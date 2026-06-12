@@ -149,6 +149,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_partial_has_no_fields() {
+        assert!(!PartialConfig::default().has_any_field());
+    }
+
+    #[test]
+    fn partial_with_mode_has_field() {
+        assert!(
+            PartialConfig {
+                mode: Some(ProjectMode::App),
+                ..PartialConfig::default()
+            }
+            .has_any_field()
+        );
+    }
+
+    #[test]
     fn merge_replaces_whole_plugin_map() {
         let mut plugins = BTreeMap::new();
         plugins.insert(PluginId::Celery, true);

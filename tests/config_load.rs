@@ -67,8 +67,20 @@ fn loads_pyproject_tool_yokei() {
     assert_eq!(config.confidence, Confidence::Certain);
     assert_eq!(config.exclude, vec!["custom/**".to_owned()]);
     assert_eq!(config.entry.len(), 2);
+    assert_eq!(config.entry[0].path, "manage.py");
+    assert!(config.entry[0].symbol.is_none());
     assert_eq!(config.entry[1].path, "src/acme/asgi.py");
     assert_eq!(config.entry[1].symbol.as_deref(), Some("application"));
+    assert_eq!(
+        config.project,
+        vec!["src/**/*.py".to_owned(), "tests/**/*.py".to_owned()]
+    );
+    assert_eq!(config.dependencies.dev_groups, vec!["dev".to_owned()]);
+    assert_eq!(
+        config.dependencies.runtime_groups,
+        vec!["server".to_owned()]
+    );
+    assert_eq!(config.dependencies.type_groups, vec!["types".to_owned()]);
     assert_eq!(
         config.package_module_map.get("PyYAML"),
         Some(&vec!["yaml".to_owned()])
@@ -76,8 +88,14 @@ fn loads_pyproject_tool_yokei() {
     assert_eq!(config.binary_map.get("pytest"), Some(&"pytest".to_owned()));
     assert_eq!(config.plugins.get(&PluginId::Pytest), Some(&false));
     assert_eq!(config.plugins.get(&PluginId::Celery), Some(&true));
+    assert_eq!(config.plugins.get(&PluginId::Django), Some(&true));
     assert_eq!(config.ignore.get("YOK002"), Some(&vec!["boto3".to_owned()]));
-    assert!(config.workspaces.contains_key("api"));
+    let api = config.workspaces.get("api").expect("api workspace");
+    assert_eq!(api.path, "services/api");
+    assert_eq!(
+        api.project.as_deref(),
+        Some(["src/**/*.py".to_owned()].as_slice())
+    );
 }
 
 #[test]
@@ -86,6 +104,7 @@ fn merge_priority_pyproject_wins() {
     let config = &loaded.effective;
 
     assert_eq!(config.mode, ProjectMode::Library);
+    assert_ne!(config.mode, ProjectMode::App);
     assert!(config.production);
     assert_eq!(config.confidence, Confidence::Maybe);
     assert!(loaded.sources.dot_yokei_toml.is_some());
@@ -147,6 +166,14 @@ fn rejects_unknown_plugin_key() {
 }
 
 #[test]
+fn rejects_non_boolean_plugin_value() {
+    let path = fixture("invalid_plugin_type");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("non-boolean plugin");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
 fn rejects_invalid_ignore_rule() {
     let path = fixture("invalid_ignore");
     let root = project_root_at(&path);
@@ -181,4 +208,123 @@ fn apply_overrides_production() {
         },
     );
     assert!(config.production);
+}
+
+#[test]
+#[cfg(unix)]
+fn io_error_propagates() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let pyproject = temp.path().join("pyproject.toml");
+    fs::write(&pyproject, "[tool.yokei]\nmode = \"app\"\n").expect("write pyproject");
+
+    let mut perms = fs::metadata(&pyproject).expect("metadata").permissions();
+    perms.set_mode(0o000);
+    fs::set_permissions(&pyproject, perms).expect("chmod");
+
+    let root = project_root_at(temp.path());
+    let error = load_config(&root).expect_err("unreadable pyproject");
+    assert!(matches!(error, ConfigError::Io { .. }));
+
+    // Restore permissions so tempdir cleanup succeeds.
+    let mut restored = fs::metadata(&pyproject).expect("metadata").permissions();
+    restored.set_mode(0o644);
+    let _ = fs::set_permissions(&pyproject, restored);
+}
+
+#[test]
+fn rejects_unknown_top_level_key() {
+    let path = fixture("unknown_top_level_key");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("unknown top-level key");
+    assert!(matches!(error, ConfigError::UnknownKey { .. }));
+}
+
+#[test]
+fn rejects_invalid_target_version() {
+    let path = fixture("invalid_target_version");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("invalid target_version");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn rejects_invalid_confidence() {
+    let path = fixture("invalid_confidence");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("invalid confidence");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn rejects_incomplete_dependencies() {
+    let path = fixture("incomplete_dependencies");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("incomplete dependencies");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn reads_uv_workspace_string_member() {
+    let loaded = load_fixture("uv_workspace_string_member");
+    let hint = loaded.uv_workspace.expect("uv workspace hint");
+    assert_eq!(hint.members, vec!["services/api"]);
+}
+
+#[test]
+fn rejects_invalid_uv_workspace_members_type() {
+    let path = fixture("invalid_uv_workspace_members");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("invalid uv workspace members");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn rejects_empty_workspace_path() {
+    let path = fixture("empty_workspace_path");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("empty workspace path");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn rejects_entry_with_empty_symbol() {
+    let path = fixture("entry_empty_symbol");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("empty entry symbol");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn rejects_backslash_absolute_entry_path() {
+    let path = fixture("backslash_entry");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("backslash absolute entry");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn rejects_absolute_project_path() {
+    let path = fixture("invalid_project_path");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("absolute project path");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn rejects_absolute_exclude_path() {
+    let path = fixture("invalid_exclude_path");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("absolute exclude path");
+    assert!(matches!(error, ConfigError::Validation { .. }));
+}
+
+#[test]
+fn empty_yokei_toml_uses_defaults() {
+    let loaded = load_fixture("empty_yokei_toml");
+    assert_eq!(loaded.effective, default_config());
+    assert!(loaded.sources.yokei_toml.is_some());
+    assert!(!loaded.sources.pyproject_tool_yokei);
 }

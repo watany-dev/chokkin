@@ -484,8 +484,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn valid_ignore_rules_accept_yok010() {
-        assert!(is_valid_ignore_rule("YOK010"));
+    fn valid_ignore_rules_accept_yok001_through_yok010() {
+        for code in 1..=10 {
+            let rule = format!("YOK{code:03}");
+            assert!(is_valid_ignore_rule(&rule), "expected {rule} to be valid");
+        }
+        assert!(!is_valid_ignore_rule("YOK000"));
+        assert!(!is_valid_ignore_rule("YOK011"));
         assert!(!is_valid_ignore_rule("YOK099"));
     }
 }
