@@ -32,3 +32,11 @@ yokei の編集タスク後に手動で行っていた `/simplify` → `/update-
   ドキュメントを変更しうるため、先に wrapup を終えてから commit & push する。
 - yokei は Python コードを実行しない静的解析ツール。simplify / update-docs が
   解析対象プロジェクトのコードを実行することは絶対にない。
+
+## ホスト別の注意 (Codex / Cursor)
+
+`.codex/skills` と `.cursor/skills` はこの `.claude/skills` への symlink。
+Codex / Cursor から本スキルを起動した場合、手順 4 のマーカーと手順 5 の
+`/compact` は Claude Code 専用なので省略し、手順 1–3（コード整理 →
+update-docs → `make check`）のコアだけを実行する。`simplify` は Claude Code の
+組込みスキルなので、Codex / Cursor では同等のコード整理を手動で行う。
