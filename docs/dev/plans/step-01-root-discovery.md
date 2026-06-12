@@ -298,12 +298,12 @@ match discover_project_root(start) {
 
 ## 12. Exit criteria（Step 1 完了定義）
 
-- [ ] `src/discovery/` が `make check` を通過する
-- [ ] §4 の 6 種 marker すべてに対するテストが存在する
-- [ ] `discover_project_root` が `pub` API として `lib.rs` から re-export される
-- [ ] production コードに `unwrap` / `expect` / `panic` がない
-- [ ] `docs/dev/spec.ja.md` §6 処理順 Step 1 と `AGENTS.md` の repository structure に `discovery/` が追記される（`update-docs`）
-- [ ] `cargo deny check` が `thiserror` 追加後も通過する
+- [x] `src/discovery/` が `make check` を通過する
+- [x] §4 の 6 種 marker すべてに対するテストが存在する
+- [x] `discover_project_root` が `pub` API として `lib.rs` から re-export される
+- [x] production コードに `unwrap` / `expect` / `panic` がない
+- [x] `docs/dev/spec.ja.md` §6 処理順 Step 1 と `AGENTS.md` の repository structure に `discovery/` が追記される（`update-docs`）
+- [x] `cargo deny check` が `thiserror` 追加後も通過する
 
 ## 13. 実装順序（推奨）
 

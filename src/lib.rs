@@ -4,6 +4,10 @@
 //! The crate is in the design phase; the analyzer is not implemented yet.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
+pub mod discovery;
+
+pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
+
 /// The version of yokei, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

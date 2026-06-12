@@ -19,6 +19,7 @@ Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
 src/
   main.rs         CLI entry point — argument dispatch and process exit only
   lib.rs          Library crate — all logic goes here as the project grows
+  discovery/      Project root discovery (pipeline step 1)
   cli.rs          (future) CLI argument parsing
   config.rs       (future) Config file parsing ([tool.yokei])
   manifest/       (future) pyproject.toml / requirements*.txt / lockfile readers

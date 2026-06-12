@@ -12,6 +12,10 @@ keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints.rust]
 unsafe_code = "forbid"
