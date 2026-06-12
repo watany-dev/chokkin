@@ -3,6 +3,7 @@
 
 // The CLI layer is the one place allowed to print and exit.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
+#![allow(clippy::multiple_crate_versions)] // pep508_rs depends on thiserror 1.x
 
 use std::process::ExitCode;
 

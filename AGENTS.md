@@ -10,10 +10,10 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** pre-alpha. Pipeline steps 1–2 (`src/discovery/` project root
-discovery, `src/config/` config load) are implemented as library APIs; the
-CLI analyzer and issue reporting are not wired yet. Implementation follows the
-phased roadmap in `docs/dev/spec.ja.md`.
+**Status:** pre-alpha. Pipeline steps 1–3 (`src/discovery/` project root
+discovery, `src/config/` config load, `src/manifest/` manifest extraction) are
+implemented as library APIs; the CLI analyzer and issue reporting are not wired
+yet. Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
 
 ## Repository structure
 
@@ -23,8 +23,8 @@ src/
   lib.rs          Library crate — all logic goes here as the project grows
   discovery/      Project root discovery (pipeline step 1)
   config/         Config loading ([tool.yokei], pipeline step 2)
+  manifest/       Manifest extraction (pipeline step 3)
   cli.rs          (future) CLI argument parsing
-  manifest/       (future) pyproject.toml / requirements*.txt / lockfile readers
   parser/         (future) Python AST parser (Rust-based, static only)
   resolver/       (future) import-name → distribution-name resolution
   graph/          (future) project reachability graph

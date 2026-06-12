@@ -1,12 +1,16 @@
+#![allow(clippy::multiple_crate_versions)] // pep508_rs depends on thiserror 1.x
+
 //! `yokei` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
-//! Early implementation: pipeline steps 1–2 ([`discovery`], [`config`]) are
-//! available as library APIs. The CLI analyzer and issue reporting are not
-//! wired yet. See `docs/dev/spec.ja.md` for the full specification.
+//! Early implementation: pipeline steps 1–3 ([`discovery`], [`config`],
+//! [`manifest`]) are available as library APIs. The CLI analyzer and issue
+//! reporting are not wired yet. See `docs/dev/spec.ja.md` for the full
+//! specification.
 
 pub mod config;
 pub mod discovery;
+pub mod manifest;
 
 pub use config::{
     Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
@@ -14,6 +18,11 @@ pub use config::{
     YokeiConfig, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
+pub use manifest::{
+    DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
+    LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
+    extract_manifest, resolve_target_version,
+};
 
 /// The version of yokei, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

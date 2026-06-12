@@ -293,7 +293,7 @@ File reaches File
 ```text
 1. root discovery          # 実装済み: src/discovery/ (`discover_project_root`)
 2. config load             # 実装済み: src/config/ (`load_config`)
-3. manifest extraction
+3. manifest extraction     # 実装済み: src/manifest/ (`extract_manifest`)
 4. source file discovery
 5. config/plugin extraction
 6. Python parse
@@ -692,7 +692,7 @@ yokei/
     discovery/   # 実装済み: pipeline step 1 (root discovery)
     config/      # 実装済み: pipeline step 2 (config load)
     cli.rs
-    manifest/
+    manifest/    # 実装済み: pipeline step 3 (manifest extraction)
     parser/
     resolver/
     graph/
