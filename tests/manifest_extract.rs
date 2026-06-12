@@ -109,6 +109,19 @@ fn requirements_constraints_not_declared() {
     let names = dependency_names(&manifest);
     assert!(names.contains(&"requests"));
     assert!(!names.contains(&"constraints.txt"));
+    assert!(
+        manifest
+            .constraints
+            .iter()
+            .any(|dep| dep.name == "requests")
+    );
+    assert!(
+        manifest
+            .sources
+            .requirements_files
+            .iter()
+            .any(|path| path.contains("constraints.txt"))
+    );
 }
 
 #[test]
@@ -170,7 +183,13 @@ fn opaque_url_not_unused_candidate() {
         .iter()
         .find(|dep| dep.opaque)
         .expect("opaque editable dependency");
-    assert_eq!(editable.name, "localpkg");
+    assert!(editable.name.is_empty());
+    assert!(
+        editable
+            .specifier
+            .as_deref()
+            .is_some_and(|spec| spec.contains("localpkg"))
+    );
 }
 
 #[test]
@@ -227,6 +246,95 @@ fn poetry_detected_emits_warning() {
             .warnings
             .iter()
             .any(|warning| matches!(warning, ManifestWarning::PoetryDetected))
+    );
+}
+
+#[test]
+fn requirements_long_flag_include() {
+    let manifest = extract_fixture("requirements_long_flag");
+    assert!(manifest.dependencies.iter().any(|dep| dep.name == "flask"));
+}
+
+#[test]
+fn requirements_egg_name_extracted() {
+    let manifest = extract_fixture("requirements_egg");
+    assert!(
+        manifest
+            .dependencies
+            .iter()
+            .any(|dep| dep.name == "my-package")
+    );
+}
+
+#[test]
+fn requirements_url_without_egg_is_opaque() {
+    let manifest = extract_fixture("requirements_opaque_url");
+    let dep = manifest
+        .dependencies
+        .iter()
+        .find(|dep| dep.opaque)
+        .expect("opaque git dependency");
+    assert!(dep.name.is_empty());
+    assert!(
+        dep.specifier
+            .as_deref()
+            .is_some_and(|spec| spec.contains("github.com"))
+    );
+}
+
+#[test]
+fn setup_py_partial_comment_emits_warning() {
+    let manifest = extract_fixture("setup_py_partial_comment");
+    assert!(manifest.sources.setup_py);
+    assert!(
+        manifest
+            .warnings
+            .iter()
+            .any(|warning| matches!(warning, ManifestWarning::SetupPyPartiallyStatic { .. }))
+    );
+    assert!(
+        manifest
+            .dependencies
+            .iter()
+            .any(|dep| dep.name == "requests")
+    );
+    assert!(
+        manifest
+            .dependencies
+            .iter()
+            .filter(|dep| dep.name == "requests")
+            .count()
+            == 1
+    );
+}
+
+#[test]
+fn metadata_conflict_emits_warning() {
+    let manifest = extract_fixture("metadata_conflict");
+    assert_eq!(manifest.metadata.version.as_deref(), Some("1.0.0"));
+    assert!(manifest.warnings.iter().any(|warning| matches!(
+        warning,
+        ManifestWarning::MetadataConflict { field, .. } if field == "version"
+    )));
+}
+
+#[test]
+fn uv_workspace_hint_copied_from_config() {
+    let path = fixture("uv_workspace_hint");
+    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    let members = config
+        .uv_workspace
+        .as_ref()
+        .map(|hint| hint.members.as_slice())
+        .expect("uv workspace hint");
+    assert_eq!(
+        manifest
+            .uv_workspace
+            .as_ref()
+            .map(|hint| hint.members.as_slice()),
+        Some(members)
     );
 }
 

@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use super::error::ManifestError;
-use super::pep508_util::parse_requirement;
-use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin, ProjectMetadata};
+use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
+use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.cfg`.
@@ -34,14 +34,15 @@ pub fn extract_setup_cfg(root: &Path, path: &Path) -> Result<SetupCfgExtraction,
         && let Some(requires) = options.get("install_requires")
     {
         for (index, raw) in split_requirement_lines(requires).iter().enumerate() {
-            push_setup_dependency(
-                &mut result.dependencies,
-                &mut result.warnings,
+            push_dependency(DependencyPush {
+                dependencies: &mut result.dependencies,
+                warnings: &mut result.warnings,
                 raw,
-                DependencyContext::Runtime,
-                &rel,
-                &format!("options.install_requires[{index}]"),
-            );
+                context: DependencyContext::Runtime,
+                file: &rel,
+                label: &format!("options.install_requires[{index}]"),
+                line: None,
+            });
         }
     }
 
@@ -51,39 +52,20 @@ pub fn extract_setup_cfg(root: &Path, path: &Path) -> Result<SetupCfgExtraction,
                 continue;
             }
             for (index, raw) in split_requirement_lines(requires).iter().enumerate() {
-                push_setup_dependency(
-                    &mut result.dependencies,
-                    &mut result.warnings,
+                push_dependency(DependencyPush {
+                    dependencies: &mut result.dependencies,
+                    warnings: &mut result.warnings,
                     raw,
-                    DependencyContext::SetupExtra(extra.clone()),
-                    &rel,
-                    &format!("options.extras_require.{extra}[{index}]"),
-                );
+                    context: DependencyContext::SetupExtra(extra.clone()),
+                    file: &rel,
+                    label: &format!("options.extras_require.{extra}[{index}]"),
+                    line: None,
+                });
             }
         }
     }
 
     Ok(result)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_setup_dependency(
-    dependencies: &mut Vec<DeclaredDependency>,
-    warnings: &mut Vec<ManifestWarning>,
-    raw: &str,
-    context: DependencyContext,
-    file: &str,
-    label: &str,
-) {
-    let origin = DependencyOrigin {
-        file: file.to_owned(),
-        line: None,
-        label: label.to_owned(),
-    };
-    match parse_requirement(raw, context, origin) {
-        Ok(dep) => dependencies.push(dep),
-        Err(warning) => warnings.push(warning),
-    }
 }
 
 fn split_requirement_lines(value: &str) -> Vec<String> {
@@ -152,20 +134,6 @@ fn parse_ini_sections(
     }
 
     sections
-}
-
-fn read_to_string(path: &Path) -> Result<String, ManifestError> {
-    std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-fn relative_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root).map_or_else(
-        |_| "setup.cfg".to_owned(),
-        |p| p.to_string_lossy().replace('\\', "/"),
-    )
 }
 
 #[cfg(test)]
