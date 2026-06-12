@@ -58,7 +58,8 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          manylinux: ${{ matrix.platform.manylinux || 'auto' }}
+          # Pass manylinux only for Linux targets; empty string disables it for macOS/Windows.
+          manylinux: ${{ matrix.platform.manylinux }}
           args: --release --locked --out dist
           sccache: "true"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -112,7 +113,8 @@ jobs:
         with:
           path: ./dist
           artifact-name: yokei-sbom.spdx.json
-          output-file: ./yokei-sbom.spdx.json
+          # Write into dist/ so it is included in the gh release create glob below.
+          output-file: ./dist/yokei-sbom.spdx.json
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: dist/*

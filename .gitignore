@@ -13,6 +13,9 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
+# Claude Code local settings (personal overrides, not for team sharing)
+.claude/settings.local.json
+
 # Python / maturin build artifacts
 dist/
 .venv/
