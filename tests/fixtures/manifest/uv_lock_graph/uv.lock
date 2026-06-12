@@ -1,0 +1,20 @@
+version = 1
+requires-python = ">=3.11"
+
+[[package]]
+name = "requests"
+version = "2.32.5"
+dependencies = [
+    { name = "urllib3" },
+    { name = "certifi" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.2.0"
+dependencies = []
+
+[[package]]
+name = "certifi"
+version = "2024.8.30"
+dependencies = []

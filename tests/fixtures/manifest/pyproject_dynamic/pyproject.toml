@@ -1,0 +1,4 @@
+[project]
+name = "dynamic"
+version = "0.1.0"
+dynamic = ["dependencies"]

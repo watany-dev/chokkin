@@ -1,0 +1,20 @@
+[project]
+name = "acme"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["requests"]
+
+[project.optional-dependencies]
+dev = ["pytest", "black"]
+
+[project.scripts]
+acme-cli = "acme.cli:main"
+
+[project.gui-scripts]
+acme-gui = "acme.gui:run"
+
+[project.entry-points."acme.plugins"]
+plugin-a = "acme.plugins.a:Plugin"
+
+[dependency-groups]
+dev = ["ruff>=0.1"]

@@ -12,6 +12,7 @@ keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+pep508_rs = "0.9"
 thiserror = "2"
 toml = "0.8"
 
