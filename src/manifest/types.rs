@@ -104,6 +104,7 @@ pub struct ManifestSources {
 }
 
 /// Fully extracted manifest for a project root.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedManifest {
     /// Project root from discovery step 1.

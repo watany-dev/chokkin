@@ -1,6 +1,7 @@
 //! Non-fatal warnings emitted during manifest extraction.
 
 /// Warning that does not prevent manifest extraction from completing.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestWarning {
     /// `setup.py` could not be parsed statically; dependencies were skipped.
