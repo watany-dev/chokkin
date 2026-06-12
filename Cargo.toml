@@ -1,0 +1,92 @@
+[package]
+name = "yokei"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Find unused files, dependencies, and public symbols in Python projects"
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/watany-dev/yokei"
+homepage = "https://github.com/watany-dev/yokei"
+keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+non_ascii_idents = "deny"
+unused_must_use = "deny"
+unused_extern_crates = "warn"
+unused_import_braces = "warn"
+trivial_numeric_casts = "warn"
+variant_size_differences = "warn"
+noop_method_call = "warn"
+meta_variable_misuse = "warn"
+
+[lints.clippy]
+# Groups as a strict baseline; CI runs clippy with -D warnings.
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Restrictions: never in production code (relaxed for tests via clippy.toml).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+exit = "deny"
+mem_forget = "deny"
+unreachable = "deny"
+lossy_float_literal = "deny"
+rc_buffer = "deny"
+verbose_file_reads = "deny"
+assertions_on_result_states = "deny"
+empty_drop = "deny"
+empty_structs_with_brackets = "deny"
+partial_pub_fields = "deny"
+pub_without_shorthand = "deny"
+redundant_type_annotations = "deny"
+same_name_method = "deny"
+try_err = "deny"
+unnecessary_safety_comment = "deny"
+unnecessary_safety_doc = "deny"
+unnecessary_self_imports = "deny"
+unneeded_field_pattern = "deny"
+self_named_module_files = "deny"
+semicolon_inside_block = "deny"
+# Integration tests and property-test macros need root-level #[test].
+tests_outside_test_module = "allow"
+
+# Exemptions for legitimate patterns.
+module_name_repetitions = "allow"
+option_if_let_else = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+missing_const_for_fn = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+debug = false
+
+# Used by wheel/release builds for maximum optimization.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+panic = "unwind"
+
+[profile.dev.package."*"]
+opt-level = 1

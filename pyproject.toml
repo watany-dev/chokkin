@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "yokei"
+version = "0.1.0"
+description = "Find unused files, dependencies, and public symbols in Python projects"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = ["python", "dead-code", "dependencies", "unused", "knip", "uv"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/watany-dev/yokei"
+Repository = "https://github.com/watany-dev/yokei"
+Issues = "https://github.com/watany-dev/yokei/issues"
+
+[tool.maturin]
+bindings = "bin"
+strip = true

@@ -1,0 +1,8 @@
+self-hosted-runner:
+  labels: []
+config-variables:
+paths:
+  ".github/workflows/release.yml":
+    ignore:
+      # maturin matrix values come from a static inline matrix, not user input.
+      - 'shellcheck reported issue.*SC(2086|2129)'
