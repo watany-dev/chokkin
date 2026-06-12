@@ -6,12 +6,14 @@ use std::path::Path;
 
 use toml::Value;
 
-use super::defaults::PartialConfig;
+use super::defaults::{PartialConfig, PartialDependencyGroups};
 use super::error::ConfigError;
 use super::types::{
-    Confidence, DependencyGroupsConfig, EntrySpec, PluginId, ProjectMode, TargetVersion,
-    UvWorkspaceHint, WorkspaceOverride,
+    Confidence, EntrySpec, PluginId, ProjectMode, TargetVersion, UvWorkspaceHint,
+    WorkspaceOverride, is_absolute_path_str,
 };
+
+const WORKSPACE_KEYS: &[&str] = &["path", "entry", "project", "mode"];
 
 const TOP_LEVEL_KEYS: &[&str] = &[
     "entry",
@@ -116,7 +118,7 @@ fn partial_from_table(path: &Path, table: &toml::Table) -> Result<PartialConfig,
 
     Ok(PartialConfig {
         entry: parse_optional_entry_list(path, table.get("entry"), "entry")?,
-        project: parse_optional_string_list(path, table.get("project"), "project")?,
+        project: parse_optional_path_list(path, table.get("project"), "project")?,
         mode: parse_optional_mode(path, table.get("mode"))?,
         production: parse_optional_bool(path, table.get("production"), "production")?,
         target_version: parse_optional_target_version(path, table.get("target_version"))?,
@@ -126,7 +128,7 @@ fn partial_from_table(path: &Path, table: &toml::Table) -> Result<PartialConfig,
             "respect_gitignore",
         )?,
         confidence: parse_optional_confidence(path, table.get("confidence"))?,
-        exclude: parse_optional_string_list(path, table.get("exclude"), "exclude")?,
+        exclude: parse_optional_path_list(path, table.get("exclude"), "exclude")?,
         dependencies: parse_optional_dependencies(path, table.get("dependencies"))?,
         package_module_map: parse_optional_string_list_map(
             path,
@@ -166,12 +168,40 @@ fn parse_optional_entry_list(
         let field_name = format!("{field}[{index}]");
         let parsed = EntrySpec::parse(&item).map_err(|message| ConfigError::Validation {
             path: path.to_path_buf(),
-            field: field_name,
+            field: field_name.clone(),
             message: message.to_owned(),
         })?;
+        ensure_relative_path(path, &field_name, &parsed.path)?;
         entries.push(parsed);
     }
     Ok(Some(entries))
+}
+
+/// Parse an optional array of root-relative path or glob strings.
+fn parse_optional_path_list(
+    path: &Path,
+    value: Option<&Value>,
+    field: &'static str,
+) -> Result<Option<Vec<String>>, ConfigError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let items = value_as_string_array(path, value, field)?;
+    for (index, item) in items.iter().enumerate() {
+        ensure_relative_path(path, &format!("{field}[{index}]"), item)?;
+    }
+    Ok(Some(items))
+}
+
+fn ensure_relative_path(path: &Path, field: &str, value: &str) -> Result<(), ConfigError> {
+    if is_absolute_path_str(value) {
+        return Err(ConfigError::Validation {
+            path: path.to_path_buf(),
+            field: field.to_owned(),
+            message: "path must be relative to the project root".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn parse_optional_string_list(
@@ -251,50 +281,41 @@ fn parse_optional_bool(
         })
 }
 
+const DEPENDENCY_GROUP_KEYS: &[&str] = &["dev_groups", "runtime_groups", "type_groups"];
+
 fn parse_optional_dependencies(
     path: &Path,
     value: Option<&Value>,
-) -> Result<Option<DependencyGroupsConfig>, ConfigError> {
+) -> Result<Option<PartialDependencyGroups>, ConfigError> {
     let Some(value) = value else {
         return Ok(None);
     };
     let table = value_as_table(path, value, "dependencies")?;
-    Ok(Some(DependencyGroupsConfig {
-        dev_groups: parse_required_string_list_in_table(
+    for key in table.keys() {
+        if !DEPENDENCY_GROUP_KEYS.contains(&key.as_str()) {
+            return Err(ConfigError::UnknownKey {
+                path: path.to_path_buf(),
+                key: format!("dependencies.{key}"),
+            });
+        }
+    }
+    Ok(Some(PartialDependencyGroups {
+        dev_groups: parse_optional_string_list(
             path,
-            table,
-            "dev_groups",
+            table.get("dev_groups"),
             "dependencies.dev_groups",
         )?,
-        runtime_groups: parse_required_string_list_in_table(
+        runtime_groups: parse_optional_string_list(
             path,
-            table,
-            "runtime_groups",
+            table.get("runtime_groups"),
             "dependencies.runtime_groups",
         )?,
-        type_groups: parse_required_string_list_in_table(
+        type_groups: parse_optional_string_list(
             path,
-            table,
-            "type_groups",
+            table.get("type_groups"),
             "dependencies.type_groups",
         )?,
     }))
-}
-
-fn parse_required_string_list_in_table(
-    path: &Path,
-    table: &toml::Table,
-    key: &str,
-    field: &'static str,
-) -> Result<Vec<String>, ConfigError> {
-    let Some(value) = table.get(key) else {
-        return Err(ConfigError::Validation {
-            path: path.to_path_buf(),
-            field: field.to_owned(),
-            message: format!("missing required key {key}"),
-        });
-    };
-    value_as_string_array(path, value, field)
 }
 
 fn parse_optional_string_list_map(
@@ -389,6 +410,15 @@ fn parse_optional_workspaces(
     let mut map = BTreeMap::new();
     for (id, item) in table {
         let workspace_table = value_as_table(path, item, "workspaces")?;
+        for key in workspace_table.keys() {
+            if !WORKSPACE_KEYS.contains(&key.as_str()) {
+                return Err(ConfigError::UnknownKey {
+                    path: path.to_path_buf(),
+                    key: format!("workspaces.{id}.{key}"),
+                });
+            }
+        }
+
         let path_value = workspace_table
             .get("path")
             .ok_or_else(|| ConfigError::Validation {
@@ -404,11 +434,12 @@ fn parse_optional_workspaces(
                 message: "workspace path must not be empty".to_owned(),
             });
         }
+        ensure_relative_path(path, &format!("workspaces.{id}.path"), &member_path)?;
 
         let entry =
             parse_optional_entry_list(path, workspace_table.get("entry"), "workspaces.entry")?;
         let project =
-            parse_optional_string_list(path, workspace_table.get("project"), "workspaces.project")?;
+            parse_optional_path_list(path, workspace_table.get("project"), "workspaces.project")?;
         let mode = parse_optional_mode(path, workspace_table.get("mode"))?;
 
         map.insert(
