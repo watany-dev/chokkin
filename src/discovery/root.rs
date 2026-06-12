@@ -19,7 +19,7 @@ pub enum RootMarker {
     SetupPy,
     /// `requirements.txt` exists in the root directory.
     RequirementsTxt,
-    /// `.git` directory exists in the root directory.
+    /// `.git` file (gitfile) or directory exists in the root directory.
     Git,
 }
 
@@ -71,10 +71,13 @@ const FILE_MARKERS: &[(&str, RootMarker)] = &[
 pub fn discover_project_root(start: &Path) -> Result<ProjectRoot, DiscoveryError> {
     let original_start = start.to_path_buf();
 
-    if !start.is_dir() {
-        return Err(DiscoveryError::InvalidStart {
-            path: original_start,
-        });
+    match metadata_for(start)? {
+        Some(metadata) if metadata.is_dir() => {},
+        _ => {
+            return Err(DiscoveryError::InvalidStart {
+                path: original_start,
+            });
+        },
     }
 
     let mut current = normalize_start(start)?;
@@ -94,12 +97,6 @@ pub fn discover_project_root(start: &Path) -> Result<ProjectRoot, DiscoveryError
                 start: original_start,
             });
         };
-
-        if parent == current {
-            return Err(DiscoveryError::NotFound {
-                start: original_start,
-            });
-        }
 
         current = parent.to_path_buf();
     }
@@ -128,7 +125,7 @@ fn probe_markers(dir: &Path) -> Result<Option<RootMarker>, DiscoveryError> {
     }
 
     let git_path = dir.join(".git");
-    if is_directory(&git_path)? {
+    if metadata_for(&git_path)?.is_some_and(|metadata| metadata.is_file() || metadata.is_dir()) {
         return Ok(Some(RootMarker::Git));
     }
 
@@ -148,10 +145,6 @@ fn metadata_for(path: &Path) -> Result<Option<fs::Metadata>, DiscoveryError> {
 
 fn is_file(path: &Path) -> Result<bool, DiscoveryError> {
     Ok(metadata_for(path)?.is_some_and(|metadata| metadata.is_file()))
-}
-
-fn is_directory(path: &Path) -> Result<bool, DiscoveryError> {
-    Ok(metadata_for(path)?.is_some_and(|metadata| metadata.is_dir()))
 }
 
 #[cfg(test)]
@@ -192,6 +185,15 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(temp.path().join(".git")).expect("create .git");
         write_file(&temp.path().join(".git/HEAD"), "ref: refs/heads/main\n");
+
+        let marker = probe_markers(temp.path()).expect("probe").expect("marker");
+        assert_eq!(marker, RootMarker::Git);
+    }
+
+    #[test]
+    fn probe_markers_detects_git_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(&temp.path().join(".git"), "gitdir: /path/to/real/.git\n");
 
         let marker = probe_markers(temp.path()).expect("probe").expect("marker");
         assert_eq!(marker, RootMarker::Git);
