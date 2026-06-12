@@ -6,8 +6,7 @@ use crate::manifest::LoadedManifest;
 
 use super::error::SourcesError;
 use super::glob::{build_glob_set, effective_exclude};
-use super::layout::infer_layout;
-use super::layout::layout_warnings;
+use super::layout::{infer_layout, layout_warnings};
 use super::types::DiscoveredSources;
 use super::walk::{
     CollectOptions, collect_files, large_project_warning, load_gitignore, validate_entries,

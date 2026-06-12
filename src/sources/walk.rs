@@ -14,6 +14,7 @@ use super::types::{DiscoveredFile, FileKind, LayoutInfo};
 use super::warnings::SourcesWarning;
 
 const LARGE_PROJECT_THRESHOLD: usize = 10_000;
+const GITIGNORE_PATH: &str = ".gitignore";
 
 /// Options for [`collect_files`].
 pub struct CollectOptions<'a> {
@@ -43,7 +44,7 @@ pub fn load_gitignore(root: &Path) -> (Option<Gitignore>, Option<SourcesWarning>
         return (
             None,
             Some(SourcesWarning::GitignoreUnreadable {
-                path: normalize_rel_path(&gitignore_path),
+                path: GITIGNORE_PATH.to_owned(),
             }),
         );
     }
@@ -53,7 +54,7 @@ pub fn load_gitignore(root: &Path) -> (Option<Gitignore>, Option<SourcesWarning>
         Err(_error) => (
             None,
             Some(SourcesWarning::GitignoreUnreadable {
-                path: normalize_rel_path(&gitignore_path),
+                path: GITIGNORE_PATH.to_owned(),
             }),
         ),
     }
