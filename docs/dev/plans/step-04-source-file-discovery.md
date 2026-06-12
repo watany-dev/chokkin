@@ -461,15 +461,15 @@ Step 4 完了時点の Phase 0 exit 寄与: **layout と `.py` 件数を CLI に
 
 ## 12. Exit criteria（Step 4 完了定義）
 
-- [ ] `src/sources/` が `make check` を通過する
-- [ ] `discover_sources` が `pub` API として `lib.rs` から re-export される
-- [ ] `project = []` で src / flat / fallback layout を推定できる
-- [ ] `exclude` / `respect_gitignore` / `production` が反映される
-- [ ] 各ファイルに `FileContext` が付与される
-- [ ] 欠落 entry パスが warning になる
-- [ ] production コードに `unwrap` / `expect` / `panic` がない
-- [ ] `docs/dev/spec.ja.md` §6 処理順 Step 4 に `sources/` モジュール名が追記される（`update-docs`）
-- [ ] `cargo deny check` が新規依存追加後も通過する
+- [x] `src/sources/` が `make check` を通過する
+- [x] `discover_sources` が `pub` API として `lib.rs` から re-export される
+- [x] `project = []` で src / flat / fallback layout を推定できる
+- [x] `exclude` / `respect_gitignore` / `production` が反映される
+- [x] 各ファイルに `FileContext` が付与される
+- [x] 欠落 entry パスが warning になる
+- [x] production コードに `unwrap` / `expect` / `panic` がない
+- [x] `docs/dev/spec.ja.md` §6 処理順 Step 4 に `sources/` モジュール名が追記される（`update-docs`）
+- [x] `cargo deny check` が新規依存追加後も通過する
 
 ## 13. 実装順序（推奨）
 

@@ -296,7 +296,7 @@ File reaches File
 1. root discovery          # 実装済み: src/discovery/ (`discover_project_root`)
 2. config load             # 実装済み: src/config/ (`load_config`)
 3. manifest extraction     # 実装済み: src/manifest/ (`extract_manifest`)
-4. source file discovery
+4. source file discovery     # 実装済み: src/sources/ (`discover_sources`)
 5. config/plugin extraction
 6. Python parse
 7. import resolution
@@ -695,6 +695,7 @@ yokei/
     config/      # 実装済み: pipeline step 2 (config load)
     cli.rs
     manifest/    # 実装済み: pipeline step 3 (manifest extraction)
+    sources/     # 実装済み: pipeline step 4 (source file discovery)
       util.rs      # shared path/read/push helpers
       pep508_util.rs
       requirements.rs
