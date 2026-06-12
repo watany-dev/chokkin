@@ -79,6 +79,36 @@ Install tools once with `make tools`.
 - Include a test plan in the PR body.
 - Squash-merge by default.
 
+## Agent skills (shared across Claude / Codex / Cursor)
+
+Reusable task workflows ("Agent Skills") live under `.claude/skills/` — the
+single source of truth. Each is a `SKILL.md` directory with `name`/`description`
+frontmatter, the format Claude Code, Codex, and Cursor all share. The other two
+hosts reuse the same files via symlink, so a skill is authored once:
+
+- `.codex/skills` → `../.claude/skills` (Codex scans `.codex/skills/`)
+- `.cursor/skills` → `../.claude/skills` (Cursor scans `.cursor/skills/`)
+
+Available skills:
+
+- `wrapup` — clean up changed code (`simplify`) then `update-docs`, run
+  `make check` if files changed, then remind to compact context.
+- `update-docs` — sync `src/` changes into `README.md`, `README.ja.md`,
+  `docs/dev/spec.ja.md`, `CLAUDE.md`, and `AGENTS.md`.
+- `update-design` — score `docs/dev/spec.ja.md` (5 categories × 20 pts) and
+  flag design/code drift.
+- `update-plan` — validate a plan to `update-design` standards before finalizing.
+- `grill-me` — interview you about a plan/design, then record an ADR under
+  `docs/adr/`.
+
+**Host-specific notes.** The Stop-hook auto-trigger, `/compact`, `simplify`,
+and `ExitPlanMode` referenced by some skills are Claude Code features. On Codex
+and Cursor the agent auto-selects skills by relevance (or you invoke them by
+name); run the `simplify` → `update-docs` → `make check` core manually and skip
+the Claude-only marker/compact steps. The Stop-hook enforcement that nags
+`wrapup` after edits lives only in `.claude/` (`hooks/stop-wrapup.sh` +
+`settings.json`).
+
 ## Guardrail: ptuf
 
 This repository uses [ptuf](https://github.com/watany-dev/ptuf) as a
