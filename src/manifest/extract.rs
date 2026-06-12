@@ -31,14 +31,12 @@ pub fn extract_manifest(
         metadata = merge_metadata(metadata, extracted.metadata);
         dependencies.extend(extracted.dependencies);
         entry_points.extend(extracted.entry_points);
+        sources.skipped_poetry = extracted
+            .warnings
+            .iter()
+            .any(|w| matches!(w, super::warnings::ManifestWarning::PoetryDetected));
         warnings.extend(extracted.warnings);
         sources.pyproject_toml = true;
-        if warnings
-            .iter()
-            .any(|w| matches!(w, super::warnings::ManifestWarning::PoetryDetected))
-        {
-            sources.skipped_poetry = true;
-        }
     }
 
     let dev_group = DependencyContext::Group("dev".to_owned());

@@ -458,17 +458,17 @@ Step 3 完了時点の Phase 0 exit 寄与: **manifest の件数・名前を CLI
 
 ## 11. Exit criteria（Step 3 完了定義）
 
-- [ ] `src/manifest/` が `make check` を通過する
-- [ ] `extract_manifest` が `pub` API として `lib.rs` から re-export される
-- [ ] §3.1 のソースから依存・entry points・metadata を抽出できる
-- [ ] PEP 508 パースが `DeclaredDependency` に反映される
-- [ ] `uv.lock` から `LockfileGraph` を構築できる
-- [ ] requirements `-r` / `-c` / `-e` の規則がテストされている
-- [ ] `setup.py` 動的ケースが warning でスキップされる
-- [ ] production コードに `unwrap` / `expect` / `panic` がない
-- [ ] `resolve_target_version` が実装・テストされている
-- [ ] `docs/dev/spec.ja.md` §6 処理順 Step 3 に `manifest/` モジュール名が追記される（`update-docs`）
-- [ ] `cargo deny check` が `pep508_rs` 追加後も通過する
+- [x] `src/manifest/` が `make check` を通過する
+- [x] `extract_manifest` が `pub` API として `lib.rs` から re-export される
+- [x] §3.1 のソースから依存・entry points・metadata を抽出できる
+- [x] PEP 508 パースが `DeclaredDependency` に反映される
+- [x] `uv.lock` から `LockfileGraph` を構築できる
+- [x] requirements `-r` / `-c` / `-e` の規則がテストされている
+- [x] `setup.py` 動的ケースが warning でスキップされる
+- [x] production コードに `unwrap` / `expect` / `panic` がない
+- [x] `resolve_target_version` が実装・テストされている
+- [x] `docs/dev/spec.ja.md` §6 処理順 Step 3 に `manifest/` モジュール名が追記される（`update-docs`）
+- [x] `cargo deny check` が `pep508_rs` 追加後も通過する
 
 ## 12. 実装順序（推奨）
 
