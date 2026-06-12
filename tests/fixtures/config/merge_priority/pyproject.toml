@@ -1,0 +1,7 @@
+[project]
+name = "acme"
+version = "0.1.0"
+
+[tool.yokei]
+mode = "library"
+production = true

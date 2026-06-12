@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust stable (1.93+, see `rust-version` in `Cargo.toml`)
+- Rust 1.93+ (see `rust-version` in `Cargo.toml`; `rust-toolchain.toml` pins the toolchain for local development)
 - [uv](https://docs.astral.sh/uv/) (for `uvx maturin` wheel builds)
 
 Install development tools:
