@@ -23,7 +23,7 @@ globset = "0.4"
 ignore = "0.4"
 pep508_rs = "0.9"
 thiserror = "2"
-toml = "0.8"
+toml = "1.1"
 walkdir = "2"
 
 [dev-dependencies]
