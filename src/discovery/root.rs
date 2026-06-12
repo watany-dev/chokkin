@@ -24,7 +24,7 @@ pub enum RootMarker {
 }
 
 impl RootMarker {
-    /// Stable snake-case name for reporters and `--explain` output.
+    /// Stable marker identifier for reporters and `--explain` output.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -106,12 +106,6 @@ pub fn discover_project_root(start: &Path) -> Result<ProjectRoot, DiscoveryError
 }
 
 fn normalize_start(start: &Path) -> Result<PathBuf, DiscoveryError> {
-    if !start.is_dir() {
-        return Err(DiscoveryError::InvalidStart {
-            path: start.to_path_buf(),
-        });
-    }
-
     fs::canonicalize(start).or_else(|_| {
         if start.is_absolute() {
             Ok(start.to_path_buf())
@@ -141,10 +135,10 @@ fn probe_markers(dir: &Path) -> Result<Option<RootMarker>, DiscoveryError> {
     Ok(None)
 }
 
-fn is_file(path: &Path) -> Result<bool, DiscoveryError> {
+fn metadata_for(path: &Path) -> Result<Option<fs::Metadata>, DiscoveryError> {
     match fs::metadata(path) {
-        Ok(metadata) => Ok(metadata.is_file()),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(source) => Err(DiscoveryError::Io {
             path: path.to_path_buf(),
             source,
@@ -152,15 +146,12 @@ fn is_file(path: &Path) -> Result<bool, DiscoveryError> {
     }
 }
 
+fn is_file(path: &Path) -> Result<bool, DiscoveryError> {
+    Ok(metadata_for(path)?.is_some_and(|metadata| metadata.is_file()))
+}
+
 fn is_directory(path: &Path) -> Result<bool, DiscoveryError> {
-    match fs::metadata(path) {
-        Ok(metadata) => Ok(metadata.is_dir()),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(DiscoveryError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
+    Ok(metadata_for(path)?.is_some_and(|metadata| metadata.is_dir()))
 }
 
 #[cfg(test)]

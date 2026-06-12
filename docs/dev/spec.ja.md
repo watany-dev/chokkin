@@ -687,6 +687,7 @@ yokei/
   pyproject.toml
   src/
     main.rs
+    discovery/   # 実装済み: pipeline step 1 (root discovery)
     cli.rs
     config.rs
     manifest/
