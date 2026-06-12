@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::config::UvWorkspaceHint;
 use crate::discovery::ProjectRoot;
 
 use super::warnings::ManifestWarning;
@@ -103,6 +104,7 @@ pub struct ManifestSources {
 }
 
 /// Fully extracted manifest for a project root.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedManifest {
     /// Project root from discovery step 1.
@@ -111,6 +113,10 @@ pub struct LoadedManifest {
     pub metadata: ProjectMetadata,
     /// Declared dependencies from all manifest sources.
     pub dependencies: Vec<DeclaredDependency>,
+    /// Version constraints from `-c` requirements files.
+    pub constraints: Vec<DeclaredDependency>,
+    /// Raw `[tool.uv.workspace]` members copied from config load (hash input).
+    pub uv_workspace: Option<UvWorkspaceHint>,
     /// Packaging entry points.
     pub entry_points: Vec<EntryPointDecl>,
     /// Lockfile transitive closure graph.

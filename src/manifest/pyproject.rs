@@ -5,10 +5,10 @@ use std::path::Path;
 use toml::Value;
 
 use super::error::ManifestError;
-use super::pep508_util::parse_requirement;
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ProjectMetadata,
 };
+use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `pyproject.toml`.
@@ -54,14 +54,15 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
         {
             for (index, dep) in deps.iter().enumerate() {
                 if let Some(raw) = dep.as_str() {
-                    push_pyproject_dependency(
-                        &mut result.dependencies,
-                        &mut result.warnings,
+                    push_dependency(DependencyPush {
+                        dependencies: &mut result.dependencies,
+                        warnings: &mut result.warnings,
                         raw,
-                        DependencyContext::Runtime,
-                        &rel,
-                        &format!("project.dependencies[{index}]"),
-                    );
+                        context: DependencyContext::Runtime,
+                        file: &rel,
+                        label: &format!("project.dependencies[{index}]"),
+                        line: None,
+                    });
                 }
             }
         }
@@ -74,14 +75,15 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
                 if let Some(deps) = deps_value.as_array() {
                     for (index, dep) in deps.iter().enumerate() {
                         if let Some(raw) = dep.as_str() {
-                            push_pyproject_dependency(
-                                &mut result.dependencies,
-                                &mut result.warnings,
+                            push_dependency(DependencyPush {
+                                dependencies: &mut result.dependencies,
+                                warnings: &mut result.warnings,
                                 raw,
-                                DependencyContext::OptionalExtra(extra.clone()),
-                                &rel,
-                                &format!("project.optional-dependencies.{extra}[{index}]"),
-                            );
+                                context: DependencyContext::OptionalExtra(extra.clone()),
+                                file: &rel,
+                                label: &format!("project.optional-dependencies.{extra}[{index}]"),
+                                line: None,
+                            });
                         }
                     }
                 }
@@ -149,14 +151,15 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
             if let Some(deps) = deps_value.as_array() {
                 for (index, dep) in deps.iter().enumerate() {
                     if let Some(raw) = dep.as_str() {
-                        push_pyproject_dependency(
-                            &mut result.dependencies,
-                            &mut result.warnings,
+                        push_dependency(DependencyPush {
+                            dependencies: &mut result.dependencies,
+                            warnings: &mut result.warnings,
                             raw,
-                            DependencyContext::Group(group.clone()),
-                            &rel,
-                            &format!("dependency-groups.{group}[{index}]"),
-                        );
+                            context: DependencyContext::Group(group.clone()),
+                            file: &rel,
+                            label: &format!("dependency-groups.{group}[{index}]"),
+                            line: None,
+                        });
                     }
                 }
             }
@@ -213,43 +216,4 @@ fn detect_unsupported_tools(table: &toml::Table, warnings: &mut Vec<ManifestWarn
     if tool.contains_key("hatch") {
         warnings.push(ManifestWarning::HatchDetected);
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_pyproject_dependency(
-    dependencies: &mut Vec<DeclaredDependency>,
-    warnings: &mut Vec<ManifestWarning>,
-    raw: &str,
-    context: DependencyContext,
-    file: &str,
-    label: &str,
-) {
-    let origin = DependencyOrigin {
-        file: file.to_owned(),
-        line: None,
-        label: label.to_owned(),
-    };
-    match parse_requirement(raw, context, origin) {
-        Ok(dep) => dependencies.push(dep),
-        Err(warning) => warnings.push(warning),
-    }
-}
-
-fn read_to_string(path: &Path) -> Result<String, ManifestError> {
-    std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-fn relative_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root).map_or_else(
-        |_| {
-            path.file_name().map_or_else(
-                || path.to_string_lossy().into_owned(),
-                |name| name.to_string_lossy().into_owned(),
-            )
-        },
-        |p| p.to_string_lossy().replace('\\', "/"),
-    )
 }

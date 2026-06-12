@@ -11,6 +11,13 @@ homepage = "https://github.com/watany-dev/yokei"
 keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
 categories = ["command-line-utilities", "development-tools"]
 
+# Pre-alpha (0.1.x): library API is still evolving; report expansion but do not block CI.
+[package.metadata.cargo-semver-checks.lints]
+constructible_struct_adds_field = "warn"
+enum_variant_added = "warn"
+struct_marked_non_exhaustive = "warn"
+enum_marked_non_exhaustive = "warn"
+
 [dependencies]
 pep508_rs = "0.9"
 thiserror = "2"

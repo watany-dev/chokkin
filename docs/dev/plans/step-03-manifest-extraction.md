@@ -164,13 +164,14 @@ src/
     mod.rs            # 公開 API と re-export
     error.rs          # ManifestError
     types.rs          # LoadedManifest, DeclaredDependency, ...
-    extract.rs        # extract_manifest オーケストレーション
+    extract.rs        # extract_manifest オーケストレーション・metadata マージ
     pyproject.rs      # pyproject.toml の [project] / entry-points / groups
-    requirements.rs     # requirements*.txt パーサ
+    requirements.rs   # requirements*.txt パーサ（pip互換コメント・長形式フラグ・constraints）
+    pep508_util.rs    # PEP 508 / #egg= ヘルパ
+    util.rs           # read_to_string / relative_path / push_dependency
     uv_lock.rs        # uv.lock グラフ構築
     setup_cfg.rs      # setup.cfg パーサ
-    setup_py.rs       # setup.py 静的パーサ
-    merge.rs          # ソース統合と ManifestSources 記録
+    setup_py.rs       # setup.py 静的パーサ（setup() 本体スコープ）
     warnings.rs       # ManifestWarning（非致命）
 ```
 
@@ -300,6 +301,8 @@ pub struct LoadedManifest {
     pub root: ProjectRoot,
     pub metadata: ProjectMetadata,
     pub dependencies: Vec<DeclaredDependency>,
+    pub constraints: Vec<DeclaredDependency>,   // -c ファイル由来（宣言とは別）
+    pub uv_workspace: Option<UvWorkspaceHint>,  // Step 2 からコピー（hash 入力）
     pub entry_points: Vec<EntryPointDecl>,
     pub lockfile: LockfileGraph,
     pub sources: ManifestSources,

@@ -8,6 +8,7 @@ mod requirements;
 mod setup_cfg;
 mod setup_py;
 mod types;
+mod util;
 mod uv_lock;
 mod warnings;
 
