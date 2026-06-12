@@ -3,14 +3,15 @@
 //! `yokei` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
-//! Early implementation: pipeline steps 1–3 ([`discovery`], [`config`],
-//! [`manifest`]) are available as library APIs. The CLI analyzer and issue
+//! Early implementation: pipeline steps 1–4 ([`discovery`], [`config`],
+//! [`manifest`], [`sources`]) are available as library APIs. The CLI analyzer and issue
 //! reporting are not wired yet. See `docs/dev/spec.ja.md` for the full
 //! specification.
 
 pub mod config;
 pub mod discovery;
 pub mod manifest;
+pub mod sources;
 
 pub use config::{
     Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
@@ -22,6 +23,10 @@ pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
     LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
     extract_manifest, resolve_target_version,
+};
+pub use sources::{
+    DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
+    SourcesError, SourcesWarning, discover_sources,
 };
 
 /// The version of yokei, taken from `Cargo.toml`.
