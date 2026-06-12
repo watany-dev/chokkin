@@ -1,8 +1,13 @@
 //! `yokei` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
-//! The crate is in the design phase; the analyzer is not implemented yet.
+//! Early implementation: pipeline step 1 ([`discovery`]) is available as a
+//! library API. The CLI analyzer and issue reporting are not wired yet.
 //! See `docs/dev/spec.ja.md` for the full specification.
+
+pub mod discovery;
+
+pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 
 /// The version of yokei, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

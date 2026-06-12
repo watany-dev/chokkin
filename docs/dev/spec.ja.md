@@ -289,7 +289,7 @@ File reaches File
 処理順は固定する。
 
 ```text
-1. root discovery
+1. root discovery          # 実装済み: src/discovery/ (`discover_project_root`)
 2. config load
 3. manifest extraction
 4. source file discovery
@@ -687,6 +687,7 @@ yokei/
   pyproject.toml
   src/
     main.rs
+    discovery/   # 実装済み: pipeline step 1 (root discovery)
     cli.rs
     config.rs
     manifest/

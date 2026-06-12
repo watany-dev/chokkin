@@ -1,0 +1,3 @@
+[project]
+name = "pyproject-only"
+version = "0.1.0"

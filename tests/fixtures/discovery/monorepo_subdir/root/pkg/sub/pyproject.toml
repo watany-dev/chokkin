@@ -1,0 +1,3 @@
+[project]
+name = "monorepo-sub"
+version = "0.1.0"
