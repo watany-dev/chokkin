@@ -338,9 +338,12 @@ pub struct RuntimeOverrides {
     pub confidence_floor: Option<Confidence>,
 }
 
-/// Returns true when `path` is an absolute path string.
+/// Returns true when `path` must be rejected as non-root-relative.
+///
+/// POSIX leading `/` and Windows leading `\` are treated as absolute on every OS
+/// so config validation stays consistent across platforms.
 pub(super) fn is_absolute_path_str(path: &str) -> bool {
-    Path::new(path).is_absolute()
+    Path::new(path).is_absolute() || path.starts_with('/') || path.starts_with('\\')
 }
 
 #[cfg(test)]
@@ -363,8 +366,16 @@ mod tests {
     }
 
     #[test]
-    fn absolute_unix_path_is_detected() {
+    fn absolute_posix_path_is_rejected() {
         assert!(is_absolute_path_str("/absolute/manage.py"));
+        assert!(is_absolute_path_str(r"\absolute\manage.py"));
+    }
+
+    #[test]
+    fn windows_drive_path_is_rejected() {
+        if cfg!(windows) {
+            assert!(is_absolute_path_str(r"C:\absolute\manage.py"));
+        }
     }
 
     #[test]
