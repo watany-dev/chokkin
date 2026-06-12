@@ -372,10 +372,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn windows_drive_path_is_rejected() {
-        if cfg!(windows) {
-            assert!(is_absolute_path_str(r"C:\absolute\manage.py"));
-        }
+        assert!(is_absolute_path_str(r"C:\absolute\manage.py"));
     }
 
     #[test]
