@@ -1,0 +1,19 @@
+# Intentional workflow security suppressions.
+# Each entry is documented so the policy remains reviewable.
+rules:
+  # dtolnay/rust-toolchain uses a rolling "stable" branch — upstream does not
+  # publish versioned release tags. The SHA is updated via upstream commit
+  # monitoring. This is the established pattern for this action across the Rust
+  # ecosystem; the "stale" reference is intentional.
+  stale-action-refs:
+    ignore:
+      - ci.yml
+      - audit.yml
+
+  # PyO3/maturin-action and pypa/gh-action-pypi-publish are referenced by
+  # semver tag, not SHA, while we verify the exact SHA on first release.
+  # Tracked in docs/dev/ci-porting-notes.md — remove these entries once SHA
+  # pins are in place.
+  unpinned-uses:
+    ignore:
+      - release.yml

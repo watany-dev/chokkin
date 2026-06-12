@@ -27,11 +27,11 @@ fn main() -> ExitCode {
         Some("-h" | "--help") => {
             println!("{USAGE}");
             ExitCode::from(ExitStatus::Success.code())
-        }
+        },
         Some("-V" | "--version") => {
             println!("yokei {}", yokei::VERSION);
             ExitCode::from(ExitStatus::Success.code())
-        }
+        },
         _ => {
             eprintln!(
                 "yokei {}: the analyzer is not implemented yet.",
@@ -39,6 +39,6 @@ fn main() -> ExitCode {
             );
             eprintln!("Run `yokei --help` for details.");
             ExitCode::from(ExitStatus::UsageError.code())
-        }
+        },
     }
 }
