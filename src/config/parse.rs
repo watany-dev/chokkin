@@ -114,7 +114,7 @@ fn parse_uv_workspace(
 }
 
 fn partial_from_table(path: &Path, table: &toml::Table) -> Result<PartialConfig, ConfigError> {
-    reject_unknown_top_level_keys(path, table)?;
+    reject_unknown_keys(path, table, TOP_LEVEL_KEYS, "")?;
 
     Ok(PartialConfig {
         entry: parse_optional_entry_list(path, table.get("entry"), "entry")?,
@@ -142,12 +142,23 @@ fn partial_from_table(path: &Path, table: &toml::Table) -> Result<PartialConfig,
     })
 }
 
-fn reject_unknown_top_level_keys(path: &Path, table: &toml::Table) -> Result<(), ConfigError> {
+/// Reject table keys outside `allowed`, reporting them as `prefix.key` (or bare
+/// `key` when `prefix` is empty).
+fn reject_unknown_keys(
+    path: &Path,
+    table: &toml::Table,
+    allowed: &[&str],
+    prefix: &str,
+) -> Result<(), ConfigError> {
     for key in table.keys() {
-        if !TOP_LEVEL_KEYS.contains(&key.as_str()) {
+        if !allowed.contains(&key.as_str()) {
             return Err(ConfigError::UnknownKey {
                 path: path.to_path_buf(),
-                key: key.clone(),
+                key: if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                },
             });
         }
     }
@@ -291,14 +302,7 @@ fn parse_optional_dependencies(
         return Ok(None);
     };
     let table = value_as_table(path, value, "dependencies")?;
-    for key in table.keys() {
-        if !DEPENDENCY_GROUP_KEYS.contains(&key.as_str()) {
-            return Err(ConfigError::UnknownKey {
-                path: path.to_path_buf(),
-                key: format!("dependencies.{key}"),
-            });
-        }
-    }
+    reject_unknown_keys(path, table, DEPENDENCY_GROUP_KEYS, "dependencies")?;
     Ok(Some(PartialDependencyGroups {
         dev_groups: parse_optional_string_list(
             path,
@@ -410,14 +414,12 @@ fn parse_optional_workspaces(
     let mut map = BTreeMap::new();
     for (id, item) in table {
         let workspace_table = value_as_table(path, item, "workspaces")?;
-        for key in workspace_table.keys() {
-            if !WORKSPACE_KEYS.contains(&key.as_str()) {
-                return Err(ConfigError::UnknownKey {
-                    path: path.to_path_buf(),
-                    key: format!("workspaces.{id}.{key}"),
-                });
-            }
-        }
+        reject_unknown_keys(
+            path,
+            workspace_table,
+            WORKSPACE_KEYS,
+            &format!("workspaces.{id}"),
+        )?;
 
         let path_value = workspace_table
             .get("path")

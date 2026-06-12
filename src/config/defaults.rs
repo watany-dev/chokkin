@@ -15,6 +15,21 @@ pub(super) struct PartialDependencyGroups {
     pub type_groups: Option<Vec<String>>,
 }
 
+impl PartialDependencyGroups {
+    /// Overwrite `target` with the groups this layer sets.
+    fn apply_to(&self, target: &mut DependencyGroupsConfig) {
+        if let Some(dev_groups) = &self.dev_groups {
+            target.dev_groups.clone_from(dev_groups);
+        }
+        if let Some(runtime_groups) = &self.runtime_groups {
+            target.runtime_groups.clone_from(runtime_groups);
+        }
+        if let Some(type_groups) = &self.type_groups {
+            target.type_groups.clone_from(type_groups);
+        }
+    }
+}
+
 /// Optional fields for one configuration layer. `Some` values replace the merged
 /// result, except `plugins` and `dependencies` which merge per key (§3.1).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -132,18 +147,7 @@ pub fn merge_layers(layers: &[PartialConfig]) -> YokeiConfig {
             config.exclude.clone_from(exclude);
         }
         if let Some(dependencies) = &layer.dependencies {
-            if let Some(dev_groups) = &dependencies.dev_groups {
-                config.dependencies.dev_groups.clone_from(dev_groups);
-            }
-            if let Some(runtime_groups) = &dependencies.runtime_groups {
-                config
-                    .dependencies
-                    .runtime_groups
-                    .clone_from(runtime_groups);
-            }
-            if let Some(type_groups) = &dependencies.type_groups {
-                config.dependencies.type_groups.clone_from(type_groups);
-            }
+            dependencies.apply_to(&mut config.dependencies);
         }
         if let Some(package_module_map) = &layer.package_module_map {
             config.package_module_map.clone_from(package_module_map);
