@@ -151,6 +151,8 @@ MVPでは以下のrule IDを固定する。
 6. .git
 ```
 
+`.git` markerは通常のGitリポジトリではディレクトリ、git worktreeやsubmoduleでは`gitdir:`を書いたファイル(gitfile)になる。どちらの場合もmarkerとして扱う。
+
 探索方向は2段階に分ける。root探索はcurrent directoryから**上方向のみ**で、最初にmarkerが見つかったdirectoryをproject rootとして確定する。workspace member探索は、確定したrootから**下方向**にスキャンする(§5、§8)。この区別を曖昧にすると、monorepoのsubdirectoryで実行した場合の挙動が定義できない。
 
 `pyproject.toml` はPython packagingだけでなくlinters/type checkersなど各種tool設定の置き場でもあるため、`[project]`、`[dependency-groups]`、`[tool.*]` を読む前提にする。

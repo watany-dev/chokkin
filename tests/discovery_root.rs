@@ -81,6 +81,31 @@ fn discovers_git_when_no_manifest() {
 }
 
 #[test]
+fn discovers_git_gitfile_when_no_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(root.join(".git"), "gitdir: /path/to/real/.git\n").expect("write gitfile");
+
+    assert_discovered(root, root, RootMarker::Git);
+}
+
+#[cfg(unix)]
+#[test]
+fn returns_io_error_for_unreadable_start_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dir = temp.path();
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+
+    let error = discover_project_root(dir).expect_err("expected io error");
+
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).ok();
+
+    assert!(matches!(error, DiscoveryError::Io { .. }));
+}
+
+#[test]
 fn returns_not_found_for_empty_tree() {
     let temp = tempfile::tempdir().expect("tempdir");
 

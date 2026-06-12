@@ -505,7 +505,7 @@ apply_overrides(&mut config, &cli.overrides);
 | ネスト `pyproject.toml` による workspace 自動検出 | v0.2 scope | Phase 2 |
 | `yokei.toml` と `.yokei.toml` の優先順位をユーザー設定で入れ替え | 需要低 | issue 化 |
 | `[tool.yokei]` 以外の Knip 互換 standalone のみ運用 | pyproject 第一候補で足りる | フィードバック後 |
-| git worktree での config path | discovery と同様 | v0.2 |
+| ~~git worktree での config path~~ | discovery 側で gitfile 対応済み（#6） | **解消** |
 
 ## 15. update-plan 検証サマリ
 

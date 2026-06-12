@@ -184,9 +184,9 @@ discover_project_root(start):
 | `SetupCfg` | `dir/setup.cfg` が通常ファイル |
 | `SetupPy` | `dir/setup.py` が通常ファイル |
 | `RequirementsTxt` | `dir/requirements.txt` が通常ファイル |
-| `Git` | `dir/.git` が **ディレクトリ**（`std::fs::metadata(path).is_ok_and(|m| m.is_dir())`） |
+| `Git` | `dir/.git` が通常ファイル（gitfile）またはディレクトリ |
 
-**Note:** git worktree では `.git` が **ファイル**（gitfile）になる。`is_dir()` が false のため `.git` marker は **一致しない**。これは意図的 — worktree では上位の通常 `.git` ディレクトリを辿るか、manifest marker に頼る。gitfile 対応は v0.2 で ADR 化して検討する。
+git worktree や submodule では `.git` が `gitdir: ...` を書いた **ファイル** になる。§4 はファイル/ディレクトリを区別しないため、どちらも marker として扱う。
 
 ### 7.2 パス正規化
 
@@ -324,7 +324,7 @@ match discover_project_root(start) {
 
 | 項目 | 理由 | 再検討タイミング |
 | --- | --- | --- |
-| git worktree（`.git` がファイル） | 実プロジェクトでの頻度は低い | v0.2 / issue 化 |
+| ~~git worktree（`.git` がファイル）~~ | ~~v0.2 保留~~ | **対応済み**（#6） |
 | `pyproject.toml` が `[project]` を持たない tool-only ファイル | root としては有効（§4: linters 設定の置き場） | Step 3 で manifest 妥当性を別途検証 |
 | 複数 `requirements*.txt` のうち `requirements-dev.txt` を root marker にするか | §4 は `requirements.txt` のみ列挙 | 需要があれば ADR |
 
@@ -368,7 +368,7 @@ match discover_project_root(start) {
 | 優先度 | 課題 | 対応 |
 | --- | --- | --- |
 | **P0** | §1「外部 crate 依存を増やさない」と `thiserror` 追加が矛盾 | §1 を「`thiserror` 1 crate に限定」に修正 |
-| **P0** | §7.1 `.git` marker 判定の記述矛盾（directory / gitfile） | ディレクトリのみ一致と明記、worktree は v0.2 保留 |
+| **P0** | §7.1 `.git` marker 判定の記述矛盾（directory / gitfile） | ファイル/ディレクトリ両対応に修正（#6） |
 | **P1** | `ProjectRoot.start` が正規化前か後か曖昧 | 呼び出し元の生パスを保持と明記、アルゴリズム疑似コード修正 |
 | **P1** | テスト表 T4 の番号・網羅性が不明確 | T4 を 6 marker parametrize、T8/T10 を追加 |
 | **P1** | `thiserror` バージョン・`deny` 通過が未記載 | `>=2, <3` と exit criteria に `cargo deny` を追加 |
