@@ -21,6 +21,21 @@ pub struct RequirementsExtraction {
     pub files_read: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+enum RequirementsParseMode {
+    Dependencies,
+    Constraints,
+}
+
+struct RequirementsParseContext<'a> {
+    root: &'a Path,
+    path: &'a Path,
+    default_context: &'a DependencyContext,
+    include_stack: &'a mut Vec<PathBuf>,
+    result: &'a mut RequirementsExtraction,
+    mode: RequirementsParseMode,
+}
+
 /// Parse a root-level requirements file by conventional name.
 pub fn extract_requirements_file(
     root: &Path,
@@ -34,184 +49,139 @@ pub fn extract_requirements_file(
 
     let mut include_stack = Vec::new();
     let mut result = RequirementsExtraction::default();
-    parse_requirements_path(
+    parse_requirements_file_path(RequirementsParseContext {
         root,
-        &path,
+        path: &path,
         default_context,
-        &mut include_stack,
-        &mut result,
-    )?;
+        include_stack: &mut include_stack,
+        result: &mut result,
+        mode: RequirementsParseMode::Dependencies,
+    })?;
     Ok(result)
 }
 
-fn parse_requirements_path(
-    root: &Path,
-    path: &Path,
-    default_context: &DependencyContext,
-    include_stack: &mut Vec<PathBuf>,
-    result: &mut RequirementsExtraction,
+fn parse_requirements_file_path(
+    mut ctx: RequirementsParseContext<'_>,
 ) -> Result<(), ManifestError> {
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if include_stack.contains(&canonical) {
-        let cycle = include_stack
+    let canonical = std::fs::canonicalize(ctx.path).unwrap_or_else(|_| ctx.path.to_path_buf());
+    if ctx.include_stack.contains(&canonical) {
+        let cycle = ctx
+            .include_stack
             .iter()
             .chain(std::iter::once(&canonical))
-            .map(|p| relative_path(root, p))
+            .map(|p| relative_path(ctx.root, p))
             .collect::<Vec<_>>()
             .join(" -> ");
         return Err(ManifestError::RequirementsCircularInclude { cycle });
     }
 
-    let rel = relative_path(root, path);
-    result.files_read.push(rel.clone());
-    include_stack.push(canonical);
+    let rel = relative_path(ctx.root, ctx.path);
+    ctx.result.files_read.push(rel.clone());
+    ctx.include_stack.push(canonical);
 
-    let contents = std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
-        path: path.to_path_buf(),
+    let contents = std::fs::read_to_string(ctx.path).map_err(|source| ManifestError::Io {
+        path: ctx.path.to_path_buf(),
         source,
     })?;
 
     for (line_number, line) in contents.lines().enumerate() {
-        let line_no = u32::try_from(line_number + 1).unwrap_or(u32::MAX);
-        let trimmed = strip_comment(line).trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if let Some(include_path) = flag_value(trimmed, "-r", "--requirement") {
-            let resolved = resolve_requirements_include(root, path, include_path);
-            let resolved_path =
-                resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
-                    path: include_path.to_owned(),
-                })?;
-            parse_requirements_path(root, &resolved_path, default_context, include_stack, result)?;
-            continue;
-        }
-
-        if let Some(constraint_path) = flag_value(trimmed, "-c", "--constraint") {
-            if let Some(resolved) = resolve_requirements_include(root, path, constraint_path) {
-                parse_constraints_path(root, &resolved, default_context, include_stack, result)?;
-            } else {
-                result
-                    .warnings
-                    .push(ManifestWarning::RequirementsConstraintMissing {
-                        path: constraint_path.to_owned(),
-                    });
-            }
-            continue;
-        }
-
-        if let Some(editable) = editable_flag_value(trimmed) {
-            push_editable_dependency(result, editable, default_context, &rel, line_no);
-            continue;
-        }
-
-        if trimmed.starts_with('-') {
-            result
-                .warnings
-                .push(ManifestWarning::RequirementsOptionIgnored {
-                    file: rel.clone(),
-                    line: line_no,
-                    raw: trimmed.to_owned(),
-                });
-            continue;
-        }
-
-        let origin = DependencyOrigin {
-            file: rel.clone(),
-            line: Some(line_no),
-            label: rel.clone(),
-        };
-        match parse_requirement(trimmed, default_context.clone(), origin) {
-            Ok(dep) => result.dependencies.push(dep),
-            Err(warning) => result.warnings.push(warning),
-        }
+        parse_requirements_line(&mut ctx, &rel, line, line_number)?;
     }
 
-    include_stack.pop();
+    ctx.include_stack.pop();
     Ok(())
 }
 
-fn parse_constraints_path(
-    root: &Path,
-    path: &Path,
-    default_context: &DependencyContext,
-    include_stack: &mut Vec<PathBuf>,
-    result: &mut RequirementsExtraction,
+fn parse_requirements_line(
+    ctx: &mut RequirementsParseContext<'_>,
+    rel: &str,
+    line: &str,
+    line_number: usize,
 ) -> Result<(), ManifestError> {
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if include_stack.contains(&canonical) {
-        let cycle = include_stack
-            .iter()
-            .chain(std::iter::once(&canonical))
-            .map(|p| relative_path(root, p))
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        return Err(ManifestError::RequirementsCircularInclude { cycle });
+    let line_no = u32::try_from(line_number + 1).unwrap_or(u32::MAX);
+    let trimmed = strip_comment(line).trim();
+    if trimmed.is_empty() {
+        return Ok(());
     }
 
-    let rel = relative_path(root, path);
-    result.files_read.push(rel.clone());
-    include_stack.push(canonical);
-
-    let contents = std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-
-    for (line_number, line) in contents.lines().enumerate() {
-        let line_no = u32::try_from(line_number + 1).unwrap_or(u32::MAX);
-        let trimmed = strip_comment(line).trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if let Some(include_path) = flag_value(trimmed, "-r", "--requirement") {
-            let resolved = resolve_requirements_include(root, path, include_path);
-            let resolved_path =
-                resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
-                    path: include_path.to_owned(),
-                })?;
-            parse_requirements_path(root, &resolved_path, default_context, include_stack, result)?;
-            continue;
-        }
-
-        if let Some(constraint_path) = flag_value(trimmed, "-c", "--constraint") {
-            if let Some(resolved) = resolve_requirements_include(root, path, constraint_path) {
-                parse_constraints_path(root, &resolved, default_context, include_stack, result)?;
-            } else {
-                result
-                    .warnings
-                    .push(ManifestWarning::RequirementsConstraintMissing {
-                        path: constraint_path.to_owned(),
-                    });
-            }
-            continue;
-        }
-
-        if trimmed.starts_with('-') {
-            result
-                .warnings
-                .push(ManifestWarning::RequirementsOptionIgnored {
-                    file: rel.clone(),
-                    line: line_no,
-                    raw: trimmed.to_owned(),
-                });
-            continue;
-        }
-
-        push_dependency(DependencyPush {
-            dependencies: &mut result.constraints,
-            warnings: &mut result.warnings,
-            raw: trimmed,
-            context: default_context.clone(),
-            file: &rel,
-            label: &rel,
-            line: Some(line_no),
+    if let Some(include_path) = flag_value(trimmed, "-r", "--requirement") {
+        let resolved = resolve_requirements_include(ctx.root, ctx.path, include_path);
+        let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
+            path: include_path.to_owned(),
+        })?;
+        return parse_requirements_file_path(RequirementsParseContext {
+            root: ctx.root,
+            path: &resolved_path,
+            default_context: ctx.default_context,
+            include_stack: ctx.include_stack,
+            result: ctx.result,
+            mode: RequirementsParseMode::Dependencies,
         });
     }
 
-    include_stack.pop();
+    if let Some(constraint_path) = flag_value(trimmed, "-c", "--constraint") {
+        if let Some(resolved) = resolve_requirements_include(ctx.root, ctx.path, constraint_path) {
+            parse_requirements_file_path(RequirementsParseContext {
+                root: ctx.root,
+                path: &resolved,
+                default_context: ctx.default_context,
+                include_stack: ctx.include_stack,
+                result: ctx.result,
+                mode: RequirementsParseMode::Constraints,
+            })?;
+        } else {
+            ctx.result
+                .warnings
+                .push(ManifestWarning::RequirementsConstraintMissing {
+                    path: constraint_path.to_owned(),
+                });
+        }
+        return Ok(());
+    }
+
+    if matches!(ctx.mode, RequirementsParseMode::Dependencies)
+        && let Some(editable) = editable_flag_value(trimmed)
+    {
+        push_editable_dependency(ctx.result, editable, ctx.default_context, rel, line_no);
+        return Ok(());
+    }
+
+    if trimmed.starts_with('-') {
+        ctx.result
+            .warnings
+            .push(ManifestWarning::RequirementsOptionIgnored {
+                file: rel.to_owned(),
+                line: line_no,
+                raw: trimmed.to_owned(),
+            });
+        return Ok(());
+    }
+
+    match ctx.mode {
+        RequirementsParseMode::Dependencies => {
+            let origin = DependencyOrigin {
+                file: rel.to_owned(),
+                line: Some(line_no),
+                label: rel.to_owned(),
+            };
+            match parse_requirement(trimmed, ctx.default_context.clone(), origin) {
+                Ok(dep) => ctx.result.dependencies.push(dep),
+                Err(warning) => ctx.result.warnings.push(warning),
+            }
+        },
+        RequirementsParseMode::Constraints => {
+            push_dependency(DependencyPush {
+                dependencies: &mut ctx.result.constraints,
+                warnings: &mut ctx.result.warnings,
+                raw: trimmed,
+                context: ctx.default_context.clone(),
+                file: rel,
+                label: rel,
+                line: Some(line_no),
+            });
+        },
+    }
+
     Ok(())
 }
 

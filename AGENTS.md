@@ -23,7 +23,7 @@ src/
   lib.rs          Library crate — all logic goes here as the project grows
   discovery/      Project root discovery (pipeline step 1)
   config/         Config loading ([tool.yokei], pipeline step 2)
-  manifest/       Manifest extraction (pipeline step 3)
+  manifest/       Manifest extraction (pipeline step 3; util.rs shared helpers)
   cli.rs          (future) CLI argument parsing
   parser/         (future) Python AST parser (Rust-based, static only)
   resolver/       (future) import-name → distribution-name resolution

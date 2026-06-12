@@ -174,7 +174,9 @@ setup.py  # static parseのみ。実行しない。
 uv.lock
 ```
 
-requirements系filesのパース規則を定める。`-r other.txt` は再帰的に追跡する。`-c constraints.txt` はversion制約の情報源としてのみ読み、依存宣言とは扱わない。`-e ./path` とlocal path指定はworkspace/first-party候補として扱う。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
+requirements系filesのパース規則を定める。コメントはpip互換で「行頭または空白が先行する `#`」のみを除去し、URLフラグメント（`#sha256=` / `#egg=`）は保持する。`-r` / `--requirement`（`--requirement=other.txt` 含む）は再帰的に追跡する。`-c` / `--constraint` はversion制約の情報源としてのみ読み、`LoadedManifest.constraints` に積み、依存宣言とは合流させない（ファイル欠如はwarning）。`-e ./path` とlocal path指定はworkspace/first-party候補として扱い、distribution名は空のopaque依存として記録する。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
+
+`setup.py` は `setup()` 呼び出し本体のみを静的パースする。リスト走査が途中で破綻した場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
 
 `setup.py` が静的に解析できない場合(動的な `install_requires` 構築など)は、warningを出してそのsourceをskipし、他のsourceで解析を継続する。`[project]` の `dynamic = ["dependencies"]` が指定されている場合は、setuptoolsの慣習に従い `requirements*.txt` 側を依存宣言の実体として読む。
 
@@ -693,6 +695,10 @@ yokei/
     config/      # 実装済み: pipeline step 2 (config load)
     cli.rs
     manifest/    # 実装済み: pipeline step 3 (manifest extraction)
+      util.rs      # shared path/read/push helpers
+      pep508_util.rs
+      requirements.rs
+      setup_py.rs  # static setup() body parse only
     parser/
     resolver/
     graph/
