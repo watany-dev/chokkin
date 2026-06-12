@@ -469,14 +469,14 @@ apply_overrides(&mut config, &cli.overrides);
 
 ## 12. Exit criteria（Step 2 完了定義）
 
-- [ ] `src/config/` が `make check` を通過する
-- [ ] zero-config（設定ファイル無し）で `DEFAULTS` が返るテストがある
-- [ ] §3.1 の 4 層マージと `ConfigSources` 記録がテストされている
-- [ ] `[tool.yokei]` の §5 掲載フィールドを deserialize できる
-- [ ] `load_config` が `pub` API として `lib.rs` から re-export される
-- [ ] production コードに `unwrap` / `expect` / `panic` がない
-- [ ] `docs/dev/spec.ja.md` §6 処理順 Step 2 に `config/` モジュール名が追記される（`update-docs`）
-- [ ] `cargo deny check` が `toml` / `serde` 追加後も通過する
+- [x] `src/config/` が `make check` を通過する
+- [x] zero-config（設定ファイル無し）で `DEFAULTS` が返るテストがある
+- [x] §3.1 の 4 層マージと `ConfigSources` 記録がテストされている
+- [x] `[tool.yokei]` の §5 掲載フィールドを deserialize できる
+- [x] `load_config` が `pub` API として `lib.rs` から re-export される
+- [x] production コードに `unwrap` / `expect` / `panic` がない
+- [x] `docs/dev/spec.ja.md` §6 処理順 Step 2 に `config/` モジュール名が追記される（`update-docs`）
+- [x] `cargo deny check` が `toml` / `serde` 追加後も通過する
 
 ## 13. 実装順序（推奨）
 

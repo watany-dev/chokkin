@@ -12,7 +12,9 @@ keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"

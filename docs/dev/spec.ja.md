@@ -290,7 +290,7 @@ File reaches File
 
 ```text
 1. root discovery          # 実装済み: src/discovery/ (`discover_project_root`)
-2. config load
+2. config load             # 実装済み: src/config/ (`load_config`)
 3. manifest extraction
 4. source file discovery
 5. config/plugin extraction
@@ -688,8 +688,8 @@ yokei/
   src/
     main.rs
     discovery/   # 実装済み: pipeline step 1 (root discovery)
+    config/      # 実装済み: pipeline step 2 (config load)
     cli.rs
-    config.rs
     manifest/
     parser/
     resolver/
