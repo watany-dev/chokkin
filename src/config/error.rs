@@ -35,8 +35,8 @@ pub enum ConfigError {
         message: String,
     },
 
-    /// Unknown key in `[tool.yokei]` or a nested table such as `plugins`.
-    #[error("unknown key in [tool.yokei] at {path}: {key}")]
+    /// Unknown key in a yokei config table such as `[tool.yokei]` or `plugins`.
+    #[error("unknown config key {key} in {path}")]
     UnknownKey {
         /// Config file path.
         path: PathBuf,

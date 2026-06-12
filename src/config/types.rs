@@ -204,6 +204,8 @@ pub struct EntrySpec {
 
 impl EntrySpec {
     /// Parse an entry string such as `src/pkg/asgi.py:app`.
+    ///
+    /// At most one `:` is allowed, separating a relative path from a symbol.
     pub fn parse(value: &str) -> Result<Self, &'static str> {
         if value.is_empty() {
             return Err("entry path must not be empty");
@@ -212,29 +214,30 @@ impl EntrySpec {
             return Err("entry path must not be . or ..");
         }
 
-        if let Some((path, symbol)) = split_entry_symbol(value) {
-            if path.is_empty() || path == "." || path == ".." {
-                return Err("entry path must not be empty");
-            }
-            return Ok(Self {
-                path: path.to_owned(),
-                symbol: Some(symbol.to_owned()),
-            });
-        }
+        let (path, symbol) = match value.rsplit_once(':') {
+            Some((_, symbol)) if symbol.contains('/') || symbol.contains('\\') => {
+                return Err("entry path must not contain ':'");
+            },
+            Some((path, symbol)) => {
+                if symbol.is_empty() {
+                    return Err("entry symbol must not be empty");
+                }
+                if path.is_empty() || path == "." || path == ".." {
+                    return Err("entry path must not be empty");
+                }
+                if path.contains(':') {
+                    return Err("entry path must not contain ':'");
+                }
+                (path, Some(symbol))
+            },
+            None => (value, None),
+        };
 
         Ok(Self {
-            path: value.to_owned(),
-            symbol: None,
+            path: path.to_owned(),
+            symbol: symbol.map(str::to_owned),
         })
     }
-}
-
-fn split_entry_symbol(value: &str) -> Option<(&str, &str)> {
-    let (path, symbol) = value.rsplit_once(':')?;
-    if symbol.contains('/') || symbol.contains('\\') {
-        return None;
-    }
-    Some((path, symbol))
 }
 
 /// Dependency group name mappings (§5 `[tool.yokei.dependencies]`).
@@ -358,11 +361,15 @@ mod tests {
     }
 
     #[test]
-    fn entry_spec_allows_colon_paths_without_symbol_on_unix() {
-        // On Unix, `C:\foo.py` is a relative path with backslashes.
-        let spec = EntrySpec::parse(r"C:\foo.py").expect("parse on unix");
-        assert_eq!(spec.path, r"C:\foo.py");
-        assert!(spec.symbol.is_none());
+    fn entry_spec_rejects_colon_in_path() {
+        // Windows drive letters and ambiguous multi-colon entries are rejected (§7.2).
+        EntrySpec::parse(r"C:\foo.py").unwrap_err();
+        EntrySpec::parse("a:b:c").unwrap_err();
+    }
+
+    #[test]
+    fn entry_spec_rejects_empty_symbol() {
+        EntrySpec::parse("manage.py:").unwrap_err();
     }
 
     #[test]

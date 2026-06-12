@@ -6,7 +6,32 @@ use super::types::{
     Confidence, DependencyGroupsConfig, PluginId, ProjectMode, TargetVersion, YokeiConfig,
 };
 
-/// Optional fields for one configuration layer. `Some` values replace the merged result.
+/// Optional dependency group keys for one layer. Missing keys keep lower-priority values.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
+pub(super) struct PartialDependencyGroups {
+    pub dev_groups: Option<Vec<String>>,
+    pub runtime_groups: Option<Vec<String>>,
+    pub type_groups: Option<Vec<String>>,
+}
+
+impl PartialDependencyGroups {
+    /// Overwrite `target` with the groups this layer sets.
+    fn apply_to(&self, target: &mut DependencyGroupsConfig) {
+        if let Some(dev_groups) = &self.dev_groups {
+            target.dev_groups.clone_from(dev_groups);
+        }
+        if let Some(runtime_groups) = &self.runtime_groups {
+            target.runtime_groups.clone_from(runtime_groups);
+        }
+        if let Some(type_groups) = &self.type_groups {
+            target.type_groups.clone_from(type_groups);
+        }
+    }
+}
+
+/// Optional fields for one configuration layer. `Some` values replace the merged
+/// result, except `plugins` and `dependencies` which merge per key (§3.1).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct PartialConfig {
     pub entry: Option<Vec<super::types::EntrySpec>>,
@@ -17,7 +42,7 @@ pub(super) struct PartialConfig {
     pub respect_gitignore: Option<bool>,
     pub confidence: Option<Confidence>,
     pub exclude: Option<Vec<String>>,
-    pub dependencies: Option<DependencyGroupsConfig>,
+    pub dependencies: Option<PartialDependencyGroups>,
     pub package_module_map: Option<BTreeMap<String, Vec<String>>>,
     pub binary_map: Option<BTreeMap<String, String>>,
     pub plugins: Option<BTreeMap<PluginId, bool>>,
@@ -122,7 +147,7 @@ pub fn merge_layers(layers: &[PartialConfig]) -> YokeiConfig {
             config.exclude.clone_from(exclude);
         }
         if let Some(dependencies) = &layer.dependencies {
-            config.dependencies = dependencies.clone();
+            dependencies.apply_to(&mut config.dependencies);
         }
         if let Some(package_module_map) = &layer.package_module_map {
             config.package_module_map.clone_from(package_module_map);
@@ -131,7 +156,9 @@ pub fn merge_layers(layers: &[PartialConfig]) -> YokeiConfig {
             config.binary_map.clone_from(binary_map);
         }
         if let Some(plugins) = &layer.plugins {
-            config.plugins.clone_from(plugins);
+            for (plugin, enabled) in plugins {
+                config.plugins.insert(*plugin, *enabled);
+            }
         }
         if let Some(ignore) = &layer.ignore {
             config.ignore.clone_from(ignore);
@@ -165,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_replaces_whole_plugin_map() {
+    fn merge_overlays_plugins_onto_defaults() {
         let mut plugins = BTreeMap::new();
         plugins.insert(PluginId::Celery, true);
 
@@ -174,8 +201,30 @@ mod tests {
             ..PartialConfig::default()
         }]);
 
-        assert_eq!(merged.plugins.len(), 1);
+        assert_eq!(merged.plugins.len(), PluginId::all().len());
         assert_eq!(merged.plugins.get(&PluginId::Celery), Some(&true));
-        assert!(!merged.plugins.contains_key(&PluginId::Pytest));
+        assert_eq!(merged.plugins.get(&PluginId::Pytest), Some(&true));
+        assert_eq!(merged.plugins.get(&PluginId::Tox), Some(&false));
+    }
+
+    #[test]
+    fn merge_keeps_default_dependency_groups_for_missing_keys() {
+        let merged = merge_layers(&[PartialConfig {
+            dependencies: Some(PartialDependencyGroups {
+                dev_groups: Some(vec!["dev".to_owned()]),
+                ..PartialDependencyGroups::default()
+            }),
+            ..PartialConfig::default()
+        }]);
+
+        assert_eq!(merged.dependencies.dev_groups, vec!["dev".to_owned()]);
+        assert_eq!(
+            merged.dependencies.runtime_groups,
+            default_config().dependencies.runtime_groups
+        );
+        assert_eq!(
+            merged.dependencies.type_groups,
+            default_config().dependencies.type_groups
+        );
     }
 }

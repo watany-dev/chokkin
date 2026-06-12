@@ -211,27 +211,16 @@ fn apply_overrides_production() {
 }
 
 #[test]
-#[cfg(unix)]
 fn io_error_propagates() {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-
     let temp = tempfile::tempdir().expect("tempdir");
     let pyproject = temp.path().join("pyproject.toml");
-    fs::write(&pyproject, "[tool.yokei]\nmode = \"app\"\n").expect("write pyproject");
-
-    let mut perms = fs::metadata(&pyproject).expect("metadata").permissions();
-    perms.set_mode(0o000);
-    fs::set_permissions(&pyproject, perms).expect("chmod");
+    // Invalid UTF-8 makes read_to_string fail on every platform, even as root
+    // (unlike chmod 000, which CAP_DAC_OVERRIDE bypasses).
+    std::fs::write(&pyproject, b"[tool.yokei]\nmode = \xff\xfe\n").expect("write pyproject");
 
     let root = project_root_at(temp.path());
     let error = load_config(&root).expect_err("unreadable pyproject");
     assert!(matches!(error, ConfigError::Io { .. }));
-
-    // Restore permissions so tempdir cleanup succeeds.
-    let mut restored = fs::metadata(&pyproject).expect("metadata").permissions();
-    restored.set_mode(0o644);
-    let _ = fs::set_permissions(&pyproject, restored);
 }
 
 #[test]
@@ -259,11 +248,45 @@ fn rejects_invalid_confidence() {
 }
 
 #[test]
-fn rejects_incomplete_dependencies() {
-    let path = fixture("incomplete_dependencies");
+fn partial_dependencies_keep_defaults_for_missing_keys() {
+    let loaded = load_fixture("incomplete_dependencies");
+    let defaults = default_config();
+    assert_eq!(loaded.effective.dependencies.dev_groups, vec!["dev"]);
+    assert_eq!(
+        loaded.effective.dependencies.runtime_groups,
+        defaults.dependencies.runtime_groups
+    );
+    assert_eq!(
+        loaded.effective.dependencies.type_groups,
+        defaults.dependencies.type_groups
+    );
+}
+
+#[test]
+fn partial_plugins_overlay_defaults() {
+    let loaded = load_fixture("partial_plugins");
+    let plugins = &loaded.effective.plugins;
+    assert_eq!(plugins.get(&PluginId::Celery), Some(&true));
+    // Defaults survive a partial [tool.yokei.plugins] table.
+    assert_eq!(plugins.get(&PluginId::Pytest), Some(&true));
+    assert_eq!(plugins.get(&PluginId::Django), Some(&true));
+    assert_eq!(plugins.get(&PluginId::Tox), Some(&false));
+}
+
+#[test]
+fn rejects_unknown_dependencies_key() {
+    let path = fixture("unknown_dependencies_key");
     let root = project_root_at(&path);
-    let error = load_config(&root).expect_err("incomplete dependencies");
-    assert!(matches!(error, ConfigError::Validation { .. }));
+    let error = load_config(&root).expect_err("unknown dependencies key");
+    assert!(matches!(error, ConfigError::UnknownKey { .. }));
+}
+
+#[test]
+fn rejects_unknown_workspace_key() {
+    let path = fixture("unknown_workspace_key");
+    let root = project_root_at(&path);
+    let error = load_config(&root).expect_err("unknown workspace key");
+    assert!(matches!(error, ConfigError::UnknownKey { .. }));
 }
 
 #[test]
