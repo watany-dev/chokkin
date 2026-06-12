@@ -71,13 +71,10 @@ const FILE_MARKERS: &[(&str, RootMarker)] = &[
 pub fn discover_project_root(start: &Path) -> Result<ProjectRoot, DiscoveryError> {
     let original_start = start.to_path_buf();
 
-    match metadata_for(start)? {
-        Some(metadata) if metadata.is_dir() => {},
-        _ => {
-            return Err(DiscoveryError::InvalidStart {
-                path: original_start,
-            });
-        },
+    if !is_directory(start)? {
+        return Err(DiscoveryError::InvalidStart {
+            path: original_start,
+        });
     }
 
     let mut current = normalize_start(start)?;
@@ -145,6 +142,10 @@ fn metadata_for(path: &Path) -> Result<Option<fs::Metadata>, DiscoveryError> {
 
 fn is_file(path: &Path) -> Result<bool, DiscoveryError> {
     Ok(metadata_for(path)?.is_some_and(|metadata| metadata.is_file()))
+}
+
+fn is_directory(path: &Path) -> Result<bool, DiscoveryError> {
+    Ok(metadata_for(path)?.is_some_and(|metadata| metadata.is_dir()))
 }
 
 #[cfg(test)]
