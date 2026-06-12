@@ -1,0 +1,11 @@
+cognitive-complexity-threshold = 10
+too-many-lines-threshold = 80
+too-many-arguments-threshold = 5
+max-struct-bools = 3
+
+# Allow common test idioms; applies to #[cfg(test)] and tests/ (requires clippy >=1.71).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true

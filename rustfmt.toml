@@ -1,0 +1,15 @@
+# Stable-channel options only. CI runs on stable; nightly-only options are
+# silently skipped and cause config-drift between local and CI runs.
+edition = "2024"
+max_width = 100
+tab_spaces = 4
+hard_tabs = false
+newline_style = "Unix"
+
+use_field_init_shorthand = true
+use_try_shorthand = true
+force_explicit_abi = true
+match_block_trailing_comma = true
+remove_nested_parens = true
+reorder_imports = true
+reorder_modules = true
