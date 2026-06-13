@@ -256,4 +256,52 @@ mod tests {
             SourcesWarning::MissingEntryPath { .. }
         ));
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn normalize_rel_path_strips_backslashes(raw in "\\PC{0,60}") {
+                let normalized = normalize_rel_path(Path::new(&raw));
+                prop_assert!(!normalized.contains('\\'));
+            }
+
+            #[test]
+            fn normalize_rel_path_is_idempotent(raw in "\\PC{0,60}") {
+                let once = normalize_rel_path(Path::new(&raw));
+                prop_assert_eq!(normalize_rel_path(Path::new(&once)), once);
+            }
+
+            #[test]
+            fn large_project_warning_triggers_exactly_above_threshold(count in 0usize..30_000) {
+                let warning = large_project_warning(count);
+                prop_assert_eq!(warning.is_some(), count > LARGE_PROJECT_THRESHOLD);
+                if let Some(SourcesWarning::LargeProject { file_count }) = warning {
+                    prop_assert_eq!(file_count, count);
+                }
+            }
+
+            #[test]
+            fn validate_entries_reports_each_missing_entry(
+                names in prop::collection::btree_set("[a-z]{1,10}", 0..5),
+            ) {
+                let temp = tempdir().expect("tempdir");
+                let entries: Vec<EntrySpec> = names
+                    .iter()
+                    .map(|name| EntrySpec {
+                        path: format!("{name}.py"),
+                        symbol: None,
+                    })
+                    .collect();
+                let warnings = validate_entries(temp.path(), &entries);
+                prop_assert_eq!(warnings.len(), entries.len());
+                let all_missing = warnings
+                    .iter()
+                    .all(|warning| matches!(warning, SourcesWarning::MissingEntryPath { .. }));
+                prop_assert!(all_missing);
+            }
+        }
+    }
 }

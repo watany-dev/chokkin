@@ -199,4 +199,77 @@ mod tests {
         let marker = probe_markers(temp.path()).expect("probe").expect("marker");
         assert_eq!(marker, RootMarker::Git);
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Random non-empty subset of §4 file markers, as index set.
+        fn marker_subset() -> impl Strategy<Value = Vec<usize>> {
+            prop::collection::btree_set(0..FILE_MARKERS.len(), 1..=FILE_MARKERS.len())
+                .prop_map(|set| set.into_iter().collect())
+        }
+
+        fn nested_segments() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec("[a-z][a-z0-9_]{0,8}", 0..4)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(32))]
+
+            #[test]
+            fn probe_markers_returns_highest_priority(indices in marker_subset()) {
+                let temp = tempfile::tempdir().expect("tempdir");
+                for &index in &indices {
+                    write_file(&temp.path().join(FILE_MARKERS[index].0), "x\n");
+                }
+
+                let marker = probe_markers(temp.path()).expect("probe").expect("marker");
+                let best = indices.iter().min().copied().expect("non-empty subset");
+                prop_assert_eq!(marker, FILE_MARKERS[best].1);
+            }
+
+            #[test]
+            fn discovery_walks_up_to_marker_root(
+                indices in marker_subset(),
+                segments in nested_segments(),
+            ) {
+                let temp = tempfile::tempdir().expect("tempdir");
+                for &index in &indices {
+                    write_file(&temp.path().join(FILE_MARKERS[index].0), "x\n");
+                }
+                let mut start = temp.path().to_path_buf();
+                for segment in &segments {
+                    start.push(segment);
+                }
+                fs::create_dir_all(&start).expect("create nested dirs");
+
+                let result = discover_project_root(&start).expect("marker root found");
+                let expected_root =
+                    fs::canonicalize(temp.path()).unwrap_or_else(|_| temp.path().to_path_buf());
+                prop_assert_eq!(result.path, expected_root);
+                prop_assert_eq!(result.start, start);
+                let best = indices.iter().min().copied().expect("non-empty subset");
+                prop_assert_eq!(result.marker, FILE_MARKERS[best].1);
+            }
+
+            #[test]
+            fn nearest_marker_wins_over_ancestor(
+                outer in 0..FILE_MARKERS.len(),
+                inner in 0..FILE_MARKERS.len(),
+                segment in "[a-z][a-z0-9_]{0,8}",
+            ) {
+                let temp = tempfile::tempdir().expect("tempdir");
+                write_file(&temp.path().join(FILE_MARKERS[outer].0), "x\n");
+                let nested = temp.path().join(&segment);
+                write_file(&nested.join(FILE_MARKERS[inner].0), "x\n");
+
+                let result = discover_project_root(&nested).expect("nested root found");
+                let expected_root =
+                    fs::canonicalize(&nested).unwrap_or_else(|_| nested.clone());
+                prop_assert_eq!(result.path, expected_root);
+                prop_assert_eq!(result.marker, FILE_MARKERS[inner].1);
+            }
+        }
+    }
 }

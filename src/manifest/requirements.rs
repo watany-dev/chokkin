@@ -328,4 +328,92 @@ mod tests {
     fn editable_flag_rejects_example_pkg_false_positive() {
         assert_eq!(editable_flag_value("-example-pkg"), None);
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// True when `line` still contains a pip comment start (`#` at line
+        /// start or after whitespace).
+        fn has_comment_start(line: &str) -> bool {
+            let mut prev_is_space = true;
+            for ch in line.chars() {
+                if ch == '#' && prev_is_space {
+                    return true;
+                }
+                prev_is_space = ch.is_whitespace();
+            }
+            false
+        }
+
+        proptest! {
+            #[test]
+            fn strip_comment_returns_prefix(line in "\\PC{0,120}") {
+                let stripped = strip_comment(&line);
+                prop_assert!(line.starts_with(stripped));
+            }
+
+            #[test]
+            fn strip_comment_is_idempotent(line in "\\PC{0,120}") {
+                let once = strip_comment(&line);
+                prop_assert_eq!(strip_comment(once), once);
+            }
+
+            #[test]
+            fn strip_comment_removes_all_comment_starts(line in "\\PC{0,120}") {
+                prop_assert!(!has_comment_start(strip_comment(&line)));
+            }
+
+            #[test]
+            fn flag_value_parses_long_forms(value in "[^\\r\\n=][^\\r\\n]{0,60}") {
+                let equals_form = format!("--requirement={value}");
+                prop_assert_eq!(
+                    flag_value(&equals_form, "-r", "--requirement"),
+                    Some(value.trim())
+                );
+                let space_form = format!("--requirement {value}");
+                prop_assert_eq!(
+                    flag_value(&space_form, "-r", "--requirement"),
+                    Some(value.trim())
+                );
+            }
+
+            #[test]
+            fn flag_value_parses_short_forms(value in "[^\\r\\n]{0,60}") {
+                let attached_form = format!("-r{value}");
+                prop_assert_eq!(
+                    flag_value(&attached_form, "-r", "--requirement"),
+                    Some(value.trim())
+                );
+                let spaced_form = format!("-r {value}");
+                prop_assert_eq!(
+                    flag_value(&spaced_form, "-r", "--requirement"),
+                    Some(value.trim())
+                );
+            }
+
+            #[test]
+            fn flag_value_rejects_long_prefix_followed_by_ident(
+                ch in proptest::char::ranges(vec!['a'..='z', 'A'..='Z', '0'..='9'].into()),
+                rest in "[^\\r\\n]{0,30}",
+            ) {
+                let line = format!("--requirement{ch}{rest}");
+                prop_assert_eq!(flag_value(&line, "-r", "--requirement"), None);
+            }
+
+            #[test]
+            fn editable_flag_value_never_panics(line in "\\PC{0,120}") {
+                let _ = editable_flag_value(&line);
+            }
+
+            #[test]
+            fn editable_flag_accepts_explicit_forms(path in "[a-z][a-z0-9/_.-]{0,30}") {
+                let expected = format!("./{path}");
+                let short_form = format!("-e ./{path}");
+                prop_assert_eq!(editable_flag_value(&short_form), Some(expected.as_str()));
+                let long_form = format!("--editable=./{path}");
+                prop_assert_eq!(editable_flag_value(&long_form), Some(expected.as_str()));
+            }
+        }
+    }
 }
