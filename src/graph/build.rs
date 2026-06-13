@@ -1,7 +1,7 @@
 //! Build graph nodes from manifest and discovered sources.
 
 use crate::manifest::LoadedManifest;
-use crate::sources::{DiscoveredSources, FileKind};
+use crate::sources::DiscoveredSources;
 
 use super::error::GraphError;
 use super::types::{FileNode, GraphEdge, ModuleOrigin, ProjectGraph};
@@ -39,9 +39,6 @@ pub fn build_graph_skeleton(
             source: dependency.origin.clone(),
         });
     }
-
-    // Stub files are indexed but not parsed in Phase 0.
-    let _ = FileKind::Stub;
 
     Ok(graph)
 }
