@@ -49,15 +49,10 @@ fn merge_symbol(target: &mut EntrySpec, incoming: &EntrySpec) {
 }
 
 fn prefer_context(existing: FileContext, incoming: FileContext) -> FileContext {
-    match (existing, incoming) {
-        (FileContext::Runtime, other) | (other, FileContext::Runtime) => {
-            if existing == FileContext::Runtime {
-                existing
-            } else {
-                other
-            }
-        },
-        (left, _) => left,
+    if existing == FileContext::Runtime || incoming == FileContext::Runtime {
+        FileContext::Runtime
+    } else {
+        existing
     }
 }
 

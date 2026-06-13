@@ -157,12 +157,12 @@ pub fn build_entry_roots(
 
 ## 7. Exit criteria
 
-- [ ] `build_entry_roots` が §8 規則を満たす
-- [ ] `resolve_project_mode` が app / library を正しく判定
-- [ ] `Entry reaches File` 辺が graph に追加される
-- [ ] `production` で test entry 除外
-- [ ] `make check` 通過、production 無 panic
-- [ ] `update-docs` で `entry/` を §15 に追記
+- [x] `build_entry_roots` が §8 規則を満たす
+- [x] `resolve_project_mode` が app / library を正しく判定
+- [x] `Entry reaches File` 辺が graph に追加される
+- [x] `production` で test entry 除外
+- [x] `make check` 通過、production 無 panic
+- [x] `update-docs` で `entry/` を §15 に追記
 
 ## 8. 実装順序
 
