@@ -3,18 +3,21 @@
 //! `yokei` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
-//! Early implementation: pipeline steps 1–4 ([`discovery`], [`config`],
-//! [`manifest`], [`sources`]) are available as library APIs. Phase 0 adds
-//! [`graph`] and [`parser`] skeletons. The CLI analyzer and issue reporting are
-//! not wired yet. See `docs/dev/spec.ja.md` for the full specification.
+//! Pipeline steps 1–4 ([`discovery`], [`config`], [`manifest`], [`sources`]) are
+//! available as library APIs and via [`pipeline::probe_project`]. Phase 0 adds
+//! [`graph`] and [`parser`] skeletons. Full issue reporting is not wired yet.
+//! See `docs/dev/spec.ja.md` for the full specification.
 
+pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod graph;
 pub mod manifest;
 pub mod parser;
+pub mod pipeline;
 pub mod sources;
 
+pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
     Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
     PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint, WorkspaceOverride,
@@ -32,6 +35,9 @@ pub use manifest::{
 };
 pub use parser::{
     ImportKind, ImportRef, ParseDiagnostic, ParseError, ParseSeverity, ParsedModule, parse_file,
+};
+pub use pipeline::{
+    ProbeError, ProbeReport, ProbeWarning, probe_project, write_probe_report, write_probe_warnings,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
