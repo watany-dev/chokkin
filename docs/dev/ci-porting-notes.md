@@ -52,6 +52,13 @@ provides meaningful coverage. Re-enable when Phase 1 is merged:
 # --fail-under 95
 ```
 
+## Windows test temp directory
+
+`cargo nextest` on `windows-latest` can hit `PermissionDenied` when many
+parallel tests create directories under the default short-path user temp
+(`RUNNER~1\AppData\Local\Temp`). The `test` job redirects `TMP` / `TEMP` /
+`TMPDIR` to `$RUNNER_TEMP/yokei-test-tmp` before running nextest.
+
 ## Deferred CI jobs (require code to exist)
 
 These jobs from ptuf's `nightly.yml` are omitted until the corresponding code
