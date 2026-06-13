@@ -1,18 +1,14 @@
 //! Lockfile transitive dependency index.
 
-use crate::manifest::{LoadedManifest, LockfileGraph};
+use crate::manifest::LoadedManifest;
 
 use super::types::TransitiveIndex;
 
 /// Build transitive index from manifest lockfile data.
 #[must_use]
 pub fn build_transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
-    from_lockfile(&manifest.lockfile)
-}
-
-fn from_lockfile(lockfile: &LockfileGraph) -> TransitiveIndex {
     TransitiveIndex {
-        edges: lockfile.edges.clone(),
+        edges: manifest.lockfile.edges.clone(),
     }
 }
 

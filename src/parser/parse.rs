@@ -35,22 +35,23 @@ pub fn parse_file(
         source,
     })?;
 
-    let mut parsed = ParsedModule::empty(path.to_owned());
-
     let mut locator = RandomLocator::new(&source);
-    match ast::Suite::parse(&source, path) {
+    let mut parsed = match ast::Suite::parse(&source, path) {
         Ok(stmts) => {
             let mut visitor = ModuleVisitor::new(path, layout, file_context, &mut locator);
             visitor.visit_module(&stmts);
-            parsed = visitor.into_parsed();
+            let mut parsed = visitor.into_parsed();
             note_unsupported_syntax(target, &stmts, &mut parsed.diagnostics);
+            parsed
         },
         Err(error) => {
+            let mut parsed = ParsedModule::empty(path.to_owned());
             parsed
                 .diagnostics
                 .push(syntax_diagnostic(path, &mut locator, &error, target));
+            parsed
         },
-    }
+    };
 
     parsed.ignores = extract_ignores(&source);
     Ok(parsed)
@@ -72,11 +73,7 @@ pub fn parse_project_sources(
     let mut summary = ParseSummary::empty();
 
     for file in &sources.files {
-        if file.kind == FileKind::Stub {
-            summary.skipped_count = summary.skipped_count.saturating_add(1);
-            continue;
-        }
-        if file.kind != FileKind::Python {
+        if file.kind == FileKind::Stub || file.kind != FileKind::Python {
             summary.skipped_count = summary.skipped_count.saturating_add(1);
             continue;
         }
