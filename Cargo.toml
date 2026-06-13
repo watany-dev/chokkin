@@ -30,6 +30,16 @@ walkdir = "2"
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 tempfile = "3"
 
+# Route `cargo bench` to the criterion targets only; the default libtest
+# harness rejects criterion CLI flags such as --save-baseline.
+[lib]
+bench = false
+
+[[bin]]
+name = "yokei"
+path = "src/main.rs"
+bench = false
+
 [[bench]]
 name = "manifest"
 harness = false

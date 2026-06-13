@@ -31,13 +31,13 @@ doc:
 ## ─── Benchmarks ───────────────────────────────────────────────────────────────
 # bench-save/bench-cmp: pass BASELINE=<name> (e.g. make bench-save BASELINE=main)
 bench:
-	cargo bench --locked
+	cargo bench --benches --locked
 
 bench-save:
-	cargo bench --locked -- --save-baseline $(BASELINE)
+	cargo bench --benches --locked -- --save-baseline $(BASELINE)
 
 bench-cmp:
-	cargo bench --locked -- --baseline $(BASELINE)
+	cargo bench --benches --locked -- --baseline $(BASELINE)
 
 ## ─── Security & supply chain ──────────────────────────────────────────────────
 deny:
