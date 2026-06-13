@@ -95,13 +95,35 @@ src/ で requests + requests が test group のみ → misplaced
 
 **v0.1 簡略:** test ファイルからの runtime 依存使用は warning なし（test が main dep を使うのは許容）。
 
-### 3.4 YOK009
+### 3.4 try-import（§10）
+
+```python
+try:
+    import orjson
+except ImportError:
+    orjson = None
+```
+
+`ImportRef.optional = true` の場合:
+
+```text
+orjson が optional extra / main にある → OK
+どこにもない → optional_missing（default: info, --strict: warning）
+即 YOK003 にしない
+```
+
+`optional_missing` は `RuleId` 専用ではなく `IssueCandidate` + `Severity::Info` で表現（Step 12 で filter）。
+
+### 3.5 YOK009
 
 同一 PEP 508 `name` が `runtime` + `dev` 等に出現 → 重複。保持 context を message に列挙。
 
-### 3.5 `DependencyReport`
+### 3.6 `DependencyReport`
 
 ```rust
+// rules/types.rs — Step 10–12 共有。confidence は config::Confidence を re-export
+use crate::config::Confidence;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DependencyReport {
     pub candidates: Vec<IssueCandidate>,
@@ -114,7 +136,7 @@ pub struct IssueCandidate {
     pub rule: RuleId,           // YOK002, ...
     pub subject: IssueSubject,  // Distribution | Binary
     pub severity: Severity,
-    pub confidence: IssueConfidence,
+    pub confidence: Confidence,
     pub message: String,
     pub origins: Vec<Origin>,   // manifest line / import line / binary ref
     pub explain: ExplainData,   // Step 12 --explain
@@ -177,15 +199,53 @@ fixture カテゴリ `tests/fixtures/deps/`:
 - [ ] `ExplainData` に used/unused 根拠が入る
 - [ ] `make check` 通過
 
-## 8. update-plan 検証サマリ（確定）
+## 8. 未決事項
 
-| カテゴリ | 得点 |
-| --- | ---: |
-| モジュール設計 | 19 |
-| 静的解析制約 | 20 |
-| ルール / ポリシー | 20 |
-| エラー処理 | 19 |
-| テスト容易性 | 19 |
-| **合計** | **97 — 合格** |
+| 項目 | 理由 | 再検討 |
+| --- | --- | --- |
+| environment marker 評価 | 静的不可 | confidence 低下のみ |
+| stub `types-*` 連動 | §10 複雑 | v0.1 は runtime 未使用なら stub も YOK002 |
+
+## 9. update-plan 検証サマリ（確定）
+
+### Phase 1: コンテキスト収集
+
+| 成果物 | 確認結果 |
+| --- | --- |
+| `step-10-dependency-reconciliation.md` | 本プラン |
+| `docs/dev/spec.ja.md` §3, §10 | YOK002–005 / 008–009 と一致 |
+| `src/manifest/types.rs` | `DeclaredDependency`, `LockfileGraph`, `DependencyContext` |
+| `src/config/types.rs` | `Confidence`, `DependencyGroupsConfig` |
+| `step-09` | `ReachabilityReport.used_modules` |
+| `step-07` | `ResolutionIndex`, `TransitiveIndex` |
+
+### Phase 2: 品質評価（100点満点）
+
+| カテゴリ | 配点 | 得点 | 所見 |
+| --- | ---: | ---: | --- |
+| モジュール / struct 設計 | 20 | 19 | `rules/deps/` 分割。共有型は `rules/types.rs` |
+| 静的解析制約 | 20 | 20 | lockfile 読み取りのみ。marker 非評価 |
+| ルール / ポリシー | 20 | 20 | try-import / YOK003 vs 004 優先を明記 |
+| エラー処理 | 20 | 19 | `reconcile_dependencies` は non-fatal（`DependencyReport`） |
+| テスト容易性 | 20 | 19 | deps fixture 7 カテゴリ |
+| **合計** | **100** | **97** | **合格**（90 以上） |
+
+### Phase 3: 整合性チェック
+
+| チェック項目 | 結果 |
+| --- | --- |
+| YOK010 境界 | OK — unresolved は Step 11 が候補化 |
+| `reconcile_dependencies` 戻り値 | OK — 集約ステップは diagnostic 継続 |
+| lockfile なし縮退 | OK — §10 準拠 |
+
+### Phase 4: 改善反映（課題分類）
+
+| 優先度 | 課題 | 対応 |
+| --- | --- | --- |
+| **P1** | try-import 未記載 | §3.4 追加済み |
+| **P1** | `IssueConfidence` 重複 | `config::Confidence` に統一済み |
+| **P2** | types-stub 規則 | §8 未決に委譲 |
+
+### 確定判定
 
 **合格 — 実装着手可。** Step 9 + Step 7 完了後。

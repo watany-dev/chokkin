@@ -23,7 +23,7 @@
 
 | 対象 issue | 操作 |
 | --- | --- |
-| YOK002（confidence ≥ likely） | `[project.dependencies]` 等から削除 |
+| YOK002（confidence = **Certain** のみ） | `[project.dependencies]` 等から削除 |
 | YOK009 | 重複宣言の一方を削除（dev 側優先保持は設定なし — 辞書順で低優先 context を削除） |
 | YOK005（明確な case のみ） | dev group → runtime への **移動**（逆は手動） |
 
@@ -134,8 +134,48 @@ pub fn apply_fixes(
 - [ ] `--allow-remove-files` なしでファイル削除しない
 - [ ] `make check` 通過
 
-## 8. update-plan 検証サマリ（確定）
+## 8. 未決事項
 
-| **合計** | **95 — 合格** |
+| 項目 | 理由 | 再検討 |
+| --- | --- | --- |
+| YOK005 移動の自動化 | 曖昧 case 多い | v0.1 は明確 case のみ |
+| `setup.py` fix | 静的限界 | v0.2 |
+
+## 9. update-plan 検証サマリ（確定）
+
+### Phase 1: コンテキスト収集
+
+| 成果物 | 確認結果 |
+| --- | --- |
+| `step-13-optional-fix.md` | 本プラン |
+| `docs/dev/spec.ja.md` §13, §16 | safe fix 境界と一致 |
+| `step-12` | `IssueReport` 入力 |
+| `Cargo.toml` | `toml_edit` 未追加 — 本 PR で deny 確認後 |
+
+### Phase 2: 品質評価（100点満点）
+
+| カテゴリ | 配点 | 得点 | 所見 |
+| --- | ---: | ---: | --- |
+| モジュール / struct 設計 | 20 | 19 | `fix/` 単独。manifest 編集を分離 |
+| 静的解析制約 | 20 | 20 | 対象 project コードは編集しない |
+| ルール / ポリシー | 20 | 19 | Certain のみ自動削除。lock 非編集 |
+| エラー処理 | 20 | 19 | `Result<FixReport, FixError>`。skip は diagnostic |
+| テスト容易性 | 20 | 18 | tempdir + golden manifest |
+| **合計** | **100** | **95** | **合格**（90 以上） |
+
+### Phase 3: 整合性チェック
+
+| チェック項目 | 結果 |
+| --- | --- |
+| §13 禁止事項 | OK |
+| YOK002 scope vs 安全契約 | OK — P0 矛盾を修正（Certain のみ） |
+
+### Phase 4: 改善反映（課題分類）
+
+| 優先度 | 課題 | 対応 |
+| --- | --- | --- |
+| **P0** | §2 と §3.1 で YOK002 fix 条件が矛盾 | Certain のみに統一済み |
+
+### 確定判定
 
 **合格 — 実装着手可。** Step 12 + Phase 1 CLI `--fix` フラグ後。

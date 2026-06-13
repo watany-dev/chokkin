@@ -97,7 +97,7 @@ while queue not empty:
     同上（first-party のみファイルキュー）
 ```
 
-third-party import は **distribution 使用**として `UsedDependencyIndex`（Step 10）へ渡すが、ファイルキューには入れない。
+third-party / stdlib import は `ReachabilityReport.used_modules` に記録し、Step 10 の `UsedDistributionIndex` 構築入力とする。ファイル BFS キューには入れない。
 
 ### 3.3 除外・低 confidence 入力（§11）
 
@@ -129,7 +129,7 @@ pub struct UnreachableFile {
     pub file: FileId,
     pub path: String,
     pub reasons: Vec<UnreachableReason>,   // ExcludedInit, NotReachable, ...
-    pub max_confidence: IssueConfidence,   // Step 12 へ
+    pub max_confidence: Confidence,   // `config::Confidence` — Step 12 へ
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,15 +206,54 @@ pub fn analyze_reachability(
 7. make check
 ```
 
-## 9. update-plan 検証サマリ（確定）
+## 9. 未決事項
 
-| カテゴリ | 得点 | 所見 |
-| --- | ---: | --- |
-| モジュール設計 | 19 | BFS 単独 crate。graph は辺の SoT |
-| 静的解析制約 | 20 | 実行なし |
-| ルール / ポリシー | 19 | YOK001 は Step 12。confidence 入力を渡す |
-| エラー処理 | 20 | 未解決 module は skip + diagnostic |
-| テスト容易性 | 19 | chain / orphan / plugin fixture |
-| **合計** | **97** | **合格** |
+| 項目 | 理由 | 再検討 |
+| --- | --- | --- |
+| `__init__.py` 経由の暗黙到達 | v0.1 簡易 | import 辺があれば到達 — package `__init__` 自動キューはしない |
+| `indexmap::IndexSet` | 安定順序 | 既存 `indexmap` 依存で追加 crate なし |
+
+## 10. update-plan 検証サマリ（確定）
+
+### Phase 1: コンテキスト収集
+
+| 成果物 | 確認結果 |
+| --- | --- |
+| `docs/dev/plans/step-09-reachability-analysis.md` | 本プラン |
+| `docs/dev/spec.ja.md` §6 Step 9, §11 | unused file / confidence と一致 |
+| `src/graph/types.rs` | `FileImportsModule` 確定。`Entry` / `FileReachesFile` は本 PR で追加 |
+| `src/config/types.rs` | `Confidence` 確定 — `IssueConfidence` は導入しない |
+| `step-08` | `EntryPlan`, `ResolvedMode` 入力 |
+| `step-10` | `used_modules` → `UsedDistributionIndex` 受け渡し |
+
+### Phase 2: 品質評価（100点満点）
+
+| カテゴリ | 配点 | 得点 | 所見 |
+| --- | ---: | ---: | --- |
+| モジュール / struct 設計 | 20 | 19 | `reachability/` 単独。graph は辺の SoT |
+| 静的解析制約 | 20 | 20 | Python 非実行維持 |
+| ルール / ポリシー | 20 | 19 | YOK001 は Step 12。confidence 入力を `Confidence` で統一 |
+| エラー処理 | 20 | 20 | 未解決 module は skip + diagnostic |
+| テスト容易性 | 20 | 19 | chain / orphan / plugin fixture |
+| **合計** | **100** | **97** | **合格**（90 以上） |
+
+### Phase 3: 整合性チェック
+
+| チェック項目 | 結果 |
+| --- | --- |
+| §6 処理順 Step 9 | OK |
+| Step 7 `ModuleOrigin::FirstParty` | OK — first-party のみ BFS 拡張 |
+| Step 4 `production` フィルタ | OK — 二重適用を文書化（対象外ファイルは unreachable にも入れない） |
+| `src/` 衝突 | なし — 新規 `reachability/` |
+
+### Phase 4: 改善反映（課題分類）
+
+| 優先度 | 課題 | 対応 |
+| --- | --- | --- |
+| **P0** | `IssueConfidence` が `config::Confidence` と重複 | `Confidence` に統一済み |
+| **P1** | `UsedDependencyIndex` の定義場所が不明瞭 | §3.2 で `used_modules` 経由に修正済み |
+| **P2** | `petgraph` 再検討 | Out of scope 維持 |
+
+### 確定判定
 
 **合格 — 実装着手可。** Step 7–8 完了後。

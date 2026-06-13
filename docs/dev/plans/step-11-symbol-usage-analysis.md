@@ -93,7 +93,7 @@ v0.1 は **保守的**:
 pub struct SymbolReport {
     pub candidates: Vec<IssueCandidate>,
     pub symbol_count: u32,
-    pub external_symbols: IndexSet<SymbolId>,
+    pub external_symbols: IndexSet<rules::symbols::SymbolId>,  // rules ローカル ID（graph SymbolId とは別）
 }
 ```
 
@@ -140,8 +140,49 @@ pub fn analyze_symbols(
 - [ ] library mode で severity info
 - [ ] `make check` 通過
 
-## 8. update-plan 検証サマリ（確定）
+## 8. 未決事項
 
-| **合計** | **96 — 合格** |
+| 項目 | 理由 | 再検討 |
+| --- | --- | --- |
+| attribute access 追跡 | 精度とコスト | v0.2 |
+| YOK010 vs Step 10 | unresolved は Step 11 が担当 | Step 10 §3.1 と整合 |
+
+## 9. update-plan 検証サマリ（確定）
+
+### Phase 1: コンテキスト収集
+
+| 成果物 | 確認結果 |
+| --- | --- |
+| `step-11-symbol-usage-analysis.md` | 本プラン |
+| `docs/dev/spec.ja.md` §3, §12 | preview / externally-used と一致 |
+| `step-06` | `SymbolDef`, `exports`（設計） |
+| `step-09` | reachable ファイルフィルタ |
+| `src/graph/types.rs` | `SymbolId` 未導入 — rules ローカルで定義 |
+
+### Phase 2: 品質評価（100点満点）
+
+| カテゴリ | 配点 | 得点 | 所見 |
+| --- | ---: | ---: | --- |
+| モジュール / struct 設計 | 20 | 19 | `rules/symbols/`。`SymbolId` は graph と分離 |
+| 静的解析制約 | 20 | 20 | AST 静的解析のみ |
+| ルール / ポリシー | 20 | 19 | library mode info。保守的 attribute 方針 |
+| エラー処理 | 20 | 19 | non-fatal `SymbolReport` |
+| テスト容易性 | 20 | 19 | 5 fixture カテゴリ |
+| **合計** | **100** | **96** | **合格**（90 以上） |
+
+### Phase 3: 整合性チェック
+
+| チェック項目 | 結果 |
+| --- | --- |
+| 到達外ファイル除外 | OK — unused file と重複回避 |
+| YOK010 分担 | OK — Step 7 `ResolveWarning` 入力 |
+
+### Phase 4: 改善反映（課題分類）
+
+| 優先度 | 課題 | 対応 |
+| --- | --- | --- |
+| **P1** | `SymbolId` が graph 未存在と衝突 | rules ローカル ID に明記済み |
+
+### 確定判定
 
 **合格 — 実装着手可。** Step 6–9 完了後。

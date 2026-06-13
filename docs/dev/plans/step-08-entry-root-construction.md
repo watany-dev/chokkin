@@ -179,13 +179,39 @@ pub fn build_entry_roots(
 
 ## 9. update-plan 検証サマリ（確定）
 
-| カテゴリ | 得点 | 判定 |
-| --- | ---: | --- |
-| モジュール設計 | 19 | |
-| 静的解析制約 | 20 | |
-| ルール / ポリシー | 19 | §8 深度制限を表形式で固定 |
-| エラー処理 | 20 | |
-| テスト容易性 | 18 | |
-| **合計** | **96** | **合格** |
+### Phase 1: コンテキスト収集
+
+| 成果物 | 確認結果 |
+| --- | --- |
+| `step-08-entry-root-construction.md` | 本プラン |
+| `docs/dev/spec.ja.md` §8 | entry 深度制限・mode 判定と一致 |
+| `src/config/types.rs` | `EntrySpec`, `ProjectMode` 確定 |
+| `step-05` | `PluginHints.entries` 入力 |
+
+### Phase 2: 品質評価（100点満点）
+
+| カテゴリ | 配点 | 得点 | 所見 |
+| --- | ---: | ---: | --- |
+| モジュール / struct 設計 | 20 | 19 | `entry/` 単独 |
+| 静的解析制約 | 20 | 20 | パス走査のみ |
+| ルール / ポリシー | 20 | 19 | §8 深度制限を表で固定 |
+| エラー処理 | 20 | 20 | 欠落 entry は warning |
+| テスト容易性 | 20 | 18 | fixture 5 — 拡張余地 |
+| **合計** | **100** | **96** | **合格**（90 以上） |
+
+### Phase 3: 整合性チェック
+
+| チェック項目 | 結果 |
+| --- | --- |
+| Step 5 マージ規則 | OK |
+| graph `Entry` ノード | 本 PR で新規 |
+
+### Phase 4: 改善反映（課題分類）
+
+| 優先度 | 課題 | 対応 |
+| --- | --- | --- |
+| **P2** | `SymbolReference` 解決の Step 7 依存 | §5 API に `layout` 間接入力（sources 経由） |
+
+### 確定判定
 
 **合格 — 実装着手可。** Step 4–5 と manifest entry points に依存。Step 6–7 と並行可能（graph apply は Step 7 後でも可）。

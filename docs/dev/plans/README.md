@@ -3,6 +3,8 @@
 `docs/dev/spec.ja.md` §6 パイプラインと §17 ロードマップに対応する設計ドキュメント一覧。
 各プランは **update-plan 合格**（90点以上）を付記してから実装に進む。
 
+**横断検証:** [`VALIDATION.md`](./VALIDATION.md)（Steps 9–13 + Phase 1 CLI、2026-06-13 合格）
+
 ## パイプライン Steps 1–13
 
 | Step | ドキュメント | 状態 | 実装 |
