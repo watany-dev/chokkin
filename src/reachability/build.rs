@@ -2,14 +2,12 @@
 
 use indexmap::IndexSet;
 
-use globset::{Glob, GlobSetBuilder};
-
 use crate::config::{Confidence, ProjectMode};
 use crate::entry::{EntryPlan, ResolvedMode};
 use crate::graph::ProjectGraph;
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
-use crate::sources::{DiscoveredSources, FileContext, FileKind};
+use crate::sources::{DiscoveredSources, FileContext, FileKind, build_glob_set};
 
 use super::bfs::run_reachability_bfs;
 use super::error::ReachabilityError;
@@ -62,15 +60,7 @@ pub fn analyze_reachability(
         }
 
         let reasons = exclusion_reasons(file, mode, production);
-        if reasons.iter().any(|reason| {
-            matches!(
-                reason,
-                UnreachableReason::ExcludedInit
-                    | UnreachableReason::ExcludedStub
-                    | UnreachableReason::ExcludedTestContext
-                    | UnreachableReason::ExcludedProductionContext
-            )
-        }) {
+        if is_hard_excluded(&reasons) {
             continue;
         }
 
@@ -107,20 +97,14 @@ fn apply_framework_globs(
         return Ok(IndexSet::new());
     }
 
-    let mut builder = GlobSetBuilder::new();
-    for pattern in &patterns {
-        let glob = Glob::new(pattern).map_err(|error| ReachabilityError::InvalidFrameworkGlob {
-            pattern: pattern.clone(),
-            reason: error.to_string(),
-        })?;
-        builder.add(glob);
-    }
-    let set = builder
-        .build()
-        .map_err(|error| ReachabilityError::InvalidFrameworkGlob {
-            pattern: patterns.join(", "),
-            reason: error.to_string(),
-        })?;
+    let set = build_glob_set(&patterns).map_err(|error| match error {
+        crate::sources::SourcesError::InvalidGlob { pattern, reason } => {
+            ReachabilityError::InvalidFrameworkGlob { pattern, reason }
+        },
+        crate::sources::SourcesError::Io { .. } => ReachabilityError::Invariant {
+            detail: "unexpected I/O error while compiling framework globs".to_owned(),
+        },
+    })?;
 
     let mut framework_used = IndexSet::new();
     for file in &sources.files {
@@ -147,9 +131,6 @@ fn exclusion_reasons(
     if file.path.ends_with("__init__.py") {
         reasons.push(UnreachableReason::ExcludedInit);
     }
-    if file.kind == FileKind::Stub {
-        reasons.push(UnreachableReason::ExcludedStub);
-    }
     if file.context == FileContext::Test && mode.mode == ProjectMode::Library {
         reasons.push(UnreachableReason::ExcludedTestContext);
     }
@@ -158,6 +139,18 @@ fn exclusion_reasons(
     }
 
     reasons
+}
+
+fn is_hard_excluded(reasons: &[UnreachableReason]) -> bool {
+    reasons.iter().any(|reason| {
+        matches!(
+            reason,
+            UnreachableReason::ExcludedInit
+                | UnreachableReason::ExcludedStub
+                | UnreachableReason::ExcludedTestContext
+                | UnreachableReason::ExcludedProductionContext
+        )
+    })
 }
 
 fn confidence_for_unreachable(

@@ -265,7 +265,7 @@ fn trace_to_file_returns_import_chain() {
     .expect("reachability");
 
     let target = inputs.graph.file_id("src/acme/b.py").expect("target file");
-    let trace = trace_to_file(&report, &inputs.graph, target).expect("trace");
+    let trace = trace_to_file(&report, target).expect("trace");
     assert_eq!(trace.target, target);
     assert!(!trace.steps.is_empty());
 }

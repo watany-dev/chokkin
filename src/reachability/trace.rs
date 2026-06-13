@@ -1,16 +1,12 @@
 //! Reconstruct reachability trace paths.
 
-use crate::graph::{FileId, ProjectGraph};
+use crate::graph::FileId;
 
 use super::types::{ReachabilityReport, TracePath};
 
 /// Reconstruct the shortest known path from an entry root to `target`.
 #[must_use]
-pub fn trace_to_file(
-    report: &ReachabilityReport,
-    graph: &ProjectGraph,
-    target: FileId,
-) -> Option<TracePath> {
+pub fn trace_to_file(report: &ReachabilityReport, target: FileId) -> Option<TracePath> {
     if !report.reachable.contains(&target) {
         return None;
     }
@@ -27,7 +23,6 @@ pub fn trace_to_file(
     }
     steps.reverse();
 
-    let _ = graph;
     Some(TracePath { target, steps })
 }
 
@@ -43,11 +38,6 @@ mod tests {
 
     #[test]
     fn trace_returns_none_for_unreachable_file() {
-        let graph = ProjectGraph::new(ProjectRoot {
-            path: std::env::temp_dir(),
-            marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
-        });
         let file_id = FileId(0);
         let report = ReachabilityReport {
             reachable: IndexSet::new(),
@@ -56,7 +46,7 @@ mod tests {
             framework_used: IndexSet::new(),
             predecessors: indexmap::IndexMap::new(),
         };
-        assert!(trace_to_file(&report, &graph, file_id).is_none());
+        assert!(trace_to_file(&report, file_id).is_none());
     }
 
     #[test]
@@ -114,7 +104,7 @@ mod tests {
             predecessors,
         };
 
-        let trace = trace_to_file(&report, &graph, child).expect("trace");
+        let trace = trace_to_file(&report, child).expect("trace");
         assert_eq!(trace.target, child);
         assert!(trace.steps.len() >= 2);
     }
