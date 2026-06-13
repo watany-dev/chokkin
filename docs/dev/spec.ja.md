@@ -693,7 +693,8 @@ yokei/
     main.rs
     discovery/   # 実装済み: pipeline step 1 (root discovery)
     config/      # 実装済み: pipeline step 2 (config load)
-    cli.rs
+    cli.rs          # CLI argument parsing (Phase 0 probe)
+    pipeline/       # `probe_project` — steps 1–4 orchestration
     manifest/    # 実装済み: pipeline step 3 (manifest extraction)
     sources/     # 実装済み: pipeline step 4 (source file discovery)
     graph/       # Phase 0: pipeline step 6 前提 (`build_graph_skeleton`, import 辺)
