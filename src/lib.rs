@@ -6,6 +6,7 @@
 //! Pipeline steps 1–5 ([`discovery`], [`config`], [`manifest`], [`sources`],
 //! [`plugins`]) are available as library APIs. Phase 0 adds [`graph`] and
 //! [`parser`] skeletons. Full issue reporting is not wired yet.
+//! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod config;
 pub mod discovery;

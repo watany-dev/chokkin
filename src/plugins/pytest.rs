@@ -26,6 +26,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     let mut python_files = Vec::new();
     let mut has_explicit_config = false;
     let mut config_origin: Option<ReferenceOrigin> = None;
+    let mut pyproject_table: Option<toml::Table> = None;
 
     if pyproject_path.is_file() {
         match read_pyproject_table(&pyproject_path) {
@@ -57,6 +58,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
                             .collect();
                     }
                 }
+                pyproject_table = Some(table);
             },
             Err(error) => {
                 warnings.push(PluginsWarning::PluginExtractFailed {
@@ -164,9 +166,8 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         }
     }
 
-    if pyproject_path.is_file()
-        && let Ok(table) = read_pyproject_table(&pyproject_path)
-        && let Some(options) = pytest_ini_options_from_pyproject(&table)
+    if let Some(table) = pyproject_table.as_ref()
+        && let Some(options) = pytest_ini_options_from_pyproject(table)
         && let Some(plugins) = options.get("pytest_plugins")
     {
         let plugin_modules = collect_pytest_plugins(plugins);
