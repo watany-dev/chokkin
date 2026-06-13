@@ -78,6 +78,9 @@ semicolon_inside_block = "deny"
 # Integration tests and property-test macros need root-level #[test].
 tests_outside_test_module = "allow"
 
+# Duplicate crate versions are enforced by cargo-deny (deny.toml [bans]), not clippy.
+multiple_crate_versions = "allow"
+
 # Exemptions for legitimate patterns.
 module_name_repetitions = "allow"
 option_if_let_else = "allow"

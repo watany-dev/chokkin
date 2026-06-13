@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 1.93+ (see `rust-version` in `Cargo.toml`; `rust-toolchain.toml` pins the toolchain for local development)
+- Rust 1.93+ (MSRV — see `rust-version` in `Cargo.toml`; CI also tests latest stable)
 - [uv](https://docs.astral.sh/uv/) (for `uvx maturin` wheel builds)
 
 Install development tools:
@@ -22,10 +22,10 @@ make check
 This runs the full pre-commit gate in order:
 
 1. `cargo fmt --check` — formatting
-2. `cargo clippy --all-targets --locked -- -D warnings` — linting
+2. `cargo clippy --all-targets --locked -- -D warnings` + `cargo doc` — linting
 3. `cargo test --locked` — unit and integration tests
-4. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked` — docs
-5. `cargo deny check` — license / advisory / supply-chain policy
+4. `cargo deny check` — license / advisory / supply-chain policy
+5. `cargo machete` — unused dependency detection
 
 ### Individual targets
 
