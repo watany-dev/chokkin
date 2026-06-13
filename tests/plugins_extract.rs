@@ -1,0 +1,240 @@
+//! Integration tests for plugin hint extraction (pipeline step 5).
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
+use std::path::{Path, PathBuf};
+
+use yokei::{
+    FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
+    discover_sources, extract_manifest, extract_plugin_hints, load_config,
+};
+
+fn fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/plugins")
+        .join(name)
+}
+
+fn project_root_at(path: &Path) -> ProjectRoot {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    ProjectRoot {
+        path: canonical,
+        marker: RootMarker::PyProjectToml,
+        start: path.to_path_buf(),
+    }
+}
+
+fn extract_fixture(name: &str) -> yokei::PluginHints {
+    let path = fixture(name);
+    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
+    extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+}
+
+fn pytest_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
+    hints
+        .contributions
+        .iter()
+        .find(|contrib| contrib.plugin == PluginId::Pytest)
+        .expect("pytest contribution")
+}
+
+fn django_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
+    hints
+        .contributions
+        .iter()
+        .find(|contrib| contrib.plugin == PluginId::Django)
+        .expect("django contribution")
+}
+
+fn fastapi_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
+    hints
+        .contributions
+        .iter()
+        .find(|contrib| contrib.plugin == PluginId::Fastapi)
+        .expect("fastapi contribution")
+}
+
+fn entry_paths(contrib: &yokei::PluginContribution) -> Vec<&str> {
+    contrib
+        .entries
+        .iter()
+        .map(|entry| entry.spec.path.as_str())
+        .collect()
+}
+
+#[test]
+fn pytest_discovers_test_files() {
+    let hints = extract_fixture("pytest_pyproject");
+    let contrib = pytest_contrib(&hints);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"tests/test_sample.py"));
+    assert!(
+        contrib
+            .entries
+            .iter()
+            .all(|entry| entry.context == FileContext::Test)
+    );
+}
+
+#[test]
+fn pytest_respects_testpaths() {
+    let hints = extract_fixture("pytest_pyproject");
+    let contrib = pytest_contrib(&hints);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"tests/test_sample.py"));
+    assert!(!paths.iter().any(|path| path.starts_with("src/")));
+}
+
+#[test]
+fn pytest_conftest_entry() {
+    let hints = extract_fixture("pytest_pyproject");
+    let contrib = pytest_contrib(&hints);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"tests/conftest.py"));
+}
+
+#[test]
+fn pytest_binary_usage() {
+    let hints = extract_fixture("pytest_pyproject");
+    let contrib = pytest_contrib(&hints);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "pytest")
+    );
+}
+
+#[test]
+fn pytest_ini_fixture() {
+    let hints = extract_fixture("pytest_ini");
+    let contrib = pytest_contrib(&hints);
+    assert!(entry_paths(contrib).contains(&"tests/test_one.py"));
+}
+
+#[test]
+fn pytest_setup_cfg_fixture() {
+    let hints = extract_fixture("pytest_setup_cfg");
+    let contrib = pytest_contrib(&hints);
+    assert!(entry_paths(contrib).contains(&"tests/test_cfg.py"));
+}
+
+#[test]
+fn django_installed_apps() {
+    let hints = extract_fixture("django_manage");
+    let contrib = django_contrib(&hints);
+    let modules: Vec<&str> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| reference.module.as_str())
+        .collect();
+    assert!(modules.contains(&"django.contrib.admin"));
+    assert!(modules.contains(&"myapp"));
+    assert!(modules.contains(&"mysite.urls"));
+}
+
+#[test]
+fn django_migrations_framework_used() {
+    let hints = extract_fixture("django_migrations");
+    let contrib = django_contrib(&hints);
+    assert!(
+        contrib
+            .framework_used_globs
+            .iter()
+            .any(|glob| glob.pattern == "**/migrations/**/*.py")
+    );
+}
+
+#[test]
+fn django_manage_entry() {
+    let hints = extract_fixture("django_manage");
+    let contrib = django_contrib(&hints);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"manage.py"));
+    assert!(paths.contains(&"mysite/settings.py"));
+    assert!(paths.contains(&"mysite/urls.py"));
+}
+
+#[test]
+fn fastapi_uvicorn_app_symbol() {
+    let hints = extract_fixture("fastapi_uvicorn_tool");
+    let contrib = fastapi_contrib(&hints);
+    assert!(
+        contrib
+            .symbol_refs
+            .iter()
+            .any(|reference| { reference.module == "pkg.main" && reference.symbol == "app" })
+    );
+}
+
+#[test]
+fn fastapi_scripts_symbol() {
+    let hints = extract_fixture("fastapi_scripts");
+    let contrib = fastapi_contrib(&hints);
+    assert!(
+        contrib
+            .symbol_refs
+            .iter()
+            .any(|reference| { reference.module == "pkg.main" && reference.symbol == "app" })
+    );
+}
+
+#[test]
+fn disabled_plugin_skipped() {
+    let hints = extract_fixture("plugins_disabled");
+    assert!(hints.contributions.is_empty());
+}
+
+#[test]
+fn full_pipeline_step5() {
+    let hints = extract_fixture("django_manage");
+    assert_eq!(hints.contributions.len(), 3);
+    assert!(
+        pytest_contrib(&hints)
+            .entries
+            .iter()
+            .any(|entry| { entry.spec.path.contains("test") })
+            || hints.warnings.iter().any(|warning| {
+                matches!(
+                    warning,
+                    PluginsWarning::PluginNoOp {
+                        plugin: PluginId::Pytest
+                    }
+                )
+            })
+    );
+}
+
+#[test]
+fn partial_settings_warns() {
+    let hints = extract_fixture("django_partial_settings");
+    assert!(
+        hints
+            .warnings
+            .iter()
+            .any(|warning| { matches!(warning, PluginsWarning::PartialSettingsParse { .. }) })
+    );
+}
+
+#[test]
+fn no_django_no_panic() {
+    let hints = extract_fixture("no_django");
+    let django = django_contrib(&hints);
+    assert!(django.entries.is_empty());
+    assert!(hints.warnings.iter().any(|warning| {
+        matches!(
+            warning,
+            PluginsWarning::PluginNoOp {
+                plugin: PluginId::Django
+            }
+        )
+    }));
+}

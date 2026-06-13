@@ -2,13 +2,14 @@
 
 mod error;
 mod extract;
+pub(crate) mod literals;
 mod pep508_util;
 mod pyproject;
 mod requirements;
 mod setup_cfg;
 mod setup_py;
 mod types;
-mod util;
+pub(crate) mod util;
 mod uv_lock;
 mod warnings;
 

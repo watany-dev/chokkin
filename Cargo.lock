@@ -1568,6 +1568,7 @@ dependencies = [
  "indexmap",
  "pep508_rs",
  "proptest",
+ "regex",
  "rustpython-parser",
  "tempfile",
  "thiserror 2.0.18",

@@ -1,0 +1,7 @@
+[project]
+name = "acme"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

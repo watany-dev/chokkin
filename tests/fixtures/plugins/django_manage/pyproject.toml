@@ -1,0 +1,4 @@
+[project]
+name = "mysite"
+version = "0.1.0"
+dependencies = ["django>=4.0"]

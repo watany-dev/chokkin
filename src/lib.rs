@@ -3,16 +3,16 @@
 //! `yokei` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
-//! Early implementation: pipeline steps 1–4 ([`discovery`], [`config`],
-//! [`manifest`], [`sources`]) are available as library APIs. Phase 0 adds
-//! [`graph`] and [`parser`] skeletons. The CLI analyzer and issue reporting are
-//! not wired yet. See `docs/dev/spec.ja.md` for the full specification.
+//! Pipeline steps 1–5 ([`discovery`], [`config`], [`manifest`], [`sources`],
+//! [`plugins`]) are available as library APIs. Phase 0 adds [`graph`] and
+//! [`parser`] skeletons. Full issue reporting is not wired yet.
 
 pub mod config;
 pub mod discovery;
 pub mod graph;
 pub mod manifest;
 pub mod parser;
+pub mod plugins;
 pub mod sources;
 
 pub use config::{
@@ -32,6 +32,11 @@ pub use manifest::{
 };
 pub use parser::{
     ImportKind, ImportRef, ParseDiagnostic, ParseError, ParseSeverity, ParsedModule, parse_file,
+};
+pub use plugins::{
+    BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
+    PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
+    extract_plugin_hints,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
