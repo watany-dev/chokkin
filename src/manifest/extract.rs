@@ -127,8 +127,8 @@ pub fn extract_manifest(
 /// Prefer explicit `[tool.yokei].target_version`, else infer from `requires-python`.
 #[must_use]
 pub fn resolve_target_version(config: &YokeiConfig, manifest: &LoadedManifest) -> TargetVersion {
-    if config.target_version != TargetVersion::default_py311() {
-        return config.target_version.clone();
+    if let Some(explicit) = &config.target_version {
+        return explicit.clone();
     }
 
     if let Some(ref requires_python) = manifest.metadata.requires_python
@@ -137,7 +137,7 @@ pub fn resolve_target_version(config: &YokeiConfig, manifest: &LoadedManifest) -
         return inferred;
     }
 
-    config.target_version.clone()
+    TargetVersion::default_py311()
 }
 
 fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {

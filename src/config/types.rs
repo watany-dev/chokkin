@@ -275,8 +275,8 @@ pub struct YokeiConfig {
     pub mode: ProjectMode,
     /// Whether production-only analysis is enabled.
     pub production: bool,
-    /// Target Python version for parsing and stdlib checks.
-    pub target_version: TargetVersion,
+    /// Explicit target Python version from config layers, if any.
+    pub target_version: Option<TargetVersion>,
     /// Whether to respect `.gitignore` during file discovery.
     pub respect_gitignore: bool,
     /// Minimum issue confidence to report.

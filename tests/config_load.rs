@@ -62,7 +62,10 @@ fn loads_pyproject_tool_yokei() {
     assert!(loaded.sources.pyproject_tool_yokei);
     assert_eq!(config.mode, ProjectMode::Library);
     assert!(config.production);
-    assert_eq!(config.target_version.as_str(), "py312");
+    assert_eq!(
+        config.target_version.as_ref().expect("set").as_str(),
+        "py312"
+    );
     assert!(!config.respect_gitignore);
     assert_eq!(config.confidence, Confidence::Certain);
     assert_eq!(config.exclude, vec!["custom/**".to_owned()]);

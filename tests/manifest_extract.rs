@@ -212,6 +212,15 @@ fn resolve_target_version_from_requires_python() {
 }
 
 #[test]
+fn resolve_target_version_honors_explicit_py311_over_requires_python() {
+    let manifest = extract_fixture("pyproject_full");
+    let mut config = default_config();
+    config.target_version = Some(TargetVersion::parse("py311").expect("py311"));
+    let resolved = resolve_target_version(&config, &manifest);
+    assert_eq!(resolved, TargetVersion::parse("py311").expect("py311"));
+}
+
+#[test]
 fn extracts_without_pyproject() {
     let manifest = extract_fixture("requirements_only");
     assert!(manifest.dependencies.iter().any(|dep| dep.name == "django"));

@@ -25,6 +25,13 @@ pub enum SourcesWarning {
         /// Path to the unreadable file.
         path: String,
     },
+    /// A path could not be read during directory walking.
+    PathUnreadable {
+        /// Path that triggered the error.
+        path: String,
+        /// Human-readable error description.
+        reason: String,
+    },
     /// Project exceeds the large-project file threshold.
     LargeProject {
         /// Number of discovered files.

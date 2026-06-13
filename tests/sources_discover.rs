@@ -53,9 +53,9 @@ fn infers_src_layout() {
     assert_eq!(
         sources.effective_globs,
         vec![
-            "src/**/*.py".to_owned(),
-            "tests/**/*.py".to_owned(),
-            "scripts/**/*.py".to_owned(),
+            "src/**/*.{py,pyi}".to_owned(),
+            "tests/**/*.{py,pyi}".to_owned(),
+            "scripts/**/*.{py,pyi}".to_owned(),
         ]
     );
 
@@ -112,6 +112,46 @@ fn filters_production_contexts() {
     let discovered = paths(&sources);
     assert!(discovered.contains(&"src/acme/module.py"));
     assert!(!discovered.contains(&"tests/test_module.py"));
+}
+
+#[test]
+fn assigns_test_context_for_conftest() {
+    let sources = discover_fixture("src_layout");
+    let by_path = |target: &str| {
+        sources
+            .files
+            .iter()
+            .find(|file| file.path == target)
+            .map(|file| file.context)
+    };
+    assert_eq!(by_path("tests/conftest.py"), Some(FileContext::Test));
+}
+
+#[test]
+fn includes_pyi_as_stub_kind() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root_path = temp.path();
+    std::fs::create_dir_all(root_path.join("src/acme")).expect("create package");
+    std::fs::write(root_path.join("src/acme/__init__.py"), "").expect("write init");
+    std::fs::write(root_path.join("src/acme/module.py"), "").expect("write py");
+    std::fs::write(root_path.join("src/acme/module.pyi"), "").expect("write pyi");
+    std::fs::write(
+        root_path.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write pyproject");
+
+    let root = discover_project_root(root_path).expect("discover root");
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
+
+    let stub = sources
+        .files
+        .iter()
+        .find(|file| file.path == "src/acme/module.pyi")
+        .expect("pyi file");
+    assert_eq!(stub.kind, FileKind::Stub);
 }
 
 #[test]
@@ -194,11 +234,17 @@ fn full_pipeline_step4() {
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    assert_eq!(sources.python_files().count(), 4);
+    assert_eq!(sources.python_files().count(), 5);
     assert!(
         sources
             .files
             .iter()
             .any(|file| file.kind == FileKind::Python)
+    );
+    assert!(
+        sources
+            .files
+            .iter()
+            .any(|file| file.path == "tests/conftest.py" && file.context == FileContext::Test)
     );
 }

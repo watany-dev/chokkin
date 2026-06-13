@@ -119,15 +119,15 @@ fn flat_package_candidates(root: &Path) -> Vec<String> {
 
 fn default_globs(layout: ProjectLayout, packages: &[String]) -> Vec<String> {
     let mut globs = match layout {
-        ProjectLayout::Src => vec!["src/**/*.py".to_owned()],
+        ProjectLayout::Src => vec!["src/**/*.{py,pyi}".to_owned()],
         ProjectLayout::Flat => packages
             .iter()
-            .map(|package| format!("{package}/**/*.py"))
+            .map(|package| format!("{package}/**/*.{{py,pyi}}"))
             .collect(),
-        ProjectLayout::Unknown => vec!["**/*.py".to_owned()],
+        ProjectLayout::Unknown => vec!["**/*.{py,pyi}".to_owned()],
     };
-    globs.push("tests/**/*.py".to_owned());
-    globs.push("scripts/**/*.py".to_owned());
+    globs.push("tests/**/*.{py,pyi}".to_owned());
+    globs.push("scripts/**/*.{py,pyi}".to_owned());
     globs
 }
 
@@ -182,9 +182,9 @@ mod tests {
         assert_eq!(
             globs,
             vec![
-                "src/**/*.py".to_owned(),
-                "tests/**/*.py".to_owned(),
-                "scripts/**/*.py".to_owned(),
+                "src/**/*.{py,pyi}".to_owned(),
+                "tests/**/*.{py,pyi}".to_owned(),
+                "scripts/**/*.{py,pyi}".to_owned(),
             ]
         );
     }
@@ -254,8 +254,10 @@ mod tests {
             ) {
                 for layout in [ProjectLayout::Src, ProjectLayout::Flat, ProjectLayout::Unknown] {
                     let globs = default_globs(layout, &packages);
-                    prop_assert!(globs.contains(&"tests/**/*.py".to_owned()));
-                    prop_assert!(globs.contains(&"scripts/**/*.py".to_owned()));
+                    let tests_glob = "tests/**/*.{py,pyi}".to_owned();
+                    let scripts_glob = "scripts/**/*.{py,pyi}".to_owned();
+                    prop_assert!(globs.contains(&tests_glob));
+                    prop_assert!(globs.contains(&scripts_glob));
                 }
             }
         }

@@ -41,6 +41,9 @@ fn is_test_path(path: &str) -> bool {
     let Some(file_name) = path.rsplit('/').next() else {
         return false;
     };
+    if file_name == "conftest.py" {
+        return true;
+    }
     (file_name.starts_with("test_")
         && std::path::Path::new(file_name)
             .extension()
@@ -67,6 +70,19 @@ mod tests {
         let info = layout(ProjectLayout::Src, &["acme"]);
         assert_eq!(
             assign_file_context("tests/test_foo.py", &info),
+            FileContext::Test
+        );
+    }
+
+    #[test]
+    fn assigns_test_context_for_conftest() {
+        let info = layout(ProjectLayout::Src, &["acme"]);
+        assert_eq!(
+            assign_file_context("tests/conftest.py", &info),
+            FileContext::Test
+        );
+        assert_eq!(
+            assign_file_context("src/acme/conftest.py", &info),
             FileContext::Test
         );
     }
