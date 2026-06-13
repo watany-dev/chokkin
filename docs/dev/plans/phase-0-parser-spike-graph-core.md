@@ -456,10 +456,13 @@ flowchart TB
 | work | 依存 | 成果 |
 | --- | --- | --- |
 | **Phase 0（本プラン）** | Step 4 | parser ADR、`ProjectGraph`、`parse_file` spike |
-| **CLI 縦スライス** | Step 4 | `uvx yokei` が root / layout / deps / files を表示 |
-| **Step 5 plugins** | Step 2–4 | `PluginHints`（entry / module refs / binary usage） |
+| **CLI 縦スライス** | Step 4 | [`phase-0-cli-vertical-slice.md`](./phase-0-cli-vertical-slice.md) — `probe_project` |
+| **Step 5 plugins** | Step 2–4 | [`step-05-config-plugin-extraction.md`](./step-05-config-plugin-extraction.md) |
+| **Step 6 parse 本実装** | Phase 0 spike | [`step-06-python-parse.md`](./step-06-python-parse.md) |
+| **Step 7 resolver + maps** | Step 6 | [`step-07-import-resolution.md`](./step-07-import-resolution.md) |
+| **Step 8 entry roots** | Step 5–6 | [`step-08-entry-root-construction.md`](./step-08-entry-root-construction.md) |
 
-Step 5 の詳細設計は [`step-05-config-plugin-extraction.md`](./step-05-config-plugin-extraction.md) を参照（§9 plugin 仕様）。
+プラン索引: [`README.md`](./README.md)
 
 ## 13. 未決事項
 

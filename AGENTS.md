@@ -10,13 +10,11 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** pre-alpha. Pipeline steps 1–5 (`src/discovery/` project root
-discovery, `src/config/` config load, `src/manifest/` manifest extraction,
-`src/sources/` source file discovery, `src/plugins/` config/plugin extraction)
-are implemented as library APIs. Phase 0 adds `src/graph/` and `src/parser/`
-skeletons (`build_graph_skeleton`, `parse_file`). The CLI analyzer and issue
-reporting are not wired yet. Implementation follows the phased roadmap in
-`docs/dev/spec.ja.md`.
+**Status:** pre-alpha. Pipeline steps 1–4 run via `probe_project` (CLI probe
+mode). Step 5 (`src/plugins/` config/plugin extraction) is implemented as a
+library API. Issue reporting and steps 6–13 are not wired yet. Phase 0 adds
+`src/graph/` and `src/parser/` skeletons. Implementation follows the phased
+roadmap in `docs/dev/spec.ja.md`.
 
 ## Repository structure
 
@@ -31,7 +29,8 @@ src/
   plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi)
   graph/          Project graph skeleton (Phase 0; import edges)
   parser/         Python parse spike (`parse_file`, pipeline step 6 前提)
-  cli.rs          (future) CLI argument parsing
+  cli.rs          CLI argument parsing (Phase 0 probe flags)
+  pipeline/       probe_project — pipeline steps 1–4 orchestration
   resolver/       (future) import-name → distribution-name resolution
   rules/          (future) YOK001–YOK010 rule implementations
   reporters/      (future) default / compact / JSON / Markdown reporters
