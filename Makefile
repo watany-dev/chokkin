@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.47.0
 
-.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools help
+.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test doc deny
@@ -27,6 +27,17 @@ fmt-check:
 
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+
+## ─── Benchmarks ───────────────────────────────────────────────────────────────
+# bench-save/bench-cmp: pass BASELINE=<name> (e.g. make bench-save BASELINE=main)
+bench:
+	cargo bench --locked
+
+bench-save:
+	cargo bench --locked -- --save-baseline $(BASELINE)
+
+bench-cmp:
+	cargo bench --locked -- --baseline $(BASELINE)
 
 ## ─── Security & supply chain ──────────────────────────────────────────────────
 deny:
