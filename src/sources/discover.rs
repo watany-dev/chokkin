@@ -48,7 +48,7 @@ pub fn discover_sources(
     let (files, walk_warnings) = collect_files(&collect_options)?;
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
-    warnings.extend(layout_warnings(&root.path, &layout));
+    warnings.extend(layout_warnings(&layout));
     warnings.extend(walk_warnings);
     if let Some(warning) = gitignore_warning {
         warnings.push(warning);

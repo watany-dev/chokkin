@@ -1,0 +1,7 @@
+[project]
+name = "gitignore-disabled"
+version = "0.1.0"
+
+[tool.yokei]
+respect_gitignore = false
+project = ["**/*.{py,pyi}"]

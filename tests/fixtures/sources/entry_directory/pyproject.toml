@@ -1,0 +1,6 @@
+[project]
+name = "entry-directory"
+version = "0.1.0"
+
+[tool.yokei]
+entry = ["src/acme"]

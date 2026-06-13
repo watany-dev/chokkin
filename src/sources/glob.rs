@@ -5,29 +5,37 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use super::error::SourcesError;
 
 const CACHE_PATTERN: &str = "**/__pycache__/**";
+const MANDATORY_EXCLUDES: &[&str] = &[".venv/**", "build/**", "dist/**", CACHE_PATTERN];
 
 /// Build a glob matcher from pattern strings.
 pub fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
     let mut builder = GlobSetBuilder::new();
+    let mut compiled = Vec::with_capacity(patterns.len());
     for pattern in patterns {
         let glob = Glob::new(pattern).map_err(|error| SourcesError::InvalidGlob {
             pattern: pattern.clone(),
             reason: error.to_string(),
         })?;
         builder.add(glob);
+        compiled.push(pattern.clone());
     }
     builder.build().map_err(|error| SourcesError::InvalidGlob {
-        pattern: String::new(),
+        pattern: compiled.join(", "),
         reason: error.to_string(),
     })
 }
 
-/// Merge config excludes with mandatory cache-directory exclusion.
+/// Merge config excludes with mandatory safety patterns.
+///
+/// `.venv`, `build`, `dist`, and `__pycache__` are always excluded even when
+/// the user replaces `config.exclude`.
 #[must_use]
 pub fn effective_exclude(config_exclude: &[String]) -> Vec<String> {
     let mut patterns = config_exclude.to_vec();
-    if !patterns.iter().any(|pattern| pattern == CACHE_PATTERN) {
-        patterns.push(CACHE_PATTERN.to_owned());
+    for mandatory in MANDATORY_EXCLUDES {
+        if !patterns.iter().any(|pattern| pattern == *mandatory) {
+            patterns.push((*mandatory).to_owned());
+        }
     }
     patterns
 }
@@ -51,8 +59,19 @@ mod tests {
     }
 
     #[test]
-    fn effective_exclude_adds_pycache_pattern() {
+    fn effective_exclude_adds_mandatory_patterns() {
         let patterns = effective_exclude(&[]);
+        assert!(patterns.contains(&".venv/**".to_owned()));
+        assert!(patterns.contains(&"build/**".to_owned()));
+        assert!(patterns.contains(&"dist/**".to_owned()));
+        assert!(patterns.contains(&"**/__pycache__/**".to_owned()));
+    }
+
+    #[test]
+    fn effective_exclude_keeps_mandatory_when_config_replaced() {
+        let patterns = effective_exclude(&["custom/**".to_owned()]);
+        assert!(patterns.contains(&"custom/**".to_owned()));
+        assert!(patterns.contains(&".venv/**".to_owned()));
         assert!(patterns.contains(&"**/__pycache__/**".to_owned()));
     }
 
@@ -75,16 +94,18 @@ mod tests {
             }
 
             #[test]
-            fn effective_exclude_keeps_input_and_adds_cache_once(
+            fn effective_exclude_keeps_input_and_adds_mandatory_once(
                 patterns in prop::collection::vec("[a-z0-9_/*.]{0,20}", 0..6),
             ) {
                 let effective = effective_exclude(&patterns);
                 prop_assert!(effective.starts_with(&patterns));
-                let input_count = patterns.iter().filter(|p| *p == CACHE_PATTERN).count();
-                prop_assert_eq!(
-                    effective.iter().filter(|p| *p == CACHE_PATTERN).count(),
-                    input_count.max(1)
-                );
+                for mandatory in MANDATORY_EXCLUDES {
+                    let input_count = patterns.iter().filter(|p| *p == mandatory).count();
+                    prop_assert_eq!(
+                        effective.iter().filter(|p| *p == mandatory).count(),
+                        input_count.max(1)
+                    );
+                }
             }
 
             #[test]
