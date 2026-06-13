@@ -88,6 +88,14 @@ fn corpus() -> Vec<String> {
         "\"a\",".repeat(10_000)
     ));
     cases.push(format!("[{}]]", "section.".repeat(1_000)));
+    // Lockfile-shaped adversaries: package array floods and type confusion.
+    cases.push("[[package]]\n".repeat(2_000));
+    cases.push(format!(
+        "[[package]]\nname = \"a\"\ndependencies = [{}]",
+        "\"b\",".repeat(5_000)
+    ));
+    cases.push("package = \"not-an-array\"\nrequires-python = 3".to_owned());
+    cases.push("[[package]]\nname = 42\ndependencies = [1, [], {}]\n".to_owned());
     cases
 }
 
@@ -130,6 +138,22 @@ fn setup_cfg_corpus_never_panics() {
     for payload in corpus() {
         let temp = tempfile::tempdir().expect("tempdir");
         fs::write(temp.path().join("setup.cfg"), &payload).expect("write");
+        let root = project_root_at(temp.path());
+        let config = default_loaded_config(&root);
+        let _ = extract_manifest(&root, &config);
+    }
+}
+
+#[test]
+fn uv_lock_corpus_never_panics() {
+    for payload in corpus() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"x\"\n",
+        )
+        .expect("write");
+        fs::write(temp.path().join("uv.lock"), &payload).expect("write");
         let root = project_root_at(temp.path());
         let config = default_loaded_config(&root);
         let _ = extract_manifest(&root, &config);

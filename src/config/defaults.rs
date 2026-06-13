@@ -227,4 +227,121 @@ mod tests {
             default_config().dependencies.type_groups
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn any_mode() -> impl Strategy<Value = ProjectMode> {
+            prop_oneof![
+                Just(ProjectMode::Auto),
+                Just(ProjectMode::App),
+                Just(ProjectMode::Library),
+            ]
+        }
+
+        fn any_confidence() -> impl Strategy<Value = Confidence> {
+            prop_oneof![
+                Just(Confidence::Certain),
+                Just(Confidence::Likely),
+                Just(Confidence::Maybe),
+            ]
+        }
+
+        fn any_plugins() -> impl Strategy<Value = BTreeMap<PluginId, bool>> {
+            prop::collection::btree_map(
+                prop::sample::select(PluginId::all().to_vec()),
+                proptest::bool::ANY,
+                0..4,
+            )
+        }
+
+        fn partial_config() -> impl Strategy<Value = PartialConfig> {
+            (
+                proptest::option::of(any_mode()),
+                proptest::option::of(proptest::bool::ANY),
+                proptest::option::of(any_confidence()),
+                proptest::option::of(proptest::bool::ANY),
+                proptest::option::of(prop::collection::vec("[a-z/*.]{1,10}", 0..4)),
+                proptest::option::of(any_plugins()),
+            )
+                .prop_map(
+                    |(mode, production, confidence, respect_gitignore, exclude, plugins)| {
+                        PartialConfig {
+                            mode,
+                            production,
+                            respect_gitignore,
+                            confidence,
+                            exclude,
+                            plugins,
+                            ..PartialConfig::default()
+                        }
+                    },
+                )
+        }
+
+        proptest! {
+            #[test]
+            fn merge_with_no_layers_is_default(_unused in proptest::bool::ANY) {
+                prop_assert_eq!(merge_layers(&[]), default_config());
+            }
+
+            #[test]
+            fn empty_layers_are_identity(
+                layers in prop::collection::vec(partial_config(), 0..4),
+                position in 0usize..5,
+            ) {
+                let mut padded = layers.clone();
+                padded.insert(position.min(layers.len()), PartialConfig::default());
+                prop_assert_eq!(merge_layers(&padded), merge_layers(&layers));
+            }
+
+            #[test]
+            fn scalar_fields_take_last_set_value(
+                layers in prop::collection::vec(partial_config(), 0..4),
+            ) {
+                let merged = merge_layers(&layers);
+                let defaults = default_config();
+
+                let last_mode = layers.iter().rev().find_map(|layer| layer.mode);
+                prop_assert_eq!(merged.mode, last_mode.unwrap_or(defaults.mode));
+
+                let last_production = layers.iter().rev().find_map(|layer| layer.production);
+                prop_assert_eq!(
+                    merged.production,
+                    last_production.unwrap_or(defaults.production)
+                );
+
+                let last_exclude = layers
+                    .iter()
+                    .rev()
+                    .find_map(|layer| layer.exclude.clone());
+                prop_assert_eq!(merged.exclude, last_exclude.unwrap_or(defaults.exclude));
+            }
+
+            #[test]
+            fn plugins_merge_per_key_keeping_defaults(
+                layers in prop::collection::vec(partial_config(), 0..4),
+            ) {
+                let merged = merge_layers(&layers);
+                let defaults = default_config();
+
+                // Every default plugin key survives merging.
+                prop_assert_eq!(merged.plugins.len(), defaults.plugins.len());
+                for plugin in PluginId::all() {
+                    let expected = layers
+                        .iter()
+                        .rev()
+                        .find_map(|layer| {
+                            layer
+                                .plugins
+                                .as_ref()
+                                .and_then(|plugins| plugins.get(plugin).copied())
+                        })
+                        .or_else(|| defaults.plugins.get(plugin).copied());
+                    prop_assert_eq!(merged.plugins.get(plugin).copied(), expected);
+                }
+            }
+        }
+    }
 }
