@@ -36,7 +36,6 @@ pub fn parse_file(
     })?;
 
     let mut parsed = ParsedModule::empty(path.to_owned());
-    parsed.ignores = extract_ignores(&source);
 
     let mut locator = RandomLocator::new(&source);
     match ast::Suite::parse(&source, path) {
@@ -44,7 +43,6 @@ pub fn parse_file(
             let mut visitor = ModuleVisitor::new(path, layout, file_context, &mut locator);
             visitor.visit_module(&stmts);
             parsed = visitor.into_parsed();
-            parsed.ignores = extract_ignores(&source);
             note_unsupported_syntax(target, &stmts, &mut parsed.diagnostics);
         },
         Err(error) => {
@@ -54,6 +52,7 @@ pub fn parse_file(
         },
     }
 
+    parsed.ignores = extract_ignores(&source);
     Ok(parsed)
 }
 

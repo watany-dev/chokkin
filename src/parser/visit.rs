@@ -25,7 +25,6 @@ pub struct ModuleVisitor<'a> {
     in_type_checking: bool,
     try_depth: u32,
     module_level: bool,
-    exports: Vec<String>,
     parsed: ParsedModule,
 }
 
@@ -46,7 +45,6 @@ impl<'a> ModuleVisitor<'a> {
             in_type_checking: false,
             try_depth: 0,
             module_level: true,
-            exports: Vec::new(),
             parsed: ParsedModule::empty(path.to_owned()),
         }
     }
@@ -59,8 +57,7 @@ impl<'a> ModuleVisitor<'a> {
 
     /// Visit module-level statements.
     pub fn visit_module(&mut self, stmts: &[Stmt]) {
-        self.exports = extract_exports(stmts, &mut self.parsed.diagnostics);
-        self.parsed.exports = self.exports.clone();
+        self.parsed.exports = extract_exports(stmts, &mut self.parsed.diagnostics);
         collect_dynamic_imports(
             stmts,
             &mut self.parsed.dynamic_imports,
@@ -317,7 +314,8 @@ impl<'a> ModuleVisitor<'a> {
     }
 
     fn record_symbol(&mut self, name: String, kind: SymbolKind, line: u32, decorators: &[Expr]) {
-        let is_public = !name.starts_with('_') || self.exports.iter().any(|export| export == &name);
+        let is_public =
+            !name.starts_with('_') || self.parsed.exports.iter().any(|export| export == &name);
         let normalized = decorators.iter().filter_map(normalize_decorator).collect();
         self.parsed.symbols.push(SymbolDef {
             name,

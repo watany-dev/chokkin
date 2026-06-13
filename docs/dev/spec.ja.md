@@ -698,7 +698,7 @@ yokei/
     manifest/    # 実装済み: pipeline step 3 (manifest extraction)
     sources/     # 実装済み: pipeline step 4 (source file discovery)
     plugins/     # 実装済み: pipeline step 5 (config/plugin extraction)
-    graph/       # Phase 0: pipeline step 6 前提 (`build_graph_skeleton`, import 辺)
+    graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
     parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`)
     resolver/
     rules/

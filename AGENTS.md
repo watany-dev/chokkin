@@ -11,10 +11,10 @@ unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
 **Status:** pre-alpha. Pipeline steps 1–4 run via `probe_project` (CLI probe
-mode). Step 5 (`src/plugins/` config/plugin extraction) is implemented as a
-library API. Issue reporting and steps 6–13 are not wired yet. Phase 0 adds
-`src/graph/` and `src/parser/` skeletons. Implementation follows the phased
-roadmap in `docs/dev/spec.ja.md`.
+mode). Steps 5–6 (`src/plugins/` config/plugin extraction and `src/parser/`
+Python parse) are implemented as library APIs. Issue reporting and steps 7–13
+are not wired yet. `src/graph/` provides skeleton nodes and import edges.
+Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
 
 ## Repository structure
 
@@ -27,7 +27,7 @@ src/
   manifest/       Manifest extraction (pipeline step 3; util.rs shared helpers)
   sources/        Source file discovery (pipeline step 4)
   plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi)
-  graph/          Project graph skeleton (Phase 0; import edges)
+  graph/          Project graph skeleton + import edges (Phase 0; extended in step 6)
   parser/         Python parse (`parse_file`, `parse_project_sources`, pipeline step 6)
   cli.rs          CLI argument parsing (Phase 0 probe flags)
   pipeline/       probe_project — pipeline steps 1–4 orchestration
