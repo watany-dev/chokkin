@@ -3,6 +3,8 @@
 `docs/dev/spec.ja.md` §6 パイプラインと §17 ロードマップに対応する設計ドキュメント一覧。
 各プランは **update-plan 合格**（90点以上）を付記してから実装に進む。
 
+**横断検証:** [`VALIDATION.md`](./VALIDATION.md)（Steps 9–13 + Phase 1 CLI、2026-06-13 合格）
+
 ## パイプライン Steps 1–13
 
 | Step | ドキュメント | 状態 | 実装 |
@@ -15,20 +17,21 @@
 | 6 | [step-06-python-parse.md](./step-06-python-parse.md) | 確定 | 🟡 spike のみ |
 | 7 | [step-07-import-resolution.md](./step-07-import-resolution.md) | 確定 | ⬜ |
 | 8 | [step-08-entry-root-construction.md](./step-08-entry-root-construction.md) | 確定 | ⬜ |
-| 9 | reachability analysis | **未設計** | ⬜ |
-| 10 | dependency reconciliation | **未設計** | ⬜ |
-| 11 | symbol usage analysis | **未設計** | ⬜ |
-| 12 | issue emission | **未設計** | ⬜ |
-| 13 | optional fix | **未設計** | ⬜ |
+| 9 | [step-09-reachability-analysis.md](./step-09-reachability-analysis.md) | 確定 | ⬜ |
+| 10 | [step-10-dependency-reconciliation.md](./step-10-dependency-reconciliation.md) | 確定 | ⬜ |
+| 11 | [step-11-symbol-usage-analysis.md](./step-11-symbol-usage-analysis.md) | 確定 | ⬜ |
+| 12 | [step-12-issue-emission.md](./step-12-issue-emission.md) | 確定 | ⬜ |
+| 13 | [step-13-optional-fix.md](./step-13-optional-fix.md) | 確定 | ⬜ |
 
-## Phase 0 横断
+## Phase 0 / Phase 1 横断
 
 | 項目 | ドキュメント | 状態 | 実装 |
 | --- | --- | --- | --- |
 | Parser spike + graph core | [phase-0-parser-spike-graph-core.md](./phase-0-parser-spike-graph-core.md) | 確定 | 🟡 骨格あり |
-| CLI 縦スライス | [phase-0-cli-vertical-slice.md](./phase-0-cli-vertical-slice.md) | 確定 | ⬜ |
-| bundled maps | step-07 §3.2–3.3 に包含 | 確定 | ⬜ |
+| CLI 縦スライス（probe） | [phase-0-cli-vertical-slice.md](./phase-0-cli-vertical-slice.md) | 確定 | ⬜ |
+| bundled maps | [step-07](./step-07-import-resolution.md) §3.2–3.3 | 確定 | ⬜ |
 | wheel + PyPI release | spec §15, `release.yml` | CI のみ | ⬜ 未タグ |
+| **フル CLI + reporter** | [phase-1-cli-reporter.md](./phase-1-cli-reporter.md) | 確定 | ⬜ |
 
 ## 推奨実装順（クリティカルパス）
 
@@ -42,7 +45,7 @@ flowchart TB
   end
 
   subgraph phase0 [Phase 0 残り — 並行可]
-    CLI[CLI 縦スライス]
+    CLI[CLI probe]
     P0G[graph/parser spike ✅]
     MAPS[bundled maps]
   end
@@ -56,6 +59,8 @@ flowchart TB
     S10[Step 10 deps]
     S11[Step 11 symbols]
     S12[Step 12 issues]
+    S13[Step 13 fix]
+    P1[Phase 1 CLI]
   end
 
   S4 --> CLI
@@ -73,15 +78,20 @@ flowchart TB
   S9 --> S11
   S10 --> S12
   S11 --> S12
+  S12 --> S13
+  S12 --> P1
+  S13 --> P1
 ```
 
-## 次に設計すべきもの
+## 設計完了 — 実装フェーズ
 
-1. **Step 9: reachability analysis** — BFS、`File reaches File`、`ConfigReference` 辺
-2. **Step 10: dependency reconciliation** — YOK002–YOK005, lockfile transitive
-3. **Step 11: symbol usage analysis** — YOK006–YOK007, decorator externally-used
-4. **Step 12: issue emission** — reporter 接続前の `Issue` 型と confidence フィルタ
-5. **Phase 1 CLI** — `clap`、`--explain` / `--trace`、reporter
+**パイプライン Steps 1–13 + Phase 0/1 CLI の設計はすべて確定済み。**
+
+残作業は実装と Phase 1 exit criteria（§17）:
+
+- OSS 20 プロジェクト dogfooding
+- YOK002/YOK003 誤検知率 5% 未満
+- medium project cold 2s 以内
 
 ## ADR
 
