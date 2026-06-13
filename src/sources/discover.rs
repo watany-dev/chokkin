@@ -25,8 +25,9 @@ pub fn discover_sources(
         config.effective.project.clone()
     };
 
+    let exclude_patterns = effective_exclude(&config.effective.exclude);
     let project_matcher = build_glob_set(&effective_globs)?;
-    let exclude_matcher = build_glob_set(&effective_exclude(&config.effective.exclude))?;
+    let exclude_matcher = build_glob_set(&exclude_patterns)?;
 
     let (gitignore, gitignore_warning) = if config.effective.respect_gitignore {
         load_gitignore(&root.path)
@@ -38,14 +39,17 @@ pub fn discover_sources(
         root: &root.path,
         project_matcher: &project_matcher,
         exclude_matcher: &exclude_matcher,
+        exclude_patterns: &exclude_patterns,
+        respect_gitignore: config.effective.respect_gitignore,
         gitignore: gitignore.as_ref(),
         production: config.effective.production,
         layout: &layout,
     };
-    let files = collect_files(&collect_options)?;
+    let (files, walk_warnings) = collect_files(&collect_options)?;
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
     warnings.extend(layout_warnings(&root.path, &layout));
+    warnings.extend(walk_warnings);
     if let Some(warning) = gitignore_warning {
         warnings.push(warning);
     }

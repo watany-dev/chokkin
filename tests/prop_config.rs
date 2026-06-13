@@ -12,7 +12,9 @@ use std::fs;
 use std::path::Path;
 
 use proptest::prelude::*;
-use yokei::{Confidence, PluginId, ProjectMode, ProjectRoot, RootMarker, load_config};
+use yokei::{
+    Confidence, PluginId, ProjectMode, ProjectRoot, RootMarker, TargetVersion, load_config,
+};
 
 const PLUGIN_KEYS: [&str; 8] = [
     "pytest",
@@ -108,7 +110,10 @@ proptest! {
         );
         prop_assert_eq!(loaded.effective.production, production);
         prop_assert_eq!(loaded.effective.respect_gitignore, respect_gitignore);
-        prop_assert_eq!(loaded.effective.target_version.as_str(), target_version.as_str());
+        prop_assert_eq!(
+            loaded.effective.target_version.as_ref().map(TargetVersion::as_str),
+            Some(target_version.as_str())
+        );
         prop_assert_eq!(loaded.effective.exclude, exclude);
         prop_assert!(loaded.sources.dot_yokei_toml.is_some());
     }

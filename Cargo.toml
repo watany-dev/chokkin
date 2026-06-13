@@ -26,7 +26,6 @@ pep508_rs = "0.9"
 rustpython-parser = { version = "0.4", default-features = false, features = ["location", "num-bigint"] }
 thiserror = "2"
 toml = "1.1"
-walkdir = "2"
 
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }

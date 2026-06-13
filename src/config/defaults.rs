@@ -88,7 +88,7 @@ pub fn default_config() -> YokeiConfig {
         project: Vec::new(),
         mode: ProjectMode::Auto,
         production: false,
-        target_version: TargetVersion::default_py311(),
+        target_version: None,
         respect_gitignore: true,
         confidence: Confidence::Likely,
         exclude: vec![
@@ -135,7 +135,7 @@ pub fn merge_layers(layers: &[PartialConfig]) -> YokeiConfig {
             config.production = production;
         }
         if let Some(target_version) = &layer.target_version {
-            config.target_version = target_version.clone();
+            config.target_version = Some(target_version.clone());
         }
         if let Some(respect_gitignore) = layer.respect_gitignore {
             config.respect_gitignore = respect_gitignore;
