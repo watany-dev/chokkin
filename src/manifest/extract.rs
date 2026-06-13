@@ -324,4 +324,102 @@ mod tests {
         );
         assert!(warnings.is_empty());
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn infer_target_version_never_panics(specifier in "\\PC{0,80}") {
+                if let Some(version) = infer_target_version_from_requires_python(&specifier) {
+                    prop_assert!(TargetVersion::parse(version.as_str()).is_some());
+                }
+            }
+
+            #[test]
+            fn infer_target_version_reads_lower_bound(minor in 10u32..40) {
+                let inferred = infer_target_version_from_requires_python(&format!(">=3.{minor}"))
+                    .expect("lower bound must infer");
+                let expected = format!("py3{minor:02}");
+                prop_assert_eq!(inferred.as_str(), expected.as_str());
+            }
+
+            #[test]
+            fn infer_target_version_picks_highest_lower_bound(
+                low in 10u32..20,
+                high in 20u32..40,
+            ) {
+                let inferred =
+                    infer_target_version_from_requires_python(&format!(">=3.{low},>=3.{high}"))
+                        .expect("compound bound must infer");
+                let expected = format!("py3{high:02}");
+                prop_assert_eq!(inferred.as_str(), expected.as_str());
+            }
+
+            #[test]
+            fn parse_python_version_never_panics(digits in "\\PC{0,20}") {
+                let _ = parse_python_version(&digits);
+            }
+
+            #[test]
+            fn parse_python_version_roundtrips_dotted(major in 0u32..10, minor in 0u32..100) {
+                prop_assert_eq!(
+                    parse_python_version(&format!("{major}.{minor}")),
+                    Some((major, minor))
+                );
+            }
+
+            #[test]
+            fn merge_metadata_keeps_base_and_warns_on_conflict(
+                base_name in "[a-z][a-z0-9-]{0,15}",
+                overlay_name in "[a-z][a-z0-9-]{0,15}",
+            ) {
+                let base = ProjectMetadata {
+                    name: Some(base_name.clone()),
+                    ..ProjectMetadata::default()
+                };
+                let overlay = ProjectMetadata {
+                    name: Some(overlay_name.clone()),
+                    ..ProjectMetadata::default()
+                };
+                let mut warnings = Vec::new();
+                let merged =
+                    merge_metadata(base, overlay, &mut warnings, "pyproject.toml", "setup.cfg");
+                prop_assert_eq!(merged.name.as_deref(), Some(base_name.as_str()));
+                prop_assert_eq!(warnings.len(), usize::from(base_name != overlay_name));
+            }
+
+            #[test]
+            fn merge_metadata_dynamic_union_is_deduplicated(
+                base_dynamic in prop::collection::vec("[a-z]{1,8}", 0..4),
+                overlay_dynamic in prop::collection::vec("[a-z]{1,8}", 0..4),
+            ) {
+                let base = ProjectMetadata {
+                    dynamic: dedup(base_dynamic),
+                    ..ProjectMetadata::default()
+                };
+                let overlay = ProjectMetadata {
+                    dynamic: overlay_dynamic,
+                    ..ProjectMetadata::default()
+                };
+                let expected_base = base.dynamic.clone();
+                let mut warnings = Vec::new();
+                let merged =
+                    merge_metadata(base, overlay, &mut warnings, "pyproject.toml", "setup.cfg");
+
+                let mut seen = BTreeSet::new();
+                prop_assert!(merged.dynamic.iter().all(|item| seen.insert(item.clone())));
+                prop_assert!(merged.dynamic.starts_with(&expected_base));
+            }
+        }
+
+        fn dedup(items: Vec<String>) -> Vec<String> {
+            let mut seen = BTreeSet::new();
+            items
+                .into_iter()
+                .filter(|item| seen.insert(item.clone()))
+                .collect()
+        }
+    }
 }

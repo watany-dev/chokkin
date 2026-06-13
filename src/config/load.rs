@@ -100,4 +100,68 @@ mod tests {
         );
         assert_eq!(config.confidence, Confidence::Certain);
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn any_confidence() -> impl Strategy<Value = Confidence> {
+            prop_oneof![
+                Just(Confidence::Certain),
+                Just(Confidence::Likely),
+                Just(Confidence::Maybe),
+            ]
+        }
+
+        proptest! {
+            #[test]
+            fn overrides_replace_only_set_fields(
+                production in proptest::option::of(proptest::bool::ANY),
+                confidence_floor in proptest::option::of(any_confidence()),
+                strict in proptest::option::of(proptest::bool::ANY),
+            ) {
+                let baseline = default_config();
+                let mut config = baseline.clone();
+                apply_overrides(
+                    &mut config,
+                    &RuntimeOverrides {
+                        production,
+                        strict,
+                        confidence_floor,
+                    },
+                );
+
+                prop_assert_eq!(
+                    config.production,
+                    production.unwrap_or(baseline.production)
+                );
+                prop_assert_eq!(
+                    config.confidence,
+                    confidence_floor.unwrap_or(baseline.confidence)
+                );
+
+                // Everything else stays untouched.
+                config.production = baseline.production;
+                config.confidence = baseline.confidence;
+                prop_assert_eq!(config, baseline);
+            }
+
+            #[test]
+            fn apply_overrides_is_idempotent(
+                production in proptest::option::of(proptest::bool::ANY),
+                confidence_floor in proptest::option::of(any_confidence()),
+            ) {
+                let overrides = RuntimeOverrides {
+                    production,
+                    strict: None,
+                    confidence_floor,
+                };
+                let mut once = default_config();
+                apply_overrides(&mut once, &overrides);
+                let mut twice = once.clone();
+                apply_overrides(&mut twice, &overrides);
+                prop_assert_eq!(once, twice);
+            }
+        }
+    }
 }

@@ -72,8 +72,8 @@ Run before every push:
 make check
 ```
 
-This runs: `cargo fmt --check` → `cargo clippy -D warnings` → `cargo test` →
-`cargo doc -D warnings` → `cargo deny check`.
+This runs: `cargo fmt --check` → `cargo clippy -D warnings` + `cargo doc` →
+`cargo test` → `cargo deny check` → `cargo machete`.
 
 Install tools once with `make tools`.
 

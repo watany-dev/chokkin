@@ -192,4 +192,62 @@ mod tests {
         let chosen = resolve_flat_packages(&candidates, &ProjectMetadata::default());
         assert_eq!(chosen, vec!["alpha".to_owned()]);
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn candidate_names() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec("[a-z][a-z0-9_]{0,12}", 0..6)
+        }
+
+        proptest! {
+            #[test]
+            fn resolve_flat_returns_subset_of_candidates(
+                candidates in candidate_names(),
+                name in proptest::option::of("[A-Za-z][A-Za-z0-9_-]{0,16}"),
+            ) {
+                let metadata = ProjectMetadata {
+                    name,
+                    ..ProjectMetadata::default()
+                };
+                let resolved = resolve_flat_packages(&candidates, &metadata);
+
+                prop_assert!(resolved.iter().all(|pkg| candidates.contains(pkg)));
+                if candidates.len() <= 1 {
+                    prop_assert_eq!(resolved, candidates);
+                } else {
+                    prop_assert_eq!(resolved.len(), 1);
+                }
+            }
+
+            #[test]
+            fn resolve_flat_prefers_underscored_metadata_name(
+                mut candidates in candidate_names(),
+                target in "[a-z][a-z0-9_]{0,12}",
+            ) {
+                candidates.push(target.clone());
+                candidates.sort();
+                candidates.dedup();
+
+                let metadata = ProjectMetadata {
+                    name: Some(target.replace('_', "-")),
+                    ..ProjectMetadata::default()
+                };
+                let resolved = resolve_flat_packages(&candidates, &metadata);
+                prop_assert_eq!(resolved, vec![target]);
+            }
+
+            #[test]
+            fn default_globs_always_cover_tests_and_scripts(
+                packages in candidate_names(),
+            ) {
+                for layout in [ProjectLayout::Src, ProjectLayout::Flat, ProjectLayout::Unknown] {
+                    let globs = default_globs(layout, &packages);
+                    prop_assert!(globs.contains(&"tests/**/*.py".to_owned()));
+                    prop_assert!(globs.contains(&"scripts/**/*.py".to_owned()));
+                }
+            }
+        }
+    }
 }

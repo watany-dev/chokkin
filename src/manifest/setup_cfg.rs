@@ -153,4 +153,64 @@ install_requires =
         assert!(requires.contains("requests"), "requires={requires:?}");
         assert!(requires.contains("flask>=1.0"), "requires={requires:?}");
     }
+
+    mod props {
+        use std::fmt::Write as _;
+
+        use super::*;
+        use proptest::prelude::*;
+
+        /// INI values that survive `key = value` rendering unchanged: no
+        /// newlines, no comment leaders, and no surrounding whitespace.
+        fn ini_value() -> impl Strategy<Value = String> {
+            "[A-Za-z0-9><=~. _-]{0,30}".prop_map(|value| value.trim().to_owned())
+        }
+
+        proptest! {
+            #[test]
+            fn parse_ini_sections_never_panics(contents in "\\PC{0,400}") {
+                let _ = parse_ini_sections(&contents);
+            }
+
+            #[test]
+            fn parse_ini_sections_roundtrips_flat_keys(
+                section in "[a-z][a-z0-9.]{0,15}",
+                entries in prop::collection::btree_map("[a-z][a-z0-9_]{0,12}", ini_value(), 0..6),
+            ) {
+                let mut contents = format!("[{section}]\n");
+                for (key, value) in &entries {
+                    writeln!(contents, "{key} = {value}").expect("write to string");
+                }
+
+                let sections = parse_ini_sections(&contents);
+                let parsed = sections.get(&section).expect("section must exist");
+                prop_assert_eq!(parsed, &entries);
+            }
+
+            #[test]
+            fn parse_ini_sections_joins_continuation_lines(
+                values in prop::collection::vec("[a-z][a-z0-9>=.-]{0,15}", 1..6),
+            ) {
+                let mut contents = String::from("[options]\ninstall_requires =\n");
+                for value in &values {
+                    writeln!(contents, "    {value}").expect("write to string");
+                }
+
+                let sections = parse_ini_sections(&contents);
+                let requires = sections
+                    .get("options")
+                    .and_then(|options| options.get("install_requires"))
+                    .expect("install_requires must exist");
+                prop_assert_eq!(split_requirement_lines(requires), values);
+            }
+
+            #[test]
+            fn split_requirement_lines_yields_trimmed_nonempty(value in "\\PC{0,200}") {
+                for line in split_requirement_lines(&value) {
+                    prop_assert!(!line.is_empty());
+                    prop_assert_eq!(line.trim(), line.as_str());
+                }
+            }
+        }
+    }
 }

@@ -1,5 +1,13 @@
 [graph]
-targets = []
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
 all-features = true
 
 [advisories]
@@ -12,6 +20,8 @@ ignore = [
     { id = "RUSTSEC-2025-0098", reason = "rustpython-parser → unic-ucd-version" },
     { id = "RUSTSEC-2025-0100", reason = "rustpython-parser → unic-ucd-ident" },
 ]
+yanked = "deny"
+unmaintained = "workspace"
 
 [licenses]
 allow = [

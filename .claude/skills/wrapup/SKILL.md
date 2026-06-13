@@ -16,8 +16,8 @@ yokei の編集タスク後に手動で行っていた `/simplify` → `/update-
    観点でレビュー／リファクタする。
 2. **update-docs** を Skill ツールで呼び出し、`src/` の変更を `README.md` /
    `README.ja.md` / `docs/dev/spec.ja.md` / `CLAUDE.md` / `AGENTS.md` に同期する。
-3. ファイルを変更した場合は `make check` を実行し、fmt-check → clippy → test →
-   doc → cargo-deny が通ることを確認する。
+3. ファイルを変更した場合は `make check` を実行し、fmt-check → lint (clippy + doc) →
+   test → deny → machete が通ることを確認する。
 4. **完了マーカーを必ず touch する。** Stop hook の block reason に埋め込まれた
    絶対パス (例 `/tmp/yokei-wrapup-<session_id>`) を `touch` する。reason から
    取得できない場合は `/tmp/yokei-wrapup-default` をフォールバックに使う。

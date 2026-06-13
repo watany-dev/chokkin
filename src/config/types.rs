@@ -393,4 +393,104 @@ mod tests {
     fn target_version_rejects_invalid() {
         assert!(TargetVersion::parse("python3.11").is_none());
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Reference model for `TargetVersion::parse`: `py3` + 2-3 ASCII digits.
+        fn is_valid_target_version(value: &str) -> bool {
+            value.strip_prefix("py3").is_some_and(|suffix| {
+                (2..=3).contains(&suffix.len()) && suffix.chars().all(|ch| ch.is_ascii_digit())
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn target_version_matches_reference_model(value in "\\PC{0,12}") {
+                prop_assert_eq!(
+                    TargetVersion::parse(&value).is_some(),
+                    is_valid_target_version(&value)
+                );
+            }
+
+            #[test]
+            fn target_version_accepts_generated_valid_forms(suffix in "[0-9]{2,3}") {
+                let value = format!("py3{suffix}");
+                let parsed = TargetVersion::parse(&value).expect("valid form must parse");
+                prop_assert_eq!(parsed.as_str(), value.as_str());
+            }
+
+            #[test]
+            fn entry_spec_parse_never_panics(value in "\\PC{0,80}") {
+                let _ = EntrySpec::parse(&value);
+            }
+
+            #[test]
+            fn entry_spec_ok_invariants(value in "\\PC{0,80}") {
+                if let Ok(spec) = EntrySpec::parse(&value) {
+                    prop_assert!(!spec.path.is_empty());
+                    prop_assert!(spec.path != "." && spec.path != "..");
+                    prop_assert!(!spec.path.contains(':'));
+                    if let Some(symbol) = &spec.symbol {
+                        prop_assert!(!symbol.is_empty());
+                    }
+                }
+            }
+
+            #[test]
+            fn entry_spec_roundtrips_path_and_symbol(
+                path in "[a-z][a-z0-9_/.]{0,30}",
+                symbol in "[A-Za-z_][A-Za-z0-9_]{0,12}",
+            ) {
+                prop_assume!(path != "." && path != "..");
+
+                let plain = EntrySpec::parse(&path).expect("plain path must parse");
+                prop_assert_eq!(&plain.path, &path);
+                prop_assert_eq!(plain.symbol, None);
+
+                let with_symbol =
+                    EntrySpec::parse(&format!("{path}:{symbol}")).expect("path:symbol must parse");
+                prop_assert_eq!(with_symbol.path, path);
+                prop_assert_eq!(with_symbol.symbol, Some(symbol));
+            }
+
+            #[test]
+            fn mode_and_confidence_parse_only_known_values(value in "\\PC{0,12}") {
+                prop_assert_eq!(
+                    ProjectMode::parse(&value).is_some(),
+                    matches!(value.as_str(), "auto" | "app" | "library")
+                );
+                prop_assert_eq!(
+                    Confidence::parse(&value).is_some(),
+                    matches!(value.as_str(), "certain" | "likely" | "maybe")
+                );
+            }
+
+            #[test]
+            fn leading_separator_is_always_absolute(rest in "[a-z0-9/._-]{0,20}") {
+                let posix = format!("/{rest}");
+                let windows = format!("\\{rest}");
+                prop_assert!(is_absolute_path_str(&posix));
+                prop_assert!(is_absolute_path_str(&windows));
+            }
+        }
+
+        #[test]
+        fn plugin_id_keys_roundtrip() {
+            for plugin in PluginId::all() {
+                assert_eq!(PluginId::from_key(plugin.as_key()), Some(*plugin));
+            }
+        }
+
+        #[test]
+        fn mode_and_confidence_as_str_roundtrip() {
+            for mode in [ProjectMode::Auto, ProjectMode::App, ProjectMode::Library] {
+                assert_eq!(ProjectMode::parse(mode.as_str()), Some(mode));
+            }
+            for confidence in [Confidence::Certain, Confidence::Likely, Confidence::Maybe] {
+                assert_eq!(Confidence::parse(confidence.as_str()), Some(confidence));
+            }
+        }
+    }
 }

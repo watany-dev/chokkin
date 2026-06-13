@@ -98,6 +98,17 @@ fn returns_io_error_for_unreadable_start_dir() {
     let dir = temp.path();
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
 
+    // Root (CAP_DAC_OVERRIDE) bypasses permission bits; the unreadable-dir
+    // scenario cannot be reproduced there, so skip instead of failing.
+    let denied = matches!(
+        std::fs::metadata(dir.join("pyproject.toml")),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied
+    );
+    if !denied {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).ok();
+        return;
+    }
+
     let error = discover_project_root(dir).expect_err("expected io error");
 
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).ok();

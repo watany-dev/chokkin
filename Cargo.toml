@@ -29,6 +29,7 @@ toml = "1.1"
 walkdir = "2"
 
 [dev-dependencies]
+proptest = "1"
 tempfile = "3"
 
 [lints.rust]
@@ -79,6 +80,9 @@ self_named_module_files = "deny"
 semicolon_inside_block = "deny"
 # Integration tests and property-test macros need root-level #[test].
 tests_outside_test_module = "allow"
+
+# Duplicate crate versions are enforced by cargo-deny (deny.toml [bans]), not clippy.
+multiple_crate_versions = "allow"
 
 # Exemptions for legitimate patterns.
 module_name_repetitions = "allow"

@@ -1,3 +1,4 @@
+# Stricter than clippy defaults; keeps early codebase reviewable as modules grow.
 cognitive-complexity-threshold = 10
 too-many-lines-threshold = 80
 too-many-arguments-threshold = 5
