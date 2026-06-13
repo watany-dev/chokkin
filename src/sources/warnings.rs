@@ -1,6 +1,7 @@
 //! Non-fatal warnings during source file discovery.
 
 /// Non-fatal conditions encountered while discovering source files.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourcesWarning {
     /// A configured entry path does not exist.
@@ -25,16 +26,16 @@ pub enum SourcesWarning {
         /// Path to the unreadable file.
         path: String,
     },
+    /// Project exceeds the large-project file threshold.
+    LargeProject {
+        /// Number of discovered files.
+        file_count: usize,
+    },
     /// A path could not be read during directory walking.
     PathUnreadable {
         /// Path that triggered the error.
         path: String,
         /// Human-readable error description.
         reason: String,
-    },
-    /// Project exceeds the large-project file threshold.
-    LargeProject {
-        /// Number of discovered files.
-        file_count: usize,
     },
 }
