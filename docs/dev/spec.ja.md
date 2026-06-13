@@ -298,7 +298,7 @@ File reaches File
 3. manifest extraction     # 実装済み: src/manifest/ (`extract_manifest`)
 4. source file discovery     # 実装済み: src/sources/ (`discover_sources`)
 5. config/plugin extraction
-6. Python parse
+6. Python parse              # Phase 0 spike: src/parser/ (`parse_file`, import 抽出のみ)
 7. import resolution
 8. entry root construction
 9. reachability analysis
@@ -696,13 +696,9 @@ yokei/
     cli.rs
     manifest/    # 実装済み: pipeline step 3 (manifest extraction)
     sources/     # 実装済み: pipeline step 4 (source file discovery)
-      util.rs      # shared path/read/push helpers
-      pep508_util.rs
-      requirements.rs
-      setup_py.rs  # static setup() body parse only
-    parser/
+    graph/       # Phase 0: pipeline step 6 前提 (`build_graph_skeleton`, import 辺)
+    parser/      # Phase 0 spike: `parse_file`（Step 6 本実装は未着手）
     resolver/
-    graph/
     rules/
     reporters/
     fix/
