@@ -11,9 +11,10 @@ unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
 **Status:** pre-alpha. Pipeline steps 1–4 run via `probe_project` (CLI probe
-mode). Issue reporting and steps 5–13 are not wired yet. Phase 0 adds
-`src/graph/` and `src/parser/` skeletons.
-Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
+mode). Step 5 (`src/plugins/` config/plugin extraction) is implemented as a
+library API. Issue reporting and steps 6–13 are not wired yet. Phase 0 adds
+`src/graph/` and `src/parser/` skeletons. Implementation follows the phased
+roadmap in `docs/dev/spec.ja.md`.
 
 ## Repository structure
 
@@ -25,6 +26,7 @@ src/
   config/         Config loading ([tool.yokei], pipeline step 2)
   manifest/       Manifest extraction (pipeline step 3; util.rs shared helpers)
   sources/        Source file discovery (pipeline step 4)
+  plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi)
   graph/          Project graph skeleton (Phase 0; import edges)
   parser/         Python parse spike (`parse_file`, pipeline step 6 前提)
   cli.rs          CLI argument parsing (Phase 0 probe flags)
@@ -33,7 +35,6 @@ src/
   rules/          (future) YOK001–YOK010 rule implementations
   reporters/      (future) default / compact / JSON / Markdown reporters
   fix/            (future) --fix: manifest-level edits only
-  plugins/        (future) pytest / django / fastapi plugin implementations
 pyproject.toml    maturin bin bindings — yokei ships as a Python wheel
 docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing

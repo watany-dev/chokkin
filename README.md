@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `yokei` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx yokei` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!WARNING]
-> **Status: pre-alpha.** Running `yokei` executes **probe mode**: pipeline steps 1–4 (discovery, config, manifest, sources) and prints a project summary. Full unused dependency/file analysis is not implemented yet. Phase 0 also adds `src/graph/` and `src/parser/` skeletons. The command output below shows the **target** UX once analysis is complete; see [`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md).
+> **Status: pre-alpha.** Running `yokei` executes **probe mode**: pipeline steps 1–4 (discovery, config, manifest, sources) and prints a project summary. Step 5 (`src/plugins/` config/plugin extraction) is available as a library API. Full unused dependency/file analysis and issue reporting are not implemented yet. Phase 0 also adds `src/graph/` and `src/parser/` skeletons. The command output below shows the **target** UX once analysis is complete; see [`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md).
 
 ## Why yokei?
 
