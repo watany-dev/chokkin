@@ -217,3 +217,205 @@ fn detect_unsupported_tools(table: &toml::Table, warnings: &mut Vec<ManifestWarn
         warnings.push(ManifestWarning::HatchDetected);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn extract(contents: &str) -> Result<PyprojectExtraction, ManifestError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("pyproject.toml");
+        std::fs::write(&path, contents).expect("write pyproject.toml");
+        extract_pyproject(temp.path(), &path)
+    }
+
+    #[test]
+    fn dynamic_dependencies_skip_project_list() {
+        let result = extract(
+            "[project]\nname = \"x\"\ndynamic = [\"dependencies\"]\ndependencies = [\"requests\"]\n",
+        )
+        .expect("valid pyproject");
+
+        assert!(result.skip_project_dependencies);
+        assert!(result.dependencies.is_empty());
+    }
+
+    #[test]
+    fn detects_all_unsupported_tools() {
+        let result = extract("[tool.poetry]\n[tool.pdm]\n[tool.hatch]\n").expect("valid pyproject");
+        assert_eq!(
+            result.warnings,
+            vec![
+                ManifestWarning::PoetryDetected,
+                ManifestWarning::PdmDetected,
+                ManifestWarning::HatchDetected,
+            ]
+        );
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn bare_key() -> impl Strategy<Value = String> {
+            "[a-z][a-z0-9-]{0,8}"
+        }
+
+        fn dep_name() -> impl Strategy<Value = String> {
+            "[A-Za-z0-9]([A-Za-z0-9._-]{0,12}[A-Za-z0-9])?"
+        }
+
+        proptest! {
+            #[test]
+            fn extract_pyproject_never_panics(contents in "\\PC{0,300}") {
+                let _ = extract(&contents);
+            }
+
+            #[test]
+            fn metadata_fields_roundtrip(
+                name in proptest::option::of(dep_name()),
+                version in proptest::option::of("[0-9]{1,3}\\.[0-9]{1,3}"),
+                requires_python in proptest::option::of(">=3\\.[0-9]{1,2}"),
+                dynamic in prop::collection::vec(bare_key(), 0..4),
+            ) {
+                let mut project = toml::Table::new();
+                if let Some(name) = &name {
+                    project.insert("name".into(), Value::String(name.clone()));
+                }
+                if let Some(version) = &version {
+                    project.insert("version".into(), Value::String(version.clone()));
+                }
+                if let Some(requires) = &requires_python {
+                    project.insert("requires-python".into(), Value::String(requires.clone()));
+                }
+                project.insert(
+                    "dynamic".into(),
+                    Value::Array(dynamic.iter().cloned().map(Value::String).collect()),
+                );
+                let mut doc = toml::Table::new();
+                doc.insert("project".into(), Value::Table(project));
+
+                let result = extract(&toml::to_string(&doc).expect("serialize"))
+                    .expect("valid pyproject");
+                prop_assert_eq!(result.metadata.name, name);
+                prop_assert_eq!(result.metadata.version, version);
+                prop_assert_eq!(result.metadata.requires_python, requires_python);
+                prop_assert_eq!(&result.metadata.dynamic, &dynamic);
+
+                let dynamic_deps = result.metadata.dynamic.iter().any(|d| d == "dependencies");
+                prop_assert_eq!(result.skip_project_dependencies, dynamic_deps);
+            }
+
+            #[test]
+            fn optional_dependencies_carry_extra_context(
+                extras in prop::collection::btree_map(
+                    bare_key(),
+                    prop::collection::vec(dep_name(), 0..4),
+                    0..4,
+                ),
+            ) {
+                let mut optional = toml::Table::new();
+                for (extra, deps) in &extras {
+                    optional.insert(
+                        extra.clone(),
+                        Value::Array(deps.iter().cloned().map(Value::String).collect()),
+                    );
+                }
+                let mut project = toml::Table::new();
+                project.insert("name".into(), Value::String("x".into()));
+                project.insert("optional-dependencies".into(), Value::Table(optional));
+                let mut doc = toml::Table::new();
+                doc.insert("project".into(), Value::Table(project));
+
+                let result = extract(&toml::to_string(&doc).expect("serialize"))
+                    .expect("valid pyproject");
+
+                let expected: usize = extras.values().map(Vec::len).sum();
+                prop_assert_eq!(result.dependencies.len(), expected);
+                for dep in &result.dependencies {
+                    let DependencyContext::OptionalExtra(extra) = &dep.context else {
+                        let context = format!("{:?}", dep.context);
+                        return Err(TestCaseError::fail(format!(
+                            "unexpected context: {context}"
+                        )));
+                    };
+                    prop_assert!(extras.contains_key(extra));
+                    let label_prefix = format!("project.optional-dependencies.{extra}[");
+                    prop_assert!(dep.origin.label.starts_with(&label_prefix));
+                }
+            }
+
+            #[test]
+            fn entry_points_roundtrip_across_groups(
+                scripts in prop::collection::btree_map(bare_key(), "[a-z_.:]{1,20}", 0..4),
+                gui_scripts in prop::collection::btree_map(bare_key(), "[a-z_.:]{1,20}", 0..4),
+            ) {
+                let to_table = |map: &std::collections::BTreeMap<String, String>| {
+                    let mut table = toml::Table::new();
+                    for (key, value) in map {
+                        table.insert(key.clone(), Value::String(value.clone()));
+                    }
+                    table
+                };
+                let mut project = toml::Table::new();
+                project.insert("name".into(), Value::String("x".into()));
+                project.insert("scripts".into(), Value::Table(to_table(&scripts)));
+                project.insert("gui-scripts".into(), Value::Table(to_table(&gui_scripts)));
+                let mut doc = toml::Table::new();
+                doc.insert("project".into(), Value::Table(project));
+
+                let result = extract(&toml::to_string(&doc).expect("serialize"))
+                    .expect("valid pyproject");
+
+                prop_assert_eq!(
+                    result.entry_points.len(),
+                    scripts.len() + gui_scripts.len()
+                );
+                for entry in &result.entry_points {
+                    let expected = match entry.group.as_str() {
+                        "console" => scripts.get(&entry.name),
+                        "gui" => gui_scripts.get(&entry.name),
+                        other => {
+                            let group = other.to_owned();
+                            return Err(TestCaseError::fail(format!(
+                                "unexpected group: {group}"
+                            )));
+                        }
+                    };
+                    prop_assert_eq!(Some(&entry.target), expected);
+                }
+            }
+
+            #[test]
+            fn unsupported_tool_warnings_match_subset(
+                poetry in proptest::bool::ANY,
+                pdm in proptest::bool::ANY,
+                hatch in proptest::bool::ANY,
+            ) {
+                let mut contents = String::new();
+                if poetry {
+                    contents.push_str("[tool.poetry]\n");
+                }
+                if pdm {
+                    contents.push_str("[tool.pdm]\n");
+                }
+                if hatch {
+                    contents.push_str("[tool.hatch]\n");
+                }
+
+                let result = extract(&contents).expect("valid pyproject");
+                let mut expected = Vec::new();
+                if poetry {
+                    expected.push(ManifestWarning::PoetryDetected);
+                }
+                if pdm {
+                    expected.push(ManifestWarning::PdmDetected);
+                }
+                if hatch {
+                    expected.push(ManifestWarning::HatchDetected);
+                }
+                prop_assert_eq!(result.warnings, expected);
+            }
+        }
+    }
+}
