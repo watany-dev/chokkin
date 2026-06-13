@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::manifest::ProjectMetadata;
 
-use super::types::{LayoutInfo, ProjectLayout};
+use super::types::{FlatResolution, LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
 
 const NON_PACKAGE_DIRS: &[&str] = &["tests", "scripts", "docs", "build", "dist", ".venv"];
@@ -22,18 +22,22 @@ pub fn infer_layout(root: &Path, metadata: &ProjectMetadata) -> LayoutInfo {
                 layout: ProjectLayout::Src,
                 packages,
                 inferred_globs,
+                flat_candidates: Vec::new(),
+                ambiguous_flat_resolution: false,
             };
         }
     }
 
     let flat_candidates = flat_package_candidates(root);
     if !flat_candidates.is_empty() {
-        let packages = resolve_flat_packages(&flat_candidates, metadata);
-        let inferred_globs = default_globs(ProjectLayout::Flat, &packages);
+        let resolution = resolve_flat_packages(&flat_candidates, metadata);
+        let inferred_globs = default_globs(ProjectLayout::Flat, &resolution.packages);
         return LayoutInfo {
             layout: ProjectLayout::Flat,
-            packages,
+            packages: resolution.packages,
             inferred_globs,
+            flat_candidates,
+            ambiguous_flat_resolution: resolution.ambiguous,
         };
     }
 
@@ -41,25 +45,42 @@ pub fn infer_layout(root: &Path, metadata: &ProjectMetadata) -> LayoutInfo {
         layout: ProjectLayout::Unknown,
         packages: Vec::new(),
         inferred_globs: default_globs(ProjectLayout::Unknown, &[]),
+        flat_candidates: Vec::new(),
+        ambiguous_flat_resolution: false,
     }
 }
 
 /// Choose a flat-layout package when multiple candidates exist.
 #[must_use]
-pub fn resolve_flat_packages(candidates: &[String], metadata: &ProjectMetadata) -> Vec<String> {
+pub fn resolve_flat_packages(candidates: &[String], metadata: &ProjectMetadata) -> FlatResolution {
     if candidates.len() <= 1 {
-        return candidates.to_vec();
+        return FlatResolution {
+            packages: candidates.to_vec(),
+            ambiguous: false,
+        };
     }
 
     if let Some(name) = &metadata.name {
         for candidate in normalized_project_names(name) {
             if candidates.iter().any(|pkg| pkg == &candidate) {
-                return vec![candidate];
+                return FlatResolution {
+                    packages: vec![candidate],
+                    ambiguous: false,
+                };
             }
         }
     }
 
-    vec![candidates[0].clone()]
+    let Some(chosen) = candidates.first() else {
+        return FlatResolution {
+            packages: Vec::new(),
+            ambiguous: false,
+        };
+    };
+    FlatResolution {
+        packages: vec![chosen.clone()],
+        ambiguous: true,
+    }
 }
 
 /// Directory check from the type `read_dir` already holds; symlinks
@@ -133,13 +154,8 @@ fn default_globs(layout: ProjectLayout, packages: &[String]) -> Vec<String> {
 
 /// Build layout-related warnings such as ambiguous flat packages.
 #[must_use]
-pub fn layout_warnings(root: &Path, layout: &LayoutInfo) -> Vec<SourcesWarning> {
-    if layout.layout != ProjectLayout::Flat {
-        return Vec::new();
-    }
-
-    let candidates = flat_package_candidates(root);
-    if candidates.len() <= 1 {
+pub fn layout_warnings(layout: &LayoutInfo) -> Vec<SourcesWarning> {
+    if layout.layout != ProjectLayout::Flat || !layout.ambiguous_flat_resolution {
         return Vec::new();
     }
 
@@ -148,7 +164,7 @@ pub fn layout_warnings(root: &Path, layout: &LayoutInfo) -> Vec<SourcesWarning> 
     };
 
     vec![SourcesWarning::AmbiguousFlatLayout {
-        candidates,
+        candidates: layout.flat_candidates.clone(),
         chosen: chosen.clone(),
     }]
 }
@@ -193,14 +209,39 @@ mod tests {
     fn resolve_flat_prefers_metadata_name() {
         let candidates = vec!["acme".to_owned(), "other".to_owned()];
         let chosen = resolve_flat_packages(&candidates, &metadata("acme-api"));
-        assert_eq!(chosen, vec!["acme".to_owned()]);
+        assert_eq!(chosen.packages, vec!["acme".to_owned()]);
+        assert!(!chosen.ambiguous);
     }
 
     #[test]
     fn resolve_flat_falls_back_to_first_candidate() {
         let candidates = vec!["alpha".to_owned(), "beta".to_owned()];
         let chosen = resolve_flat_packages(&candidates, &ProjectMetadata::default());
-        assert_eq!(chosen, vec!["alpha".to_owned()]);
+        assert_eq!(chosen.packages, vec!["alpha".to_owned()]);
+        assert!(chosen.ambiguous);
+    }
+
+    #[test]
+    fn layout_warnings_only_on_ambiguous_fallback() {
+        let resolved = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: vec!["acme".to_owned(), "other".to_owned()],
+            ambiguous_flat_resolution: false,
+        };
+        assert!(layout_warnings(&resolved).is_empty());
+
+        let ambiguous = LayoutInfo {
+            ambiguous_flat_resolution: true,
+            ..resolved
+        };
+        let warnings = layout_warnings(&ambiguous);
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            SourcesWarning::AmbiguousFlatLayout { .. }
+        ));
     }
 
     mod props {
@@ -223,11 +264,12 @@ mod tests {
                 };
                 let resolved = resolve_flat_packages(&candidates, &metadata);
 
-                prop_assert!(resolved.iter().all(|pkg| candidates.contains(pkg)));
+                prop_assert!(resolved.packages.iter().all(|pkg| candidates.contains(pkg)));
                 if candidates.len() <= 1 {
-                    prop_assert_eq!(resolved, candidates);
+                    prop_assert_eq!(resolved.packages, candidates);
+                    prop_assert!(!resolved.ambiguous);
                 } else {
-                    prop_assert_eq!(resolved.len(), 1);
+                    prop_assert_eq!(resolved.packages.len(), 1);
                 }
             }
 
@@ -245,7 +287,8 @@ mod tests {
                     ..ProjectMetadata::default()
                 };
                 let resolved = resolve_flat_packages(&candidates, &metadata);
-                prop_assert_eq!(resolved, vec![target]);
+                prop_assert_eq!(resolved.packages, vec![target]);
+                prop_assert!(!resolved.ambiguous);
             }
 
             #[test]

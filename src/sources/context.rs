@@ -44,12 +44,25 @@ fn is_test_path(path: &str) -> bool {
     if file_name == "conftest.py" {
         return true;
     }
-    (file_name.starts_with("test_")
-        && std::path::Path::new(file_name)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("py")))
-        || file_name.ends_with("_test.py")
-        || file_name.ends_with("_test.pyi")
+    if file_name.starts_with("test_") && has_py_or_pyi_extension(file_name) {
+        return true;
+    }
+    ends_with_ignore_ascii_case(file_name, "_test.py")
+        || ends_with_ignore_ascii_case(file_name, "_test.pyi")
+}
+
+fn has_py_or_pyi_extension(file_name: &str) -> bool {
+    std::path::Path::new(file_name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
+}
+
+fn ends_with_ignore_ascii_case(value: &str, suffix: &str) -> bool {
+    if value.len() < suffix.len() {
+        return false;
+    }
+    let start = value.len() - suffix.len();
+    value.is_char_boundary(start) && value[start..].eq_ignore_ascii_case(suffix)
 }
 
 #[cfg(test)]
@@ -62,6 +75,8 @@ mod tests {
             layout,
             packages: packages.iter().map(|p| (*p).to_owned()).collect(),
             inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
         }
     }
 
@@ -92,6 +107,28 @@ mod tests {
         let info = layout(ProjectLayout::Src, &["acme"]);
         assert_eq!(
             assign_file_context("src/acme/test_utils.py", &info),
+            FileContext::Test
+        );
+    }
+
+    #[test]
+    fn assigns_test_context_for_test_pyi_stub() {
+        let info = layout(ProjectLayout::Src, &["acme"]);
+        assert_eq!(
+            assign_file_context("src/acme/test_utils.pyi", &info),
+            FileContext::Test
+        );
+    }
+
+    #[test]
+    fn assigns_test_context_for_uppercase_py_extension() {
+        let info = layout(ProjectLayout::Src, &["acme"]);
+        assert_eq!(
+            assign_file_context("src/acme/test_utils.PY", &info),
+            FileContext::Test
+        );
+        assert_eq!(
+            assign_file_context("src/acme/module_test.PYI", &info),
             FileContext::Test
         );
     }
@@ -149,6 +186,8 @@ mod tests {
                     layout,
                     packages,
                     inferred_globs: Vec::new(),
+                    flat_candidates: Vec::new(),
+                    ambiguous_flat_resolution: false,
                 })
         }
 

@@ -107,6 +107,48 @@ fn respects_gitignore() {
 }
 
 #[test]
+fn skips_gitignore_when_disabled() {
+    let sources = discover_fixture("gitignore_disabled");
+    let discovered = paths(&sources);
+    assert!(discovered.contains(&"acme/visible.py"));
+    assert!(discovered.contains(&"local/hidden.py"));
+}
+
+#[test]
+fn warns_entry_path_is_directory() {
+    let sources = discover_fixture("entry_directory");
+    assert!(sources.warnings.iter().any(|warning| matches!(
+        warning,
+        SourcesWarning::EntryPathIsDirectory { path } if path == "src/acme"
+    )));
+}
+
+#[test]
+fn applies_mandatory_exclude_when_config_replaced() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root_path = temp.path();
+    std::fs::create_dir_all(root_path.join("src/acme")).expect("create package");
+    std::fs::write(root_path.join("src/acme/__init__.py"), "").expect("write init");
+    std::fs::write(root_path.join("src/acme/module.py"), "").expect("write py");
+    std::fs::create_dir_all(root_path.join(".venv/lib")).expect("create venv");
+    std::fs::write(root_path.join(".venv/lib/site.py"), "").expect("write venv py");
+    std::fs::write(
+        root_path.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.yokei]\nexclude = [\"custom/**\"]\n",
+    )
+    .expect("write pyproject");
+
+    let root = discover_project_root(root_path).expect("discover root");
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
+
+    let discovered = paths(&sources);
+    assert!(discovered.contains(&"src/acme/module.py"));
+    assert!(!discovered.contains(&".venv/lib/site.py"));
+}
+
+#[test]
 fn filters_production_contexts() {
     let sources = discover_fixture("production_mode");
     let discovered = paths(&sources);
@@ -185,6 +227,18 @@ fn resolves_ambiguous_flat_layout_with_metadata_name() {
     assert_eq!(sources.layout.packages, vec!["acme".to_owned()]);
     assert!(paths(&sources).contains(&"acme/foo.py"));
     assert!(!paths(&sources).contains(&"other/bar.py"));
+    assert!(
+        !sources
+            .warnings
+            .iter()
+            .any(|warning| matches!(warning, SourcesWarning::AmbiguousFlatLayout { .. }))
+    );
+}
+
+#[test]
+fn warns_ambiguous_flat_layout_without_metadata_match() {
+    let sources = discover_fixture("ambiguous_flat_no_name");
+    assert_eq!(sources.layout.packages, vec!["acme".to_owned()]);
     assert!(sources.warnings.iter().any(|warning| matches!(
         warning,
         SourcesWarning::AmbiguousFlatLayout { chosen, .. } if chosen == "acme"
