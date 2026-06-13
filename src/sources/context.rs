@@ -4,8 +4,8 @@ use super::types::{FileContext, LayoutInfo, ProjectLayout};
 
 /// Assign a file context from a root-relative path and layout info.
 ///
-/// `path` must already be in normalized forward-slash form, as produced
-/// by [`super::walk::normalize_rel_path`].
+/// `path` must already be in normalized forward-slash form (as produced by the
+/// source file walk).
 #[must_use]
 pub fn assign_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
     if is_test_path(path) {
