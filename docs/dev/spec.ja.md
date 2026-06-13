@@ -301,7 +301,7 @@ File reaches File
 6. Python parse              # 実装済み: src/parser/ (`parse_file`, `parse_project_sources`)
 7. import resolution         # 実装済み: src/resolver/ (`resolve_imports`, bundled maps)
 8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`, `apply_entry_plan`)
-9. reachability analysis
+9. reachability analysis     # 実装済み: src/reachability/ (`analyze_reachability`, `trace_to_file`)
 10. dependency reconciliation
 11. symbol usage analysis
 12. issue emission
@@ -702,6 +702,7 @@ yokei/
     parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`)
     resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps)
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
+    reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
     rules/
     reporters/
     fix/

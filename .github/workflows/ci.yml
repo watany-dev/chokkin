@@ -65,6 +65,15 @@ jobs:
       - uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: cargo-nextest@0.9.133
+      - name: Configure Windows temp directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $testTmp = Join-Path $env:RUNNER_TEMP 'yokei-test-tmp'
+          New-Item -ItemType Directory -Force -Path $testTmp | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "TMP=$testTmp"
+          Add-Content -Path $env:GITHUB_ENV -Value "TEMP=$testTmp"
+          Add-Content -Path $env:GITHUB_ENV -Value "TMPDIR=$testTmp"
       - run: cargo nextest run --locked --all-targets
       - run: cargo test --locked --doc
 

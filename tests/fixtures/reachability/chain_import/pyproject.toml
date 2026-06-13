@@ -1,0 +1,7 @@
+[project]
+name = "chain-import"
+version = "0.0.0"
+
+[tool.yokei]
+mode = "app"
+entry = ["src/acme/main.py"]

@@ -1,0 +1,6 @@
+[project]
+name = "dynamic-import"
+version = "0.0.0"
+
+[tool.yokei]
+entry = ["src/acme/main.py"]
