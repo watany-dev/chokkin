@@ -71,6 +71,12 @@ fn read_venv_index(venv: &Path) -> Result<VenvIndex, String> {
 }
 
 fn find_site_packages(venv: &Path) -> Option<PathBuf> {
+    // Windows venvs use Lib/site-packages (no pythonX.Y segment).
+    let windows_style = venv.join("Lib").join("site-packages");
+    if windows_style.is_dir() {
+        return Some(windows_style);
+    }
+
     let lib = venv.join("lib");
     let entries = fs::read_dir(&lib).ok()?;
     for entry in entries.flatten() {

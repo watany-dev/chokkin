@@ -19,6 +19,9 @@ target
 # Python / maturin build artifacts
 dist/
 .venv/
+# Committed resolver test fixtures ship a minimal .venv tree (dist-info only).
+!tests/fixtures/**/.venv/
+!tests/fixtures/**/.venv/**
 __pycache__/
 *.egg-info/
 *.whl
