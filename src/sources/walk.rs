@@ -79,7 +79,15 @@ pub fn collect_files(options: &CollectOptions<'_>) -> Result<Vec<DiscoveredFile>
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if !path.is_file() {
+
+        // Cheap rejections first: extension and the file type WalkDir
+        // already holds, so skipped entries pay no stat or allocation.
+        let kind = match path.extension().and_then(|ext| ext.to_str()) {
+            Some("py") => FileKind::Python,
+            Some("pyi") => FileKind::Stub,
+            _ => continue,
+        };
+        if !entry.file_type().is_file() {
             continue;
         }
 
@@ -91,12 +99,6 @@ pub fn collect_files(options: &CollectOptions<'_>) -> Result<Vec<DiscoveredFile>
             ),
         })?;
         let rel_str = normalize_rel_path(rel);
-
-        let kind = match path.extension().and_then(|ext| ext.to_str()) {
-            Some("py") => FileKind::Python,
-            Some("pyi") => FileKind::Stub,
-            _ => continue,
-        };
 
         if !project_matcher.is_match(&rel_str) || exclude_matcher.is_match(&rel_str) {
             continue;
@@ -160,7 +162,12 @@ pub fn large_project_warning(file_count: usize) -> Option<SourcesWarning> {
 /// Normalize a path to root-relative forward-slash form.
 #[must_use]
 pub fn normalize_rel_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    let raw = path.to_string_lossy();
+    if raw.contains('\\') {
+        raw.replace('\\', "/")
+    } else {
+        raw.into_owned()
+    }
 }
 
 #[cfg(test)]
