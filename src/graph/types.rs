@@ -20,6 +20,10 @@ pub struct ModuleId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DistributionId(pub u32);
 
+/// Stable identifier for an entry root node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EntryId(pub u32);
+
 /// How a module node was classified (refined in Step 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleOrigin {
@@ -62,7 +66,16 @@ pub struct DistributionNode {
     pub contexts: Vec<DependencyContext>,
 }
 
-/// Graph edges accumulated during pipeline steps 3–6.
+/// An entry root for reachability analysis (pipeline step 8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryNode {
+    /// Human-readable label, e.g. `script:acme-cli` or `auto:manage.py`.
+    pub label: String,
+    /// Assigned file context.
+    pub context: FileContext,
+}
+
+/// Graph edges accumulated during pipeline steps 3–8.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphEdge {
     /// A file imports a module at the given 1-based line.
@@ -88,6 +101,13 @@ pub enum GraphEdge {
         /// Provided module.
         module: ModuleId,
     },
+    /// An entry root reaches a project file (Step 8).
+    EntryReachesFile {
+        /// Entry root node.
+        entry: EntryId,
+        /// Target file.
+        file: FileId,
+    },
 }
 
 /// Project-wide reachability graph (skeleton in Phase 0).
@@ -99,6 +119,7 @@ pub struct ProjectGraph {
     files: IndexMap<FileId, FileNode>,
     modules: IndexMap<ModuleId, ModuleNode>,
     distributions: IndexMap<DistributionId, DistributionNode>,
+    entries: IndexMap<EntryId, EntryNode>,
     edges: Vec<GraphEdge>,
     path_to_file: HashMap<String, FileId>,
     name_to_module: HashMap<String, ModuleId>,
@@ -106,6 +127,7 @@ pub struct ProjectGraph {
     next_file_id: u32,
     next_module_id: u32,
     next_distribution_id: u32,
+    next_entry_id: u32,
 }
 
 impl ProjectGraph {
@@ -117,6 +139,7 @@ impl ProjectGraph {
             files: IndexMap::new(),
             modules: IndexMap::new(),
             distributions: IndexMap::new(),
+            entries: IndexMap::new(),
             edges: Vec::new(),
             path_to_file: HashMap::new(),
             name_to_module: HashMap::new(),
@@ -124,6 +147,7 @@ impl ProjectGraph {
             next_file_id: 0,
             next_module_id: 0,
             next_distribution_id: 0,
+            next_entry_id: 0,
         }
     }
 
@@ -149,6 +173,12 @@ impl ProjectGraph {
     #[must_use]
     pub fn distribution_count(&self) -> usize {
         self.distributions.len()
+    }
+
+    /// Returns the number of registered entry roots.
+    #[must_use]
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
     }
 
     /// Looks up a file id by root-relative path.
@@ -249,6 +279,14 @@ impl ProjectGraph {
     /// Appends an edge to the graph.
     pub fn push_edge(&mut self, edge: GraphEdge) {
         self.edges.push(edge);
+    }
+
+    /// Registers an entry root node, returning its stable id.
+    pub fn intern_entry(&mut self, node: EntryNode) -> EntryId {
+        let id = EntryId(self.next_entry_id);
+        self.next_entry_id = self.next_entry_id.saturating_add(1);
+        self.entries.insert(id, node);
+        id
     }
 }
 

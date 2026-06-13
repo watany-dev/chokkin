@@ -7,12 +7,14 @@
 //! [`plugins`]) are available as library APIs. Steps 1–4 also run via
 //! [`pipeline::probe_project`]. Step 6 ([`parser`]) parses Python sources.
 //! Step 7 ([`resolver`]) resolves imports to stdlib / first-party / third-party
-//! distributions. Steps 8–12 (reachability, rules, reporters) are not wired
-//! to the CLI yet. See `docs/dev/spec.ja.md` for the full specification.
+//! distributions. Step 8 ([`entry`]) builds entry roots for reachability.
+//! Steps 9–12 (reachability, rules, reporters) are not wired to the CLI yet.
+//! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
 pub mod config;
 pub mod discovery;
+pub mod entry;
 pub mod graph;
 pub mod manifest;
 pub mod parser;
@@ -28,9 +30,13 @@ pub use config::{
     YokeiConfig, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
+pub use entry::{
+    EntryError, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
+    build_entry_roots,
+};
 pub use graph::{
-    DistributionId, DistributionNode, FileId, FileNode, GraphEdge, GraphError, ModuleId,
-    ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+    DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
+    ModuleId, ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
 pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
