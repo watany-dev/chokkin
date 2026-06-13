@@ -1,0 +1,10 @@
+[project]
+name = "marker-pywin32"
+version = "0.1.0"
+dependencies = [
+    "requests",
+    "pywin32; sys_platform == 'win32'",
+]
+
+[project.scripts]
+acme-cli = "acme.main:main"

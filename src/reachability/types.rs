@@ -123,3 +123,17 @@ pub struct ReachabilityReport {
     /// Shortest-path predecessors for [`super::trace::trace_to_file`].
     pub(super) predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
 }
+
+impl ReachabilityReport {
+    /// Empty report for unit tests and early pipeline stages.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            reachable: IndexSet::new(),
+            unreachable: Vec::new(),
+            used_modules: Vec::new(),
+            framework_used: IndexSet::new(),
+            predecessors: indexmap::IndexMap::new(),
+        }
+    }
+}

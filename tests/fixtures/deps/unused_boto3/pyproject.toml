@@ -1,0 +1,7 @@
+[project]
+name = "unused-boto3"
+version = "0.1.0"
+dependencies = ["boto3", "requests"]
+
+[project.scripts]
+acme-cli = "acme.main:main"

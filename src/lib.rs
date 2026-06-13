@@ -9,7 +9,8 @@
 //! Step 7 ([`resolver`]) resolves imports to stdlib / first-party / third-party
 //! distributions. Step 8 ([`entry`]) builds entry roots for reachability.
 //! Step 9 ([`reachability`]) computes reachable files from entry roots.
-//! Steps 10–12 (dependency rules, symbol usage, issue emission) are not wired to the CLI yet.
+//! Step 10 ([`rules`]) reconciles declared dependencies against usage.
+//! Steps 11–12 (symbol usage, issue emission) are not wired to the CLI yet.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
@@ -23,6 +24,7 @@ pub mod pipeline;
 pub mod plugins;
 pub mod reachability;
 pub mod resolver;
+pub mod rules;
 pub mod sources;
 
 pub use cli::{CliArgs, parse_cli_args};
@@ -65,6 +67,10 @@ pub use reachability::{
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
     TransitiveIndex, apply_resolution_to_graph, import_root, resolve_imports,
+};
+pub use rules::{
+    DependencyReport, ExplainData, IssueCandidate, IssueSubject, Origin, ReconcileDiagnostic,
+    RuleId, Severity, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

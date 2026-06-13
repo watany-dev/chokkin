@@ -1,0 +1,10 @@
+[project]
+name = "misplaced-pytest"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[project.scripts]
+acme-cli = "acme.main:main"

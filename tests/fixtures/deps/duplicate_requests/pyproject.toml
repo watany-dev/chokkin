@@ -1,0 +1,10 @@
+[project]
+name = "duplicate-requests"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["requests"]
+
+[project.scripts]
+acme-cli = "acme.main:main"

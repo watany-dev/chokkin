@@ -18,7 +18,7 @@
 | 7 | [step-07-import-resolution.md](./step-07-import-resolution.md) | 確定 | ⬜ |
 | 8 | [step-08-entry-root-construction.md](./step-08-entry-root-construction.md) | 確定 | ✅ |
 | 9 | [step-09-reachability-analysis.md](./step-09-reachability-analysis.md) | 確定 | ✅ |
-| 10 | [step-10-dependency-reconciliation.md](./step-10-dependency-reconciliation.md) | 確定 | ⬜ |
+| 10 | [step-10-dependency-reconciliation.md](./step-10-dependency-reconciliation.md) | 確定 | ✅ |
 | 11 | [step-11-symbol-usage-analysis.md](./step-11-symbol-usage-analysis.md) | 確定 | ⬜ |
 | 12 | [step-12-issue-emission.md](./step-12-issue-emission.md) | 確定 | ⬜ |
 | 13 | [step-13-optional-fix.md](./step-13-optional-fix.md) | 確定 | ⬜ |

@@ -35,7 +35,7 @@ src/
   resolver/       Import resolution (`resolve_imports`, bundled maps, pipeline step 7)
   entry/          Entry root construction (`build_entry_roots`, pipeline step 8)
   reachability/   Reachability analysis (`analyze_reachability`, pipeline step 9)
-  rules/          (future) YOK001–YOK010 rule implementations
+  rules/          Dependency reconciliation (step 10); issue emission (steps 11–12)
   reporters/      (future) default / compact / JSON / Markdown reporters
   fix/            (future) --fix: manifest-level edits only
 pyproject.toml    maturin bin bindings — yokei ships as a Python wheel
