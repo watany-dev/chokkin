@@ -1,0 +1,6 @@
+[project]
+name = "explicit"
+version = "0.1.0"
+
+[tool.yokei]
+project = ["custom/**/*.py"]

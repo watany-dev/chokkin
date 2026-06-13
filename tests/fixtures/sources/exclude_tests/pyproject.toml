@@ -1,0 +1,6 @@
+[project]
+name = "exclude-tests"
+version = "0.1.0"
+
+[tool.yokei]
+exclude = ["tests/**"]
