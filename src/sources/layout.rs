@@ -17,10 +17,11 @@ pub fn infer_layout(root: &Path, metadata: &ProjectMetadata) -> LayoutInfo {
     if src_dir.is_dir() {
         let packages = packages_with_init(&src_dir);
         if !packages.is_empty() {
+            let inferred_globs = default_globs(ProjectLayout::Src, &packages);
             return LayoutInfo {
                 layout: ProjectLayout::Src,
-                packages: packages.clone(),
-                inferred_globs: default_globs(ProjectLayout::Src, &packages),
+                packages,
+                inferred_globs,
             };
         }
     }
@@ -28,10 +29,11 @@ pub fn infer_layout(root: &Path, metadata: &ProjectMetadata) -> LayoutInfo {
     let flat_candidates = flat_package_candidates(root);
     if !flat_candidates.is_empty() {
         let packages = resolve_flat_packages(&flat_candidates, metadata);
+        let inferred_globs = default_globs(ProjectLayout::Flat, &packages);
         return LayoutInfo {
             layout: ProjectLayout::Flat,
-            packages: packages.clone(),
-            inferred_globs: default_globs(ProjectLayout::Flat, &packages),
+            packages,
+            inferred_globs,
         };
     }
 
@@ -60,6 +62,14 @@ pub fn resolve_flat_packages(candidates: &[String], metadata: &ProjectMetadata) 
     vec![candidates[0].clone()]
 }
 
+/// Directory check from the type `read_dir` already holds; symlinks
+/// still need a stat to keep links to directories included.
+fn entry_is_dir(entry: &fs::DirEntry) -> bool {
+    entry
+        .file_type()
+        .is_ok_and(|ft| ft.is_dir() || (ft.is_symlink() && entry.path().is_dir()))
+}
+
 fn packages_with_init(parent: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(parent) else {
         return Vec::new();
@@ -67,10 +77,10 @@ fn packages_with_init(parent: &Path) -> Vec<String> {
 
     let mut packages = Vec::new();
     for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
+        if !entry_is_dir(&entry) {
             continue;
         }
+        let path = entry.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
@@ -89,10 +99,10 @@ fn flat_package_candidates(root: &Path) -> Vec<String> {
 
     let mut packages = Vec::new();
     for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
+        if !entry_is_dir(&entry) {
             continue;
         }
+        let path = entry.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };

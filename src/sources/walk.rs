@@ -82,12 +82,14 @@ pub fn collect_files(options: &CollectOptions<'_>) -> Result<Vec<DiscoveredFile>
 
         // Cheap rejections first: extension and the file type WalkDir
         // already holds, so skipped entries pay no stat or allocation.
+        // Symlinks still need a stat to keep links to files included.
         let kind = match path.extension().and_then(|ext| ext.to_str()) {
             Some("py") => FileKind::Python,
             Some("pyi") => FileKind::Stub,
             _ => continue,
         };
-        if !entry.file_type().is_file() {
+        let file_type = entry.file_type();
+        if !(file_type.is_file() || file_type.is_symlink() && path.is_file()) {
             continue;
         }
 
