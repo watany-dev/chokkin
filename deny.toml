@@ -11,7 +11,15 @@ targets = [
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # Transitive via rustpython-parser 0.4 (ADR 0001). Revisit when evaluating Ruff parser.
+    { id = "RUSTSEC-2025-0075", reason = "rustpython-parser → unic-char-range" },
+    { id = "RUSTSEC-2025-0080", reason = "rustpython-parser → unic-common" },
+    { id = "RUSTSEC-2025-0081", reason = "rustpython-parser → unic-char-property" },
+    { id = "RUSTSEC-2025-0090", reason = "rustpython-parser → unic-emoji-char" },
+    { id = "RUSTSEC-2025-0098", reason = "rustpython-parser → unic-ucd-version" },
+    { id = "RUSTSEC-2025-0100", reason = "rustpython-parser → unic-ucd-ident" },
+]
 yanked = "deny"
 unmaintained = "workspace"
 

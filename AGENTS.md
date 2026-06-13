@@ -12,9 +12,10 @@ equivalent for Python.
 
 **Status:** pre-alpha. Pipeline steps 1–4 (`src/discovery/` project root
 discovery, `src/config/` config load, `src/manifest/` manifest extraction,
-`src/sources/` source file discovery) are implemented as library APIs; the CLI
-analyzer and issue reporting are not wired yet. Implementation follows the phased
-roadmap in `docs/dev/spec.ja.md`.
+`src/sources/` source file discovery) are implemented as library APIs. Phase 0
+adds `src/graph/` and `src/parser/` skeletons (`build_graph_skeleton`,
+`parse_file`). The CLI analyzer and issue reporting are not wired yet.
+Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
 
 ## Repository structure
 
@@ -26,10 +27,10 @@ src/
   config/         Config loading ([tool.yokei], pipeline step 2)
   manifest/       Manifest extraction (pipeline step 3; util.rs shared helpers)
   sources/        Source file discovery (pipeline step 4)
+  graph/          Project graph skeleton (Phase 0; import edges)
+  parser/         Python parse spike (`parse_file`, pipeline step 6 前提)
   cli.rs          (future) CLI argument parsing
-  parser/         (future) Python AST parser (Rust-based, static only)
   resolver/       (future) import-name → distribution-name resolution
-  graph/          (future) project reachability graph
   rules/          (future) YOK001–YOK010 rule implementations
   reporters/      (future) default / compact / JSON / Markdown reporters
   fix/            (future) --fix: manifest-level edits only

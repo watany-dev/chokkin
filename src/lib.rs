@@ -4,13 +4,15 @@
 //! projects by building a project-wide reachability graph.
 //!
 //! Early implementation: pipeline steps 1–4 ([`discovery`], [`config`],
-//! [`manifest`], [`sources`]) are available as library APIs. The CLI analyzer and issue
-//! reporting are not wired yet. See `docs/dev/spec.ja.md` for the full
-//! specification.
+//! [`manifest`], [`sources`]) are available as library APIs. Phase 0 adds
+//! [`graph`] and [`parser`] skeletons. The CLI analyzer and issue reporting are
+//! not wired yet. See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod config;
 pub mod discovery;
+pub mod graph;
 pub mod manifest;
+pub mod parser;
 pub mod sources;
 
 pub use config::{
@@ -19,10 +21,17 @@ pub use config::{
     YokeiConfig, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
+pub use graph::{
+    DistributionId, DistributionNode, FileId, FileNode, GraphEdge, GraphError, ModuleId,
+    ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+};
 pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
     LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
     extract_manifest, resolve_target_version,
+};
+pub use parser::{
+    ImportKind, ImportRef, ParseDiagnostic, ParseError, ParseSeverity, ParsedModule, parse_file,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
