@@ -332,4 +332,102 @@ mod tests {
             Some("acme")
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Quote `value` as a Python double-quoted string literal.
+        fn python_quote(value: &str) -> String {
+            let mut quoted = String::with_capacity(value.len() + 2);
+            quoted.push('"');
+            for ch in value.chars() {
+                if ch == '"' || ch == '\\' {
+                    quoted.push('\\');
+                }
+                quoted.push(ch);
+            }
+            quoted.push('"');
+            quoted
+        }
+
+        /// String values without newlines (Python literals here are single-line).
+        fn literal_value() -> impl Strategy<Value = String> {
+            "[^\\r\\n]{0,40}"
+        }
+
+        proptest! {
+            #[test]
+            fn extract_delimited_body_never_panics(input in "\\PC{0,200}") {
+                for (open, close) in [('(', ')'), ('[', ']'), ('{', '}')] {
+                    if let Some(body) = extract_delimited_body(&input, open, close) {
+                        prop_assert!(input[1..].contains(body));
+                    }
+                }
+            }
+
+            #[test]
+            fn read_quoted_string_roundtrips(value in literal_value()) {
+                let quoted = python_quote(&value);
+                let (read, remaining) = read_quoted_string(&quoted[1..], '"')
+                    .expect("quoted literal must read back");
+                prop_assert_eq!(read, value);
+                prop_assert_eq!(remaining, "");
+            }
+
+            #[test]
+            fn read_quoted_string_never_panics(input in "\\PC{0,120}") {
+                let _ = read_quoted_string(&input, '"');
+                let _ = read_quoted_string(&input, '\'');
+            }
+
+            #[test]
+            fn scan_string_literals_roundtrips(values in prop::collection::vec(literal_value(), 0..8)) {
+                let rendered = values
+                    .iter()
+                    .map(|value| python_quote(value))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let scan = scan_string_literals(&rendered);
+                prop_assert!(scan.complete);
+                prop_assert_eq!(scan.values, values);
+            }
+
+            #[test]
+            fn scan_string_literals_never_panics(input in "\\PC{0,200}") {
+                let scan = scan_string_literals(&input);
+                prop_assert!(scan.values.len() <= input.len());
+            }
+
+            #[test]
+            fn setup_call_body_never_panics(input in "\\PC{0,300}") {
+                let _ = setup_call_body(&input);
+            }
+
+            #[test]
+            fn extract_keyword_string_finds_rendered_name(name in "[A-Za-z0-9._-]{1,30}") {
+                let body = format!("name={}, version=\"1.0\"", python_quote(&name));
+                prop_assert_eq!(extract_keyword_string(&body, "name"), Some(name));
+            }
+
+            #[test]
+            fn full_setup_call_roundtrips_install_requires(
+                deps in prop::collection::vec("[a-z][a-z0-9-]{0,15}", 0..6),
+            ) {
+                let rendered = deps
+                    .iter()
+                    .map(|dep| python_quote(dep))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let contents = format!(
+                    "from setuptools import setup\nsetup(\n    name=\"acme\",\n    install_requires=[{rendered}],\n)\n"
+                );
+                let body = setup_call_body(&contents).expect("setup call must be found");
+                let scan = extract_string_list_argument(body, "install_requires")
+                    .expect("install_requires must be found");
+                prop_assert!(scan.complete);
+                prop_assert_eq!(scan.values, deps);
+            }
+        }
+    }
 }

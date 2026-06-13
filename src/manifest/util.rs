@@ -54,3 +54,72 @@ pub fn push_dependency(push: DependencyPush<'_>) {
         Err(warning) => push.warnings.push(warning),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_path_strips_root_prefix() {
+        let root = Path::new("/proj");
+        assert_eq!(relative_path(root, Path::new("/proj/a/b.txt")), "a/b.txt");
+    }
+
+    #[test]
+    fn relative_path_falls_back_to_full_path_outside_root() {
+        let root = Path::new("/proj");
+        assert_eq!(
+            relative_path(root, Path::new("/other/x.txt")),
+            "/other/x.txt"
+        );
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+        use std::path::PathBuf;
+
+        fn rel_segments() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec("[a-z][a-z0-9_.]{0,10}", 1..4)
+        }
+
+        proptest! {
+            #[test]
+            fn relative_path_roundtrips_paths_under_root(segments in rel_segments()) {
+                let root = PathBuf::from("/proj");
+                let mut path = root.clone();
+                for segment in &segments {
+                    path.push(segment);
+                }
+
+                prop_assert_eq!(relative_path(&root, &path), segments.join("/"));
+            }
+
+            #[test]
+            fn relative_path_never_yields_backslashes(
+                root in "[a-zA-Z0-9/_.-]{0,30}",
+                path in "\\PC{0,60}",
+            ) {
+                let result = relative_path(Path::new(&root), Path::new(&path));
+                prop_assert!(!result.contains('\\'));
+            }
+
+            #[test]
+            fn push_dependency_appends_exactly_one_item(raw in "\\PC{0,120}") {
+                let mut dependencies = Vec::new();
+                let mut warnings = Vec::new();
+                push_dependency(DependencyPush {
+                    dependencies: &mut dependencies,
+                    warnings: &mut warnings,
+                    raw: &raw,
+                    context: DependencyContext::Runtime,
+                    file: "requirements.txt",
+                    label: "requirements.txt".to_string(),
+                    line: Some(1),
+                });
+
+                prop_assert_eq!(dependencies.len() + warnings.len(), 1);
+            }
+        }
+    }
+}

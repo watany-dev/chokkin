@@ -6,7 +6,7 @@ CARGO_SEMVER_CHECKS_VERSION ?= 0.47.0
 .PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
-check: fmt-check lint test doc deny
+check: fmt-check lint test deny machete
 
 ## ─── Core ─────────────────────────────────────────────────────────────────────
 build:

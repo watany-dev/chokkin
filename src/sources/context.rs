@@ -115,4 +115,76 @@ mod tests {
             FileContext::Runtime
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn any_layout() -> impl Strategy<Value = LayoutInfo> {
+            (
+                prop_oneof![
+                    Just(ProjectLayout::Src),
+                    Just(ProjectLayout::Flat),
+                    Just(ProjectLayout::Unknown),
+                ],
+                prop::collection::vec("[a-z][a-z0-9_]{0,8}", 0..3),
+            )
+                .prop_map(|(layout, packages)| LayoutInfo {
+                    layout,
+                    packages,
+                    inferred_globs: Vec::new(),
+                })
+        }
+
+        proptest! {
+            #[test]
+            fn assign_file_context_never_panics(path in "\\PC{0,80}", info in any_layout()) {
+                let _ = assign_file_context(&path, &info);
+            }
+
+            #[test]
+            fn assign_file_context_is_deterministic(path in "\\PC{0,80}", info in any_layout()) {
+                prop_assert_eq!(
+                    assign_file_context(&path, &info),
+                    assign_file_context(&path, &info)
+                );
+            }
+
+            #[test]
+            fn tests_tree_is_always_test_context(rest in "[a-z0-9_/]{0,30}", info in any_layout()) {
+                prop_assert_eq!(
+                    assign_file_context(&format!("tests/{rest}.py"), &info),
+                    FileContext::Test
+                );
+            }
+
+            #[test]
+            fn test_prefix_files_are_test_context_anywhere(
+                dir in "[a-z][a-z0-9_/]{0,20}",
+                name in "[a-z][a-z0-9_]{0,12}",
+                info in any_layout(),
+            ) {
+                prop_assert_eq!(
+                    assign_file_context(&format!("{dir}/test_{name}.py"), &info),
+                    FileContext::Test
+                );
+                prop_assert_eq!(
+                    assign_file_context(&format!("{dir}/{name}_test.py"), &info),
+                    FileContext::Test
+                );
+            }
+
+            #[test]
+            fn src_tree_non_test_files_are_runtime(
+                name in "[a-z][a-z0-9_]{0,12}",
+                info in any_layout(),
+            ) {
+                prop_assume!(!name.starts_with("test_") && !name.ends_with("_test"));
+                prop_assert_eq!(
+                    assign_file_context(&format!("src/pkg/{name}.py"), &info),
+                    FileContext::Runtime
+                );
+            }
+        }
+    }
 }
