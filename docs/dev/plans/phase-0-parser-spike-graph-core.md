@@ -7,7 +7,7 @@ Step 4 (`discover_sources`) 完了後の **クリティカルパス** 設計。
 > **並行 work（本ドキュメント外）**
 >
 > - **CLI 縦スライス**: Steps 1–4 を `main.rs` から呼び、layout / manifest 件数 / `.py` 件数を表示（Phase 0 exit の一部）
-> - **Step 5 (config/plugin extraction)**: `src/plugins/` — Step 6 と部分並行可（§17 後半）
+> - **Step 5 (config/plugin extraction)**: [`step-05-config-plugin-extraction.md`](./step-05-config-plugin-extraction.md) — Step 6 と部分並行可（§17 後半）
 
 ## 1. 目的
 
@@ -451,7 +451,7 @@ flowchart TB
 | **CLI 縦スライス** | Step 4 | `uvx yokei` が root / layout / deps / files を表示 |
 | **Step 5 plugins** | Step 2–4 | `PluginHints`（entry / module refs / binary usage） |
 
-Step 5 の設計は **別 PR** で `docs/dev/plans/step-05-config-plugin-extraction.md` として起票する（§9 plugin 仕様）。
+Step 5 の詳細設計は [`step-05-config-plugin-extraction.md`](./step-05-config-plugin-extraction.md) を参照（§9 plugin 仕様）。
 
 ## 13. 未決事項
 
