@@ -68,7 +68,7 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
                 raw,
                 context: DependencyContext::Runtime,
                 file: &rel,
-                label: &format!("install_requires[{index}]"),
+                label: format!("install_requires[{index}]"),
                 line: None,
             });
         }
@@ -90,7 +90,7 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
                 raw,
                 context: DependencyContext::SetupExtra(extra.clone()),
                 file: &rel,
-                label: &format!("extras_require.{extra}[{index}]"),
+                label: format!("extras_require.{extra}[{index}]"),
                 line: None,
             });
         }
@@ -141,11 +141,13 @@ fn extract_extras_require(body: &str) -> Vec<(String, LiteralScan)> {
 }
 
 fn find_keyword_assignment(body: &str, keyword: &str) -> Option<usize> {
-    let needle = format!("{keyword}=");
+    let bytes = body.as_bytes();
     let mut search_start = 0;
-    while let Some(rel) = body[search_start..].find(&needle) {
+    while let Some(rel) = body[search_start..].find(keyword) {
         let abs = search_start + rel;
-        if abs == 0 || !is_ident_byte(body.as_bytes()[abs - 1]) {
+        if bytes.get(abs + keyword.len()) == Some(&b'=')
+            && (abs == 0 || !is_ident_byte(bytes[abs - 1]))
+        {
             return Some(abs);
         }
         search_start = abs + 1;
@@ -270,6 +272,14 @@ fn next_string_literal(input: &str) -> Option<(String, &str)> {
 }
 
 fn read_quoted_string(input: &str, quote: char) -> Option<(String, &str)> {
+    // Fast path: no escape before the closing quote, so the value is a
+    // plain slice copied in one allocation.
+    let special = input.find([quote, '\\'])?;
+    if input[special..].starts_with(quote) {
+        let end = special + quote.len_utf8();
+        return Some((input[..special].to_owned(), &input[end..]));
+    }
+
     let mut value = String::new();
     let mut escaped = false;
 

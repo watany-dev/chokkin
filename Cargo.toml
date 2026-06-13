@@ -27,8 +27,27 @@ toml = "1.1"
 walkdir = "2"
 
 [dev-dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 proptest = "1"
 tempfile = "3"
+
+# Route `cargo bench` to the criterion targets only; the default libtest
+# harness rejects criterion CLI flags such as --save-baseline.
+[lib]
+bench = false
+
+[[bin]]
+name = "yokei"
+path = "src/main.rs"
+bench = false
+
+[[bench]]
+name = "manifest"
+harness = false
+
+[[bench]]
+name = "sources"
+harness = false
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -107,6 +126,12 @@ codegen-units = 1
 [profile.dev]
 opt-level = 0
 panic = "unwind"
+
+# Benchmarks: keep release optimization but retain symbols for profilers.
+[profile.bench]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
 
 [profile.dev.package."*"]
 opt-level = 1
