@@ -182,7 +182,7 @@ pub struct PluginContribution {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginHints {
-    /// One record per plugin that ran (including empty stubs for traceability).
+    /// One record per **enabled** plugin that ran (v0.1: up to 3; v0.2 stubs when enabled).
     pub contributions: Vec<PluginContribution>,
     pub warnings: Vec<PluginsWarning>,
 }
@@ -235,10 +235,13 @@ pub enum PluginsWarning {
     PytestConfigUnreadable { path: String },
     /// Multiple settings.py candidates; first chosen.
     AmbiguousSettings { chosen: String, candidates: Vec<String> },
+    /// Plugin extractor failed non-fatally; analysis continues.
+    PluginExtractFailed { plugin: PluginId, detail: String },
 }
 ```
 
-個別 plugin の失敗は **warning + 空 contribution** で継続（§20: 解析全体を止めない）。`PluginsError` は root 読み取り不能など致命的ケースのみ。
+個別 plugin の失敗は **`PluginExtractFailed` warning + 空 `PluginContribution`** で継続（§20）。
+`PluginsError` は project root の致命的 IO、または呼び出し側の前提違反のみ。
 
 ## 6. 公開 API
 
@@ -372,7 +375,9 @@ WSGI_APPLICATION      # module:symbol → SymbolReference
 ASGI_APPLICATION      # module:symbol → SymbolReference
 ```
 
-`util::extract_python_list_literals(path, &[field_names])` — Step 3 `setup_py.rs` と共通化:
+`util::extract_python_list_literals(path, &[field_names])` — `manifest/setup_py.rs` の
+`extract_string_list_argument` を `src/manifest/util.rs`（または `src/util/literal.rs`）へ
+抽出して pytest/django と共有:
 
 - 文字列要素のみ抽出（`"django.contrib.admin"`）
 - 動的組み立て・変数参照はスキップ → `PartialSettingsParse` warning
@@ -429,14 +434,21 @@ fastapi  → 直接 CLI 使用は稀。module import 主体
 ### 7.4 stub (`plugins/stub.rs`)
 
 ```rust
-pub fn extract(plugin: PluginId, _ctx: &PluginContext<'_>) -> PluginContribution {
-    PluginContribution { plugin, ..Default::default() }
+pub fn extract(plugin: PluginId, _ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
+    (
+        PluginContribution { plugin, ..Default::default() },
+        vec![PluginsWarning::PluginNoOp { plugin }],
+    )
 }
 ```
 
-`extract.rs` が `config.plugins[id] == false` のとき stub を **実行しない**（contributions に含めない）。`true` かつ v0.2 plugin のとき空 contribution + `PluginNoOp` warning。
+`config.plugins[id] == false` の plugin は **実行しない**（contributions に含めない）。
+`true` かつ v0.2 plugin のとき stub を実行し、空 contribution + `PluginNoOp` warning を返す。
 
 ## 8. オーケストレーション
+
+各 plugin の `extract` は **`(PluginContribution, Vec<PluginsWarning>)` を返す**（`Result` ではない）。
+内部 IO / パース失敗は空 contribution + `PluginExtractFailed` warning に落とす。
 
 ```rust
 pub fn extract_plugin_hints(
@@ -445,18 +457,29 @@ pub fn extract_plugin_hints(
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
 ) -> Result<PluginHints, PluginsError> {
-    let ctx = PluginContext { root, config: &config.effective, sources, manifest };
+    let ctx = PluginContext {
+        root,
+        config: &config.effective,
+        sources,
+        manifest,
+    };
     let mut contributions = Vec::new();
     let mut warnings = Vec::new();
 
     for plugin in PluginId::all() {
-        if !config.effective.plugins.get(plugin).copied().unwrap_or(false) {
+        let enabled = config
+            .effective
+            .plugins
+            .get(plugin)
+            .copied()
+            .unwrap_or(false);
+        if !enabled {
             continue;
         }
         let (contrib, plugin_warnings) = match plugin {
-            PluginId::Pytest => pytest::extract(&ctx)?,
-            PluginId::Django => django::extract(&ctx)?,
-            PluginId::Fastapi => fastapi::extract(&ctx)?,
+            PluginId::Pytest => pytest::extract(&ctx),
+            PluginId::Django => django::extract(&ctx),
+            PluginId::Fastapi => fastapi::extract(&ctx),
             _ => stub::extract(plugin, &ctx),
         };
         warnings.extend(plugin_warnings);
@@ -466,6 +489,8 @@ pub fn extract_plugin_hints(
     Ok(PluginHints { contributions, warnings })
 }
 ```
+
+`PluginsError` は `extract_plugin_hints` 全体が続行不能なときのみ（現状はほぼ発生しない予約型）。
 
 **不変条件:**
 
@@ -524,7 +549,8 @@ tests/fixtures/plugins/
 
 **追加しない（v0.2）:** `serde_yaml`（GitHub Actions）、`quick-xml`
 
-共通化: `util::extract_python_list_literals` は `manifest/setup_py.rs` から移動または `src/util/` 共有モジュール化を検討。
+共通化: `manifest/setup_py.rs` の `extract_string_list_argument` を
+`src/manifest/util.rs` へ移し、`plugins/util.rs` からも呼ぶ（Step 5 実装 PR でリファクタ）。
 
 ## 11. Exit criteria（Step 5 完了定義）
 
@@ -604,7 +630,7 @@ entry_roots = config.entry
 | plugin 自動有効化（依存から推論） | zero-config 体験 | v0.1 後半 — 既定 true で十分か検証 |
 | 共有 `src/util/` モジュール | setup_py と list 抽出重複 | 実装時にリファクタ |
 
-## 15. update-plan 検証サマリ（ドラフト）
+## 15. update-plan 検証サマリ（確定）
 
 ### Phase 1: コンテキスト収集
 
@@ -613,7 +639,12 @@ entry_roots = config.entry
 | `docs/dev/plans/step-05-config-plugin-extraction.md` | 本プラン |
 | `docs/dev/spec.ja.md` §6 Step 5, §9, §10, §16 | plugin 責務・v0.1 scope と一致 |
 | `docs/dev/plans/step-02` – `step-04` | `PluginId` / `EntrySpec` / `DiscoveredSources` 確定済み |
-| `phase-0-parser-spike-graph-core.md` | 並行 work として整合 |
+| `phase-0-parser-spike-graph-core.md` | 並行 work。`ConfigReference` 辺は Step 8 |
+| `src/config/types.rs` | `PluginId`, `YokeiConfig.plugins` 確定済み |
+| `src/config/defaults.rs` | pytest/django/fastapi 既定 `true` と一致 |
+| `src/manifest/setup_py.rs` | `extract_string_list_argument` 共通化元 |
+| `AGENTS.md` | `plugins/` は `(future)` — 実装時 update-docs |
+| `Cargo.toml` | `regex` 追加予定。`globset` / `toml` は既存 |
 
 ### Phase 2: 品質評価（100点満点）
 
@@ -621,10 +652,10 @@ entry_roots = config.entry
 | --- | ---: | ---: | --- |
 | モジュール / struct 設計 | 20 | 19 | plugin ごとにファイル分割。`PluginHints` は Step 8 向け |
 | 静的解析制約 | 20 | 20 | Python 非実行。list literal 限定 |
-| ルール / ポリシー | 20 | 19 | §9 三責務を型で表現 |
-| エラー処理 | 20 | 18 | plugin 失敗は warning 継続 |
+| ルール / ポリシー | 20 | 19 | §9 三責務を型で表現。YOK008 は Step 10 |
+| エラー処理 | 20 | 20 | plugin 失敗は warning 継続。`?` による全体中断を除去 |
 | テスト容易性 | 20 | 19 | fixture 10 + 統合 12 件 |
-| **合計** | **100** | **95** | **合格**（90 以上） |
+| **合計** | **100** | **97** | **合格**（90 以上） |
 
 ### Phase 3: 整合性チェック
 
@@ -635,6 +666,16 @@ entry_roots = config.entry
 | Step 4 `sources.files` | OK — entry は discovered 集合と突合 |
 | Step 6 / Phase 0 との境界 | OK — decorator / AST は Step 6 |
 | `src/` 現行構成との衝突 | なし — 新規 `plugins/` |
+| §9 pytest test discovery | OK — test file を Test entry 化 |
+
+### Phase 4: 改善反映（課題分類）
+
+| 優先度 | 課題 | 対応 |
+| --- | --- | --- |
+| **P0** | オーケストレーションの `?` が §20 と矛盾 | §8 を non-`Result` plugin API に修正済み |
+| **P1** | `PluginHints.contributions` の意味が曖昧 | 有効 plugin のみと明記 |
+| **P1** | list literal 共通化先が未定 | `manifest/util.rs` へ移動と明記 |
+| **P2** | `pytest_plugins` の Step 5 / 6 分担 | §7.1.2 と §14 で委譲を固定 |
 
 ### 確定判定
 
