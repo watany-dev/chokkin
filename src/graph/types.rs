@@ -81,6 +81,13 @@ pub enum GraphEdge {
         /// Source location in a manifest file.
         source: DependencyOrigin,
     },
+    /// A distribution provides an importable module (Step 7).
+    DistributionProvidesModule {
+        /// Declared distribution.
+        distribution: DistributionId,
+        /// Provided module.
+        module: ModuleId,
+    },
 }
 
 /// Project-wide reachability graph (skeleton in Phase 0).
@@ -148,6 +155,43 @@ impl ProjectGraph {
     #[must_use]
     pub fn file_id(&self, path: &str) -> Option<FileId> {
         self.path_to_file.get(path).copied()
+    }
+
+    /// Looks up a module id by dotted name.
+    #[must_use]
+    pub fn module_id(&self, name: &str) -> Option<ModuleId> {
+        self.name_to_module.get(name).copied()
+    }
+
+    /// Updates the origin classification for an existing module node.
+    pub fn set_module_origin(&mut self, module: ModuleId, origin: ModuleOrigin) {
+        if let Some(node) = self.modules.get_mut(&module) {
+            node.origin = origin;
+        }
+    }
+
+    /// Looks up a distribution id by normalized name.
+    #[must_use]
+    pub fn distribution_id(&self, name: &str) -> Option<DistributionId> {
+        self.name_to_distribution.get(name).copied()
+    }
+
+    /// Registers a distribution by normalized name when not already present.
+    pub fn ensure_distribution(&mut self, name: &str) -> DistributionId {
+        if let Some(id) = self.name_to_distribution.get(name) {
+            return *id;
+        }
+        let id = DistributionId(self.next_distribution_id);
+        self.next_distribution_id = self.next_distribution_id.saturating_add(1);
+        self.name_to_distribution.insert(name.to_owned(), id);
+        self.distributions.insert(
+            id,
+            DistributionNode {
+                name: name.to_owned(),
+                contexts: Vec::new(),
+            },
+        );
+        id
     }
 
     /// Registers a file node, returning its stable id.

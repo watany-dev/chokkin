@@ -700,7 +700,7 @@ yokei/
     plugins/     # 実装済み: pipeline step 5 (config/plugin extraction)
     graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
     parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`)
-    resolver/
+    resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps)
     rules/
     reporters/
     fix/
