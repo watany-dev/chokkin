@@ -1,0 +1,6 @@
+[project]
+name = "library-orphan"
+version = "0.0.0"
+
+[tool.yokei]
+mode = "library"

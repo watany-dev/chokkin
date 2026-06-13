@@ -8,7 +8,8 @@
 //! [`pipeline::probe_project`]. Step 6 ([`parser`]) parses Python sources.
 //! Step 7 ([`resolver`]) resolves imports to stdlib / first-party / third-party
 //! distributions. Step 8 ([`entry`]) builds entry roots for reachability.
-//! Steps 9–12 (reachability, rules, reporters) are not wired to the CLI yet.
+//! Step 9 ([`reachability`]) computes reachable files from entry roots.
+//! Steps 10–12 (dependency rules, symbol usage, issue emission) are not wired to the CLI yet.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
@@ -20,6 +21,7 @@ pub mod manifest;
 pub mod parser;
 pub mod pipeline;
 pub mod plugins;
+pub mod reachability;
 pub mod resolver;
 pub mod sources;
 
@@ -55,6 +57,10 @@ pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
     PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
     extract_plugin_hints,
+};
+pub use reachability::{
+    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
+    UnreachableReason, UsedModule, analyze_reachability, path_to_module, trace_to_file,
 };
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,

@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 
 use crate::discovery::ProjectRoot;
 use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
+use crate::plugins::ReferenceOrigin;
 use crate::sources::{FileContext, FileKind};
 
 /// Stable identifier for a project file node.
@@ -75,7 +76,18 @@ pub struct EntryNode {
     pub context: FileContext,
 }
 
-/// Graph edges accumulated during pipeline steps 3–8.
+/// How one project file reaches another during reachability analysis (step 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileReachVia {
+    /// Static or resolved import edge.
+    Import,
+    /// Plugin configuration module reference.
+    PluginReference,
+    /// Literal dynamic import.
+    DynamicImport,
+}
+
+/// Graph edges accumulated during pipeline steps 3–9.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphEdge {
     /// A file imports a module at the given 1-based line.
@@ -107,6 +119,22 @@ pub enum GraphEdge {
         entry: EntryId,
         /// Target file.
         file: FileId,
+    },
+    /// A project file reaches another via import resolution (Step 9).
+    FileReachesFile {
+        /// Source file.
+        from: FileId,
+        /// Target file.
+        to: FileId,
+        /// How the reach was discovered.
+        via: FileReachVia,
+    },
+    /// Plugin configuration references a module (Step 9).
+    ConfigReferenceUsesModule {
+        /// Discovery origin.
+        origin: ReferenceOrigin,
+        /// Referenced module.
+        module: ModuleId,
     },
 }
 
@@ -155,6 +183,28 @@ impl ProjectGraph {
     #[must_use]
     pub fn edges(&self) -> &[GraphEdge] {
         &self.edges
+    }
+
+    /// Returns a registered file node.
+    #[must_use]
+    pub fn file(&self, id: FileId) -> Option<&FileNode> {
+        self.files.get(&id)
+    }
+
+    /// Returns a registered module node.
+    #[must_use]
+    pub fn module(&self, id: ModuleId) -> Option<&ModuleNode> {
+        self.modules.get(&id)
+    }
+
+    /// Iterates registered files in insertion order.
+    pub fn files(&self) -> impl Iterator<Item = (FileId, &FileNode)> {
+        self.files.iter().map(|(id, node)| (*id, node))
+    }
+
+    /// Iterates registered entry roots in insertion order.
+    pub fn entries(&self) -> impl Iterator<Item = (EntryId, &EntryNode)> {
+        self.entries.iter().map(|(id, node)| (*id, node))
     }
 
     /// Returns the number of registered files.

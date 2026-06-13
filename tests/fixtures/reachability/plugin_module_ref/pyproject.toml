@@ -1,0 +1,6 @@
+[project]
+name = "plugin-module-ref"
+version = "0.0.0"
+
+[tool.yokei.plugins]
+django = true

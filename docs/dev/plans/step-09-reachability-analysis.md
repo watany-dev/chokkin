@@ -188,11 +188,11 @@ pub fn analyze_reachability(
 
 ## 7. Exit criteria
 
-- [ ] BFS が entry から全 first-party 連鎖を辿る
-- [ ] `trace_to_file` が最短経路を返す
-- [ ] `FrameworkUsedGlob` が反映される
-- [ ] `make check` 通過
-- [ ] `update-docs` で `reachability/` を §15 に追記
+- [x] BFS が entry から全 first-party 連鎖を辿る
+- [x] `trace_to_file` が最短経路を返す
+- [x] `FrameworkUsedGlob` が反映される
+- [x] `make check` 通過
+- [x] `update-docs` で `reachability/` を §15 に追記
 
 ## 8. 実装順序
 

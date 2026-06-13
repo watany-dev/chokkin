@@ -11,9 +11,10 @@ unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
 **Status:** pre-alpha. Pipeline steps 1–4 run via `probe_project` (CLI probe
-mode). Steps 5–8 (`plugins`, `parser`, `resolver`, `entry`) are implemented as library
-APIs. Issue reporting and steps 9–13 are not wired yet. `src/graph/` provides
-skeleton nodes, import edges, distribution → module links, and entry → file edges.
+mode). Steps 5–9 (`plugins`, `parser`, `resolver`, `entry`, `reachability`) are
+implemented as library APIs. Issue reporting and steps 10–13 are not wired yet.
+`src/graph/` provides skeleton nodes, import edges, distribution → module links,
+entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
 
 ## Repository structure
@@ -33,6 +34,7 @@ src/
   pipeline/       probe_project — pipeline steps 1–4 orchestration
   resolver/       Import resolution (`resolve_imports`, bundled maps, pipeline step 7)
   entry/          Entry root construction (`build_entry_roots`, pipeline step 8)
+  reachability/   Reachability analysis (`analyze_reachability`, pipeline step 9)
   rules/          (future) YOK001–YOK010 rule implementations
   reporters/      (future) default / compact / JSON / Markdown reporters
   fix/            (future) --fix: manifest-level edits only
