@@ -6,9 +6,9 @@
 //! Pipeline steps 1–5 ([`discovery`], [`config`], [`manifest`], [`sources`],
 //! [`plugins`]) are available as library APIs. Steps 1–4 also run via
 //! [`pipeline::probe_project`]. Step 6 ([`parser`]) parses Python sources.
-//! Phase 0 [`graph`] skeleton is extended as imports are attached. Steps 7–12
-//! (resolution, reachability, rules, reporters) are not wired yet.
-//! See `docs/dev/spec.ja.md` for the full specification.
+//! Step 7 ([`resolver`]) resolves imports to stdlib / first-party / third-party
+//! distributions. Steps 8–12 (reachability, rules, reporters) are not wired
+//! to the CLI yet. See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
 pub mod config;
@@ -18,6 +18,7 @@ pub mod manifest;
 pub mod parser;
 pub mod pipeline;
 pub mod plugins;
+pub mod resolver;
 pub mod sources;
 
 pub use cli::{CliArgs, parse_cli_args};
@@ -48,6 +49,10 @@ pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
     PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
     extract_plugin_hints,
+};
+pub use resolver::{
+    ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
+    TransitiveIndex, apply_resolution_to_graph, import_root, resolve_imports,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

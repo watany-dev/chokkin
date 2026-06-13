@@ -1,0 +1,326 @@
+{
+  "packages": [
+    {
+      "distribution": "PyYAML",
+      "imports": [
+        "yaml"
+      ]
+    },
+    {
+      "distribution": "Pillow",
+      "imports": [
+        "PIL"
+      ]
+    },
+    {
+      "distribution": "python-dotenv",
+      "imports": [
+        "dotenv"
+      ]
+    },
+    {
+      "distribution": "beautifulsoup4",
+      "imports": [
+        "bs4"
+      ]
+    },
+    {
+      "distribution": "scikit-learn",
+      "imports": [
+        "sklearn"
+      ]
+    },
+    {
+      "distribution": "opencv-python",
+      "imports": [
+        "cv2"
+      ]
+    },
+    {
+      "distribution": "protobuf",
+      "imports": [
+        "google"
+      ]
+    },
+    {
+      "distribution": "google-api-core",
+      "imports": [
+        "google"
+      ]
+    },
+    {
+      "distribution": "google-auth",
+      "imports": [
+        "google"
+      ]
+    },
+    {
+      "distribution": "google-cloud-storage",
+      "imports": [
+        "google"
+      ]
+    },
+    {
+      "distribution": "ruamel.yaml",
+      "imports": [
+        "ruamel"
+      ]
+    },
+    {
+      "distribution": "msgpack",
+      "imports": [
+        "msgpack"
+      ]
+    },
+    {
+      "distribution": "mysqlclient",
+      "imports": [
+        "MySQLdb"
+      ]
+    },
+    {
+      "distribution": "psycopg2-binary",
+      "imports": [
+        "psycopg2"
+      ]
+    },
+    {
+      "distribution": "psycopg",
+      "imports": [
+        "psycopg"
+      ]
+    },
+    {
+      "distribution": "pyyaml",
+      "imports": [
+        "yaml"
+      ]
+    },
+    {
+      "distribution": "attrs",
+      "imports": [
+        "attrs"
+      ]
+    },
+    {
+      "distribution": "typing-extensions",
+      "imports": [
+        "typing_extensions"
+      ]
+    },
+    {
+      "distribution": "pyjwt",
+      "imports": [
+        "jwt"
+      ]
+    },
+    {
+      "distribution": "pymongo",
+      "imports": [
+        "bson",
+        "gridfs",
+        "pymongo"
+      ]
+    },
+    {
+      "distribution": "apache-airflow",
+      "imports": [
+        "airflow"
+      ]
+    },
+    {
+      "distribution": "django",
+      "imports": [
+        "django"
+      ]
+    },
+    {
+      "distribution": "flask",
+      "imports": [
+        "flask"
+      ]
+    },
+    {
+      "distribution": "fastapi",
+      "imports": [
+        "fastapi"
+      ]
+    },
+    {
+      "distribution": "requests",
+      "imports": [
+        "requests"
+      ]
+    }
+  ],
+  "auto_packages": [
+    "aiofiles",
+    "aiosqlite",
+    "alembic",
+    "annotated-types",
+    "ansible",
+    "appdirs",
+    "argon2-cffi",
+    "arrow",
+    "asgiref",
+    "astroid",
+    "asttokens",
+    "async-timeout",
+    "autopep8",
+    "backoff",
+    "bcrypt",
+    "bleach",
+    "blinker",
+    "bokeh",
+    "brotli",
+    "build",
+    "cattrs",
+    "cfgv",
+    "chardet",
+    "cherrypy",
+    "chevron",
+    "cloudpickle",
+    "comm",
+    "contourpy",
+    "croniter",
+    "cycler",
+    "dask",
+    "decorator",
+    "defusedxml",
+    "deprecated",
+    "dill",
+    "distlib",
+    "distro",
+    "docker",
+    "ecdsa",
+    "email-validator",
+    "et-xmlfile",
+    "executing",
+    "fabric",
+    "factory-boy",
+    "faker",
+    "fastjsonschema",
+    "fonttools",
+    "freezegun",
+    "furl",
+    "gdown",
+    "gevent",
+    "gitpython",
+    "gunicorn",
+    "h2",
+    "hpack",
+    "html5lib",
+    "humanize",
+    "hyperframe",
+    "importlib-metadata",
+    "importlib-resources",
+    "inflection",
+    "ipywidgets",
+    "isodate",
+    "jedi",
+    "joblib",
+    "json5",
+    "jsonpointer",
+    "jupyter-client",
+    "jupyter-core",
+    "kiwisolver",
+    "kombu",
+    "kubernetes",
+    "lazy-object-proxy",
+    "limits",
+    "loguru",
+    "mako",
+    "marshmallow",
+    "matplotlib-inline",
+    "mccabe",
+    "mdurl",
+    "mistune",
+    "multiprocess",
+    "mypy-extensions",
+    "nbformat",
+    "nest-asyncio",
+    "networkx",
+    "nltk",
+    "nodeenv",
+    "numba",
+    "oauth2client",
+    "objgraph",
+    "ordered-set",
+    "outcome",
+    "parso",
+    "passlib",
+    "pendulum",
+    "pexpect",
+    "pip-tools",
+    "plotly",
+    "polars",
+    "pre-commit",
+    "prometheus-client",
+    "prompt-toolkit",
+    "proto-plus",
+    "ptyprocess",
+    "pure-eval",
+    "pyasn1",
+    "pyasn1-modules",
+    "pycodestyle",
+    "pydantic-core",
+    "pydeck",
+    "pyflakes",
+    "pygithub",
+    "pynacl",
+    "pyopenssl",
+    "pyproject-hooks",
+    "pyrsistent",
+    "pysocks",
+    "python-multipart",
+    "python-slugify",
+    "pyzmq",
+    "qrcode",
+    "rapidfuzz",
+    "reportlab",
+    "requests-oauthlib",
+    "responses",
+    "retrying",
+    "ruamel-yaml",
+    "s3fs",
+    "scipy",
+    "scrapy",
+    "seaborn",
+    "selenium",
+    "semver",
+    "sendgrid",
+    "sentry-sdk",
+    "simplejson",
+    "slack-sdk",
+    "sortedcontainers",
+    "stack-data",
+    "stripe",
+    "sympy",
+    "tabulate",
+    "tenacity",
+    "text-unidecode",
+    "threadpoolctl",
+    "toml",
+    "tomlkit",
+    "toolz",
+    "tornado",
+    "traitlets",
+    "trio",
+    "twilio",
+    "types-requests",
+    "typing-inspection",
+    "ujson",
+    "unidecode",
+    "uvloop",
+    "validators",
+    "vine",
+    "wcwidth",
+    "webencodings",
+    "websocket-client",
+    "websockets",
+    "whoosh",
+    "xlsxwriter",
+    "xmltodict",
+    "zstandard"
+  ]
+}

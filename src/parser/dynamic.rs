@@ -109,7 +109,7 @@ fn inspect_expr(expr: &Expr, out: &mut Vec<DynamicImport>, opaque: &mut bool) {
             out.push(DynamicImport { module, line });
             return;
         }
-        if is_opaque_dynamic_call(&call.func) && !call.args.is_empty() {
+        if is_import_module_call(&call.func) && !call.args.is_empty() {
             *opaque = true;
         }
     }
@@ -134,10 +134,6 @@ fn is_import_module_call(func: &Expr) -> bool {
         Expr::Name(name) => name.id.as_str() == "__import__",
         _ => false,
     }
-}
-
-fn is_opaque_dynamic_call(func: &Expr) -> bool {
-    is_import_module_call(func)
 }
 
 fn string_literal(expr: &Expr) -> Option<String> {

@@ -21,31 +21,39 @@ pub fn add_parsed_imports(
         });
     }
 
-    for import in &parsed.imports {
-        if import.module.is_empty() {
-            continue;
-        }
-        let module_id = graph.intern_module(import.module.clone(), ModuleOrigin::Unknown);
-        graph.push_edge(GraphEdge::FileImportsModule {
-            file: file_id,
-            module: module_id,
-            line: import.line,
-        });
-    }
-
-    for dynamic in &parsed.dynamic_imports {
-        if dynamic.module.is_empty() {
-            continue;
-        }
-        let module_id = graph.intern_module(dynamic.module.clone(), ModuleOrigin::Unknown);
-        graph.push_edge(GraphEdge::FileImportsModule {
-            file: file_id,
-            module: module_id,
-            line: dynamic.line,
-        });
-    }
+    push_module_import_edges(
+        graph,
+        file_id,
+        parsed.imports.iter().map(|i| (i.module.as_str(), i.line)),
+    );
+    push_module_import_edges(
+        graph,
+        file_id,
+        parsed
+            .dynamic_imports
+            .iter()
+            .map(|i| (i.module.as_str(), i.line)),
+    );
 
     Ok(())
+}
+
+fn push_module_import_edges<'a>(
+    graph: &mut ProjectGraph,
+    file_id: super::types::FileId,
+    imports: impl IntoIterator<Item = (&'a str, u32)>,
+) {
+    for (module, line) in imports {
+        if module.is_empty() {
+            continue;
+        }
+        let module_id = graph.intern_module(module.to_owned(), ModuleOrigin::Unknown);
+        graph.push_edge(GraphEdge::FileImportsModule {
+            file: file_id,
+            module: module_id,
+            line,
+        });
+    }
 }
 
 #[cfg(test)]
