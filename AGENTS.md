@@ -77,6 +77,23 @@ This runs: `cargo fmt --check` → `cargo clippy -D warnings` + `cargo doc` →
 
 Install tools once with `make tools`.
 
+## Benchmarks
+
+Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy
+extraction, `sources` for the file-discovery walk) with synthetic fixtures
+generated in `benches/support/mod.rs`. They are not part of `make check`;
+run them when touching hot paths:
+
+```bash
+make bench                      # run all benchmarks
+make bench-save BASELINE=main   # save a named baseline
+make bench-cmp BASELINE=main    # compare current code against it
+```
+
+Baselines live under `target/criterion/`, so avoid `cargo clean` between
+save and compare. Only land optimizations that show a significant
+improvement in `bench-cmp`.
+
 ## PR hygiene
 
 - One logical change per PR.
