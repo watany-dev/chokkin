@@ -28,7 +28,7 @@ src/
   sources/        Source file discovery (pipeline step 4)
   plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi)
   graph/          Project graph skeleton (Phase 0; import edges)
-  parser/         Python parse spike (`parse_file`, pipeline step 6 前提)
+  parser/         Python parse (`parse_file`, `parse_project_sources`, pipeline step 6)
   cli.rs          CLI argument parsing (Phase 0 probe flags)
   pipeline/       probe_project — pipeline steps 1–4 orchestration
   resolver/       (future) import-name → distribution-name resolution

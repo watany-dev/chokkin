@@ -31,7 +31,18 @@ pub fn add_parsed_imports(
             module: module_id,
             line: import.line,
         });
-        let _ = import.kind; // reserved for Step 7 relative-import handling
+    }
+
+    for dynamic in &parsed.dynamic_imports {
+        if dynamic.module.is_empty() {
+            continue;
+        }
+        let module_id = graph.intern_module(dynamic.module.clone(), ModuleOrigin::Unknown);
+        graph.push_edge(GraphEdge::FileImportsModule {
+            file: file_id,
+            module: module_id,
+            line: dynamic.line,
+        });
     }
 
     Ok(())
@@ -41,7 +52,7 @@ pub fn add_parsed_imports(
 mod tests {
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::parser::{ImportKind, ImportRef, ParsedModule};
+    use crate::parser::{ImportContext, ImportKind, ImportRef, ParsedModule};
     use crate::sources::{FileContext, FileKind};
 
     #[test]
@@ -62,9 +73,19 @@ mod tests {
             path: "app.py".to_owned(),
             imports: vec![ImportRef {
                 module: "os".to_owned(),
+                name: None,
+                alias: None,
                 line: 1,
                 kind: ImportKind::Import,
+                context: ImportContext::Runtime,
+                optional: false,
+                relative_level: 0,
             }],
+            dynamic_imports: Vec::new(),
+            symbols: Vec::new(),
+            exports: Vec::new(),
+            ignores: Vec::new(),
+            has_opaque_dynamic_import: false,
             diagnostics: Vec::new(),
         };
         add_parsed_imports(&mut graph, file_id, &parsed).expect("edges");

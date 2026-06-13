@@ -5,8 +5,9 @@
 //!
 //! Pipeline steps 1–5 ([`discovery`], [`config`], [`manifest`], [`sources`],
 //! [`plugins`]) are available as library APIs. Steps 1–4 also run via
-//! [`pipeline::probe_project`]. Phase 0 adds [`graph`] and [`parser`] skeletons.
-//! Full issue reporting is not wired yet.
+//! [`pipeline::probe_project`]. Step 6 ([`parser`]) parses Python sources.
+//! Phase 0 [`graph`] skeleton is extended as imports are attached. Steps 7–12
+//! (resolution, reachability, rules, reporters) are not wired yet.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
@@ -36,7 +37,9 @@ pub use manifest::{
     extract_manifest, resolve_target_version,
 };
 pub use parser::{
-    ImportKind, ImportRef, ParseDiagnostic, ParseError, ParseSeverity, ParsedModule, parse_file,
+    DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
+    ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, parse_file,
+    parse_project_sources,
 };
 pub use pipeline::{
     ProbeError, ProbeReport, ProbeWarning, probe_project, write_probe_report, write_probe_warnings,
