@@ -31,7 +31,7 @@ fn pipeline_phase0_spike() -> Result<(), Box<dyn std::error::Error>> {
     let mut graph = build_graph_skeleton(&manifest, &sources)?;
 
     for file in sources.python_files() {
-        let parsed = parse_file(&root, &file.path, target.clone())?;
+        let parsed = parse_file(&root, &file.path, &sources.layout, file.context, &target)?;
         let file_id = graph
             .file_id(&file.path)
             .ok_or("discovered file missing from graph")?;
