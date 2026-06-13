@@ -176,7 +176,7 @@ fn parse_requirements_line(
                 raw: trimmed,
                 context: ctx.default_context.clone(),
                 file: rel,
-                label: rel,
+                label: rel.to_owned(),
                 line: Some(line_no),
             });
         },

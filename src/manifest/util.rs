@@ -37,7 +37,7 @@ pub struct DependencyPush<'a> {
     /// Root-relative manifest file path.
     pub file: &'a str,
     /// TOML key path or requirements label.
-    pub label: &'a str,
+    pub label: String,
     /// 1-based line number when available.
     pub line: Option<u32>,
 }
@@ -47,7 +47,7 @@ pub fn push_dependency(push: DependencyPush<'_>) {
     let origin = DependencyOrigin {
         file: push.file.to_owned(),
         line: push.line,
-        label: push.label.to_owned(),
+        label: push.label,
     };
     match parse_requirement(push.raw, push.context, origin) {
         Ok(dep) => push.dependencies.push(dep),

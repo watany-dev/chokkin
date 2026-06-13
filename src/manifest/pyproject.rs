@@ -60,7 +60,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
                         raw,
                         context: DependencyContext::Runtime,
                         file: &rel,
-                        label: &format!("project.dependencies[{index}]"),
+                        label: format!("project.dependencies[{index}]"),
                         line: None,
                     });
                 }
@@ -81,7 +81,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
                                 raw,
                                 context: DependencyContext::OptionalExtra(extra.clone()),
                                 file: &rel,
-                                label: &format!("project.optional-dependencies.{extra}[{index}]"),
+                                label: format!("project.optional-dependencies.{extra}[{index}]"),
                                 line: None,
                             });
                         }
@@ -157,7 +157,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
                             raw,
                             context: DependencyContext::Group(group.clone()),
                             file: &rel,
-                            label: &format!("dependency-groups.{group}[{index}]"),
+                            label: format!("dependency-groups.{group}[{index}]"),
                             line: None,
                         });
                     }
