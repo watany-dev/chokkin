@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
+use crate::cache::CacheOptions;
 use crate::config::RuntimeOverrides;
 use crate::entry::{ResolvedMode, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, apply_fixes};
@@ -49,6 +50,8 @@ pub struct AnalyzeOptions {
     pub baseline: Option<std::path::PathBuf>,
     /// Update the baseline file with the current issue set.
     pub update_baseline: bool,
+    /// Cache policy for Phase 2 warm-run support.
+    pub cache: CacheOptions,
 }
 
 /// Run pipeline steps 1–12 and optionally step 13.

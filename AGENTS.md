@@ -17,7 +17,8 @@ and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
 reports resolved/inventoried workspace member counts when uv/chokkin workspaces are found;
 resolver tags member-owned imports, treats cross-member imports as first-party, `--strict`
 requires member-local direct dependency declarations, and reporters expose member ids on
-workspace findings. PyPI
+workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `--no-cache`
+(`.chokkin/cache`; cache units still draft). PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`

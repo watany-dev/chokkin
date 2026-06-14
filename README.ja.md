@@ -91,6 +91,7 @@ uvx chokkin --fix
 uvx chokkin --fix --dry-run
 uvx chokkin --baseline chokkin-baseline.json
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
+uvx chokkin --no-cache
 uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
 uvx chokkin --probe              # ステップ 1–4 の概要のみ
@@ -103,6 +104,7 @@ uvx chokkin --init                # v0.2
 - `--strict` — transitive依存の直接importを常にerror、workspace memberごとに直接依存宣言を要求、environment marker付き依存のunusedもerror扱い、confidence `maybe` のissueも表示します。
 - `--no-exit-code` — issueがあってもexit codeを0にします(config/CLI errorの2、internal errorの3は維持)。導入初期やGitHub Actions summary用に。
 - `--baseline PATH` / `--update-baseline` — 現在のissueをbaseline fileに凍結し、以後の実行では一致するissueを抑制して新規issueだけCIで落とします。
+- `--no-cache` — Phase 2 cache の read/write を無効化します。cache policy plumbing は実装済みですが、parse/manifest cache unit は draft です。
 - `--reporter github` / `--reporter sarif` — GitHub Actions annotation、または code scanning 用の SARIF 2.1.0 subset を出力します。
 - `--probe` — uv / chokkin workspace が検出された場合、解決済み・inventory済み workspace member 数も表示します。
 - `--explain` / `--trace` — issueが報告された理由・ファイルが到達可能と判定された経路を表示します。誤検知の調査・報告のための導線です。

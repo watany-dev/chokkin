@@ -38,6 +38,7 @@ Options:
       --dry-run           Preview fixes without writing files (requires --fix)
       --baseline <PATH>   Suppress issues already recorded in a baseline file
       --update-baseline   Write current issues to --baseline
+      --no-cache          Disable cache reads and writes
       --probe             Run probe mode (pipeline steps 1-4 only)
       --project-root PATH Override project root discovery start directory
 

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::cache::CacheOptions;
 use crate::config::{Confidence, RuntimeOverrides};
 use crate::fix::FixOptions;
 use crate::pipeline::AnalyzeOptions;
@@ -79,6 +80,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub update_baseline: bool,
 
+    /// Disable cache reads and writes.
+    #[arg(long)]
+    pub no_cache: bool,
+
     /// Run probe mode (pipeline steps 1–4 only).
     #[arg(long)]
     pub probe: bool,
@@ -133,6 +138,11 @@ impl CliArgs {
             },
             baseline: self.baseline.clone(),
             update_baseline: self.update_baseline,
+            cache: if self.no_cache {
+                CacheOptions::disabled()
+            } else {
+                CacheOptions::default()
+            },
         }
     }
 
@@ -226,5 +236,12 @@ mod tests {
     fn update_baseline_requires_baseline_path() {
         let args = parse_cli_args(vec!["--update-baseline".to_owned()]).expect("parse");
         assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn parses_no_cache() {
+        let args = parse_cli_args(vec!["--no-cache".to_owned()]).expect("parse");
+        assert!(args.no_cache);
+        assert!(!args.analyze_options().cache.enabled);
     }
 }

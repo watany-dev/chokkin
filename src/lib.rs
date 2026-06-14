@@ -18,6 +18,7 @@
 
 pub mod cli;
 pub mod baseline;
+pub mod cache;
 pub mod config;
 pub mod discovery;
 pub mod entry;
@@ -37,6 +38,7 @@ pub use cli::{CliArgs, parse_cli_args};
 pub use baseline::{
     BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
 };
+pub use cache::{CacheOptions, DEFAULT_CACHE_DIR};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
     LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint,

@@ -91,6 +91,7 @@ uvx chokkin --fix
 uvx chokkin --fix --dry-run
 uvx chokkin --baseline chokkin-baseline.json
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
+uvx chokkin --no-cache
 uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
 uvx chokkin --probe              # steps 1–4 summary only
@@ -103,6 +104,7 @@ Key flags:
 - `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
+- `--no-cache` — disable Phase 2 cache reads/writes. Cache policy plumbing is present; parse/manifest cache units are still draft.
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
