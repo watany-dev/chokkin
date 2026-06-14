@@ -3,12 +3,12 @@
 use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
-use crate::cache::CacheOptions;
+use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{ResolvedMode, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, apply_fixes};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
-use crate::parser::parse_project_sources;
+use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::extract_plugin_hints;
 use crate::reachability::{ReachabilityReport, analyze_reachability};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
@@ -66,7 +66,7 @@ pub fn analyze_project(
     options: AnalyzeOptions,
 ) -> Result<AnalysisReport, AnalyzeError> {
     let probe = probe_project(start, project_root_override, overrides)?;
-    let mut core = run_analysis_core(&probe, overrides)?;
+    let mut core = run_analysis_core(&probe, overrides, &options)?;
     let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
     let fix = if options.fix_enabled {
         Some(apply_fixes(
@@ -114,6 +114,7 @@ struct AnalysisCore {
 fn run_analysis_core(
     probe: &ProbeReport,
     overrides: &RuntimeOverrides,
+    options: &AnalyzeOptions,
 ) -> Result<AnalysisCore, AnalyzeError> {
     let production = probe.effective_config.production;
     let loaded = crate::config::LoadedConfig {
@@ -132,7 +133,13 @@ fn run_analysis_core(
         .clone()
         .unwrap_or_else(crate::config::TargetVersion::default_py311);
 
-    let parse = parse_project_sources(&probe.root, &probe.sources, &target)?;
+    let mut parse_cache = options.cache.enabled.then(ParseCacheStore::new);
+    let parse = parse_project_sources_with_cache(
+        &probe.root,
+        &probe.sources,
+        &target,
+        parse_cache.as_mut(),
+    )?;
 
     let entry = build_entry_roots(
         &probe.effective_config,

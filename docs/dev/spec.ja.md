@@ -1008,7 +1008,7 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の `.chokkin/cache` を既定directoryにする。`--no-cache` は cache read/write を両方無効化し、未実装またはstale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` でpolicyだけを先に通し、parse/manifest/plugin/module index の各unitを後続PRで保守的に追加する。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせ、mtime/sizeに加えてfile bytesのstable content hashを含める。
+cache は project root 配下の `.chokkin/cache` を既定directoryにする。`--no-cache` は cache read/write を両方無効化し、未実装またはstale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` でpolicyだけを先に通し、parse/manifest/plugin/module index の各unitを後続PRで保守的に追加する。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせ、mtime/sizeに加えてfile bytesのstable content hashを含める。最初のbackendは `ParseCacheStore` によるin-memory reuseで、disk永続化は `.chokkin/cache/parse/<key>.json` のentry pathとserializer/schemaを固めてから追加する。
 
 cache keyは以下を使う。
 

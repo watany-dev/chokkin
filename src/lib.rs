@@ -38,7 +38,10 @@ pub use cli::{CliArgs, parse_cli_args};
 pub use baseline::{
     BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
 };
-pub use cache::{CacheOptions, DEFAULT_CACHE_DIR};
+pub use cache::{
+    CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheKey, ParseCacheStats,
+    ParseCacheStore, SourceFingerprint,
+};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
     LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint,
@@ -64,7 +67,7 @@ pub use manifest::{
 pub use parser::{
     DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
     ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, parse_file,
-    parse_project_sources,
+    parse_project_sources, parse_project_sources_with_cache,
 };
 pub use pipeline::{
     AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,

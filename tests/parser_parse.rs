@@ -5,8 +5,9 @@
 use std::path::PathBuf;
 
 use chokkin::{
-    FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout, ProjectRoot,
-    RootMarker, TargetVersion, parse_file, parse_project_sources,
+    FileContext, ImportContext, ImportKind, LayoutInfo, ParseCacheStore, ParseSeverity,
+    ProjectLayout, ProjectRoot, RootMarker, TargetVersion, parse_file, parse_project_sources,
+    parse_project_sources_with_cache,
 };
 
 fn spike_fixture(name: &str) -> PathBuf {
@@ -227,6 +228,45 @@ fn parse_project_sources_fixture_suite() {
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
     assert!(summary.parsed_count >= 3);
     assert_eq!(summary.skipped_count, 0);
+}
+
+#[test]
+fn parse_project_sources_reuses_cache_when_inputs_match() {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parse");
+    let root = ProjectRoot {
+        path: base.clone(),
+        marker: RootMarker::PyProjectToml,
+        start: base.clone(),
+    };
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        },
+        effective_globs: Vec::new(),
+        files: vec![chokkin::DiscoveredFile {
+            path: "imports/absolute_import.py".to_owned(),
+            kind: chokkin::FileKind::Python,
+            context: FileContext::Runtime,
+        }],
+        warnings: Vec::new(),
+    };
+    let target = TargetVersion::default_py311();
+    let mut cache = ParseCacheStore::new();
+
+    let first =
+        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache)).expect("parse");
+    let second =
+        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache)).expect("parse");
+
+    assert_eq!(first, second);
+    assert_eq!(cache.stats().misses, 1);
+    assert_eq!(cache.stats().stores, 1);
+    assert_eq!(cache.stats().hits, 1);
 }
 
 fn collect_py_files(

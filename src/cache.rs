@@ -1,8 +1,11 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+
+use crate::parser::ParsedModule;
 
 /// Default cache directory name below the project root.
 pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -34,10 +37,22 @@ impl CacheOptions {
             ..Self::default()
         }
     }
+
+    /// Resolve the cache directory below `project_root`.
+    #[must_use]
+    pub fn directory_path(&self, project_root: &Path) -> PathBuf {
+        project_root.join(&self.directory)
+    }
+
+    /// Absolute path for a persisted parse cache entry.
+    #[must_use]
+    pub fn parse_entry_path(&self, project_root: &Path, key: &ParseCacheKey) -> PathBuf {
+        self.directory_path(project_root).join(key.relative_path())
+    }
 }
 
 /// Stable inputs shared by cache units.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CacheKeyContext {
     /// chokkin version string.
     pub chokkin_version: String,
@@ -52,7 +67,7 @@ pub struct CacheKeyContext {
 }
 
 /// Fingerprint for one root-relative source file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourceFingerprint {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -88,12 +103,100 @@ impl SourceFingerprint {
 }
 
 /// Key for a cacheable parse result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ParseCacheKey {
     /// Shared key context.
     pub context: CacheKeyContext,
     /// Source file fingerprint.
     pub source: SourceFingerprint,
+}
+
+impl ParseCacheKey {
+    /// Stable filename for the cached parse result.
+    #[must_use]
+    pub fn file_name(&self) -> String {
+        let input = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            self.context.chokkin_version,
+            self.context.config_hash,
+            self.context.manifest_hash,
+            self.context.target_version,
+            self.context.unit_version,
+            self.source.path,
+            self.source.size,
+            self.source
+                .modified_ns
+                .map_or_else(String::new, |value| value.to_string()),
+            self.source.content_hash
+        );
+        format!("{}.json", stable_hex_hash(input.as_bytes()))
+    }
+
+    /// Project-root-relative path for a persisted parse cache entry.
+    #[must_use]
+    pub fn relative_path(&self) -> PathBuf {
+        PathBuf::from("parse").join(self.file_name())
+    }
+}
+
+/// Parse cache hit/miss counters for observability and tests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ParseCacheStats {
+    /// Number of cache hits.
+    pub hits: u32,
+    /// Number of cache misses.
+    pub misses: u32,
+    /// Number of values inserted into the cache.
+    pub stores: u32,
+}
+
+/// In-memory parse cache used as the first conservative cache backend.
+#[derive(Debug, Default)]
+pub struct ParseCacheStore {
+    entries: BTreeMap<ParseCacheKey, ParsedModule>,
+    stats: ParseCacheStats,
+}
+
+impl ParseCacheStore {
+    /// Create an empty parse cache store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Return cached parse output for `key` when available.
+    pub fn get(&mut self, key: &ParseCacheKey) -> Option<ParsedModule> {
+        if let Some(parsed) = self.entries.get(key) {
+            self.stats.hits = self.stats.hits.saturating_add(1);
+            return Some(parsed.clone());
+        }
+        self.stats.misses = self.stats.misses.saturating_add(1);
+        None
+    }
+
+    /// Store parse output for `key`.
+    pub fn insert(&mut self, key: ParseCacheKey, parsed: ParsedModule) {
+        self.entries.insert(key, parsed);
+        self.stats.stores = self.stats.stores.saturating_add(1);
+    }
+
+    /// Current cache counters.
+    #[must_use]
+    pub const fn stats(&self) -> ParseCacheStats {
+        self.stats
+    }
+
+    /// Number of entries currently held.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// Normalize a path for cache keys.
@@ -174,5 +277,61 @@ mod tests {
         assert_eq!(second.path, "src/app.py");
         assert_ne!(first.content_hash, second.content_hash);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parse_cache_store_tracks_hits_and_misses() {
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: "hash".to_owned(),
+            },
+        };
+        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let mut cache = ParseCacheStore::new();
+
+        assert!(cache.get(&key).is_none());
+        cache.insert(key.clone(), parsed.clone());
+        assert_eq!(cache.get(&key), Some(parsed));
+
+        let stats = cache.stats();
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.stores, 1);
+        assert_eq!(stats.hits, 1);
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn parse_entry_path_uses_stable_hashed_filename() {
+        let context = CacheKeyContext {
+            chokkin_version: "test".to_owned(),
+            config_hash: "config".to_owned(),
+            manifest_hash: "manifest".to_owned(),
+            target_version: "py311".to_owned(),
+            unit_version: "parse-v1".to_owned(),
+        };
+        let key = ParseCacheKey {
+            context,
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: "hash".to_owned(),
+            },
+        };
+
+        let path = CacheOptions::default().parse_entry_path(Path::new("/repo"), &key);
+
+        assert!(path.starts_with("/repo/.chokkin/cache/parse"));
+        assert_eq!(path.extension().and_then(std::ffi::OsStr::to_str), Some("json"));
     }
 }

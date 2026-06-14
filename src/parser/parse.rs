@@ -4,6 +4,10 @@ use rustpython_parser::ast;
 use rustpython_parser::source_code::RandomLocator;
 use rustpython_parser::{Parse, ParseError as RpParseError};
 
+use crate::VERSION;
+use crate::cache::{
+    CacheKeyContext, ParseCacheKey, ParseCacheStore, SourceFingerprint, stable_hex_hash,
+};
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
 use crate::sources::{DiscoveredSources, FileKind, LayoutInfo};
@@ -69,8 +73,25 @@ pub fn parse_project_sources(
     sources: &DiscoveredSources,
     target: &TargetVersion,
 ) -> Result<ParseSummary, ParseError> {
+    parse_project_sources_with_cache(root, sources, target, None)
+}
+
+/// Parse all `.py` files in `sources`, optionally reusing parse results from cache.
+///
+/// IO failures abort the whole operation. Syntax errors are recorded per file.
+///
+/// # Errors
+///
+/// Returns [`ParseError::Io`] when a source file cannot be read.
+pub fn parse_project_sources_with_cache(
+    root: &ProjectRoot,
+    sources: &DiscoveredSources,
+    target: &TargetVersion,
+    mut cache: Option<&mut ParseCacheStore>,
+) -> Result<ParseSummary, ParseError> {
     let layout = &sources.layout;
     let mut summary = ParseSummary::empty();
+    let context = provisional_parse_cache_context(sources, target);
 
     for file in &sources.files {
         if file.kind == FileKind::Stub || file.kind != FileKind::Python {
@@ -78,7 +99,18 @@ pub fn parse_project_sources(
             continue;
         }
 
-        let parsed = parse_file(root, &file.path, layout, file.context, target)?;
+        let parsed = if let Some(cache_store) = cache.as_deref_mut() {
+            let key = parse_cache_key(root, &file.path, &context)?;
+            if let Some(parsed) = cache_store.get(&key) {
+                parsed
+            } else {
+                let parsed = parse_file(root, &file.path, layout, file.context, target)?;
+                cache_store.insert(key, parsed.clone());
+                parsed
+            }
+        } else {
+            parse_file(root, &file.path, layout, file.context, target)?
+        };
         let has_syntax_error = parsed
             .diagnostics
             .iter()
@@ -91,6 +123,36 @@ pub fn parse_project_sources(
     }
 
     Ok(summary)
+}
+
+fn provisional_parse_cache_context(
+    sources: &DiscoveredSources,
+    target: &TargetVersion,
+) -> CacheKeyContext {
+    CacheKeyContext {
+        chokkin_version: VERSION.to_owned(),
+        config_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
+        manifest_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
+        target_version: target.as_str().to_owned(),
+        unit_version: "parse-v1".to_owned(),
+    }
+}
+
+fn parse_cache_key(
+    root: &ProjectRoot,
+    path: &str,
+    context: &CacheKeyContext,
+) -> Result<ParseCacheKey, ParseError> {
+    let source = SourceFingerprint::from_root_relative(&root.path, path).map_err(|source| {
+        ParseError::Io {
+            path: root.path.join(path),
+            source,
+        }
+    })?;
+    Ok(ParseCacheKey {
+        context: context.clone(),
+        source,
+    })
 }
 
 fn syntax_diagnostic(
