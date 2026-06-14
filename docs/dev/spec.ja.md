@@ -1044,7 +1044,7 @@ tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として
 
 Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。decorator/task discovery は plugin extraction が parse step 前に走る現行pipelineでは未実装。
 
-Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs plugin/theme の詳細parseは未実装。
+Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 
 notebook parsing は v0.2 plugin 拡充の初期実装として、source discovery が `.ipynb` を `FileKind::Notebook` として拾い、parser が `cells[].cell_type == "code"` の `source` だけを連結して既存の Python static parser に渡す。markdown/raw cell と outputs は無視し、notebook JSON が壊れている場合は per-file warning diagnostic に留める。
 

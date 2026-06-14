@@ -118,20 +118,129 @@ fn scan_mkdocs_config(
                 label: name.to_owned(),
             },
         );
-        if let Ok(contents) = std::fs::read_to_string(&path)
-            && mkdocs_uses_material_theme(&contents)
-        {
-            push_distribution(result, "mkdocs-material");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            for distribution in mkdocs_used_distributions(&contents) {
+                push_distribution(result, distribution);
+            }
         }
         break;
     }
 }
 
-fn mkdocs_uses_material_theme(contents: &str) -> bool {
-    contents.contains("name: material")
-        || contents.contains("name: 'material'")
-        || contents.contains("name: \"material\"")
+fn mkdocs_used_distributions(contents: &str) -> Vec<&'static str> {
+    let mut distributions = Vec::new();
+    if mkdocs_theme_name(contents).is_some_and(|theme| theme == "material")
         || contents.contains("mkdocs-material")
+    {
+        distributions.push("mkdocs-material");
+    }
+
+    for plugin in mkdocs_plugin_names(contents) {
+        if let Some(distribution) = mkdocs_plugin_distribution(&plugin) {
+            distributions.push(distribution);
+        }
+    }
+
+    distributions.sort_unstable();
+    distributions.dedup();
+    distributions
+}
+
+fn mkdocs_theme_name(contents: &str) -> Option<String> {
+    let mut in_theme = false;
+    let mut theme_indent = 0usize;
+
+    for line in contents.lines() {
+        let trimmed = strip_yaml_comment(line).trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let indent = leading_spaces(line);
+        if trimmed == "theme:" {
+            in_theme = true;
+            theme_indent = indent;
+            continue;
+        }
+        if in_theme && indent <= theme_indent {
+            in_theme = false;
+        }
+        if let Some(value) = trimmed.strip_prefix("theme:") {
+            return Some(unquote_yaml_scalar(value.trim()).to_owned());
+        }
+        if in_theme && let Some(value) = trimmed.strip_prefix("name:") {
+            return Some(unquote_yaml_scalar(value.trim()).to_owned());
+        }
+    }
+
+    None
+}
+
+fn mkdocs_plugin_names(contents: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut in_plugins = false;
+    let mut plugins_indent = 0usize;
+
+    for line in contents.lines() {
+        let trimmed = strip_yaml_comment(line).trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let indent = leading_spaces(line);
+        if trimmed == "plugins:" {
+            in_plugins = true;
+            plugins_indent = indent;
+            continue;
+        }
+        if in_plugins && indent <= plugins_indent {
+            in_plugins = false;
+        }
+        if !in_plugins {
+            continue;
+        }
+        let Some(item) = trimmed.strip_prefix('-') else {
+            continue;
+        };
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let name = item
+            .split_once(':')
+            .map_or(item, |(name, _)| name)
+            .trim();
+        if !name.is_empty() {
+            names.push(unquote_yaml_scalar(name).to_owned());
+        }
+    }
+
+    names
+}
+
+fn mkdocs_plugin_distribution(plugin: &str) -> Option<&'static str> {
+    match plugin {
+        "mkdocstrings" => Some("mkdocstrings"),
+        "autorefs" => Some("mkdocs-autorefs"),
+        "include-markdown" => Some("mkdocs-include-markdown-plugin"),
+        "redirects" => Some("mkdocs-redirects"),
+        "minify" => Some("mkdocs-minify-plugin"),
+        _ => None,
+    }
+}
+
+fn strip_yaml_comment(line: &str) -> &str {
+    line.split_once('#').map_or(line, |(before, _)| before)
+}
+
+fn unquote_yaml_scalar(value: &str) -> &str {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 fn scan_pre_commit_config(
@@ -473,7 +582,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(
             dir.join("mkdocs.yml"),
-            "site_name: demo\ntheme:\n  name: material\n",
+            "site_name: demo\ntheme:\n  name: material\nplugins:\n  - search\n  - mkdocstrings:\n      handlers:\n        python: {}\n  - autorefs\n",
         )
         .expect("write mkdocs");
 
@@ -514,6 +623,16 @@ mod tests {
             result
                 .used_distributions
                 .contains(&"mkdocs-material".to_owned())
+        );
+        assert!(
+            result
+                .used_distributions
+                .contains(&"mkdocstrings".to_owned())
+        );
+        assert!(
+            result
+                .used_distributions
+                .contains(&"mkdocs-autorefs".to_owned())
         );
     }
 
