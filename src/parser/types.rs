@@ -39,6 +39,8 @@ pub struct ImportRef {
     pub context: ImportContext,
     /// `true` when the import appears inside a `try` block body.
     pub optional: bool,
+    /// `true` when the import appears under an `if sys.platform …` guard.
+    pub platform_guarded: bool,
     /// Relative import dot count (`0` = absolute).
     pub relative_level: u8,
 }

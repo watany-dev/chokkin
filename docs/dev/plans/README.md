@@ -33,7 +33,7 @@
 | wheel + PyPI release | spec §15, `release.yml` | CI のみ | ⬜ 未タグ |
 | **フル CLI + reporter** | [phase-1-cli-reporter.md](./phase-1-cli-reporter.md) | 確定 | ✅ |
 | OSS dogfooding + §17 gate | `scripts/oss-metrics.sh` | 確定 | ✅ 計測済み |
-| **v0.1 誤検知是正** | [phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md) | 確定 | ⬜ **次の着手** |
+| **v0.1 誤検知是正** | [phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md) | 確定 | ✅ |
 
 ## 推奨実装順（クリティカルパス）
 
@@ -75,7 +75,7 @@ flowchart TB
 
 ## v0.1 リリース前の残作業（§17 exit criteria）
 
-**計測済み (2026-06-14):** crash 0 ✅、cold medium ≤ 111 ms ✅、YOK002 FP **100%** ❌。
+**計測済み (2026-06-14, Phase 1.5 完了後):** crash 0 ✅、cold medium ≤ 2s ✅、YOK002 FP **0%** ✅。
 詳細は [`oss-validation-report.md`](../oss-validation-report.md)。
 
 Phase 1.5（[phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md)）で是正:

@@ -40,6 +40,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
     let mut result = PyprojectExtraction::default();
 
     detect_unsupported_tools(&table, &mut result.warnings);
+    extract_pdm_hatch_dependencies(&table, &rel, &mut result.dependencies, &mut result.warnings);
 
     if let Some(project) = table.get("project").and_then(Value::as_table) {
         result.metadata = parse_project_metadata(project);
@@ -218,6 +219,111 @@ fn detect_unsupported_tools(table: &toml::Table, warnings: &mut Vec<ManifestWarn
     }
 }
 
+fn extract_pdm_hatch_dependencies(
+    table: &toml::Table,
+    rel: &str,
+    dependencies: &mut Vec<DeclaredDependency>,
+    warnings: &mut Vec<ManifestWarning>,
+) {
+    let Some(tool) = table.get("tool").and_then(Value::as_table) else {
+        return;
+    };
+    extract_pdm_dependencies(tool, rel, dependencies, warnings);
+    extract_hatch_dependencies(tool, rel, dependencies, warnings);
+}
+
+fn extract_pdm_dependencies(
+    tool: &toml::Table,
+    rel: &str,
+    dependencies: &mut Vec<DeclaredDependency>,
+    warnings: &mut Vec<ManifestWarning>,
+) {
+    let Some(pdm) = tool.get("pdm").and_then(Value::as_table) else {
+        return;
+    };
+
+    if let Some(dev_groups) = pdm.get("dev-dependencies").and_then(Value::as_table) {
+        for (group, deps_value) in dev_groups {
+            if let Some(deps) = deps_value.as_array() {
+                for (index, dep) in deps.iter().enumerate() {
+                    if let Some(raw) = dep.as_str() {
+                        push_dependency(DependencyPush {
+                            dependencies,
+                            warnings,
+                            raw,
+                            context: DependencyContext::Group(group.clone()),
+                            file: rel,
+                            label: format!("tool.pdm.dev-dependencies.{group}[{index}]"),
+                            line: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(optional) = pdm.get("optional-dependencies").and_then(Value::as_table) {
+        for (extra, deps_value) in optional {
+            if let Some(deps) = deps_value.as_array() {
+                for (index, dep) in deps.iter().enumerate() {
+                    if let Some(raw) = dep.as_str() {
+                        push_dependency(DependencyPush {
+                            dependencies,
+                            warnings,
+                            raw,
+                            context: DependencyContext::OptionalExtra(extra.clone()),
+                            file: rel,
+                            label: format!("tool.pdm.optional-dependencies.{extra}[{index}]"),
+                            line: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn extract_hatch_dependencies(
+    tool: &toml::Table,
+    rel: &str,
+    dependencies: &mut Vec<DeclaredDependency>,
+    warnings: &mut Vec<ManifestWarning>,
+) {
+    let Some(hatch) = tool.get("hatch").and_then(Value::as_table) else {
+        return;
+    };
+    let Some(envs) = hatch.get("envs").and_then(Value::as_table) else {
+        return;
+    };
+
+    for (env_name, env_value) in envs {
+        let Some(env_table) = env_value.as_table() else {
+            continue;
+        };
+        let Some(deps) = env_table.get("dependencies").and_then(Value::as_array) else {
+            continue;
+        };
+        let group = if env_name == "default" {
+            "dev".to_owned()
+        } else {
+            env_name.clone()
+        };
+        for (index, dep) in deps.iter().enumerate() {
+            if let Some(raw) = dep.as_str() {
+                push_dependency(DependencyPush {
+                    dependencies,
+                    warnings,
+                    raw,
+                    context: DependencyContext::Group(group.clone()),
+                    file: rel,
+                    label: format!("tool.hatch.envs.{env_name}.dependencies[{index}]"),
+                    line: None,
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +344,39 @@ mod tests {
 
         assert!(result.skip_project_dependencies);
         assert!(result.dependencies.is_empty());
+    }
+
+    #[test]
+    fn extracts_pdm_dev_dependencies() {
+        let result = extract(
+            "[project]\nname = \"x\"\n[tool.pdm.dev-dependencies]\ndev = [\"pytest>=8\"]\n",
+        )
+        .expect("valid pyproject");
+        assert!(result.warnings.contains(&ManifestWarning::PdmDetected));
+        assert_eq!(result.dependencies.len(), 1);
+        assert_eq!(result.dependencies[0].name, "pytest");
+        assert!(matches!(
+            &result.dependencies[0].context,
+            DependencyContext::Group(group) if group == "dev"
+        ));
+    }
+
+    #[test]
+    fn extracts_hatch_env_dependencies_as_groups() {
+        let result = extract(
+            "[project]\nname = \"x\"\n[tool.hatch.envs.default]\ndependencies = [\"pytest\"]\n[tool.hatch.envs.test]\ndependencies = [\"coverage\"]\n",
+        )
+        .expect("valid pyproject");
+        assert!(result.warnings.contains(&ManifestWarning::HatchDetected));
+        assert_eq!(result.dependencies.len(), 2);
+        assert!(result.dependencies.iter().any(|dep| {
+            dep.name == "pytest"
+                && matches!(&dep.context, DependencyContext::Group(group) if group == "dev")
+        }));
+        assert!(result.dependencies.iter().any(|dep| {
+            dep.name == "coverage"
+                && matches!(&dep.context, DependencyContext::Group(group) if group == "test")
+        }));
     }
 
     #[test]

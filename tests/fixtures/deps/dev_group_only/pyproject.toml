@@ -1,0 +1,10 @@
+[project]
+name = "dev-group-only"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[project.scripts]
+dev-group-only = "acme.main:main"

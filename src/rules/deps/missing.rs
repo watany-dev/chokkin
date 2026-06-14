@@ -260,6 +260,8 @@ mod tests {
             file: "src/app.py".to_owned(),
             line: 1,
             context: crate::parser::ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
             origin: ModuleOrigin::ThirdParty,
             distribution: Some("requests".to_owned()),
             confidence: crate::resolver::ResolveConfidence::Certain,

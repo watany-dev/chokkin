@@ -1,13 +1,16 @@
 //! YOK002 unused dependency detection.
 
-use crate::config::Confidence;
+use crate::config::{Confidence, YokeiConfig};
 use crate::manifest::DeclaredDependency;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
+
+use super::context::{DeclarationBucket, declaration_bucket};
 
 /// Detect declared dependencies with no matching usage.
 pub(super) fn detect_unused_dependencies(
     declared: &[&DeclaredDependency],
     used: &indexmap::IndexSet<String>,
+    config: &YokeiConfig,
     strict: bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -21,6 +24,15 @@ pub(super) fn detect_unused_dependencies(
             continue;
         }
         if used.contains(&dep.name) {
+            continue;
+        }
+        if should_suppress_unused_dev_dependency(&dep.context, config, strict) {
+            continue;
+        }
+        if should_suppress_unused_optional_dependency(&dep.context, strict) {
+            continue;
+        }
+        if !strict && dep.marker.is_some() {
             continue;
         }
 
@@ -51,6 +63,33 @@ pub(super) fn detect_unused_dependencies(
     candidates
 }
 
+/// Dev-group declarations are not reported as unused unless `--strict`.
+fn should_suppress_unused_dev_dependency(
+    context: &crate::manifest::DependencyContext,
+    config: &YokeiConfig,
+    strict: bool,
+) -> bool {
+    if strict {
+        return false;
+    }
+    declaration_bucket(context, &config.dependencies) == DeclarationBucket::Dev
+}
+
+/// Optional-extra declarations are not reported as unused unless `--strict`.
+fn should_suppress_unused_optional_dependency(
+    context: &crate::manifest::DependencyContext,
+    strict: bool,
+) -> bool {
+    if strict {
+        return false;
+    }
+    matches!(
+        context,
+        crate::manifest::DependencyContext::OptionalExtra(_)
+            | crate::manifest::DependencyContext::SetupExtra(_)
+    )
+}
+
 fn unused_confidence(dep: &DeclaredDependency, strict: bool) -> (Confidence, Severity) {
     if dep.marker.is_some() {
         let severity = if strict {
@@ -63,8 +102,72 @@ fn unused_confidence(dep: &DeclaredDependency, strict: bool) -> (Confidence, Sev
     (Confidence::Certain, Severity::Error)
 }
 
-/// Whether a distribution name looks like a types stub package.
+/// Whether a `types-*` stub name looks like a types stub package.
 #[must_use]
 pub(super) fn is_types_stub(name: &str) -> bool {
     name.starts_with("types-") || name.ends_with("-stubs")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::default_config;
+    use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
+
+    fn dep(context: DependencyContext) -> DeclaredDependency {
+        DeclaredDependency {
+            name: "pytest".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(1),
+                label: "dependency-groups.dev[0]".to_owned(),
+            },
+            opaque: false,
+        }
+    }
+
+    #[test]
+    fn suppresses_unused_dev_group_by_default() {
+        let config = default_config();
+        let dev_dep = dep(DependencyContext::Group("dev".to_owned()));
+        let candidates =
+            detect_unused_dependencies(&[&dev_dep], &indexmap::IndexSet::new(), &config, false);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn reports_unused_dev_group_in_strict_mode() {
+        let config = default_config();
+        let dev_dep = dep(DependencyContext::Group("dev".to_owned()));
+        let candidates =
+            detect_unused_dependencies(&[&dev_dep], &indexmap::IndexSet::new(), &config, true);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].rule, RuleId::Yok002);
+    }
+
+    #[test]
+    fn reports_unused_runtime_dependency() {
+        let config = default_config();
+        let runtime_dep = dep(DependencyContext::Runtime);
+        let candidates =
+            detect_unused_dependencies(&[&runtime_dep], &indexmap::IndexSet::new(), &config, false);
+        assert_eq!(candidates.len(), 1);
+    }
+
+    #[test]
+    fn suppresses_unused_optional_extra_by_default() {
+        let config = default_config();
+        let optional_dep = dep(DependencyContext::OptionalExtra("brotli".to_owned()));
+        let candidates = detect_unused_dependencies(
+            &[&optional_dep],
+            &indexmap::IndexSet::new(),
+            &config,
+            false,
+        );
+        assert!(candidates.is_empty());
+    }
 }

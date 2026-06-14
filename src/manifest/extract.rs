@@ -11,7 +11,8 @@ use super::requirements::extract_requirements_file;
 use super::setup_cfg::extract_setup_cfg;
 use super::setup_py::extract_setup_py;
 use super::types::{
-    DependencyContext, LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata,
+    DeclaredDependency, DependencyContext, LoadedManifest, LockfileGraph, ManifestSources,
+    ProjectMetadata,
 };
 use super::uv_lock::extract_uv_lock;
 use super::warnings::ManifestWarning;
@@ -42,23 +43,6 @@ pub fn extract_manifest(
             .any(|w| matches!(w, ManifestWarning::PoetryDetected));
         warnings.extend(extracted.warnings);
         sources.pyproject_toml = true;
-    }
-
-    let dev_group = DependencyContext::Group("dev".to_owned());
-    let requirements_specs: &[(&str, &DependencyContext)] = &[
-        ("requirements.txt", &DependencyContext::Runtime),
-        ("requirements-dev.txt", &dev_group),
-        ("dev-requirements.txt", &dev_group),
-    ];
-
-    for (filename, context) in requirements_specs {
-        let extracted = extract_requirements_file(root_path, filename, context)?;
-        if !extracted.files_read.is_empty() {
-            sources.requirements_files.extend(extracted.files_read);
-        }
-        dependencies.extend(extracted.dependencies);
-        constraints.extend(extracted.constraints);
-        warnings.extend(extracted.warnings);
     }
 
     let setup_cfg_path = root_path.join("setup.cfg");
@@ -105,6 +89,29 @@ pub fn extract_manifest(
         warnings.extend(extracted.warnings);
     }
 
+    let dev_group = DependencyContext::Group("dev".to_owned());
+    let docs_group = DependencyContext::Group("docs".to_owned());
+    let tests_group = DependencyContext::Group("tests".to_owned());
+    let requirements_txt_context = requirements_txt_context(&sources, &dependencies);
+    let requirements_specs: &[(&str, &DependencyContext)] = &[
+        ("requirements.txt", &requirements_txt_context),
+        ("requirements-dev.txt", &dev_group),
+        ("dev-requirements.txt", &dev_group),
+        ("requirements-docs.txt", &docs_group),
+        ("requirements-tests.txt", &tests_group),
+        ("requirements-test.txt", &tests_group),
+    ];
+
+    for (filename, context) in requirements_specs {
+        let extracted = extract_requirements_file(root_path, filename, context)?;
+        if !extracted.files_read.is_empty() {
+            sources.requirements_files.extend(extracted.files_read);
+        }
+        dependencies.extend(extracted.dependencies);
+        constraints.extend(extracted.constraints);
+        warnings.extend(extracted.warnings);
+    }
+
     let uv_lock_path = root_path.join("uv.lock");
     if uv_lock_path.is_file() {
         lockfile = extract_uv_lock(&uv_lock_path)?;
@@ -122,6 +129,24 @@ pub fn extract_manifest(
         sources,
         warnings,
     })
+}
+
+/// When runtime deps are declared in pyproject/setup, root `requirements.txt` is dev tooling.
+fn requirements_txt_context(
+    sources: &ManifestSources,
+    dependencies: &[DeclaredDependency],
+) -> DependencyContext {
+    let has_runtime_declaration = dependencies.iter().any(|dep| {
+        matches!(
+            dep.context,
+            DependencyContext::Runtime | DependencyContext::SetupExtra(_)
+        )
+    });
+    if (sources.pyproject_toml || sources.setup_cfg || sources.setup_py) && has_runtime_declaration
+    {
+        return DependencyContext::Group("dev".to_owned());
+    }
+    DependencyContext::Runtime
 }
 
 /// Prefer explicit `[tool.yokei].target_version`, else infer from `requires-python`.

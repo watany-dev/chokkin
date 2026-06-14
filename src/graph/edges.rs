@@ -87,6 +87,7 @@ mod tests {
                 kind: ImportKind::Import,
                 context: ImportContext::Runtime,
                 optional: false,
+                platform_guarded: false,
                 relative_level: 0,
             }],
             dynamic_imports: Vec::new(),

@@ -9,6 +9,7 @@ use crate::sources::{FileContext, LayoutInfo};
 use super::decorators::normalize_decorator;
 use super::dynamic::collect_dynamic_imports;
 use super::exports::extract_exports;
+use super::platform_guard::is_platform_guard_if;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_if;
 use super::types::{
@@ -24,6 +25,7 @@ pub struct ModuleVisitor<'a> {
     default_context: ImportContext,
     in_type_checking: bool,
     try_depth: u32,
+    platform_guard_depth: u32,
     module_level: bool,
     parsed: ParsedModule,
 }
@@ -44,6 +46,7 @@ impl<'a> ModuleVisitor<'a> {
             default_context,
             in_type_checking: false,
             try_depth: 0,
+            platform_guard_depth: 0,
             module_level: true,
             parsed: ParsedModule::empty(path.to_owned()),
         }
@@ -147,13 +150,18 @@ impl<'a> ModuleVisitor<'a> {
             },
             Stmt::If(if_stmt) => {
                 let was_type_checking = self.in_type_checking;
+                let was_platform_guard = self.platform_guard_depth;
                 if is_type_checking_if(stmt) {
                     self.in_type_checking = true;
+                }
+                if is_platform_guard_if(stmt) {
+                    self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
                 }
                 for inner in &if_stmt.body {
                     self.visit_stmt(inner);
                 }
                 self.in_type_checking = was_type_checking;
+                self.platform_guard_depth = was_platform_guard;
                 for inner in &if_stmt.orelse {
                     self.visit_stmt(inner);
                 }
@@ -226,6 +234,7 @@ impl<'a> ModuleVisitor<'a> {
         let line = self.line_number(import);
         let context = self.current_import_context();
         let optional = self.try_depth > 0;
+        let platform_guarded = self.platform_guard_depth > 0;
         for alias in &import.names {
             self.push_import(ImportRef {
                 module: alias.name.to_string(),
@@ -235,6 +244,7 @@ impl<'a> ModuleVisitor<'a> {
                 kind: ImportKind::Import,
                 context,
                 optional,
+                platform_guarded,
                 relative_level: 0,
             });
         }
@@ -244,6 +254,7 @@ impl<'a> ModuleVisitor<'a> {
         let line = self.line_number(import_from);
         let context = self.current_import_context();
         let optional = self.try_depth > 0;
+        let platform_guarded = self.platform_guard_depth > 0;
         let level = import_from
             .level
             .as_ref()
@@ -296,6 +307,7 @@ impl<'a> ModuleVisitor<'a> {
                 kind: ImportKind::ImportFrom,
                 context,
                 optional,
+                platform_guarded,
                 relative_level: level,
             });
         }

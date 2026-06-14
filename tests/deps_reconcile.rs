@@ -88,6 +88,10 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
 }
 
 fn reconcile_fixture(name: &str) -> yokei::DependencyReport {
+    reconcile_fixture_with_strict(name, false)
+}
+
+fn reconcile_fixture_with_strict(name: &str, strict: bool) -> yokei::DependencyReport {
     let inputs = load_deps(&fixture(name), false);
     reconcile_dependencies(
         &inputs.manifest,
@@ -98,7 +102,7 @@ fn reconcile_fixture(name: &str) -> yokei::DependencyReport {
         &inputs.sources,
         &inputs.parse,
         &inputs.graph,
-        false,
+        strict,
     )
 }
 
@@ -188,12 +192,18 @@ fn duplicate_requests_emits_yok009() {
 }
 
 #[test]
-fn marker_pywin32_emits_yok002_likely() {
-    let report = reconcile_fixture("marker_pywin32");
+fn marker_pywin32_emits_yok002_likely_in_strict_mode() {
+    let report = reconcile_fixture_with_strict("marker_pywin32", true);
     let pywin32 = candidate_for_distribution(&report, RuleId::Yok002, "pywin32")
         .expect("pywin32 unused with marker");
     assert_eq!(pywin32.confidence, Confidence::Likely);
-    assert_eq!(pywin32.severity, Severity::Warning);
+    assert_eq!(pywin32.severity, Severity::Error);
+}
+
+#[test]
+fn marker_pywin32_suppressed_by_default() {
+    let report = reconcile_fixture("marker_pywin32");
+    assert!(!has_rule(&report, RuleId::Yok002, "pywin32"));
 }
 
 #[test]
@@ -245,4 +255,30 @@ fn binary_mkdocs_theme_marks_material_used() {
     assert!(!has_rule(&report, RuleId::Yok002, "mkdocs-material"));
     assert!(report.used_distributions.contains("mkdocs"));
     assert!(report.used_distributions.contains("mkdocs-material"));
+}
+
+#[test]
+fn dev_group_only_suppresses_yok002_for_pytest() {
+    let report = reconcile_fixture("dev_group_only");
+    assert!(!has_rule(&report, RuleId::Yok002, "pytest"));
+}
+
+#[test]
+fn pdm_dev_dependencies_suppress_yok002() {
+    let report = reconcile_fixture("pdm_dev_deps");
+    assert!(!has_rule(&report, RuleId::Yok002, "pytest"));
+}
+
+#[test]
+fn optional_try_import_marks_brotli_used() {
+    let report = reconcile_fixture("optional_try_import");
+    assert!(!has_rule(&report, RuleId::Yok002, "brotli"));
+    assert!(report.used_distributions.contains("brotli"));
+}
+
+#[test]
+fn platform_guard_import_marks_tzdata_used() {
+    let report = reconcile_fixture("platform_guard_import");
+    assert!(!has_rule(&report, RuleId::Yok002, "tzdata"));
+    assert!(report.used_distributions.contains("tzdata"));
 }

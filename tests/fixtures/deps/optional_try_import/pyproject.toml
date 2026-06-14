@@ -1,0 +1,10 @@
+[project]
+name = "optional-try-import"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[project.optional-dependencies]
+brotli = ["brotli>=1.0.9"]
+
+[project.scripts]
+optional-try-import = "acme.main:main"

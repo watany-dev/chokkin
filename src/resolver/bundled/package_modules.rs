@@ -22,6 +22,7 @@ pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("autopep8", &["autopep8"]),
     ("babel", &["babel"]),
     ("backoff", &["backoff"]),
+    ("backports-zoneinfo", &["backports.zoneinfo"]),
     ("bcrypt", &["bcrypt"]),
     ("beautifulsoup4", &["bs4"]),
     ("black", &["black"]),
@@ -285,4 +286,4 @@ pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("zstandard", &["zstandard"]),
 ];
 
-pub const PACKAGE_MAP_ENTRY_COUNT: usize = 280;
+pub const PACKAGE_MAP_ENTRY_COUNT: usize = 281;

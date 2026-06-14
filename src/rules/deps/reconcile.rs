@@ -66,7 +66,7 @@ pub fn reconcile_dependencies(
     let mut candidates = Vec::new();
 
     for deps in declared.values() {
-        candidates.extend(detect_unused_dependencies(deps, &used, strict));
+        candidates.extend(detect_unused_dependencies(deps, &used, config, strict));
     }
 
     candidates.extend(detect_missing_dependencies(
