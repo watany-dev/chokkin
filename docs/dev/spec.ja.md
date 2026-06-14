@@ -703,7 +703,7 @@ yokei/
     resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps)
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
-    rules/
+    rules/       # 実装済み: pipeline step 10 (`reconcile_dependencies`, YOK002–YOK009)
     reporters/
     fix/
 ```

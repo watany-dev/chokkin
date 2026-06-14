@@ -11,8 +11,9 @@ unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
 **Status:** pre-alpha. Pipeline steps 1–4 run via `probe_project` (CLI probe
-mode). Steps 5–9 (`plugins`, `parser`, `resolver`, `entry`, `reachability`) are
-implemented as library APIs. Issue reporting and steps 10–13 are not wired yet.
+mode). Steps 5–10 (`plugins`, `parser`, `resolver`, `entry`, `reachability`,
+`rules`) are implemented as library APIs. Issue emission and steps 11–13 are not
+wired to the CLI yet.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.

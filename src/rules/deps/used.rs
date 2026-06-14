@@ -9,7 +9,6 @@ use crate::manifest::LoadedManifest;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::sources::DiscoveredSources;
 
 /// Index of declared dependencies keyed by normalized distribution name.
 pub(super) type DeclaredIndex<'a> = BTreeMap<String, Vec<&'a crate::manifest::DeclaredDependency>>;
@@ -47,7 +46,6 @@ pub(super) fn collect_used_distributions(
     resolution: &ResolutionIndex,
     reachability: &ReachabilityReport,
     plugins: &PluginHints,
-    sources: &DiscoveredSources,
     graph: &ProjectGraph,
     binary_resolutions: &BTreeMap<String, String>,
 ) -> IndexSet<String> {
@@ -64,7 +62,6 @@ pub(super) fn collect_used_distributions(
         if !reachable.contains(&import.file) {
             continue;
         }
-        let _ = sources;
         used.insert(distribution.clone());
     }
 
@@ -145,23 +142,6 @@ mod tests {
             transitive: TransitiveIndex::empty(),
             binary_resolutions: BTreeMap::new(),
         };
-        let sources = DiscoveredSources {
-            root: ProjectRoot {
-                path: std::env::temp_dir(),
-                marker: RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
-            },
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                packages: vec!["acme".to_owned()],
-                inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
-            },
-            effective_globs: Vec::new(),
-            files: Vec::new(),
-            warnings: Vec::new(),
-        };
         let used = collect_used_distributions(
             &resolution,
             &reachable,
@@ -169,7 +149,6 @@ mod tests {
                 contributions: Vec::new(),
                 warnings: Vec::new(),
             },
-            &sources,
             &graph,
             &BTreeMap::new(),
         );

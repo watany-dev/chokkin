@@ -36,12 +36,6 @@ pub(super) fn detect_misplaced_dependencies(
         }
 
         let usage = usage_context_for_import(&import.file, import.context, sources);
-        if matches!(
-            usage,
-            UsageContext::Test | UsageContext::Docs | UsageContext::Dev
-        ) {
-            continue;
-        }
         if usage != UsageContext::Runtime {
             continue;
         }

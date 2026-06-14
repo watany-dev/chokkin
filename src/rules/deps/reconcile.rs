@@ -7,7 +7,7 @@ use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::types::DependencyReport;
+use crate::rules::types::{DependencyReport, IssueSubject};
 use crate::sources::DiscoveredSources;
 
 use super::binary::detect_unlisted_binaries;
@@ -42,7 +42,6 @@ pub fn reconcile_dependencies(
         resolution,
         reachability,
         plugins,
-        sources,
         graph,
         &resolution.binary_resolutions,
     );
@@ -99,26 +98,20 @@ pub fn reconcile_dependencies(
     }
 }
 
-fn subject_key(subject: &crate::rules::types::IssueSubject) -> String {
+fn subject_key(subject: &IssueSubject) -> String {
     match subject {
-        crate::rules::types::IssueSubject::Distribution { name }
-        | crate::rules::types::IssueSubject::Binary { name } => name.clone(),
-        crate::rules::types::IssueSubject::File { path } => path.clone(),
-        crate::rules::types::IssueSubject::Symbol { module, name } => {
-            format!("{module}:{name}")
-        },
-        crate::rules::types::IssueSubject::Import { module, file, line } => {
-            format!("{file}:{line}:{module}")
-        },
+        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
+        IssueSubject::File { path } => path.clone(),
+        IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
+        IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
     }
 }
 
 /// Map a `types-*` stub name to its runtime package when the pattern is known.
 fn runtime_for_stub(stub_name: &str) -> Option<&str> {
-    if let Some(rest) = stub_name.strip_prefix("types-") {
-        return Some(rest);
-    }
-    stub_name.strip_suffix("-stubs")
+    stub_name
+        .strip_prefix("types-")
+        .or_else(|| stub_name.strip_suffix("-stubs"))
 }
 
 #[cfg(test)]
@@ -154,6 +147,28 @@ mod tests {
         }
     }
 
+    fn reconcile_inputs(
+        manifest: &LoadedManifest,
+    ) -> (DiscoveredSources, ParseSummary, ProjectGraph) {
+        (
+            DiscoveredSources {
+                root: manifest.root.clone(),
+                layout: crate::sources::LayoutInfo {
+                    layout: crate::sources::ProjectLayout::Src,
+                    packages: Vec::new(),
+                    inferred_globs: Vec::new(),
+                    flat_candidates: Vec::new(),
+                    ambiguous_flat_resolution: false,
+                },
+                effective_globs: Vec::new(),
+                files: Vec::new(),
+                warnings: Vec::new(),
+            },
+            ParseSummary::empty(),
+            ProjectGraph::new(manifest.root.clone()),
+        )
+    }
+
     #[test]
     fn runtime_for_stub_maps_types_prefix() {
         assert_eq!(runtime_for_stub("types-requests"), Some("requests"));
@@ -169,21 +184,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
-        let sources = DiscoveredSources {
-            root: manifest.root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
-            },
-            effective_globs: Vec::new(),
-            files: Vec::new(),
-            warnings: Vec::new(),
-        };
-        let parse = ParseSummary::empty();
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let (sources, parse, graph) = reconcile_inputs(&manifest);
         let report = reconcile_dependencies(
             &manifest,
             &resolution,
@@ -221,21 +222,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
-        let sources = DiscoveredSources {
-            root: manifest.root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
-            },
-            effective_globs: Vec::new(),
-            files: Vec::new(),
-            warnings: Vec::new(),
-        };
-        let parse = ParseSummary::empty();
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let (sources, parse, graph) = reconcile_inputs(&manifest);
         let report = reconcile_dependencies(
             &manifest,
             &resolution,
