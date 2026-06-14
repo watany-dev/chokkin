@@ -94,13 +94,17 @@ fn render_issue(out: &mut String, issue: &Issue) {
     let _ = writeln!(
         out,
         "      \"file\": {},",
-        optional_json_string(issue.location.file.as_deref())
+        optional_json_path(issue.location.file.as_deref())
     );
     append_subject_fields(out, &issue.subject);
     let _ = write!(out, "      \"manifest\": ");
     if let Some(origin) = &issue.location.manifest {
         let _ = writeln!(out, "{{");
-        let _ = writeln!(out, "        \"file\": {},", json_string(&origin.file));
+        let _ = writeln!(
+            out,
+            "        \"file\": {},",
+            json_string(&normalize_path(&origin.file))
+        );
         let _ = writeln!(
             out,
             "        \"line\": {}",
@@ -120,10 +124,18 @@ fn optional_json_string(value: Option<&str>) -> String {
     value.map_or_else(|| "null".to_owned(), json_string)
 }
 
+fn optional_json_path(value: Option<&str>) -> String {
+    value.map_or_else(|| "null".to_owned(), |path| json_string(&normalize_path(path)))
+}
+
+fn normalize_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
     match subject {
         IssueSubject::File { path } => {
-            let _ = writeln!(out, "      \"path\": {},", json_string(path));
+            let _ = writeln!(out, "      \"path\": {},", json_string(&normalize_path(path)));
             let _ = writeln!(out, "      \"distribution\": null,");
             let _ = writeln!(out, "      \"symbol\": null,");
             let _ = writeln!(out, "      \"binary\": null,");
@@ -151,12 +163,13 @@ fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
             let _ = writeln!(out, "      \"binary\": {},", json_string(name));
         },
         IssueSubject::Import { module, file, line } => {
-            let _ = writeln!(out, "      \"path\": {},", json_string(file));
+            let path = normalize_path(file);
+            let _ = writeln!(out, "      \"path\": {},", json_string(&path));
             let _ = writeln!(out, "      \"distribution\": null,");
             let _ = writeln!(
                 out,
                 "      \"symbol\": {},",
-                json_string(&format!("{file}:{line} {module}"))
+                json_string(&format!("{path}:{line} {module}"))
             );
             let _ = writeln!(out, "      \"binary\": null,");
         },

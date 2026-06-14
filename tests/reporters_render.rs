@@ -116,6 +116,27 @@ fn json_reporter_renders_valid_json() {
 }
 
 #[test]
+fn json_reporter_normalizes_path_separators() {
+    let mut report = report();
+    report.issues[0].location.file = Some("src\\acme\\app.py".to_owned());
+    report.issues[0].subject = IssueSubject::Import {
+        module: "requests".to_owned(),
+        file: "src\\acme\\app.py".to_owned(),
+        line: 7,
+    };
+
+    let rendered = render_issues(ReporterId::Json, &report, &context());
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json report");
+
+    assert_eq!(parsed["issues"][0]["file"], "src/acme/app.py");
+    assert_eq!(parsed["issues"][0]["path"], "src/acme/app.py");
+    assert_eq!(
+        parsed["issues"][0]["symbol"],
+        "src/acme/app.py:7 requests"
+    );
+}
+
+#[test]
 fn sarif_reporter_normalizes_artifact_uri_separators() {
     let mut report = report();
     report.issues[0].location.file = Some("src\\acme\\app.py".to_owned());
