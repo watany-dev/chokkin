@@ -172,7 +172,7 @@ fn issue_fingerprint(issue: &Issue) -> String {
 }
 
 fn issue_target(issue: &Issue) -> String {
-    match &issue.subject {
+    let target = match &issue.subject {
         IssueSubject::File { path } => normalize_path(path),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::Symbol { module, name } => issue
@@ -185,6 +185,11 @@ fn issue_target(issue: &Issue) -> String {
         IssueSubject::Import { module, file, .. } => {
             format!("{}:{module}", normalize_path(file))
         },
+    };
+    if let Some(member) = &issue.workspace_member {
+        format!("{member}:{target}")
+    } else {
+        target
     }
 }
 
@@ -271,6 +276,52 @@ mod tests {
             issue_fingerprint(&issue),
             "CHK006:src/acme/api.py:public_api"
         );
+    }
+
+    #[test]
+    fn fingerprint_includes_workspace_member() {
+        let mut issue = issue("src\\legacy.py");
+        issue.workspace_member = Some("api".to_owned());
+        assert_eq!(
+            issue_fingerprint(&issue),
+            "CHK001:api:src/legacy.py"
+        );
+    }
+
+    #[test]
+    fn baseline_does_not_suppress_other_workspace_member() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join("chokkin-baseline.json");
+        let mut frozen = issue("src/shared.py");
+        frozen.workspace_member = Some("api".to_owned());
+        let frozen_report = IssueReport {
+            issues: vec![frozen],
+            suppressed: Vec::new(),
+            summary: IssueSummary {
+                total: 1,
+                by_rule: std::iter::once((RuleId::Chk001, 1)).collect(),
+            },
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        write_baseline(&frozen_report, dir.path(), &baseline).expect("write baseline");
+
+        let mut current = issue("src/shared.py");
+        current.workspace_member = Some("worker".to_owned());
+        let mut current_report = IssueReport {
+            issues: vec![current],
+            suppressed: Vec::new(),
+            summary: IssueSummary {
+                total: 1,
+                by_rule: std::iter::once((RuleId::Chk001, 1)).collect(),
+            },
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let result =
+            apply_baseline(&mut current_report, dir.path(), &baseline).expect("apply baseline");
+        assert_eq!(result.suppressed, 0);
+        assert_eq!(current_report.issues.len(), 1);
+        assert_eq!(current_report.exit_status, crate::ExitStatus::IssuesFound);
     }
 
     #[test]

@@ -1010,7 +1010,7 @@ uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
 ```
 
-baselineは既存issueを黙らせ、新規issueだけCIで落とすためのもの。大規模既存projectでは必須。fingerprintは `rule_id + stable target` を基本とし、file pathは `/` 区切りに正規化し、dependency/file issueではline numberをkeyに含めない。
+baselineは既存issueを黙らせ、新規issueだけCIで落とすためのもの。大規模既存projectでは必須。fingerprintは `rule_id + stable target` を基本とし、workspace member付きissueでは stable target に `member:` prefix を含める。file pathは `/` 区切りに正規化し、dependency/file issueではline numberをkeyに含めない。
 
 ## 19. パフォーマンス目標
 
