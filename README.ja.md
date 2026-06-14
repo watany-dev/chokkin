@@ -215,7 +215,7 @@ pipx run yokei
 pip install yokei
 ```
 
-yokeiは解析対象projectのコードを実行しません — 解析は完全にstaticです。projectの仮想環境も必須ではありません: `.venv` があればmetadataを読み、なければmanifest・lockfile・bundled mapで解析します。
+yokeiは解析対象projectのコードを実行しません — 解析は完全にstaticです。projectの仮想環境も必須ではありません: `.venv` があれば dist-info metadata（`METADATA` / `top_level.txt` / `RECORD` / `entry_points.txt`）を読み、なければmanifest・lockfile・bundled mapで解析します。
 
 ## Contributing
 

@@ -215,7 +215,7 @@ pipx run yokei
 pip install yokei
 ```
 
-yokei never executes your project's code — analysis is fully static. It also doesn't require your project's virtualenv: if `.venv` exists it is read for metadata, otherwise manifests, lockfiles, and bundled maps are used.
+yokei never executes your project's code — analysis is fully static. It also doesn't require your project's virtualenv: if `.venv` exists it is read for dist-info metadata (`METADATA`, `top_level.txt`, `RECORD`, `entry_points.txt`), otherwise manifests, lockfiles, and bundled maps are used.
 
 ## Contributing
 
