@@ -224,6 +224,34 @@ fn partial_settings_warns() {
     );
 }
 
+fn extract_fixture_from_deps(name: &str) -> yokei::PluginHints {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/deps")
+        .join(name);
+    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
+    extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+}
+
+#[test]
+fn config_scan_deps_fixture() {
+    let hints = extract_fixture_from_deps("binary_tool_pyproject");
+    assert!(
+        hints
+            .config_binary_usages
+            .iter()
+            .any(|usage| usage.binary == "mypy")
+    );
+    assert!(
+        hints
+            .config_binary_usages
+            .iter()
+            .any(|usage| usage.binary == "ruff")
+    );
+}
+
 #[test]
 fn no_django_no_panic() {
     let hints = extract_fixture("no_django");

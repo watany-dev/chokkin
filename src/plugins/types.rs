@@ -116,6 +116,10 @@ impl PluginContribution {
 pub struct PluginHints {
     /// One record per enabled plugin that ran.
     pub contributions: Vec<PluginContribution>,
+    /// CLI binaries discovered from generic config scanning (Phase 1.5 §4.A).
+    pub config_binary_usages: Vec<BinaryUsage>,
+    /// Distributions used via config without a distinct CLI name.
+    pub config_used_distributions: Vec<String>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,
 }
@@ -140,6 +144,12 @@ impl PluginHints {
         self.contributions
             .iter()
             .flat_map(|contrib| contrib.binary_usages.iter())
+            .chain(self.config_binary_usages.iter())
+    }
+
+    /// Distributions marked used from config scanning only.
+    pub fn config_used_distributions(&self) -> &[String] {
+        &self.config_used_distributions
     }
 
     /// Iterate all symbol references.

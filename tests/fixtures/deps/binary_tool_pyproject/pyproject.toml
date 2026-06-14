@@ -1,0 +1,16 @@
+[project]
+name = "binary-tool-pyproject"
+version = "0.1.0"
+dependencies = ["mypy", "ruff", "requests"]
+
+[project.scripts]
+demo-cli = "acme.main:main"
+
+[tool.mypy]
+strict = true
+
+[tool.ruff]
+line-length = 88
+
+[tool.coverage.run]
+branch = true

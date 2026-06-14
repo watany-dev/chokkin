@@ -5,6 +5,7 @@ use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
 use crate::sources::DiscoveredSources;
 
+use super::config_scan;
 use super::context::PluginContext;
 use super::django;
 use super::error::PluginsError;
@@ -49,8 +50,12 @@ pub fn extract_plugin_hints(
         contributions.push(contrib);
     }
 
+    let scan = config_scan::scan_config(&ctx);
+
     Ok(PluginHints {
         contributions,
+        config_binary_usages: scan.binary_usages,
+        config_used_distributions: scan.used_distributions,
         warnings,
     })
 }

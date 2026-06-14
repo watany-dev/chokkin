@@ -1,0 +1,7 @@
+[project]
+name = "binary-mkdocs-theme"
+version = "0.1.0"
+dependencies = ["mkdocs", "mkdocs-material", "requests"]
+
+[project.scripts]
+demo-cli = "acme.main:main"

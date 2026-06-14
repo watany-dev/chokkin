@@ -36,6 +36,13 @@
     { "binary": "watchmedo", "distribution": "watchdog" },
     { "binary": "yamllint", "distribution": "yamllint" },
     { "binary": "sqlformat", "distribution": "sqlparse" },
-    { "binary": "dotenv", "distribution": "python-dotenv" }
+    { "binary": "dotenv", "distribution": "python-dotenv" },
+    { "binary": "mkdocs", "distribution": "mkdocs" },
+    { "binary": "mkdocs-material", "distribution": "mkdocs-material" },
+    { "binary": "sphinx", "distribution": "sphinx" },
+    { "binary": "cogapp", "distribution": "cogapp" },
+    { "binary": "towncrier", "distribution": "towncrier" },
+    { "binary": "build", "distribution": "build" },
+    { "binary": "httpbin", "distribution": "httpbin" }
   ]
 }
