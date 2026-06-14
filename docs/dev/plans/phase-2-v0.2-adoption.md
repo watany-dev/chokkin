@@ -52,7 +52,7 @@ baseline stores:
 
 PR 分割:
 
-1. `rules` に stable issue fingerprint を追加する — 初期実装済み (`src/baseline/` で `rule_id + stable target`)
+1. `rules` に stable issue fingerprint を追加する — 実装済み (`src/rules/types.rs` の `issue_fingerprint` / `issue_stable_target` を baseline / JSON / SARIF で共有)
 2. baseline read/filter を Step 12 issue emission 後に挿入する — 初期実装済み
 3. `--update-baseline` で atomic write する — 初期実装済み (`--baseline PATH` 必須、nested baseline parent 作成対応)
 4. reporter に baseline summary を出す — 初期実装済み (`default`/`compact`/`json`/`markdown`/`github`)
