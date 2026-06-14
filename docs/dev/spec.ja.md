@@ -704,9 +704,10 @@ yokei/
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
     rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_dependencies`, YOK002–YOK009);
-                 #           step 11 `rules/symbols/` (`analyze_symbols`, YOK006–YOK007, YOK010)
-    reporters/
-    fix/
+                 #           step 11 `rules/symbols/` (`analyze_symbols`, YOK006–YOK007, YOK010);
+                 #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
+    reporters/   # 実装済み: step 12 trait + types（描画は Phase 1 CLI）
+    fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg)
 ```
 
 `pyproject.toml` は概ねこうする。
