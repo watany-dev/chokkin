@@ -19,7 +19,7 @@ fn bench_parse_cache_warm(c: &mut Criterion) {
         .sample_size(20)
         .measurement_time(Duration::from_secs(10));
 
-    for n_files in [100u64, 1_000, 5_000] {
+    for n_files in [100u64, 1_000, 5_000, 10_000] {
         let project = support::synth_src_project(n_files);
         let root = discover_project_root(project.path()).expect("discover root");
         let config = load_config(&root).expect("load config");
