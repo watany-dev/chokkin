@@ -1,0 +1,7 @@
+[project]
+name = "self-extra"
+version = "0.1.0"
+dependencies = ["self-extra[benchmark]"]
+
+[project.scripts]
+self-extra-cli = "self_extra.main:main"

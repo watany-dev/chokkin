@@ -151,6 +151,34 @@
       "imports": [
         "requests"
       ]
+    },
+    {
+      "distribution": "argon2-cffi",
+      "imports": [
+        "argon2",
+        "argon2_cffi"
+      ]
+    },
+    {
+      "distribution": "pyopenssl",
+      "imports": [
+        "OpenSSL",
+        "pyopenssl"
+      ]
+    },
+    {
+      "distribution": "pysocks",
+      "imports": [
+        "socks",
+        "pysocks"
+      ]
+    },
+    {
+      "distribution": "python-multipart",
+      "imports": [
+        "multipart",
+        "python_multipart"
+      ]
     }
   ],
   "auto_packages": [

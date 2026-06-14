@@ -214,3 +214,17 @@ fn reachable_import_graph_is_consistent() {
             .any(|edge| matches!(edge, GraphEdge::FileImportsModule { .. }))
     );
 }
+
+#[test]
+fn map_alias_import_resolves_to_python_multipart() {
+    let report = reconcile_fixture("map_alias");
+    assert!(!has_rule(&report, RuleId::Yok002, "python-multipart"));
+    assert!(report.used_distributions.contains("python-multipart"));
+}
+
+#[test]
+fn self_extra_dependency_is_not_unused() {
+    let report = reconcile_fixture("self_extra");
+    assert!(!has_rule(&report, RuleId::Yok002, "self-extra"));
+    assert!(report.used_distributions.contains("self-extra"));
+}

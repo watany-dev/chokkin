@@ -1,0 +1,7 @@
+[project]
+name = "map-alias"
+version = "0.1.0"
+dependencies = ["python-multipart"]
+
+[project.scripts]
+map-alias-cli = "acme.main:main"

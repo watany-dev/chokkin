@@ -163,4 +163,21 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].source, MapSource::User);
     }
+
+    #[test]
+    fn resolves_import_name_aliases_from_bundled_map() {
+        let import_map = ImportMap::build(&default_config());
+        for (import_root, distribution) in [
+            ("multipart", "python-multipart"),
+            ("OpenSSL", "pyopenssl"),
+            ("socks", "pysocks"),
+            ("argon2", "argon2-cffi"),
+        ] {
+            let candidates = import_map.candidates(import_root);
+            assert!(
+                candidates.iter().any(|c| c.distribution == distribution),
+                "expected {import_root} -> {distribution}, got {candidates:?}"
+            );
+        }
+    }
 }
