@@ -21,6 +21,9 @@ Not covered:
 - Human reporters (`default`, `compact`, `markdown`, `github`) as a stable
   parse target. Use JSON or SARIF for automation.
 
+CI-facing location paths are normalized with `/` separators in JSON, SARIF
+artifact URIs, GitHub annotation `file=` properties, and baseline fingerprints.
+
 ## Compatibility Policy
 
 Until Phase 3, the JSON reporter and baseline file are draft schemas. v0.2
@@ -108,6 +111,7 @@ Recommended consumer keys:
 - workspace grouping: `workspace_member`
 - baseline visibility: `suppressed.baseline`
 - SARIF grouping: SARIF `ruleId`, not message text
+- location paths: `/`-normalized strings, regardless of host OS path separator
 
 Message text is not a stable identifier.
 
