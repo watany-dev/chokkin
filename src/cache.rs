@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde::de::DeserializeOwned;
@@ -47,7 +47,7 @@ impl CacheOptions {
     /// Resolve the cache directory below `project_root`.
     #[must_use]
     pub fn directory_path(&self, project_root: &Path) -> PathBuf {
-        project_root.join(&self.directory)
+        project_root.join(root_relative_directory(&self.directory))
     }
 
     /// Absolute path for a persisted parse cache entry.
@@ -207,6 +207,16 @@ impl CacheOptions {
         };
         self.write_scan_record(project_root, &record)
     }
+}
+
+fn root_relative_directory(directory: &Path) -> PathBuf {
+    let mut relative = PathBuf::new();
+    for component in directory.components() {
+        if let Component::Normal(part) = component {
+            relative.push(part);
+        }
+    }
+    relative
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -611,6 +621,30 @@ mod tests {
         let options = CacheOptions::disabled();
         assert!(!options.enabled);
         assert_eq!(options.directory, PathBuf::from(DEFAULT_CACHE_DIR));
+    }
+
+    #[test]
+    fn cache_directory_path_stays_under_project_root() {
+        let options = CacheOptions {
+            enabled: true,
+            directory: PathBuf::from("../outside/cache"),
+        };
+
+        let path = options.directory_path(Path::new("/repo/project"));
+
+        assert_eq!(path, PathBuf::from("/repo/project/outside/cache"));
+    }
+
+    #[test]
+    fn absolute_cache_directory_is_made_project_relative() {
+        let options = CacheOptions {
+            enabled: true,
+            directory: PathBuf::from("/tmp/chokkin-cache"),
+        };
+
+        let path = options.directory_path(Path::new("/repo/project"));
+
+        assert_eq!(path, PathBuf::from("/repo/project/tmp/chokkin-cache"));
     }
 
     #[test]
