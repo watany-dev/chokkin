@@ -270,6 +270,22 @@ fn github_actions_plugin_records_run_binaries() {
                 && usage.origin.file == ".github/workflows/ci.yml"
                 && usage.origin.line == Some(12))
     );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "pytest"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(14))
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "uv"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(14))
+    );
 }
 
 #[test]

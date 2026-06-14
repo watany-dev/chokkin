@@ -130,11 +130,8 @@ fn extract_github_actions(ctx: &PluginContext<'_>, contrib: &mut PluginContribut
             continue;
         };
         let rel = relative_path(root, &path);
-        for (line_index, line) in contents.lines().enumerate() {
-            let Some(command) = workflow_run_command(line) else {
-                continue;
-            };
-            for binary in command_known_binaries(command, &binary_map) {
+        for (line_index, command) in workflow_run_commands(&contents) {
+            for binary in command_known_binaries(&command, &binary_map) {
                 let key = (rel.clone(), line_index, binary.clone());
                 if !seen.insert(key) {
                     continue;
@@ -163,12 +160,74 @@ fn is_workflow_file(path: &Path) -> bool {
     )
 }
 
-fn workflow_run_command(line: &str) -> Option<&str> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WorkflowRunValue<'a> {
+    indent: usize,
+    command: &'a str,
+}
+
+fn workflow_run_commands(contents: &str) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = contents.lines().collect();
+    let mut commands = Vec::new();
+    let mut index = 0;
+
+    while let Some(line) = lines.get(index) {
+        let Some(run) = workflow_run_value(line) else {
+            index += 1;
+            continue;
+        };
+
+        if is_workflow_block_scalar(run.command) {
+            let mut block = String::new();
+            let mut cursor = index + 1;
+            while let Some(block_line) = lines.get(cursor) {
+                if block_line.trim().is_empty() {
+                    block.push('\n');
+                    cursor += 1;
+                    continue;
+                }
+                if leading_spaces(block_line) <= run.indent {
+                    break;
+                }
+                if !block.is_empty() {
+                    block.push('\n');
+                }
+                block.push_str(block_line.trim_start());
+                cursor += 1;
+            }
+            if !block.trim().is_empty() {
+                commands.push((index, block));
+            }
+            index = cursor;
+            continue;
+        }
+
+        if !run.command.is_empty() {
+            commands.push((index, run.command.to_owned()));
+        }
+        index += 1;
+    }
+
+    commands
+}
+
+fn workflow_run_value(line: &str) -> Option<WorkflowRunValue<'_>> {
+    let indent = leading_spaces(line);
     let trimmed = line.trim_start();
-    trimmed
+    let command = trimmed
         .strip_prefix("run:")
         .or_else(|| trimmed.strip_prefix("- run:"))
-        .map(str::trim)
+        .map(str::trim)?;
+    Some(WorkflowRunValue { indent, command })
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
+}
+
+fn is_workflow_block_scalar(command: &str) -> bool {
+    let trimmed = command.trim_start();
+    trimmed.starts_with('|') || trimmed.starts_with('>')
 }
 
 fn command_known_binaries(

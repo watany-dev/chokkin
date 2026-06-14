@@ -923,8 +923,8 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     tox/nox/pre-commit/GitHub Actionsのbinary usage plugin化は初期実装済み。
     Flask/Celery は static app command/reference extraction を初期実装済み。
     Sphinx/MkDocs/Alembic は conventional config/entry extraction を初期実装済み。
-    GitHub Actions は single-line `run:` のみ対応。notebook parsing は `.ipynb`
-    discovery と Python code-cell extraction を初期実装済み。block scalar command parse、
+    GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` に対応。
+    notebook parsing は `.ipynb` discovery と Python code-cell extraction を初期実装済み。
     decorator由来 refs の拡張は未実装)
   - JSON reporter / baseline draft schema と migration 方針 (`docs/dev/schema-migration-notes.md`)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
@@ -1039,7 +1039,7 @@ parallelize対象は、file discovery、parse、import extraction、symbol extra
 
 warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。
 
-tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` のみ対応し、block scalar command parse は未実装。
+tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応する。
 
 Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。decorator/task discovery は plugin extraction が parse step 前に走る現行pipelineでは未実装。
 
