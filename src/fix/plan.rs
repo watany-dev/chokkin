@@ -53,7 +53,7 @@ pub(super) fn plan_fixes(
                 name: String::new(),
             },
             reason: SkippedReason::NotFixable,
-            detail: "--add-missing is not implemented in v0.1".to_owned(),
+            detail: "--add-missing is not implemented yet".to_owned(),
         }]);
     }
 

@@ -76,6 +76,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub allow_remove_files: bool,
 
+    /// Allow `--fix` to add missing dependency declarations when unambiguous.
+    #[arg(long)]
+    pub add_missing: bool,
+
     /// Suppress issues already recorded in this baseline file.
     #[arg(long, value_name = "PATH")]
     pub baseline: Option<PathBuf>,
@@ -143,6 +147,7 @@ impl CliArgs {
             fix: FixOptions {
                 dry_run: self.dry_run,
                 allow_remove_files: self.allow_remove_files,
+                add_missing: self.add_missing,
                 ..FixOptions::default()
             },
             baseline: self.baseline.clone(),
@@ -163,6 +168,9 @@ impl CliArgs {
         if self.allow_remove_files && !self.fix {
             return Err("`--allow-remove-files` requires `--fix`".to_owned());
         }
+        if self.add_missing && !self.fix {
+            return Err("`--add-missing` requires `--fix`".to_owned());
+        }
         if self.update_baseline && self.baseline.is_none() {
             return Err("`--update-baseline` requires `--baseline <PATH>`".to_owned());
         }
@@ -173,6 +181,7 @@ impl CliArgs {
             && (self.fix
                 || self.dry_run
                 || self.allow_remove_files
+                || self.add_missing
                 || self.production
                 || self.strict
                 || self.no_exit_code
@@ -292,6 +301,22 @@ mod tests {
     #[test]
     fn allow_remove_files_requires_fix() {
         let args = parse_cli_args(vec!["--allow-remove-files".to_owned()]).expect("parse");
+        let err = args.validate().expect_err("missing fix");
+        assert!(err.contains("--fix"));
+    }
+
+    #[test]
+    fn parses_add_missing() {
+        let args = parse_cli_args(vec!["--fix".to_owned(), "--add-missing".to_owned()])
+            .expect("parse");
+        assert!(args.add_missing);
+        assert!(args.analyze_options().fix.add_missing);
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn add_missing_requires_fix() {
+        let args = parse_cli_args(vec!["--add-missing".to_owned()]).expect("parse");
         let err = args.validate().expect_err("missing fix");
         assert!(err.contains("--fix"));
     }
