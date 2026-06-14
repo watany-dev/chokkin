@@ -1,8 +1,10 @@
 //! Non-fatal warnings emitted during manifest extraction.
 
+use serde::{Deserialize, Serialize};
+
 /// Warning that does not prevent manifest extraction from completing.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ManifestWarning {
     /// `setup.py` could not be parsed statically; dependencies were skipped.
     SetupPyNotStatic {

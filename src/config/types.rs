@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::discovery::ProjectRoot;
 
 /// Project analysis mode (§5, §8). `Auto` is resolved in a later pipeline step.
@@ -362,7 +364,7 @@ pub struct LoadedConfig {
 }
 
 /// Raw `[tool.uv.workspace]` members from `pyproject.toml` (unexpanded).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UvWorkspaceHint {
     /// Member glob patterns as written in `pyproject.toml`.
     pub members: Vec<String>,

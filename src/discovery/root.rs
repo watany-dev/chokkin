@@ -4,10 +4,12 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use super::error::DiscoveryError;
 
 /// Marker that determined the project root (§4 priority order).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RootMarker {
     /// `pyproject.toml` exists in the root directory.
     PyProjectToml,
@@ -45,7 +47,7 @@ impl fmt::Display for RootMarker {
 }
 
 /// A discovered Python project root directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectRoot {
     /// Canonical or normalized absolute path to the project root.
     pub path: PathBuf,
