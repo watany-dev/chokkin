@@ -80,3 +80,14 @@ fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     assert!(rendered.contains("\"startLine\": 7"));
     assert!(rendered.contains("\"workspaceMember\": \"api\""));
 }
+
+#[test]
+fn sarif_reporter_normalizes_artifact_uri_separators() {
+    let mut report = report();
+    report.issues[0].location.file = Some("src\\acme\\app.py".to_owned());
+
+    let rendered = render_issues(ReporterId::Sarif, &report, &context());
+
+    assert!(rendered.contains("\"uri\": \"src/acme/app.py\""));
+    assert!(!rendered.contains("src\\\\acme\\\\app.py"));
+}

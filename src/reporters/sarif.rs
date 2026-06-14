@@ -134,7 +134,11 @@ fn render_locations(out: &mut String, issue: &Issue) {
     let _ = writeln!(out, "            {{");
     let _ = writeln!(out, "              \"physicalLocation\": {{");
     let _ = writeln!(out, "                \"artifactLocation\": {{");
-    let _ = writeln!(out, "                  \"uri\": {}", json_string(file));
+    let _ = writeln!(
+        out,
+        "                  \"uri\": {}",
+        json_string(&sarif_uri(file))
+    );
     let _ = writeln!(out, "                }},");
     let _ = writeln!(out, "                \"region\": {{");
     let _ = writeln!(
@@ -198,4 +202,8 @@ fn sarif_level(severity: Severity) -> &'static str {
         "info" => "note",
         _ => "warning",
     }
+}
+
+fn sarif_uri(path: &str) -> String {
+    path.replace('\\', "/")
 }
