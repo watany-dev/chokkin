@@ -259,9 +259,11 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
     let mut cache = ParseCacheStore::new();
 
     let first =
-        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache)).expect("parse");
+        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+            .expect("parse");
     let second =
-        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache)).expect("parse");
+        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+            .expect("parse");
 
     assert_eq!(first, second);
     assert_eq!(cache.stats().misses, 1);

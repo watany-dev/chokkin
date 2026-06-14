@@ -139,6 +139,7 @@ fn run_analysis_core(
         &probe.sources,
         &target,
         parse_cache.as_mut(),
+        Some(&options.cache),
     )?;
 
     let entry = build_entry_roots(

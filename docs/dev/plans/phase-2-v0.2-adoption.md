@@ -157,7 +157,7 @@ plugin version
 PR 分割:
 
 1. cache directory policy と `--no-cache` — policy型とCLI plumbingは初期実装済み (`CacheOptions`, `.chokkin/cache`)
-2. parse result cache — key/fingerprint、entry path、in-memory storeは初期実装済み (`ParseCacheStore`, `parse_project_sources_with_cache`); persistent disk serializer は未実装
+2. parse result cache — 初期実装済み (`ParseCacheStore`, `parse_project_sources_with_cache`, `.chokkin/cache/parse/*.json`)
 3. manifest/config scan cache
 4. warm benchmark fixture と `make bench` comparison
 

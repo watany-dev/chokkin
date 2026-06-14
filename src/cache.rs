@@ -49,6 +49,57 @@ impl CacheOptions {
     pub fn parse_entry_path(&self, project_root: &Path, key: &ParseCacheKey) -> PathBuf {
         self.directory_path(project_root).join(key.relative_path())
     }
+
+    /// Read a persisted parse cache entry.
+    ///
+    /// Corrupt JSON entries are treated as misses; callers then reparse source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the cache file exists but cannot be read.
+    pub fn read_parse_entry(
+        &self,
+        project_root: &Path,
+        key: &ParseCacheKey,
+    ) -> io::Result<Option<ParsedModule>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let path = self.parse_entry_path(project_root, key);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        Ok(serde_json::from_slice(&bytes).ok())
+    }
+
+    /// Write a persisted parse cache entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the cache directory or file cannot be written.
+    pub fn write_parse_entry(
+        &self,
+        project_root: &Path,
+        key: &ParseCacheKey,
+        parsed: &ParsedModule,
+    ) -> io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let path = self.parse_entry_path(project_root, key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let bytes = serde_json::to_vec(parsed).map_err(io::Error::other)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, bytes)?;
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        std::fs::rename(tmp, path)
+    }
 }
 
 /// Stable inputs shared by cache units.
@@ -333,5 +384,70 @@ mod tests {
 
         assert!(path.starts_with("/repo/.chokkin/cache/parse"));
         assert_eq!(path.extension().and_then(std::ffi::OsStr::to_str), Some("json"));
+    }
+
+    #[test]
+    fn parse_entry_round_trips_to_disk() {
+        let root = temp_cache_test_dir("disk");
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: "hash".to_owned(),
+            },
+        };
+        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let options = CacheOptions::default();
+
+        options
+            .write_parse_entry(&root, &key, &parsed)
+            .expect("write parse cache");
+        let restored = options
+            .read_parse_entry(&root, &key)
+            .expect("read parse cache")
+            .expect("cache hit");
+
+        assert_eq!(restored, parsed);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_parse_entry_is_cache_miss() {
+        let root = temp_cache_test_dir("corrupt");
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: "hash".to_owned(),
+            },
+        };
+        let options = CacheOptions::default();
+        let path = options.parse_entry_path(&root, &key);
+        std::fs::create_dir_all(path.parent().expect("cache parent")).expect("create cache parent");
+        std::fs::write(&path, b"not json").expect("write corrupt cache");
+
+        assert_eq!(
+            options
+                .read_parse_entry(&root, &key)
+                .expect("read corrupt cache"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

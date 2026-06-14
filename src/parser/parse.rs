@@ -6,7 +6,8 @@ use rustpython_parser::{Parse, ParseError as RpParseError};
 
 use crate::VERSION;
 use crate::cache::{
-    CacheKeyContext, ParseCacheKey, ParseCacheStore, SourceFingerprint, stable_hex_hash,
+    CacheKeyContext, CacheOptions, ParseCacheKey, ParseCacheStore, SourceFingerprint,
+    stable_hex_hash,
 };
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
@@ -73,7 +74,7 @@ pub fn parse_project_sources(
     sources: &DiscoveredSources,
     target: &TargetVersion,
 ) -> Result<ParseSummary, ParseError> {
-    parse_project_sources_with_cache(root, sources, target, None)
+    parse_project_sources_with_cache(root, sources, target, None, None)
 }
 
 /// Parse all `.py` files in `sources`, optionally reusing parse results from cache.
@@ -88,6 +89,7 @@ pub fn parse_project_sources_with_cache(
     sources: &DiscoveredSources,
     target: &TargetVersion,
     mut cache: Option<&mut ParseCacheStore>,
+    disk_cache: Option<&CacheOptions>,
 ) -> Result<ParseSummary, ParseError> {
     let layout = &sources.layout;
     let mut summary = ParseSummary::empty();
@@ -99,13 +101,25 @@ pub fn parse_project_sources_with_cache(
             continue;
         }
 
-        let parsed = if let Some(cache_store) = cache.as_deref_mut() {
+        let use_cache = cache.is_some() || disk_cache.is_some();
+        let parsed = if use_cache {
             let key = parse_cache_key(root, &file.path, &context)?;
-            if let Some(parsed) = cache_store.get(&key) {
+            if let Some(parsed) = cache
+                .as_deref_mut()
+                .and_then(|cache_store| cache_store.get(&key))
+            {
+                parsed
+            } else if let Some(parsed) = read_disk_parse_cache(disk_cache, &root.path, &key)? {
+                if let Some(cache_store) = cache.as_deref_mut() {
+                    cache_store.insert(key, parsed.clone());
+                }
                 parsed
             } else {
                 let parsed = parse_file(root, &file.path, layout, file.context, target)?;
-                cache_store.insert(key, parsed.clone());
+                write_disk_parse_cache(disk_cache, &root.path, &key, &parsed)?;
+                if let Some(cache_store) = cache.as_deref_mut() {
+                    cache_store.insert(key, parsed.clone());
+                }
                 parsed
             }
         } else {
@@ -123,6 +137,39 @@ pub fn parse_project_sources_with_cache(
     }
 
     Ok(summary)
+}
+
+fn read_disk_parse_cache(
+    cache: Option<&CacheOptions>,
+    project_root: &std::path::Path,
+    key: &ParseCacheKey,
+) -> Result<Option<ParsedModule>, ParseError> {
+    let Some(cache) = cache else {
+        return Ok(None);
+    };
+    cache
+        .read_parse_entry(project_root, key)
+        .map_err(|source| ParseError::Io {
+            path: cache.parse_entry_path(project_root, key),
+            source,
+        })
+}
+
+fn write_disk_parse_cache(
+    cache: Option<&CacheOptions>,
+    project_root: &std::path::Path,
+    key: &ParseCacheKey,
+    parsed: &ParsedModule,
+) -> Result<(), ParseError> {
+    let Some(cache) = cache else {
+        return Ok(());
+    };
+    cache
+        .write_parse_entry(project_root, key, parsed)
+        .map_err(|source| ParseError::Io {
+            path: cache.parse_entry_path(project_root, key),
+            source,
+        })
 }
 
 fn provisional_parse_cache_context(

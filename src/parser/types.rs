@@ -1,9 +1,11 @@
 //! Parsed Python module types.
 
+use serde::{Deserialize, Serialize};
+
 use crate::sources::FileContext;
 
 /// Whether an import came from `import` or `from … import`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportKind {
     /// `import module`.
     Import,
@@ -12,7 +14,7 @@ pub enum ImportKind {
 }
 
 /// Context of an import statement for dependency classification (§10).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportContext {
     /// Normal runtime import.
     Runtime,
@@ -23,7 +25,7 @@ pub enum ImportContext {
 }
 
 /// One import statement extracted from a module.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportRef {
     /// Imported module name (normalized dotted name; empty = unresolved relative).
     pub module: String,
@@ -46,7 +48,7 @@ pub struct ImportRef {
 }
 
 /// A literal dynamic import (`importlib.import_module("…")` or `__import__("…")`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicImport {
     /// Resolved module name from a string literal.
     pub module: String,
@@ -55,7 +57,7 @@ pub struct DynamicImport {
 }
 
 /// Kind of top-level symbol definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolKind {
     /// `def` / `async def`.
     Function,
@@ -66,7 +68,7 @@ pub enum SymbolKind {
 }
 
 /// A top-level symbol definition for Step 11.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolDef {
     /// Symbol name.
     pub name: String,
@@ -83,7 +85,7 @@ pub struct SymbolDef {
 }
 
 /// Inline or file-level ignore directive (§18).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IgnoreDirective {
     /// `true` for `# chokkin: file-ignore[…]` at file head.
     pub file_level: bool,
@@ -94,7 +96,7 @@ pub struct IgnoreDirective {
 }
 
 /// Severity of a non-fatal parse diagnostic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ParseSeverity {
     /// Syntax or unsupported construct.
     Error,
@@ -103,7 +105,7 @@ pub enum ParseSeverity {
 }
 
 /// Non-fatal parse diagnostic; analysis continues.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseDiagnostic {
     /// 1-based line number when known.
     pub line: u32,
@@ -114,7 +116,7 @@ pub struct ParseDiagnostic {
 }
 
 /// Result of parsing one `.py` file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedModule {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -135,7 +137,7 @@ pub struct ParsedModule {
 }
 
 /// Aggregate result of parsing all project `.py` sources.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseSummary {
     /// One parsed module per `.py` file.
     pub modules: Vec<ParsedModule>,
