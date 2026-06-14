@@ -87,7 +87,7 @@ PR 分割:
 1. reporter enum と CLI parse を拡張する — 初期実装済み (`github`, `sarif`)
 2. GitHub markdown/job summary reporter を追加する — annotation reporter として初期実装済み
 3. SARIF v2.1.0 の最小 schema serializer を追加する — 初期実装済み
-4. fixtures で snapshot test を追加する
+4. fixtures で snapshot test を追加する — reporter render regression は初期実装済み (`tests/reporters_render.rs`)
 
 ### P1: Workspace / Monorepo
 
