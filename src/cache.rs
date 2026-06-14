@@ -1,7 +1,7 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
 use std::collections::BTreeMap;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -105,12 +105,7 @@ impl CacheOptions {
             std::fs::create_dir_all(parent)?;
         }
         let bytes = serde_json::to_vec(parsed).map_err(io::Error::other)?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, bytes)?;
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-        }
-        std::fs::rename(tmp, path)
+        write_cache_bytes(&path, &bytes)
     }
 
     /// Read a persisted scan cache record.
@@ -162,12 +157,7 @@ impl CacheOptions {
             std::fs::create_dir_all(parent)?;
         }
         let bytes = serde_json::to_vec(record).map_err(io::Error::other)?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, bytes)?;
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-        }
-        std::fs::rename(tmp, path)
+        write_cache_bytes(&path, &bytes)
     }
 
     /// Read and deserialize the payload from a persisted scan cache record.
@@ -217,6 +207,19 @@ impl CacheOptions {
         };
         self.write_scan_record(project_root, &record)
     }
+}
+
+fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent")
+    })?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".chokkin-cache-")
+        .tempfile_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 /// Stable inputs shared by cache units.
@@ -776,6 +779,43 @@ mod tests {
             .expect("cache hit");
 
         assert_eq!(restored, parsed);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parse_entry_replaces_existing_disk_value() {
+        let root = temp_cache_test_dir("disk-replace");
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: "hash".to_owned(),
+            },
+        };
+        let first = ParsedModule::empty("src/first.py".to_owned());
+        let second = ParsedModule::empty("src/second.py".to_owned());
+        let options = CacheOptions::default();
+
+        options
+            .write_parse_entry(&root, &key, &first)
+            .expect("write first parse cache");
+        options
+            .write_parse_entry(&root, &key, &second)
+            .expect("replace parse cache");
+        let restored = options
+            .read_parse_entry(&root, &key)
+            .expect("read parse cache")
+            .expect("cache hit");
+
+        assert_eq!(restored, second);
         let _ = std::fs::remove_dir_all(root);
     }
 
