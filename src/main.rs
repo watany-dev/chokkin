@@ -227,10 +227,11 @@ fn write_fix_report(report: &FixReport, out: &mut impl Write) -> std::io::Result
     for skipped in &report.skipped {
         writeln!(
             out,
-            "  skipped {} {} — {:?}",
+            "  skipped {} {} — {:?}: {}",
             skipped.rule.as_code(),
             format_subject(&skipped.subject),
-            skipped.reason
+            skipped.reason,
+            skipped.detail
         )?;
     }
     for reminder in &report.reminders {

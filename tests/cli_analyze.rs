@@ -129,6 +129,21 @@ fn binary_dry_run_without_fix_errors() {
 }
 
 #[test]
+fn binary_fix_reports_skipped_detail() {
+    let root = fixture_path(&["reachability", "library_orphan"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--fix")
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("Fixes:"));
+    assert!(stderr.contains("skipped CHK001"));
+    assert!(stderr.contains("file removal requires `--allow-remove-files`"));
+}
+
+#[test]
 fn binary_baseline_update_then_suppresses_existing_issue() {
     let temp = tempfile::TempDir::new().expect("tempdir");
     copy_dir_recursive(&fixture_path(&["deps", "unused_boto3"]), temp.path()).expect("copy");
