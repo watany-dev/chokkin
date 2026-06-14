@@ -1,0 +1,2 @@
+project = "sphinx-docs"
+extensions = []

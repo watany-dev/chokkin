@@ -1,0 +1,7 @@
+[project]
+name = "mkdocs-config"
+version = "0.1.0"
+dependencies = ["mkdocs"]
+
+[tool.chokkin.plugins]
+mkdocs = true

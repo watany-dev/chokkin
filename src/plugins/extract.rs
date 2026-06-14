@@ -10,11 +10,11 @@ use super::celery;
 use super::context::PluginContext;
 use super::devtools;
 use super::django;
+use super::doctools;
 use super::error::PluginsError;
 use super::fastapi;
 use super::flask;
 use super::pytest;
-use super::stub;
 use super::types::PluginHints;
 
 /// Extract framework hints from tool configuration (§6 step 5).
@@ -52,7 +52,9 @@ pub fn extract_plugin_hints(
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
                 devtools::extract(*plugin, &ctx)
             }
-            _ => stub::extract(*plugin, &ctx),
+            PluginId::Sphinx | PluginId::MkDocs | PluginId::Alembic => {
+                doctools::extract(*plugin, &ctx)
+            }
         };
         warnings.extend(plugin_warnings);
         contributions.push(contrib);

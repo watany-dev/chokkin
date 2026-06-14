@@ -123,6 +123,12 @@ pub enum PluginId {
     PreCommit,
     /// GitHub Actions workflows.
     GithubActions,
+    /// Sphinx documentation configuration.
+    Sphinx,
+    /// MkDocs documentation configuration.
+    MkDocs,
+    /// Alembic migration environment.
+    Alembic,
 }
 
 impl PluginId {
@@ -139,6 +145,9 @@ impl PluginId {
             Self::Nox => "nox",
             Self::PreCommit => "pre_commit",
             Self::GithubActions => "github_actions",
+            Self::Sphinx => "sphinx",
+            Self::MkDocs => "mkdocs",
+            Self::Alembic => "alembic",
         }
     }
 
@@ -154,6 +163,9 @@ impl PluginId {
             "nox" => Some(Self::Nox),
             "pre_commit" => Some(Self::PreCommit),
             "github_actions" => Some(Self::GithubActions),
+            "sphinx" => Some(Self::Sphinx),
+            "mkdocs" => Some(Self::MkDocs),
+            "alembic" => Some(Self::Alembic),
             _ => None,
         }
     }
@@ -171,6 +183,9 @@ impl PluginId {
             Self::Nox,
             Self::PreCommit,
             Self::GithubActions,
+            Self::Sphinx,
+            Self::MkDocs,
+            Self::Alembic,
         ]
     }
 }

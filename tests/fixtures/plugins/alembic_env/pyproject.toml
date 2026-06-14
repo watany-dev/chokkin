@@ -1,0 +1,7 @@
+[project]
+name = "alembic-env"
+version = "0.1.0"
+dependencies = ["alembic"]
+
+[tool.chokkin.plugins]
+alembic = true

@@ -309,6 +309,46 @@ fn celery_plugin_records_app_symbol() {
 }
 
 #[test]
+fn sphinx_plugin_records_docs_conf_entry() {
+    let hints = extract_fixture("sphinx_docs");
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"docs/conf.py"));
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "sphinx-build" && usage.origin.file == "docs/conf.py")
+    );
+}
+
+#[test]
+fn mkdocs_plugin_records_config_binary() {
+    let hints = extract_fixture("mkdocs_config");
+    let contrib = plugin_contrib(&hints, PluginId::MkDocs);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "mkdocs" && usage.origin.file == "mkdocs.yml")
+    );
+}
+
+#[test]
+fn alembic_plugin_records_env_entry() {
+    let hints = extract_fixture("alembic_env");
+    let contrib = plugin_contrib(&hints, PluginId::Alembic);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"alembic/env.py"));
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "alembic" && usage.origin.file == "alembic.ini")
+    );
+}
+
+#[test]
 fn full_pipeline_step5() {
     let hints = extract_fixture("django_manage");
     assert_eq!(hints.contributions.len(), 3);

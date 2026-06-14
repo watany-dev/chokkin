@@ -16,7 +16,7 @@ use chokkin::{
 };
 use proptest::prelude::*;
 
-const PLUGIN_KEYS: [&str; 9] = [
+const PLUGIN_KEYS: [&str; 12] = [
     "pytest",
     "django",
     "fastapi",
@@ -26,6 +26,9 @@ const PLUGIN_KEYS: [&str; 9] = [
     "nox",
     "pre_commit",
     "github_actions",
+    "sphinx",
+    "mkdocs",
+    "alembic",
 ];
 
 const IGNORE_RULES: [&str; 10] = [

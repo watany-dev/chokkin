@@ -183,7 +183,7 @@ fastapi = true
 frameworkは文字列やdecoratorでmoduleを参照するため、純粋なimport解析では見えません。pluginがentry file・string/module reference・binary usageを追加してこのギャップを埋めます。
 
 - **v0.1**: pytest, django, fastapi/uvicorn
-- **v0.2以降**: tox/nox/pre-commit/GitHub Actions の binary usage 検出と Flask/Celery の static app reference 検出は実装中。sphinx, mkdocs, alembic は計画中です。
+- **v0.2以降**: tox/nox/pre-commit/GitHub Actions の binary usage 検出、Flask/Celery の static app reference 検出、Sphinx/MkDocs/Alembic の慣例config/entry検出は実装中です。
 
 例えばDjango pluginは `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` の文字列をmodule referenceとして扱い、`migrations/**` をframework-used扱いにします。FastAPI pluginは `@router.get` 等で修飾されたhandlerをexternally used扱いにします。
 

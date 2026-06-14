@@ -176,7 +176,7 @@ Phase 1.5 の generic config scanner を、ユーザーに説明しやすい plu
 
 1. tox / nox / pre-commit / github-actions — binary usage plugin 化は初期実装済み (`src/plugins/devtools.rs`); GitHub Actions は single-line `run:` command のみ対応
 2. flask / celery — static app command/reference extraction is initial implementation (`FLASK_APP`, `flask --app`, `celery -A/--app`)
-3. Sphinx / MkDocs / Alembic
+3. Sphinx / MkDocs / Alembic — conventional config/entry extraction is initial implementation (`docs/conf.py`, `mkdocs.yml`, `alembic/env.py`)
 4. notebook parsing
 
 方針:
