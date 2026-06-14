@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.1 alpha.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`), plus `--explain`, `--trace`, and `--fix`. Use `--probe` for steps 1–4 summary only. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`). PyPI **v0.1** tag awaits Trusted Publishing setup.
+> **Status: v0.1 alpha.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`), plus `--explain`, `--trace`, and `--fix`. Use `--probe` for steps 1–4 summary only. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`), and **v0.1.0 has been released**.
 
 ## Why chokkin?
 
