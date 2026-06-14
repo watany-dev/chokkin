@@ -100,7 +100,7 @@ fn apply_action(
             from_label,
             raw,
         } => {
-            let path = root.join(file);
+            let path = resolve_contained_path(root, file)?;
             let description = move_group_to_runtime(&path, from_label, raw)?;
             Ok(AppliedFix {
                 rule: RuleId::Chk005,
@@ -527,5 +527,22 @@ mod tests {
         assert_eq!(fix_report.applied.len(), 1);
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(updated.contains("dependencies = [\"pyyaml\"]"));
+    }
+
+    #[test]
+    fn move_to_runtime_rejects_escaped_manifest_path() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let action = FixAction::MoveToRuntime {
+            name: "pytest".to_owned(),
+            file: "../outside.toml".to_owned(),
+            from_label: "dependency-groups.dev[0]".to_owned(),
+            raw: "pytest".to_owned(),
+        };
+
+        let error = apply_action(dir.path(), &action, FixOptions::default())
+            .expect_err("escaped path should be rejected");
+
+        assert!(matches!(error, FixError::Unsupported { .. }));
+        assert!(error.to_string().contains("escapes the project root"));
     }
 }
