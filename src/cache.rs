@@ -137,7 +137,7 @@ impl CacheOptions {
         let Ok(record) = serde_json::from_slice::<ScanCacheRecord>(&bytes) else {
             return Ok(None);
         };
-        if record.key == *key {
+        if record.key == *key && record.schema_version == SCAN_CACHE_SCHEMA_VERSION {
             Ok(Some(record))
         } else {
             Ok(None)
@@ -974,6 +974,38 @@ mod tests {
             CacheOptions::default()
                 .read_scan_record(&root, &expected)
                 .expect("read mismatched cache"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mismatched_scan_record_schema_is_cache_miss() {
+        let root = temp_cache_test_dir("scan-schema-mismatch");
+        let key = ScanCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "scan-v1".to_owned(),
+            },
+            inputs: ScanInputFingerprints::default(),
+        };
+        let path = CacheOptions::default().scan_entry_path(&root, &key);
+        std::fs::create_dir_all(path.parent().expect("cache parent")).expect("create cache parent");
+        let record = ScanCacheRecord {
+            key: key.clone(),
+            schema_version: "scan-record-v0".to_owned(),
+            payload: None,
+        };
+        std::fs::write(&path, serde_json::to_vec(&record).expect("serialize record"))
+            .expect("write schema-mismatched cache");
+
+        assert_eq!(
+            CacheOptions::default()
+                .read_scan_record(&root, &key)
+                .expect("read schema-mismatched cache"),
             None
         );
         let _ = std::fs::remove_dir_all(root);
