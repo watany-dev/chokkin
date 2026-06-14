@@ -61,7 +61,7 @@ pub(super) fn plan_fixes(
     let mut skipped = Vec::new();
 
     for issue in &report.issues {
-        match plan_issue_fix(issue, manifest) {
+        match plan_issue_fix(issue, manifest, options) {
             Ok(Some(action)) => actions.push(action),
             Ok(None) => {},
             Err(skip) => skipped.push(skip),
@@ -78,6 +78,7 @@ pub(super) fn plan_fixes(
 fn plan_issue_fix(
     issue: &Issue,
     manifest: &LoadedManifest,
+    options: FixOptions,
 ) -> Result<Option<FixAction>, SkippedFix> {
     match issue.rule {
         RuleId::Chk001 => plan_remove_file(issue, options),
