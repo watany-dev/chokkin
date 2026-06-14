@@ -850,6 +850,19 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
          crash 0、cold実行がmedium projectで2s以内
 ```
 
+検証ハーネスは `scripts/oss-clones.manifest` (20 project、tag pinned) と
+`scripts/clone-oss-fixtures.sh` / `scripts/oss-metrics.sh` (`make oss-clones` /
+`make oss-metrics`)。誤検知のground truthは `scripts/oss-fixtures.labels.tsv`
+に `fp`/`tp` で記録し、未分類が残るとFP gateは通らない。最新の計測結果は
+`docs/dev/oss-validation-report.md` に scorecard として残す。
+
+**現状 (v0.1.0): exit criteria未達。** crash 0、cold実行はmedium最遅でも111ms
+(2s budgetに対し十分)。しかしYOK002の誤検知率は **100% (155/155)**。根因は
+(1) dev/test/docs toolのbinary+config利用を検出できない (110件)、(2)
+optional/条件付き/platform-guarded import未追跡・PDM/Hatch group未対応 (34件)、
+(3) import名≠distribution名のmap欠落 (8件)、(4) 自己参照extra (3件)。§20の
+「信頼を失いにくい」方針に照らし、FP gateが通るまでv0.1は出さない。
+
 ### Phase 2: v0.2 導入支援(+6〜8週)
 
 ```text

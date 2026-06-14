@@ -1,0 +1,173 @@
+# Ground-truth labels for YOK002 (unused dependency) / YOK003 (missing
+# dependency) findings on the §17 OSS validation set.
+#
+# Tab-separated columns (lines starting with # and blank lines are ignored):
+#   slug          project slug from scripts/oss-clones.manifest
+#   code          YOK002 | YOK003
+#   distribution  distribution name reported in the finding
+#   verdict       fp | tp
+#                   fp = false positive (the dependency is in fact used /
+#                        correctly declared; yokei is wrong)
+#                   tp = true positive (genuinely unused / genuinely missing)
+#   note          short justification (how it was verified)
+#
+# scripts/oss-metrics.sh matches findings on (slug, code, distribution).
+# Any finding not listed here is counted `unknown`, which blocks the FP gate
+# until classified. Populate this file after the first metrics run.
+#
+# slug	code	distribution	verdict	note
+requests	YOK002	httpbin	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+requests	YOK002	pysocks	fp	runtime dep used via import name != distribution name (package-module-map gap)
+requests	YOK002	pytest-cov	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+requests	YOK002	pytest-httpbin	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+requests	YOK002	wheel	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+urllib3	YOK002	backports-zoneinfo	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	brotli	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	brotlicffi	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	build	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+urllib3	YOK002	cffi	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+urllib3	YOK002	cryptography	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	h2	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	httpx	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	hypercorn	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	idna	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	pyopenssl	fp	runtime dep used via import name != distribution name (package-module-map gap)
+urllib3	YOK002	pysocks	fp	runtime dep used via import name != distribution name (package-module-map gap)
+urllib3	YOK002	pytest-memray	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+urllib3	YOK002	pytest-socket	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+urllib3	YOK002	pytest-timeout	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+urllib3	YOK002	quart	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	quart-trio	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	towncrier	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+urllib3	YOK002	trio	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	trustme	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+urllib3	YOK002	zstandard	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+jinja	YOK002	babel	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+httpx	YOK002	build	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	mkautodoc	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	mkdocs	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	mkdocs-material	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	mypy	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	ruff	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	trio-typing	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+httpx	YOK002	twine	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	build	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	importlib-metadata	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+starlette	YOK002	mkautodoc	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	mkdocs	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	mkdocs-material	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	mypy	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	python-multipart	fp	runtime dep used via import name != distribution name (package-module-map gap)
+starlette	YOK002	ruff	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	twine	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	types-contextvars	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+starlette	YOK002	types-dataclasses	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	build	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	colorama	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+uvicorn	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	coverage-conditional-plugin	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	mkdocs	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	mkdocs-material	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	mypy	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	ruff	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+uvicorn	YOK002	twine	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	attrs	fp	self-referential extra (project depends on itself with extras); always used
+attrs	YOK002	cloudpickle	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	cogapp	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	furo	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	mypy	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	myst-parser	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	pre-commit	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	pytest-codspeed	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	pytest-mypy-plugins	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	pytest-xdist	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	sphinx	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	sphinx-notfound-page	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	sphinxcontrib-towncrier	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+attrs	YOK002	towncrier	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+anyio	YOK002	anyio	fp	self-referential extra (project depends on itself with extras); always used
+anyio	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+anyio	YOK002	hypothesis	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+anyio	YOK002	packaging	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+anyio	YOK002	sphinx	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+anyio	YOK002	sphinx-autodoc-typehints	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+anyio	YOK002	sphinx-rtd-theme	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+anyio	YOK002	trio	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+python-dotenv	YOK002	black	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+python-dotenv	YOK002	bumpversion	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+python-dotenv	YOK002	flake8	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+python-dotenv	YOK002	ipython	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+python-dotenv	YOK002	pytest-cov	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+python-dotenv	YOK002	tox	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+python-dotenv	YOK002	twine	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+python-dotenv	YOK002	wheel	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+tenacity	YOK002	reno	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+tenacity	YOK002	sphinx	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	cogapp	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	furo	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	mypy	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	myst-parser	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	sphinx	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	sphinx-notfound-page	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	sphinxcontrib-mermaid	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	sphinxext-opengraph	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+structlog	YOK002	structlog	fp	self-referential extra (project depends on itself with extras); always used
+pluggy	YOK002	pre-commit	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+pluggy	YOK002	pytest-benchmark	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+pluggy	YOK002	tox	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	cairosvg	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	mdx-include	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	mkdocs-macros-plugin	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	mkdocs-material	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	mkdocs-redirects	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	mypy	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	pillow	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	pre-commit	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	pytest-cov	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	pytest-sugar	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	pytest-xdist	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+typer	YOK002	pyyaml	fp	runtime dep used via import name != distribution name (package-module-map gap)
+typer	YOK002	ruff	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+black	YOK002	ipython	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	black	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	cairosvg	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	coverage	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	databases	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+fastapi	YOK002	flask	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+fastapi	YOK002	griffe-typingdoc	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	itsdangerous	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+fastapi	YOK002	jieba	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+fastapi	YOK002	mdx-include	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	mkdocs-macros-plugin	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	mkdocs-material	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	mkdocs-redirects	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	mkdocstrings	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	mypy	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	passlib	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+fastapi	YOK002	pillow	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	pre-commit	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	pydantic-extra-types	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+fastapi	YOK002	pyjwt	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+fastapi	YOK002	python-multipart	fp	runtime dep used via import name != distribution name (package-module-map gap)
+fastapi	YOK002	ruff	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+fastapi	YOK002	uvicorn	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+djangorestframework	YOK002	attrs	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+djangorestframework	YOK002	backports-zoneinfo	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+djangorestframework	YOK002	django-filter	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+djangorestframework	YOK002	django-guardian	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+djangorestframework	YOK002	importlib-metadata	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+djangorestframework	YOK002	mkdocs	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+djangorestframework	YOK002	psycopg2-binary	fp	runtime dep used via import name != distribution name (package-module-map gap)
+djangorestframework	YOK002	pylinkvalidator	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+djangorestframework	YOK002	pytest-cov	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+djangorestframework	YOK002	pytest-django	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+djangorestframework	YOK002	transifex-client	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+djangorestframework	YOK002	twine	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+djangorestframework	YOK002	wheel	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
+django	YOK002	argon2-cffi	fp	runtime dep used via import name != distribution name (package-module-map gap)
+django	YOK002	tzdata	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1

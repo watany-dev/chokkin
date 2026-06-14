@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.47.0
 
-.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures help
+.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -40,8 +40,18 @@ bench-cmp:
 	cargo bench --benches --locked -- --baseline $(BASELINE)
 
 ## ─── OSS dogfooding (Phase 1 §17) ─────────────────────────────────────────────
+# oss-fixtures: in-repo regression skeleton (always available, no network).
+# oss-clones:   clone the 20-project §17 validation set into target/oss-clones/.
+# oss-metrics:  measure FP rate / crashes / cold-run speed vs §17 exit criteria.
+#               Pass ARGS=--gate to fail when any criterion misses.
 oss-fixtures:
 	scripts/run-oss-fixture.sh --build
+
+oss-clones:
+	scripts/clone-oss-fixtures.sh
+
+oss-metrics:
+	scripts/oss-metrics.sh --build $(ARGS)
 
 ## ─── Security & supply chain ──────────────────────────────────────────────────
 deny:
