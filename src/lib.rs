@@ -24,6 +24,7 @@ pub mod discovery;
 pub mod entry;
 pub mod fix;
 pub mod graph;
+pub mod init;
 pub mod manifest;
 pub mod parser;
 pub mod pipeline;
@@ -60,10 +61,11 @@ pub use graph::{
     DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
     ModuleId, ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
+pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
     LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
-    extract_manifest, resolve_target_version,
+    extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
     DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,

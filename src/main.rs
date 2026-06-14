@@ -11,7 +11,8 @@ use std::process::ExitCode;
 use chokkin::{
     AnalysisReport, CliArgs, ExitStatus, FixReport, RenderContext, RuntimeOverrides, VERSION,
     analyze_project, config_label_from_sources, explain_issue, format_subject, parse_cli_args,
-    probe_project, render_issues, trace_output, write_probe_report, write_probe_warnings,
+    init_project, probe_project, render_issues, trace_output, write_probe_report,
+    write_probe_warnings,
 };
 
 const USAGE: &str = "\
@@ -40,6 +41,7 @@ Options:
       --update-baseline   Write current issues to --baseline
       --no-cache          Disable cache reads and writes
       --probe             Run probe mode (pipeline steps 1-4 only)
+      --init              Append starter [tool.chokkin] config to pyproject.toml
       --project-root PATH Override project root discovery start directory
 
 See https://github.com/watany-dev/chokkin for the specification and roadmap.";
@@ -72,6 +74,10 @@ fn main() -> ExitCode {
     let start = args.path.as_deref().unwrap_or_else(|| Path::new("."));
     let overrides = args.runtime_overrides();
 
+    if args.init {
+        return run_init(start, args.project_root.as_deref(), &overrides);
+    }
+
     if args.probe {
         return run_probe(start, args.project_root.as_deref(), &overrides);
     }
@@ -83,6 +89,26 @@ fn main() -> ExitCode {
         args.analyze_options(),
     ) {
         Ok(report) => run_analysis(&args, report),
+        Err(error) if error.is_usage_error() => {
+            eprintln!("{error}");
+            ExitCode::from(ExitStatus::UsageError.code())
+        },
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(ExitStatus::InternalError.code())
+        },
+    }
+}
+
+fn run_init(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverrides) -> ExitCode {
+    match init_project(start, project_root, overrides) {
+        Ok(report) => {
+            println!(
+                "wrote starter [tool.chokkin] to {}",
+                report.path.display()
+            );
+            ExitCode::from(ExitStatus::Success.code())
+        },
         Err(error) if error.is_usage_error() => {
             eprintln!("{error}");
             ExitCode::from(ExitStatus::UsageError.code())

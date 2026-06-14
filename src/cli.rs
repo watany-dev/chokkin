@@ -88,6 +88,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub probe: bool,
 
+    /// Append a starter `[tool.chokkin]` config to pyproject.toml.
+    #[arg(long)]
+    pub init: bool,
+
     /// Print help and exit.
     #[arg(short = 'h', long = "help")]
     pub help: bool,
@@ -154,6 +158,27 @@ impl CliArgs {
         if self.update_baseline && self.baseline.is_none() {
             return Err("`--update-baseline` requires `--baseline <PATH>`".to_owned());
         }
+        if self.init && self.probe {
+            return Err("`--init` cannot be combined with `--probe`".to_owned());
+        }
+        if self.init
+            && (self.fix
+                || self.dry_run
+                || self.production
+                || self.strict
+                || self.no_exit_code
+                || self.include.is_some()
+                || self.exclude.is_some()
+                || self.reporter.is_some()
+                || self.confidence.is_some()
+                || self.baseline.is_some()
+                || self.update_baseline
+                || self.no_cache
+                || self.explain.is_some()
+                || self.trace.is_some())
+        {
+            return Err("`--init` cannot be combined with analysis or fix flags".to_owned());
+        }
         Ok(())
     }
 }
@@ -212,6 +237,19 @@ mod tests {
             parse_cli_args(vec!["--reporter".to_owned(), "sarif".to_owned()]).expect("parse");
         assert_eq!(github.reporter, Some(ReporterId::Github));
         assert_eq!(sarif.reporter, Some(ReporterId::Sarif));
+    }
+
+    #[test]
+    fn parses_init_flag() {
+        let args = parse_cli_args(vec!["--init".to_owned()]).expect("parse");
+        assert!(args.init);
+    }
+
+    #[test]
+    fn rejects_init_probe_combination() {
+        let args = parse_cli_args(vec!["--init".to_owned(), "--probe".to_owned()]).expect("parse");
+        let err = args.validate().expect_err("invalid combination");
+        assert!(err.contains("--init"));
     }
 
     #[test]
