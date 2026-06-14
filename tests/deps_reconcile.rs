@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, GraphEdge, ProjectRoot, RootMarker, RuleId, Severity, add_parsed_imports,
-    analyze_reachability, apply_entry_plan, apply_resolution_to_graph, build_entry_roots,
-    build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
-    extract_plugin_hints, load_config, parse_project_sources, reconcile_dependencies,
-    resolve_imports, resolve_target_version,
+    Confidence, GraphEdge, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, Severity,
+    WorkspaceDependencyBoundary, add_parsed_imports, analyze_reachability, apply_entry_plan,
+    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
+    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
+    probe_project, reconcile_dependencies, resolve_imports, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -27,6 +27,7 @@ struct DepsInputs {
     graph: chokkin::ProjectGraph,
     resolution: chokkin::ResolutionIndex,
     reachability: chokkin::ReachabilityReport,
+    workspace_inputs: Vec<chokkin::WorkspaceMemberInputs>,
 }
 
 fn load_deps(path: &Path, production: bool) -> DepsInputs {
@@ -75,6 +76,9 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         production,
     )
     .expect("reachability");
+    let workspace_inputs = probe_project(path, None, &RuntimeOverrides::default())
+        .expect("probe")
+        .workspace_inputs;
 
     DepsInputs {
         manifest,
@@ -85,6 +89,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         graph,
         resolution,
         reachability,
+        workspace_inputs,
     }
 }
 
@@ -94,6 +99,14 @@ fn reconcile_fixture(name: &str) -> chokkin::DependencyReport {
 
 fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::DependencyReport {
     let inputs = load_deps(&fixture(name), false);
+    let workspace_boundaries = inputs
+        .workspace_inputs
+        .iter()
+        .map(|input| WorkspaceDependencyBoundary {
+            member_id: &input.member.id,
+            manifest: &input.manifest,
+        })
+        .collect::<Vec<_>>();
     reconcile_dependencies(
         &inputs.manifest,
         &inputs.resolution,
@@ -103,6 +116,7 @@ fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::Dependenc
         &inputs.sources,
         &inputs.parse,
         &inputs.graph,
+        &workspace_boundaries,
         strict,
     )
 }
@@ -159,6 +173,31 @@ fn transitive_urllib3_emits_chk004() {
         .iter()
         .find(|candidate| candidate.rule == RuleId::Chk004 && candidate.message.contains("urllib3"))
         .expect("urllib3 transitive");
+    assert_eq!(candidate.severity, Severity::Error);
+}
+
+#[test]
+fn workspace_member_root_declared_dependency_is_allowed_by_default() {
+    let report = reconcile_fixture("workspace_member_strict");
+    assert!(!report
+        .candidates
+        .iter()
+        .any(|candidate| candidate.rule == RuleId::Chk003
+            && candidate.message.contains("requests")));
+}
+
+#[test]
+fn strict_workspace_member_requires_member_local_dependency() {
+    let report = reconcile_fixture_with_strict("workspace_member_strict", true);
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| {
+            candidate.rule == RuleId::Chk003
+                && candidate.message.contains("requests")
+                && candidate.message.contains("workspace member api")
+        })
+        .expect("member-local requests declaration");
     assert_eq!(candidate.severity, Severity::Error);
 }
 

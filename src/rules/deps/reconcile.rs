@@ -7,7 +7,7 @@ use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::types::{DependencyReport, subject_sort_key};
+use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, subject_sort_key};
 use crate::sources::DiscoveredSources;
 
 use super::binary::detect_unlisted_binaries;
@@ -32,9 +32,17 @@ pub fn reconcile_dependencies(
     sources: &DiscoveredSources,
     parse: &ParseSummary,
     graph: &ProjectGraph,
+    workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
     strict: bool,
 ) -> DependencyReport {
     let declared = build_declared_index(manifest);
+    let workspace_declared = workspace_boundaries
+        .iter()
+        .map(|boundary| super::missing::WorkspaceDeclaredIndex {
+            member_id: boundary.member_id,
+            declared: build_declared_index(boundary.manifest),
+        })
+        .collect::<Vec<_>>();
     let lockfile_present = has_lockfile(manifest, resolution);
     let reachable = reachable_paths(graph, reachability);
     let optional_imports = collect_optional_imports(parse);
@@ -77,6 +85,7 @@ pub fn reconcile_dependencies(
         lockfile_present,
         config,
         sources,
+        &workspace_declared,
         strict,
     ));
 
@@ -194,6 +203,7 @@ mod tests {
             &sources,
             &parse,
             &graph,
+            &[],
             false,
         );
         assert!(report.candidates.is_empty());
@@ -234,6 +244,7 @@ mod tests {
             &sources,
             &parse,
             &graph,
+            &[],
             false,
         );
         assert_eq!(report.candidates.len(), 1);
@@ -299,6 +310,7 @@ mod tests {
             &sources,
             &parse,
             &graph,
+            &[],
             false,
         );
         assert!(report.used_distributions.contains("types-PyYAML"));

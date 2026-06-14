@@ -82,6 +82,7 @@ fn load_emit(path: &Path) -> EmitInputs {
         &sources,
         &parse,
         &graph,
+        &[],
         false,
     );
     let symbols = analyze_symbols(

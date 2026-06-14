@@ -79,6 +79,7 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
         &sources,
         &parse,
         &graph,
+        &[],
         false,
     );
     let symbols = analyze_symbols(

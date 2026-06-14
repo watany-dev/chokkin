@@ -14,4 +14,5 @@ pub use symbols::{SymbolId, SymbolReport, analyze_symbols};
 pub use types::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
     IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
+    WorkspaceDependencyBoundary,
 };

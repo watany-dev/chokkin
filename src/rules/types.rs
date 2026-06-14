@@ -3,7 +3,7 @@
 use indexmap::IndexSet;
 
 use crate::config::Confidence;
-use crate::manifest::DependencyOrigin;
+use crate::manifest::{DependencyOrigin, LoadedManifest};
 use crate::plugins::ReferenceOrigin;
 
 /// CHK001–CHK010 rule identifiers (§3).
@@ -178,6 +178,15 @@ pub struct DependencyReport {
     pub used_distributions: IndexSet<String>,
     /// Non-fatal reconciliation notes.
     pub diagnostics: Vec<ReconcileDiagnostic>,
+}
+
+/// Manifest boundary for a single workspace member during dependency reconciliation.
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspaceDependencyBoundary<'a> {
+    /// Stable workspace member identifier.
+    pub member_id: &'a str,
+    /// Manifest loaded from the workspace member root.
+    pub manifest: &'a LoadedManifest,
 }
 
 /// Final issue location for reporters and `--explain`.

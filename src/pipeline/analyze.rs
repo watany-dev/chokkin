@@ -11,7 +11,10 @@ use crate::parser::parse_project_sources;
 use crate::plugins::extract_plugin_hints;
 use crate::reachability::{ReachabilityReport, analyze_reachability};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
-use crate::rules::{IssueReport, analyze_symbols, emit_issues, reconcile_dependencies};
+use crate::rules::{
+    IssueReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
+    reconcile_dependencies,
+};
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project};
@@ -161,6 +164,15 @@ fn run_analysis_core(
         production,
     )?;
 
+    let workspace_boundaries = probe
+        .workspace_inputs
+        .iter()
+        .map(|input| WorkspaceDependencyBoundary {
+            member_id: &input.member.id,
+            manifest: &input.manifest,
+        })
+        .collect::<Vec<_>>();
+
     let deps = reconcile_dependencies(
         &probe.manifest,
         &resolution,
@@ -170,6 +182,7 @@ fn run_analysis_core(
         &probe.sources,
         &parse,
         &graph,
+        &workspace_boundaries,
         production,
     );
 
