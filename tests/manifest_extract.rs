@@ -10,9 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    ConfigSources, DependencyContext, LoadedConfig, ManifestError, ManifestWarning, ProjectRoot,
-    RootMarker, TargetVersion, default_config, discover_project_root, extract_manifest,
-    load_config, resolve_target_version,
+    CacheOptions, ConfigSources, DependencyContext, LoadedConfig, ManifestError, ManifestWarning,
+    ProjectRoot, RootMarker, TargetVersion, default_config, discover_project_root,
+    extract_manifest, extract_manifest_with_cache, load_config, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -101,6 +101,33 @@ fn requirements_recursive_include() {
             .iter()
             .any(|f| f.contains("nested.txt"))
     );
+}
+
+#[test]
+fn manifest_cache_revalidates_included_requirements() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"cache-demo\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write pyproject");
+    std::fs::write(temp.path().join("requirements.txt"), "-r nested.txt\nrequests\n")
+        .expect("write requirements");
+    std::fs::write(temp.path().join("nested.txt"), "urllib3\n").expect("write nested");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert!(dependency_names(&first).contains(&"urllib3"));
+
+    std::fs::write(temp.path().join("nested.txt"), "idna\n").expect("rewrite nested");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    let names = dependency_names(&second);
+    assert!(names.contains(&"idna"));
+    assert!(!names.contains(&"urllib3"));
 }
 
 #[test]

@@ -18,7 +18,7 @@ use crate::rules::{
 };
 
 use super::error::AnalyzeError;
-use super::probe::{ProbeReport, probe_project};
+use super::probe::{ProbeReport, probe_project_with_cache};
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +65,8 @@ pub fn analyze_project(
     overrides: &RuntimeOverrides,
     options: AnalyzeOptions,
 ) -> Result<AnalysisReport, AnalyzeError> {
-    let probe = probe_project(start, project_root_override, overrides)?;
+    let probe =
+        probe_project_with_cache(start, project_root_override, overrides, Some(&options.cache))?;
     let mut core = run_analysis_core(&probe, overrides, &options)?;
     let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
     let fix = if options.fix_enabled {

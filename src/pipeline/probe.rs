@@ -4,12 +4,13 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::VERSION;
+use crate::cache::CacheOptions;
 use crate::config::{
     ChokkinConfig, ConfigSources, ResolvedWorkspaceMember, RuntimeOverrides, TargetVersion,
     apply_overrides, load_config,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
-use crate::manifest::{LoadedManifest, extract_manifest, resolve_target_version};
+use crate::manifest::{LoadedManifest, extract_manifest_with_cache, resolve_target_version};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, discover_sources};
 
 use super::error::ProbeError;
@@ -59,6 +60,20 @@ pub fn probe_project(
     project_root_override: Option<&Path>,
     overrides: &RuntimeOverrides,
 ) -> Result<ProbeReport, ProbeError> {
+    probe_project_with_cache(start, project_root_override, overrides, None)
+}
+
+/// Run pipeline steps 1–4 with optional manifest cache support.
+///
+/// # Errors
+///
+/// Returns [`ProbeError`] when a pipeline step fails fatally.
+pub fn probe_project_with_cache(
+    start: &Path,
+    project_root_override: Option<&Path>,
+    overrides: &RuntimeOverrides,
+    cache: Option<&CacheOptions>,
+) -> Result<ProbeReport, ProbeError> {
     let discovery_start = project_root_override.unwrap_or(start);
     let canonical_start = canonicalize_path(discovery_start)?;
 
@@ -66,12 +81,13 @@ pub fn probe_project(
     let mut loaded = load_config(&root)?;
     apply_overrides(&mut loaded.effective, overrides);
 
-    let manifest = extract_manifest(&root, &loaded)?;
+    let manifest = extract_manifest_with_cache(&root, &loaded, cache)?;
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
 
     let sources = discover_sources(&root, &loaded, &manifest)?;
-    let workspace_inputs = collect_workspace_inputs(&root, &loaded.workspace_members, overrides)?;
+    let workspace_inputs =
+        collect_workspace_inputs(&root, &loaded.workspace_members, overrides, cache)?;
     let warnings = collect_warnings(&manifest, &sources);
 
     Ok(ProbeReport {
@@ -91,6 +107,7 @@ fn collect_workspace_inputs(
     root: &ProjectRoot,
     members: &[ResolvedWorkspaceMember],
     overrides: &RuntimeOverrides,
+    cache: Option<&CacheOptions>,
 ) -> Result<Vec<WorkspaceMemberInputs>, ProbeError> {
     let mut inputs = Vec::new();
     for member in members {
@@ -100,7 +117,7 @@ fn collect_workspace_inputs(
         }
         let mut loaded = load_config(&member_root)?;
         apply_overrides(&mut loaded.effective, overrides);
-        let manifest = extract_manifest(&member_root, &loaded)?;
+        let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
         let target_version = resolve_target_version(&loaded.effective, &manifest);
         loaded.effective.target_version = Some(target_version);
         let sources = discover_sources(&member_root, &loaded, &manifest)?;

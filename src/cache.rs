@@ -325,6 +325,28 @@ fn manifest_input_fingerprints(
     fingerprint_paths(root, paths)
 }
 
+fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerprint>> {
+    let mut paths = Vec::new();
+    for filename in [
+        "pyproject.toml",
+        "setup.cfg",
+        "setup.py",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "dev-requirements.txt",
+        "requirements-docs.txt",
+        "requirements-tests.txt",
+        "requirements-test.txt",
+        "uv.lock",
+    ] {
+        let path = root.join(filename);
+        if path.is_file() {
+            paths.push(path);
+        }
+    }
+    fingerprint_paths(root, paths)
+}
+
 fn fingerprint_paths(root: &Path, paths: Vec<PathBuf>) -> io::Result<Vec<SourceFingerprint>> {
     let mut fingerprints = Vec::new();
     for path in paths {
@@ -424,6 +446,21 @@ impl ScanInputFingerprints {
         Ok(Self {
             config: config_input_fingerprints(root, config)?,
             manifest: manifest_input_fingerprints(root, manifest)?,
+        })
+    }
+
+    /// Collect fingerprints for manifest extraction before extraction has run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when a candidate manifest input exists but cannot be read.
+    pub fn collect_manifest_candidates(
+        root: &Path,
+        config: &ConfigSources,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            config: config_input_fingerprints(root, config)?,
+            manifest: manifest_candidate_fingerprints(root)?,
         })
     }
 }

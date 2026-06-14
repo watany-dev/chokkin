@@ -158,7 +158,7 @@ PR 分割:
 
 1. cache directory policy と `--no-cache` — policy型とCLI plumbingは初期実装済み (`CacheOptions`, `.chokkin/cache`)
 2. parse result cache — 初期実装済み (`ParseCacheStore`, `parse_project_sources_with_cache`, `.chokkin/cache/parse/*.json`)
-3. manifest/config scan cache — input fingerprint/key/record envelope、JSON payload slot、disk backend、generic config scan payload wiring は初期実装済み (`ScanInputFingerprints`, `ScanCacheKey`, `ScanCacheRecord`, `read_scan_payload`, `write_scan_payload`); full manifest extraction payload は未実装
+3. manifest/config scan cache — input fingerprint/key/record envelope、JSON payload slot、disk backend、generic config scan payload wiring、full manifest extraction payload は初期実装済み (`ScanInputFingerprints`, `ScanCacheKey`, `ScanCacheRecord`, `read_scan_payload`, `write_scan_payload`, `extract_manifest_with_cache`)
 4. warm benchmark fixture と `make bench` comparison — parse cache warm benchmark は初期実装済み (`benches/cache.rs`)
 
 exit:
@@ -167,6 +167,7 @@ exit:
 - medium project warm < 1s
 - synthetic 10k files warm < 2s
 - stale cache による false negative を regression test で防ぐ
+- recursive requirements include の変更で manifest payload cache が stale hit しない
 
 ### P2: Plugin 拡充
 
