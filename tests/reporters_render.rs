@@ -71,6 +71,7 @@ fn github_reporter_renders_annotation_and_baseline_summary() {
 #[test]
 fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     let rendered = render_issues(ReporterId::Sarif, &report(), &context());
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid sarif json");
     assert!(rendered.contains("\"version\": \"2.1.0\""));
     assert!(rendered.contains("\"semanticVersion\": \"0.2.0-test\""));
     assert!(rendered.contains("\"id\": \"CHK003\""));
@@ -79,6 +80,18 @@ fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     assert!(rendered.contains("\"uri\": \"src/acme/app.py\""));
     assert!(rendered.contains("\"startLine\": 7"));
     assert!(rendered.contains("\"workspaceMember\": \"api\""));
+    assert_eq!(parsed["version"], "2.1.0");
+}
+
+#[test]
+fn json_reporter_renders_valid_json() {
+    let rendered = render_issues(ReporterId::Json, &report(), &context());
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json report");
+
+    assert_eq!(parsed["version"], "0.2.0-test");
+    assert_eq!(parsed["issues"][0]["code"], "CHK003");
+    assert_eq!(parsed["issues"][0]["workspace_member"], "api");
+    assert_eq!(parsed["suppressed"]["baseline"], 1);
 }
 
 #[test]
