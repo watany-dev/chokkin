@@ -54,7 +54,7 @@ PR 分割:
 
 1. `rules` に stable issue fingerprint を追加する — 初期実装済み (`src/baseline/` で `rule_id + stable target`)
 2. baseline read/filter を Step 12 issue emission 後に挿入する — 初期実装済み
-3. `--update-baseline` で atomic write する — 初期実装済み (`--baseline PATH` 必須)
+3. `--update-baseline` で atomic write する — 初期実装済み (`--baseline PATH` 必須、nested baseline parent 作成対応)
 4. reporter に baseline summary を出す — 初期実装済み (`default`/`compact`/`json`/`markdown`/`github`)
 
 検証:
@@ -86,8 +86,8 @@ PR 分割:
 
 1. reporter enum と CLI parse を拡張する — 初期実装済み (`github`, `sarif`)
 2. GitHub markdown/job summary reporter を追加する — annotation reporter として初期実装済み
-3. SARIF v2.1.0 の最小 schema serializer を追加する — 初期実装済み
-4. fixtures で snapshot test を追加する — reporter render regression は初期実装済み (`tests/reporters_render.rs`)
+3. SARIF v2.1.0 の最小 schema serializer を追加する — 初期実装済み (`partialFingerprints["chokkin/v0"]` で baseline と同型の stable identity を出力)
+4. fixtures で snapshot test を追加する — reporter render regression は初期実装済み (`tests/reporters_render.rs`; fileless GitHub annotation / path normalization / SARIF fingerprint を含む)
 
 ### P1: Workspace / Monorepo
 
@@ -157,8 +157,8 @@ plugin version
 PR 分割:
 
 1. cache directory policy と `--no-cache` — policy型とCLI plumbingは初期実装済み (`CacheOptions`, `.chokkin/cache`)
-2. parse result cache — 初期実装済み (`ParseCacheStore`, `parse_project_sources_with_cache`, `.chokkin/cache/parse/*.json`)
-3. manifest/config scan cache — input fingerprint/key/record envelope、JSON payload slot、disk backend、generic config scan payload wiring、full manifest extraction payload、module index payload は初期実装済み (`ScanInputFingerprints`, `ScanCacheKey`, `ScanCacheRecord`, `read_scan_payload`, `write_scan_payload`, `extract_manifest_with_cache`, `ModuleIndex::build_with_cache`)
+2. parse result cache — 初期実装済み (`ParseCacheStore`, `parse_project_sources_with_cache`, `.chokkin/cache/parse/*.json`; persisted entry は atomic replace)
+3. manifest/config scan cache — input fingerprint/key/record envelope、JSON payload slot、disk backend、generic config scan payload wiring、full manifest extraction payload、module index payload は初期実装済み (`ScanInputFingerprints`, `ScanCacheKey`, `ScanCacheRecord`, `read_scan_payload`, `write_scan_payload`, `extract_manifest_with_cache`, `ModuleIndex::build_with_cache`; persisted entry は atomic replace)
 4. warm benchmark fixture と `make bench` comparison — parse cache warm benchmark は初期実装済み (`benches/cache.rs`)
 
 exit:
