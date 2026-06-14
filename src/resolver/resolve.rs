@@ -1,6 +1,6 @@
 //! Import resolution orchestration.
 
-use crate::config::{ChokkinConfig, TargetVersion};
+use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::discovery::ProjectRoot;
 use crate::graph::ModuleOrigin;
 use crate::manifest::LoadedManifest;
@@ -20,6 +20,9 @@ use super::venv::load_venv_index;
 
 /// Resolve parsed imports and plugin module references to origins and distributions.
 ///
+/// `workspace_members` marks cross-member imports as first-party so workspace
+/// packages do not become false missing-dependency findings.
+///
 /// # Errors
 ///
 /// Returns [`ResolveError`] only for internal invariant failures (v0.1).
@@ -31,6 +34,7 @@ pub fn resolve_imports(
     sources: &DiscoveredSources,
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
+    workspace_members: &[ResolvedWorkspaceMember],
 ) -> Result<ResolutionIndex, ResolveError> {
     let _ = root;
     let target = config
@@ -60,6 +64,7 @@ pub fn resolve_imports(
                 sources,
                 manifest,
                 config,
+                workspace_members,
                 &import_map,
                 &venv_index.imports,
                 &mut warnings,
@@ -77,6 +82,7 @@ pub fn resolve_imports(
                 sources,
                 manifest,
                 config,
+                workspace_members,
                 &import_map,
                 &venv_index.imports,
                 &mut warnings,
@@ -96,6 +102,7 @@ pub fn resolve_imports(
             sources,
             manifest,
             config,
+            workspace_members,
             &import_map,
             &venv_index.imports,
             &mut warnings,
@@ -122,6 +129,7 @@ fn resolve_module(
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     config: &ChokkinConfig,
+    workspace_members: &[ResolvedWorkspaceMember],
     import_map: &ImportMap,
     venv_imports: &std::collections::BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
@@ -158,7 +166,12 @@ fn resolve_module(
         };
     }
 
-    if is_workspace_import(&root_name, manifest.uv_workspace.as_ref(), config) {
+    if is_workspace_import(
+        &root_name,
+        workspace_members,
+        manifest.uv_workspace.as_ref(),
+        config,
+    ) {
         return ResolvedImport {
             import_root: root_name,
             full_module: full_module.to_owned(),

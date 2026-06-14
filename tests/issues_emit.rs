@@ -58,6 +58,7 @@ fn load_emit(path: &Path) -> EmitInputs {
         &sources,
         &parse,
         &plugin_refs,
+        &loaded.workspace_members,
     )
     .expect("resolve imports");
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");

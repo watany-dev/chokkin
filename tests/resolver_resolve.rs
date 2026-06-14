@@ -37,6 +37,7 @@ fn resolve_fixture(name: &str) -> chokkin::ResolutionIndex {
         &sources,
         &parse,
         &plugin_refs,
+        &loaded.workspace_members,
     )
     .expect("resolve")
 }
@@ -54,6 +55,14 @@ fn resolves_first_party_import() {
     let index = resolve_fixture("first_party");
     assert!(index.imports.iter().any(|resolved| {
         resolved.import_root == "acme" && resolved.origin == ModuleOrigin::FirstParty
+    }));
+}
+
+#[test]
+fn resolves_workspace_member_import_from_resolved_member_id() {
+    let index = resolve_fixture("uv_workspace_member");
+    assert!(index.imports.iter().any(|resolved| {
+        resolved.import_root == "api" && resolved.origin == ModuleOrigin::FirstParty
     }));
 }
 

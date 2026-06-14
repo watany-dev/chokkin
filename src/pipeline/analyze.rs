@@ -146,6 +146,7 @@ fn run_analysis_core(
         &probe.sources,
         &parse,
         &plugin_refs,
+        &probe.workspace_members,
     )?;
     apply_resolution_to_graph(&mut graph, &resolution)?;
     apply_entry_plan(&mut graph, &entry)?;

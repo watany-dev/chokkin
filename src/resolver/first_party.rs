@@ -1,6 +1,6 @@
 //! First-party and workspace import classification.
 
-use crate::config::{ChokkinConfig, UvWorkspaceHint};
+use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
 use crate::manifest::ProjectMetadata;
 use crate::sources::LayoutInfo;
 
@@ -24,13 +24,19 @@ pub fn is_first_party_import(
     false
 }
 
-/// Returns `true` when `import_root` matches a uv workspace member name (v0.1 simplified).
+/// Returns `true` when `import_root` matches a resolved workspace member.
 #[must_use]
 pub fn is_workspace_import(
     import_root: &str,
+    members: &[ResolvedWorkspaceMember],
     workspace: Option<&UvWorkspaceHint>,
     config: &ChokkinConfig,
 ) -> bool {
+    for member in members {
+        if member.id == import_root || member_basename(&member.path) == import_root {
+            return true;
+        }
+    }
     if let Some(hint) = workspace {
         for member in &hint.members {
             if member_basename(member) == import_root {
@@ -65,7 +71,7 @@ fn normalized_project_names(name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::default_config;
+    use crate::config::{ResolvedWorkspaceMember, WorkspaceMemberSource, default_config};
     use crate::manifest::ProjectMetadata;
     use crate::sources::{LayoutInfo, ProjectLayout};
 
@@ -92,8 +98,20 @@ mod tests {
         };
         assert!(is_workspace_import(
             "billing",
+            &[],
             Some(&hint),
             &default_config()
         ));
+    }
+
+    #[test]
+    fn resolved_workspace_member_matches_id() {
+        let member = ResolvedWorkspaceMember {
+            id: "api".to_owned(),
+            path: "services/api".to_owned(),
+            pyproject_toml: Some("services/api/pyproject.toml".to_owned()),
+            source: WorkspaceMemberSource::Uv,
+        };
+        assert!(is_workspace_import("api", &[member], None, &default_config()));
     }
 }
