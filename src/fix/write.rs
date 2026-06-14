@@ -63,7 +63,6 @@ pub fn atomic_write(path: &Path, contents: &str) -> Result<(), FixError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     #[test]
@@ -75,8 +74,11 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).expect("read"), "new");
     }
 
+    #[cfg(unix)]
     #[test]
     fn atomic_write_preserves_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("pyproject.toml");
         fs::write(&path, "old").expect("write");
