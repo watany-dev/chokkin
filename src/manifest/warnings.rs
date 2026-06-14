@@ -11,11 +11,11 @@ pub enum ManifestWarning {
         /// Root-relative path to `setup.py`.
         file: String,
     },
-    /// Poetry manifest sections were detected but are not supported in v0.1.
+    /// Poetry manifest sections were detected.
     PoetryDetected,
-    /// PDM manifest sections were detected but are not supported in v0.1.
+    /// PDM manifest sections were detected.
     PdmDetected,
-    /// Hatch manifest sections were detected but are not supported in v0.1.
+    /// Hatch manifest sections were detected.
     HatchDetected,
     /// A PEP 508 requirement line could not be parsed.
     InvalidRequirementLine {

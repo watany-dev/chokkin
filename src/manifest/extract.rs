@@ -47,7 +47,7 @@ pub fn extract_manifest(
         metadata = extracted.metadata;
         dependencies.extend(extracted.dependencies);
         entry_points.extend(extracted.entry_points);
-        sources.skipped_poetry = extracted
+        sources.poetry = extracted
             .warnings
             .iter()
             .any(|w| matches!(w, ManifestWarning::PoetryDetected));

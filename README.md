@@ -20,7 +20,7 @@ deptry   : consistency between dependency manifests and imports
 chokkin    : unused files, dependencies, and public symbols from the whole project graph
 ```
 
-`chokkin` is not a style/lint tool. It answers a different question: starting from your entry points, what can actually be reached — and what is just sitting there? It reads `pyproject.toml`, requirements files, uv/Poetry lockfiles, and framework/tool configs (Django, FastAPI, pytest, tox, nox, pre-commit, GitHub Actions, …) to build that picture.
+`chokkin` is not a style/lint tool. It answers a different question: starting from your entry points, what can actually be reached — and what is just sitting there? It reads `pyproject.toml` (including Poetry/PDM/Hatch dependency sections), requirements files, uv lockfiles, and framework/tool configs (Django, FastAPI, pytest, tox, nox, pre-commit, GitHub Actions, …) to build that picture.
 
 ## Quick start
 

@@ -892,8 +892,8 @@ crash 0、cold 実行 medium 最遅でも 2s 以内。scorecard は
      - §3のCHK008とbinary mapを前倒し実装するのが本丸。mypy / ruff / pytest /
        sphinx / mkdocs / twine / coverage 等がこれで「利用」と判定される。
   2. dependency-group / extras の context認識 (PDM/Hatch group分を含む)
-     - PEP 735 [dependency-groups]・PDM/Hatch group・requirements-*.txt を
-       dev contextとして解釈する (現状は "unsupported in v0.1" で素通り)。
+     - PEP 735 [dependency-groups]・Poetry/PDM/Hatch group・requirements-*.txt を
+       dev contextとして解釈する。
      - dev群はCHK002をdefaultで抑制し、--strict時のみerrorにする緩いpolicy。
      - Phase 2予定だったPDM/Hatch manifest対応の「読取り」部分を前倒し。
   3. optional / conditional import tracing

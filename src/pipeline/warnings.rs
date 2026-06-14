@@ -38,19 +38,19 @@ fn write_manifest_warning(
         ManifestWarning::PoetryDetected => {
             write!(
                 formatter,
-                "manifest: Poetry sections detected (unsupported in v0.1)"
+                "manifest: Poetry sections detected (partial dependency extraction)"
             )
         },
         ManifestWarning::PdmDetected => {
             write!(
                 formatter,
-                "manifest: PDM sections detected (unsupported in v0.1)"
+                "manifest: PDM sections detected (partial dependency extraction)"
             )
         },
         ManifestWarning::HatchDetected => {
             write!(
                 formatter,
-                "manifest: Hatch sections detected (unsupported in v0.1)"
+                "manifest: Hatch sections detected (partial dependency extraction)"
             )
         },
         ManifestWarning::InvalidRequirementLine { file, line, raw } => write!(

@@ -101,8 +101,8 @@ pub struct ManifestSources {
     pub setup_py: bool,
     /// `uv.lock` contributed.
     pub uv_lock: bool,
-    /// Poetry sections were detected and skipped.
-    pub skipped_poetry: bool,
+    /// Poetry sections were detected.
+    pub poetry: bool,
 }
 
 /// Fully extracted manifest for a project root.

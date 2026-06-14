@@ -277,7 +277,10 @@ fn broken_pyproject_is_error() {
 #[test]
 fn poetry_detected_emits_warning() {
     let manifest = extract_fixture("poetry_detected");
-    assert!(manifest.sources.skipped_poetry);
+    assert!(manifest.sources.poetry);
+    assert!(manifest.dependencies.iter().any(|dep| {
+        dep.name == "requests" && dep.context == DependencyContext::Runtime
+    }));
     assert!(
         manifest
             .warnings

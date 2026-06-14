@@ -20,7 +20,7 @@ deptry   : Python dependency manifestとimportの整合性検出
 chokkin    : project graph全体から未使用ファイル・依存・公開シンボルを検出
 ```
 
-`chokkin` は style/lint ツールではありません。entry point から実際に到達できるものは何か — そして何がただ置いてあるだけなのか、という別の問いに答えます。そのために `pyproject.toml`、requirements 系、uv/Poetry の lockfile、framework/ツール設定(Django、FastAPI、pytest、tox、nox、pre-commit、GitHub Actions など)を読みます。
+`chokkin` は style/lint ツールではありません。entry point から実際に到達できるものは何か — そして何がただ置いてあるだけなのか、という別の問いに答えます。そのために `pyproject.toml`（Poetry/PDM/Hatch の dependency section を含む）、requirements 系、uv lockfile、framework/ツール設定(Django、FastAPI、pytest、tox、nox、pre-commit、GitHub Actions など)を読みます。
 
 ## Quick start
 
