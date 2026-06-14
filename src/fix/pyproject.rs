@@ -95,6 +95,19 @@ fn remove_label_in_document(doc: &mut DocumentMut, label: &str) -> Result<bool, 
     if let Some((group, index)) = parse_group_label(label, "dependency-groups.") {
         return remove_array_index(doc, &["dependency-groups", group.as_str()], index);
     }
+    if let Some(name) = label.strip_prefix("tool.poetry.dependencies.") {
+        return remove_table_key(doc, &["tool", "poetry", "dependencies"], name);
+    }
+    if let Some(name) = label.strip_prefix("tool.poetry.dev-dependencies.") {
+        return remove_table_key(doc, &["tool", "poetry", "dev-dependencies"], name);
+    }
+    if let Some((group, name)) = parse_poetry_group_dependency_label(label) {
+        return remove_table_key(
+            doc,
+            &["tool", "poetry", "group", group.as_str(), "dependencies"],
+            &name,
+        );
+    }
     Err(FixError::Unsupported {
         detail: format!("unsupported pyproject label `{label}`"),
     })
@@ -111,6 +124,34 @@ fn parse_group_label(label: &str, prefix: &str) -> Option<(String, usize)> {
     let (group, index_part) = rest.split_once('[')?;
     let index = index_part.strip_suffix(']')?.parse().ok()?;
     Some((group.to_owned(), index))
+}
+
+fn parse_poetry_group_dependency_label(label: &str) -> Option<(String, String)> {
+    let rest = label.strip_prefix("tool.poetry.group.")?;
+    let (group, name) = rest.split_once(".dependencies.")?;
+    if group.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some((group.to_owned(), name.to_owned()))
+}
+
+fn remove_table_key(
+    doc: &mut DocumentMut,
+    path: &[&str],
+    key: &str,
+) -> Result<bool, FixError> {
+    let mut current = doc.as_item_mut();
+    for segment in path {
+        current = current
+            .get_mut(*segment)
+            .ok_or_else(|| FixError::Unsupported {
+                detail: format!("missing TOML path `{}`", path.join(".")),
+            })?;
+    }
+    let table = current.as_table_mut().ok_or_else(|| FixError::Unsupported {
+        detail: format!("`{}` is not a table", path.join(".")),
+    })?;
+    Ok(table.remove(key).is_some())
 }
 
 fn remove_array_index(
@@ -161,5 +202,47 @@ dependencies = ["boto3>=1.0", "requests>=2.0"]
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("boto3"));
         assert!(updated.contains("requests"));
+    }
+
+    #[test]
+    fn removes_poetry_runtime_dependency() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            r#"
+[tool.poetry.dependencies]
+python = "^3.11"
+boto3 = "^1.34"
+requests = "^2.32"
+"#,
+        )
+        .expect("write");
+
+        remove_by_label(&path, "tool.poetry.dependencies.boto3").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(!updated.contains("boto3"));
+        assert!(updated.contains("requests"));
+        assert!(updated.contains("python"));
+    }
+
+    #[test]
+    fn removes_poetry_group_dependency() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            r#"
+[tool.poetry.group.dev.dependencies]
+pytest = "^8"
+ruff = "^0.6"
+"#,
+        )
+        .expect("write");
+
+        remove_by_label(&path, "tool.poetry.group.dev.dependencies.pytest").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(!updated.contains("pytest"));
+        assert!(updated.contains("ruff"));
     }
 }
