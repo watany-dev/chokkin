@@ -398,8 +398,11 @@ mod tests {
         };
 
         let result = write_baseline(&report, dir.path(), &baseline).expect("write baseline");
+        let written = read_baseline(&baseline).expect("read baseline");
 
         assert_eq!(result.written, 1);
+        assert_eq!(written.issues[0].fingerprint, "CHK001:src/legacy.py");
+        assert_eq!(written.issues[0].target, "src/legacy.py");
         assert!(baseline.exists());
     }
 
