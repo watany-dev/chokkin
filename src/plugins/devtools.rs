@@ -266,3 +266,31 @@ fn clean_command_token(token: &str) -> String {
 fn is_python_binary(token: &str) -> bool {
     token == "python" || token == "python3" || token == "py"
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binary_map(names: &[&str]) -> BTreeMap<String, String> {
+        names
+            .iter()
+            .map(|name| ((*name).to_owned(), (*name).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn command_detects_direct_and_wrapped_binaries() {
+        let map = binary_map(&["pytest", "ruff", "uv"]);
+        let binaries = command_known_binaries("uv run ruff format && python -m pytest", &map);
+        assert!(binaries.contains(&"uv".to_owned()));
+        assert!(binaries.contains(&"ruff".to_owned()));
+        assert!(binaries.contains(&"pytest".to_owned()));
+    }
+
+    #[test]
+    fn command_ignores_unknown_python_modules() {
+        let map = binary_map(&["pytest"]);
+        let binaries = command_known_binaries("python -m unknown_module", &map);
+        assert!(binaries.is_empty());
+    }
+}
