@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.47.0
 
-.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp help
+.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -38,6 +38,10 @@ bench-save:
 
 bench-cmp:
 	cargo bench --benches --locked -- --baseline $(BASELINE)
+
+## ─── OSS dogfooding (Phase 1 §17) ─────────────────────────────────────────────
+oss-fixtures:
+	scripts/run-oss-fixture.sh --build
 
 ## ─── Security & supply chain ──────────────────────────────────────────────────
 deny:

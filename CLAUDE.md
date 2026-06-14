@@ -59,6 +59,7 @@ the shell `permissions` above.
 ## Key constraints (quick reference)
 
 - Never execute the analyzed project's Python code.
+- Default CLI runs full analysis (steps 1–13); `--probe` is steps 1–4 only.
 - All logic in `src/lib.rs` and submodules; `main.rs` is dispatch only.
 - No `unsafe`, no `unwrap`/`expect`/`panic` outside tests.
 - Use `std::path` for all path handling (cross-platform wheels).

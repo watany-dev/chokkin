@@ -1,0 +1,38 @@
+//! One-line-per-issue reporter.
+
+use std::fmt::Write as _;
+
+use crate::rules::IssueReport;
+
+use super::format::{format_location_column, format_subject, severity_label};
+use super::traits::Reporter;
+use super::types::RenderContext;
+
+/// Compact reporter: one line per issue.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompactReporter;
+
+impl Reporter for CompactReporter {
+    fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
+        let mut out = String::new();
+        for issue in &report.issues {
+            let _ = writeln!(
+                out,
+                "{} {} {} {} {}",
+                issue.rule.as_code(),
+                severity_label(issue.severity),
+                issue.confidence.as_str(),
+                format_subject(&issue.subject),
+                format_location_column(&issue.location),
+            );
+        }
+        if report.issues.is_empty() {
+            let _ = writeln!(
+                out,
+                "yokei {} — no issues ({})",
+                context.version, context.mode.mode
+            );
+        }
+        out
+    }
+}

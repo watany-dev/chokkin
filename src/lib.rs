@@ -5,7 +5,8 @@
 //!
 //! Pipeline steps 1–5 ([`discovery`], [`config`], [`manifest`], [`sources`],
 //! [`plugins`]) are available as library APIs. Steps 1–4 also run via
-//! [`pipeline::probe_project`]. Step 6 ([`parser`]) parses Python sources.
+//! [`pipeline::probe_project`]; the full pipeline runs via
+//! [`pipeline::analyze_project`]. Step 6 ([`parser`]) parses Python sources.
 //! Step 7 ([`resolver`]) resolves imports to stdlib / first-party / third-party
 //! distributions. Step 8 ([`entry`]) builds entry roots for reachability.
 //! Step 9 ([`reachability`]) computes reachable files from entry roots.
@@ -60,7 +61,8 @@ pub use parser::{
     parse_project_sources,
 };
 pub use pipeline::{
-    ProbeError, ProbeReport, ProbeWarning, probe_project, write_probe_report, write_probe_warnings,
+    AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,
+    analyze_project, probe_project, trace_output, write_probe_report, write_probe_warnings,
 };
 pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
@@ -71,7 +73,10 @@ pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
     UnreachableReason, UsedModule, analyze_reachability, path_to_module, trace_to_file,
 };
-pub use reporters::{RenderContext, Reporter, ReporterId};
+pub use reporters::{
+    CompactReporter, DefaultReporter, JsonReporter, MarkdownReporter, RenderContext, Reporter,
+    ReporterId, config_label_from_sources, format_subject, render_issues,
+};
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
     TransitiveIndex, apply_resolution_to_graph, import_root, resolve_imports,
