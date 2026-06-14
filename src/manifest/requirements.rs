@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use super::error::ManifestError;
 use super::pep508_util::{extract_egg_name, normalize_distribution_name, parse_requirement};
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
-use super::util::{DependencyPush, push_dependency, relative_path};
+use super::util::{DependencyPush, path_is_within_root, push_dependency, relative_path};
 use super::warnings::ManifestWarning;
 
 /// Result of parsing one or more requirements files.
@@ -285,19 +285,15 @@ fn is_url_like(spec: &str) -> bool {
 }
 
 fn resolve_requirements_include(root: &Path, base: &Path, include: &str) -> Option<PathBuf> {
-    if let Some(parent) = base.parent() {
-        let candidate = parent.join(include);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
+    let candidates = [
+        base.parent().map(|parent| parent.join(include)),
+        Some(root.join(include)),
+    ];
 
-    let root_candidate = root.join(include);
-    if root_candidate.is_file() {
-        return Some(root_candidate);
-    }
-
-    None
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|candidate| candidate.is_file() && path_is_within_root(root, candidate))
 }
 
 /// Infer dependency context from an included requirements filename (Phase 1.5 §4.B).

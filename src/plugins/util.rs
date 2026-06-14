@@ -9,7 +9,9 @@ use toml::Value;
 
 use crate::manifest::ManifestError;
 use crate::manifest::literals::LiteralScan;
-use crate::manifest::util::{read_to_string, relative_path as manifest_relative_path};
+use crate::manifest::util::{
+    path_is_within_root, read_to_string, relative_path as manifest_relative_path,
+};
 
 use super::error::PluginsError;
 use super::types::ReferenceOrigin;
@@ -261,8 +263,11 @@ fn collect_settings_files(root: &Path, current: &Path, depth: usize, out: &mut V
             {
                 continue;
             }
+            if !path_is_within_root(root, &path) {
+                continue;
+            }
             collect_settings_files(root, &path, depth + 1, out);
-        } else if file_name == "settings.py" {
+        } else if file_name == "settings.py" && path_is_within_root(root, &path) {
             out.push(relative_path(root, &path));
         }
     }

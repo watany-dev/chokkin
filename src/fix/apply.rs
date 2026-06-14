@@ -6,6 +6,7 @@ use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
 use crate::rules::{IssueReport, RuleId};
 
+use super::containment::resolve_contained_path;
 use super::error::FixError;
 use super::plan::{FixAction, plan_fixes};
 use super::pyproject::{move_group_to_runtime, remove_by_label};
@@ -67,7 +68,7 @@ fn apply_action(
             label,
             line,
         } => {
-            let path = root.join(file);
+            let path = resolve_contained_path(root, file)?;
             let description = if std::path::Path::new(file)
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))

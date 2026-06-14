@@ -1,6 +1,7 @@
 //! Optional automatic fixes (pipeline step 13).
 
 mod apply;
+mod containment;
 mod error;
 mod plan;
 mod pyproject;

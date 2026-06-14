@@ -16,6 +16,14 @@ pub fn relative_path(root: &Path, path: &Path) -> String {
     )
 }
 
+/// Returns `true` when `path` resolves under `root`.
+#[must_use]
+pub fn path_is_within_root(root: &Path, path: &Path) -> bool {
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    canonical_path.starts_with(&canonical_root)
+}
+
 /// Read a manifest file as UTF-8 text.
 pub fn read_to_string(path: &Path) -> Result<String, ManifestError> {
     std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
