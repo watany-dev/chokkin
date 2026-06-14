@@ -118,6 +118,7 @@ exit codeはCI向けに固定する。
 ```
 
 `--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、SARIF/GitHub reporterはv0.2で追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
+`--baseline PATH` と `--update-baseline` は v0.2 導入支援のP0として実装する。`--update-baseline` は必ず `--baseline PATH` と併用し、通常実行では baseline にある fingerprint と一致する issue を抑制する。
 
 ## 3. issue種別
 
@@ -989,11 +990,11 @@ CHK006 = ["src/acme/public_api.py:*"]
 baselineも導入しやすさに効く。
 
 ```bash
-uvx chokkin --update-baseline
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
 ```
 
-baselineは既存issueを黙らせ、新規issueだけCIで落とすためのもの。大規模既存projectでは必須。
+baselineは既存issueを黙らせ、新規issueだけCIで落とすためのもの。大規模既存projectでは必須。fingerprintは `rule_id + stable target` を基本とし、file pathは `/` 区切りに正規化し、dependency/file issueではline numberをkeyに含めない。
 
 ## 19. パフォーマンス目標
 

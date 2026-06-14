@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::{fs, io};
 
 use chokkin::ExitStatus;
 
@@ -94,4 +95,52 @@ fn binary_dry_run_without_fix_errors() {
         output.status.code(),
         Some(ExitStatus::UsageError.code().into())
     );
+}
+
+#[test]
+fn binary_baseline_update_then_suppresses_existing_issue() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(&fixture_path(&["deps", "unused_boto3"]), temp.path()).expect("copy");
+    let baseline = temp.path().join("chokkin-baseline.json");
+
+    let update = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--update-baseline")
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        update.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    let baseline_contents = fs::read_to_string(&baseline).expect("read baseline");
+    assert!(baseline_contents.contains("CHK002:boto3"));
+
+    let filtered = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        filtered.status.code(),
+        Some(ExitStatus::Success.code().into())
+    );
+    let stdout = String::from_utf8(filtered.stdout).expect("utf8");
+    assert!(stdout.contains("Summary: 0 issues"));
+}
+
+fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> io::Result<()> {
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let target_path = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target_path)?;
+        } else {
+            fs::copy(entry.path(), target_path)?;
+        }
+    }
+    Ok(())
 }

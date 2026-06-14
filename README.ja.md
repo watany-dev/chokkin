@@ -87,6 +87,8 @@ uvx chokkin --reporter markdown
 uvx chokkin --confidence likely
 uvx chokkin --fix
 uvx chokkin --fix --dry-run
+uvx chokkin --baseline chokkin-baseline.json
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
 uvx chokkin --probe              # ステップ 1–4 の概要のみ
@@ -99,6 +101,7 @@ uvx chokkin --reporter sarif      # v0.2
 - `--production` — dev/test/docs/lint/type contextを解析から外し、runtime contextの到達性だけで判定します。dev専用のファイル・依存は報告対象外になり、逆に「productionで未使用」が厳密に出ます。
 - `--strict` — transitive依存の直接importを常にerror、workspace memberごとに直接依存宣言を要求、environment marker付き依存のunusedもerror扱い、confidence `maybe` のissueも表示します。
 - `--no-exit-code` — issueがあってもexit codeを0にします(config/CLI errorの2、internal errorの3は維持)。導入初期やGitHub Actions summary用に。
+- `--baseline PATH` / `--update-baseline` — 現在のissueをbaseline fileに凍結し、以後の実行では一致するissueを抑制して新規issueだけCIで落とします。
 - `--explain` / `--trace` — issueが報告された理由・ファイルが到達可能と判定された経路を表示します。誤検知の調査・報告のための導線です。
 
 exit codeはCI向けに固定です。
@@ -201,7 +204,7 @@ CHK006 = ["src/acme/public_api.py:*"]
 大規模な既存projectには、既存issueを凍結して新規issueだけCIで落とすbaselineを使います(v0.2)。
 
 ```bash
-uvx chokkin --update-baseline
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
 ```
 

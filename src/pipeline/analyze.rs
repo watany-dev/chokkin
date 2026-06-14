@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::config::RuntimeOverrides;
 use crate::entry::{ResolvedMode, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, apply_fixes};
@@ -30,15 +31,21 @@ pub struct AnalysisReport {
     pub issues: IssueReport,
     /// Fix report when `--fix` was requested (step 13).
     pub fix: Option<FixReport>,
+    /// Baseline report when `--baseline` was requested.
+    pub baseline: Option<BaselineReport>,
 }
 
 /// Options for the analysis run beyond [`RuntimeOverrides`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AnalyzeOptions {
     /// When true, run step 13 after issue emission.
     pub fix_enabled: bool,
     /// Fix behaviour when `fix_enabled` is true.
     pub fix: FixOptions,
+    /// Baseline file to read/filter after issue emission.
+    pub baseline: Option<std::path::PathBuf>,
+    /// Update the baseline file with the current issue set.
+    pub update_baseline: bool,
 }
 
 /// Run pipeline steps 1–12 and optionally step 13.
@@ -53,7 +60,8 @@ pub fn analyze_project(
     options: AnalyzeOptions,
 ) -> Result<AnalysisReport, AnalyzeError> {
     let probe = probe_project(start, project_root_override, overrides)?;
-    let core = run_analysis_core(&probe, overrides)?;
+    let mut core = run_analysis_core(&probe, overrides)?;
+    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
     let fix = if options.fix_enabled {
         Some(apply_fixes(
             &core.issues,
@@ -72,7 +80,22 @@ pub fn analyze_project(
         entry_mode: core.entry_mode,
         issues: core.issues,
         fix,
+        baseline,
     })
+}
+
+fn apply_baseline_options(
+    issues: &mut IssueReport,
+    root: &Path,
+    options: &AnalyzeOptions,
+) -> Result<Option<BaselineReport>, AnalyzeError> {
+    let Some(path) = &options.baseline else {
+        return Ok(None);
+    };
+    if options.update_baseline {
+        return Ok(Some(write_baseline(issues, root, path)?));
+    }
+    Ok(Some(apply_baseline(issues, root, path)?))
 }
 
 struct AnalysisCore {

@@ -87,6 +87,8 @@ uvx chokkin --reporter markdown
 uvx chokkin --confidence likely
 uvx chokkin --fix
 uvx chokkin --fix --dry-run
+uvx chokkin --baseline chokkin-baseline.json
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
 uvx chokkin --probe              # steps 1–4 summary only
@@ -99,6 +101,7 @@ Key flags:
 - `--production` — drop dev/test/docs/lint/type contexts and judge reachability from runtime context only. Dev-only files and dependencies are no longer reported, and "unused in production" becomes strict.
 - `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
+- `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
 - `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
 
 Exit codes are fixed for CI:
@@ -201,7 +204,7 @@ CHK006 = ["src/acme/public_api.py:*"]
 For large existing projects, a baseline freezes current issues so CI only fails on new ones (v0.2):
 
 ```bash
-uvx chokkin --update-baseline
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
 ```
 

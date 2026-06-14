@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use crate::rules::{Issue, IssueReport, IssueSubject};
 
-use super::format::json_string;
+use super::format::{baseline_suppressed_count, json_string};
 use super::traits::Reporter;
 use super::types::RenderContext;
 
@@ -55,6 +55,13 @@ impl Reporter for JsonReporter {
             let _ = writeln!(out);
         }
         let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "  }},");
+        let _ = writeln!(out, "  \"suppressed\": {{");
+        let _ = writeln!(
+            out,
+            "    \"baseline\": {}",
+            baseline_suppressed_count(report)
+        );
         let _ = writeln!(out, "  }}");
         let _ = write!(out, "}}");
         out

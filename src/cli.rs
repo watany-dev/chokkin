@@ -71,6 +71,14 @@ pub struct CliArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Suppress issues already recorded in this baseline file.
+    #[arg(long, value_name = "PATH")]
+    pub baseline: Option<PathBuf>,
+
+    /// Write the current issue set to the baseline file.
+    #[arg(long)]
+    pub update_baseline: bool,
+
     /// Run probe mode (pipeline steps 1–4 only).
     #[arg(long)]
     pub probe: bool,
@@ -123,6 +131,8 @@ impl CliArgs {
                 dry_run: self.dry_run,
                 ..FixOptions::default()
             },
+            baseline: self.baseline.clone(),
+            update_baseline: self.update_baseline,
         }
     }
 
@@ -130,6 +140,9 @@ impl CliArgs {
     pub fn validate(&self) -> Result<(), String> {
         if self.dry_run && !self.fix {
             return Err("`--dry-run` requires `--fix`".to_owned());
+        }
+        if self.update_baseline && self.baseline.is_none() {
+            return Err("`--update-baseline` requires `--baseline <PATH>`".to_owned());
         }
         Ok(())
     }
@@ -196,6 +209,12 @@ mod tests {
     #[test]
     fn dry_run_requires_fix() {
         let args = parse_cli_args(vec!["--dry-run".to_owned()]).expect("parse");
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn update_baseline_requires_baseline_path() {
+        let args = parse_cli_args(vec!["--update-baseline".to_owned()]).expect("parse");
         assert!(args.validate().is_err());
     }
 }

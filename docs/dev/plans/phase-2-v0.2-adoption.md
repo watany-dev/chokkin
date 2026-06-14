@@ -34,7 +34,7 @@ v0.2.0 まで JSON schema は draft 扱いを維持する。stable schema は Ph
 CLI:
 
 ```text
-chokkin --update-baseline
+chokkin --baseline chokkin-baseline.json --update-baseline
 chokkin --baseline chokkin-baseline.json
 chokkin --baseline chokkin-baseline.json --reporter json
 ```
@@ -52,9 +52,9 @@ baseline stores:
 
 PR 分割:
 
-1. `rules` に stable issue fingerprint を追加する
-2. baseline read/filter を Step 12 issue emission 後に挿入する
-3. `--update-baseline` で atomic write する
+1. `rules` に stable issue fingerprint を追加する — 初期実装済み (`src/baseline/` で `rule_id + stable target`)
+2. baseline read/filter を Step 12 issue emission 後に挿入する — 初期実装済み
+3. `--update-baseline` で atomic write する — 初期実装済み (`--baseline PATH` 必須)
 4. reporter に baseline summary を出す
 
 検証:

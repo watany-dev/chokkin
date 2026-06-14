@@ -17,6 +17,7 @@
 //! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
+pub mod baseline;
 pub mod config;
 pub mod discovery;
 pub mod entry;
@@ -33,6 +34,9 @@ pub mod rules;
 pub mod sources;
 
 pub use cli::{CliArgs, parse_cli_args};
+pub use baseline::{
+    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
+};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
     LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint,

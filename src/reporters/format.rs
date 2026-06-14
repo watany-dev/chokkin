@@ -1,7 +1,7 @@
 //! Shared formatting helpers for reporters.
 
 use crate::manifest::DependencyOrigin;
-use crate::rules::{Issue, IssueLocation, IssueSubject, RuleId};
+use crate::rules::{Issue, IssueLocation, IssueReport, IssueSubject, RuleId, SuppressReason};
 
 /// Format a primary location column for human reporters.
 pub(super) fn format_location_column(location: &IssueLocation) -> String {
@@ -64,6 +64,16 @@ pub(super) fn severity_label(severity: crate::rules::Severity) -> &'static str {
         crate::rules::Severity::Info => "info",
     }
 }
+
+/// Count issues suppressed by the baseline file.
+pub(super) fn baseline_suppressed_count(report: &IssueReport) -> usize {
+    report
+        .suppressed
+        .iter()
+        .filter(|suppressed| suppressed.reason == SuppressReason::Baseline)
+        .count()
+}
+
 pub(super) fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

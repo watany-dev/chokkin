@@ -219,6 +219,8 @@ pub enum SuppressReason {
     Inline,
     /// Matched file-level `# chokkin: file-ignore[…]`.
     FileLevel,
+    /// Matched a frozen issue in the baseline file.
+    Baseline,
 }
 
 /// Issue suppressed by ignore configuration or directives.

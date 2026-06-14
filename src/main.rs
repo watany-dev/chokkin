@@ -36,6 +36,8 @@ Options:
       --trace <PATH>      Show reachability trace to a file
       --fix               Apply safe automatic manifest fixes
       --dry-run           Preview fixes without writing files (requires --fix)
+      --baseline <PATH>   Suppress issues already recorded in a baseline file
+      --update-baseline   Write current issues to --baseline
       --probe             Run probe mode (pipeline steps 1-4 only)
       --project-root PATH Override project root discovery start directory
 
@@ -160,6 +162,12 @@ fn run_analysis(args: &CliArgs, report: AnalysisReport) -> ExitCode {
         return ExitCode::from(ExitStatus::InternalError.code());
     }
 
+    if let Some(baseline) = &report.baseline
+        && write_baseline_report(baseline, &mut std::io::stderr()).is_err()
+    {
+        return ExitCode::from(ExitStatus::InternalError.code());
+    }
+
     ExitCode::from(report.issues.exit_status.code())
 }
 
@@ -198,6 +206,23 @@ fn write_fix_report(report: &FixReport, out: &mut impl Write) -> std::io::Result
     }
     for reminder in &report.reminders {
         writeln!(out, "  reminder: {reminder}")?;
+    }
+    Ok(())
+}
+
+fn write_baseline_report(
+    report: &chokkin::BaselineReport,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    let path = report.path.as_deref().unwrap_or("(unknown)");
+    if report.written > 0 {
+        writeln!(out, "Baseline: wrote {} issues to {path}", report.written)?;
+    } else if report.suppressed > 0 {
+        writeln!(
+            out,
+            "Baseline: suppressed {} existing issues from {path}",
+            report.suppressed
+        )?;
     }
     Ok(())
 }
