@@ -171,3 +171,10 @@ djangorestframework	YOK002	twine	fp	dev/test/docs tool used via CLI/CI, not impo
 djangorestframework	YOK002	wheel	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
 django	YOK002	argon2-cffi	fp	runtime dep used via import name != distribution name (package-module-map gap)
 django	YOK002	tzdata	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
+#
+# --- Recall sentinels (in-repo fixtures from scripts/oss-recall.manifest) ---
+# These are genuinely-unused dependencies that yokei MUST keep flagging. They
+# give the recall gate true positives so over-suppression (reporting nothing)
+# fails the run instead of passing trivially.
+unused_boto3	YOK002	boto3	tp	recall sentinel: declared runtime dep with no import anywhere; must stay detected
+optional_try_import	YOK002	requests	tp	recall sentinel: unused runtime dep coexisting with a correctly-suppressed optional import — guards 4.C against over-suppression

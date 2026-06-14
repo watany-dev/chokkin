@@ -856,10 +856,16 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 に `fp`/`tp` で記録し、未分類が残るとFP gateは通らない。最新の計測結果は
 `docs/dev/oss-validation-report.md` に scorecard として残す。
 
+FP gateは「報告された YOK002」を分母にするため、**何も報告しなければ自明に通る**。
+これを塞ぐため、ハーネスは `scripts/oss-recall.manifest` の **recall sentinel**
+(意図的に未使用依存を含む in-repo fixture) を OSS clone と一緒に計測し、`tp`
+ラベルが findings に現れなければ **recall gate を失敗**させる (`pass_recall`)。
+これが Phase 1.5 の誤検知是正が「全件抑制」へ退化していないことの保証になる。
+
 **現状 (v0.1.0): §17 exit criteria達成。** Phase 1.5 完了後の OSS 20 件検証で
-YOK002 誤検知率 **0% (0/0)**、crash 0、cold 実行 medium 最遅でも 2s 以内。
-scorecard は `docs/dev/oss-validation-report.md`。PyPI v0.1 タグは Trusted
-Publishing 設定後に予定。
+YOK002 誤検知率 **0.0% (0 FP / 2 reported)**、recall sentinel **2/2 検出**、
+crash 0、cold 実行 medium 最遅でも 2s 以内。scorecard は
+`docs/dev/oss-validation-report.md`。PyPI v0.1 タグは Trusted Publishing 設定後に予定。
 
 ### Phase 1.5: v0.1 誤検知是正(リリースブロッカー) — ✅ 完了
 
@@ -893,7 +899,8 @@ Publishing 設定後に予定。
 検証   : `make oss-metrics ARGS=--gate` を再実行し、scripts/oss-fixtures.labels.tsv
          を再分類する。YOK003 (現状1747件) の誤検知も大幅減を確認 (gateではないが
          §20の信頼性指標)。各根因にregression fixtureを追加してCI化する。
-exit   : YOK002誤検知率 5%未満 (未分類0)、crash 0維持、cold実行 medium 2s維持。
+exit   : YOK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 (過剰抑制ガード)、
+         crash 0維持、cold実行 medium 2s維持。
 ```
 
 ### Phase 2: v0.2 導入支援(+6〜8週)
