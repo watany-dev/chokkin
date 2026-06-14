@@ -146,3 +146,22 @@ fn sarif_reporter_normalizes_artifact_uri_separators() {
     assert!(rendered.contains("\"uri\": \"src/acme/app.py\""));
     assert!(!rendered.contains("src\\\\acme\\\\app.py"));
 }
+
+#[test]
+fn sarif_reporter_includes_stable_partial_fingerprint() {
+    let mut report = report();
+    report.issues[0].location.file = Some("src\\acme\\app.py".to_owned());
+    report.issues[0].subject = IssueSubject::Import {
+        module: "requests".to_owned(),
+        file: "src\\acme\\app.py".to_owned(),
+        line: 7,
+    };
+
+    let rendered = render_issues(ReporterId::Sarif, &report, &context());
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid sarif json");
+
+    assert_eq!(
+        parsed["runs"][0]["results"][0]["partialFingerprints"]["chokkin/v0"],
+        "CHK003:api:src/acme/app.py:requests"
+    );
+}
