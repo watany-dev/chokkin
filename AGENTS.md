@@ -101,8 +101,8 @@ Install tools once with `make tools`.
 ## Benchmarks
 
 Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy
-extraction, `sources` for the file-discovery walk) with synthetic fixtures
-generated in `benches/support/mod.rs`. They are not part of `make check`;
+extraction, `sources` for the file-discovery walk, `cache` for warm parse-cache
+reuse) with synthetic fixtures generated in `benches/support/mod.rs`. They are not part of `make check`;
 run them when touching hot paths:
 
 ```bash

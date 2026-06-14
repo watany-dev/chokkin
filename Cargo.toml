@@ -56,6 +56,10 @@ harness = false
 name = "sources"
 harness = false
 
+[[bench]]
+name = "cache"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 non_ascii_idents = "deny"

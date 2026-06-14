@@ -159,7 +159,7 @@ PR 分割:
 1. cache directory policy と `--no-cache` — policy型とCLI plumbingは初期実装済み (`CacheOptions`, `.chokkin/cache`)
 2. parse result cache — 初期実装済み (`ParseCacheStore`, `parse_project_sources_with_cache`, `.chokkin/cache/parse/*.json`)
 3. manifest/config scan cache — input fingerprint/key/record envelopeは初期実装済み (`ScanInputFingerprints`, `ScanCacheKey`, `ScanCacheRecord`); result payload/backend は未実装
-4. warm benchmark fixture と `make bench` comparison
+4. warm benchmark fixture と `make bench` comparison — parse cache warm benchmark は初期実装済み (`benches/cache.rs`)
 
 exit:
 
