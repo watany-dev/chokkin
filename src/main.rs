@@ -9,8 +9,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use yokei::{
-    AnalysisReport, CliArgs, ExitStatus, FixReport, IssueSubject, RenderContext, RuntimeOverrides,
-    VERSION, analyze_project, config_label_from_sources, explain_issue, parse_cli_args,
+    AnalysisReport, CliArgs, ExitStatus, FixReport, RenderContext, RuntimeOverrides, VERSION,
+    analyze_project, config_label_from_sources, explain_issue, format_subject, parse_cli_args,
     probe_project, render_issues, trace_output, write_probe_report, write_probe_warnings,
 };
 
@@ -182,7 +182,7 @@ fn write_fix_report(report: &FixReport, out: &mut impl Write) -> std::io::Result
             out,
             "  applied {} {} in {} — {}",
             fix.rule.as_code(),
-            format_subject_short(&fix.subject),
+            format_subject(&fix.subject),
             fix.file,
             fix.description
         )?;
@@ -192,7 +192,7 @@ fn write_fix_report(report: &FixReport, out: &mut impl Write) -> std::io::Result
             out,
             "  skipped {} {} — {:?}",
             skipped.rule.as_code(),
-            format_subject_short(&skipped.subject),
+            format_subject(&skipped.subject),
             skipped.reason
         )?;
     }
@@ -200,13 +200,4 @@ fn write_fix_report(report: &FixReport, out: &mut impl Write) -> std::io::Result
         writeln!(out, "  reminder: {reminder}")?;
     }
     Ok(())
-}
-
-fn format_subject_short(subject: &IssueSubject) -> String {
-    match subject {
-        IssueSubject::File { path } => path.clone(),
-        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
-        IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
-        IssueSubject::Import { module, file, line } => format!("{file}:{line} {module}"),
-    }
 }

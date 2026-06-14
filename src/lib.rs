@@ -75,7 +75,7 @@ pub use reachability::{
 };
 pub use reporters::{
     CompactReporter, DefaultReporter, JsonReporter, MarkdownReporter, RenderContext, Reporter,
-    ReporterId, config_label_from_sources, render_issues,
+    ReporterId, config_label_from_sources, format_subject, render_issues,
 };
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,

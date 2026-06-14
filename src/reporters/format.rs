@@ -23,7 +23,7 @@ fn format_manifest_origin(origin: &DependencyOrigin) -> String {
 }
 
 /// Short subject label for compact output.
-pub(super) fn format_subject(subject: &IssueSubject) -> String {
+pub fn format_subject(subject: &IssueSubject) -> String {
     match subject {
         IssueSubject::File { path } => path.clone(),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),

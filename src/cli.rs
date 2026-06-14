@@ -110,11 +110,8 @@ impl CliArgs {
 
     /// Selected reporter, defaulting to human-readable output.
     #[must_use]
-    pub const fn reporter_id(&self) -> ReporterId {
-        match self.reporter {
-            Some(id) => id,
-            None => ReporterId::Default,
-        }
+    pub fn reporter_id(&self) -> ReporterId {
+        self.reporter.unwrap_or_default()
     }
 
     /// Analysis options including optional fix behaviour.
