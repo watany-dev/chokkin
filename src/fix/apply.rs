@@ -47,6 +47,11 @@ pub fn apply_fixes(
             .reminders
             .push("Run `uv lock` to refresh uv.lock".to_owned());
     }
+    if manifest.sources.poetry && !report_out.applied.is_empty() {
+        report_out
+            .reminders
+            .push("Run `poetry lock` to refresh poetry.lock".to_owned());
+    }
 
     Ok(report_out)
 }
@@ -229,6 +234,29 @@ mod tests {
         }
     }
 
+    fn unused_dependency_issue(name: &str) -> Issue {
+        Issue {
+            rule: RuleId::Chk002,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "unused".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: None,
+                line: None,
+                manifest: Some(DependencyOrigin {
+                    file: "pyproject.toml".to_owned(),
+                    line: None,
+                    label: "project.dependencies[0]".to_owned(),
+                }),
+            },
+            subject: crate::rules::IssueSubject::Distribution {
+                name: name.to_owned(),
+            },
+            explain: None,
+        }
+    }
+
     #[test]
     fn dry_run_does_not_write_files() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -383,5 +411,50 @@ mod tests {
         assert!(!dir.path().join("src/legacy.py").exists());
         assert_eq!(fix_report.applied.len(), 1);
         assert_eq!(fix_report.applied[0].rule, RuleId::Chk001);
+    }
+
+    #[test]
+    fn poetry_manifest_fix_reminds_to_refresh_lockfile() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\"boto3>=1.0\"]\n",
+        )
+        .expect("write");
+
+        let root = project_root(dir.path());
+        let mut manifest = empty_manifest(&root);
+        manifest.dependencies.push(DeclaredDependency {
+            name: "boto3".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: Some(">=1.0".to_owned()),
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+        });
+        manifest.sources.pyproject_toml = true;
+        manifest.sources.poetry = true;
+        let report = issue_report(unused_dependency_issue("boto3"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                dry_run: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert!(fix_report.reminders.iter().any(|reminder| {
+            reminder.contains("poetry lock")
+        }));
     }
 }
