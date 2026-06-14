@@ -927,7 +927,8 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     Flask/Celery は static app command/reference extraction を初期実装済み。
     Sphinx/MkDocs/Alembic は conventional config/entry extraction と Sphinx literal
     `extensions` module refs を初期実装済み。
-    GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` に対応。
+    GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` に対応し、
+    `python -m pytest` のような module invocation も既知binary利用として扱う。
     notebook parsing は `.ipynb` discovery と Python code-cell extraction を初期実装済み。
     Flask/Celery decorator由来 module refs は literal scan として初期実装済み)
   - JSON reporter / baseline draft schema と migration 方針 (`docs/dev/schema-migration-notes.md`)
@@ -1043,7 +1044,7 @@ parallelize対象は、file discovery、parse、import extraction、symbol extra
 
 warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。
 
-tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応する。
+tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
 Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route`, `@bp.get` など)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。
 
