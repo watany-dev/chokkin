@@ -272,6 +272,52 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
 }
 
 #[test]
+fn parse_project_sources_invalidates_cache_when_source_changes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_path = temp.path().join("src/app.py");
+    std::fs::create_dir_all(source_path.parent().expect("source parent"))
+        .expect("mkdir");
+    std::fs::write(&source_path, "import requests\n").expect("write first source");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: temp.path().to_path_buf(),
+    };
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: vec!["app".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        },
+        effective_globs: Vec::new(),
+        files: vec![chokkin::DiscoveredFile {
+            path: "src/app.py".to_owned(),
+            kind: chokkin::FileKind::Python,
+            context: FileContext::Runtime,
+        }],
+        warnings: Vec::new(),
+    };
+    let target = TargetVersion::default_py311();
+    let mut cache = ParseCacheStore::new();
+
+    parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("first parse");
+    std::fs::write(&source_path, "import yaml\n").expect("write second source");
+    let second =
+        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+            .expect("second parse");
+
+    let module = second.modules.first().expect("parsed module");
+    assert!(module.imports.iter().any(|import| import.module == "yaml"));
+    assert!(!module.imports.iter().any(|import| import.module == "requests"));
+    assert_eq!(cache.stats().misses, 2);
+    assert_eq!(cache.stats().hits, 0);
+}
+
+#[test]
 fn parse_project_sources_extracts_notebook_code_cells() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root_path = temp.path();
