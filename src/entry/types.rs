@@ -16,7 +16,7 @@ pub struct ResolvedMode {
 /// Where an entry root was discovered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryOrigin {
-    /// `[tool.yokei].entry` or workspace override.
+    /// `[tool.chokkin].entry` or workspace override.
     Config,
     /// `[project.scripts]` / `[project.gui-scripts]` / `[project.entry-points]`.
     Manifest {

@@ -17,13 +17,13 @@ Step 4 (`discover_sources`) の直後に位置し、framework / test runner / CI
 | 解決する問題 | Django `INSTALLED_APPS`、pytest test discovery、FastAPI/uvicorn 起動指定など **設定由来の暗黙参照** を検出し、unused dependency / unused file の誤検知を減らす |
 | 成果物 | `extract_plugin_hints(...) -> Result<PluginHints, PluginsError>` |
 | Phase 0 / 1 との関係 | v0.1 MVP の plugin 3 体（pytest / django / fastapi）を実装。graph / parser と部分並行可 |
-| 後続ステップへの入力 | Step 8 (entry roots)、Step 9 (reachability)、Step 10 (YOK002/YOK008)、Step 12 (diagnostics) |
+| 後続ステップへの入力 | Step 8 (entry roots)、Step 9 (reachability)、Step 10 (CHK002/CHK008)、Step 12 (diagnostics) |
 
 ## 2. スコープ
 
 ### In scope（v0.1）
 
-- `[tool.yokei.plugins]` で **有効化された plugin** のみ実行（§5 既定: pytest / django / fastapi = `true`）
+- `[tool.chokkin.plugins]` で **有効化された plugin** のみ実行（§5 既定: pytest / django / fastapi = `true`）
 - 各 plugin の 3 責務（§9）:
   1. **entry files** の追加
   2. **string / module references** の追加
@@ -40,7 +40,7 @@ Step 4 (`discover_sources`) の直後に位置し、framework / test runner / CI
 | `@router.get` / `@pytest.fixture` 等の **decorator 解析** | Step 6 (parse) — plugin は parse 結果を **消費** する拡張ポイントのみ定義 |
 | entry グラフへの統合・BFS 到達性 | Step 8–9 |
 | import 名 ↔ distribution 名解決 | Step 7 (resolver) |
-| YOK001–YOK010 判定 | Step 10–12 |
+| CHK001–CHK010 判定 | Step 10–12 |
 | v0.2 plugin（celery / tox / nox / pre-commit / github-actions）の **本実装** | v0.2 — Step 5 では `PluginId` と **no-op stub** のみ |
 | `.github/workflows/*.yml` YAML 解析 | v0.2 (`github_actions` plugin) |
 | `pyproject.toml` `[tool.poetry]` / PDM 深掘り | v0.2 |
@@ -57,7 +57,7 @@ Step 4 (`discover_sources`) の直後に位置し、framework / test runner / CI
 | `PluginEntry` | 到達性の root 候補 | Step 8 |
 | `ModuleReference` | `ConfigReference uses Module` 辺 | Step 9–10 |
 | `SymbolReference` | `module:symbol`（uvicorn `app:application` 等） | Step 8–9 |
-| `BinaryUsage` | CLI コマンド → distribution（YOK008） | Step 10 |
+| `BinaryUsage` | CLI コマンド → distribution（CHK008） | Step 10 |
 | `FrameworkUsedGlob` | unused file から除外 / confidence 低下 | Step 9–12 |
 | `FileContextOverride` | path → context 上書き（§10） | Step 4 補正は **再実行しない** — Step 8–10 が参照 |
 
@@ -143,7 +143,7 @@ pub struct SymbolReference {
     pub origin: ReferenceOrigin,
 }
 
-/// CLI binary usage (§9.3, YOK008).
+/// CLI binary usage (§9.3, CHK008).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinaryUsage {
     pub binary: String,            // e.g. `pytest`, `uvicorn`
@@ -205,7 +205,7 @@ impl PluginHints {
 /// Read-only inputs for plugin extractors.
 pub struct PluginContext<'a> {
     pub root: &'a ProjectRoot,
-    pub config: &'a YokeiConfig,
+    pub config: &'a ChokkinConfig,
     pub sources: &'a DiscoveredSources,
     pub manifest: &'a LoadedManifest,
 }
@@ -607,7 +607,7 @@ flowchart LR
 | Step 6 (parse) | conftest / settings / urls の `ReferenceOrigin`（ignore / string ref 拡張） |
 | Step 8 (entry) | `PluginEntry`, `SymbolReference`, test file entries |
 | Step 9 (reachability) | `ModuleReference`, `FrameworkUsedGlob` |
-| Step 10 (rules) | `BinaryUsage` → YOK008 |
+| Step 10 (rules) | `BinaryUsage` → CHK008 |
 | Step 12 (issues) | `PluginsWarning` → diagnostic |
 
 ### Step 8 マージ規則（予告）
@@ -640,7 +640,7 @@ entry_roots = config.entry
 | `docs/dev/spec.ja.md` §6 Step 5, §9, §10, §16 | plugin 責務・v0.1 scope と一致 |
 | `docs/dev/plans/step-02` – `step-04` | `PluginId` / `EntrySpec` / `DiscoveredSources` 確定済み |
 | `phase-0-parser-spike-graph-core.md` | 並行 work。`ConfigReference` 辺は Step 8 |
-| `src/config/types.rs` | `PluginId`, `YokeiConfig.plugins` 確定済み |
+| `src/config/types.rs` | `PluginId`, `ChokkinConfig.plugins` 確定済み |
 | `src/config/defaults.rs` | pytest/django/fastapi 既定 `true` と一致 |
 | `src/manifest/setup_py.rs` | `extract_string_list_argument` 共通化元 |
 | `AGENTS.md` | `plugins/` は `(future)` — 実装時 update-docs |
@@ -652,7 +652,7 @@ entry_roots = config.entry
 | --- | ---: | ---: | --- |
 | モジュール / struct 設計 | 20 | 19 | plugin ごとにファイル分割。`PluginHints` は Step 8 向け |
 | 静的解析制約 | 20 | 20 | Python 非実行。list literal 限定 |
-| ルール / ポリシー | 20 | 19 | §9 三責務を型で表現。YOK008 は Step 10 |
+| ルール / ポリシー | 20 | 19 | §9 三責務を型で表現。CHK008 は Step 10 |
 | エラー処理 | 20 | 20 | plugin 失敗は warning 継続。`?` による全体中断を除去 |
 | テスト容易性 | 20 | 19 | fixture 10 + 統合 12 件 |
 | **合計** | **100** | **97** | **合格**（90 以上） |

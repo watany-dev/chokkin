@@ -47,7 +47,7 @@ pub struct SymbolReference {
     pub origin: ReferenceOrigin,
 }
 
-/// CLI binary usage (§9.3, YOK008).
+/// CLI binary usage (§9.3, CHK008).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinaryUsage {
     /// Binary name, e.g. `pytest` or `uvicorn`.

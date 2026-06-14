@@ -1,8 +1,8 @@
-//! YOK009 duplicate dependency declaration detection.
+//! CHK009 duplicate dependency declaration detection.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::{Confidence, YokeiConfig};
+use crate::config::{ChokkinConfig, Confidence};
 use crate::manifest::DeclaredDependency;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 
@@ -11,7 +11,7 @@ use super::context::{DeclarationBucket, declaration_bucket};
 /// Detect the same distribution declared in multiple incompatible contexts.
 pub(super) fn detect_duplicate_dependencies(
     manifest_deps: &[DeclaredDependency],
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
 ) -> Vec<IssueCandidate> {
     let mut by_name: BTreeMap<&str, BTreeSet<DeclarationBucket>> = BTreeMap::new();
     let mut origins_by_name: BTreeMap<&str, Vec<&DeclaredDependency>> = BTreeMap::new();
@@ -44,7 +44,7 @@ pub(super) fn detect_duplicate_dependencies(
             .collect();
 
         candidates.push(IssueCandidate {
-            rule: RuleId::Yok009,
+            rule: RuleId::Chk009,
             subject: IssueSubject::Distribution {
                 name: name.to_owned(),
             },

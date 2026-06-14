@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     Confidence, ExitStatus, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, add_parsed_imports,
     analyze_reachability, analyze_symbols, apply_entry_plan, apply_resolution_to_graph,
     build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources, emit_issues,
@@ -19,12 +19,12 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 struct EmitInputs {
-    config: yokei::YokeiConfig,
-    parse: yokei::ParseSummary,
-    reachability: yokei::ReachabilityReport,
-    deps: yokei::DependencyReport,
-    symbols: yokei::SymbolReport,
-    entry: yokei::EntryPlan,
+    config: chokkin::ChokkinConfig,
+    parse: chokkin::ParseSummary,
+    reachability: chokkin::ReachabilityReport,
+    deps: chokkin::DependencyReport,
+    symbols: chokkin::SymbolReport,
+    entry: chokkin::EntryPlan,
 }
 
 fn load_emit(path: &Path) -> EmitInputs {
@@ -49,7 +49,7 @@ fn load_emit(path: &Path) -> EmitInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), yokei::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
         &root,
@@ -121,7 +121,7 @@ fn emit_reports_unused_dependency() {
         report
             .issues
             .iter()
-            .any(|issue| issue.rule == RuleId::Yok002)
+            .any(|issue| issue.rule == RuleId::Chk002)
     );
     assert_eq!(report.exit_status, ExitStatus::IssuesFound);
 }
@@ -132,7 +132,7 @@ fn config_ignore_suppresses_matching_issue() {
     let mut config = inputs.config.clone();
     config
         .ignore
-        .insert("YOK002".to_owned(), vec!["boto3".to_owned()]);
+        .insert("CHK002".to_owned(), vec!["boto3".to_owned()]);
     let report = emit_issues(
         &inputs.reachability,
         &inputs.deps,
@@ -146,7 +146,7 @@ fn config_ignore_suppresses_matching_issue() {
         report
             .issues
             .iter()
-            .all(|issue| issue.rule != RuleId::Yok002)
+            .all(|issue| issue.rule != RuleId::Chk002)
     );
     assert!(!report.suppressed.is_empty());
 }
@@ -169,6 +169,6 @@ fn likely_unused_dependency_hidden_when_confidence_is_certain() {
         report
             .issues
             .iter()
-            .all(|issue| issue.rule != RuleId::Yok002)
+            .all(|issue| issue.rule != RuleId::Chk002)
     );
 }

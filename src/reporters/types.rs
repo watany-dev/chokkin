@@ -50,7 +50,7 @@ pub struct RenderContext {
     pub mode: ResolvedMode,
     /// Effective `production` flag for the run.
     pub production: bool,
-    /// yokei version string.
+    /// chokkin version string.
     pub version: &'static str,
     /// Primary config file label for the header.
     pub config_label: Option<String>,

@@ -2,7 +2,7 @@
 name = "acme"
 version = "0.1.0"
 
-[tool.yokei]
+[tool.chokkin]
 entry = ["manage.py", "src/acme/asgi.py:application"]
 project = ["src/**/*.py", "tests/**/*.py"]
 mode = "library"
@@ -12,27 +12,27 @@ respect_gitignore = false
 confidence = "certain"
 exclude = ["custom/**"]
 
-[tool.yokei.dependencies]
+[tool.chokkin.dependencies]
 dev_groups = ["dev"]
 runtime_groups = ["server"]
 type_groups = ["types"]
 
-[tool.yokei.package_module_map]
+[tool.chokkin.package_module_map]
 "PyYAML" = ["yaml"]
 
-[tool.yokei.binary_map]
+[tool.chokkin.binary_map]
 pytest = "pytest"
 
-[tool.yokei.plugins]
+[tool.chokkin.plugins]
 pytest = false
 django = true
 fastapi = true
 celery = true
 
-[tool.yokei.ignore]
-YOK002 = ["boto3"]
+[tool.chokkin.ignore]
+CHK002 = ["boto3"]
 
-[tool.yokei.workspaces.api]
+[tool.chokkin.workspaces.api]
 path = "services/api"
 entry = ["src/api/main.py"]
 project = ["src/**/*.py"]

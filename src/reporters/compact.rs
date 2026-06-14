@@ -29,7 +29,7 @@ impl Reporter for CompactReporter {
         if report.issues.is_empty() {
             let _ = writeln!(
                 out,
-                "yokei {} — no issues ({})",
+                "chokkin {} — no issues ({})",
                 context.version, context.mode.mode
             );
         }

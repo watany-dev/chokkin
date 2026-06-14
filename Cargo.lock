@@ -129,6 +129,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "chokkin"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "criterion",
+ "globset",
+ "ignore",
+ "indexmap",
+ "pep508_rs",
+ "proptest",
+ "regex",
+ "rustpython-parser",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "toml_edit",
+]
+
+[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1678,25 +1697,6 @@ dependencies = [
  "quote",
  "syn",
  "synstructure",
-]
-
-[[package]]
-name = "yokei"
-version = "0.1.0"
-dependencies = [
- "clap",
- "criterion",
- "globset",
- "ignore",
- "indexmap",
- "pep508_rs",
- "proptest",
- "regex",
- "rustpython-parser",
- "tempfile",
- "thiserror 2.0.18",
- "toml",
- "toml_edit",
 ]
 
 [[package]]

@@ -10,9 +10,9 @@ mod support;
 use std::hint::black_box;
 use std::path::Path;
 
+use chokkin::{LoadedConfig, ProjectRoot, discover_project_root, extract_manifest, load_config};
 use criterion::{Criterion, criterion_group, criterion_main};
 use tempfile::TempDir;
-use yokei::{LoadedConfig, ProjectRoot, discover_project_root, extract_manifest, load_config};
 
 fn pipeline_inputs(root_dir: &Path) -> (ProjectRoot, LoadedConfig) {
     let root = discover_project_root(root_dir).expect("discover root");

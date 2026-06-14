@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::YokeiConfig;
+use crate::config::ChokkinConfig;
 use crate::manifest::normalize_distribution_name;
 
 use super::bundled::package_modules::PACKAGE_TO_IMPORTS;
@@ -13,7 +13,7 @@ use super::types::ResolveConfidence;
 pub enum MapSource {
     /// Bundled package-module map.
     Bundled,
-    /// User `[tool.yokei].package_module_map`.
+    /// User `[tool.chokkin].package_module_map`.
     User,
     /// Canonicalized name fallback.
     Canonicalize,
@@ -40,7 +40,7 @@ pub struct ImportMap {
 impl ImportMap {
     /// Build merged import map from bundled data and user config.
     #[must_use]
-    pub fn build(config: &YokeiConfig) -> Self {
+    pub fn build(config: &ChokkinConfig) -> Self {
         let mut bundled: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (distribution, imports) in PACKAGE_TO_IMPORTS {
             let dist = normalize_distribution_name(distribution);
@@ -127,7 +127,7 @@ fn canonicalize_match(import_root: &str) -> Option<String> {
 /// Build merged binary name → distribution map.
 #[must_use]
 pub fn build_binary_map(
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     venv: &super::venv::VenvIndex,
 ) -> BTreeMap<String, String> {
     let mut map: BTreeMap<String, String> = BTreeMap::new();

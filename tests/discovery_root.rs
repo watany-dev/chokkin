@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{DiscoveryError, RootMarker, discover_project_root};
+use chokkin::{DiscoveryError, RootMarker, discover_project_root};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

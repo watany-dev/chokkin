@@ -1,4 +1,4 @@
-# Contributing to yokei
+# Contributing to chokkin
 
 ## Prerequisites
 
@@ -38,7 +38,7 @@ make coverage  # HTML coverage report (no threshold yet — see below)
 make semver    # public API compatibility vs. origin/main
 make wheel     # build a local maturin wheel
 make sdist     # build source distribution
-make oss-fixtures  # run yokei on OSS/regression fixture manifest (Phase 1 §17)
+make oss-fixtures  # run chokkin on OSS/regression fixture manifest (Phase 1 §17)
 make deny      # cargo-deny (license / advisory / supply-chain policy)
 make machete   # unused dependency detection
 make audit     # cargo-audit (run locally if you updated deps)
@@ -55,7 +55,7 @@ at the Phase 1 (v0.1 MVP) milestone. See `docs/dev/ci-porting-notes.md`.
 - All new logic goes in `src/lib.rs` (and submodules). `src/main.rs` is
   argument dispatch and process exit code only.
 - No `unsafe` code. No `unwrap`/`expect`/`panic` outside `#[cfg(test)]`.
-- Use `std::path` APIs — yokei ships cross-platform wheels.
+- Use `std::path` APIs — chokkin ships cross-platform wheels.
 - Never execute the analyzed project's Python code (static analysis only).
 
 See [AGENTS.md](./AGENTS.md) for the full architecture overview.
@@ -80,6 +80,6 @@ for all platforms and publishes to PyPI via Trusted Publishing:
 5. GitHub Actions builds wheels, creates a GitHub Release, and publishes to PyPI.
 
 Before publishing the first release, a PyPI Trusted Publisher must be
-registered at pypi.org (repo: `watany-dev/yokei`, workflow: `release.yml`,
+registered at pypi.org (repo: `watany-dev/chokkin`, workflow: `release.yml`,
 environment: `pypi`). See `docs/dev/ci-porting-notes.md` for the full setup
 checklist.

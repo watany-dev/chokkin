@@ -2,7 +2,7 @@
 name = "acme"
 version = "0.1.0"
 
-[tool.yokei.workspaces.worker]
+[tool.chokkin.workspaces.worker]
 path = "services/worker"
 entry = ["src/worker/__main__.py"]
 mode = "app"

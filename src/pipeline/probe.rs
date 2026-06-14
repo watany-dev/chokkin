@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::VERSION;
 use crate::config::{
-    ConfigSources, RuntimeOverrides, TargetVersion, YokeiConfig, apply_overrides, load_config,
+    ChokkinConfig, ConfigSources, RuntimeOverrides, TargetVersion, apply_overrides, load_config,
 };
 use crate::discovery::{ProjectRoot, discover_project_root};
 use crate::manifest::{LoadedManifest, extract_manifest, resolve_target_version};
@@ -24,7 +24,7 @@ pub struct ProbeReport {
     /// Which configuration files contributed.
     pub config_sources: ConfigSources,
     /// Effective configuration after overrides and target resolution.
-    pub effective_config: YokeiConfig,
+    pub effective_config: ChokkinConfig,
     /// Extracted manifest metadata and dependencies.
     pub manifest: LoadedManifest,
     /// Discovered source files and layout.
@@ -78,7 +78,7 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, ProbeError> {
 
 /// Write human-readable probe summary to `out`.
 pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Result<()> {
-    writeln!(out, "yokei {} (probe)", report.version)?;
+    writeln!(out, "chokkin {} (probe)", report.version)?;
     writeln!(out)?;
 
     let project_name = report
@@ -158,14 +158,14 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
 
 fn format_config_sources(sources: &ConfigSources) -> String {
     let mut parts = Vec::new();
-    if sources.dot_yokei_toml.is_some() {
-        parts.push(".yokei.toml".to_owned());
+    if sources.dot_chokkin_toml.is_some() {
+        parts.push(".chokkin.toml".to_owned());
     }
-    if sources.yokei_toml.is_some() {
-        parts.push("yokei.toml".to_owned());
+    if sources.chokkin_toml.is_some() {
+        parts.push("chokkin.toml".to_owned());
     }
-    if sources.pyproject_tool_yokei {
-        parts.push("pyproject.toml [tool.yokei]".to_owned());
+    if sources.pyproject_tool_chokkin {
+        parts.push("pyproject.toml [tool.chokkin]".to_owned());
     }
     if parts.is_empty() {
         if sources.used_defaults {
@@ -277,7 +277,7 @@ mod tests {
         let mut output = Vec::new();
         write_probe_report(&report, &mut output).expect("write");
         let text = String::from_utf8(output).expect("utf8");
-        assert!(text.contains("yokei"));
+        assert!(text.contains("chokkin"));
         assert!(text.contains("(probe)"));
         assert!(text.contains("Project : demo"));
         assert!(text.contains("Summary: probe complete"));

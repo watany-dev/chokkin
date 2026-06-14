@@ -21,7 +21,7 @@ Steps 9–13 + Phase 1 CLI の `/update-plan` 実行結果（2026-06-13）。
 | 優先度 | 課題 | 対応プラン |
 | --- | --- | --- |
 | **P0** | `IssueConfidence` と `config::Confidence` の重複 | step-09, 10, 12 — `Confidence` に統一 |
-| **P0** | Step 13 の YOK002 fix 条件が §2 と §3.1 で矛盾 | step-13 — **Certain のみ**に統一 |
+| **P0** | Step 13 の CHK002 fix 条件が §2 と §3.1 で矛盾 | step-13 — **Certain のみ**に統一 |
 | **P1** | try-import (`optional_missing`) が Step 10 に未記載 | step-10 §3.4 追加 |
 | **P1** | `RuntimeOverrides` に `no_exit_code` 等が未定義 | phase-1 §6.1, step-12 参照 |
 | **P1** | `SymbolId` が graph 未存在と衝突 | step-11 — rules ローカル ID |
@@ -33,7 +33,7 @@ Steps 9–13 + Phase 1 CLI の `/update-plan` 実行結果（2026-06-13）。
 ```text
 config::Confidence     — issue confidence 軸（表示フィルタ / exit 判定）
 rules::types::Severity — error | warning | info
-rules::types::RuleId   — YOK001–YOK010
+rules::types::RuleId   — CHK001–CHK010
 rules::types::IssueCandidate — Step 10–11 出力
 rules::types::Issue    — Step 12 最終形
 config::RuntimeOverrides — Phase 1 で CLI フラグを集約
@@ -61,7 +61,7 @@ Phase 0 CLI probe  ∥  Step 5  ∥  Step 6
 | --- | ---: | --- | --- |
 | phase-1.5-fp-remediation | 96 | ✅ 合格 | なし |
 
-OSS 検証で YOK002 FP 100% が判明したが、4 workstream 実装後に
+OSS 検証で CHK002 FP 100% が判明したが、4 workstream 実装後に
 `make oss-metrics ARGS=--gate` が合格（0/0）。詳細は
 [`phase-1.5-fp-remediation.md`](./phase-1.5-fp-remediation.md) と
 [`oss-validation-report.md`](../oss-validation-report.md)。

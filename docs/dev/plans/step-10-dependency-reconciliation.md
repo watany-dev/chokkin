@@ -1,7 +1,7 @@
 # Step 10: Dependency Reconciliation 設計
 
 解析パイプライン §6 の **処理ステップ 10 (dependency reconciliation)** の実装設計。
-到達性・import 解決・manifest・plugin binary 使用を照合し、**YOK002–YOK005 / YOK008–YOK009** の issue 候補を生成する。
+到達性・import 解決・manifest・plugin binary 使用を照合し、**CHK002–CHK005 / CHK008–CHK009** の issue 候補を生成する。
 
 > **関連プラン**
 >
@@ -25,12 +25,12 @@
 
 | Rule | 判定概要 |
 | --- | --- |
-| **YOK002** | 宣言あり・使用なし（import / module ref / binary いずれもなし） |
-| **YOK003** | import あり・直接宣言なし（lockfile なし or 推移閉包外） |
-| **YOK004** | 直接 import あるが推移閉包内のみで直接宣言なし |
-| **YOK005** | file context と dependency context の不一致 |
-| **YOK008** | binary 使用あるが distribution 未宣言 |
-| **YOK009** | 同一 distribution が複数 context に重複宣言 |
+| **CHK002** | 宣言あり・使用なし（import / module ref / binary いずれもなし） |
+| **CHK003** | import あり・直接宣言なし（lockfile なし or 推移閉包外） |
+| **CHK004** | 直接 import あるが推移閉包内のみで直接宣言なし |
+| **CHK005** | file context と dependency context の不一致 |
+| **CHK008** | binary 使用あるが distribution 未宣言 |
+| **CHK009** | 同一 distribution が複数 context に重複宣言 |
 
 **使用の定義（§10）:**
 
@@ -56,27 +56,27 @@ used(distribution D) :=
 
 | 項目 | 担当 |
 | --- | --- |
-| YOK001 / YOK006–YOK007 / YOK010 | Step 11–12 |
+| CHK001 / CHK006–CHK007 / CHK010 | Step 11–12 |
 | environment marker の実行時評価 | 静的 — marker 付きは confidence 低下（§10） |
 | Poetry/PDM lock transitive | v0.2 |
 | workspace member 境界 | v0.2 — v0.1 は root manifest 統合 |
 
 ## 3. 仕様との対応
 
-### 3.1 YOK003 vs YOK004 優先（§10）
+### 3.1 CHK003 vs CHK004 優先（§10）
 
 ```text
 import I from file F
   if I resolves to distribution D:
     if D declared directly in matching context → OK
-    else if D in transitive closure of declared deps (lockfile) → YOK004
-    else → YOK003
-  else if I unresolved → YOK010 (Step 12)
+    else if D in transitive closure of declared deps (lockfile) → CHK004
+    else → CHK003
+  else if I unresolved → CHK010 (Step 12)
 ```
 
-lockfile なし: YOK004 を発行せず YOK003 に縮退。message に `no lockfile` を含める。
+lockfile なし: CHK004 を発行せず CHK003 に縮退。message に `no lockfile` を含める。
 
-### 3.2 YOK002 confidence（§10）
+### 3.2 CHK002 confidence（§10）
 
 | 条件 | confidence |
 | --- | --- |
@@ -85,7 +85,7 @@ lockfile なし: YOK004 を発行せず YOK003 に縮退。message に `no lockf
 | opaque / setup.py 由来宣言 | Likely |
 | types-* stub のみで runtime 未使用 | 別途 stub 規則 — runtime も未使用なら Certain |
 
-### 3.3 YOK005 例
+### 3.3 CHK005 例
 
 ```text
 src/ で pytest を import + pytest が [dependency-groups].dev のみ → misplaced
@@ -109,12 +109,12 @@ except ImportError:
 ```text
 orjson が optional extra / main にある → OK
 どこにもない → optional_missing（default: info, --strict: warning）
-即 YOK003 にしない
+即 CHK003 にしない
 ```
 
 `optional_missing` は `RuleId` 専用ではなく `IssueCandidate` + `Severity::Info` で表現（Step 12 で filter）。
 
-### 3.5 YOK009
+### 3.5 CHK009
 
 同一 PEP 508 `name` が `runtime` + `dev` 等に出現 → 重複。保持 context を message に列挙。
 
@@ -133,7 +133,7 @@ pub struct DependencyReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueCandidate {
-    pub rule: RuleId,           // YOK002, ...
+    pub rule: RuleId,           // CHK002, ...
     pub subject: IssueSubject,  // Distribution | Binary
     pub severity: Severity,
     pub confidence: Confidence,
@@ -154,11 +154,11 @@ src/
       mod.rs
       reconcile.rs        # reconcile_dependencies
       used.rs             # UsedDistributionIndex 構築
-      unused.rs           # YOK002
-      missing.rs          # YOK003, YOK004
-      misplaced.rs        # YOK005
-      binary.rs           # YOK008
-      duplicate.rs        # YOK009
+      unused.rs           # CHK002
+      missing.rs          # CHK003, CHK004
+      misplaced.rs        # CHK005
+      binary.rs           # CHK008
+      duplicate.rs        # CHK009
 ```
 
 Step 11–12 も `rules/` 配下に置き、Step 10 は `rules/deps/` のみ実装。
@@ -171,7 +171,7 @@ pub fn reconcile_dependencies(
     resolution: &ResolutionIndex,
     reachability: &ReachabilityReport,
     plugins: &PluginHints,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     strict: bool,
 ) -> DependencyReport;
 ```
@@ -184,18 +184,18 @@ fixture カテゴリ `tests/fixtures/deps/`:
 
 | ケース | Rule |
 | --- | --- |
-| boto3 宣言のみ | YOK002 |
-| import yaml, 宣言なし | YOK003 |
-| urllib3 via requests lockfile | YOK004 |
-| pytest in src | YOK005 |
-| tox.ini pytest 未宣言 | YOK008 |
-| requests in main + dev | YOK009 |
-| pywin32 marker only | YOK002 Likely |
+| boto3 宣言のみ | CHK002 |
+| import yaml, 宣言なし | CHK003 |
+| urllib3 via requests lockfile | CHK004 |
+| pytest in src | CHK005 |
+| tox.ini pytest 未宣言 | CHK008 |
+| requests in main + dev | CHK009 |
+| pywin32 marker only | CHK002 Likely |
 
 ## 7. Exit criteria
 
-- [x] YOK002–YOK005, YOK008–YOK009 が候補生成される
-- [x] lockfile あり/なしで YOK003/YOK004 分岐
+- [x] CHK002–CHK005, CHK008–CHK009 が候補生成される
+- [x] lockfile あり/なしで CHK003/CHK004 分岐
 - [x] `ExplainData` に used/unused 根拠が入る
 - [x] `make check` 通過
 
@@ -204,7 +204,7 @@ fixture カテゴリ `tests/fixtures/deps/`:
 | 項目 | 理由 | 再検討 |
 | --- | --- | --- |
 | environment marker 評価 | 静的不可 | confidence 低下のみ |
-| stub `types-*` 連動 | §10 複雑 | v0.1 は runtime 未使用なら stub も YOK002 |
+| stub `types-*` 連動 | §10 複雑 | v0.1 は runtime 未使用なら stub も CHK002 |
 
 ## 9. update-plan 検証サマリ（確定）
 
@@ -213,7 +213,7 @@ fixture カテゴリ `tests/fixtures/deps/`:
 | 成果物 | 確認結果 |
 | --- | --- |
 | `step-10-dependency-reconciliation.md` | 本プラン |
-| `docs/dev/spec.ja.md` §3, §10 | YOK002–005 / 008–009 と一致 |
+| `docs/dev/spec.ja.md` §3, §10 | CHK002–005 / 008–009 と一致 |
 | `src/manifest/types.rs` | `DeclaredDependency`, `LockfileGraph`, `DependencyContext` |
 | `src/config/types.rs` | `Confidence`, `DependencyGroupsConfig` |
 | `step-09` | `ReachabilityReport.used_modules` |
@@ -225,7 +225,7 @@ fixture カテゴリ `tests/fixtures/deps/`:
 | --- | ---: | ---: | --- |
 | モジュール / struct 設計 | 20 | 19 | `rules/deps/` 分割。共有型は `rules/types.rs` |
 | 静的解析制約 | 20 | 20 | lockfile 読み取りのみ。marker 非評価 |
-| ルール / ポリシー | 20 | 20 | try-import / YOK003 vs 004 優先を明記 |
+| ルール / ポリシー | 20 | 20 | try-import / CHK003 vs 004 優先を明記 |
 | エラー処理 | 20 | 19 | `reconcile_dependencies` は non-fatal（`DependencyReport`） |
 | テスト容易性 | 20 | 19 | deps fixture 7 カテゴリ |
 | **合計** | **100** | **97** | **合格**（90 以上） |
@@ -234,7 +234,7 @@ fixture カテゴリ `tests/fixtures/deps/`:
 
 | チェック項目 | 結果 |
 | --- | --- |
-| YOK010 境界 | OK — unresolved は Step 11 が候補化 |
+| CHK010 境界 | OK — unresolved は Step 11 が候補化 |
 | `reconcile_dependencies` 戻り値 | OK — 集約ステップは diagnostic 継続 |
 | lockfile なし縮退 | OK — §10 準拠 |
 

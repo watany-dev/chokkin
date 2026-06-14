@@ -11,10 +11,10 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use proptest::prelude::*;
-use yokei::{
+use chokkin::{
     Confidence, PluginId, ProjectMode, ProjectRoot, RootMarker, TargetVersion, load_config,
 };
+use proptest::prelude::*;
 
 const PLUGIN_KEYS: [&str; 8] = [
     "pytest",
@@ -28,8 +28,8 @@ const PLUGIN_KEYS: [&str; 8] = [
 ];
 
 const IGNORE_RULES: [&str; 10] = [
-    "YOK001", "YOK002", "YOK003", "YOK004", "YOK005", "YOK006", "YOK007", "YOK008", "YOK009",
-    "YOK010",
+    "CHK001", "CHK002", "CHK003", "CHK004", "CHK005", "CHK006", "CHK007", "CHK008", "CHK009",
+    "CHK010",
 ];
 
 fn project_root_at(path: &Path) -> ProjectRoot {
@@ -59,7 +59,7 @@ proptest! {
     #[test]
     fn load_config_fuzz_never_panics(contents in "\\PC{0,400}") {
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".yokei.toml"), &contents);
+        write_file(&temp.path().join(".chokkin.toml"), &contents);
         let root = project_root_at(temp.path());
 
         let _ = load_config(&root);
@@ -99,7 +99,7 @@ proptest! {
         contents.push_str("]\n");
 
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".yokei.toml"), &contents);
+        write_file(&temp.path().join(".chokkin.toml"), &contents);
         let root = project_root_at(temp.path());
 
         let loaded = load_config(&root).expect("valid config");
@@ -115,7 +115,7 @@ proptest! {
             Some(target_version.as_str())
         );
         prop_assert_eq!(loaded.effective.exclude, exclude);
-        prop_assert!(loaded.sources.dot_yokei_toml.is_some());
+        prop_assert!(loaded.sources.dot_chokkin_toml.is_some());
     }
 
     #[test]
@@ -125,12 +125,12 @@ proptest! {
     ) {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(
-            &temp.path().join(".yokei.toml"),
+            &temp.path().join(".chokkin.toml"),
             &format!("mode = \"{standalone_mode}\"\n"),
         );
         write_file(
             &temp.path().join("pyproject.toml"),
-            &format!("[tool.yokei]\nmode = \"{pyproject_mode}\"\n"),
+            &format!("[tool.chokkin]\nmode = \"{pyproject_mode}\"\n"),
         );
         let root = project_root_at(temp.path());
 
@@ -139,7 +139,7 @@ proptest! {
             loaded.effective.mode,
             ProjectMode::parse(pyproject_mode).expect("known mode")
         );
-        prop_assert!(loaded.sources.pyproject_tool_yokei);
+        prop_assert!(loaded.sources.pyproject_tool_chokkin);
     }
 
     #[test]
@@ -152,7 +152,7 @@ proptest! {
         prop_assume!(!known.contains(&key.as_str()));
 
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".yokei.toml"), &format!("{key} = true\n"));
+        write_file(&temp.path().join(".chokkin.toml"), &format!("{key} = true\n"));
         let root = project_root_at(temp.path());
 
         prop_assert!(load_config(&root).is_err());
@@ -165,7 +165,7 @@ proptest! {
     ) {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(
-            &temp.path().join(".yokei.toml"),
+            &temp.path().join(".chokkin.toml"),
             &format!("{field} = [\"/{rest}\"]\n"),
         );
         let root = project_root_at(temp.path());
@@ -204,7 +204,7 @@ proptest! {
         }
 
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".yokei.toml"), &contents);
+        write_file(&temp.path().join(".chokkin.toml"), &contents);
         let root = project_root_at(temp.path());
 
         let loaded = load_config(&root).expect("valid plugins table");
@@ -220,7 +220,7 @@ proptest! {
 
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(
-            &temp.path().join(".yokei.toml"),
+            &temp.path().join(".chokkin.toml"),
             &format!("[plugins]\n{key} = true\n"),
         );
         let root = project_root_at(temp.path());
@@ -247,7 +247,7 @@ proptest! {
         }
 
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".yokei.toml"), &contents);
+        write_file(&temp.path().join(".chokkin.toml"), &contents);
         let root = project_root_at(temp.path());
 
         let loaded = load_config(&root).expect("valid ignore table");
@@ -263,7 +263,7 @@ proptest! {
 
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(
-            &temp.path().join(".yokei.toml"),
+            &temp.path().join(".chokkin.toml"),
             &format!("[ignore]\n{code} = []\n"),
         );
         let root = project_root_at(temp.path());
@@ -283,7 +283,7 @@ proptest! {
         }
 
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".yokei.toml"), &contents);
+        write_file(&temp.path().join(".chokkin.toml"), &contents);
         let root = project_root_at(temp.path());
 
         let loaded = load_config(&root).expect("valid workspaces table");
@@ -297,7 +297,7 @@ proptest! {
     fn load_config_rejects_workspace_without_path(id in "[a-z][a-z0-9-]{0,10}") {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(
-            &temp.path().join(".yokei.toml"),
+            &temp.path().join(".chokkin.toml"),
             &format!("[workspaces.{id}]\nmode = \"app\"\n"),
         );
         let root = project_root_at(temp.path());
@@ -309,7 +309,7 @@ proptest! {
     fn load_config_rejects_absolute_workspace_path(rest in "[a-z][a-z0-9/]{0,12}") {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(
-            &temp.path().join(".yokei.toml"),
+            &temp.path().join(".chokkin.toml"),
             &format!("[workspaces.member]\npath = \"/{rest}\"\n"),
         );
         let root = project_root_at(temp.path());
@@ -320,7 +320,7 @@ proptest! {
     #[test]
     fn load_config_is_deterministic(contents in "\\PC{0,200}") {
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".yokei.toml"), &contents);
+        write_file(&temp.path().join(".chokkin.toml"), &contents);
         let root = project_root_at(temp.path());
 
         match (load_config(&root), load_config(&root)) {

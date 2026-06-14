@@ -1,1 +1,1 @@
-import sys  # yokei: ignore[YOK003]
+import sys  # chokkin: ignore[CHK003]

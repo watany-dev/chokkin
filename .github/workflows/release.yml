@@ -112,9 +112,9 @@ jobs:
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           path: ./dist
-          artifact-name: yokei-sbom.spdx.json
+          artifact-name: chokkin-sbom.spdx.json
           # Write into dist/ so it is included in the gh release create glob below.
-          output-file: ./dist/yokei-sbom.spdx.json
+          output-file: ./dist/chokkin-sbom.spdx.json
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: dist/*
@@ -137,7 +137,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: pypi
-      url: https://pypi.org/p/yokei
+      url: https://pypi.org/p/chokkin
     permissions:
       id-token: write  # PyPI Trusted Publishing (no token needed)
     steps:
@@ -148,7 +148,7 @@ jobs:
           merge-multiple: true
       # TODO: pin pypa/gh-action-pypi-publish to a commit SHA.
       # PyPI Trusted Publishing requires the environment named "pypi" to be
-      # registered in pypi.org settings: repo=watany-dev/yokei, workflow=release.yml.
+      # registered in pypi.org settings: repo=watany-dev/chokkin, workflow=release.yml.
       # See docs/dev/ci-porting-notes.md for setup instructions.
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:

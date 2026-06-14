@@ -1,4 +1,4 @@
-//! `# yokei: ignore[…]` directive extraction from source text.
+//! `# chokkin: ignore[…]` directive extraction from source text.
 
 use regex::Regex;
 
@@ -8,12 +8,12 @@ use super::types::IgnoreDirective;
 fn ignore_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"#\s*yokei:\s*(file-)?ignore\[([A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*)\]")
+        Regex::new(r"#\s*chokkin:\s*(file-)?ignore\[([A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*)\]")
             .expect("valid ignore regex")
     })
 }
 
-/// Extract yokei ignore directives from raw source.
+/// Extract chokkin ignore directives from raw source.
 #[must_use]
 pub fn extract_ignores(source: &str) -> Vec<IgnoreDirective> {
     let mut directives = Vec::new();
@@ -71,7 +71,7 @@ pub fn extract_ignores(source: &str) -> Vec<IgnoreDirective> {
 }
 
 fn is_valid_code(code: &str) -> bool {
-    code.len() == 6 && code.starts_with("YOK") && code[3..].chars().all(|ch| ch.is_ascii_digit())
+    code.len() == 6 && code.starts_with("CHK") && code[3..].chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn first_statement_offset(source: &str) -> usize {
@@ -94,23 +94,23 @@ mod tests {
 
     #[test]
     fn parses_inline_ignore() {
-        let source = "import sys  # yokei: ignore[YOK003]\n";
+        let source = "import sys  # chokkin: ignore[CHK003]\n";
         let directives = extract_ignores(source);
         assert_eq!(directives.len(), 1);
         assert!(!directives[0].file_level);
-        assert_eq!(directives[0].codes, vec!["YOK003".to_owned()]);
+        assert_eq!(directives[0].codes, vec!["CHK003".to_owned()]);
         assert_eq!(directives[0].line, 1);
     }
 
     #[test]
     fn parses_file_ignore_before_code() {
-        let source = "# yokei: file-ignore[YOK001,YOK006]\nimport os\n";
+        let source = "# chokkin: file-ignore[CHK001,CHK006]\nimport os\n";
         let directives = extract_ignores(source);
         assert_eq!(directives.len(), 1);
         assert!(directives[0].file_level);
         assert_eq!(
             directives[0].codes,
-            vec!["YOK001".to_owned(), "YOK006".to_owned()]
+            vec!["CHK001".to_owned(), "CHK006".to_owned()]
         );
     }
 }

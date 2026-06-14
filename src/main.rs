@@ -8,16 +8,16 @@ use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
-use yokei::{
+use chokkin::{
     AnalysisReport, CliArgs, ExitStatus, FixReport, RenderContext, RuntimeOverrides, VERSION,
     analyze_project, config_label_from_sources, explain_issue, format_subject, parse_cli_args,
     probe_project, render_issues, trace_output, write_probe_report, write_probe_warnings,
 };
 
 const USAGE: &str = "\
-yokei - Find unused files, dependencies, and public symbols in Python projects
+chokkin - Find unused files, dependencies, and public symbols in Python projects
 
-Usage: yokei [OPTIONS] [PATH]
+Usage: chokkin [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  Directory to analyze (default: current directory)
@@ -28,25 +28,25 @@ Options:
       --production        Analyze runtime context only (exclude test/docs/dev files)
       --strict            Enable strict analysis policies
       --no-exit-code      Report issues but return exit code 0
-      --include <RULES>   Only emit these rule codes (comma-separated YOK00x)
-      --exclude <RULES>   Suppress these rule codes (comma-separated YOK00x)
+      --include <RULES>   Only emit these rule codes (comma-separated CHK00x)
+      --exclude <RULES>   Suppress these rule codes (comma-separated CHK00x)
       --reporter <ID>     Output reporter: default, compact, json, markdown
       --confidence <LVL>  Minimum confidence: certain, likely, maybe
-      --explain <SEL>     Explain an issue (e.g. YOK002:boto3)
+      --explain <SEL>     Explain an issue (e.g. CHK002:boto3)
       --trace <PATH>      Show reachability trace to a file
       --fix               Apply safe automatic manifest fixes
       --dry-run           Preview fixes without writing files (requires --fix)
       --probe             Run probe mode (pipeline steps 1-4 only)
       --project-root PATH Override project root discovery start directory
 
-See https://github.com/watany-dev/yokei for the specification and roadmap.";
+See https://github.com/watany-dev/chokkin for the specification and roadmap.";
 
 fn main() -> ExitCode {
     let args = match parse_cli_args(std::env::args().skip(1).collect()) {
         Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("Run `yokei --help` for usage.");
+            eprintln!("Run `chokkin --help` for usage.");
             return ExitCode::from(ExitStatus::UsageError.code());
         },
     };
@@ -57,7 +57,7 @@ fn main() -> ExitCode {
     }
 
     if args.version {
-        println!("yokei {VERSION}");
+        println!("chokkin {VERSION}");
         return ExitCode::from(ExitStatus::Success.code());
     }
 

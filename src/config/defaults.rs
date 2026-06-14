@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::types::{
-    Confidence, DependencyGroupsConfig, PluginId, ProjectMode, TargetVersion, YokeiConfig,
+    ChokkinConfig, Confidence, DependencyGroupsConfig, PluginId, ProjectMode, TargetVersion,
 };
 
 /// Optional dependency group keys for one layer. Missing keys keep lower-priority values.
@@ -73,7 +73,7 @@ impl PartialConfig {
 
 /// Hardcoded zero-config defaults (§5).
 #[must_use]
-pub fn default_config() -> YokeiConfig {
+pub fn default_config() -> ChokkinConfig {
     let mut plugins = BTreeMap::new();
     for plugin in PluginId::all() {
         let enabled = matches!(
@@ -83,7 +83,7 @@ pub fn default_config() -> YokeiConfig {
         plugins.insert(*plugin, enabled);
     }
 
-    YokeiConfig {
+    ChokkinConfig {
         entry: Vec::new(),
         project: Vec::new(),
         mode: ProjectMode::Auto,
@@ -118,7 +118,7 @@ pub fn default_config() -> YokeiConfig {
 
 /// Merge configuration layers from lowest to highest priority.
 #[must_use]
-pub fn merge_layers(layers: &[PartialConfig]) -> YokeiConfig {
+pub fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
     let mut config = default_config();
 
     for layer in layers {

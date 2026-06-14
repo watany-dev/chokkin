@@ -11,6 +11,6 @@ pub use defaults::default_config;
 pub use error::ConfigError;
 pub use load::{apply_overrides, load_config};
 pub use types::{
-    Confidence, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig, PluginId,
-    ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint, WorkspaceOverride, YokeiConfig,
+    ChokkinConfig, Confidence, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
+    PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint, WorkspaceOverride,
 };

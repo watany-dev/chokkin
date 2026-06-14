@@ -15,7 +15,7 @@
 use std::fs;
 use std::path::Path;
 
-use yokei::{
+use chokkin::{
     ConfigSources, EntrySpec, LoadedConfig, ProjectRoot, RootMarker, TargetVersion, default_config,
     discover_sources, extract_manifest, load_config,
 };
@@ -35,9 +35,9 @@ fn default_loaded_config(root: &ProjectRoot) -> LoadedConfig {
         effective: default_config(),
         sources: ConfigSources {
             used_defaults: true,
-            dot_yokei_toml: None,
-            yokei_toml: None,
-            pyproject_tool_yokei: false,
+            dot_chokkin_toml: None,
+            chokkin_toml: None,
+            pyproject_tool_chokkin: false,
         },
         uv_workspace: None,
     }
@@ -164,7 +164,7 @@ fn uv_lock_corpus_never_panics() {
 fn standalone_config_corpus_never_panics() {
     for payload in corpus() {
         let temp = tempfile::tempdir().expect("tempdir");
-        fs::write(temp.path().join(".yokei.toml"), &payload).expect("write");
+        fs::write(temp.path().join(".chokkin.toml"), &payload).expect("write");
         let root = project_root_at(temp.path());
         let _ = load_config(&root);
     }

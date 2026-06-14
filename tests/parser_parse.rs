@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use yokei::{
+use chokkin::{
     FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout, ProjectRoot,
     RootMarker, TargetVersion, parse_file, parse_project_sources,
 };
@@ -15,7 +15,7 @@ fn spike_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn parse_fixture(name: &str) -> yokei::ParsedModule {
+fn parse_fixture(name: &str) -> chokkin::ParsedModule {
     let path = spike_fixture(name);
     let root = ProjectRoot {
         path: path.parent().expect("parent").to_path_buf(),
@@ -39,7 +39,7 @@ fn parse_fixture(name: &str) -> yokei::ParsedModule {
     .expect("parse")
 }
 
-fn parse_fixture_dir(dir: &str, name: &str) -> yokei::ParsedModule {
+fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/parse")
         .join(dir);
@@ -140,7 +140,7 @@ fn syntax_error_yields_diagnostic() {
 fn extracts_inline_ignore_directive() {
     let parsed = parse_fixture("p8_ignore_comment.py");
     assert_eq!(parsed.ignores.len(), 1);
-    assert_eq!(parsed.ignores[0].codes, vec!["YOK003".to_owned()]);
+    assert_eq!(parsed.ignores[0].codes, vec!["CHK003".to_owned()]);
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn parse_project_sources_fixture_suite() {
     };
     let mut files = Vec::new();
     collect_py_files(&base.join("imports"), &base, &mut files);
-    let sources = yokei::DiscoveredSources {
+    let sources = chokkin::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
@@ -232,7 +232,7 @@ fn parse_project_sources_fixture_suite() {
 fn collect_py_files(
     dir: &std::path::Path,
     base: &std::path::Path,
-    out: &mut Vec<yokei::DiscoveredFile>,
+    out: &mut Vec<chokkin::DiscoveredFile>,
 ) {
     let entries = std::fs::read_dir(dir).expect("read dir");
     for entry in entries.filter_map(Result::ok) {
@@ -247,9 +247,9 @@ fn collect_py_files(
                 .expect("strip")
                 .to_string_lossy()
                 .replace('\\', "/");
-            out.push(yokei::DiscoveredFile {
+            out.push(chokkin::DiscoveredFile {
                 path: rel,
-                kind: yokei::FileKind::Python,
+                kind: chokkin::FileKind::Python,
                 context: FileContext::Runtime,
             });
         }

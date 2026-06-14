@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     ExitStatus, FixOptions, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, add_parsed_imports,
     analyze_reachability, analyze_symbols, apply_entry_plan, apply_fixes,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
@@ -46,7 +46,7 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), yokei::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
         &root,
@@ -109,7 +109,7 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
     let fix_report =
         apply_fixes(&issues, &root, &manifest, FixOptions::default()).expect("apply fixes");
     assert_eq!(fix_report.applied.len(), 1);
-    assert_eq!(fix_report.applied[0].rule, RuleId::Yok002);
+    assert_eq!(fix_report.applied[0].rule, RuleId::Chk002);
 
     let after = std::fs::read_to_string(&pyproject).expect("read pyproject after fix");
     assert!(!after.contains("\"boto3\""));

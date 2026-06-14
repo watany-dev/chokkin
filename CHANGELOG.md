@@ -1,11 +1,16 @@
 # Changelog
 
-All notable changes to `yokei` will be documented in this file.
+All notable changes to `chokkin` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+- **BREAKING:** Renamed the project from `yokei` to `chokkin` — CLI binary, PyPI
+  package, `[tool.chokkin]` config table, `chokkin.toml` / `.chokkin.toml` config
+  files, `# chokkin: ignore[…]` directives, and rule codes `CHK001`–`CHK010`.
 
 ### Added
 - Minimal Rust bin+lib crate scaffold (`--version`, `--help`).

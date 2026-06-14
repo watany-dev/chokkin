@@ -3,6 +3,6 @@ name = "library-mode"
 version = "0.1.0"
 dependencies = []
 
-[tool.yokei]
+[tool.chokkin]
 mode = "library"
 entry = ["src/acme/main.py"]

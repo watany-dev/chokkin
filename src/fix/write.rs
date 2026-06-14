@@ -25,7 +25,7 @@ pub fn atomic_write(path: &Path, contents: &str) -> Result<(), FixError> {
     let original_metadata = fs::metadata(path).ok();
 
     let mut temp = tempfile::Builder::new()
-        .prefix(".yokei-")
+        .prefix(".chokkin-")
         .tempfile_in(parent)
         .map_err(|source| FixError::Io {
             path: rel.to_owned(),

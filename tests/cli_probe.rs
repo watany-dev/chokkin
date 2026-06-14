@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use yokei::{
+use chokkin::{
     ExitStatus, RuntimeOverrides, probe_project, write_probe_report, write_probe_warnings,
 };
 
@@ -61,22 +61,22 @@ fn probe_warnings_written_to_stderr_format() {
 
 #[test]
 fn binary_help_exits_zero() {
-    let output = Command::new(env!("CARGO_BIN_EXE_yokei"))
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .arg("--help")
         .output()
-        .expect("run yokei");
+        .expect("run chokkin");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8");
-    assert!(stdout.contains("Usage: yokei"));
+    assert!(stdout.contains("Usage: chokkin"));
 }
 
 #[test]
 fn binary_probe_fixture_exits_zero() {
     let root = fixture_path("probe/empty");
-    let output = Command::new(env!("CARGO_BIN_EXE_yokei"))
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .arg(&root)
         .output()
-        .expect("run yokei");
+        .expect("run chokkin");
     assert_eq!(
         output.status.code(),
         Some(ExitStatus::Success.code().into())
@@ -86,10 +86,10 @@ fn binary_probe_fixture_exits_zero() {
 #[test]
 fn binary_broken_pyproject_exits_two() {
     let root = fixture_path("manifest/broken_pyproject");
-    let output = Command::new(env!("CARGO_BIN_EXE_yokei"))
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .arg(&root)
         .output()
-        .expect("run yokei");
+        .expect("run chokkin");
     assert_eq!(
         output.status.code(),
         Some(ExitStatus::UsageError.code().into())

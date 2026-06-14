@@ -12,7 +12,7 @@ Step 2 (`load_config`) の直後に位置し、プロジェクトの **依存宣
 | 解決する問題 | 「何が宣言されているか」を複数ソースから統合し、context 付きの依存一覧と lockfile 推移閉包を型安全に提供する |
 | 成果物 | `extract_manifest(&ProjectRoot, &LoadedConfig) -> Result<LoadedManifest, ManifestError>` |
 | Phase 0 との関係 | graph core / parser spike と並行可能。TOML / テキスト静的パースのみで Python 非実行を維持 |
-| 後続ステップへの入力 | Step 7 (import resolution) の distribution 名解決、Step 10 (dependency reconciliation) の YOK002–YOK005/YOK009 判定、Step 8 (entry root construction) の `[project.scripts]` 等 |
+| 後続ステップへの入力 | Step 7 (import resolution) の distribution 名解決、Step 10 (dependency reconciliation) の CHK002–CHK005/CHK009 判定、Step 8 (entry root construction) の `[project.scripts]` 等 |
 
 ## 2. スコープ
 
@@ -23,7 +23,7 @@ Step 2 (`load_config`) の直後に位置し、プロジェクトの **依存宣
 - 依存を **context**（runtime / dev / test / optional-extra / dependency-group 名）に分類する（§10 の入力）
 - `pyproject.toml` から **project metadata**（name / version / requires-python / dynamic）を抽出する
 - `pyproject.toml` から **entry points**（`[project.scripts]` / `[project.gui-scripts]` / `[project.entry-points.*]`）を抽出する
-- `uv.lock` から **推移閉包**（package → dependencies）を構築する（YOK004 判定の入力）
+- `uv.lock` から **推移閉包**（package → dependencies）を構築する（CHK004 判定の入力）
 - `requirements*.txt` の `-r` 再帰追跡、`-c` constraints 参照、`-e` / path / VCS / URL 指定の分類
 - `setup.cfg` の `[metadata]` / `[options]` install_requires / extras_require
 - `setup.py` の **静的パース**（`install_requires` / `extras_require` のリテラル抽出のみ）
@@ -35,11 +35,11 @@ Step 2 (`load_config`) の直後に位置し、プロジェクトの **依存宣
 
 | 項目 | 担当ステップ |
 | --- | --- |
-| `[tool.yokei]` 設定の読み込み | Step 2 (config load) — 完了済み |
+| `[tool.chokkin]` 設定の読み込み | Step 2 (config load) — 完了済み |
 | `mode = "auto"` の app / library 解決 | Step 8 前の `resolve_mode` |
 | ソースファイルの glob 探索・layout 推定 | Step 4 (source file discovery) |
 | import 名 ↔ distribution 名の解決 | Step 7 (import resolution) |
-| YOK002–YOK010 の issue 判定 | Step 10–12 |
+| CHK002–CHK010 の issue 判定 | Step 10–12 |
 | `[tool.poetry.*]` / PDM / Hatch の深掘り | v0.2（Step 3 では **検出のみ** — 存在すれば warning でスキップ） |
 | uv workspace member の下方向自動スキャンと member 別 manifest | v0.2（Step 2 の `UvWorkspaceHint` は参照するが member 展開はしない） |
 | `.venv` / dist-info / METADATA の読み取り | Step 7 (resolver) |
@@ -72,10 +72,10 @@ Step 2 (`load_config`) の直後に位置し、プロジェクトの **依存宣
 
 複数ソースから同一 distribution が宣言される場合の不変条件:
 
-1. **宣言は和集合** — 同一 distribution が複数 context / 複数ファイルに現れてもすべて保持する（YOK009 duplicate 判定の入力）
+1. **宣言は和集合** — 同一 distribution が複数 context / 複数ファイルに現れてもすべて保持する（CHK009 duplicate 判定の入力）
 2. **同名・同 context・同ファイル** — 後勝ちではなく **重複レコードとして保持**（行番号が異なる場合は両方残す）
 3. **lockfile は宣言を上書きしない** — `uv.lock` は推移閉包の情報源であり、manifest 宣言の代替にはしない
-4. **opaque 依存** — VCS URL 等から distribution 名を抽出できない場合は `OpaqueDependency` として記録し、unused 判定（YOK002）の対象外にする（§4）
+4. **opaque 依存** — VCS URL 等から distribution 名を抽出できない場合は `OpaqueDependency` として記録し、unused 判定（CHK002）の対象外にする（§4）
 5. **dynamic dependencies** — `[project] dynamic = ["dependencies"]` のとき、`requirements*.txt` 側を実体として読む（§4）
 
 **優先度（情報の主従。マージは和集合）:**
@@ -101,11 +101,11 @@ Step 2 (`load_config`) の直後に位置し、プロジェクトの **依存宣
 | PEP 508 行 | `DeclaredDependency` としてパース |
 | `name @ url` / VCS URL | PEP 508 パース。名前抽出不能なら opaque |
 
-requirements ファイル由来の依存の **既定 context** は `dev`（`requirements-dev.txt` / `dev-requirements.txt`）または `runtime`（`requirements.txt`）。`[tool.yokei.dependencies].dev_groups` との照合は Step 10。
+requirements ファイル由来の依存の **既定 context** は `dev`（`requirements-dev.txt` / `dev-requirements.txt`）または `runtime`（`requirements.txt`）。`[tool.chokkin.dependencies].dev_groups` との照合は Step 10。
 
 ### 3.4 pyproject.toml 読み取り範囲
 
-Step 2 が `[tool.yokei]` を読むのに対し、Step 3 は以下のみ読む（**同一ファイル・責務分離**）。
+Step 2 が `[tool.chokkin]` を読むのに対し、Step 3 は以下のみ読む（**同一ファイル・責務分離**）。
 
 | セクション | 抽出内容 |
 | --- | --- |
@@ -138,7 +138,7 @@ requires-python
   dependencies[]   # { name = "..." } 形式
 ```
 
-environment marker 付きの platform 別解決は v0.2 で精緻化。v0.1 では **名前の有向グラフ** として閉包を構築し、YOK004 の「lockfile で解決可能か」判定に使う。lockfile が無い場合は `LockfileGraph::empty()` とし、§10 のとおり YOK004 は YOK003 に縮退する旨を後続ステップへ渡す。
+environment marker 付きの platform 別解決は v0.2 で精緻化。v0.1 では **名前の有向グラフ** として閉包を構築し、CHK004 の「lockfile で解決可能か」判定に使う。lockfile が無い場合は `LockfileGraph::empty()` とし、§10 のとおり CHK004 は CHK003 に縮退する旨を後続ステップへ渡す。
 
 ### 3.6 setup.py 静的パース方針
 
@@ -198,7 +198,7 @@ pub enum DependencyContext {
 }
 ```
 
-`dev` / `test` / `docs` / `lint` / `type` への **意味論マッピング** は `YokeiConfig.dependencies` と Step 10 が担当。manifest は **宣言場所のラベル** を忠実に保持する。
+`dev` / `test` / `docs` / `lint` / `type` への **意味論マッピング** は `ChokkinConfig.dependencies` と Step 10 が担当。manifest は **宣言場所のラベル** を忠実に保持する。
 
 ### 5.2 `DependencyOrigin`
 
@@ -315,9 +315,9 @@ pub struct LoadedManifest {
 Step 2 保留事項の解消。
 
 ```rust
-/// Prefer `[tool.yokei].target_version`, else infer from `requires-python`.
+/// Prefer `[tool.chokkin].target_version`, else infer from `requires-python`.
 pub fn resolve_target_version(
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     manifest: &LoadedManifest,
 ) -> TargetVersion;
 ```
@@ -347,7 +347,7 @@ pub fn extract_manifest(
 ) -> Result<LoadedManifest, ManifestError>;
 ```
 
-`config` は workspace hint と dev group 名の参照に使う。`config.effective` の yokei 解析ポリシー（exclude 等）は Step 4 以降。
+`config` は workspace hint と dev group 名の参照に使う。`config.effective` の chokkin 解析ポリシー（exclude 等）は Step 4 以降。
 
 ### 6.2 エラーと warning の分離
 
@@ -418,7 +418,7 @@ tests/fixtures/manifest/
 | M9 | `setup_py_static_install_requires` | リテラルリスト抽出 |
 | M10 | `setup_py_dynamic_warns_and_skips` | warning のみ |
 | M11 | `opaque_url_not_unused_candidate` | opaque フラグ |
-| M12 | `merge_keeps_duplicate_declarations` | YOK009 用に重複保持 |
+| M12 | `merge_keeps_duplicate_declarations` | CHK009 用に重複保持 |
 | M13 | `resolve_target_version_from_requires_python` | py312 推定 |
 | M14 | `extracts_without_pyproject` | requirements-only root |
 | M15 | `broken_pyproject_is_error` | InvalidToml |
@@ -457,7 +457,7 @@ config.target_version = resolve_target_version(&config, &manifest);
 // eprintln!("Dependencies: {}", manifest.dependencies.len());
 ```
 
-Step 3 完了時点の Phase 0 exit 寄与: **manifest の件数・名前を CLI に表示**し、`uvx yokei` が「何もせず終了 0」ではなく **解析対象の存在を示す** ところまで。
+Step 3 完了時点の Phase 0 exit 寄与: **manifest の件数・名前を CLI に表示**し、`uvx chokkin` が「何もせず終了 0」ではなく **解析対象の存在を示す** ところまで。
 
 ## 11. Exit criteria（Step 3 完了定義）
 
@@ -494,17 +494,17 @@ Step 3 完了時点の Phase 0 exit 寄与: **manifest の件数・名前を CLI
 16. update-docs（spec.ja.md §6, AGENTS.md）
 ```
 
-所要: 新規 Rust ファイル 10、テストフィクスチャ 12 前後、依存 1 crate（`pep508_rs`）。Step 2 と `pyproject.toml` を両方読むが、責務は `[tool.yokei]` vs `[project]` で分離済み。
+所要: 新規 Rust ファイル 10、テストフィクスチャ 12 前後、依存 1 crate（`pep508_rs`）。Step 2 と `pyproject.toml` を両方読むが、責務は `[tool.chokkin]` vs `[project]` で分離済み。
 
 ## 13. 未決事項（Step 3 では保留）
 
 | 項目 | 理由 | 再検討タイミング |
 | --- | --- | --- |
 | `setup.py` の AST パーサ選定 | Step 6 parser spike と共通化したい | parser spike 完了後 |
-| uv.lock の platform marker 別グラフ | v0.1 は名前グラフで十分 | YOK004 誤検知が出たら v0.2 |
+| uv.lock の platform marker 別グラフ | v0.1 は名前グラフで十分 | CHK004 誤検知が出たら v0.2 |
 | Poetry / PDM manifest 読み取り | §16 v0.2 scope | Phase 2 |
 | workspace member ごとの `LoadedManifest` | uv workspace 本格対応 | Phase 2 |
-| `constraints.txt` を version 解決に使う | YOK003/004 には不要 | resolver 強化時 |
+| `constraints.txt` を version 解決に使う | CHK003/004 には不要 | resolver 強化時 |
 | PEP 508 marker の実行時評価 | 静的解析では文字列保持のみ | Step 10 |
 
 ## 14. update-plan 検証サマリ
@@ -527,7 +527,7 @@ Step 3 完了時点の Phase 0 exit 寄与: **manifest の件数・名前を CLI
 | --- | ---: | ---: | --- |
 | モジュール / struct 設計 | 20 | 19 | `manifest/` 単一責務。宣言と lockfile グラフを分離 |
 | 静的解析制約 | 20 | 20 | TOML / テキストのみ。setup.py 実行禁止を明記 |
-| ルール / ポリシー | 20 | 18 | YOK002–009 の **入力** を提供。判定は Step 10 |
+| ルール / ポリシー | 20 | 18 | CHK002–009 の **入力** を提供。判定は Step 10 |
 | エラー処理 | 20 | 19 | 致命エラーと warning の分離が明確 |
 | テスト容易性 | 20 | 19 | フィクスチャ 12 件・統合テスト 15 件を具体化 |
 | **合計** | **100** | **95** | **合格**（90 以上） |
@@ -542,14 +542,14 @@ Step 3 完了時点の Phase 0 exit 寄与: **manifest の件数・名前を CLI
 | Step 2 `LoadedConfig` との接続 | OK — workspace hint / target_version |
 | `src/` 現行構成との衝突 | なし — 新規 `manifest/` 追加 |
 | 実装順序の依存関係 | OK — types → parsers → merge → extract → tests |
-| Phase 0 exit（`uvx yokei` 動作） | Step 3 + CLI 縦スライスで manifest 表示まで |
+| Phase 0 exit（`uvx chokkin` 動作） | Step 3 + CLI 縦スライスで manifest 表示まで |
 
 ### Phase 4: 改善反映（課題分類）
 
 | 優先度 | 課題 | 対応 |
 | --- | --- | --- |
 | **P1** | `AGENTS.md` は `manifest/` が future 記載 | 実装時 `manifest/` 実装済みに更新（exit criteria に含む） |
-| **P1** | Step 2 と `pyproject.toml` 二重読み | 責務分離（`[tool.yokei]` vs `[project]`）を §3.4 に明記済み |
+| **P1** | Step 2 と `pyproject.toml` 二重読み | 責務分離（`[tool.chokkin]` vs `[project]`）を §3.4 に明記済み |
 | **P2** | `setup.py` 静的パーサの精度 | v0.1 は限定パーサ。AST 化は §13 で parser spike 後 |
 
 ### 確定判定

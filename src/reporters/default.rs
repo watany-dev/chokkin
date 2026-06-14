@@ -16,7 +16,7 @@ pub struct DefaultReporter;
 impl Reporter for DefaultReporter {
     fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
         let mut out = String::new();
-        let _ = writeln!(out, "yokei {}\n", context.version);
+        let _ = writeln!(out, "chokkin {}\n", context.version);
 
         let project = context.project_name.as_deref().unwrap_or("(unknown)");
         let _ = writeln!(out, "Project: {project}");
@@ -30,16 +30,16 @@ impl Reporter for DefaultReporter {
         );
 
         let rules = [
-            RuleId::Yok001,
-            RuleId::Yok002,
-            RuleId::Yok003,
-            RuleId::Yok004,
-            RuleId::Yok005,
-            RuleId::Yok006,
-            RuleId::Yok007,
-            RuleId::Yok008,
-            RuleId::Yok009,
-            RuleId::Yok010,
+            RuleId::Chk001,
+            RuleId::Chk002,
+            RuleId::Chk003,
+            RuleId::Chk004,
+            RuleId::Chk005,
+            RuleId::Chk006,
+            RuleId::Chk007,
+            RuleId::Chk008,
+            RuleId::Chk009,
+            RuleId::Chk010,
         ];
 
         for rule in rules {
@@ -67,13 +67,13 @@ impl Reporter for DefaultReporter {
 #[must_use]
 pub fn config_label_from_sources(sources: &ConfigSources) -> String {
     let mut parts = Vec::new();
-    if sources.dot_yokei_toml.is_some() {
-        parts.push(".yokei.toml".to_owned());
+    if sources.dot_chokkin_toml.is_some() {
+        parts.push(".chokkin.toml".to_owned());
     }
-    if sources.yokei_toml.is_some() {
-        parts.push("yokei.toml".to_owned());
+    if sources.chokkin_toml.is_some() {
+        parts.push("chokkin.toml".to_owned());
     }
-    if sources.pyproject_tool_yokei {
+    if sources.pyproject_tool_chokkin {
         parts.push("pyproject.toml".to_owned());
     }
     if parts.is_empty() {

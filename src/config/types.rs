@@ -1,4 +1,4 @@
-//! Configuration types for the yokei analyzer.
+//! Configuration types for the chokkin analyzer.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -29,7 +29,7 @@ impl ProjectMode {
         }
     }
 
-    /// Parse a `[tool.yokei].mode` value.
+    /// Parse a `[tool.chokkin].mode` value.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "auto" => Some(Self::Auto),
@@ -69,7 +69,7 @@ impl Confidence {
         }
     }
 
-    /// Parse a `[tool.yokei].confidence` value.
+    /// Parse a `[tool.chokkin].confidence` value.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "certain" => Some(Self::Certain),
@@ -102,7 +102,7 @@ impl fmt::Display for Confidence {
     }
 }
 
-/// Known yokei plugins (§5, §9).
+/// Known chokkin plugins (§5, §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PluginId {
     /// pytest test discovery and fixtures.
@@ -124,7 +124,7 @@ pub enum PluginId {
 }
 
 impl PluginId {
-    /// TOML key under `[tool.yokei.plugins]`.
+    /// TOML key under `[tool.chokkin.plugins]`.
     #[must_use]
     pub const fn as_key(self) -> &'static str {
         match self {
@@ -256,7 +256,7 @@ impl EntrySpec {
     }
 }
 
-/// Dependency group name mappings (§5 `[tool.yokei.dependencies]`).
+/// Dependency group name mappings (§5 `[tool.chokkin.dependencies]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyGroupsConfig {
     /// Group names treated as dev context.
@@ -267,7 +267,7 @@ pub struct DependencyGroupsConfig {
     pub type_groups: Vec<String>,
 }
 
-/// Per-workspace overrides under `[tool.yokei.workspaces.<id>]`.
+/// Per-workspace overrides under `[tool.chokkin.workspaces.<id>]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceOverride {
     /// Member path relative to the project root.
@@ -280,9 +280,9 @@ pub struct WorkspaceOverride {
     pub mode: Option<ProjectMode>,
 }
 
-/// Effective yokei configuration after defaults and file layers are merged.
+/// Effective chokkin configuration after defaults and file layers are merged.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct YokeiConfig {
+pub struct ChokkinConfig {
     /// Explicit entry roots.
     pub entry: Vec<EntrySpec>,
     /// Project file globs (unexpanded).
@@ -318,12 +318,12 @@ pub struct YokeiConfig {
 pub struct ConfigSources {
     /// Hardcoded defaults always contribute.
     pub used_defaults: bool,
-    /// `.yokei.toml` at the project root, if present.
-    pub dot_yokei_toml: Option<PathBuf>,
-    /// `yokei.toml` at the project root, if present.
-    pub yokei_toml: Option<PathBuf>,
-    /// Whether `[tool.yokei]` in `pyproject.toml` contributed.
-    pub pyproject_tool_yokei: bool,
+    /// `.chokkin.toml` at the project root, if present.
+    pub dot_chokkin_toml: Option<PathBuf>,
+    /// `chokkin.toml` at the project root, if present.
+    pub chokkin_toml: Option<PathBuf>,
+    /// Whether `[tool.chokkin]` in `pyproject.toml` contributed.
+    pub pyproject_tool_chokkin: bool,
 }
 
 /// Configuration loaded for a discovered project root.
@@ -332,7 +332,7 @@ pub struct LoadedConfig {
     /// Project root from discovery step 1.
     pub root: ProjectRoot,
     /// Merged effective configuration.
-    pub effective: YokeiConfig,
+    pub effective: ChokkinConfig,
     /// Files that contributed to `effective`.
     pub sources: ConfigSources,
     /// Raw `[tool.uv.workspace]` hint from root `pyproject.toml`, if present.
@@ -357,9 +357,9 @@ pub struct RuntimeOverrides {
     pub confidence_floor: Option<Confidence>,
     /// When true, report issues but return exit code 0.
     pub no_exit_code: Option<bool>,
-    /// When set, only emit issues for these rule codes (`YOK00x`).
+    /// When set, only emit issues for these rule codes (`CHK00x`).
     pub include_rules: Option<Vec<String>>,
-    /// When set, suppress issues for these rule codes (`YOK00x`).
+    /// When set, suppress issues for these rule codes (`CHK00x`).
     pub exclude_rules: Option<Vec<String>>,
 }
 

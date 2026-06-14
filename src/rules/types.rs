@@ -6,62 +6,62 @@ use crate::config::Confidence;
 use crate::manifest::DependencyOrigin;
 use crate::plugins::ReferenceOrigin;
 
-/// YOK001–YOK010 rule identifiers (§3).
+/// CHK001–CHK010 rule identifiers (§3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RuleId {
     /// Unused file (entry unreachable).
-    Yok001,
+    Chk001,
     /// Unused declared dependency.
-    Yok002,
+    Chk002,
     /// Missing direct dependency declaration.
-    Yok003,
+    Chk003,
     /// Transitive-only dependency import.
-    Yok004,
+    Chk004,
     /// Misplaced dependency (context mismatch).
-    Yok005,
+    Chk005,
     /// Unused public export.
-    Yok006,
+    Chk006,
     /// Unused re-export.
-    Yok007,
+    Chk007,
     /// Unlisted binary dependency.
-    Yok008,
+    Chk008,
     /// Duplicate dependency declaration.
-    Yok009,
+    Chk009,
     /// Unresolved import.
-    Yok010,
+    Chk010,
 }
 
 impl RuleId {
-    /// Stable `YOK00x` code for reporters and `--explain`.
+    /// Stable `CHK00x` code for reporters and `--explain`.
     #[must_use]
     pub const fn as_code(self) -> &'static str {
         match self {
-            Self::Yok001 => "YOK001",
-            Self::Yok002 => "YOK002",
-            Self::Yok003 => "YOK003",
-            Self::Yok004 => "YOK004",
-            Self::Yok005 => "YOK005",
-            Self::Yok006 => "YOK006",
-            Self::Yok007 => "YOK007",
-            Self::Yok008 => "YOK008",
-            Self::Yok009 => "YOK009",
-            Self::Yok010 => "YOK010",
+            Self::Chk001 => "CHK001",
+            Self::Chk002 => "CHK002",
+            Self::Chk003 => "CHK003",
+            Self::Chk004 => "CHK004",
+            Self::Chk005 => "CHK005",
+            Self::Chk006 => "CHK006",
+            Self::Chk007 => "CHK007",
+            Self::Chk008 => "CHK008",
+            Self::Chk009 => "CHK009",
+            Self::Chk010 => "CHK010",
         }
     }
 
-    /// Parse a `YOK00x` selector for `--explain`.
+    /// Parse a `CHK00x` selector for `--explain`.
     pub fn parse_code(value: &str) -> Option<Self> {
         match value.to_ascii_uppercase().as_str() {
-            "YOK001" => Some(Self::Yok001),
-            "YOK002" => Some(Self::Yok002),
-            "YOK003" => Some(Self::Yok003),
-            "YOK004" => Some(Self::Yok004),
-            "YOK005" => Some(Self::Yok005),
-            "YOK006" => Some(Self::Yok006),
-            "YOK007" => Some(Self::Yok007),
-            "YOK008" => Some(Self::Yok008),
-            "YOK009" => Some(Self::Yok009),
-            "YOK010" => Some(Self::Yok010),
+            "CHK001" => Some(Self::Chk001),
+            "CHK002" => Some(Self::Chk002),
+            "CHK003" => Some(Self::Chk003),
+            "CHK004" => Some(Self::Chk004),
+            "CHK005" => Some(Self::Chk005),
+            "CHK006" => Some(Self::Chk006),
+            "CHK007" => Some(Self::Chk007),
+            "CHK008" => Some(Self::Chk008),
+            "CHK009" => Some(Self::Chk009),
+            "CHK010" => Some(Self::Chk010),
             _ => None,
         }
     }
@@ -213,11 +213,11 @@ pub struct Issue {
 /// Why an issue was suppressed by ignore rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuppressReason {
-    /// Matched `[tool.yokei.ignore]`.
+    /// Matched `[tool.chokkin.ignore]`.
     Config,
-    /// Matched inline `# yokei: ignore[…]`.
+    /// Matched inline `# chokkin: ignore[…]`.
     Inline,
-    /// Matched file-level `# yokei: file-ignore[…]`.
+    /// Matched file-level `# chokkin: file-ignore[…]`.
     FileLevel,
 }
 

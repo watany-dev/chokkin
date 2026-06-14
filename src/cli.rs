@@ -13,7 +13,7 @@ use crate::reporters::ReporterId;
 #[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
 #[allow(clippy::struct_excessive_bools)]
 #[command(
-    name = "yokei",
+    name = "chokkin",
     about = "Find unused files, dependencies, and public symbols in Python projects",
     disable_help_flag = true,
     disable_version_flag = true
@@ -39,11 +39,11 @@ pub struct CliArgs {
     #[arg(long)]
     pub no_exit_code: bool,
 
-    /// Only emit issues for these rule codes (comma-separated `YOK00x`).
+    /// Only emit issues for these rule codes (comma-separated `CHK00x`).
     #[arg(long, value_delimiter = ',')]
     pub include: Option<Vec<String>>,
 
-    /// Suppress issues for these rule codes (comma-separated `YOK00x`).
+    /// Suppress issues for these rule codes (comma-separated `CHK00x`).
     #[arg(long, value_delimiter = ',')]
     pub exclude: Option<Vec<String>>,
 
@@ -55,7 +55,7 @@ pub struct CliArgs {
     #[arg(long, value_parser = parse_confidence)]
     pub confidence: Option<Confidence>,
 
-    /// Explain a specific issue (e.g. `YOK002:boto3`).
+    /// Explain a specific issue (e.g. `CHK002:boto3`).
     #[arg(long, value_name = "SELECTOR")]
     pub explain: Option<String>,
 
@@ -90,7 +90,7 @@ pub struct CliArgs {
 ///
 /// Returns a usage message when arguments are invalid.
 pub fn parse_cli_args(args: Vec<String>) -> Result<CliArgs, String> {
-    let command_line = std::iter::once("yokei".to_owned()).chain(args);
+    let command_line = std::iter::once("chokkin".to_owned()).chain(args);
     CliArgs::try_parse_from(command_line).map_err(|err| err.to_string())
 }
 

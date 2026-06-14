@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use yokei::{
+use chokkin::{
     ModuleOrigin, ProjectRoot, ResolveConfidence, RootMarker, discover_project_root,
     discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
     resolve_imports, resolve_target_version,
@@ -16,7 +16,7 @@ fn resolver_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn resolve_fixture(name: &str) -> yokei::ResolutionIndex {
+fn resolve_fixture(name: &str) -> chokkin::ResolutionIndex {
     let path = resolver_fixture(name);
     let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),

@@ -8,7 +8,7 @@ v0.1 MVP の **CLI 統合**と **reporter 実装**の設計。
 
 | 項目 | 内容 |
 | --- | --- |
-| 解決する問題 | README / §2 が示す `uvx yokei` 体験（flags / 出力 / exit code）を完成させる |
+| 解決する問題 | README / §2 が示す `uvx chokkin` 体験（flags / 出力 / exit code）を完成させる |
 | 成果物 | `analyze_project(...) -> Result<AnalysisReport, AnalyzeError>` + `clap` CLI + 4 reporters |
 | 依存 | Steps 5–13 の library API |
 
@@ -19,15 +19,15 @@ v0.1 MVP の **CLI 統合**と **reporter 実装**の設計。
 **CLI flags（§2）:**
 
 ```text
-uvx yokei [PATH]
+uvx chokkin [PATH]
   --production
   --strict
   --no-exit-code
-  --include <rules>        # comma-separated YOK00x
+  --include <rules>        # comma-separated CHK00x
   --exclude <rules>
   --reporter default|compact|json|markdown
   --confidence certain|likely|maybe
-  --explain YOK002:boto3
+  --explain CHK002:boto3
   --trace src/acme/legacy.py
   --fix
   --fix --dry-run
@@ -67,7 +67,7 @@ uvx yokei [PATH]
 
 | 項目 | 時期 |
 | --- | --- |
-| `yokei --init` | v0.1 後半 |
+| `chokkin --init` | v0.1 後半 |
 | SARIF / GitHub reporter | v0.2 |
 | `--timings` | §19 チューニング時 |
 | cache | v0.2 |
@@ -89,7 +89,7 @@ src/
   main.rs         # デフォルトは analyze。`--probe` で Phase 0 互換
 ```
 
-**移行方針:** Phase 1 マージ後、`yokei` 引数なしは `analyze_project` を呼ぶ。Steps 5–12 未実装期間は feature flag または compile-time で `probe` にフォールバックしない — **Phase 0 CLI を先にマージ**してから Phase 1 を繋ぐ。
+**移行方針:** Phase 1 マージ後、`chokkin` 引数なしは `analyze_project` を呼ぶ。Steps 5–12 未実装期間は feature flag または compile-time で `probe` にフォールバックしない — **Phase 0 CLI を先にマージ**してから Phase 1 を繋ぐ。
 
 ## 4. `analyze_project` API
 
@@ -110,7 +110,7 @@ pub fn analyze_project(
 ## 5. 出力例（default reporter）
 
 ```text
-yokei 0.1.0
+chokkin 0.1.0
 
 Project: acme-api
 Config : pyproject.toml
@@ -158,7 +158,7 @@ pub struct RuntimeOverrides {
 
 ## 7. Exit criteria（Phase 1 CLI）
 
-- [x] `uvx yokei` がサンプル fixture で §2 形式の出力
+- [x] `uvx chokkin` がサンプル fixture で §2 形式の出力
 - [x] 4 reporter 切替
 - [x] `--explain` / `--trace` 動作
 - [x] `--fix` で pyproject 編集（Step 13 連携）

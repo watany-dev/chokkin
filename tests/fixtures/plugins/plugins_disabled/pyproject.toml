@@ -2,7 +2,7 @@
 name = "acme"
 version = "0.1.0"
 
-[tool.yokei.plugins]
+[tool.chokkin.plugins]
 pytest = false
 django = false
 fastapi = false

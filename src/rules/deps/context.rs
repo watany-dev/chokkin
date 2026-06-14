@@ -1,6 +1,6 @@
 //! Dependency context matching helpers (§10).
 
-use crate::config::{DependencyGroupsConfig, YokeiConfig};
+use crate::config::{ChokkinConfig, DependencyGroupsConfig};
 use crate::manifest::DependencyContext;
 use crate::parser::ImportContext;
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
@@ -34,7 +34,7 @@ pub(super) enum DeclarationBucket {
 }
 
 impl DeclarationBucket {
-    /// Stable label for YOK009 messages.
+    /// Stable label for CHK009 messages.
     pub(super) fn label(&self) -> String {
         match self {
             Self::Runtime => "runtime".to_owned(),
@@ -75,7 +75,7 @@ pub(super) fn declaration_bucket(
 pub(super) fn declaration_matches_usage(
     context: &DependencyContext,
     usage: UsageContext,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
 ) -> bool {
     let bucket = declaration_bucket(context, &config.dependencies);
     match usage {
@@ -118,7 +118,7 @@ pub(super) fn usage_context_for_import(
 pub(super) fn is_directly_declared(
     declarations: &[&crate::manifest::DeclaredDependency],
     usage: UsageContext,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
 ) -> bool {
     declarations
         .iter()

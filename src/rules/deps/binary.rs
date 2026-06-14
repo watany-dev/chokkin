@@ -1,4 +1,4 @@
-//! YOK008 unlisted binary dependency detection.
+//! CHK008 unlisted binary dependency detection.
 
 use crate::config::Confidence;
 use crate::plugins::PluginHints;
@@ -28,7 +28,7 @@ pub(super) fn detect_unlisted_binaries(
         }
 
         candidates.push(IssueCandidate {
-            rule: RuleId::Yok008,
+            rule: RuleId::Chk008,
             subject: IssueSubject::Binary {
                 name: usage.binary.clone(),
             },

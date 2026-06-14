@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::ExitStatus;
-use crate::config::{RuntimeOverrides, YokeiConfig};
+use crate::config::{ChokkinConfig, RuntimeOverrides};
 use crate::entry::ResolvedMode;
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
@@ -14,12 +14,12 @@ use crate::rules::types::{
     SuppressedIssue, subject_sort_key,
 };
 
+use super::chk001::chk001_candidates;
 use super::filter::{
     counts_toward_exit, effective_confidence_floor, passes_confidence_filter, passes_rule_filter,
 };
 use super::ignore::IgnoreMatcher;
 use super::types::RuleId;
-use super::yok001::yok001_candidates;
 
 /// Merge candidates, apply ignore/confidence filters, and compute exit status.
 #[must_use]
@@ -29,7 +29,7 @@ pub fn emit_issues(
     deps: &DependencyReport,
     symbols: &SymbolReport,
     parse: &ParseSummary,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
     mode: &ResolvedMode,
 ) -> IssueReport {
@@ -37,7 +37,7 @@ pub fn emit_issues(
     let matcher = IgnoreMatcher::build(config, parse);
     let confidence_floor = effective_confidence_floor(config, overrides, strict);
 
-    let mut candidates = yok001_candidates(&unreachable.unreachable, mode);
+    let mut candidates = chk001_candidates(&unreachable.unreachable, mode);
     candidates.extend(deps.candidates.clone());
     candidates.extend(symbols.candidates.clone());
 
@@ -81,7 +81,7 @@ pub fn emit_issues(
     }
 }
 
-/// Render explain text for a selector such as `YOK002:boto3`.
+/// Render explain text for a selector such as `CHK002:boto3`.
 #[must_use]
 pub fn explain_issue(report: &IssueReport, selector: &str) -> Option<String> {
     let (code, subject_key) = selector.split_once(':')?;
@@ -223,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_yok001_for_unreachable_file() {
+    fn emits_chk001_for_unreachable_file() {
         let mut report = ReachabilityReport::empty();
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
@@ -247,7 +247,7 @@ mod tests {
             &resolved_app_mode(),
         );
         assert_eq!(issues.issues.len(), 1);
-        assert_eq!(issues.issues[0].rule, RuleId::Yok001);
+        assert_eq!(issues.issues[0].rule, RuleId::Chk001);
         assert_eq!(issues.exit_status, ExitStatus::IssuesFound);
     }
 
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn explain_issue_finds_selector() {
         let candidate = IssueCandidate {
-            rule: RuleId::Yok002,
+            rule: RuleId::Chk002,
             subject: IssueSubject::Distribution {
                 name: "boto3".to_owned(),
             },
@@ -309,7 +309,7 @@ mod tests {
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
         );
-        let text = explain_issue(&report, "YOK002:boto3").expect("explain");
+        let text = explain_issue(&report, "CHK002:boto3").expect("explain");
         assert!(text.contains("boto3 is declared but not used"));
     }
 }

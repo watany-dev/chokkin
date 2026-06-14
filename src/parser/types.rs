@@ -85,9 +85,9 @@ pub struct SymbolDef {
 /// Inline or file-level ignore directive (§18).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IgnoreDirective {
-    /// `true` for `# yokei: file-ignore[…]` at file head.
+    /// `true` for `# chokkin: file-ignore[…]` at file head.
     pub file_level: bool,
-    /// Rule codes such as `YOK003`.
+    /// Rule codes such as `CHK003`.
     pub codes: Vec<String>,
     /// 1-based line number (`0` for file-level).
     pub line: u32,

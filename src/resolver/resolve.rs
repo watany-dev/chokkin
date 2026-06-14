@@ -1,6 +1,6 @@
 //! Import resolution orchestration.
 
-use crate::config::{TargetVersion, YokeiConfig};
+use crate::config::{ChokkinConfig, TargetVersion};
 use crate::discovery::ProjectRoot;
 use crate::graph::ModuleOrigin;
 use crate::manifest::LoadedManifest;
@@ -26,7 +26,7 @@ use super::venv::load_venv_index;
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_imports(
     root: &ProjectRoot,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     parse: &ParseSummary,
@@ -121,7 +121,7 @@ fn resolve_module(
     target: &TargetVersion,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     import_map: &ImportMap,
     venv_imports: &std::collections::BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,

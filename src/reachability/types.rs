@@ -10,9 +10,9 @@ use crate::graph::{EntryId, FileId, ModuleOrigin};
 pub enum UnreachableReason {
     /// No path from any entry root was found.
     NotReachable,
-    /// `__init__.py` files are excluded from YOK001.
+    /// `__init__.py` files are excluded from CHK001.
     ExcludedInit,
-    /// Stub files are excluded from YOK001.
+    /// Stub files are excluded from CHK001.
     ExcludedStub,
     /// Test-context files are excluded in library mode.
     ExcludedTestContext,

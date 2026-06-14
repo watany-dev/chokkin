@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     Confidence, ConfigError, PluginId, ProjectMode, ProjectRoot, RootMarker, RuntimeOverrides,
     apply_overrides, default_config, discover_project_root, load_config,
 };
@@ -29,7 +29,7 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     }
 }
 
-fn load_fixture(name: &str) -> yokei::LoadedConfig {
+fn load_fixture(name: &str) -> chokkin::LoadedConfig {
     let path = fixture(name);
     let root = discover_project_root(&path).expect("discover root");
     load_config(&root).expect("load config")
@@ -43,23 +43,23 @@ fn defaults_when_no_config_files() {
 
     assert_eq!(loaded.effective, default_config());
     assert!(loaded.sources.used_defaults);
-    assert!(!loaded.sources.pyproject_tool_yokei);
+    assert!(!loaded.sources.pyproject_tool_chokkin);
     assert!(loaded.uv_workspace.is_none());
 }
 
 #[test]
-fn defaults_when_pyproject_has_no_tool_yokei() {
+fn defaults_when_pyproject_has_no_tool_chokkin() {
     let loaded = load_fixture("defaults_only");
     assert_eq!(loaded.effective, default_config());
-    assert!(!loaded.sources.pyproject_tool_yokei);
+    assert!(!loaded.sources.pyproject_tool_chokkin);
 }
 
 #[test]
-fn loads_pyproject_tool_yokei() {
+fn loads_pyproject_tool_chokkin() {
     let loaded = load_fixture("pyproject_full");
     let config = &loaded.effective;
 
-    assert!(loaded.sources.pyproject_tool_yokei);
+    assert!(loaded.sources.pyproject_tool_chokkin);
     assert_eq!(config.mode, ProjectMode::Library);
     assert!(config.production);
     assert_eq!(
@@ -92,7 +92,7 @@ fn loads_pyproject_tool_yokei() {
     assert_eq!(config.plugins.get(&PluginId::Pytest), Some(&false));
     assert_eq!(config.plugins.get(&PluginId::Celery), Some(&true));
     assert_eq!(config.plugins.get(&PluginId::Django), Some(&true));
-    assert_eq!(config.ignore.get("YOK002"), Some(&vec!["boto3".to_owned()]));
+    assert_eq!(config.ignore.get("CHK002"), Some(&vec!["boto3".to_owned()]));
     let api = config.workspaces.get("api").expect("api workspace");
     assert_eq!(api.path, "services/api");
     assert_eq!(
@@ -110,21 +110,21 @@ fn merge_priority_pyproject_wins() {
     assert_ne!(config.mode, ProjectMode::App);
     assert!(config.production);
     assert_eq!(config.confidence, Confidence::Maybe);
-    assert!(loaded.sources.dot_yokei_toml.is_some());
-    assert!(loaded.sources.yokei_toml.is_some());
-    assert!(loaded.sources.pyproject_tool_yokei);
+    assert!(loaded.sources.dot_chokkin_toml.is_some());
+    assert!(loaded.sources.chokkin_toml.is_some());
+    assert!(loaded.sources.pyproject_tool_chokkin);
 }
 
 #[test]
-fn loads_standalone_yokei_toml() {
-    let loaded = load_fixture("yokei_toml_only");
+fn loads_standalone_chokkin_toml() {
+    let loaded = load_fixture("chokkin_toml_only");
     assert_eq!(loaded.effective.mode, ProjectMode::App);
     assert!(loaded.effective.production);
 }
 
 #[test]
-fn loads_dot_yokei_toml() {
-    let loaded = load_fixture("dot_yokei_only");
+fn loads_dot_chokkin_toml() {
+    let loaded = load_fixture("dot_chokkin_only");
     assert_eq!(loaded.effective.mode, ProjectMode::App);
     assert_eq!(loaded.effective.confidence, Confidence::Maybe);
 }
@@ -219,7 +219,7 @@ fn io_error_propagates() {
     let pyproject = temp.path().join("pyproject.toml");
     // Invalid UTF-8 makes read_to_string fail on every platform, even as root
     // (unlike chmod 000, which CAP_DAC_OVERRIDE bypasses).
-    std::fs::write(&pyproject, b"[tool.yokei]\nmode = \xff\xfe\n").expect("write pyproject");
+    std::fs::write(&pyproject, b"[tool.chokkin]\nmode = \xff\xfe\n").expect("write pyproject");
 
     let root = project_root_at(temp.path());
     let error = load_config(&root).expect_err("unreadable pyproject");
@@ -270,7 +270,7 @@ fn partial_plugins_overlay_defaults() {
     let loaded = load_fixture("partial_plugins");
     let plugins = &loaded.effective.plugins;
     assert_eq!(plugins.get(&PluginId::Celery), Some(&true));
-    // Defaults survive a partial [tool.yokei.plugins] table.
+    // Defaults survive a partial [tool.chokkin.plugins] table.
     assert_eq!(plugins.get(&PluginId::Pytest), Some(&true));
     assert_eq!(plugins.get(&PluginId::Django), Some(&true));
     assert_eq!(plugins.get(&PluginId::Tox), Some(&false));
@@ -348,9 +348,9 @@ fn rejects_absolute_exclude_path() {
 }
 
 #[test]
-fn empty_yokei_toml_uses_defaults() {
-    let loaded = load_fixture("empty_yokei_toml");
+fn empty_chokkin_toml_uses_defaults() {
+    let loaded = load_fixture("empty_chokkin_toml");
     assert_eq!(loaded.effective, default_config());
-    assert!(loaded.sources.yokei_toml.is_some());
-    assert!(!loaded.sources.pyproject_tool_yokei);
+    assert!(loaded.sources.chokkin_toml.is_some());
+    assert!(!loaded.sources.pyproject_tool_chokkin);
 }

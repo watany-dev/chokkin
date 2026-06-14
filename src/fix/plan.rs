@@ -43,7 +43,7 @@ pub(super) fn plan_fixes(
 ) -> Result<Vec<FixAction>, Vec<SkippedFix>> {
     if options.allow_remove_files {
         return Err(vec![SkippedFix {
-            rule: RuleId::Yok001,
+            rule: RuleId::Chk001,
             subject: IssueSubject::File {
                 path: String::new(),
             },
@@ -53,7 +53,7 @@ pub(super) fn plan_fixes(
     }
     if options.add_missing {
         return Err(vec![SkippedFix {
-            rule: RuleId::Yok003,
+            rule: RuleId::Chk003,
             subject: IssueSubject::Distribution {
                 name: String::new(),
             },
@@ -85,14 +85,14 @@ fn plan_issue_fix(
     manifest: &LoadedManifest,
 ) -> Result<Option<FixAction>, SkippedFix> {
     match issue.rule {
-        RuleId::Yok002 if issue.confidence == Confidence::Certain => plan_remove_dependency(issue),
-        RuleId::Yok009 if issue.confidence == Confidence::Certain => {
+        RuleId::Chk002 if issue.confidence == Confidence::Certain => plan_remove_dependency(issue),
+        RuleId::Chk009 if issue.confidence == Confidence::Certain => {
             plan_remove_duplicate(issue, manifest)
         },
-        RuleId::Yok005 if issue.confidence == Confidence::Certain => {
+        RuleId::Chk005 if issue.confidence == Confidence::Certain => {
             plan_move_to_runtime(issue, manifest)
         },
-        RuleId::Yok002 | RuleId::Yok005 | RuleId::Yok009 => Err(skipped(
+        RuleId::Chk002 | RuleId::Chk005 | RuleId::Chk009 => Err(skipped(
             issue,
             SkippedReason::NotFixable,
             "only Certain-confidence dependency issues are auto-fixable",
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn plans_yok002_removal_for_certain_issue() {
+    fn plans_chk002_removal_for_certain_issue() {
         let manifest = manifest_with(vec![DeclaredDependency {
             name: "boto3".to_owned(),
             extras: Vec::new(),
@@ -281,7 +281,7 @@ mod tests {
             opaque: false,
         }]);
         let issue = Issue {
-            rule: RuleId::Yok002,
+            rule: RuleId::Chk002,
             severity: Severity::Error,
             confidence: Confidence::Certain,
             message: "unused".to_owned(),
