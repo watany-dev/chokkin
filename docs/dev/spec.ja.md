@@ -302,8 +302,8 @@ File reaches File
 7. import resolution         # 実装済み: src/resolver/ (`resolve_imports`, bundled maps)
 8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`, `apply_entry_plan`)
 9. reachability analysis     # 実装済み: src/reachability/ (`analyze_reachability`, `trace_to_file`)
-10. dependency reconciliation
-11. symbol usage analysis
+10. dependency reconciliation # 実装済み: src/rules/deps/ (`reconcile_dependencies`, YOK002–YOK009)
+11. symbol usage analysis    # 実装済み: src/rules/symbols/ (`analyze_symbols`, YOK006–YOK007, YOK010)
 12. issue emission
 13. optional fix
 ```
@@ -703,7 +703,8 @@ yokei/
     resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps)
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
-    rules/       # 実装済み: pipeline step 10 (`reconcile_dependencies`, YOK002–YOK009)
+    rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_dependencies`, YOK002–YOK009);
+                 #           step 11 `rules/symbols/` (`analyze_symbols`, YOK006–YOK007, YOK010)
     reporters/
     fix/
 ```

@@ -1,0 +1,8 @@
+[project]
+name = "library-mode"
+version = "0.1.0"
+dependencies = []
+
+[tool.yokei]
+mode = "library"
+entry = ["src/acme/main.py"]

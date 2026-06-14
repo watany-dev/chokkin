@@ -135,10 +135,10 @@ pub fn analyze_symbols(
 
 ## 7. Exit criteria
 
-- [ ] YOK006–YOK007, YOK010 候補生成
-- [ ] externally-used マーキングで false positive 抑制
-- [ ] library mode で severity info
-- [ ] `make check` 通過
+- [x] YOK006–YOK007, YOK010 候補生成
+- [x] externally-used マーキングで false positive 抑制
+- [x] library mode で severity info
+- [x] `make check` 通過
 
 ## 8. 未決事項
 

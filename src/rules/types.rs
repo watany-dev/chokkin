@@ -179,3 +179,13 @@ pub struct DependencyReport {
     /// Non-fatal reconciliation notes.
     pub diagnostics: Vec<ReconcileDiagnostic>,
 }
+
+/// Stable sort key for issue candidates within a rule.
+pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
+    match subject {
+        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
+        IssueSubject::File { path } => path.clone(),
+        IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
+        IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
+    }
+}

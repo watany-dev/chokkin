@@ -1,0 +1,7 @@
+[project]
+name = "pytest-fixture"
+version = "0.1.0"
+dependencies = ["pytest"]
+
+[project.scripts]
+acme-cli = "acme.main:main"

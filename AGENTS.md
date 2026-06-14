@@ -11,9 +11,9 @@ unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
 **Status:** pre-alpha. Pipeline steps 1–4 run via `probe_project` (CLI probe
-mode). Steps 5–10 (`plugins`, `parser`, `resolver`, `entry`, `reachability`,
-`rules`) are implemented as library APIs. Issue emission and steps 11–13 are not
-wired to the CLI yet.
+mode). Steps 5–11 (`plugins`, `parser`, `resolver`, `entry`, `reachability`,
+`rules`) are implemented as library APIs. Issue emission (step 12) and step 13
+(`--fix`) are not wired to the CLI yet.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
@@ -36,7 +36,8 @@ src/
   resolver/       Import resolution (`resolve_imports`, bundled maps, pipeline step 7)
   entry/          Entry root construction (`build_entry_roots`, pipeline step 8)
   reachability/   Reachability analysis (`analyze_reachability`, pipeline step 9)
-  rules/          Dependency reconciliation (step 10); issue emission (steps 11–12)
+  rules/          Dependency reconciliation (step 10) and symbol usage (step 11);
+                  issue emission (step 12)
   reporters/      (future) default / compact / JSON / Markdown reporters
   fix/            (future) --fix: manifest-level edits only
 pyproject.toml    maturin bin bindings — yokei ships as a Python wheel
