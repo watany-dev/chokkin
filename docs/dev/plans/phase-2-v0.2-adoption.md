@@ -89,6 +89,10 @@ PR 分割:
 3. SARIF v2.1.0 の最小 schema serializer を追加する — 初期実装済み (`partialFingerprints["chokkin/v0"]` で baseline と同型の stable identity を出力)
 4. fixtures で snapshot test を追加する — reporter render regression は初期実装済み (`tests/reporters_render.rs`; fileless GitHub annotation / path normalization / SARIF fingerprint を含む)
 
+JSON reporter も baseline と同じ `fingerprint` と、その readable component である
+`target`、source location 用の `line` を出力する。CI 連携や移行 tooling は
+`file`/`line` より `fingerprint` を永続 key として扱う。
+
 ### P1: Workspace / Monorepo
 
 uv workspace と明示 `[tool.chokkin.workspaces]` を、first-party 判定だけでなく依存境界まで使う。

@@ -1,4 +1,4 @@
-//! JSON reporter (v0.1 draft schema).
+//! JSON reporter (v0.2 draft schema).
 
 use std::fmt::Write as _;
 
