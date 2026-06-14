@@ -194,10 +194,10 @@ fixture カテゴリ `tests/fixtures/deps/`:
 
 ## 7. Exit criteria
 
-- [ ] YOK002–YOK005, YOK008–YOK009 が候補生成される
-- [ ] lockfile あり/なしで YOK003/YOK004 分岐
-- [ ] `ExplainData` に used/unused 根拠が入る
-- [ ] `make check` 通過
+- [x] YOK002–YOK005, YOK008–YOK009 が候補生成される
+- [x] lockfile あり/なしで YOK003/YOK004 分岐
+- [x] `ExplainData` に used/unused 根拠が入る
+- [x] `make check` 通過
 
 ## 8. 未決事項
 

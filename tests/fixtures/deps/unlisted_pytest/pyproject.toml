@@ -1,0 +1,10 @@
+[project]
+name = "unlisted-pytest"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[project.scripts]
+acme-cli = "acme.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
