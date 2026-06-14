@@ -1,7 +1,12 @@
 [project]
 name = "mkdocs-config"
 version = "0.1.0"
-dependencies = ["mkdocs"]
+dependencies = [
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings",
+    "mkdocs-autorefs",
+]
 
 [tool.chokkin.plugins]
 mkdocs = true

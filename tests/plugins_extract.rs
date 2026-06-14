@@ -386,6 +386,21 @@ fn mkdocs_plugin_records_config_binary() {
             .iter()
             .any(|usage| usage.binary == "mkdocs" && usage.origin.file == "mkdocs.yml")
     );
+    assert!(
+        hints
+            .config_used_distributions
+            .contains(&"mkdocs-material".to_owned())
+    );
+    assert!(
+        hints
+            .config_used_distributions
+            .contains(&"mkdocstrings".to_owned())
+    );
+    assert!(
+        hints
+            .config_used_distributions
+            .contains(&"mkdocs-autorefs".to_owned())
+    );
 }
 
 #[test]
