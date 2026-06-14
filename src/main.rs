@@ -148,6 +148,10 @@ fn run_analysis(args: &CliArgs, report: AnalysisReport) -> ExitCode {
         let _ = error;
         return ExitCode::from(ExitStatus::InternalError.code());
     }
+    if let Err(error) = write_probe_warnings(&report.warnings, &mut std::io::stderr()) {
+        let _ = error;
+        return ExitCode::from(ExitStatus::InternalError.code());
+    }
 
     if let Some(selector) = &args.explain {
         match explain_issue(&report.issues, selector) {

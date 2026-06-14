@@ -19,6 +19,7 @@ use crate::rules::{
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project_with_cache};
+use super::warnings::{ProbeWarning, actionable_plugin_warnings};
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +38,8 @@ pub struct AnalysisReport {
     pub fix: Option<FixReport>,
     /// Baseline report when `--baseline` was requested.
     pub baseline: Option<BaselineReport>,
+    /// Non-fatal warnings from the full analysis pipeline.
+    pub warnings: Vec<ProbeWarning>,
 }
 
 /// Options for the analysis run beyond [`RuntimeOverrides`].
@@ -88,6 +91,7 @@ pub fn analyze_project(
         issues: core.issues,
         fix,
         baseline,
+        warnings: core.warnings,
     })
 }
 
@@ -110,6 +114,7 @@ struct AnalysisCore {
     reachability: ReachabilityReport,
     entry_mode: ResolvedMode,
     issues: IssueReport,
+    warnings: Vec<ProbeWarning>,
 }
 
 fn run_analysis_core(
@@ -133,6 +138,7 @@ fn run_analysis_core(
         &probe.manifest,
         Some(&options.cache),
     )?;
+    let warnings = actionable_plugin_warnings(&plugins);
 
     let target = probe
         .effective_config
@@ -232,6 +238,7 @@ fn run_analysis_core(
         reachability,
         entry_mode: entry.mode,
         issues,
+        warnings,
     })
 }
 
