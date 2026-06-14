@@ -3,6 +3,7 @@
 use toml_edit::{DocumentMut, Item, Value};
 
 use super::error::FixError;
+use super::write::atomic_write;
 
 /// Remove a dependency entry identified by a manifest label.
 pub fn remove_by_label(path: &std::path::Path, label: &str) -> Result<String, FixError> {
@@ -28,10 +29,7 @@ pub fn remove_by_label(path: &std::path::Path, label: &str) -> Result<String, Fi
         });
     }
 
-    std::fs::write(path, doc.to_string()).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    atomic_write(path, &doc.to_string())?;
     Ok(format!("removed `{label}` from {rel}"))
 }
 
@@ -79,10 +77,7 @@ pub fn move_group_to_runtime(
         })?;
     deps.push(raw);
 
-    std::fs::write(path, doc.to_string()).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    atomic_write(path, &doc.to_string())?;
     Ok(format!("moved dependency to project.dependencies in {rel}"))
 }
 
