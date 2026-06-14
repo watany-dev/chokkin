@@ -5,6 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::config::ConfigSources;
+use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
 
 /// Default cache directory name below the project root.
@@ -138,10 +140,24 @@ impl SourceFingerprint {
     /// Returns an IO error when metadata or file contents cannot be read.
     pub fn from_root_relative(root: &Path, path: &str) -> io::Result<Self> {
         let absolute = root.join(path);
-        let metadata = std::fs::metadata(&absolute)?;
-        let bytes = std::fs::read(&absolute)?;
+        Self::from_absolute(root, &absolute)
+    }
+
+    /// Build a conservative file fingerprint from an absolute or root-relative path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_absolute(root: &Path, path: &Path) -> io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        let bytes = std::fs::read(path)?;
+        let key_path = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
         Ok(Self {
-            path: normalize_cache_path(path),
+            path: normalize_cache_path(&key_path),
             size: metadata.len(),
             modified_ns: metadata
                 .modified()
@@ -149,6 +165,84 @@ impl SourceFingerprint {
                 .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_nanos()),
             content_hash: stable_hex_hash(&bytes),
+        })
+    }
+}
+
+fn config_input_fingerprints(
+    root: &Path,
+    sources: &ConfigSources,
+) -> io::Result<Vec<SourceFingerprint>> {
+    let mut paths = Vec::new();
+    if let Some(path) = &sources.dot_chokkin_toml {
+        paths.push(path.clone());
+    }
+    if let Some(path) = &sources.chokkin_toml {
+        paths.push(path.clone());
+    }
+    let pyproject = root.join("pyproject.toml");
+    if pyproject.is_file() {
+        paths.push(pyproject);
+    }
+    fingerprint_paths(root, paths)
+}
+
+fn manifest_input_fingerprints(
+    root: &Path,
+    sources: &ManifestSources,
+) -> io::Result<Vec<SourceFingerprint>> {
+    let mut paths = Vec::new();
+    if sources.pyproject_toml {
+        paths.push(root.join("pyproject.toml"));
+    }
+    if sources.setup_cfg {
+        paths.push(root.join("setup.cfg"));
+    }
+    if sources.setup_py {
+        paths.push(root.join("setup.py"));
+    }
+    if sources.uv_lock {
+        paths.push(root.join("uv.lock"));
+    }
+    for path in &sources.requirements_files {
+        paths.push(root.join(path));
+    }
+    fingerprint_paths(root, paths)
+}
+
+fn fingerprint_paths(root: &Path, paths: Vec<PathBuf>) -> io::Result<Vec<SourceFingerprint>> {
+    let mut fingerprints = Vec::new();
+    for path in paths {
+        fingerprints.push(SourceFingerprint::from_absolute(root, &path)?);
+    }
+    fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+    fingerprints.dedup_by(|left, right| left.path == right.path);
+    Ok(fingerprints)
+}
+
+/// Fingerprints of files that affect manifest/config scan results.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScanInputFingerprints {
+    /// Config-layer files.
+    pub config: Vec<SourceFingerprint>,
+    /// Manifest-layer files.
+    pub manifest: Vec<SourceFingerprint>,
+}
+
+impl ScanInputFingerprints {
+    /// Collect fingerprints for currently observed config and manifest inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when a recorded input exists but cannot be read.
+    pub fn collect(
+        root: &Path,
+        config: &ConfigSources,
+        manifest: &ManifestSources,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            config: config_input_fingerprints(root, config)?,
+            manifest: manifest_input_fingerprints(root, manifest)?,
         })
     }
 }
@@ -327,6 +421,54 @@ mod tests {
         assert_eq!(first.path, "src/app.py");
         assert_eq!(second.path, "src/app.py");
         assert_ne!(first.content_hash, second.content_hash);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_fingerprints_include_uv_only_pyproject_config_input() {
+        let root = temp_cache_test_dir("scan-config");
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[tool.uv.workspace]\nmembers = []\n",
+        )
+        .expect("write pyproject");
+        let config = ConfigSources {
+            used_defaults: true,
+            dot_chokkin_toml: None,
+            chokkin_toml: None,
+            pyproject_tool_chokkin: false,
+        };
+        let manifest = ManifestSources::default();
+
+        let fingerprints =
+            ScanInputFingerprints::collect(&root, &config, &manifest).expect("fingerprints");
+
+        assert_eq!(fingerprints.config.len(), 1);
+        assert_eq!(fingerprints.config[0].path, "pyproject.toml");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_fingerprints_include_manifest_requirement_files() {
+        let root = temp_cache_test_dir("scan-manifest");
+        std::fs::write(root.join("requirements.txt"), "requests\n").expect("write requirements");
+        let config = ConfigSources {
+            used_defaults: true,
+            dot_chokkin_toml: None,
+            chokkin_toml: None,
+            pyproject_tool_chokkin: false,
+        };
+        let manifest = ManifestSources {
+            requirements_files: vec!["requirements.txt".to_owned()],
+            ..ManifestSources::default()
+        };
+
+        let fingerprints =
+            ScanInputFingerprints::collect(&root, &config, &manifest).expect("fingerprints");
+
+        assert!(fingerprints.config.is_empty());
+        assert_eq!(fingerprints.manifest.len(), 1);
+        assert_eq!(fingerprints.manifest[0].path, "requirements.txt");
         let _ = std::fs::remove_dir_all(root);
     }
 
