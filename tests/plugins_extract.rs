@@ -304,6 +304,14 @@ fn flask_plugin_records_flask_app_symbol() {
             .iter()
             .any(|usage| usage.binary == "flask" && usage.origin.file == ".flaskenv")
     );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "web.routes"
+                && reference.origin.file == "src/web/routes.py"
+                && reference.origin.line == Some(4))
+    );
 }
 
 #[test]
