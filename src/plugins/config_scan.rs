@@ -413,7 +413,9 @@ fn scan_lines_for_binaries(
     seen: &mut HashSet<(String, String)>,
     origin: &ReferenceOrigin,
 ) {
-    for line in contents.lines() {
+    for (line_index, line) in contents.lines().enumerate() {
+        let mut line_origin = origin.clone();
+        line_origin.line = u32::try_from(line_index + 1).ok();
         for token in line.split_whitespace() {
             let token =
                 token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '.');
@@ -423,10 +425,10 @@ fn scan_lines_for_binaries(
                 .unwrap_or(token);
             let token = token.strip_prefix("venv/bin/").unwrap_or(token);
             if is_known_binary(token) {
-                push_binary(result, seen, token, origin.clone());
+                push_binary(result, seen, token, line_origin.clone());
             }
             if token == "sphinx-build" {
-                push_binary(result, seen, "sphinx-build", origin.clone());
+                push_binary(result, seen, "sphinx-build", line_origin.clone());
                 push_distribution(result, "sphinx");
             }
         }
@@ -439,7 +441,10 @@ fn push_binary(
     binary: &str,
     origin: ReferenceOrigin,
 ) {
-    let key = (binary.to_owned(), origin.file.clone());
+    let key = (
+        binary.to_owned(),
+        format!("{}:{}", origin.file, origin.line.unwrap_or_default()),
+    );
     if !seen.insert(key) {
         return;
     }
@@ -696,5 +701,10 @@ mod tests {
                 .iter()
                 .any(|usage| usage.binary == "tox")
         );
+        assert!(result.binary_usages.iter().any(|usage| {
+            usage.binary == "sphinx-build"
+                && usage.origin.file == "tox.ini"
+                && usage.origin.line == Some(3)
+        }));
     }
 }
