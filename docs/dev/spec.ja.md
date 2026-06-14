@@ -661,11 +661,12 @@ missing dependency追加は別フラグにする。
 uvx chokkin --fix --add-missing
 ```
 
-v0.2初期実装では Certain CHK003 で distribution が一意に解決済み、かつ root の
+v0.2初期実装では Certain CHK003 で distribution が一意に解決済み、かつ対象 manifest の
 non-Poetry `pyproject.toml` が `project.dependencies` を dynamic にしていない場合だけ、
-`[project].dependencies` に正規化済みdistribution名を追加する。workspace member別manifest、
-Poetry形式、requirements系、optional try-import、候補が複数ある場合は skipped fix として報告し、
-suggestion/手動修正に留める。
+`[project].dependencies` に正規化済みdistribution名を追加する。workspace member finding は
+`ProbeReport.workspace_inputs` で member manifest が inventory 済みなら member 側
+`pyproject.toml` に追加する。Poetry形式、requirements系、optional try-import、候補が複数ある場合は
+skipped fix として報告し、suggestion/手動修正に留める。
 
 manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、commentsと順序を極力維持する。requirements系はline-based編集で、hash付きrequirementsやconstraintsは原則自動編集しない。
 
