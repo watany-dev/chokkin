@@ -23,7 +23,7 @@
 | 12 | [step-12-issue-emission.md](./step-12-issue-emission.md) | 確定 | ✅ |
 | 13 | [step-13-optional-fix.md](./step-13-optional-fix.md) | 確定 | ✅ |
 
-## Phase 0 / Phase 1 横断
+## Phase 0 / Phase 1 / Phase 1.5 横断
 
 | 項目 | ドキュメント | 状態 | 実装 |
 | --- | --- | --- | --- |
@@ -32,7 +32,8 @@
 | bundled maps | [step-07](./step-07-import-resolution.md) §3.2–3.3 | 確定 | 🟡 seed あり |
 | wheel + PyPI release | spec §15, `release.yml` | CI のみ | ⬜ 未タグ |
 | **フル CLI + reporter** | [phase-1-cli-reporter.md](./phase-1-cli-reporter.md) | 確定 | ✅ |
-| OSS dogfooding 骨格 | `scripts/run-oss-fixture.sh` | 確定 | 🟡 骨格のみ |
+| OSS dogfooding + §17 gate | `scripts/oss-metrics.sh` | 確定 | ✅ 計測済み |
+| **v0.1 誤検知是正** | [phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md) | 確定 | ⬜ **次の着手** |
 
 ## 推奨実装順（クリティカルパス）
 
@@ -55,23 +56,36 @@ flowchart TB
     P1[Phase 1 CLI]
   end
 
-  subgraph remaining [v0.1 リリース前]
-    OSS[OSS 20 dogfooding]
-    PERF[cold 2s / FP 5%]
+  subgraph remaining [v0.1 リリース前 — Phase 1.5]
+    P15A[4.D map + self-extra]
+    P15B[4.A binary scan]
+    P15C[4.B dev policy + PDM/Hatch]
+    P15D[4.C optional imports]
+    GATE[oss-metrics --gate]
     TAG[PyPI v0.1 tag]
   end
 
-  done --> OSS
-  OSS --> PERF
-  PERF --> TAG
+  done --> P15A
+  P15A --> P15B
+  P15B --> P15C
+  P15C --> P15D
+  P15D --> GATE
+  GATE --> TAG
 ```
 
 ## v0.1 リリース前の残作業（§17 exit criteria）
 
-- OSS 20 プロジェクト dogfooding（`scripts/oss-fixtures.manifest` を拡張）
-- YOK002/YOK003 誤検知率 5% 未満の計測・記録
-- medium project cold 2s 以内
-- PyPI `v0.1.0` タグ（Trusted Publishing 設定後）
+**計測済み (2026-06-14):** crash 0 ✅、cold medium ≤ 111 ms ✅、YOK002 FP **100%** ❌。
+詳細は [`oss-validation-report.md`](../oss-validation-report.md)。
+
+Phase 1.5（[phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md)）で是正:
+
+1. **4.D** package-module-map 拡充 + 自己参照 extra guard（~11 件）
+2. **4.A** binary + config usage detection（~110 件）
+3. **4.B** dev context policy + PDM/Hatch 読取
+4. **4.C** optional / conditional import tracing
+5. `make oss-metrics ARGS=--gate` 再計測 → YOK002 FP < 5%
+6. PyPI `v0.1.0` タグ（Trusted Publishing 設定後）
 
 ## ADR
 
