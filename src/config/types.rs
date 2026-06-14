@@ -111,6 +111,8 @@ pub enum PluginId {
     Django,
     /// `FastAPI` routes and uvicorn references.
     Fastapi,
+    /// Flask application references.
+    Flask,
     /// Celery tasks and autodiscover.
     Celery,
     /// tox environments.
@@ -131,6 +133,7 @@ impl PluginId {
             Self::Pytest => "pytest",
             Self::Django => "django",
             Self::Fastapi => "fastapi",
+            Self::Flask => "flask",
             Self::Celery => "celery",
             Self::Tox => "tox",
             Self::Nox => "nox",
@@ -145,6 +148,7 @@ impl PluginId {
             "pytest" => Some(Self::Pytest),
             "django" => Some(Self::Django),
             "fastapi" => Some(Self::Fastapi),
+            "flask" => Some(Self::Flask),
             "celery" => Some(Self::Celery),
             "tox" => Some(Self::Tox),
             "nox" => Some(Self::Nox),
@@ -161,6 +165,7 @@ impl PluginId {
             Self::Pytest,
             Self::Django,
             Self::Fastapi,
+            Self::Flask,
             Self::Celery,
             Self::Tox,
             Self::Nox,

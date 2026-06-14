@@ -273,6 +273,42 @@ fn github_actions_plugin_records_run_binaries() {
 }
 
 #[test]
+fn flask_plugin_records_flask_app_symbol() {
+    let hints = extract_fixture("flask_env");
+    let contrib = plugin_contrib(&hints, PluginId::Flask);
+    assert!(
+        contrib
+            .symbol_refs
+            .iter()
+            .any(|reference| reference.module == "web.app" && reference.symbol == "app")
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "flask" && usage.origin.file == ".flaskenv")
+    );
+}
+
+#[test]
+fn celery_plugin_records_app_symbol() {
+    let hints = extract_fixture("celery_scripts");
+    let contrib = plugin_contrib(&hints, PluginId::Celery);
+    assert!(
+        contrib
+            .symbol_refs
+            .iter()
+            .any(|reference| reference.module == "worker.app" && reference.symbol == "celery")
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "celery" && usage.origin.file == "pyproject.toml")
+    );
+}
+
+#[test]
 fn full_pipeline_step5() {
     let hints = extract_fixture("django_manage");
     assert_eq!(hints.contributions.len(), 3);

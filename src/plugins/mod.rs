@@ -2,11 +2,13 @@
 
 mod config_scan;
 mod context;
+mod celery;
 mod devtools;
 mod django;
 mod error;
 mod extract;
 mod fastapi;
+mod flask;
 mod pytest;
 mod stub;
 mod types;

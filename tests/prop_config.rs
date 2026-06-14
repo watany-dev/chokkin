@@ -16,10 +16,11 @@ use chokkin::{
 };
 use proptest::prelude::*;
 
-const PLUGIN_KEYS: [&str; 8] = [
+const PLUGIN_KEYS: [&str; 9] = [
     "pytest",
     "django",
     "fastapi",
+    "flask",
     "celery",
     "tox",
     "nox",

@@ -919,8 +919,9 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
   - cache (§19のwarm目標達成)
   - plugin拡充 (flask / celery / tox / nox / pre-commit / github-actions。
     tox/nox/pre-commit/GitHub Actionsのbinary usage plugin化は初期実装済み。
+    Flask/Celery は static app command/reference extraction を初期実装済み。
     GitHub Actions は single-line `run:` のみ対応。block scalar command parse、
-    entry/module/symbol refs の拡張は未実装)
+    decorator由来 refs の拡張は未実装)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
@@ -1034,6 +1035,8 @@ parallelize対象は、file discovery、parse、import extraction、symbol extra
 warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` のみ対応し、block scalar command parse は未実装。
+
+Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。decorator/task discovery は plugin extraction が parse step 前に走る現行pipelineでは未実装。
 
 ## 20. 注意点
 

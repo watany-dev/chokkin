@@ -6,11 +6,13 @@ use crate::manifest::LoadedManifest;
 use crate::sources::DiscoveredSources;
 
 use super::config_scan;
+use super::celery;
 use super::context::PluginContext;
 use super::devtools;
 use super::django;
 use super::error::PluginsError;
 use super::fastapi;
+use super::flask;
 use super::pytest;
 use super::stub;
 use super::types::PluginHints;
@@ -45,6 +47,8 @@ pub fn extract_plugin_hints(
             PluginId::Pytest => pytest::extract(&ctx),
             PluginId::Django => django::extract(&ctx),
             PluginId::Fastapi => fastapi::extract(&ctx),
+            PluginId::Flask => flask::extract(&ctx),
+            PluginId::Celery => celery::extract(&ctx),
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
                 devtools::extract(*plugin, &ctx)
             }
