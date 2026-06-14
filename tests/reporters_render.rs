@@ -69,6 +69,17 @@ fn github_reporter_renders_annotation_and_baseline_summary() {
 }
 
 #[test]
+fn github_reporter_normalizes_annotation_file_path() {
+    let mut report = report();
+    report.issues[0].location.file = Some("src\\acme\\app.py".to_owned());
+
+    let rendered = render_issues(ReporterId::Github, &report, &context());
+
+    assert!(rendered.contains("file=src/acme/app.py,line=7"));
+    assert!(!rendered.contains("src\\acme\\app.py"));
+}
+
+#[test]
 fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     let rendered = render_issues(ReporterId::Sarif, &report(), &context());
     let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid sarif json");

@@ -45,7 +45,7 @@ fn render_annotation(out: &mut String, issue: &Issue) {
             .and_then(|origin| origin.line)
     });
     if let Some(file) = file {
-        let _ = write!(out, " file={}", escape_property(file));
+        let _ = write!(out, " file={}", escape_property(&github_path(file)));
     }
     if let Some(line) = line {
         let _ = write!(out, ",line={line}");
@@ -68,4 +68,8 @@ fn escape_message(value: &str) -> String {
         .replace('%', "%25")
         .replace('\r', "%0D")
         .replace('\n', "%0A")
+}
+
+fn github_path(path: &str) -> String {
+    path.replace('\\', "/")
 }
