@@ -38,7 +38,7 @@ Options:
       --fix               Apply safe automatic manifest fixes
       --dry-run           Preview fixes without writing files (requires --fix)
       --allow-remove-files Allow --fix to remove unreachable project files
-      --add-missing       Preview missing-dependency insertion support
+      --add-missing       Add unambiguous missing dependencies when safe
       --baseline <PATH>   Suppress issues already recorded in a baseline file
       --update-baseline   Write current issues to --baseline
       --no-cache          Disable cache reads and writes

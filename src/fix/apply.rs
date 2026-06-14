@@ -9,7 +9,7 @@ use crate::rules::{IssueReport, RuleId};
 use super::containment::resolve_contained_path;
 use super::error::FixError;
 use super::plan::{FixAction, plan_fixes};
-use super::pyproject::{move_group_to_runtime, remove_by_label};
+use super::pyproject::{add_runtime_dependency, move_group_to_runtime, remove_by_label};
 use super::requirements::remove_dependency_line;
 use super::setup_cfg::remove_dependency as remove_setup_cfg_dependency;
 use super::types::{AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason};
@@ -109,6 +109,16 @@ fn apply_action(
                 description,
             })
         },
+        FixAction::AddMissingDependency { name, file } => {
+            let path = resolve_contained_path(root, file)?;
+            let description = add_runtime_dependency(&path, name)?;
+            Ok(AppliedFix {
+                rule: RuleId::Chk003,
+                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
+                file: file.clone(),
+                description,
+            })
+        },
         FixAction::RemoveFile { path: file } => {
             let path = resolve_contained_path(root, file)?;
             std::fs::remove_file(&path).map_err(|source| FixError::Io {
@@ -141,6 +151,12 @@ fn applied_preview(action: &FixAction) -> AppliedFix {
             file: file.clone(),
             description: format!("would move `{name}` to runtime in {file}"),
         },
+        FixAction::AddMissingDependency { name, file } => AppliedFix {
+            rule: RuleId::Chk003,
+            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
+            file: file.clone(),
+            description: format!("would add `{name}` to {file}"),
+        },
         FixAction::RemoveFile { path } => AppliedFix {
             rule: RuleId::Chk001,
             subject: crate::rules::IssueSubject::File { path: path.clone() },
@@ -158,6 +174,10 @@ fn skipped_from_error(action: &FixAction, error: &FixError) -> SkippedFix {
         ),
         FixAction::MoveToRuntime { name, .. } => (
             RuleId::Chk005,
+            crate::rules::IssueSubject::Distribution { name: name.clone() },
+        ),
+        FixAction::AddMissingDependency { name, .. } => (
+            RuleId::Chk003,
             crate::rules::IssueSubject::Distribution { name: name.clone() },
         ),
         FixAction::RemoveFile { path } => (
@@ -182,7 +202,7 @@ mod tests {
         DeclaredDependency, DependencyContext, DependencyOrigin, LockfileGraph, ManifestSources,
         ProjectMetadata,
     };
-    use crate::rules::{Issue, IssueLocation, IssueReport, IssueSummary, Severity};
+    use crate::rules::{ExplainData, Issue, IssueLocation, IssueReport, IssueSummary, Severity};
 
     fn empty_manifest(root: &ProjectRoot) -> LoadedManifest {
         LoadedManifest {
@@ -254,6 +274,30 @@ mod tests {
                 name: name.to_owned(),
             },
             explain: None,
+        }
+    }
+
+    fn missing_dependency_issue(distribution: &str) -> Issue {
+        Issue {
+            rule: RuleId::Chk003,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "missing".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: Some("src/app.py".to_owned()),
+                line: Some(1),
+                manifest: None,
+            },
+            subject: crate::rules::IssueSubject::Import {
+                module: "yaml".to_owned(),
+                file: "src/app.py".to_owned(),
+                line: 1,
+            },
+            explain: Some(ExplainData {
+                summary: format!("{distribution} is imported but not declared"),
+                details: Vec::new(),
+            }),
         }
     }
 
@@ -456,5 +500,32 @@ mod tests {
         assert!(fix_report.reminders.iter().any(|reminder| {
             reminder.contains("poetry lock")
         }));
+    }
+
+    #[test]
+    fn add_missing_dependency_updates_pyproject() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(&path, "[project]\nname = \"demo\"\n").expect("write");
+
+        let root = project_root(dir.path());
+        let mut manifest = empty_manifest(&root);
+        manifest.sources.pyproject_toml = true;
+        let report = issue_report(missing_dependency_issue("pyyaml"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert_eq!(fix_report.applied.len(), 1);
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\"pyyaml\"]"));
     }
 }

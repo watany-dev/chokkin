@@ -2,6 +2,8 @@
 
 use toml_edit::{DocumentMut, Item, Value};
 
+use crate::manifest::normalize_distribution_name;
+
 use super::error::FixError;
 use super::write::atomic_write;
 
@@ -79,6 +81,69 @@ pub fn move_group_to_runtime(
 
     atomic_write(path, &doc.to_string())?;
     Ok(format!("moved dependency to project.dependencies in {rel}"))
+}
+
+/// Add a runtime dependency to `[project].dependencies`.
+pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<String, FixError> {
+    let rel = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("pyproject.toml");
+    let contents = std::fs::read_to_string(path).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
+    let mut doc = contents
+        .parse::<DocumentMut>()
+        .map_err(|error| FixError::InvalidToml {
+            path: rel.to_owned(),
+            detail: error.to_string(),
+        })?;
+
+    let deps = project_dependencies_array(&mut doc)?;
+    let normalized = normalize_distribution_name(raw);
+    if deps.iter().any(|value| {
+        value
+            .as_str()
+            .and_then(requirement_distribution_name)
+            .is_some_and(|name| name == normalized)
+    }) {
+        return Ok(format!("`{raw}` already exists in project.dependencies in {rel}"));
+    }
+    deps.push(raw);
+
+    atomic_write(path, &doc.to_string())?;
+    Ok(format!("added `{raw}` to project.dependencies in {rel}"))
+}
+
+fn project_dependencies_array(doc: &mut DocumentMut) -> Result<&mut toml_edit::Array, FixError> {
+    let project = doc
+        .entry("project")
+        .or_insert(Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| FixError::Unsupported {
+            detail: "[project] is not a table".to_owned(),
+        })?;
+    project
+        .entry("dependencies")
+        .or_insert(Item::Value(Value::Array(toml_edit::Array::new())))
+        .as_array_mut()
+        .ok_or_else(|| FixError::Unsupported {
+            detail: "project.dependencies is not an array".to_owned(),
+        })
+}
+
+fn requirement_distribution_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let end = trimmed
+        .find(['[', ';', '<', '>', '=', '!', '~', ' '])
+        .unwrap_or(trimmed.len());
+    let name = trimmed.get(..end)?.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(normalize_distribution_name(name))
+    }
 }
 
 fn remove_label_in_document(doc: &mut DocumentMut, label: &str) -> Result<bool, FixError> {
@@ -313,5 +378,31 @@ dependencies = ["pytest>=8", "coverage>=7"]
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("coverage"));
+    }
+
+    #[test]
+    fn adds_runtime_dependency_to_project_dependencies() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(&path, "[project]\nname = \"demo\"\n").expect("write");
+
+        add_runtime_dependency(&path, "pyyaml").expect("add");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\"pyyaml\"]"));
+    }
+
+    #[test]
+    fn add_runtime_dependency_is_idempotent() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\"PyYAML>=6\"]\n",
+        )
+        .expect("write");
+
+        add_runtime_dependency(&path, "pyyaml").expect("add");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated.matches("PyYAML").count(), 1);
     }
 }
