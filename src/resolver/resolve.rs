@@ -135,12 +135,14 @@ fn resolve_module(
     warnings: &mut Vec<ResolveWarning>,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
+    let workspace_member = workspace_member_for_file(file, workspace_members);
 
     if is_stdlib_import(&root_name, target) {
         return ResolvedImport {
             import_root: root_name,
             full_module: full_module.to_owned(),
             file: file.to_owned(),
+            workspace_member,
             line,
             context,
             optional,
@@ -156,6 +158,7 @@ fn resolve_module(
             import_root: root_name,
             full_module: full_module.to_owned(),
             file: file.to_owned(),
+            workspace_member,
             line,
             context,
             optional,
@@ -176,6 +179,7 @@ fn resolve_module(
             import_root: root_name,
             full_module: full_module.to_owned(),
             file: file.to_owned(),
+            workspace_member,
             line,
             context,
             optional,
@@ -197,6 +201,7 @@ fn resolve_module(
             platform_guarded,
             distributions,
             None,
+            workspace_member,
             warnings,
         );
     }
@@ -222,6 +227,7 @@ fn resolve_module(
             platform_guarded,
             &distributions,
             Some(confidence),
+            workspace_member,
             warnings,
         );
     }
@@ -234,6 +240,7 @@ fn resolve_module(
         import_root: root_name,
         full_module: full_module.to_owned(),
         file: file.to_owned(),
+        workspace_member,
         line,
         context,
         optional,
@@ -242,6 +249,20 @@ fn resolve_module(
         distribution: None,
         confidence: ResolveConfidence::Maybe,
     }
+}
+
+fn workspace_member_for_file(
+    file: &str,
+    workspace_members: &[ResolvedWorkspaceMember],
+) -> Option<String> {
+    let normalized = file.replace('\\', "/");
+    workspace_members
+        .iter()
+        .filter(|member| {
+            normalized == member.path || normalized.starts_with(&format!("{}/", member.path))
+        })
+        .max_by_key(|member| member.path.len())
+        .map(|member| member.id.clone())
 }
 
 fn confidence_rank(confidence: ResolveConfidence) -> u8 {
@@ -263,6 +284,7 @@ fn resolve_from_candidates(
     platform_guarded: bool,
     candidates: &[String],
     confidence_override: Option<ResolveConfidence>,
+    workspace_member: Option<String>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> ResolvedImport {
     if candidates.len() > 1 {
@@ -285,6 +307,7 @@ fn resolve_from_candidates(
         import_root: root_name.to_owned(),
         full_module: full_module.to_owned(),
         file: file.to_owned(),
+        workspace_member,
         line,
         context,
         optional,

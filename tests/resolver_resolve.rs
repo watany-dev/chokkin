@@ -62,7 +62,12 @@ fn resolves_first_party_import() {
 fn resolves_workspace_member_import_from_resolved_member_id() {
     let index = resolve_fixture("uv_workspace_member");
     assert!(index.imports.iter().any(|resolved| {
-        resolved.import_root == "api" && resolved.origin == ModuleOrigin::FirstParty
+        resolved.import_root == "api"
+            && resolved.origin == ModuleOrigin::FirstParty
+            && resolved.workspace_member.is_none()
+    }));
+    assert!(index.imports.iter().any(|resolved| {
+        resolved.import_root == "os" && resolved.workspace_member.as_deref() == Some("api")
     }));
 }
 

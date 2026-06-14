@@ -258,6 +258,7 @@ mod tests {
             import_root: "requests".to_owned(),
             full_module: "requests".to_owned(),
             file: "src/app.py".to_owned(),
+            workspace_member: None,
             line: 1,
             context: crate::parser::ImportContext::Runtime,
             optional: false,
