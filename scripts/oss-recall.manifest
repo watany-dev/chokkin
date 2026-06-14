@@ -1,0 +1,14 @@
+# Recall sentinels for scripts/oss-metrics.sh.
+#
+# In-repo fixtures with a deliberately UNUSED dependency that yokei must keep
+# reporting as YOK002. They are measured alongside the OSS clones (no network)
+# so the recall gate always has true positives to verify. Every YOK002 reported
+# here is labelled `tp` in scripts/oss-fixtures.labels.tsv; a missing one fails
+# the recall gate, which is the guard that stops the Phase 1.5 FP remediation
+# from quietly collapsing into "report nothing".
+#
+# Format: slug<TAB>path (path absolute or relative to repo root).
+#
+# slug<TAB>path
+unused_boto3	tests/fixtures/deps/unused_boto3
+optional_try_import	tests/fixtures/deps/optional_try_import

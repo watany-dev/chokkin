@@ -12,6 +12,7 @@
 # Options:
 #   -m, --manifest PATH   Clone list (default: scripts/oss-clones.manifest)
 #   -l, --labels PATH     Ground-truth labels (default: scripts/oss-fixtures.labels.tsv)
+#   -R, --recall PATH     Recall sentinels (default: scripts/oss-recall.manifest)
 #   -c, --clones DIR      Clone root (default: target/oss-clones)
 #   -o, --output DIR      Report directory (default: target/oss-metrics)
 #   -b, --bin PATH        yokei binary (default: target/release/yokei)
@@ -32,12 +33,19 @@
 # a false positive; `tp` as a true positive; anything unlabeled is `unknown`.
 # The FP-rate gate cannot pass while unknown findings remain — every finding
 # must be classified.
+#
+# Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
+# separate recall gate measures in-repo sentinel fixtures (--recall manifest)
+# whose deliberately-unused dependencies are labelled `tp`. Every `tp` label
+# must appear in the run's findings or the recall gate fails — this is what
+# stops the FP remediation from silently collapsing into "report nothing".
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${OSS_CLONES_MANIFEST:-$ROOT/scripts/oss-clones.manifest}"
 LABELS="${OSS_LABELS:-$ROOT/scripts/oss-fixtures.labels.tsv}"
+RECALL_MANIFEST="${OSS_RECALL_MANIFEST:-$ROOT/scripts/oss-recall.manifest}"
 CLONES="${OSS_CLONES_DIR:-$ROOT/target/oss-clones}"
 OUTPUT="${OSS_METRICS_DIR:-$ROOT/target/oss-metrics}"
 YOKEI_BIN="${YOKEI_BIN:-$ROOT/target/release/yokei}"
@@ -54,6 +62,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -m | --manifest) MANIFEST="$2"; shift 2 ;;
     -l | --labels) LABELS="$2"; shift 2 ;;
+    -R | --recall) RECALL_MANIFEST="$2"; shift 2 ;;
     -c | --clones) CLONES="$2"; shift 2 ;;
     -o | --output) OUTPUT="$2"; shift 2 ;;
     -b | --bin) YOKEI_BIN="$2"; shift 2 ;;
@@ -112,19 +121,13 @@ ran=0
 crashes=0
 medium_slow=()
 
-while IFS=$'\t' read -r slug category size ref url || [[ -n "$slug" ]]; do
-  slug="${slug%%#*}"
-  [[ -z "${slug// /}" ]] && continue
-  proj="$CLONES/$slug"
-  if [[ ! -d "$proj" ]]; then
-    echo "skip (not cloned): $slug" >&2
-    continue
-  fi
-
+# Measure one project tree: time it, record findings with verdicts, update the
+# run-wide counters. Used for both OSS clones and in-repo recall sentinels.
+measure_one() {
+  local slug="$1" category="$2" size="$3" proj="$4"
   echo "==> $slug ($category/$size)"
-  json_out="$OUTPUT/$slug.json"
-  times=""
-  exit_code=0
+  local json_out="$OUTPUT/$slug.json"
+  local times="" exit_code=0 start_ms end_ms i
   for ((i = 0; i < RUNS; i++)); do
     start_ms="$(date +%s%3N)"
     "$YOKEI_BIN" --reporter json --no-exit-code "$proj" >"$json_out" 2>"$OUTPUT/$slug.stderr"
@@ -132,15 +135,16 @@ while IFS=$'\t' read -r slug category size ref url || [[ -n "$slug" ]]; do
     end_ms="$(date +%s%3N)"
     times+=" $((end_ms - start_ms))"
   done
-  median_ms="$(median_of "$times")"
+  local median_ms; median_ms="$(median_of "$times")"
 
-  total=0; y002=0; y003=0
+  local total=0 y002=0 y003=0
   if jq -e . "$json_out" >/dev/null 2>&1; then
     total="$(jq -r '.summary.total // 0' "$json_out")"
     y002="$(jq -r '[.issues[]? | select(.code=="YOK002")] | length' "$json_out")"
     y003="$(jq -r '[.issues[]? | select(.code=="YOK003")] | length' "$json_out")"
 
     # Emit each YOK002/YOK003 finding with its ground-truth verdict.
+    local code dist conf msg verdict
     while IFS=$'\t' read -r code dist conf msg; do
       [[ -z "$code" ]] && continue
       verdict="$(label_for "$slug" "$code" "$dist")"
@@ -159,7 +163,34 @@ while IFS=$'\t' read -r slug category size ref url || [[ -n "$slug" ]]; do
   if [[ "$size" == "medium" && "$median_ms" -gt "$MEDIUM_GATE_MS" ]]; then
     medium_slow+=("$slug=${median_ms}ms")
   fi
+}
+
+while IFS=$'\t' read -r slug category size ref url || [[ -n "$slug" ]]; do
+  slug="${slug%%#*}"
+  [[ -z "${slug// /}" ]] && continue
+  proj="$CLONES/$slug"
+  if [[ ! -d "$proj" ]]; then
+    echo "skip (not cloned): $slug" >&2
+    continue
+  fi
+  measure_one "$slug" "$category" "$size" "$proj"
 done <"$MANIFEST"
+
+# Recall sentinels: in-repo fixtures with a known-unused dependency that yokei
+# must keep flagging. Measured alongside the clones (no network) so the recall
+# gate has true positives to verify even when every real project is clean.
+if [[ -f "$RECALL_MANIFEST" ]]; then
+  while IFS=$'\t' read -r slug path || [[ -n "$slug" ]]; do
+    slug="${slug%%#*}"
+    [[ -z "${slug// /}" ]] && continue
+    [[ "$path" != /* ]] && path="$ROOT/$path"
+    if [[ ! -d "$path" ]]; then
+      echo "skip (missing recall fixture): $slug" >&2
+      continue
+    fi
+    measure_one "$slug" recall sentinel "$path"
+  done <"$RECALL_MANIFEST"
+fi
 
 if [[ "$ran" -eq 0 ]]; then
   echo "no projects measured — run clone-oss-fixtures.sh first" >&2
@@ -181,14 +212,30 @@ if [[ "$y002_total" -gt 0 ]]; then
   fp_rate="$(awk -v f="$y002_fp" -v t="$y002_total" 'BEGIN{printf "%.1f", 100*f/t}')"
 fi
 
+# ── Recall accounting: every `tp` label must actually be reported ──
+# A `tp` label that is absent from findings is a false negative — yokei stopped
+# detecting a genuinely-unused dependency. This is the over-suppression guard.
+tp_total=0; tp_missed=0; missed=()
+if [[ -f "$LABELS" ]]; then
+  while IFS=$'\t' read -r lslug lcode ldist; do
+    [[ -z "$lslug" ]] && continue
+    tp_total=$((tp_total + 1))
+    awk -F'\t' -v s="$lslug" -v c="$lcode" -v d="$ldist" \
+      'NR>1 && $1==s && $2==c && $3==d {found=1} END{exit !found}' "$FINDINGS" ||
+      { tp_missed=$((tp_missed + 1)); missed+=("$lslug/$lcode/$ldist"); }
+  done < <(awk -F'\t' '/^#/ || NF<4 {next} $4=="tp" {print $1"\t"$2"\t"$3}' "$LABELS")
+fi
+tp_detected=$((tp_total - tp_missed))
+
 # ── Gate evaluation ──
-pass_fp=1; pass_crash=1; pass_speed=1
+pass_fp=1; pass_crash=1; pass_speed=1; pass_recall=1
 [[ "$y002_unknown" -gt 0 ]] && pass_fp=0
 if [[ "$y002_total" -gt 0 ]]; then
   awk -v f="$y002_fp" -v t="$y002_total" -v g="$FP_GATE_PCT" 'BEGIN{exit !(100*f/t < g)}' || pass_fp=0
 fi
 [[ "$crashes" -ne 0 ]] && pass_crash=0
 [[ "${#medium_slow[@]}" -ne 0 ]] && pass_speed=0
+[[ "$tp_missed" -ne 0 ]] && pass_recall=0
 
 verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
 
@@ -206,6 +253,11 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
   echo "| Criterion | Target | Measured | Result |"
   echo "|---|---|---|---|"
   echo "| Unused-dep FP rate (YOK002) | < ${FP_GATE_PCT}% | ${fp_rate}% (${y002_fp} FP / ${y002_total} reported${y002_unknown:+, ${y002_unknown} unclassified}) | $(verdict "$pass_fp") |"
+  if [[ "$tp_missed" -eq 0 ]]; then
+    echo "| Unused-dep recall (YOK002 tp) | all detected | ${tp_detected}/${tp_total} detected | $(verdict "$pass_recall") |"
+  else
+    echo "| Unused-dep recall (YOK002 tp) | all detected | ${tp_detected}/${tp_total} detected (missed: ${missed[*]}) | $(verdict "$pass_recall") |"
+  fi
   echo "| Crashes (exit 3) | 0 | ${crashes} | $(verdict "$pass_crash") |"
   if [[ "${#medium_slow[@]}" -eq 0 ]]; then
     echo "| Cold run, medium project | <= ${MEDIUM_GATE_MS} ms | all within budget | $(verdict "$pass_speed") |"
@@ -232,6 +284,7 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
   echo "## Notes"
   echo ""
   echo "- FP rate denominator is reported YOK002 findings (user-facing precision: when yokei says \"remove this\", how often is it wrong)."
+  echo "- Recall gate counts \`tp\` labels (incl. in-repo sentinels) that failed to appear in findings — it fails the run if the FP remediation over-suppresses and stops detecting genuinely-unused dependencies."
   echo "- YOK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_unknown} unclassified) — informational, not a §17 gate."
   echo "- Large-size projects are reported but excluded from the medium cold-run gate."
 } >"$REPORT"
@@ -244,7 +297,7 @@ echo ""
 sed -n '/## Exit criteria/,/## Per-project/p' "$REPORT" | sed '$d'
 
 if [[ "$DO_GATE" -eq 1 ]]; then
-  if [[ "$pass_fp" -eq 1 && "$pass_crash" -eq 1 && "$pass_speed" -eq 1 ]]; then
+  if [[ "$pass_fp" -eq 1 && "$pass_crash" -eq 1 && "$pass_speed" -eq 1 && "$pass_recall" -eq 1 ]]; then
     exit 0
   fi
   echo "§17 gate FAILED" >&2

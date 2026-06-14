@@ -263,6 +263,9 @@ flowchart LR
 - 各 workstream 完了時に `make oss-metrics` を実行し FP 件数の減少を記録
 - gate 合格後 `docs/dev/oss-validation-report.md` を更新
 - 新規 edge case は `scripts/oss-fixtures.labels.tsv` に `fp` 行を追加
+- **recall ガード:** FP gate は「報告 0 件」で自明に通るため、`scripts/oss-recall.manifest`
+  の sentinel fixture (`unused_boto3` / `optional_try_import`) を `tp` ラベルで併測し、
+  検出漏れ (false negative) を recall gate で fail させる。過剰抑制への退化を防ぐ安全網
 
 ### 6.3 性能
 
