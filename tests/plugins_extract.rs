@@ -62,6 +62,17 @@ fn fastapi_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution
         .expect("fastapi contribution")
 }
 
+fn plugin_contrib(
+    hints: &chokkin::PluginHints,
+    plugin: PluginId,
+) -> &chokkin::PluginContribution {
+    hints
+        .contributions
+        .iter()
+        .find(|contrib| contrib.plugin == plugin)
+        .expect("plugin contribution")
+}
+
 fn entry_paths(contrib: &chokkin::PluginContribution) -> Vec<&str> {
     contrib
         .entries
@@ -191,6 +202,52 @@ fn fastapi_scripts_symbol() {
 fn disabled_plugin_skipped() {
     let hints = extract_fixture("plugins_disabled");
     assert!(hints.contributions.is_empty());
+}
+
+#[test]
+fn tox_plugin_records_config_binary() {
+    let hints = extract_fixture("tox_config");
+    let contrib = plugin_contrib(&hints, PluginId::Tox);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "tox" && usage.origin.file == "tox.ini")
+    );
+    assert!(!hints.warnings.iter().any(|warning| {
+        matches!(
+            warning,
+            PluginsWarning::PluginNoOp {
+                plugin: PluginId::Tox
+            }
+        )
+    }));
+}
+
+#[test]
+fn nox_plugin_records_config_binary() {
+    let hints = extract_fixture("nox_config");
+    let contrib = plugin_contrib(&hints, PluginId::Nox);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "nox" && usage.origin.file == "noxfile.py")
+    );
+}
+
+#[test]
+fn pre_commit_plugin_records_config_binary() {
+    let hints = extract_fixture("pre_commit_config");
+    let contrib = plugin_contrib(&hints, PluginId::PreCommit);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| {
+                usage.binary == "pre-commit" && usage.origin.file == ".pre-commit-config.yaml"
+            })
+    );
 }
 
 #[test]

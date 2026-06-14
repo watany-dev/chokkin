@@ -2,6 +2,7 @@
 
 mod config_scan;
 mod context;
+mod devtools;
 mod django;
 mod error;
 mod extract;

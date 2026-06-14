@@ -1,0 +1,6 @@
+[project]
+name = "pre-commit-config"
+version = "0.1.0"
+
+[tool.chokkin.plugins]
+pre_commit = true

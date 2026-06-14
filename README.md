@@ -183,7 +183,7 @@ Dependencies and files are both assigned contexts (runtime / dev / test / docs /
 Frameworks reference modules through strings and decorators, which pure import analysis can't see. Plugins close that gap by adding entry files, string/module references, and binary usage:
 
 - **v0.1**: pytest, django, fastapi/uvicorn
-- **v0.2+**: flask, celery, tox, nox, pre-commit, github-actions, sphinx, mkdocs, alembic
+- **v0.2+**: tox/nox/pre-commit binary usage detection is in progress; flask, celery, github-actions, sphinx, mkdocs, and alembic remain planned.
 
 For example, the Django plugin treats `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` strings as module references and `migrations/**` as framework-used; the FastAPI plugin treats `@router.get`-decorated handlers as externally used.
 

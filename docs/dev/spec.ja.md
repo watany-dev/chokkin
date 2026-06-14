@@ -918,7 +918,8 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
   - SARIF / GitHub Actions reporter
   - cache (§19のwarm目標達成)
   - plugin拡充 (flask / celery / tox / nox / pre-commit / github-actions。
-    tox/nox/pre-commitのbinary利用検出はPhase 1.5で着手済み、ここでplugin化)
+    tox/nox/pre-commitのbinary usage plugin化は初期実装済み。GitHub Actions、
+    workflow command parse、entry/module/symbol refs の拡張は未実装)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
@@ -1030,6 +1031,8 @@ config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 
 warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。
+
+tox/nox/pre-commit は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions plugin と workflow command parse は未実装。
 
 ## 20. 注意点
 

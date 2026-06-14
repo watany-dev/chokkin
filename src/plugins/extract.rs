@@ -7,6 +7,7 @@ use crate::sources::DiscoveredSources;
 
 use super::config_scan;
 use super::context::PluginContext;
+use super::devtools;
 use super::django;
 use super::error::PluginsError;
 use super::fastapi;
@@ -44,6 +45,9 @@ pub fn extract_plugin_hints(
             PluginId::Pytest => pytest::extract(&ctx),
             PluginId::Django => django::extract(&ctx),
             PluginId::Fastapi => fastapi::extract(&ctx),
+            PluginId::Tox | PluginId::Nox | PluginId::PreCommit => {
+                devtools::extract(*plugin, &ctx)
+            }
             _ => stub::extract(*plugin, &ctx),
         };
         warnings.extend(plugin_warnings);
