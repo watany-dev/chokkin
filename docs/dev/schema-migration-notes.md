@@ -110,10 +110,29 @@ Recommended consumer keys:
   rule (`path`, `distribution`, `symbol`, or `binary`)
 - workspace grouping: `workspace_member`
 - baseline visibility: `suppressed.baseline`
-- SARIF grouping: SARIF `ruleId`, not message text
+- SARIF grouping: prefer `partialFingerprints["chokkin/v0"]`; otherwise use
+  SARIF `ruleId` plus the primary location/subject, not message text
 - location paths: `/`-normalized strings, regardless of host OS path separator
 
 Message text is not a stable identifier.
+
+## SARIF Draft
+
+`chokkin --reporter sarif` emits SARIF 2.1.0 with the built-in CHK001-CHK010
+rules and one result per emitted issue. Each result includes:
+
+- `ruleId` with the CHK code
+- `level` mapped from chokkin severity
+- `message.text` for display only
+- `locations[0].physicalLocation` when a file or manifest origin is available
+- `properties.workspaceMember`, nullable, for workspace-scoped findings
+- `partialFingerprints["chokkin/v0"]`, a stable fingerprint based on rule code
+  plus the normalized target; workspace findings include the member prefix
+
+The `chokkin/v0` fingerprint intentionally mirrors the baseline identity shape
+so GitHub code scanning and baseline workflows group the same finding the same
+way. It may gain a new fingerprint key in a future schema, but existing keys
+should remain readable through the v0.2 draft compatibility window.
 
 ## Baseline Draft
 
