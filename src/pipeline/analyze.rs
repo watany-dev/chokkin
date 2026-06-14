@@ -6,7 +6,9 @@ use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{ResolvedMode, apply_entry_plan, build_entry_roots};
-use crate::fix::{FixOptions, FixReport, apply_fixes};
+use crate::fix::{
+    FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace,
+};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::extract_plugin_hints_with_cache;
@@ -73,10 +75,21 @@ pub fn analyze_project(
     let mut core = run_analysis_core(&probe, overrides, &options)?;
     let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
     let fix = if options.fix_enabled {
-        Some(apply_fixes(
+        let workspace_manifests = probe
+            .workspace_inputs
+            .iter()
+            .map(|input| WorkspaceFixManifest {
+                id: input.member.id.as_str(),
+                path: input.member.path.as_str(),
+                pyproject_toml: input.member.pyproject_toml.as_deref(),
+                manifest: &input.manifest,
+            })
+            .collect::<Vec<_>>();
+        Some(apply_fixes_with_workspace(
             &core.issues,
             &probe.root,
             &probe.manifest,
+            &workspace_manifests,
             options.fix,
         )?)
     } else {

@@ -4,7 +4,9 @@ use crate::config::Confidence;
 use crate::manifest::{DeclaredDependency, LoadedManifest};
 use crate::rules::{Issue, IssueReport, IssueSubject, RuleId};
 
-use super::types::{FixOptions, SkippedFix, SkippedReason};
+use super::types::{
+    FixOptions, SkippedFix, SkippedReason, WorkspaceFixManifest,
+};
 
 /// One planned manifest edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,13 +53,14 @@ pub(super) enum FixAction {
 pub(super) fn plan_fixes(
     report: &IssueReport,
     manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
 ) -> Result<Vec<FixAction>, Vec<SkippedFix>> {
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
 
     for issue in &report.issues {
-        match plan_issue_fix(issue, manifest, options) {
+        match plan_issue_fix(issue, manifest, workspace_manifests, options) {
             Ok(Some(action)) => {
                 if is_duplicate_add_missing(&actions, &action) {
                     continue;
@@ -94,6 +97,7 @@ fn is_duplicate_add_missing(actions: &[FixAction], action: &FixAction) -> bool {
 fn plan_issue_fix(
     issue: &Issue,
     manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
 ) -> Result<Option<FixAction>, SkippedFix> {
     match issue.rule {
@@ -106,7 +110,7 @@ fn plan_issue_fix(
             plan_move_to_runtime(issue, manifest)
         },
         RuleId::Chk003 if options.add_missing && issue.confidence == Confidence::Certain => {
-            plan_add_missing_dependency(issue, manifest)
+            plan_add_missing_dependency(issue, manifest, workspace_manifests)
         },
         RuleId::Chk003 if options.add_missing => Err(skipped(
             issue,
@@ -125,16 +129,40 @@ fn plan_issue_fix(
 fn plan_add_missing_dependency(
     issue: &Issue,
     manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
 ) -> Result<Option<FixAction>, SkippedFix> {
     if let Some(member) = &issue.workspace_member {
+        return plan_add_missing_workspace_dependency(issue, member, workspace_manifests);
+    }
+    plan_add_missing_to_manifest(issue, manifest, "pyproject.toml".to_owned())
+}
+
+fn plan_add_missing_workspace_dependency(
+    issue: &Issue,
+    member: &str,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
+) -> Result<Option<FixAction>, SkippedFix> {
+    let Some(workspace) = workspace_manifests
+        .iter()
+        .find(|workspace| workspace.id == member)
+    else {
         return Err(skipped(
             issue,
             SkippedReason::UnsupportedTarget,
-            &format!(
-                "workspace member `{member}` requires editing its own pyproject.toml; member manifest insertion is not supported yet"
-            ),
+            &format!("workspace member `{member}` was not inventoried"),
         ));
-    }
+    };
+    let file = workspace
+        .pyproject_toml
+        .map_or_else(|| format!("{}/pyproject.toml", workspace.path), ToOwned::to_owned);
+    plan_add_missing_to_manifest(issue, workspace.manifest, file)
+}
+
+fn plan_add_missing_to_manifest(
+    issue: &Issue,
+    manifest: &LoadedManifest,
+    file: String,
+) -> Result<Option<FixAction>, SkippedFix> {
     if !manifest.sources.pyproject_toml || manifest.sources.poetry {
         return Err(skipped(
             issue,
@@ -165,7 +193,7 @@ fn plan_add_missing_dependency(
 
     Ok(Some(FixAction::AddMissingDependency {
         name,
-        file: "pyproject.toml".to_owned(),
+        file,
     }))
 }
 

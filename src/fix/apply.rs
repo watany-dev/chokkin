@@ -12,7 +12,9 @@ use super::plan::{FixAction, plan_fixes};
 use super::pyproject::{add_runtime_dependency, move_group_to_runtime, remove_by_label};
 use super::requirements::remove_dependency_line;
 use super::setup_cfg::remove_dependency as remove_setup_cfg_dependency;
-use super::types::{AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason};
+use super::types::{
+    AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason, WorkspaceFixManifest,
+};
 
 /// Apply safe automatic fixes for fixable issues in `report`.
 ///
@@ -25,9 +27,24 @@ pub fn apply_fixes(
     manifest: &LoadedManifest,
     options: FixOptions,
 ) -> Result<FixReport, FixError> {
+    apply_fixes_with_workspace(report, root, manifest, &[], options)
+}
+
+/// Apply safe automatic fixes with workspace member manifest context.
+///
+/// # Errors
+///
+/// Returns [`FixError`] when a manifest file cannot be read or written.
+pub(crate) fn apply_fixes_with_workspace(
+    report: &IssueReport,
+    root: &ProjectRoot,
+    manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
+    options: FixOptions,
+) -> Result<FixReport, FixError> {
     let mut report_out = FixReport::default();
 
-    let actions = match plan_fixes(report, manifest, options) {
+    let actions = match plan_fixes(report, manifest, workspace_manifests, options) {
         Ok(actions) => actions,
         Err(skipped) => {
             report_out.skipped = skipped;
@@ -526,6 +543,51 @@ mod tests {
 
         assert_eq!(fix_report.applied.len(), 1);
         let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\"pyyaml\"]"));
+    }
+
+    #[test]
+    fn add_missing_dependency_updates_workspace_member_pyproject() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let member_dir = dir.path().join("services/api");
+        std::fs::create_dir_all(&member_dir).expect("mkdir member");
+        let member_pyproject = member_dir.join("pyproject.toml");
+        std::fs::write(&member_pyproject, "[project]\nname = \"api\"\n").expect("write member");
+
+        let root = project_root(dir.path());
+        let root_manifest = empty_manifest(&root);
+        let member_root = ProjectRoot {
+            path: member_dir,
+            marker: RootMarker::PyProjectToml,
+            start: dir.path().to_path_buf(),
+        };
+        let mut member_manifest = empty_manifest(&member_root);
+        member_manifest.sources.pyproject_toml = true;
+        let workspace_manifest = WorkspaceFixManifest {
+            id: "api",
+            path: "services/api",
+            pyproject_toml: Some("services/api/pyproject.toml"),
+            manifest: &member_manifest,
+        };
+        let mut issue = missing_dependency_issue("pyyaml");
+        issue.workspace_member = Some("api".to_owned());
+        let report = issue_report(issue);
+
+        let fix_report = apply_fixes_with_workspace(
+            &report,
+            &root,
+            &root_manifest,
+            &[workspace_manifest],
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert_eq!(fix_report.applied.len(), 1);
+        assert_eq!(fix_report.applied[0].file, "services/api/pyproject.toml");
+        let updated = std::fs::read_to_string(&member_pyproject).expect("read member");
         assert!(updated.contains("dependencies = [\"pyyaml\"]"));
     }
 

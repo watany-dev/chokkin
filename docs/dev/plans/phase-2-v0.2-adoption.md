@@ -122,6 +122,10 @@ PR 分割:
 4. CHK003/CHK004/CHK005 の workspace policy を実装する — CHK003/CHK005 strict member-local policy は初期実装済み (`WorkspaceDependencyBoundary`)
 5. reporters に member id を表示する — 初期実装済み (`Issue.workspace_member`, human/GitHub subject labels, JSON `workspace_member`, SARIF `properties.workspaceMember`)
 
+`--fix --add-missing` は workspace member の CHK003 について、member-local
+`pyproject.toml` が静的に抽出できる場合は root ではなく member manifest に
+runtime dependency を追加する。
+
 検証:
 
 - root 実行と member directory 実行で同じ root を選ぶ
