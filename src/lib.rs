@@ -100,7 +100,7 @@ pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
     IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
     SymbolId, SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
-    explain_issue, reconcile_dependencies,
+    explain_issue, issue_fingerprint, issue_stable_target, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

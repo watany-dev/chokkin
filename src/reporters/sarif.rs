@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use crate::rules::{Issue, IssueReport, IssueSubject, RuleId, Severity};
+use crate::rules::{Issue, IssueReport, RuleId, Severity, issue_fingerprint};
 
 use super::format::{json_string, severity_label};
 use super::traits::Reporter;
@@ -103,7 +103,7 @@ fn render_result(out: &mut String, issue: &Issue) {
     let _ = writeln!(
         out,
         "            \"chokkin/v0\": {}",
-        json_string(&sarif_fingerprint(issue))
+        json_string(&issue_fingerprint(issue))
     );
     let _ = writeln!(out, "          }},");
     let _ = writeln!(out, "          \"properties\": {{");
@@ -213,27 +213,4 @@ fn sarif_level(severity: Severity) -> &'static str {
 
 fn sarif_uri(path: &str) -> String {
     path.replace('\\', "/")
-}
-
-fn sarif_fingerprint(issue: &Issue) -> String {
-    format!("{}:{}", issue.rule.as_code(), stable_target(issue))
-}
-
-fn stable_target(issue: &Issue) -> String {
-    let target = match &issue.subject {
-        IssueSubject::File { path } => sarif_uri(path),
-        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
-        IssueSubject::Symbol { module, name } => issue
-            .location
-            .file
-            .as_deref()
-            .map_or_else(|| format!("{module}:{name}"), |path| {
-                format!("{}:{name}", sarif_uri(path))
-            }),
-        IssueSubject::Import { module, file, .. } => format!("{}:{module}", sarif_uri(file)),
-    };
-    issue
-        .workspace_member
-        .as_ref()
-        .map_or_else(|| target.clone(), |member| format!("{member}:{target}"))
 }

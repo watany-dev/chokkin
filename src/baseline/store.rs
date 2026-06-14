@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
 use crate::rules::{
-    Issue, IssueReport, IssueSubject, IssueSummary, SuppressReason, SuppressedIssue,
+    Issue, IssueReport, IssueSummary, SuppressReason, SuppressedIssue, issue_fingerprint,
+    issue_stable_target,
 };
 
 use super::types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
@@ -80,7 +81,7 @@ pub fn write_baseline(
         .map(|issue| BaselineEntry {
             fingerprint: issue_fingerprint(issue),
             code: issue.rule.as_code().to_owned(),
-            target: issue_target(issue),
+            target: issue_stable_target(issue),
         })
         .collect::<Vec<_>>();
     let written = u32::try_from(issues.len()).unwrap_or(u32::MAX);
@@ -217,36 +218,6 @@ fn atomic_write(path: &Path, contents: &str) -> Result<(), BaselineError> {
     Ok(())
 }
 
-fn issue_fingerprint(issue: &Issue) -> String {
-    format!("{}:{}", issue.rule.as_code(), issue_target(issue))
-}
-
-fn issue_target(issue: &Issue) -> String {
-    let target = match &issue.subject {
-        IssueSubject::File { path } => normalize_path(path),
-        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
-        IssueSubject::Symbol { module, name } => issue
-            .location
-            .file
-            .as_deref()
-            .map_or_else(|| format!("{module}:{name}"), |path| {
-                format!("{}:{name}", normalize_path(path))
-            }),
-        IssueSubject::Import { module, file, .. } => {
-            format!("{}:{module}", normalize_path(file))
-        },
-    };
-    if let Some(member) = &issue.workspace_member {
-        format!("{member}:{target}")
-    } else {
-        target
-    }
-}
-
-fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/")
-}
-
 fn build_summary(issues: &[Issue]) -> IssueSummary {
     let mut by_rule = std::collections::BTreeMap::new();
     for issue in issues {
@@ -284,7 +255,7 @@ fn generated_at() -> String {
 mod tests {
     use super::*;
     use crate::config::Confidence;
-    use crate::rules::{IssueLocation, RuleId, Severity};
+    use crate::rules::{Issue, IssueLocation, IssueSubject, RuleId, Severity};
     use tempfile::TempDir;
 
     fn issue(path: &str) -> Issue {

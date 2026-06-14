@@ -280,6 +280,112 @@ impl IssueReport {
     }
 }
 
+/// Stable target identifier used by baseline and machine-readable reporters.
+#[must_use]
+pub fn issue_stable_target(issue: &Issue) -> String {
+    let target = match &issue.subject {
+        IssueSubject::File { path } => normalize_issue_path(path),
+        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
+        IssueSubject::Symbol { module, name } => issue.location.file.as_deref().map_or_else(
+            || format!("{module}:{name}"),
+            |path| format!("{}:{name}", normalize_issue_path(path)),
+        ),
+        IssueSubject::Import { module, file, .. } => {
+            format!("{}:{module}", normalize_issue_path(file))
+        },
+    };
+    issue
+        .workspace_member
+        .as_ref()
+        .map_or_else(|| target.clone(), |member| format!("{member}:{target}"))
+}
+
+/// Stable issue fingerprint using `rule_id + stable target`.
+#[must_use]
+pub fn issue_fingerprint(issue: &Issue) -> String {
+    format!("{}:{}", issue.rule.as_code(), issue_stable_target(issue))
+}
+
+fn normalize_issue_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::DependencyOrigin;
+
+    fn issue(path: &str) -> Issue {
+        Issue {
+            rule: RuleId::Chk001,
+            severity: Severity::Warning,
+            confidence: Confidence::Certain,
+            message: "unused".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: Some(path.to_owned()),
+                line: Some(10),
+                manifest: None,
+            },
+            subject: IssueSubject::File {
+                path: path.to_owned(),
+            },
+            explain: None,
+        }
+    }
+
+    #[test]
+    fn issue_fingerprint_uses_normalized_path_without_line() {
+        assert_eq!(
+            issue_fingerprint(&issue("src\\legacy.py")),
+            "CHK001:src/legacy.py"
+        );
+    }
+
+    #[test]
+    fn issue_fingerprint_prefers_symbol_path_and_symbol() {
+        let mut issue = issue("src\\acme\\api.py");
+        issue.rule = RuleId::Chk006;
+        issue.subject = IssueSubject::Symbol {
+            module: "acme.api".to_owned(),
+            name: "public_api".to_owned(),
+        };
+
+        assert_eq!(
+            issue_fingerprint(&issue),
+            "CHK006:src/acme/api.py:public_api"
+        );
+    }
+
+    #[test]
+    fn issue_fingerprint_includes_workspace_member() {
+        let mut issue = issue("src\\legacy.py");
+        issue.workspace_member = Some("api".to_owned());
+
+        assert_eq!(issue_fingerprint(&issue), "CHK001:api:src/legacy.py");
+    }
+
+    #[test]
+    fn issue_fingerprint_ignores_manifest_line_for_distribution() {
+        let mut issue = issue("src/app.py");
+        issue.rule = RuleId::Chk002;
+        issue.location = IssueLocation {
+            file: None,
+            line: None,
+            manifest: Some(DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(10),
+                label: "project.dependencies[0]".to_owned(),
+            }),
+        };
+        issue.subject = IssueSubject::Distribution {
+            name: "boto3".to_owned(),
+        };
+
+        assert_eq!(issue_fingerprint(&issue), "CHK002:boto3");
+    }
+}
+
 /// Stable sort key for issue candidates within a rule.
 pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
     match subject {
