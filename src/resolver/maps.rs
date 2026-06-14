@@ -126,7 +126,10 @@ fn canonicalize_match(import_root: &str) -> Option<String> {
 
 /// Build merged binary name → distribution map.
 #[must_use]
-pub fn build_binary_map(config: &YokeiConfig) -> BTreeMap<String, String> {
+pub fn build_binary_map(
+    config: &YokeiConfig,
+    venv: &super::venv::VenvIndex,
+) -> BTreeMap<String, String> {
     let mut map: BTreeMap<String, String> = BTreeMap::new();
     for (binary, distribution) in super::bundled::binaries::BINARY_TO_DISTRIBUTION {
         map.insert(
@@ -136,6 +139,9 @@ pub fn build_binary_map(config: &YokeiConfig) -> BTreeMap<String, String> {
     }
     for (binary, distribution) in &config.binary_map {
         map.insert(binary.clone(), normalize_distribution_name(distribution));
+    }
+    for (binary, distribution) in &venv.binaries {
+        map.insert(binary.clone(), distribution.clone());
     }
     map
 }

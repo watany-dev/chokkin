@@ -15,6 +15,8 @@ use super::types::ResolveWarning;
 pub struct VenvIndex {
     /// Import root to normalized distribution names.
     pub imports: BTreeMap<String, Vec<String>>,
+    /// Console script name to normalized distribution names.
+    pub binaries: BTreeMap<String, String>,
 }
 
 /// Load import mappings from a project virtualenv when present.
@@ -129,6 +131,18 @@ fn merge_dist_info(dist_info: &Path, index: &mut VenvIndex) {
     for import in metadata.import_namespaces {
         push_import(index, &import, &distribution);
     }
+
+    let record_path = dist_info.join("RECORD");
+    for import in imports_from_record(&record_path) {
+        push_import(index, &import, &distribution);
+    }
+
+    let entry_points_path = dist_info.join("entry_points.txt");
+    if let Ok(contents) = fs::read_to_string(&entry_points_path) {
+        for script in console_scripts_from_entry_points(&contents) {
+            index.binaries.insert(script, distribution.clone());
+        }
+    }
 }
 
 fn push_import(index: &mut VenvIndex, import: &str, distribution: &str) {
@@ -145,6 +159,67 @@ fn parse_dist_info_name(file_name: &str) -> Option<String> {
     Some(normalize_distribution_name(name))
 }
 
+fn imports_from_record(record_path: &Path) -> Vec<String> {
+    let Ok(contents) = fs::read_to_string(record_path) else {
+        return Vec::new();
+    };
+    let mut imports = std::collections::BTreeSet::new();
+    for line in contents.lines() {
+        let Some(path) = line.split(',').next() else {
+            continue;
+        };
+        let path = path.trim();
+        if path.is_empty() || path.contains(".dist-info/") {
+            continue;
+        }
+        if let Some(import) = top_level_import_from_record_path(path)
+            && !import.starts_with('_')
+        {
+            imports.insert(import);
+        }
+    }
+    imports.into_iter().collect()
+}
+
+fn top_level_import_from_record_path(path: &str) -> Option<String> {
+    let path = path.trim().trim_start_matches("./");
+    if path.is_empty() || path.starts_with('.') {
+        return None;
+    }
+    let first = path.split('/').next()?;
+    if let Some(stem) = first.strip_suffix(".py") {
+        if stem.contains('/') {
+            None
+        } else {
+            Some(stem.to_owned())
+        }
+    } else {
+        Some(first.to_owned())
+    }
+}
+
+fn console_scripts_from_entry_points(contents: &str) -> Vec<String> {
+    let mut scripts = Vec::new();
+    let mut in_console_scripts = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_console_scripts = trimmed.eq_ignore_ascii_case("[console_scripts]");
+            continue;
+        }
+        if !in_console_scripts || trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((name, _)) = trimmed.split_once('=') {
+            let name = name.trim();
+            if !name.is_empty() {
+                scripts.push(name.to_owned());
+            }
+        }
+    }
+    scripts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +229,27 @@ mod tests {
         assert_eq!(
             parse_dist_info_name("PyYAML-6.0.1.dist-info").as_deref(),
             Some("pyyaml")
+        );
+    }
+
+    #[test]
+    fn parses_record_top_level_imports() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let record = dir.path().join("RECORD");
+        std::fs::write(
+            &record,
+            "yaml/__init__.py,sha256=abc,100\nyaml/loader.py,sha256=def,200\n",
+        )
+        .expect("write");
+        assert_eq!(imports_from_record(&record), vec!["yaml".to_owned()]);
+    }
+
+    #[test]
+    fn parses_console_scripts_section() {
+        let contents = "[console_scripts]\nflake8 = flake8.main:main\n\n[other]\n";
+        assert_eq!(
+            console_scripts_from_entry_points(contents),
+            vec!["flake8".to_owned()]
         );
     }
 }
