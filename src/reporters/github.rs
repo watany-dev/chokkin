@@ -32,7 +32,7 @@ fn render_annotation(out: &mut String, issue: &Issue) {
         crate::rules::Severity::Warning => "warning",
         crate::rules::Severity::Info => "notice",
     };
-    let _ = write!(out, "::{level}");
+    let mut properties = Vec::new();
     let file = issue
         .location
         .file
@@ -46,17 +46,17 @@ fn render_annotation(out: &mut String, issue: &Issue) {
             .and_then(|origin| origin.line)
     });
     if let Some(file) = file {
-        let _ = write!(out, " file={}", escape_property(&github_path(file)));
+        properties.push(format!("file={}", escape_property(&github_path(file))));
     }
     if let Some(line) = line {
-        let _ = write!(out, ",line={line}");
+        properties.push(format!("line={line}"));
     }
-    let _ = write!(
-        out,
-        ",title={} {}::",
+    properties.push(format!(
+        "title={} {}",
         issue.rule.as_code(),
         escape_property(&format_issue_subject(issue))
-    );
+    ));
+    let _ = write!(out, "::{level} {}::", properties.join(","));
     let _ = writeln!(out, "{}", escape_message(&issue.message));
 }
 

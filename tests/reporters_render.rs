@@ -90,6 +90,24 @@ fn github_reporter_renders_info_as_notice() {
 }
 
 #[test]
+fn github_reporter_formats_annotation_without_location() {
+    let mut report = report();
+    report.issues[0].location = IssueLocation {
+        file: None,
+        line: None,
+        manifest: None,
+    };
+    report.issues[0].subject = IssueSubject::Distribution {
+        name: "requests".to_owned(),
+    };
+
+    let rendered = render_issues(ReporterId::Github, &report, &context());
+
+    assert!(rendered.starts_with("::error title=CHK003 api%3Arequests::"));
+    assert!(!rendered.starts_with("::error,"));
+}
+
+#[test]
 fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     let rendered = render_issues(ReporterId::Sarif, &report(), &context());
     let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid sarif json");
