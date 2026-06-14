@@ -808,6 +808,8 @@ v0.2で入れるもの。
 - cache
 ```
 
+v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。stable JSON schema は Phase 3 で凍結し、v1.0 で semver 契約の一部にする。
+
 v1.0で安定させるもの。
 
 ```text
@@ -924,6 +926,7 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     GitHub Actions は single-line `run:` のみ対応。notebook parsing は `.ipynb`
     discovery と Python code-cell extraction を初期実装済み。block scalar command parse、
     decorator由来 refs の拡張は未実装)
+  - JSON reporter / baseline draft schema と migration 方針 (`docs/dev/schema-migration-notes.md`)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
