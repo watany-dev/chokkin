@@ -11,13 +11,16 @@ use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
 use crate::resolver::{ResolutionIndex, ResolveWarning};
-use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
+use crate::rules::types::{
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, subject_sort_key,
+};
 use crate::sources::DiscoveredSources;
 
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
 use super::graph::{
-    SymbolRegistry, build_registry, collect_import_references, is_externally_referenced,
+    SymbolId, SymbolReference, SymbolRegistry, build_registry, collect_import_references,
+    is_externally_referenced,
 };
 use super::types::SymbolReport;
 
@@ -60,7 +63,7 @@ pub fn analyze_symbols(
         left.rule
             .as_code()
             .cmp(right.rule.as_code())
-            .then_with(|| subject_key(&left.subject).cmp(&subject_key(&right.subject)))
+            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
     });
 
     let symbol_count = u32::try_from(registry.entries().len()).unwrap_or(u32::MAX);
@@ -102,8 +105,8 @@ fn build_module_names<'a>(
 
 fn detect_unused_exports(
     registry: &SymbolRegistry,
-    references: &[super::graph::SymbolReference],
-    external_symbols: &indexmap::IndexSet<super::graph::SymbolId>,
+    references: &[SymbolReference],
+    external_symbols: &indexmap::IndexSet<SymbolId>,
     mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -154,7 +157,7 @@ fn detect_unused_exports(
 
 fn detect_unused_reexports(
     reexports: &[ReExport],
-    references: &[super::graph::SymbolReference],
+    references: &[SymbolReference],
     mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -272,15 +275,6 @@ fn detect_unresolved_imports(
     }
 
     candidates
-}
-
-fn subject_key(subject: &IssueSubject) -> String {
-    match subject {
-        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
-        IssueSubject::File { path } => path.clone(),
-        IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
-        IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
-    }
 }
 
 fn symbol_kind_label(kind: crate::parser::SymbolKind) -> &'static str {

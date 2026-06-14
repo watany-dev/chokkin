@@ -7,7 +7,7 @@ use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::types::{DependencyReport, IssueSubject};
+use crate::rules::types::{DependencyReport, subject_sort_key};
 use crate::sources::DiscoveredSources;
 
 use super::binary::detect_unlisted_binaries;
@@ -88,22 +88,13 @@ pub fn reconcile_dependencies(
         left.rule
             .as_code()
             .cmp(right.rule.as_code())
-            .then_with(|| subject_key(&left.subject).cmp(&subject_key(&right.subject)))
+            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
     });
 
     DependencyReport {
         candidates,
         used_distributions: used,
         diagnostics: Vec::new(),
-    }
-}
-
-fn subject_key(subject: &IssueSubject) -> String {
-    match subject {
-        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
-        IssueSubject::File { path } => path.clone(),
-        IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
-        IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
     }
 }
 
