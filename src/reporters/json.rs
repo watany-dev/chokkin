@@ -86,6 +86,13 @@ fn render_issue(out: &mut String, issue: &Issue) {
         json_string(issue.confidence.as_str())
     );
     let _ = writeln!(out, "      \"message\": {},", json_string(&issue.message));
+    let target = stable_target(issue);
+    let _ = writeln!(
+        out,
+        "      \"fingerprint\": {},",
+        json_string(&format!("{}:{target}", issue.rule.as_code()))
+    );
+    let _ = writeln!(out, "      \"target\": {},", json_string(&target));
     let _ = writeln!(
         out,
         "      \"workspace_member\": {},",
@@ -138,6 +145,25 @@ fn optional_json_path(value: Option<&str>) -> String {
 
 fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
+}
+
+fn stable_target(issue: &Issue) -> String {
+    let target = match &issue.subject {
+        IssueSubject::File { path } => normalize_path(path),
+        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
+        IssueSubject::Symbol { module, name } => issue
+            .location
+            .file
+            .as_deref()
+            .map_or_else(|| format!("{module}:{name}"), |path| {
+                format!("{}:{name}", normalize_path(path))
+            }),
+        IssueSubject::Import { module, file, .. } => format!("{}:{module}", normalize_path(file)),
+    };
+    issue
+        .workspace_member
+        .as_ref()
+        .map_or_else(|| target.clone(), |member| format!("{member}:{target}"))
 }
 
 fn append_subject_fields(out: &mut String, subject: &IssueSubject) {

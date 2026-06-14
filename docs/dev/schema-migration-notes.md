@@ -92,6 +92,8 @@ Each issue currently contains:
 | `severity` | string | reporter severity label |
 | `confidence` | string | confidence label |
 | `message` | string | user-facing message |
+| `fingerprint` | string | stable issue fingerprint using the same rule/target shape as baseline |
+| `target` | string | stable target identifier used by the fingerprint |
 | `workspace_member` | string or null | workspace member id when known |
 | `file` | string or null | primary file location when known |
 | `line` | integer or null | primary file line when known |
@@ -107,8 +109,9 @@ applicable subject field for its domain instead of assuming every issue has a
 
 Recommended consumer keys:
 
-- issue identity: `code` plus the first non-null subject field relevant to that
-  rule (`path`, `distribution`, `symbol`, or `binary`)
+- issue identity: `fingerprint`; if unavailable, use `code` plus the first
+  non-null subject field relevant to that rule (`path`, `distribution`,
+  `symbol`, or `binary`)
 - workspace grouping: `workspace_member`
 - baseline visibility: `suppressed.baseline`
 - SARIF grouping: prefer `partialFingerprints["chokkin/v0"]`; otherwise use
