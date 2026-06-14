@@ -21,7 +21,8 @@ workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `-
 (`.chokkin/cache`), and parse cache key primitives exist (`CacheKeyContext`,
 `SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse and disk
 `ParsedModule` JSON entries under `.chokkin/cache/parse/`. Config/manifest scan input
-fingerprints exist via `ScanInputFingerprints`; scan result storage is still draft. PyPI
+fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
+`ScanCacheRecord`; scan result payload storage is still draft. PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`

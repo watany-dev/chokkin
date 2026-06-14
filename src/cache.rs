@@ -5,6 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use serde::{Deserialize, Serialize};
+
 use crate::config::ConfigSources;
 use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
@@ -49,6 +51,12 @@ impl CacheOptions {
     /// Absolute path for a persisted parse cache entry.
     #[must_use]
     pub fn parse_entry_path(&self, project_root: &Path, key: &ParseCacheKey) -> PathBuf {
+        self.directory_path(project_root).join(key.relative_path())
+    }
+
+    /// Absolute path for a persisted scan cache entry.
+    #[must_use]
+    pub fn scan_entry_path(&self, project_root: &Path, key: &ScanCacheKey) -> PathBuf {
         self.directory_path(project_root).join(key.relative_path())
     }
 
@@ -105,7 +113,7 @@ impl CacheOptions {
 }
 
 /// Stable inputs shared by cache units.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CacheKeyContext {
     /// chokkin version string.
     pub chokkin_version: String,
@@ -120,7 +128,7 @@ pub struct CacheKeyContext {
 }
 
 /// Fingerprint for one root-relative source file.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SourceFingerprint {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -221,12 +229,72 @@ fn fingerprint_paths(root: &Path, paths: Vec<PathBuf>) -> io::Result<Vec<SourceF
 }
 
 /// Fingerprints of files that affect manifest/config scan results.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ScanInputFingerprints {
     /// Config-layer files.
     pub config: Vec<SourceFingerprint>,
     /// Manifest-layer files.
     pub manifest: Vec<SourceFingerprint>,
+}
+
+/// Key for cacheable config/manifest scan results.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ScanCacheKey {
+    /// Shared key context.
+    pub context: CacheKeyContext,
+    /// Files that affect scan output.
+    pub inputs: ScanInputFingerprints,
+}
+
+impl ScanCacheKey {
+    /// Stable filename for the cached scan result.
+    #[must_use]
+    pub fn file_name(&self) -> String {
+        let mut input = format!(
+            "{}\n{}\n{}\n{}\n{}",
+            self.context.chokkin_version,
+            self.context.config_hash,
+            self.context.manifest_hash,
+            self.context.target_version,
+            self.context.unit_version
+        );
+        append_fingerprints(&mut input, "config", &self.inputs.config);
+        append_fingerprints(&mut input, "manifest", &self.inputs.manifest);
+        format!("{}.json", stable_hex_hash(input.as_bytes()))
+    }
+
+    /// Project-root-relative path for a persisted scan cache entry.
+    #[must_use]
+    pub fn relative_path(&self) -> PathBuf {
+        PathBuf::from("scan").join(self.file_name())
+    }
+}
+
+fn append_fingerprints(out: &mut String, label: &str, fingerprints: &[SourceFingerprint]) {
+    out.push('\n');
+    out.push_str(label);
+    for fingerprint in fingerprints {
+        use std::fmt::Write as _;
+        let _ = write!(
+            out,
+            "\n{}\t{}\t{}\t{}",
+            fingerprint.path,
+            fingerprint.size,
+            fingerprint
+                .modified_ns
+                .map_or_else(String::new, |value| value.to_string()),
+            fingerprint.content_hash
+        );
+    }
+}
+
+/// JSON-safe envelope for future config/manifest scan cache records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanCacheRecord {
+    /// Key used to validate this record.
+    pub key: ScanCacheKey,
+    /// Schema version for the scan cache payload.
+    pub schema_version: String,
 }
 
 impl ScanInputFingerprints {
@@ -591,5 +659,55 @@ mod tests {
             None
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_entry_path_uses_stable_hashed_filename() {
+        let key = ScanCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "scan-v1".to_owned(),
+            },
+            inputs: ScanInputFingerprints {
+                config: vec![SourceFingerprint {
+                    path: "pyproject.toml".to_owned(),
+                    size: 1,
+                    modified_ns: Some(1),
+                    content_hash: "hash".to_owned(),
+                }],
+                manifest: Vec::new(),
+            },
+        };
+
+        let path = CacheOptions::default().scan_entry_path(Path::new("/repo"), &key);
+
+        assert!(path.starts_with("/repo/.chokkin/cache/scan"));
+        assert_eq!(path.extension().and_then(std::ffi::OsStr::to_str), Some("json"));
+    }
+
+    #[test]
+    fn scan_cache_record_is_json_safe() {
+        let record = ScanCacheRecord {
+            key: ScanCacheKey {
+                context: CacheKeyContext {
+                    chokkin_version: "test".to_owned(),
+                    config_hash: "config".to_owned(),
+                    manifest_hash: "manifest".to_owned(),
+                    target_version: "py311".to_owned(),
+                    unit_version: "scan-v1".to_owned(),
+                },
+                inputs: ScanInputFingerprints::default(),
+            },
+            schema_version: "scan-record-v1".to_owned(),
+        };
+
+        let bytes = serde_json::to_vec(&record).expect("serialize scan record");
+        let restored: ScanCacheRecord =
+            serde_json::from_slice(&bytes).expect("deserialize scan record");
+
+        assert_eq!(restored, record);
     }
 }

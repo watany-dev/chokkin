@@ -40,7 +40,7 @@ pub use baseline::{
 };
 pub use cache::{
     CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheKey, ParseCacheStats,
-    ParseCacheStore, ScanInputFingerprints, SourceFingerprint,
+    ParseCacheStore, ScanCacheKey, ScanCacheRecord, ScanInputFingerprints, SourceFingerprint,
 };
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
