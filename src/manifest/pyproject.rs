@@ -39,7 +39,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
     let rel = relative_path(root, path);
     let mut result = PyprojectExtraction::default();
 
-    detect_unsupported_tools(&table, &mut result.warnings);
+    detect_tool_sections(&table, &mut result.warnings);
     extract_tool_dependencies(&table, &rel, &mut result.dependencies, &mut result.warnings);
 
     if let Some(project) = table.get("project").and_then(Value::as_table) {
@@ -203,7 +203,7 @@ fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
     }
 }
 
-fn detect_unsupported_tools(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) {
+fn detect_tool_sections(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) {
     let Some(tool) = table.get("tool").and_then(Value::as_table) else {
         return;
     };
@@ -659,7 +659,7 @@ mod tests {
             }
 
             #[test]
-            fn unsupported_tool_warnings_match_subset(
+            fn tool_section_warnings_match_subset(
                 poetry in proptest::bool::ANY,
                 pdm in proptest::bool::ANY,
                 hatch in proptest::bool::ANY,
