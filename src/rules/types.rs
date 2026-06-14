@@ -180,6 +180,91 @@ pub struct DependencyReport {
     pub diagnostics: Vec<ReconcileDiagnostic>,
 }
 
+/// Final issue location for reporters and `--explain`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueLocation {
+    /// Root-relative source file when applicable.
+    pub file: Option<String>,
+    /// 1-based line number when applicable.
+    pub line: Option<u32>,
+    /// Manifest declaration location when applicable.
+    pub manifest: Option<DependencyOrigin>,
+}
+
+/// Final issue after emission filters (pipeline step 12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issue {
+    /// Rule that produced this issue.
+    pub rule: RuleId,
+    /// Issue severity.
+    pub severity: Severity,
+    /// Confidence in the finding.
+    pub confidence: Confidence,
+    /// Human-readable message.
+    pub message: String,
+    /// Primary evidence location.
+    pub location: IssueLocation,
+    /// Issue subject.
+    pub subject: IssueSubject,
+    /// Explain payload for `--explain`.
+    pub explain: Option<ExplainData>,
+}
+
+/// Why an issue was suppressed by ignore rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuppressReason {
+    /// Matched `[tool.yokei.ignore]`.
+    Config,
+    /// Matched inline `# yokei: ignore[…]`.
+    Inline,
+    /// Matched file-level `# yokei: file-ignore[…]`.
+    FileLevel,
+}
+
+/// Issue suppressed by ignore configuration or directives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppressedIssue {
+    /// The suppressed issue.
+    pub issue: Issue,
+    /// Why it was suppressed.
+    pub reason: SuppressReason,
+}
+
+/// Per-rule issue counts.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IssueSummary {
+    /// Total reported issues.
+    pub total: u32,
+    /// Counts keyed by rule id.
+    pub by_rule: std::collections::BTreeMap<RuleId, u32>,
+}
+
+/// Output of pipeline step 12.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueReport {
+    /// Issues that passed filters and ignore rules.
+    pub issues: Vec<Issue>,
+    /// Issues suppressed by ignore rules (`--debug` output).
+    pub suppressed: Vec<SuppressedIssue>,
+    /// Aggregate statistics.
+    pub summary: IssueSummary,
+    /// Recommended process exit status.
+    pub exit_status: crate::ExitStatus,
+}
+
+impl IssueReport {
+    /// Empty report with success exit status.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            issues: Vec::new(),
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::Success,
+        }
+    }
+}
+
 /// Stable sort key for issue candidates within a rule.
 pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
     match subject {

@@ -128,6 +128,7 @@ mod tests {
                         production,
                         strict,
                         confidence_floor,
+                        ..RuntimeOverrides::default()
                     },
                 );
 
@@ -155,6 +156,7 @@ mod tests {
                     production,
                     strict: None,
                     confidence_floor,
+                    ..RuntimeOverrides::default()
                 };
                 let mut once = default_config();
                 apply_overrides(&mut once, &overrides);
