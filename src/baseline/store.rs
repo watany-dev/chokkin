@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
@@ -67,6 +67,13 @@ pub fn write_baseline(
     baseline_path: &Path,
 ) -> Result<BaselineReport, BaselineError> {
     let path = resolve_baseline_path(root, baseline_path)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| BaselineError::Io {
+            path: parent.display().to_string(),
+            source,
+        })?;
+        ensure_parent_inside_root(root, parent)?;
+    }
     let issues = report
         .issues
         .iter()
@@ -115,17 +122,60 @@ fn resolve_baseline_path(root: &Path, baseline_path: &Path) -> Result<PathBuf, B
     } else {
         root.join(baseline_path)
     };
-    let parent = path.parent().unwrap_or(root.as_path());
-    let parent = parent.canonicalize().map_err(|source| BaselineError::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
-    if !parent.starts_with(&root) {
+    let resolved = resolve_through_existing_ancestor(&path)?;
+    if !resolved.starts_with(&root) {
         return Err(BaselineError::OutsideRoot {
             path: path.display().to_string(),
         });
     }
-    Ok(path)
+    Ok(resolved)
+}
+
+fn resolve_through_existing_ancestor(path: &Path) -> Result<PathBuf, BaselineError> {
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    while !ancestor.exists() {
+        let Some(name) = ancestor.file_name() else {
+            break;
+        };
+        missing.push(name.to_owned());
+        let Some(parent) = ancestor.parent() else {
+            break;
+        };
+        ancestor = parent;
+    }
+
+    let mut resolved = ancestor.canonicalize().map_err(|source| BaselineError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    for component in missing.iter().rev() {
+        if !matches!(Path::new(component).components().next(), Some(Component::Normal(_))) {
+            return Err(BaselineError::OutsideRoot {
+                path: path.display().to_string(),
+            });
+        }
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineError> {
+    let root = root.canonicalize().map_err(|source| BaselineError::Io {
+        path: root.display().to_string(),
+        source,
+    })?;
+    let parent = parent.canonicalize().map_err(|source| BaselineError::Io {
+        path: parent.display().to_string(),
+        source,
+    })?;
+    if parent.starts_with(&root) {
+        Ok(())
+    } else {
+        Err(BaselineError::OutsideRoot {
+            path: parent.display().to_string(),
+        })
+    }
 }
 
 fn atomic_write(path: &Path, contents: &str) -> Result<(), BaselineError> {
@@ -343,6 +393,43 @@ mod tests {
         assert!(report.issues.is_empty());
         assert_eq!(report.exit_status, crate::ExitStatus::Success);
         assert_eq!(report.suppressed[0].reason, SuppressReason::Baseline);
+    }
+
+    #[test]
+    fn missing_nested_baseline_is_not_an_error() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join(".chokkin").join("baseline.json");
+        let mut report = IssueReport {
+            issues: vec![issue("src/legacy.py")],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+
+        assert_eq!(result.suppressed, 0);
+        assert_eq!(report.issues.len(), 1);
+    }
+
+    #[test]
+    fn write_baseline_creates_missing_parent_directory() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join(".chokkin").join("baseline.json");
+        let report = IssueReport {
+            issues: vec![issue("src/legacy.py")],
+            suppressed: Vec::new(),
+            summary: IssueSummary {
+                total: 1,
+                by_rule: std::iter::once((RuleId::Chk001, 1)).collect(),
+            },
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let result = write_baseline(&report, dir.path(), &baseline).expect("write baseline");
+
+        assert_eq!(result.written, 1);
+        assert!(baseline.exists());
     }
 
     #[test]
