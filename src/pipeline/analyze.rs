@@ -10,7 +10,7 @@ use crate::fix::{FixOptions, FixReport, apply_fixes};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::extract_plugin_hints_with_cache;
-use crate::reachability::{ReachabilityReport, analyze_reachability};
+use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
     IssueReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
@@ -172,7 +172,7 @@ fn run_analysis_core(
     apply_resolution_to_graph(&mut graph, &resolution)?;
     apply_entry_plan(&mut graph, &entry)?;
 
-    let reachability = analyze_reachability(
+    let reachability = analyze_reachability_with_cache(
         &mut graph,
         &probe.sources,
         &entry,
@@ -180,6 +180,7 @@ fn run_analysis_core(
         &parse,
         &entry.mode,
         production,
+        Some(&options.cache),
     )?;
 
     let workspace_boundaries = probe
