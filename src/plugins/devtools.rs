@@ -234,16 +234,35 @@ fn command_known_binaries(
     command: &str,
     binary_map: &BTreeMap<String, String>,
 ) -> Vec<String> {
-    command
+    let tokens = command
         .split_whitespace()
-        .filter_map(|token| {
-            let token = token
-                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '.');
-            if binary_map.contains_key(token) {
-                Some(token.to_owned())
-            } else {
-                None
-            }
+        .map(clean_command_token)
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let mut binaries = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if binary_map.contains_key(token.as_str()) {
+            binaries.push(token.clone());
+        }
+        if is_python_binary(token)
+            && tokens.get(index + 1).is_some_and(|next| next == "-m")
+            && let Some(module) = tokens.get(index + 2)
+            && binary_map.contains_key(module.as_str())
+        {
+            binaries.push(module.clone());
+        }
+    }
+    binaries
+}
+
+fn clean_command_token(token: &str) -> String {
+    token
+        .trim_matches(|ch: char| {
+            !ch.is_ascii_alphanumeric() && !matches!(ch, '-' | '_' | '.')
         })
-        .collect()
+        .to_owned()
+}
+
+fn is_python_binary(token: &str) -> bool {
+    token == "python" || token == "python3" || token == "py"
 }

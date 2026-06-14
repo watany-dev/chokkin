@@ -10,6 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: ruff check .
       - run: mypy src
+      - run: python -m pytest tests
       - name: block scalar commands
         run: |
           pytest

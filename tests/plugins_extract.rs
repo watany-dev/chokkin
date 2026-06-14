@@ -276,7 +276,7 @@ fn github_actions_plugin_records_run_binaries() {
             .iter()
             .any(|usage| usage.binary == "pytest"
                 && usage.origin.file == ".github/workflows/ci.yml"
-                && usage.origin.line == Some(14))
+                && usage.origin.line == Some(13))
     );
     assert!(
         contrib
@@ -284,7 +284,15 @@ fn github_actions_plugin_records_run_binaries() {
             .iter()
             .any(|usage| usage.binary == "uv"
                 && usage.origin.file == ".github/workflows/ci.yml"
-                && usage.origin.line == Some(14))
+                && usage.origin.line == Some(15))
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "pytest"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(15))
     );
 }
 
