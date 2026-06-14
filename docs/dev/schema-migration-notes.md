@@ -94,6 +94,7 @@ Each issue currently contains:
 | `message` | string | user-facing message |
 | `workspace_member` | string or null | workspace member id when known |
 | `file` | string or null | primary file location when known |
+| `line` | integer or null | primary file line when known |
 | `path` | string or null | file/import subject path when applicable |
 | `distribution` | string or null | dependency subject when applicable |
 | `symbol` | string or null | symbol/import subject when applicable |

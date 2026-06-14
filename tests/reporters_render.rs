@@ -130,6 +130,7 @@ fn json_reporter_renders_valid_json() {
     assert_eq!(parsed["version"], "0.2.0-test");
     assert_eq!(parsed["issues"][0]["code"], "CHK003");
     assert_eq!(parsed["issues"][0]["workspace_member"], "api");
+    assert_eq!(parsed["issues"][0]["line"], 7);
     assert_eq!(parsed["suppressed"]["baseline"], 1);
 }
 

@@ -96,6 +96,14 @@ fn render_issue(out: &mut String, issue: &Issue) {
         "      \"file\": {},",
         optional_json_path(issue.location.file.as_deref())
     );
+    let _ = writeln!(
+        out,
+        "      \"line\": {},",
+        issue
+            .location
+            .line
+            .map_or_else(|| "null".to_owned(), |line| line.to_string())
+    );
     append_subject_fields(out, &issue.subject);
     let _ = write!(out, "      \"manifest\": ");
     if let Some(origin) = &issue.location.manifest {
