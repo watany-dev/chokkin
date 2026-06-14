@@ -26,10 +26,7 @@ pub(super) fn detect_unused_dependencies(
         if used.contains(&dep.name) {
             continue;
         }
-        if should_suppress_unused_dev_dependency(&dep.context, config, strict) {
-            continue;
-        }
-        if should_suppress_unused_optional_dependency(&dep.context, strict) {
+        if should_suppress_unused_report(&dep.context, config, strict) {
             continue;
         }
         if !strict && dep.marker.is_some() {
@@ -63,8 +60,8 @@ pub(super) fn detect_unused_dependencies(
     candidates
 }
 
-/// Dev-group declarations are not reported as unused unless `--strict`.
-fn should_suppress_unused_dev_dependency(
+/// Dev, optional-extra, and setup-extra declarations are not reported unless `--strict`.
+fn should_suppress_unused_report(
     context: &crate::manifest::DependencyContext,
     config: &YokeiConfig,
     strict: bool,
@@ -72,16 +69,8 @@ fn should_suppress_unused_dev_dependency(
     if strict {
         return false;
     }
-    declaration_bucket(context, &config.dependencies) == DeclarationBucket::Dev
-}
-
-/// Optional-extra declarations are not reported as unused unless `--strict`.
-fn should_suppress_unused_optional_dependency(
-    context: &crate::manifest::DependencyContext,
-    strict: bool,
-) -> bool {
-    if strict {
-        return false;
+    if declaration_bucket(context, &config.dependencies) == DeclarationBucket::Dev {
+        return true;
     }
     matches!(
         context,

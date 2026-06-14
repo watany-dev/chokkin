@@ -16,8 +16,10 @@ equivalent for Python.
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
-is the no-network in-repo skeleton. **The §17 gate is currently NOT met** (see
-that report). 
+is the no-network in-repo skeleton. **The §17 YOK002 gate is met** (see
+`docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
+validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
+budget. PyPI **v0.1** tag remains gated on Trusted Publishing setup. 
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
@@ -120,10 +122,8 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `scripts/oss-fixtures.labels.tsv` — ground-truth `fp`/`tp` labels for
   YOK002/YOK003 findings; the FP-rate gate requires every finding classified.
 - `docs/dev/oss-validation-report.md` — the committed scorecard from the latest
-  run. **Current status: gate NOT met** — YOK002 false-positive rate is 100%
-  (155/155), driven by missing binary/config usage detection, optional/
-  conditional import tracing, and package-module-map gaps. Crashes 0, cold-run
-  speed well within budget. v0.1 must not ship until the FP gate clears.
+  run. **Current status: YOK002 FP gate met** (0/0 after Phase 1.5; was 155/155
+  before remediation). Crashes 0, cold-run speed within budget.
 
 ## PR hygiene
 

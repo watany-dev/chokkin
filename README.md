@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `yokei` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx yokei` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.1 alpha.** `yokei` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`), plus `--explain`, `--trace`, and `--fix`. Use `--probe` for steps 1–4 summary only. A PyPI **v0.1** tag is gated on §17 exit criteria: OSS dogfooding (20 projects), YOK002/YOK003 false-positive rate under 5%, and medium-project cold run under 2s. Run `make oss-fixtures` to exercise the dogfooding skeleton.
+> **Status: v0.1 alpha.** `yokei` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`), plus `--explain`, `--trace`, and `--fix`. Use `--probe` for steps 1–4 summary only. The §17 **YOK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`). PyPI **v0.1** tag awaits Trusted Publishing setup.
 
 ## Why yokei?
 

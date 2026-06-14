@@ -54,22 +54,15 @@ flowchart TB
     S12[Step 12]
     S13[Step 13]
     P1[Phase 1 CLI]
+    P15[Phase 1.5 FP remediation]
   end
 
-  subgraph remaining [v0.1 リリース前 — Phase 1.5]
-    P15A[4.D map + self-extra]
-    P15B[4.A binary scan]
-    P15C[4.B dev policy + PDM/Hatch]
-    P15D[4.C optional imports]
-    GATE[oss-metrics --gate]
+  subgraph remaining [v0.1 リリース前]
+    GATE[oss-metrics --gate ✅]
     TAG[PyPI v0.1 tag]
   end
 
-  done --> P15A
-  P15A --> P15B
-  P15B --> P15C
-  P15C --> P15D
-  P15D --> GATE
+  done --> GATE
   GATE --> TAG
 ```
 
@@ -78,14 +71,18 @@ flowchart TB
 **計測済み (2026-06-14, Phase 1.5 完了後):** crash 0 ✅、cold medium ≤ 2s ✅、YOK002 FP **0%** ✅。
 詳細は [`oss-validation-report.md`](../oss-validation-report.md)。
 
-Phase 1.5（[phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md)）で是正:
+残作業:
+
+1. PyPI `v0.1.0` タグ（Trusted Publishing 設定後）
+
+Phase 1.5（[phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md)）は完了済み:
 
 1. **4.D** package-module-map 拡充 + 自己参照 extra guard（~11 件）
 2. **4.A** binary + config usage detection（~110 件）
 3. **4.B** dev context policy + PDM/Hatch 読取
 4. **4.C** optional / conditional import tracing
-5. `make oss-metrics ARGS=--gate` 再計測 → YOK002 FP < 5%
-6. PyPI `v0.1.0` タグ（Trusted Publishing 設定後）
+5. `make oss-metrics ARGS=--gate` 再計測 → YOK002 FP < 5% ✅
+6. PyPI `v0.1.0` タグ（Trusted Publishing 設定後）⬜
 
 ## ADR
 

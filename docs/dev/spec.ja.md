@@ -856,12 +856,12 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 に `fp`/`tp` で記録し、未分類が残るとFP gateは通らない。最新の計測結果は
 `docs/dev/oss-validation-report.md` に scorecard として残す。
 
-**現状 (v0.1.0): exit criteria未達。** crash 0、cold実行はmedium最遅でも111ms
-(2s budgetに対し十分)。しかしYOK002の誤検知率は **100% (155/155)**。§20の
-「信頼を失いにくい」方針に照らし、FP gateが通るまでv0.1は出さない。是正work
-はPhase 1.5として切り出す。
+**現状 (v0.1.0): §17 exit criteria達成。** Phase 1.5 完了後の OSS 20 件検証で
+YOK002 誤検知率 **0% (0/0)**、crash 0、cold 実行 medium 最遅でも 2s 以内。
+scorecard は `docs/dev/oss-validation-report.md`。PyPI v0.1 タグは Trusted
+Publishing 設定後に予定。
 
-### Phase 1.5: v0.1 誤検知是正(リリースブロッカー)
+### Phase 1.5: v0.1 誤検知是正(リリースブロッカー) — ✅ 完了
 
 ```text
 目標   : §17のFP gate (YOK002誤検知率 5%未満) を通す

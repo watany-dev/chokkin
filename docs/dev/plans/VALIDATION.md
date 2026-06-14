@@ -61,9 +61,10 @@ Phase 0 CLI probe  ∥  Step 5  ∥  Step 6
 | --- | ---: | --- | --- |
 | phase-1.5-fp-remediation | 96 | ✅ 合格 | なし |
 
-OSS 検証で YOK002 FP 100% が判明。4 workstream（binary scan / dev policy /
-optional import / map+self-extra）で §17 gate を通す。詳細は
-[`phase-1.5-fp-remediation.md`](./phase-1.5-fp-remediation.md)。
+OSS 検証で YOK002 FP 100% が判明したが、4 workstream 実装後に
+`make oss-metrics ARGS=--gate` が合格（0/0）。詳細は
+[`phase-1.5-fp-remediation.md`](./phase-1.5-fp-remediation.md) と
+[`oss-validation-report.md`](../oss-validation-report.md)。
 
 ## 未設計（スコープ外）
 

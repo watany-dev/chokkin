@@ -53,7 +53,7 @@ pub(super) fn collect_used_distributions(
     let mut used = IndexSet::new();
 
     for import in &resolution.imports {
-        if !import_counts_as_used(import) {
+        if import.origin != ModuleOrigin::ThirdParty {
             continue;
         }
         let Some(distribution) = import.distribution.as_ref() else {
@@ -72,15 +72,6 @@ pub(super) fn collect_used_distributions(
     }
 
     used
-}
-
-/// Whether a resolved import should mark its distribution as used (§10, Phase 1.5 §4.C).
-fn import_counts_as_used(import: &crate::resolver::ResolvedImport) -> bool {
-    if import.origin != ModuleOrigin::ThirdParty {
-        return false;
-    }
-    // Runtime, optional try-import, TYPE_CHECKING, and platform-guarded imports all count.
-    import.distribution.is_some()
 }
 
 /// Treat a project's own distribution as used when declared (self-referential extras).
