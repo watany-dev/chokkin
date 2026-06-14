@@ -136,7 +136,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment:
-      name: pypi
+      name: pypi-chokkin
       url: https://pypi.org/p/chokkin
     permissions:
       id-token: write  # PyPI Trusted Publishing (no token needed)
