@@ -89,6 +89,7 @@ uvx chokkin --reporter sarif
 uvx chokkin --confidence likely
 uvx chokkin --fix
 uvx chokkin --fix --dry-run
+uvx chokkin --fix --allow-remove-files
 uvx chokkin --baseline chokkin-baseline.json
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --no-cache
@@ -103,6 +104,7 @@ uvx chokkin --init                # v0.2
 - `--production` — dev/test/docs/lint/type contextを解析から外し、runtime contextの到達性だけで判定します。dev専用のファイル・依存は報告対象外になり、逆に「productionで未使用」が厳密に出ます。
 - `--strict` — transitive依存の直接importを常にerror、workspace memberごとに直接依存宣言を要求、environment marker付き依存のunusedもerror扱い、confidence `maybe` のissueも表示します。
 - `--no-exit-code` — issueがあってもexit codeを0にします(config/CLI errorの2、internal errorの3は維持)。導入初期やGitHub Actions summary用に。
+- `--fix` — 確実なdependency findingに対して保守的な修正を適用します。`--allow-remove-files` を追加すると、確実に未到達なファイルも削除対象にします。
 - `--baseline PATH` / `--update-baseline` — 現在のissueをbaseline fileに凍結し、以後の実行では一致するissueを抑制して新規issueだけCIで落とします。
 - `--no-cache` — Phase 2 cache の read/write を無効化します。parse、manifest/config scan、module index cache はデフォルトで有効で、壊れた cache や stale cache は miss 扱いにします。
 - `--reporter github` / `--reporter sarif` — GitHub Actions annotation、または code scanning 用の SARIF 2.1.0 subset を出力します。

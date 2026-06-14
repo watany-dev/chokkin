@@ -22,7 +22,7 @@ pub enum FixError {
         /// Parse detail.
         detail: String,
     },
-    /// Requested fix mode is not supported in v0.1.
+    /// Requested fix target or mode is not supported.
     #[error("{detail}")]
     Unsupported {
         /// Explanation.

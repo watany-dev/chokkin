@@ -643,12 +643,13 @@ duplicate dependencyを整理
 
 ```text
 Python関数/class本体の削除
-未使用ファイルの削除
 曖昧なmissing dependencyの自動追加
 dynamic import周辺の変更
 ```
 
-ファイル削除は明示フラグ必須。
+未使用ファイル削除は明示フラグ必須。v0.2初期実装では `CHK001` のうち
+confidence が `certain` の root-relative file だけを、project root containment
+check 後に削除する。`--dry-run` では削除せず preview のみ返す。
 
 ```bash
 uvx chokkin --fix --allow-remove-files

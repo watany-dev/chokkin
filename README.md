@@ -89,6 +89,7 @@ uvx chokkin --reporter sarif
 uvx chokkin --confidence likely
 uvx chokkin --fix
 uvx chokkin --fix --dry-run
+uvx chokkin --fix --allow-remove-files
 uvx chokkin --baseline chokkin-baseline.json
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --no-cache
@@ -103,6 +104,7 @@ Key flags:
 - `--production` — drop dev/test/docs/lint/type contexts and judge reachability from runtime context only. Dev-only files and dependencies are no longer reported, and "unused in production" becomes strict.
 - `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
+- `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
 - `--no-cache` — disable Phase 2 cache reads/writes. Parse, manifest/config scan, and module-index cache units are enabled by default and are conservative: corrupt or stale entries are treated as misses.
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.

@@ -72,6 +72,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Allow `--fix` to remove unreachable project files.
+    #[arg(long)]
+    pub allow_remove_files: bool,
+
     /// Suppress issues already recorded in this baseline file.
     #[arg(long, value_name = "PATH")]
     pub baseline: Option<PathBuf>,
@@ -138,6 +142,7 @@ impl CliArgs {
             fix_enabled: self.fix,
             fix: FixOptions {
                 dry_run: self.dry_run,
+                allow_remove_files: self.allow_remove_files,
                 ..FixOptions::default()
             },
             baseline: self.baseline.clone(),
@@ -155,6 +160,9 @@ impl CliArgs {
         if self.dry_run && !self.fix {
             return Err("`--dry-run` requires `--fix`".to_owned());
         }
+        if self.allow_remove_files && !self.fix {
+            return Err("`--allow-remove-files` requires `--fix`".to_owned());
+        }
         if self.update_baseline && self.baseline.is_none() {
             return Err("`--update-baseline` requires `--baseline <PATH>`".to_owned());
         }
@@ -164,6 +172,7 @@ impl CliArgs {
         if self.init
             && (self.fix
                 || self.dry_run
+                || self.allow_remove_files
                 || self.production
                 || self.strict
                 || self.no_exit_code
@@ -268,6 +277,23 @@ mod tests {
     fn dry_run_requires_fix() {
         let args = parse_cli_args(vec!["--dry-run".to_owned()]).expect("parse");
         assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn parses_allow_remove_files() {
+        let args =
+            parse_cli_args(vec!["--fix".to_owned(), "--allow-remove-files".to_owned()])
+                .expect("parse");
+        assert!(args.allow_remove_files);
+        assert!(args.analyze_options().fix.allow_remove_files);
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn allow_remove_files_requires_fix() {
+        let args = parse_cli_args(vec!["--allow-remove-files".to_owned()]).expect("parse");
+        let err = args.validate().expect_err("missing fix");
+        assert!(err.contains("--fix"));
     }
 
     #[test]

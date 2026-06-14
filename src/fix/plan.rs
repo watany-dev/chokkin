@@ -33,6 +33,11 @@ pub(super) enum FixAction {
         /// PEP 508 requirement string to add.
         raw: String,
     },
+    /// Remove an unreachable project file.
+    RemoveFile {
+        /// Root-relative file path.
+        path: String,
+    },
 }
 
 /// Build fix actions from an issue report.
@@ -41,16 +46,6 @@ pub(super) fn plan_fixes(
     manifest: &LoadedManifest,
     options: FixOptions,
 ) -> Result<Vec<FixAction>, Vec<SkippedFix>> {
-    if options.allow_remove_files {
-        return Err(vec![SkippedFix {
-            rule: RuleId::Chk001,
-            subject: IssueSubject::File {
-                path: String::new(),
-            },
-            reason: SkippedReason::FileRemovalDenied,
-            detail: "--allow-remove-files is not supported in v0.1".to_owned(),
-        }]);
-    }
     if options.add_missing {
         return Err(vec![SkippedFix {
             rule: RuleId::Chk003,
@@ -85,6 +80,7 @@ fn plan_issue_fix(
     manifest: &LoadedManifest,
 ) -> Result<Option<FixAction>, SkippedFix> {
     match issue.rule {
+        RuleId::Chk001 => plan_remove_file(issue, options),
         RuleId::Chk002 if issue.confidence == Confidence::Certain => plan_remove_dependency(issue),
         RuleId::Chk009 if issue.confidence == Confidence::Certain => {
             plan_remove_duplicate(issue, manifest)
@@ -99,6 +95,30 @@ fn plan_issue_fix(
         )),
         _ => Ok(None),
     }
+}
+
+fn plan_remove_file(
+    issue: &Issue,
+    options: FixOptions,
+) -> Result<Option<FixAction>, SkippedFix> {
+    let IssueSubject::File { path } = &issue.subject else {
+        return Ok(None);
+    };
+    if !options.allow_remove_files {
+        return Err(skipped(
+            issue,
+            SkippedReason::FileRemovalDenied,
+            "file removal requires `--allow-remove-files`",
+        ));
+    }
+    if issue.confidence != Confidence::Certain {
+        return Err(skipped(
+            issue,
+            SkippedReason::NotFixable,
+            "only Certain-confidence unreachable files are auto-removable",
+        ));
+    }
+    Ok(Some(FixAction::RemoveFile { path: path.clone() }))
 }
 
 fn plan_remove_dependency(issue: &Issue) -> Result<Option<FixAction>, SkippedFix> {

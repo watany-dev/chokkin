@@ -7,7 +7,7 @@ use crate::rules::{IssueSubject, RuleId};
 pub struct FixOptions {
     /// When true, skip writing files (dry-run).
     pub dry_run: bool,
-    /// Reserved for future file deletion support (always rejected in v0.1).
+    /// Allow explicit deletion of unreachable project files.
     pub allow_remove_files: bool,
     /// Reserved for missing-dependency insertion (not implemented in v0.1).
     pub add_missing: bool,

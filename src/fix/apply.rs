@@ -104,6 +104,19 @@ fn apply_action(
                 description,
             })
         },
+        FixAction::RemoveFile { path: file } => {
+            let path = resolve_contained_path(root, file)?;
+            std::fs::remove_file(&path).map_err(|source| FixError::Io {
+                path: file.clone(),
+                source,
+            })?;
+            Ok(AppliedFix {
+                rule: RuleId::Chk001,
+                subject: crate::rules::IssueSubject::File { path: file.clone() },
+                file: file.clone(),
+                description: format!("removed unreachable file `{file}`"),
+            })
+        },
     }
 }
 
@@ -123,6 +136,12 @@ fn applied_preview(action: &FixAction) -> AppliedFix {
             file: file.clone(),
             description: format!("would move `{name}` to runtime in {file}"),
         },
+        FixAction::RemoveFile { path } => AppliedFix {
+            rule: RuleId::Chk001,
+            subject: crate::rules::IssueSubject::File { path: path.clone() },
+            file: path.clone(),
+            description: format!("would remove unreachable file `{path}`"),
+        },
     }
 }
 
@@ -135,6 +154,10 @@ fn skipped_from_error(action: &FixAction, error: &FixError) -> SkippedFix {
         FixAction::MoveToRuntime { name, .. } => (
             RuleId::Chk005,
             crate::rules::IssueSubject::Distribution { name: name.clone() },
+        ),
+        FixAction::RemoveFile { path } => (
+            RuleId::Chk001,
+            crate::rules::IssueSubject::File { path: path.clone() },
         ),
     };
     SkippedFix {
@@ -155,6 +178,56 @@ mod tests {
         ProjectMetadata,
     };
     use crate::rules::{Issue, IssueLocation, IssueReport, IssueSummary, Severity};
+
+    fn empty_manifest(root: &ProjectRoot) -> LoadedManifest {
+        LoadedManifest {
+            root: root.clone(),
+            metadata: ProjectMetadata::default(),
+            dependencies: Vec::new(),
+            constraints: Vec::new(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: LockfileGraph::default(),
+            sources: ManifestSources::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn project_root(path: &std::path::Path) -> ProjectRoot {
+        ProjectRoot {
+            path: path.to_path_buf(),
+            marker: RootMarker::PyProjectToml,
+            start: path.to_path_buf(),
+        }
+    }
+
+    fn issue_report(issue: Issue) -> IssueReport {
+        IssueReport {
+            issues: vec![issue],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        }
+    }
+
+    fn unused_file_issue(path: &str) -> Issue {
+        Issue {
+            rule: RuleId::Chk001,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "unused".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: Some(path.to_owned()),
+                line: None,
+                manifest: None,
+            },
+            subject: crate::rules::IssueSubject::File {
+                path: path.to_owned(),
+            },
+            explain: None,
+        }
+    }
 
     #[test]
     fn dry_run_does_not_write_files() {
@@ -238,5 +311,77 @@ mod tests {
         assert_eq!(fix_report.applied.len(), 1);
         let contents = std::fs::read_to_string(&path).expect("read");
         assert!(contents.contains("boto3"));
+    }
+
+    #[test]
+    fn file_removal_requires_allow_flag() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/legacy.py"), "").expect("write");
+
+        let root = project_root(dir.path());
+        let manifest = empty_manifest(&root);
+        let report = issue_report(unused_file_issue("src/legacy.py"));
+
+        let fix_report =
+            apply_fixes(&report, &root, &manifest, FixOptions::default()).expect("apply");
+
+        assert!(dir.path().join("src/legacy.py").exists());
+        assert!(fix_report.applied.is_empty());
+        assert_eq!(fix_report.skipped.len(), 1);
+        assert_eq!(fix_report.skipped[0].reason, SkippedReason::FileRemovalDenied);
+    }
+
+    #[test]
+    fn file_removal_dry_run_keeps_file() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/legacy.py"), "").expect("write");
+
+        let root = project_root(dir.path());
+        let manifest = empty_manifest(&root);
+        let report = issue_report(unused_file_issue("src/legacy.py"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                dry_run: true,
+                allow_remove_files: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert!(dir.path().join("src/legacy.py").exists());
+        assert_eq!(fix_report.applied.len(), 1);
+        assert_eq!(fix_report.applied[0].rule, RuleId::Chk001);
+    }
+
+    #[test]
+    fn file_removal_deletes_unreachable_file() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/legacy.py"), "").expect("write");
+
+        let root = project_root(dir.path());
+        let manifest = empty_manifest(&root);
+        let report = issue_report(unused_file_issue("src/legacy.py"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                allow_remove_files: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert!(!dir.path().join("src/legacy.py").exists());
+        assert_eq!(fix_report.applied.len(), 1);
+        assert_eq!(fix_report.applied[0].rule, RuleId::Chk001);
     }
 }

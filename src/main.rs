@@ -37,6 +37,7 @@ Options:
       --trace <PATH>      Show reachability trace to a file
       --fix               Apply safe automatic manifest fixes
       --dry-run           Preview fixes without writing files (requires --fix)
+      --allow-remove-files Allow --fix to remove unreachable project files
       --baseline <PATH>   Suppress issues already recorded in a baseline file
       --update-baseline   Write current issues to --baseline
       --no-cache          Disable cache reads and writes
