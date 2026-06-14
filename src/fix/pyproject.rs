@@ -63,21 +63,7 @@ pub fn move_group_to_runtime(
         });
     }
 
-    let project = doc
-        .entry("project")
-        .or_insert(Item::Table(toml_edit::Table::new()))
-        .as_table_mut()
-        .ok_or_else(|| FixError::Unsupported {
-            detail: "[project] is not a table".to_owned(),
-        })?;
-    let deps = project
-        .entry("dependencies")
-        .or_insert(Item::Value(Value::Array(toml_edit::Array::new())))
-        .as_array_mut()
-        .ok_or_else(|| FixError::Unsupported {
-            detail: "project.dependencies is not an array".to_owned(),
-        })?;
-    deps.push(raw);
+    let _ = push_runtime_dependency(&mut doc, raw)?;
 
     atomic_write(path, &doc.to_string())?;
     Ok(format!("moved dependency to project.dependencies in {rel}"))
@@ -100,7 +86,16 @@ pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<Strin
             detail: error.to_string(),
         })?;
 
-    let deps = project_dependencies_array(&mut doc)?;
+    if !push_runtime_dependency(&mut doc, raw)? {
+        return Ok(format!("`{raw}` already exists in project.dependencies in {rel}"));
+    }
+
+    atomic_write(path, &doc.to_string())?;
+    Ok(format!("added `{raw}` to project.dependencies in {rel}"))
+}
+
+fn push_runtime_dependency(doc: &mut DocumentMut, raw: &str) -> Result<bool, FixError> {
+    let deps = project_dependencies_array(doc)?;
     let normalized = normalize_distribution_name(raw);
     if deps.iter().any(|value| {
         value
@@ -108,12 +103,10 @@ pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<Strin
             .and_then(requirement_distribution_name)
             .is_some_and(|name| name == normalized)
     }) {
-        return Ok(format!("`{raw}` already exists in project.dependencies in {rel}"));
+        return Ok(false);
     }
     deps.push(raw);
-
-    atomic_write(path, &doc.to_string())?;
-    Ok(format!("added `{raw}` to project.dependencies in {rel}"))
+    Ok(true)
 }
 
 fn project_dependencies_array(doc: &mut DocumentMut) -> Result<&mut toml_edit::Array, FixError> {
@@ -378,6 +371,29 @@ dependencies = ["pytest>=8", "coverage>=7"]
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("coverage"));
+    }
+
+    #[test]
+    fn move_group_to_runtime_does_not_duplicate_existing_runtime_dependency() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            r#"
+[project]
+name = "demo"
+dependencies = ["PyYAML>=6"]
+
+[dependency-groups]
+dev = ["pyyaml"]
+"#,
+        )
+        .expect("write");
+
+        move_group_to_runtime(&path, "dependency-groups.dev[0]", "pyyaml").expect("move");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated.matches("PyYAML").count(), 1);
+        assert!(!updated.contains("\"pyyaml\""));
     }
 
     #[test]
