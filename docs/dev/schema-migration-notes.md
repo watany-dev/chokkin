@@ -138,12 +138,14 @@ Fields:
 | `issues` | array | frozen issue entries |
 | `issues[].fingerprint` | string | stable issue fingerprint used for suppression |
 | `issues[].code` | string | duplicated rule code for reviewability |
-| `issues[].target` | string | stable target identifier used by the fingerprint |
+| `issues[].target` | string | stable target identifier used by the fingerprint; workspace issues include a `member:` prefix |
 
 Baseline fingerprints are based on `rule_id + stable target`. Paths are
 normalized with `/` separators. Dependency and file issue fingerprints do not
 include line numbers, so routine code movement should not force a full baseline
-refresh.
+refresh. For workspace findings, the stable target includes the workspace member
+id before the target so one member's accepted issue does not suppress another
+member's finding with the same path or distribution.
 
 ## Migration Guidance
 
@@ -151,6 +153,8 @@ For v0.2:
 
 - Prefer regenerating the baseline with `--update-baseline` after intentional
   large cleanup or dependency moves.
+- Regenerate baselines after adopting workspace strict mode so member-scoped
+  fingerprints include the member prefix.
 - Commit baseline changes separately from source fixes when possible, so review
   can distinguish newly accepted debt from resolved findings.
 - Treat a malformed baseline as a configuration error. Do not silently ignore a
