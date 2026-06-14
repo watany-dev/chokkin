@@ -322,6 +322,14 @@ fn celery_plugin_records_app_symbol() {
             .iter()
             .any(|usage| usage.binary == "celery" && usage.origin.file == "pyproject.toml")
     );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.file == "src/worker/tasks.py"
+                && reference.origin.line == Some(4))
+    );
 }
 
 #[test]
