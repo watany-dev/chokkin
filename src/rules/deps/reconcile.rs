@@ -49,6 +49,10 @@ pub fn reconcile_dependencies(
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
 
+    for distribution in plugins.config_used_distributions() {
+        used.insert(distribution.clone());
+    }
+
     // types-* stubs are considered used when their runtime package is used.
     for name in declared.keys() {
         if is_types_stub(name)
@@ -175,6 +179,8 @@ mod tests {
         let reachability = ReachabilityReport::empty();
         let plugins = PluginHints {
             contributions: Vec::new(),
+            config_binary_usages: Vec::new(),
+            config_used_distributions: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -213,6 +219,8 @@ mod tests {
         let reachability = ReachabilityReport::empty();
         let plugins = PluginHints {
             contributions: Vec::new(),
+            config_binary_usages: Vec::new(),
+            config_used_distributions: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();

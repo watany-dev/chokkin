@@ -228,3 +228,21 @@ fn self_extra_dependency_is_not_unused() {
     assert!(!has_rule(&report, RuleId::Yok002, "self-extra"));
     assert!(report.used_distributions.contains("self-extra"));
 }
+
+#[test]
+fn binary_tool_pyproject_marks_dev_tools_used() {
+    let report = reconcile_fixture("binary_tool_pyproject");
+    assert!(!has_rule(&report, RuleId::Yok002, "mypy"));
+    assert!(!has_rule(&report, RuleId::Yok002, "ruff"));
+    assert!(report.used_distributions.contains("mypy"));
+    assert!(report.used_distributions.contains("ruff"));
+}
+
+#[test]
+fn binary_mkdocs_theme_marks_material_used() {
+    let report = reconcile_fixture("binary_mkdocs_theme");
+    assert!(!has_rule(&report, RuleId::Yok002, "mkdocs"));
+    assert!(!has_rule(&report, RuleId::Yok002, "mkdocs-material"));
+    assert!(report.used_distributions.contains("mkdocs"));
+    assert!(report.used_distributions.contains("mkdocs-material"));
+}

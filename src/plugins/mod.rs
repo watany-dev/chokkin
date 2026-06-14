@@ -1,5 +1,6 @@
 //! Config / plugin extraction (pipeline step 5).
 
+mod config_scan;
 mod context;
 mod django;
 mod error;
