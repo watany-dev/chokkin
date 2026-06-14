@@ -74,6 +74,21 @@ pub(super) fn collect_used_distributions(
     used
 }
 
+/// Treat a project's own distribution as used when declared (self-referential extras).
+pub(super) fn mark_self_referential_distribution(
+    manifest: &LoadedManifest,
+    declared: &DeclaredIndex<'_>,
+    used: &mut IndexSet<String>,
+) {
+    let Some(project_name) = manifest.metadata.name.as_ref() else {
+        return;
+    };
+    let normalized = crate::manifest::normalize_distribution_name(project_name);
+    if declared.contains_key(&normalized) {
+        used.insert(normalized);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +168,44 @@ mod tests {
             &BTreeMap::new(),
         );
         assert!(used.contains("pyyaml"));
+    }
+
+    #[test]
+    fn marks_self_referential_distribution_as_used() {
+        let dep = crate::manifest::DeclaredDependency {
+            name: "self-extra".to_owned(),
+            extras: vec!["benchmark".to_owned()],
+            marker: None,
+            specifier: None,
+            context: crate::manifest::DependencyContext::Runtime,
+            origin: crate::manifest::DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(4),
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+        };
+        let manifest = LoadedManifest {
+            root: ProjectRoot {
+                path: std::env::temp_dir(),
+                marker: RootMarker::PyProjectToml,
+                start: std::env::temp_dir(),
+            },
+            metadata: ProjectMetadata {
+                name: Some("self-extra".to_owned()),
+                ..ProjectMetadata::default()
+            },
+            dependencies: vec![dep],
+            constraints: Vec::new(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: LockfileGraph::default(),
+            sources: ManifestSources::default(),
+            warnings: Vec::new(),
+        };
+        let declared = build_declared_index(&manifest);
+        let mut used = IndexSet::new();
+        mark_self_referential_distribution(&manifest, &declared, &mut used);
+        assert!(used.contains("self-extra"));
     }
 }

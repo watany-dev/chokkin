@@ -16,7 +16,8 @@ use super::misplaced::detect_misplaced_dependencies;
 use super::missing::{collect_optional_imports, detect_missing_dependencies};
 use super::unused::{detect_unused_dependencies, is_types_stub};
 use super::used::{
-    build_declared_index, collect_used_distributions, has_lockfile, reachable_paths,
+    build_declared_index, collect_used_distributions, has_lockfile,
+    mark_self_referential_distribution, reachable_paths,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
@@ -45,6 +46,8 @@ pub fn reconcile_dependencies(
         graph,
         &resolution.binary_resolutions,
     );
+
+    mark_self_referential_distribution(manifest, &declared, &mut used);
 
     // types-* stubs are considered used when their runtime package is used.
     for name in declared.keys() {
