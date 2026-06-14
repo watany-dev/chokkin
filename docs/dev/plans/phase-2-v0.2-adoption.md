@@ -174,7 +174,7 @@ Phase 1.5 の generic config scanner を、ユーザーに説明しやすい plu
 
 優先順:
 
-1. tox / nox / pre-commit / github-actions — tox/nox/pre-commit の binary usage plugin 化は初期実装済み (`src/plugins/devtools.rs`); GitHub Actions は未実装
+1. tox / nox / pre-commit / github-actions — binary usage plugin 化は初期実装済み (`src/plugins/devtools.rs`); GitHub Actions は single-line `run:` command のみ対応
 2. flask / celery
 3. Sphinx / MkDocs / Alembic
 4. notebook parsing

@@ -45,7 +45,7 @@ src/
   manifest/       Manifest extraction (pipeline step 3; util.rs shared helpers)
   sources/        Source file discovery (pipeline step 4)
   plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi;
-                  tox/nox/pre-commit binary usage detection)
+                  tox/nox/pre-commit/GitHub Actions binary usage detection)
   graph/          Project graph skeleton + import edges (Phase 0; extended in step 6)
   parser/         Python parse (`parse_file`, `parse_project_sources`, pipeline step 6)
   cli.rs          CLI argument parsing (`clap`, Phase 1 flags)

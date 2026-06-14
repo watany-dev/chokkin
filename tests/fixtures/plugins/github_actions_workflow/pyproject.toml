@@ -1,0 +1,6 @@
+[project]
+name = "github-actions-workflow"
+version = "0.1.0"
+
+[tool.chokkin.plugins]
+github_actions = true

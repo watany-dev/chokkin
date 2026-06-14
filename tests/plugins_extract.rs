@@ -251,6 +251,28 @@ fn pre_commit_plugin_records_config_binary() {
 }
 
 #[test]
+fn github_actions_plugin_records_run_binaries() {
+    let hints = extract_fixture("github_actions_workflow");
+    let contrib = plugin_contrib(&hints, PluginId::GithubActions);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "ruff"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(11))
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "mypy"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(12))
+    );
+}
+
+#[test]
 fn full_pipeline_step5() {
     let hints = extract_fixture("django_manage");
     assert_eq!(hints.contributions.len(), 3);

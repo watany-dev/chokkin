@@ -45,7 +45,7 @@ pub fn extract_plugin_hints(
             PluginId::Pytest => pytest::extract(&ctx),
             PluginId::Django => django::extract(&ctx),
             PluginId::Fastapi => fastapi::extract(&ctx),
-            PluginId::Tox | PluginId::Nox | PluginId::PreCommit => {
+            PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
                 devtools::extract(*plugin, &ctx)
             }
             _ => stub::extract(*plugin, &ctx),
