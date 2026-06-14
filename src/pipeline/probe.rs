@@ -196,11 +196,12 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     )?;
     writeln!(out)?;
 
-    let (python_count, stub_count) = count_files(&report.sources);
+    let (python_count, stub_count, notebook_count) = count_files(&report.sources);
     let context_counts = count_contexts(&report.sources);
     writeln!(out, "Sources")?;
-    writeln!(out, "  python files     : {python_count}")?;
-    writeln!(out, "  stub files (.pyi): {stub_count}")?;
+    writeln!(out, "  python files      : {python_count}")?;
+    writeln!(out, "  stub files (.pyi) : {stub_count}")?;
+    writeln!(out, "  notebooks (.ipynb): {notebook_count}")?;
     writeln!(
         out,
         "  contexts         : runtime {}, test {}, dev {}, docs {}",
@@ -268,16 +269,18 @@ struct ContextCounts {
     docs: usize,
 }
 
-fn count_files(sources: &DiscoveredSources) -> (usize, usize) {
+fn count_files(sources: &DiscoveredSources) -> (usize, usize, usize) {
     let mut python = 0;
     let mut stub = 0;
+    let mut notebook = 0;
     for file in &sources.files {
         match file.kind {
             FileKind::Python => python += 1,
             FileKind::Stub => stub += 1,
+            FileKind::Notebook => notebook += 1,
         }
     }
-    (python, stub)
+    (python, stub, notebook)
 }
 
 fn count_contexts(sources: &DiscoveredSources) -> ContextCounts {
@@ -288,7 +291,7 @@ fn count_contexts(sources: &DiscoveredSources) -> ContextCounts {
         docs: 0,
     };
     for file in &sources.files {
-        if file.kind != FileKind::Python {
+        if !matches!(file.kind, FileKind::Python | FileKind::Notebook) {
             continue;
         }
         match file.context {

@@ -921,7 +921,8 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     tox/nox/pre-commit/GitHub Actionsのbinary usage plugin化は初期実装済み。
     Flask/Celery は static app command/reference extraction を初期実装済み。
     Sphinx/MkDocs/Alembic は conventional config/entry extraction を初期実装済み。
-    GitHub Actions は single-line `run:` のみ対応。block scalar command parse、
+    GitHub Actions は single-line `run:` のみ対応。notebook parsing は `.ipynb`
+    discovery と Python code-cell extraction を初期実装済み。block scalar command parse、
     decorator由来 refs の拡張は未実装)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
@@ -1040,6 +1041,8 @@ tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として
 Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。decorator/task discovery は plugin extraction が parse step 前に走る現行pipelineでは未実装。
 
 Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx extensions list や MkDocs plugin/theme の詳細parseは未実装。
+
+notebook parsing は v0.2 plugin 拡充の初期実装として、source discovery が `.ipynb` を `FileKind::Notebook` として拾い、parser が `cells[].cell_type == "code"` の `source` だけを連結して既存の Python static parser に渡す。markdown/raw cell と outputs は無視し、notebook JSON が壊れている場合は per-file warning diagnostic に留める。
 
 ## 20. 注意点
 

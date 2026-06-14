@@ -186,6 +186,7 @@ pub fn collect_files(
         let kind = match path.extension().and_then(|ext| ext.to_str()) {
             Some(ext) if ext.eq_ignore_ascii_case("py") => FileKind::Python,
             Some(ext) if ext.eq_ignore_ascii_case("pyi") => FileKind::Stub,
+            Some(ext) if ext.eq_ignore_ascii_case("ipynb") => FileKind::Notebook,
             _ => continue,
         };
 

@@ -48,7 +48,8 @@ src/
                   Flask/Celery static app refs, tox/nox/pre-commit/GitHub Actions
                   binary usage detection, Sphinx/MkDocs/Alembic config entries)
   graph/          Project graph skeleton + import edges (Phase 0; extended in step 6)
-  parser/         Python parse (`parse_file`, `parse_project_sources`, pipeline step 6)
+  parser/         Python parse and notebook code-cell parsing (`parse_file`,
+                  `parse_project_sources`, pipeline step 6)
   cli.rs          CLI argument parsing (`clap`, Phase 1 flags)
   pipeline/       `probe_project` (steps 1–4), `analyze_project` (steps 1–13)
   resolver/       Import resolution (`resolve_imports`, bundled maps, venv RECORD/entry_points, pipeline step 7)

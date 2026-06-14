@@ -46,7 +46,7 @@ pub fn analyze_reachability(
 
     let mut unreachable = Vec::new();
     for file in &sources.files {
-        if file.kind != FileKind::Python {
+        if !matches!(file.kind, FileKind::Python | FileKind::Notebook) {
             continue;
         }
         if production && !file.context.is_included_in_production() {
@@ -108,7 +108,7 @@ fn apply_framework_globs(
 
     let mut framework_used = IndexSet::new();
     for file in &sources.files {
-        if file.kind != FileKind::Python {
+        if !matches!(file.kind, FileKind::Python | FileKind::Notebook) {
             continue;
         }
         if !set.is_match(&file.path) {

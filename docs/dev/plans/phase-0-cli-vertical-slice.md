@@ -69,8 +69,9 @@ Manifest
   lockfile         : uv.lock (48 nodes)
 
 Sources
-  python files     : 34
-  stub files (.pyi): 1
+  python files      : 34
+  stub files (.pyi) : 1
+  notebooks (.ipynb): 0
   contexts         : runtime 28, test 5, dev 1
 
 Warnings: 1 (see stderr)
