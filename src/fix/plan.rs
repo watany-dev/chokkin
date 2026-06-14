@@ -126,11 +126,13 @@ fn plan_add_missing_dependency(
     issue: &Issue,
     manifest: &LoadedManifest,
 ) -> Result<Option<FixAction>, SkippedFix> {
-    if issue.workspace_member.is_some() {
+    if let Some(member) = &issue.workspace_member {
         return Err(skipped(
             issue,
             SkippedReason::UnsupportedTarget,
-            "workspace member manifest insertion is not supported yet",
+            &format!(
+                "workspace member `{member}` requires editing its own pyproject.toml; member manifest insertion is not supported yet"
+            ),
         ));
     }
     if !manifest.sources.pyproject_toml || manifest.sources.poetry {
@@ -502,5 +504,52 @@ mod tests {
         .expect("plan");
 
         assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn add_missing_workspace_member_skip_names_member() {
+        let mut manifest = manifest_with(Vec::new());
+        manifest.sources.pyproject_toml = true;
+        let issue = Issue {
+            rule: RuleId::Chk003,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "missing".to_owned(),
+            workspace_member: Some("api".to_owned()),
+            location: IssueLocation {
+                file: Some("services/api/src/app.py".to_owned()),
+                line: Some(1),
+                manifest: None,
+            },
+            subject: IssueSubject::Import {
+                module: "yaml".to_owned(),
+                file: "services/api/src/app.py".to_owned(),
+                line: 1,
+            },
+            explain: Some(ExplainData {
+                summary: "pyyaml is imported but not declared".to_owned(),
+                details: Vec::new(),
+            }),
+        };
+        let report = IssueReport {
+            issues: vec![issue],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let skipped = plan_fixes(
+            &report,
+            &manifest,
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect_err("workspace member add-missing should be skipped");
+
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].detail.contains("workspace member `api`"));
+        assert!(skipped[0].detail.contains("own pyproject.toml"));
     }
 }
