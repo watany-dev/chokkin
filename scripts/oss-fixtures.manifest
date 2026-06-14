@@ -1,0 +1,19 @@
+# OSS dogfooding manifest for scripts/run-oss-fixture.sh
+#
+# Format: one path per line (absolute or relative to repo root).
+# Lines starting with # are comments. Blank lines are ignored.
+#
+# v0.1 goal: 20 projects (Django app / FastAPI app / library / monorepo).
+# Start with in-repo fixtures; add cloned OSS checkouts under target/oss-clones/.
+#
+# --- In-repo regression fixtures (always available) ---
+tests/fixtures/deps/unused_boto3
+tests/fixtures/sources/src_layout
+tests/fixtures/probe/empty
+
+# --- Example external paths (uncomment after cloning) ---
+# target/oss-clones/httpx          # library — clone: https://github.com/encode/httpx
+# target/oss-clones/starlette      # library
+# target/oss-clones/uvicorn        # app/server
+# target/oss-clones/django         # framework (large; use a sample project subtree)
+# target/oss-clones/fastapi        # app framework

@@ -6,8 +6,8 @@ Find unused files, dependencies, and public symbols in Python projects.
 
 `yokei` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx yokei` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
-> [!WARNING]
-> **Status: pre-alpha.** Running `yokei` executes **probe mode**: pipeline steps 1–4 (discovery, config, manifest, sources) and prints a project summary. Steps 5–13 are available as library APIs — including `analyze_reachability`, `trace_to_file`, `reconcile_dependencies`, `analyze_symbols`, `emit_issues` (YOK001–YOK010 with ignore/confidence filtering and exit status), and `apply_fixes` (safe manifest edits for certain YOK002/YOK005/YOK009 issues). The full analysis CLI and reporters are not wired yet.
+> [!NOTE]
+> **Status: v0.1 alpha.** `yokei` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`), plus `--explain`, `--trace`, and `--fix`. Use `--probe` for steps 1–4 summary only. A PyPI **v0.1** tag is gated on §17 exit criteria: OSS dogfooding (20 projects), YOK002/YOK003 false-positive rate under 5%, and medium-project cold run under 2s. Run `make oss-fixtures` to exercise the dogfooding skeleton.
 
 ## Why yokei?
 
@@ -79,16 +79,19 @@ Because any module top-level name is importable in Python, `unused_export` start
 uvx yokei
 uvx yokei --production
 uvx yokei --strict
-uvx yokei --fix
-uvx yokei --fix --allow-remove-files
-uvx yokei --include dependencies,files
-uvx yokei --exclude exports
-uvx yokei --reporter json
-uvx yokei --reporter sarif   # v0.2
 uvx yokei --no-exit-code
+uvx yokei --include YOK002,YOK003
+uvx yokei --exclude YOK006
+uvx yokei --reporter json
+uvx yokei --reporter markdown
+uvx yokei --confidence likely
+uvx yokei --fix
+uvx yokei --fix --dry-run
 uvx yokei --explain YOK002:boto3
 uvx yokei --trace src/acme/legacy.py
-uvx yokei --init
+uvx yokei --probe              # steps 1–4 summary only
+uvx yokei --init                # v0.2
+uvx yokei --reporter sarif      # v0.2
 ```
 
 Key flags:

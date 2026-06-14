@@ -158,13 +158,13 @@ pub struct RuntimeOverrides {
 
 ## 7. Exit criteria（Phase 1 CLI）
 
-- [ ] `uvx yokei` がサンプル fixture で §2 形式の出力
-- [ ] 4 reporter 切替
-- [ ] `--explain` / `--trace` 動作
-- [ ] `--fix` で pyproject 編集（Step 13 連携）
-- [ ] exit code §2 準拠
-- [ ] `make check` 通過
-- [ ] dogfooding 用 `scripts/run-oss-fixture.sh` 骨格（optional）
+- [x] `uvx yokei` がサンプル fixture で §2 形式の出力
+- [x] 4 reporter 切替
+- [x] `--explain` / `--trace` 動作
+- [x] `--fix` で pyproject 編集（Step 13 連携）
+- [x] exit code §2 準拠
+- [x] `make check` 通過
+- [x] dogfooding 用 `scripts/run-oss-fixture.sh` 骨格（`make oss-fixtures`）
 
 ## 8. 実装順序
 
@@ -196,7 +196,7 @@ pub struct RuntimeOverrides {
 | `docs/dev/spec.ja.md` §2, §16, §17 | flags / reporter / exit criteria |
 | `phase-0-cli-vertical-slice.md` | `probe_project` 前提 |
 | `step-12` | `IssueReport`, `Reporter` trait |
-| `src/main.rs` | 現状スタブ — Phase 0/1 で置換 |
+| `src/main.rs` | Phase 1 CLI — `analyze_project` デフォルト、`--probe` 互換 |
 | `src/config/types.rs` | `RuntimeOverrides` 拡張必要（§6.1） |
 
 ### Phase 2: 品質評価（100点満点）

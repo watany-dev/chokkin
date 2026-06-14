@@ -693,8 +693,8 @@ yokei/
     main.rs
     discovery/   # 実装済み: pipeline step 1 (root discovery)
     config/      # 実装済み: pipeline step 2 (config load)
-    cli.rs          # CLI argument parsing (Phase 0 probe)
-    pipeline/       # `probe_project` — steps 1–4 orchestration
+    cli.rs          # CLI argument parsing (`clap`, Phase 1)
+    pipeline/       # `probe_project` (steps 1–4), `analyze_project` (steps 1–13)
     manifest/    # 実装済み: pipeline step 3 (manifest extraction)
     sources/     # 実装済み: pipeline step 4 (source file discovery)
     plugins/     # 実装済み: pipeline step 5 (config/plugin extraction)
@@ -706,7 +706,7 @@ yokei/
     rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_dependencies`, YOK002–YOK009);
                  #           step 11 `rules/symbols/` (`analyze_symbols`, YOK006–YOK007, YOK010);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
-    reporters/   # 実装済み: step 12 trait + types（描画は Phase 1 CLI）
+    reporters/   # 実装済み: default / compact / json / markdown reporter
     fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg)
 ```
 

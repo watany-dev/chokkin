@@ -10,10 +10,12 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** pre-alpha. Pipeline steps 1–4 run via `probe_project` (CLI probe
-mode). Steps 5–13 (`plugins`, `parser`, `resolver`, `entry`, `reachability`,
-`rules`, `reporters`, `fix`) are implemented as library APIs. The full analysis
-CLI (step 12 reporters, `--fix` wiring) is not connected yet.
+**Status:** v0.1 alpha. Default CLI runs `analyze_project` (pipeline steps
+1–13) with `default` / `compact` / `json` / `markdown` reporters, `--explain`,
+`--trace`, and `--fix`. `--probe` runs steps 1–4 only (`probe_project`). PyPI
+v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
+rate, cold-run performance). Use `make oss-fixtures` for the dogfooding
+skeleton.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
@@ -31,15 +33,14 @@ src/
   plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi)
   graph/          Project graph skeleton + import edges (Phase 0; extended in step 6)
   parser/         Python parse (`parse_file`, `parse_project_sources`, pipeline step 6)
-  cli.rs          CLI argument parsing (Phase 0 probe flags)
-  pipeline/       probe_project — pipeline steps 1–4 orchestration
+  cli.rs          CLI argument parsing (`clap`, Phase 1 flags)
+  pipeline/       `probe_project` (steps 1–4), `analyze_project` (steps 1–13)
   resolver/       Import resolution (`resolve_imports`, bundled maps, pipeline step 7)
   entry/          Entry root construction (`build_entry_roots`, pipeline step 8)
   reachability/   Reachability analysis (`analyze_reachability`, pipeline step 9)
   rules/          Dependency reconciliation (step 10), symbol usage (step 11),
                   and issue emission (step 12: `emit_issues`, `explain_issue`)
-  reporters/      Reporter trait and types (step 12); default/compact/JSON/Markdown
-                  renderers are Phase 1 CLI
+  reporters/      Built-in reporters: default, compact, json, markdown
   fix/            Optional manifest fixes (step 13: `apply_fixes`)
 pyproject.toml    maturin bin bindings — yokei ships as a Python wheel
 docs/dev/
