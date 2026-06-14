@@ -5,7 +5,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::config::ConfigSources;
 use crate::manifest::ManifestSources;
@@ -166,6 +168,54 @@ impl CacheOptions {
             std::fs::remove_file(&path)?;
         }
         std::fs::rename(tmp, path)
+    }
+
+    /// Read and deserialize the payload from a persisted scan cache record.
+    ///
+    /// Corrupt JSON, key mismatch, missing payload, or incompatible payload shape
+    /// are treated as cache misses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the cache file exists but cannot be read.
+    pub fn read_scan_payload<T>(
+        &self,
+        project_root: &Path,
+        key: &ScanCacheKey,
+    ) -> io::Result<Option<T>>
+    where
+        T: DeserializeOwned,
+    {
+        let Some(record) = self.read_scan_record(project_root, key)? else {
+            return Ok(None);
+        };
+        let Some(payload) = record.payload else {
+            return Ok(None);
+        };
+        Ok(serde_json::from_value(payload).ok())
+    }
+
+    /// Serialize and write a scan cache payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when serialization or cache writing fails.
+    pub fn write_scan_payload<T>(
+        &self,
+        project_root: &Path,
+        key: ScanCacheKey,
+        payload: &T,
+    ) -> io::Result<()>
+    where
+        T: Serialize,
+    {
+        let payload = serde_json::to_value(payload).map_err(io::Error::other)?;
+        let record = ScanCacheRecord {
+            key,
+            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
+            payload: Some(payload),
+        };
+        self.write_scan_record(project_root, &record)
     }
 }
 
@@ -345,13 +395,19 @@ fn append_fingerprints(out: &mut String, label: &str, fingerprints: &[SourceFing
     }
 }
 
-/// JSON-safe envelope for future config/manifest scan cache records.
+/// Schema version for scan cache records.
+pub const SCAN_CACHE_SCHEMA_VERSION: &str = "scan-record-v1";
+
+/// JSON-safe envelope for config/manifest scan cache records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanCacheRecord {
     /// Key used to validate this record.
     pub key: ScanCacheKey,
     /// Schema version for the scan cache payload.
     pub schema_version: String,
+    /// Serialized scan result payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
 }
 
 impl ScanInputFingerprints {
@@ -758,7 +814,8 @@ mod tests {
                 },
                 inputs: ScanInputFingerprints::default(),
             },
-            schema_version: "scan-record-v1".to_owned(),
+            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
+            payload: None,
         };
 
         let bytes = serde_json::to_vec(&record).expect("serialize scan record");
@@ -766,6 +823,31 @@ mod tests {
             serde_json::from_slice(&bytes).expect("deserialize scan record");
 
         assert_eq!(restored, record);
+    }
+
+    #[test]
+    fn scan_cache_record_without_payload_deserializes() {
+        let json = r#"{
+            "key": {
+                "context": {
+                    "chokkin_version": "test",
+                    "config_hash": "config",
+                    "manifest_hash": "manifest",
+                    "target_version": "py311",
+                    "unit_version": "scan-v1"
+                },
+                "inputs": {
+                    "config": [],
+                    "manifest": []
+                }
+            },
+            "schema_version": "scan-record-v1"
+        }"#;
+
+        let restored: ScanCacheRecord =
+            serde_json::from_str(json).expect("deserialize legacy scan record");
+
+        assert_eq!(restored.payload, None);
     }
 
     #[test]
@@ -782,7 +864,8 @@ mod tests {
                 },
                 inputs: ScanInputFingerprints::default(),
             },
-            schema_version: "scan-record-v1".to_owned(),
+            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
+            payload: None,
         };
         let options = CacheOptions::default();
 
@@ -844,7 +927,8 @@ mod tests {
         std::fs::create_dir_all(path.parent().expect("cache parent")).expect("create cache parent");
         let record = ScanCacheRecord {
             key: stored,
-            schema_version: "scan-record-v1".to_owned(),
+            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
+            payload: None,
         };
         std::fs::write(&path, serde_json::to_vec(&record).expect("serialize record"))
             .expect("write mismatched cache");
@@ -855,6 +939,78 @@ mod tests {
                 .expect("read mismatched cache"),
             None
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_payload_round_trips_typed_value() {
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        struct Payload {
+            config_files: Vec<String>,
+            manifest_files: Vec<String>,
+        }
+
+        let root = temp_cache_test_dir("scan-payload");
+        let key = ScanCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "scan-v1".to_owned(),
+            },
+            inputs: ScanInputFingerprints::default(),
+        };
+        let payload = Payload {
+            config_files: vec!["pyproject.toml".to_owned()],
+            manifest_files: vec!["requirements.txt".to_owned()],
+        };
+        let options = CacheOptions::default();
+
+        options
+            .write_scan_payload(&root, key.clone(), &payload)
+            .expect("write scan payload");
+        let restored: Payload = options
+            .read_scan_payload(&root, &key)
+            .expect("read scan payload")
+            .expect("cache hit");
+
+        assert_eq!(restored, payload);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn incompatible_scan_payload_is_cache_miss() {
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        struct Payload {
+            required: String,
+        }
+
+        let root = temp_cache_test_dir("scan-payload-miss");
+        let key = ScanCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "scan-v1".to_owned(),
+            },
+            inputs: ScanInputFingerprints::default(),
+        };
+        let record = ScanCacheRecord {
+            key: key.clone(),
+            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
+            payload: Some(serde_json::json!({"other": "shape"})),
+        };
+        CacheOptions::default()
+            .write_scan_record(&root, &record)
+            .expect("write scan record");
+
+        let restored: Option<Payload> = CacheOptions::default()
+            .read_scan_payload(&root, &key)
+            .expect("read incompatible payload");
+
+        assert_eq!(restored, None);
         let _ = std::fs::remove_dir_all(root);
     }
 }
