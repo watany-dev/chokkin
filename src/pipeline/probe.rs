@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crate::VERSION;
 use crate::config::{
-    ChokkinConfig, ConfigSources, RuntimeOverrides, TargetVersion, apply_overrides, load_config,
+    ChokkinConfig, ConfigSources, ResolvedWorkspaceMember, RuntimeOverrides, TargetVersion,
+    apply_overrides, load_config,
 };
 use crate::discovery::{ProjectRoot, discover_project_root};
 use crate::manifest::{LoadedManifest, extract_manifest, resolve_target_version};
@@ -29,6 +30,8 @@ pub struct ProbeReport {
     pub manifest: LoadedManifest,
     /// Discovered source files and layout.
     pub sources: DiscoveredSources,
+    /// Resolved workspace members below the project root.
+    pub workspace_members: Vec<ResolvedWorkspaceMember>,
     /// Non-fatal warnings from manifest and source discovery.
     pub warnings: Vec<ProbeWarning>,
 }
@@ -64,6 +67,7 @@ pub fn probe_project(
         effective_config: loaded.effective,
         manifest,
         sources,
+        workspace_members: loaded.workspace_members,
         warnings,
     })
 }
@@ -105,6 +109,9 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         report.effective_config.mode
     )?;
     writeln!(out, "Layout  : {}", format_layout(&report.sources))?;
+    if !report.workspace_members.is_empty() {
+        writeln!(out, "Workspace: {} members", report.workspace_members.len())?;
+    }
     writeln!(
         out,
         "Target  : {}",

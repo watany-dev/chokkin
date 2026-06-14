@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     Confidence, ConfigError, PluginId, ProjectMode, ProjectRoot, RootMarker, RuntimeOverrides,
-    apply_overrides, default_config, discover_project_root, load_config,
+    WorkspaceMemberSource, apply_overrides, default_config, discover_project_root, load_config,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -143,13 +143,31 @@ fn parses_workspace_overrides() {
         worker.entry.as_ref().expect("entry")[0].path,
         "src/worker/__main__.py"
     );
+    assert_eq!(loaded.workspace_members.len(), 1);
+    assert_eq!(loaded.workspace_members[0].id, "worker");
+    assert_eq!(loaded.workspace_members[0].path, "services/worker");
+    assert_eq!(
+        loaded.workspace_members[0].pyproject_toml.as_deref(),
+        Some("services/worker/pyproject.toml")
+    );
+    assert_eq!(
+        loaded.workspace_members[0].source,
+        WorkspaceMemberSource::Chokkin
+    );
 }
 
 #[test]
 fn reads_uv_workspace_hint() {
     let loaded = load_fixture("uv_workspace_hint");
-    let hint = loaded.uv_workspace.expect("uv workspace hint");
+    let hint = loaded.uv_workspace.as_ref().expect("uv workspace hint");
     assert_eq!(hint.members, vec!["services/*", "packages/core"]);
+    assert_eq!(loaded.workspace_members.len(), 2);
+    assert!(loaded.workspace_members.iter().any(|member| {
+        member.id == "api"
+            && member.path == "services/api"
+            && member.pyproject_toml.as_deref() == Some("services/api/pyproject.toml")
+            && member.source == WorkspaceMemberSource::Uv
+    }));
 }
 
 #[test]

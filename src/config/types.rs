@@ -337,6 +337,8 @@ pub struct LoadedConfig {
     pub sources: ConfigSources,
     /// Raw `[tool.uv.workspace]` hint from root `pyproject.toml`, if present.
     pub uv_workspace: Option<UvWorkspaceHint>,
+    /// Resolved workspace members discovered below the project root.
+    pub workspace_members: Vec<ResolvedWorkspaceMember>,
 }
 
 /// Raw `[tool.uv.workspace]` members from `pyproject.toml` (unexpanded).
@@ -344,6 +346,29 @@ pub struct LoadedConfig {
 pub struct UvWorkspaceHint {
     /// Member glob patterns as written in `pyproject.toml`.
     pub members: Vec<String>,
+}
+
+/// Source that declared a workspace member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceMemberSource {
+    /// `[tool.uv.workspace].members`.
+    Uv,
+    /// `[tool.chokkin.workspaces.<id>]`.
+    Chokkin,
+}
+
+/// Workspace member resolved relative to the project root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWorkspaceMember {
+    /// Stable member id. Explicit chokkin workspaces use the table id; uv
+    /// workspaces use the member directory basename.
+    pub id: String,
+    /// Member directory path relative to the project root using `/`.
+    pub path: String,
+    /// Root-relative member `pyproject.toml` path when present.
+    pub pyproject_toml: Option<String>,
+    /// Declaration source.
+    pub source: WorkspaceMemberSource,
 }
 
 /// CLI flags that override file config (§2). Unset fields do not override.

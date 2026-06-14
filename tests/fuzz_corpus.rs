@@ -40,6 +40,7 @@ fn default_loaded_config(root: &ProjectRoot) -> LoadedConfig {
             pyproject_tool_chokkin: false,
         },
         uv_workspace: None,
+        workspace_members: Vec::new(),
     }
 }
 

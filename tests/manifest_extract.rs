@@ -241,6 +241,7 @@ fn broken_pyproject_is_error() {
             pyproject_tool_chokkin: false,
         },
         uv_workspace: None,
+        workspace_members: Vec::new(),
     };
     let error = extract_manifest(&root, &config).expect_err("broken pyproject");
     assert!(matches!(error, ManifestError::InvalidToml { .. }));

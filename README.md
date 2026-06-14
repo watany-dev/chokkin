@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.1 alpha.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`), plus `--explain`, `--trace`, and `--fix`. Use `--probe` for steps 1–4 summary only. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`), and **v0.1.0 has been released**.
+> **Status: v0.2 development.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it now reports resolved workspace member counts. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`), and **v0.1.0 has been released**.
 
 ## Why chokkin?
 
@@ -104,6 +104,7 @@ Key flags:
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
+- `--probe` — include resolved workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
 
 Exit codes are fixed for CI:

@@ -49,6 +49,17 @@ fn probe_report_contains_expected_sections() {
 }
 
 #[test]
+fn probe_report_contains_resolved_workspace_count() {
+    let root = fixture_path("config/uv_workspace_hint");
+    let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");
+    assert_eq!(report.workspace_members.len(), 2);
+    let mut output = Vec::new();
+    write_probe_report(&report, &mut output).expect("write");
+    let text = String::from_utf8(output).expect("utf8");
+    assert!(text.contains("Workspace: 2 members"));
+}
+
+#[test]
 fn probe_warnings_written_to_stderr_format() {
     let root = fixture_path("sources/missing_entry");
     let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");

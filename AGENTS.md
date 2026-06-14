@@ -10,9 +10,11 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.1 alpha. Default CLI runs `analyze_project` (pipeline steps
-1–13) with `default` / `compact` / `json` / `markdown` reporters, `--explain`,
-`--trace`, and `--fix`. `--probe` runs steps 1–4 only (`probe_project`). PyPI
+**Status:** v0.2 development on top of released v0.1.0. Default CLI runs
+`analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
+`markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
+and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
+reports resolved workspace member counts when uv/chokkin workspaces are found. PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`

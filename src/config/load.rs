@@ -10,6 +10,7 @@ use super::error::ConfigError;
 use super::parse::{parse_pyproject_config, parse_standalone_config};
 use super::source::discover_config_files;
 use super::types::{ChokkinConfig, ConfigSources, LoadedConfig, RuntimeOverrides};
+use super::workspace::resolve_workspace_members;
 
 /// Load and merge chokkin configuration for `root`.
 ///
@@ -49,12 +50,14 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
     }
 
     let effective = merge_layers(&layers);
+    let workspace_members = resolve_workspace_members(root, &effective, uv_workspace.as_ref())?;
 
     Ok(LoadedConfig {
         root: root.clone(),
         effective,
         sources,
         uv_workspace,
+        workspace_members,
     })
 }
 

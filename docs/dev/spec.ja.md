@@ -258,7 +258,7 @@ entry = ["src/worker/__main__.py"]
 project = ["src/**/*.py", "tests/**/*.py"]
 ```
 
-uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
+uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
 
 `chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
 

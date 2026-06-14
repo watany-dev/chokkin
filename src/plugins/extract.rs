@@ -87,6 +87,7 @@ mod tests {
                 pyproject_tool_chokkin: false,
             },
             uv_workspace: None,
+            workspace_members: Vec::new(),
         };
         let sources = DiscoveredSources {
             root: root.clone(),

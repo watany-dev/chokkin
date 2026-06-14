@@ -115,6 +115,7 @@ fn run_analysis_core(
         effective: probe.effective_config.clone(),
         sources: probe.config_sources.clone(),
         uv_workspace: None,
+        workspace_members: Vec::new(),
     };
 
     let plugins = extract_plugin_hints(&probe.root, &loaded, &probe.sources, &probe.manifest)?;
