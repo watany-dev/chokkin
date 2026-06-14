@@ -18,7 +18,8 @@ reports resolved/inventoried workspace member counts when uv/chokkin workspaces 
 resolver tags member-owned imports, treats cross-member imports as first-party, `--strict`
 requires member-local direct dependency declarations, and reporters expose member ids on
 workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `--no-cache`
-(`.chokkin/cache`; cache units still draft). PyPI
+(`.chokkin/cache`), and parse cache key primitives exist (`CacheKeyContext`,
+`SourceFingerprint`, `ParseCacheKey`; result storage still draft). PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
