@@ -10,7 +10,8 @@
 //! distributions. Step 8 ([`entry`]) builds entry roots for reachability.
 //! Step 9 ([`reachability`]) computes reachable files from entry roots.
 //! Step 10 ([`rules`]) reconciles declared dependencies against usage.
-//! Steps 11–12 (symbol usage, issue emission) are not wired to the CLI yet.
+//! Step 11 ([`rules`]) analyzes public symbol usage and unresolved imports.
+//! Steps 11–12 (issue emission) are not wired to the CLI yet.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
@@ -70,7 +71,7 @@ pub use resolver::{
 };
 pub use rules::{
     DependencyReport, ExplainData, IssueCandidate, IssueSubject, Origin, ReconcileDiagnostic,
-    RuleId, Severity, reconcile_dependencies,
+    RuleId, Severity, SymbolId, SymbolReport, analyze_symbols, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

@@ -1,0 +1,7 @@
+[project]
+name = "unresolved-import"
+version = "0.1.0"
+dependencies = []
+
+[project.scripts]
+acme-cli = "acme.main:main"
