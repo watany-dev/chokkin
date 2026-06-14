@@ -108,6 +108,27 @@ fn remove_label_in_document(doc: &mut DocumentMut, label: &str) -> Result<bool, 
             &name,
         );
     }
+    if let Some((group, index)) = parse_group_label(label, "tool.pdm.dev-dependencies.") {
+        return remove_array_index(
+            doc,
+            &["tool", "pdm", "dev-dependencies", group.as_str()],
+            index,
+        );
+    }
+    if let Some((extra, index)) = parse_group_label(label, "tool.pdm.optional-dependencies.") {
+        return remove_array_index(
+            doc,
+            &["tool", "pdm", "optional-dependencies", extra.as_str()],
+            index,
+        );
+    }
+    if let Some((env, index)) = parse_hatch_env_dependency_label(label) {
+        return remove_array_index(
+            doc,
+            &["tool", "hatch", "envs", env.as_str(), "dependencies"],
+            index,
+        );
+    }
     Err(FixError::Unsupported {
         detail: format!("unsupported pyproject label `{label}`"),
     })
@@ -133,6 +154,16 @@ fn parse_poetry_group_dependency_label(label: &str) -> Option<(String, String)> 
         return None;
     }
     Some((group.to_owned(), name.to_owned()))
+}
+
+fn parse_hatch_env_dependency_label(label: &str) -> Option<(String, usize)> {
+    let rest = label.strip_prefix("tool.hatch.envs.")?;
+    let (env, index_part) = rest.split_once(".dependencies[")?;
+    let index = index_part.strip_suffix(']')?.parse().ok()?;
+    if env.is_empty() {
+        return None;
+    }
+    Some((env.to_owned(), index))
 }
 
 fn remove_table_key(
@@ -244,5 +275,43 @@ ruff = "^0.6"
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("ruff"));
+    }
+
+    #[test]
+    fn removes_pdm_dev_dependency() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            r#"
+[tool.pdm.dev-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+"#,
+        )
+        .expect("write");
+
+        remove_by_label(&path, "tool.pdm.dev-dependencies.dev[0]").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(!updated.contains("pytest"));
+        assert!(updated.contains("ruff"));
+    }
+
+    #[test]
+    fn removes_hatch_env_dependency() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            r#"
+[tool.hatch.envs.test]
+dependencies = ["pytest>=8", "coverage>=7"]
+"#,
+        )
+        .expect("write");
+
+        remove_by_label(&path, "tool.hatch.envs.test.dependencies[0]").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(!updated.contains("pytest"));
+        assert!(updated.contains("coverage"));
     }
 }
