@@ -386,7 +386,11 @@ fn is_known_binary(name: &str) -> bool {
     if tool_key_to_binary(name).is_some() || hook_id_to_binary(name).is_some() {
         return true;
     }
-    build_binary_map(&crate::default_config()).contains_key(name)
+    build_binary_map(
+        &crate::default_config(),
+        &crate::resolver::VenvIndex::default(),
+    )
+    .contains_key(name)
 }
 
 #[cfg(test)]

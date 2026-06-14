@@ -21,3 +21,4 @@ pub use types::{
     ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
     import_root,
 };
+pub use venv::VenvIndex;

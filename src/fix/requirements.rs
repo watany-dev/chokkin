@@ -3,6 +3,7 @@
 use crate::manifest::normalize_distribution_name;
 
 use super::error::FixError;
+use super::write::atomic_write;
 
 /// Remove a dependency line from a requirements file by line number or name match.
 pub fn remove_dependency_line(
@@ -54,10 +55,7 @@ pub fn remove_dependency_line(
         updated.push('\n');
     }
 
-    std::fs::write(path, updated).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    atomic_write(path, &updated)?;
     Ok(format!("removed `{distribution}` from {rel}"))
 }
 

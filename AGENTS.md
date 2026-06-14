@@ -39,13 +39,13 @@ src/
   parser/         Python parse (`parse_file`, `parse_project_sources`, pipeline step 6)
   cli.rs          CLI argument parsing (`clap`, Phase 1 flags)
   pipeline/       `probe_project` (steps 1–4), `analyze_project` (steps 1–13)
-  resolver/       Import resolution (`resolve_imports`, bundled maps, pipeline step 7)
+  resolver/       Import resolution (`resolve_imports`, bundled maps, venv RECORD/entry_points, pipeline step 7)
   entry/          Entry root construction (`build_entry_roots`, pipeline step 8)
   reachability/   Reachability analysis (`analyze_reachability`, pipeline step 9)
   rules/          Dependency reconciliation (step 10), symbol usage (step 11),
                   and issue emission (step 12: `emit_issues`, `explain_issue`)
   reporters/      Built-in reporters: default, compact, json, markdown
-  fix/            Optional manifest fixes (step 13: `apply_fixes`)
+  fix/            Optional manifest fixes (step 13: `apply_fixes`; atomic writes, root containment)
 pyproject.toml    maturin bin bindings — yokei ships as a Python wheel
 docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing

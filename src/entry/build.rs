@@ -1,6 +1,6 @@
 //! Build entry roots from config, manifest, plugins, and auto-detection.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{EntrySpec, YokeiConfig};
 use crate::manifest::LoadedManifest;
@@ -27,10 +27,17 @@ pub fn build_entry_roots(
     production: bool,
 ) -> Result<EntryPlan, EntryError> {
     let known_paths = known_file_paths(sources);
+    let file_contexts = file_context_index(sources);
     let mut warnings = Vec::new();
     let mut candidates = Vec::new();
 
-    collect_config_entries(config, sources, &known_paths, &mut candidates);
+    collect_config_entries(
+        config,
+        sources,
+        &known_paths,
+        &file_contexts,
+        &mut candidates,
+    );
     collect_manifest_entries(
         manifest,
         sources,
@@ -43,6 +50,7 @@ pub fn build_entry_roots(
         plugins,
         sources,
         &known_paths,
+        &file_contexts,
         &mut candidates,
         &mut warnings,
     );
@@ -68,14 +76,23 @@ fn known_file_paths(sources: &DiscoveredSources) -> BTreeSet<String> {
     sources.files.iter().map(|file| file.path.clone()).collect()
 }
 
+fn file_context_index(sources: &DiscoveredSources) -> BTreeMap<&str, FileContext> {
+    sources
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.context))
+        .collect()
+}
+
 fn collect_config_entries(
     config: &YokeiConfig,
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
+    file_contexts: &BTreeMap<&str, FileContext>,
     candidates: &mut Vec<EntryCandidate>,
 ) {
     for entry in &config.entry {
-        let context = context_for_path(&entry.path, sources, known_paths);
+        let context = context_for_path(&entry.path, sources, known_paths, file_contexts);
         candidates.push(EntryCandidate {
             spec: entry.clone(),
             context,
@@ -131,10 +148,12 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_symbol_ref_entries(
     plugins: &PluginHints,
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
+    file_contexts: &BTreeMap<&str, FileContext>,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
 ) {
@@ -147,7 +166,7 @@ fn collect_symbol_ref_entries(
             });
             continue;
         };
-        let context = context_for_path(&path, sources, known_paths);
+        let context = context_for_path(&path, sources, known_paths, file_contexts);
         candidates.push(EntryCandidate {
             spec: EntrySpec {
                 path,
@@ -181,16 +200,13 @@ fn context_for_path(
     path: &str,
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
+    file_contexts: &BTreeMap<&str, FileContext>,
 ) -> FileContext {
     if known_paths.contains(path) {
-        sources
-            .files
-            .iter()
-            .find(|file| file.path == path)
-            .map_or_else(
-                || assign_file_context(path, &sources.layout),
-                |file| file.context,
-            )
+        file_contexts
+            .get(path)
+            .copied()
+            .unwrap_or_else(|| assign_file_context(path, &sources.layout))
     } else {
         assign_file_context(path, &sources.layout)
     }

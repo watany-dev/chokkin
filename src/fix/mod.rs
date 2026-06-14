@@ -1,12 +1,14 @@
 //! Optional automatic fixes (pipeline step 13).
 
 mod apply;
+mod containment;
 mod error;
 mod plan;
 mod pyproject;
 mod requirements;
 mod setup_cfg;
 mod types;
+mod write;
 
 pub use apply::apply_fixes;
 pub use error::FixError;

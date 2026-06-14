@@ -60,9 +60,10 @@ impl<'a> ModuleVisitor<'a> {
 
     /// Visit module-level statements.
     pub fn visit_module(&mut self, stmts: &[Stmt]) {
-        self.parsed.exports = extract_exports(stmts, &mut self.parsed.diagnostics);
+        self.parsed.exports = extract_exports(stmts, self.locator, &mut self.parsed.diagnostics);
         collect_dynamic_imports(
             stmts,
+            self.locator,
             &mut self.parsed.dynamic_imports,
             &mut self.parsed.has_opaque_dynamic_import,
         );

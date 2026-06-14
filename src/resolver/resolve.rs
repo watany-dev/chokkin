@@ -41,7 +41,7 @@ pub fn resolve_imports(
     let import_map = ImportMap::build(config);
     let mut warnings = Vec::new();
     let venv_index = load_venv_index(&manifest.root, &mut warnings);
-    let binary_resolutions = build_binary_map(config);
+    let binary_resolutions = build_binary_map(config, &venv_index);
     let mut imports = Vec::new();
 
     for module in &parse.modules {

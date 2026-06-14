@@ -662,6 +662,8 @@ uvx yokei --fix --add-missing
 
 manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、commentsと順序を極力維持する。requirements系はline-based編集で、hash付きrequirementsやconstraintsは原則自動編集しない。
 
+書き込み安全性: manifest編集は同一ディレクトリへの一時ファイル作成→`rename` でアトミックに置換する(`fix/write.rs`)。既存ファイルのpermissionsは可能な範囲で引き継ぐ。fix対象パスはproject root内に収まることを検証し、ルート外への書き込みはskipする。requirementsの `-r`/`-c` インクルードとDjango `settings.py` 探索も同様にルート封じ込めする。
+
 lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`yokei` はlockfileを直接編集しない。fix適用後に `uv lock` / `poetry lock` の実行を促すメッセージを出力する。
 
 ## 14. 既存Pythonエコシステムの課題と解決
@@ -700,14 +702,14 @@ yokei/
     plugins/     # 実装済み: pipeline step 5 (config/plugin extraction)
     graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
     parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`)
-    resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps)
+    resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps, venv RECORD/entry_points)
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
     rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_dependencies`, YOK002–YOK009);
                  #           step 11 `rules/symbols/` (`analyze_symbols`, YOK006–YOK007, YOK010);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
     reporters/   # 実装済み: default / compact / json / markdown reporter
-    fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg)
+    fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg; atomic write, root containment)
 ```
 
 `pyproject.toml` は概ねこうする。
