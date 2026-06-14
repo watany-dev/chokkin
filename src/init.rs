@@ -4,7 +4,9 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::config::{RuntimeOverrides, apply_overrides, load_config};
+use crate::config::{
+    DependencyGroupsConfig, RuntimeOverrides, apply_overrides, load_config,
+};
 use crate::discovery::{DiscoveryError, discover_project_root};
 use crate::manifest::{ManifestError, extract_manifest, resolve_target_version};
 use crate::sources::{SourcesError, discover_sources};
@@ -101,6 +103,7 @@ pub fn init_project(
     let block = render_starter_config(
         &project_globs,
         &entry,
+        &config.effective.dependencies,
         resolve_target_version(&config.effective, &manifest).as_str(),
     );
     append_config(&pyproject, &block)?;
@@ -139,6 +142,7 @@ fn infer_entry_roots(root: &Path) -> Vec<String> {
 fn render_starter_config(
     project_globs: &[String],
     entry: &[String],
+    dependencies: &DependencyGroupsConfig,
     target_version: &str,
 ) -> String {
     let mut block = String::from("\n[tool.chokkin]\n");
@@ -157,6 +161,17 @@ fn render_starter_config(
         block.push_str(&render_string_array(entry));
         block.push('\n');
     }
+    block.push('\n');
+    block.push_str("[tool.chokkin.dependencies]\n");
+    block.push_str("dev_groups = ");
+    block.push_str(&render_string_array(&dependencies.dev_groups));
+    block.push('\n');
+    block.push_str("runtime_groups = ");
+    block.push_str(&render_string_array(&dependencies.runtime_groups));
+    block.push('\n');
+    block.push_str("type_groups = ");
+    block.push_str(&render_string_array(&dependencies.type_groups));
+    block.push('\n');
     block
 }
 
@@ -234,8 +249,10 @@ mod tests {
 
         let text = fs::read_to_string(report.path).expect("read pyproject");
         assert!(text.contains("[tool.chokkin]"));
+        assert!(text.contains("[tool.chokkin.dependencies]"));
         assert!(text.contains("mode = \"auto\""));
         assert!(text.contains("entry = [\"manage.py\"]"));
+        assert!(text.contains("dev_groups = [\"dev\", \"test\", \"tests\", \"lint\", \"docs\"]"));
     }
 
     #[test]
@@ -257,6 +274,11 @@ mod tests {
         let block = render_starter_config(
             &["src/**/weird\"name.py".to_owned()],
             &["main.py".to_owned()],
+            &DependencyGroupsConfig {
+                dev_groups: vec!["dev".to_owned()],
+                runtime_groups: vec!["server".to_owned()],
+                type_groups: vec!["types".to_owned()],
+            },
             "py311",
         );
         assert!(block.contains("src/**/weird\\\"name.py"));
