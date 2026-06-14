@@ -303,35 +303,81 @@ fn scan_tox_config(
     scan_lines_for_binaries(&contents, result, seen, &origin);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToxListKey {
+    Deps,
+    Extras,
+}
+
 fn scan_tox_contents(ctx: &PluginContext<'_>, contents: &str, result: &mut ConfigScanResult) {
     let mut current_extras: Vec<String> = Vec::new();
+    let mut current_key: Option<ToxListKey> = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
             current_extras.clear();
+            current_key = None;
             continue;
         }
-        if let Some(value) = trimmed.strip_prefix("extras =") {
-            current_extras = value
-                .split([',', '\n'])
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(str::to_owned)
-                .collect();
-            for extra in &current_extras {
-                mark_optional_extra_dependencies(ctx, extra, result);
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(key) = current_key
+            && line.chars().next().is_some_and(char::is_whitespace)
+        {
+            match key {
+                ToxListKey::Deps => push_tox_dependency(trimmed, result),
+                ToxListKey::Extras => {
+                    current_extras.extend(push_tox_extras(ctx, trimmed, result));
+                }
             }
             continue;
         }
+        current_key = None;
+        if let Some(value) = trimmed.strip_prefix("extras =") {
+            current_key = Some(ToxListKey::Extras);
+            current_extras = push_tox_extras(ctx, value, result);
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("extras +=") {
+            current_key = Some(ToxListKey::Extras);
+            current_extras.extend(push_tox_extras(ctx, value, result));
+            continue;
+        }
         if let Some(value) = trimmed.strip_prefix("deps =") {
-            push_tox_dependency(value, result);
+            current_key = Some(ToxListKey::Deps);
+            if value.trim().is_empty() {
+                for extra in &current_extras {
+                    mark_optional_extra_dependencies(ctx, extra, result);
+                }
+            } else {
+                push_tox_dependency(value, result);
+            }
             continue;
         }
         if let Some(value) = trimmed.strip_prefix("deps +=") {
+            current_key = Some(ToxListKey::Deps);
             push_tox_dependency(value, result);
         }
     }
+}
+
+fn push_tox_extras(
+    ctx: &PluginContext<'_>,
+    raw: &str,
+    result: &mut ConfigScanResult,
+) -> Vec<String> {
+    let extras = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for extra in &extras {
+        mark_optional_extra_dependencies(ctx, extra, result);
+    }
+    extras
 }
 
 fn push_tox_dependency(raw: &str, result: &mut ConfigScanResult) {
@@ -706,5 +752,63 @@ mod tests {
                 && usage.origin.file == "tox.ini"
                 && usage.origin.line == Some(3)
         }));
+    }
+
+    #[test]
+    fn tox_multiline_deps_and_extras_mark_distributions_used() {
+        let dir = std::env::temp_dir().join("chokkin-config-scan-tox-multiline");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(
+            dir.join("tox.ini"),
+            "[testenv:docs]\nextras =\n    docs\ndeps =\n    pytest\n    requests>=2\n",
+        )
+        .expect("write tox");
+
+        let root = ProjectRoot {
+            path: dir.clone(),
+            marker: RootMarker::PyProjectToml,
+            start: dir,
+        };
+        let mut manifest = empty_manifest(root.clone());
+        manifest
+            .dependencies
+            .push(crate::manifest::DeclaredDependency {
+                name: "sphinx".to_owned(),
+                extras: Vec::new(),
+                marker: None,
+                specifier: None,
+                context: DependencyContext::OptionalExtra("docs".to_owned()),
+                origin: DependencyOrigin {
+                    file: "pyproject.toml".to_owned(),
+                    line: Some(1),
+                    label: "project.optional-dependencies.docs[0]".to_owned(),
+                },
+                opaque: false,
+            });
+        let config = crate::default_config();
+        let sources = DiscoveredSources {
+            root: root.clone(),
+            layout: LayoutInfo {
+                layout: ProjectLayout::Unknown,
+                packages: Vec::new(),
+                inferred_globs: Vec::new(),
+                flat_candidates: Vec::new(),
+                ambiguous_flat_resolution: false,
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let ctx = PluginContext {
+            root: &root,
+            config: &config,
+            sources: &sources,
+            manifest: &manifest,
+        };
+        let result = scan_config(&ctx);
+        assert!(result.used_distributions.contains(&"sphinx".to_owned()));
+        assert!(result.used_distributions.contains(&"pytest".to_owned()));
+        assert!(result.used_distributions.contains(&"requests".to_owned()));
     }
 }
