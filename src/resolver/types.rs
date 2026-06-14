@@ -29,6 +29,10 @@ pub struct ResolvedImport {
     pub line: u32,
     /// Import context from the parser.
     pub context: ImportContext,
+    /// `true` when the import appears inside a `try` block body.
+    pub optional: bool,
+    /// `true` when the import appears under an `if sys.platform …` guard.
+    pub platform_guarded: bool,
     /// Classification origin.
     pub origin: ModuleOrigin,
     /// Normalized PEP 508 distribution name when third-party.

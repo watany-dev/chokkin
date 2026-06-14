@@ -109,10 +109,11 @@ fn parse_requirements_line(
         let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
             path: include_path.to_owned(),
         })?;
+        let include_context = context_for_requirements_include(include_path, ctx.default_context);
         return parse_requirements_file_path(RequirementsParseContext {
             root: ctx.root,
             path: &resolved_path,
-            default_context: ctx.default_context,
+            default_context: &include_context,
             include_stack: ctx.include_stack,
             result: ctx.result,
             mode: RequirementsParseMode::Dependencies,
@@ -299,6 +300,48 @@ fn resolve_requirements_include(root: &Path, base: &Path, include: &str) -> Opti
     None
 }
 
+/// Infer dependency context from an included requirements filename (Phase 1.5 §4.B).
+fn context_for_requirements_include(
+    include_path: &str,
+    parent: &DependencyContext,
+) -> DependencyContext {
+    let basename = Path::new(include_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(include_path);
+    let normalized = basename.to_ascii_lowercase();
+
+    if matches!(
+        normalized.as_str(),
+        "requirements-dev.txt"
+            | "dev-requirements.txt"
+            | "requirements-packaging.txt"
+            | "requirements-github-actions.txt"
+    ) {
+        return DependencyContext::Group("dev".to_owned());
+    }
+
+    if normalized.starts_with("requirements-docs")
+        || normalized.contains("documentation")
+        || normalized.contains("docs")
+    {
+        return DependencyContext::Group("docs".to_owned());
+    }
+
+    if normalized.starts_with("requirements-test")
+        || normalized.contains("testing")
+        || normalized.contains("tests")
+    {
+        return DependencyContext::Group("tests".to_owned());
+    }
+
+    if normalized.contains("optional") {
+        return DependencyContext::Group("dev".to_owned());
+    }
+
+    parent.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +370,22 @@ mod tests {
     #[test]
     fn editable_flag_rejects_example_pkg_false_positive() {
         assert_eq!(editable_flag_value("-example-pkg"), None);
+    }
+
+    #[test]
+    fn include_context_infers_docs_from_nested_path() {
+        let parent = DependencyContext::Runtime;
+        assert!(matches!(
+            context_for_requirements_include("requirements-docs.txt", &parent),
+            DependencyContext::Group(group) if group == "docs"
+        ));
+        assert!(matches!(
+            context_for_requirements_include(
+                "requirements/requirements-documentation.txt",
+                &parent
+            ),
+            DependencyContext::Group(group) if group == "docs"
+        ));
     }
 
     mod props {

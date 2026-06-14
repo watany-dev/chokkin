@@ -1,0 +1,10 @@
+[project]
+name = "pdm-dev-deps"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[tool.pdm.dev-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+pdm-dev-deps = "acme.main:main"

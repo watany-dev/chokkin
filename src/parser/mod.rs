@@ -6,6 +6,7 @@ mod error;
 mod exports;
 mod ignores;
 mod parse;
+mod platform_guard;
 mod relative;
 mod syntax;
 mod type_checking;

@@ -149,6 +149,8 @@ mod tests {
                 file: "src/app.py".to_owned(),
                 line: 1,
                 context: ImportContext::Runtime,
+                optional: false,
+                platform_guarded: false,
                 origin: ModuleOrigin::ThirdParty,
                 distribution: Some("pyyaml".to_owned()),
                 confidence: ResolveConfidence::Certain,

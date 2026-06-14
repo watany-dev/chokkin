@@ -1,0 +1,7 @@
+[project]
+name = "platform-guard-import"
+version = "0.1.0"
+dependencies = ["requests", "tzdata"]
+
+[project.scripts]
+platform-guard-import = "acme.main:main"
