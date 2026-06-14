@@ -80,6 +80,16 @@ fn github_reporter_normalizes_annotation_file_path() {
 }
 
 #[test]
+fn github_reporter_renders_info_as_notice() {
+    let mut report = report();
+    report.issues[0].severity = Severity::Info;
+
+    let rendered = render_issues(ReporterId::Github, &report, &context());
+
+    assert!(rendered.starts_with("::notice"));
+}
+
+#[test]
 fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     let rendered = render_issues(ReporterId::Sarif, &report(), &context());
     let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid sarif json");

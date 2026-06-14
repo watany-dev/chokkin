@@ -29,7 +29,8 @@ impl Reporter for GithubReporter {
 fn render_annotation(out: &mut String, issue: &Issue) {
     let level = match issue.severity {
         crate::rules::Severity::Error => "error",
-        crate::rules::Severity::Warning | crate::rules::Severity::Info => "warning",
+        crate::rules::Severity::Warning => "warning",
+        crate::rules::Severity::Info => "notice",
     };
     let _ = write!(out, "::{level}");
     let file = issue
