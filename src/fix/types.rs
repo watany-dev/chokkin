@@ -9,7 +9,7 @@ pub struct FixOptions {
     pub dry_run: bool,
     /// Allow explicit deletion of unreachable project files.
     pub allow_remove_files: bool,
-    /// Reserved for missing-dependency insertion (not implemented in v0.1).
+    /// Request missing-dependency insertion when it becomes unambiguous.
     pub add_missing: bool,
 }
 
