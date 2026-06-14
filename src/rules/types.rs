@@ -156,6 +156,8 @@ pub struct IssueCandidate {
     pub confidence: Confidence,
     /// Human-readable message.
     pub message: String,
+    /// Workspace member id associated with the issue, when known.
+    pub workspace_member: Option<String>,
     /// Evidence locations.
     pub origins: Vec<Origin>,
     /// Explain payload for `--explain`.
@@ -211,6 +213,8 @@ pub struct Issue {
     pub confidence: Confidence,
     /// Human-readable message.
     pub message: String,
+    /// Workspace member id associated with the issue, when known.
+    pub workspace_member: Option<String>,
     /// Primary evidence location.
     pub location: IssueLocation,
     /// Issue subject.

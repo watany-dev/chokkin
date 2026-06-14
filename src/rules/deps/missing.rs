@@ -121,6 +121,7 @@ fn workspace_missing_candidate(
             "imported {distribution} in {}:{} but workspace member {member_id} does not declare it directly",
             import.file, import.line
         ),
+        workspace_member: Some(member_id.to_owned()),
         origins: vec![Origin::Import {
             file: import.file.clone(),
             line: import.line,
@@ -157,6 +158,7 @@ fn optional_missing_candidate(
         message: format!(
             "optional try-import of {distribution} is not declared in any dependency context"
         ),
+        workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
             line: import.line,
@@ -185,6 +187,7 @@ fn transitive_candidate(import: &ResolvedImport, distribution: &str) -> IssueCan
         message: format!(
             "imported {distribution} directly but it is only available as a transitive dependency"
         ),
+        workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
             line: import.line,
@@ -220,6 +223,7 @@ fn missing_candidate(
             "imported {distribution} in {}:{}{} but not declared in matching dependency context",
             import.file, import.line, lockfile_note
         ),
+        workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
             line: import.line,

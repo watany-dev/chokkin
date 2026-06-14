@@ -285,6 +285,7 @@ mod tests {
             severity: Severity::Error,
             confidence: Confidence::Certain,
             message: "unused".to_owned(),
+            workspace_member: None,
             location: IssueLocation {
                 file: None,
                 line: None,

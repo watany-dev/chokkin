@@ -88,6 +88,11 @@ fn render_issue(out: &mut String, issue: &Issue) {
     let _ = writeln!(out, "      \"message\": {},", json_string(&issue.message));
     let _ = writeln!(
         out,
+        "      \"workspace_member\": {},",
+        optional_json_string(issue.workspace_member.as_deref())
+    );
+    let _ = writeln!(
+        out,
         "      \"file\": {},",
         optional_json_string(issue.location.file.as_deref())
     );

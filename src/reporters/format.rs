@@ -32,6 +32,14 @@ pub fn format_subject(subject: &IssueSubject) -> String {
     }
 }
 
+/// Short subject label annotated with workspace member metadata when present.
+pub fn format_issue_subject(issue: &Issue) -> String {
+    let subject = format_subject(&issue.subject);
+    issue.workspace_member
+        .as_ref()
+        .map_or_else(|| subject.clone(), |member| format!("{member}:{subject}"))
+}
+
 /// Group title for the default reporter.
 pub(super) fn group_title(rule: RuleId, count: usize) -> String {
     let label = match rule {
@@ -51,7 +59,7 @@ pub(super) fn group_title(rule: RuleId, count: usize) -> String {
 
 /// Default reporter line: subject, location, message.
 pub(super) fn format_issue_line(issue: &Issue) -> String {
-    let subject = format_subject(&issue.subject);
+    let subject = format_issue_subject(issue);
     let location = format_location_column(&issue.location);
     format!("  {subject:<24} {location:<22} {}", issue.message)
 }
@@ -93,4 +101,38 @@ pub(super) fn json_string(value: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Confidence;
+    use crate::rules::{Issue, IssueLocation, RuleId, Severity};
+
+    #[test]
+    fn issue_subject_includes_workspace_member() {
+        let issue = Issue {
+            rule: RuleId::Chk003,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "missing".to_owned(),
+            workspace_member: Some("api".to_owned()),
+            location: IssueLocation {
+                file: Some("services/api/src/api/main.py".to_owned()),
+                line: Some(1),
+                manifest: None,
+            },
+            subject: IssueSubject::Import {
+                module: "requests".to_owned(),
+                file: "services/api/src/api/main.py".to_owned(),
+                line: 1,
+            },
+            explain: None,
+        };
+
+        assert_eq!(
+            format_issue_subject(&issue),
+            "api:services/api/src/api/main.py:1 requests"
+        );
+    }
 }

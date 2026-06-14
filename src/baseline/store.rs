@@ -238,6 +238,7 @@ mod tests {
             severity: Severity::Warning,
             confidence: Confidence::Certain,
             message: "unused".to_owned(),
+            workspace_member: None,
             location: IssueLocation {
                 file: Some(path.to_owned()),
                 line: Some(10),

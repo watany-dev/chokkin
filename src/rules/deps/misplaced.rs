@@ -105,6 +105,7 @@ pub(super) fn detect_misplaced_dependencies(
             severity: Severity::Warning,
             confidence: Confidence::Certain,
             message: misplaced_message(distribution, workspace_member, &contexts),
+            workspace_member: workspace_member.map(str::to_owned),
             origins: vec![Origin::Import {
                 file: import.file.clone(),
                 line: import.line,

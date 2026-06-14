@@ -65,6 +65,7 @@ mod tests {
             severity,
             confidence,
             message: "test".to_owned(),
+            workspace_member: None,
             location: IssueLocation {
                 file: None,
                 line: None,

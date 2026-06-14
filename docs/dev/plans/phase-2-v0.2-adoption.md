@@ -116,7 +116,7 @@ PR 分割:
 2. member ごとの `LoadedManifest` / `SourceInventory` を保持する型を追加する — 初期実装済み (`ProbeReport.workspace_inputs`)
 3. resolver に member boundary を渡す — 初期実装済み (`resolve_imports(..., workspace_members)`, `ResolvedImport.workspace_member`)
 4. CHK003/CHK004/CHK005 の workspace policy を実装する — CHK003/CHK005 strict member-local policy は初期実装済み (`WorkspaceDependencyBoundary`)
-5. reporters に member id を表示する
+5. reporters に member id を表示する — 初期実装済み (`Issue.workspace_member`, human/GitHub subject labels, JSON `workspace_member`, SARIF `properties.workspaceMember`)
 
 検証:
 

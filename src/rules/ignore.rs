@@ -255,6 +255,7 @@ mod tests {
             severity: Severity::Error,
             confidence: crate::config::Confidence::Certain,
             message: "unused".to_owned(),
+            workspace_member: None,
             origins: Vec::new(),
             explain: ExplainData::default(),
         };
@@ -290,6 +291,7 @@ mod tests {
             severity: Severity::Error,
             confidence: crate::config::Confidence::Certain,
             message: "missing".to_owned(),
+            workspace_member: None,
             origins: vec![Origin::Import {
                 file: "src/acme/main.py".to_owned(),
                 line: 4,
@@ -328,6 +330,7 @@ mod tests {
             severity: Severity::Warning,
             confidence: crate::config::Confidence::Likely,
             message: "unused export".to_owned(),
+            workspace_member: None,
             origins: vec![Origin::Import {
                 file: "src/acme/api.py".to_owned(),
                 line: 12,

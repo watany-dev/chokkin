@@ -29,6 +29,7 @@ pub fn chk001_candidates(
             severity,
             confidence,
             message: format!("file `{}` is not reachable from any entry root", file.path),
+            workspace_member: None,
             origins: Vec::new(),
             explain: ExplainData {
                 summary: format!("{path} is unreachable from entry roots", path = file.path),

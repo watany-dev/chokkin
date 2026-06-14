@@ -134,6 +134,7 @@ fn detect_unused_exports(
                 entry.id.name,
                 entry.id.module
             ),
+            workspace_member: None,
             origins: vec![Origin::Import {
                 file: entry.path.clone(),
                 line: entry.def.line,
@@ -179,6 +180,7 @@ fn detect_unused_reexports(
                 "re-export `{}` in `{}` is not imported from the package or used internally",
                 reexport.name, reexport.package_module
             ),
+            workspace_member: None,
             origins: vec![Origin::Import {
                 file: reexport.path.clone(),
                 line: reexport.line,
@@ -255,6 +257,7 @@ fn detect_unresolved_imports(
             severity: Severity::Warning,
             confidence: Confidence::Likely,
             message,
+            workspace_member: None,
             origins: vec![Origin::Import {
                 file: file.clone(),
                 line: *line,

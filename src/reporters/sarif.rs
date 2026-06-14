@@ -99,6 +99,16 @@ fn render_result(out: &mut String, issue: &Issue) {
         "          \"message\": {{ \"text\": {} }},",
         json_string(&issue.message)
     );
+    let _ = writeln!(out, "          \"properties\": {{");
+    let _ = writeln!(
+        out,
+        "            \"workspaceMember\": {}",
+        issue
+            .workspace_member
+            .as_deref()
+            .map_or_else(|| "null".to_owned(), json_string)
+    );
+    let _ = writeln!(out, "          }},");
     render_locations(out, issue);
     let _ = write!(out, "        }}");
 }

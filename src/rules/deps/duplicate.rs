@@ -54,6 +54,7 @@ pub(super) fn detect_duplicate_dependencies(
                 "{name} is declared in multiple contexts: {}",
                 labels.join(", ")
             ),
+            workspace_member: None,
             origins,
             explain: ExplainData {
                 summary: format!("{name} has duplicate declarations"),

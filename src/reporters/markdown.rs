@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use crate::rules::{IssueReport, RuleId};
 
 use super::format::{
-    baseline_suppressed_count, format_location_column, format_subject, group_title,
+    baseline_suppressed_count, format_issue_subject, format_location_column, group_title,
 };
 use super::traits::Reporter;
 use super::types::RenderContext;
@@ -63,7 +63,7 @@ impl Reporter for MarkdownReporter {
             let _ = writeln!(out, "| Code | Subject | Location | Message |");
             let _ = writeln!(out, "| --- | --- | --- | --- |");
             for issue in issues {
-                let subject = format_subject(&issue.subject);
+                let subject = format_issue_subject(issue);
                 let location = format_location_column(&issue.location);
                 let message = issue.message.replace('|', "\\|");
                 let _ = writeln!(

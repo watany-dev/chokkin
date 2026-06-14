@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use crate::rules::{Issue, IssueReport};
 
-use super::format::{baseline_suppressed_count, format_subject};
+use super::format::{baseline_suppressed_count, format_issue_subject};
 use super::traits::Reporter;
 use super::types::RenderContext;
 
@@ -54,7 +54,7 @@ fn render_annotation(out: &mut String, issue: &Issue) {
         out,
         ",title={} {}::",
         issue.rule.as_code(),
-        escape_property(&format_subject(&issue.subject))
+        escape_property(&format_issue_subject(issue))
     );
     let _ = writeln!(out, "{}", escape_message(&issue.message));
 }
