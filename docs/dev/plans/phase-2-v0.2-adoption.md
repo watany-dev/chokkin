@@ -156,7 +156,7 @@ plugin version
 
 PR 分割:
 
-1. cache directory policy と `--no-cache` — policy型とCLI plumbingは初期実装済み (`CacheOptions`, `.chokkin/cache`)
+1. cache directory policy と `--no-cache` — policy型とCLI plumbingは初期実装済み (`CacheOptions`, `.chokkin/cache`; custom directory も project root 配下に containment)
 2. parse result cache — 初期実装済み (`ParseCacheStore`, `parse_project_sources_with_cache`, `.chokkin/cache/parse/*.json`; persisted entry は atomic replace)
 3. manifest/config scan cache — input fingerprint/key/record envelope、JSON payload slot、disk backend、generic config scan payload wiring、full manifest extraction payload、module index payload は初期実装済み (`ScanInputFingerprints`, `ScanCacheKey`, `ScanCacheRecord`, `read_scan_payload`, `write_scan_payload`, `extract_manifest_with_cache`, `ModuleIndex::build_with_cache`; persisted entry は atomic replace)
 4. warm benchmark fixture と `make bench` comparison — parse cache warm benchmark は初期実装済み (`benches/cache.rs`)

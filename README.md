@@ -107,7 +107,7 @@ Key flags:
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
 - `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files. `--add-missing` adds Certain CHK003 findings to non-Poetry `[project].dependencies` when the distribution is unambiguous; unsupported cases are reported as skipped fixes with details on stderr.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
-- `--no-cache` — disable Phase 2 cache reads/writes. Parse, manifest/config scan, and module-index cache units are enabled by default and are conservative: corrupt or stale entries are treated as misses.
+- `--no-cache` — disable Phase 2 cache reads/writes. Parse, manifest/config scan, and module-index cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
