@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use toml::Value;
 
 use crate::manifest::{DependencyContext, normalize_distribution_name};
@@ -13,7 +14,7 @@ use super::types::{BinaryUsage, ReferenceOrigin};
 use super::util::{read_pyproject_table, relative_path};
 
 /// Output from config scanning.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ConfigScanResult {
     /// CLI binaries referenced from configuration.
     pub binary_usages: Vec<BinaryUsage>,

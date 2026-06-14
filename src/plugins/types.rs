@@ -2,11 +2,12 @@
 
 use crate::config::{EntrySpec, PluginId};
 use crate::sources::FileContext;
+use serde::{Deserialize, Serialize};
 
 use super::warnings::PluginsWarning;
 
 /// Where a plugin discovered a reference (for `--explain` / diagnostics).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReferenceOrigin {
     /// Root-relative path using `/` separators.
     pub file: String,
@@ -48,7 +49,7 @@ pub struct SymbolReference {
 }
 
 /// CLI binary usage (§9.3, CHK008).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BinaryUsage {
     /// Binary name, e.g. `pytest` or `uvicorn`.
     pub binary: String,
