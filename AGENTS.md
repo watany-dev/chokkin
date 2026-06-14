@@ -14,8 +14,10 @@ equivalent for Python.
 1–13) with `default` / `compact` / `json` / `markdown` reporters, `--explain`,
 `--trace`, and `--fix`. `--probe` runs steps 1–4 only (`probe_project`). PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
-rate, cold-run performance). Use `make oss-fixtures` for the dogfooding
-skeleton.
+rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
+over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
+is the no-network in-repo skeleton. **The §17 gate is currently NOT met** (see
+that report). 
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
@@ -100,6 +102,28 @@ make bench-cmp BASELINE=main    # compare current code against it
 Baselines live under `target/criterion/`, so avoid `cargo clean` between
 save and compare. Only land optimizations that show a significant
 improvement in `bench-cmp`.
+
+## OSS validation (Phase 1 §17 release gate)
+
+The v0.1 release is gated on the §17 exit criteria, measured over a fixed set
+of 20 real OSS projects (library / app / server / Django / FastAPI mix):
+
+```bash
+make oss-clones                 # clone the 20 pinned projects -> target/oss-clones/
+make oss-metrics                # measure FP rate / crashes / speed -> target/oss-metrics/report.md
+make oss-metrics ARGS=--gate    # same, but non-zero exit on any §17 miss
+scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
+```
+
+- `scripts/oss-clones.manifest` — the 20-project set (pinned tags; resolved
+  SHAs land in `target/oss-clones/clones.lock.tsv`).
+- `scripts/oss-fixtures.labels.tsv` — ground-truth `fp`/`tp` labels for
+  YOK002/YOK003 findings; the FP-rate gate requires every finding classified.
+- `docs/dev/oss-validation-report.md` — the committed scorecard from the latest
+  run. **Current status: gate NOT met** — YOK002 false-positive rate is 100%
+  (155/155), driven by missing binary/config usage detection, optional/
+  conditional import tracing, and package-module-map gaps. Crashes 0, cold-run
+  speed well within budget. v0.1 must not ship until the FP gate clears.
 
 ## PR hygiene
 

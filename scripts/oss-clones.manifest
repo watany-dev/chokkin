@@ -1,0 +1,40 @@
+# OSS clone manifest for the Phase 1 §17 validation set (20 projects).
+#
+# Used by scripts/clone-oss-fixtures.sh to populate target/oss-clones/<slug>,
+# then by scripts/oss-metrics.sh to measure false-positive rate and cold-run
+# speed against the §17 exit criteria.
+#
+# Tab-separated columns (lines starting with # and blank lines are ignored):
+#   slug      directory name under target/oss-clones/ and report key
+#   category  library | cli | app | server | framework | rest  (for the report)
+#   size      small | medium | large
+#             The §17 "cold run <= 2s" gate applies to `medium` projects;
+#             large projects are reported for information only.
+#   ref       git ref to pin (tag/branch). Empty = default branch HEAD.
+#             clone-oss-fixtures.sh records the resolved SHA in clones.lock.tsv
+#             for reproducibility regardless of this column.
+#   url       https clone URL (without trailing .git)
+#
+# The mix follows §17: Django app / FastAPI app / library / monorepo blend.
+#
+# slug	category	size	ref	url
+requests	library	medium	v2.32.3	https://github.com/psf/requests
+urllib3	library	medium	2.2.3	https://github.com/urllib3/urllib3
+click	cli	medium	8.1.7	https://github.com/pallets/click
+jinja	library	medium	3.1.4	https://github.com/pallets/jinja
+werkzeug	library	medium	3.0.4	https://github.com/pallets/werkzeug
+flask	app	medium	3.0.3	https://github.com/pallets/flask
+httpx	library	medium	0.27.2	https://github.com/encode/httpx
+starlette	app	medium	0.38.6	https://github.com/encode/starlette
+uvicorn	server	medium	0.30.6	https://github.com/encode/uvicorn
+attrs	library	medium	24.2.0	https://github.com/python-attrs/attrs
+anyio	library	small	4.6.0	https://github.com/agronholm/anyio
+python-dotenv	library	small	v1.0.1	https://github.com/theskumar/python-dotenv
+tenacity	library	small	8.5.0	https://github.com/jd/tenacity
+structlog	library	medium	24.4.0	https://github.com/hynek/structlog
+pluggy	library	small	1.5.0	https://github.com/pytest-dev/pluggy
+typer	cli	medium	0.12.5	https://github.com/fastapi/typer
+black	cli	large	24.8.0	https://github.com/psf/black
+fastapi	framework	large	0.115.0	https://github.com/fastapi/fastapi
+djangorestframework	rest	large	3.15.2	https://github.com/encode/django-rest-framework
+django	framework	large	5.1.1	https://github.com/django/django

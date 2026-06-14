@@ -850,16 +850,64 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
          crash 0、cold実行がmedium projectで2s以内
 ```
 
+検証ハーネスは `scripts/oss-clones.manifest` (20 project、tag pinned) と
+`scripts/clone-oss-fixtures.sh` / `scripts/oss-metrics.sh` (`make oss-clones` /
+`make oss-metrics`)。誤検知のground truthは `scripts/oss-fixtures.labels.tsv`
+に `fp`/`tp` で記録し、未分類が残るとFP gateは通らない。最新の計測結果は
+`docs/dev/oss-validation-report.md` に scorecard として残す。
+
+**現状 (v0.1.0): exit criteria未達。** crash 0、cold実行はmedium最遅でも111ms
+(2s budgetに対し十分)。しかしYOK002の誤検知率は **100% (155/155)**。§20の
+「信頼を失いにくい」方針に照らし、FP gateが通るまでv0.1は出さない。是正work
+はPhase 1.5として切り出す。
+
+### Phase 1.5: v0.1 誤検知是正(リリースブロッカー)
+
+```text
+目標   : §17のFP gate (YOK002誤検知率 5%未満) を通す
+背景   : OSS 20件の検証でYOK002誤検知率100% (155/155)。crash・速度は合格済み。
+         根因は「実際には使われている依存」をyokeiが利用と結べないことに集約され、
+         検出algorithmではなくpackage-module-map / binary map / context判定の
+         data・解像度不足が主因 (§21の指摘どおり)。
+成果物 : 誤検知削減インパクト順 (括弧内は155件中の寄与):
+  1. binary + config usage detection (110件 / 71%)
+     - [tool.<name>] table・[project.scripts]・dist-info entry_points・
+       .pre-commit-config.yaml・tox/nox env・CI step から dev toolのCLI利用を
+       解決し、YOK008判定とYOK002の「binary usage found」に反映する。
+     - §3のYOK008とbinary mapを前倒し実装するのが本丸。mypy / ruff / pytest /
+       sphinx / mkdocs / twine / coverage 等がこれで「利用」と判定される。
+  2. dependency-group / extras の context認識 (PDM/Hatch group分を含む)
+     - PEP 735 [dependency-groups]・PDM/Hatch group・requirements-*.txt を
+       dev contextとして解釈する (現状は "unsupported in v0.1" で素通り)。
+     - dev群はYOK002をdefaultで抑制し、--strict時のみerrorにする緩いpolicy。
+     - Phase 2予定だったPDM/Hatch manifest対応の「読取り」部分を前倒し。
+  3. optional / conditional import tracing
+     - try/except ImportError・sys.platform分岐・TYPE_CHECKING・extra guard下の
+       importを、宣言extra/依存の利用としてカウントする。
+     - tzdata / brotli / argon2-cffi / colorama / trio 等の取りこぼしを解消。
+  4. package-module-map拡充 + 自己参照guard
+     - bundled mapにimport名≠distribution名のpair追加 (python-multipart→
+       multipart, pyopenssl→OpenSSL, pysocks→socks 等)。
+     - projectが自身を `pkg[extra]` で宣言した場合は常に利用扱いとし、YOK002
+       候補から除外する。
+検証   : `make oss-metrics ARGS=--gate` を再実行し、scripts/oss-fixtures.labels.tsv
+         を再分類する。YOK003 (現状1747件) の誤検知も大幅減を確認 (gateではないが
+         §20の信頼性指標)。各根因にregression fixtureを追加してCI化する。
+exit   : YOK002誤検知率 5%未満 (未分類0)、crash 0維持、cold実行 medium 2s維持。
+```
+
 ### Phase 2: v0.2 導入支援(+6〜8週)
 
 ```text
 目標   : 既存大規模projectへの導入障壁を下げる
 成果物 : §16 v0.2 scope
   - baseline file (既存issueの凍結、§18)
-  - uv workspace / Poetry / PDM / Hatch
+  - uv workspace / Poetry / PDM / Hatch (group読取りはPhase 1.5で前倒し済み、
+    ここではworkspace解決・推移閉包まで完成させる)
   - SARIF / GitHub Actions reporter
   - cache (§19のwarm目標達成)
-  - plugin拡充 (flask / celery / tox / nox / pre-commit / github-actions)
+  - plugin拡充 (flask / celery / tox / nox / pre-commit / github-actions。
+    tox/nox/pre-commitのbinary利用検出はPhase 1.5で着手済み、ここでplugin化)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
@@ -893,6 +941,8 @@ exit   : 2 minor version連続でbreaking changeなし
 - package-module-map / binary map のデータ収集と自動生成pipeline
 - 誤検知報告template (--explain出力の添付を必須にする)
 - 検証用OSS project setの拡充とregression test化
+  (20件のharnessは `scripts/oss-*` / `make oss-metrics` として整備済み。
+   各リリース前に再計測し `docs/dev/oss-validation-report.md` を更新する)
 ```
 
 リリース判断は期日ではなくexit criteriaで行う。特にPhase 1の誤検知率は、§20の「信頼を失いにくい」方針の定量版であり、未達のままv0.1を出さない。
