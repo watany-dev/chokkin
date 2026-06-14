@@ -336,6 +336,20 @@ fn sphinx_plugin_records_docs_conf_entry() {
             .iter()
             .any(|usage| usage.binary == "sphinx-build" && usage.origin.file == "docs/conf.py")
     );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "sphinx.ext.autodoc"
+                && reference.origin.file == "docs/conf.py")
+    );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "myst_parser"
+                && reference.origin.file == "docs/conf.py")
+    );
 }
 
 #[test]

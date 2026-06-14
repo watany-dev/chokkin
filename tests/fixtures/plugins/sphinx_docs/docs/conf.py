@@ -1,2 +1,5 @@
 project = "sphinx-docs"
-extensions = []
+extensions = [
+    "sphinx.ext.autodoc",
+    "myst_parser",
+]

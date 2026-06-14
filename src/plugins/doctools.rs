@@ -3,10 +3,13 @@
 use std::path::Path;
 
 use crate::config::{EntrySpec, PluginId};
+use crate::manifest::literals::extract_python_list_assignment;
 use crate::sources::FileContext;
 
 use super::context::PluginContext;
-use super::types::{BinaryUsage, PluginContribution, PluginEntry, ReferenceOrigin};
+use super::types::{
+    BinaryUsage, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
+};
 use super::util::relative_path;
 use super::warnings::PluginsWarning;
 
@@ -24,7 +27,10 @@ pub fn extract(
         _ => {}
     }
 
-    let warnings = if contrib.entries.is_empty() && contrib.binary_usages.is_empty() {
+    let warnings = if contrib.entries.is_empty()
+        && contrib.module_refs.is_empty()
+        && contrib.binary_usages.is_empty()
+    {
         vec![PluginsWarning::PluginNoOp { plugin }]
     } else {
         Vec::new()
@@ -37,6 +43,21 @@ fn extract_sphinx(root: &Path, contrib: &mut PluginContribution) {
     if conf.is_file() {
         push_entry(contrib, root, &conf, FileContext::Docs, "docs/conf.py");
         push_binary(contrib, root, &conf, "sphinx-build", "docs/conf.py");
+        if let Ok(contents) = std::fs::read_to_string(&conf)
+            && let Some(scan) = extract_python_list_assignment(&contents, "extensions")
+        {
+            let file = relative_path(root, &conf);
+            for extension in scan.values {
+                contrib.module_refs.push(ModuleReference {
+                    module: extension,
+                    origin: ReferenceOrigin {
+                        file: file.clone(),
+                        line: None,
+                        label: "extensions".to_owned(),
+                    },
+                });
+            }
+        }
     }
 }
 
