@@ -2,6 +2,7 @@
 
 use crate::config::{Confidence, YokeiConfig};
 use crate::manifest::DeclaredDependency;
+use crate::manifest::normalize_distribution_name;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 
 use super::context::{DeclarationBucket, declaration_bucket};
@@ -94,7 +95,8 @@ fn unused_confidence(dep: &DeclaredDependency, strict: bool) -> (Confidence, Sev
 /// Whether a `types-*` stub name looks like a types stub package.
 #[must_use]
 pub(super) fn is_types_stub(name: &str) -> bool {
-    name.starts_with("types-") || name.ends_with("-stubs")
+    let normalized = normalize_distribution_name(name);
+    normalized.starts_with("types-") || normalized.ends_with("-stubs")
 }
 
 #[cfg(test)]

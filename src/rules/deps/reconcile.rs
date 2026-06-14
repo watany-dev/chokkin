@@ -2,7 +2,7 @@
 
 use crate::config::YokeiConfig;
 use crate::graph::ProjectGraph;
-use crate::manifest::LoadedManifest;
+use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
@@ -57,7 +57,7 @@ pub fn reconcile_dependencies(
     for name in declared.keys() {
         if is_types_stub(name)
             && let Some(runtime) = runtime_for_stub(name)
-            && used.contains(runtime)
+            && used.contains(&normalize_distribution_name(runtime))
         {
             used.insert(name.clone());
         }
@@ -240,6 +240,72 @@ mod tests {
         assert_eq!(
             report.candidates[0].rule,
             crate::rules::types::RuleId::Yok002
+        );
+    }
+
+    #[test]
+    fn types_stub_marked_used_when_runtime_is_used() {
+        let dep = DeclaredDependency {
+            name: "types-PyYAML".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(5),
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+        };
+        let manifest = minimal_manifest(vec![dep]);
+        let (sources, parse, mut graph) = reconcile_inputs(&manifest);
+        let file_id = graph
+            .intern_file(crate::graph::FileNode {
+                path: "src/app.py".to_owned(),
+                context: crate::sources::FileContext::Runtime,
+                kind: crate::sources::FileKind::Python,
+            })
+            .expect("file id");
+        let mut reachability = ReachabilityReport::empty();
+        reachability.reachable.insert(file_id);
+        let mut resolution = ResolutionIndex::empty();
+        resolution.imports.push(crate::resolver::ResolvedImport {
+            import_root: "yaml".to_owned(),
+            full_module: "yaml".to_owned(),
+            file: "src/app.py".to_owned(),
+            line: 1,
+            context: crate::parser::ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            origin: crate::graph::ModuleOrigin::ThirdParty,
+            distribution: Some("pyyaml".to_owned()),
+            confidence: crate::resolver::ResolveConfidence::Certain,
+        });
+        let plugins = PluginHints {
+            contributions: Vec::new(),
+            config_binary_usages: Vec::new(),
+            config_used_distributions: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let config = crate::config::default_config();
+        let report = reconcile_dependencies(
+            &manifest,
+            &resolution,
+            &reachability,
+            &plugins,
+            &config,
+            &sources,
+            &parse,
+            &graph,
+            false,
+        );
+        assert!(report.used_distributions.contains("types-PyYAML"));
+        assert!(
+            !report
+                .candidates
+                .iter()
+                .any(|candidate| candidate.rule == crate::rules::types::RuleId::Yok002)
         );
     }
 }
