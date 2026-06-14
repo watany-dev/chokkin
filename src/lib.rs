@@ -11,19 +11,22 @@
 //! Step 9 ([`reachability`]) computes reachable files from entry roots.
 //! Step 10 ([`rules`]) reconciles declared dependencies against usage.
 //! Step 11 ([`rules`]) analyzes public symbol usage and unresolved imports.
-//! Steps 11–12 (issue emission) are not wired to the CLI yet.
+//! Step 12 ([`rules`]) emits filtered issues with exit status.
+//! Step 13 ([`fix`]) applies safe manifest edits when requested.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
 pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod entry;
+pub mod fix;
 pub mod graph;
 pub mod manifest;
 pub mod parser;
 pub mod pipeline;
 pub mod plugins;
 pub mod reachability;
+pub mod reporters;
 pub mod resolver;
 pub mod rules;
 pub mod sources;
@@ -38,6 +41,9 @@ pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_ro
 pub use entry::{
     EntryError, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
     build_entry_roots,
+};
+pub use fix::{
+    AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason, apply_fixes,
 };
 pub use graph::{
     DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
@@ -65,13 +71,15 @@ pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
     UnreachableReason, UsedModule, analyze_reachability, path_to_module, trace_to_file,
 };
+pub use reporters::{RenderContext, Reporter, ReporterId};
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
     TransitiveIndex, apply_resolution_to_graph, import_root, resolve_imports,
 };
 pub use rules::{
-    DependencyReport, ExplainData, IssueCandidate, IssueSubject, Origin, ReconcileDiagnostic,
-    RuleId, Severity, SymbolId, SymbolReport, analyze_symbols, reconcile_dependencies,
+    DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
+    IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
+    SymbolId, SymbolReport, analyze_symbols, emit_issues, explain_issue, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

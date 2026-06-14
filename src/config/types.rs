@@ -78,6 +78,22 @@ impl Confidence {
             _ => None,
         }
     }
+
+    /// Numeric rank for floor comparisons (`Certain` is strongest).
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Certain => 2,
+            Self::Likely => 1,
+            Self::Maybe => 0,
+        }
+    }
+
+    /// Returns true when `self` meets or exceeds `floor`.
+    #[must_use]
+    pub const fn meets_floor(self, floor: Self) -> bool {
+        self.rank() >= floor.rank()
+    }
 }
 
 impl fmt::Display for Confidence {
@@ -335,10 +351,16 @@ pub struct UvWorkspaceHint {
 pub struct RuntimeOverrides {
     /// Override `production` when set.
     pub production: Option<bool>,
-    /// Override strict mode when set (reserved for CLI integration).
+    /// Override strict mode when set.
     pub strict: Option<bool>,
     /// Override minimum confidence when set.
     pub confidence_floor: Option<Confidence>,
+    /// When true, report issues but return exit code 0.
+    pub no_exit_code: Option<bool>,
+    /// When set, only emit issues for these rule codes (`YOK00x`).
+    pub include_rules: Option<Vec<String>>,
+    /// When set, suppress issues for these rule codes (`YOK00x`).
+    pub exclude_rules: Option<Vec<String>>,
 }
 
 /// Returns true when `path` must be rejected as non-root-relative.
