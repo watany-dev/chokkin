@@ -87,7 +87,8 @@ uvx chokkin --fix --allow-remove-files
 uvx chokkin --include dependencies,files
 uvx chokkin --exclude exports
 uvx chokkin --reporter json
-uvx chokkin --reporter sarif   # v0.2
+uvx chokkin --reporter github
+uvx chokkin --reporter sarif
 uvx chokkin --no-exit-code
 uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
@@ -117,7 +118,7 @@ exit codeはCI向けに固定する。
                  internal errorの3はこのflagでも維持する。
 ```
 
-`--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、SARIF/GitHub reporterはv0.2で追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
+`--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、v0.2でSARIF/GitHub reporterを追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
 `--baseline PATH` と `--update-baseline` は v0.2 導入支援のP0として実装する。`--update-baseline` は必ず `--baseline PATH` と併用し、通常実行では baseline にある fingerprint と一致する issue を抑制する。
 
 ## 3. issue種別

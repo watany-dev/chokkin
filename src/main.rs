@@ -30,7 +30,7 @@ Options:
       --no-exit-code      Report issues but return exit code 0
       --include <RULES>   Only emit these rule codes (comma-separated CHK00x)
       --exclude <RULES>   Suppress these rule codes (comma-separated CHK00x)
-      --reporter <ID>     Output reporter: default, compact, json, markdown
+      --reporter <ID>     Output reporter: default, compact, json, markdown, github, sarif
       --confidence <LVL>  Minimum confidence: certain, likely, maybe
       --explain <SEL>     Explain an issue (e.g. CHK002:boto3)
       --trace <PATH>      Show reachability trace to a file

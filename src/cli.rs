@@ -47,7 +47,7 @@ pub struct CliArgs {
     #[arg(long, value_delimiter = ',')]
     pub exclude: Option<Vec<String>>,
 
-    /// Output reporter (`default`, `compact`, `json`, `markdown`).
+    /// Output reporter (`default`, `compact`, `json`, `markdown`, `github`, `sarif`).
     #[arg(long, value_parser = parse_reporter)]
     pub reporter: Option<ReporterId>,
 
@@ -192,6 +192,16 @@ mod tests {
         .expect("parse");
         assert_eq!(args.reporter, Some(ReporterId::Json));
         assert!(args.strict);
+    }
+
+    #[test]
+    fn parses_v02_reporters() {
+        let github =
+            parse_cli_args(vec!["--reporter".to_owned(), "github".to_owned()]).expect("parse");
+        let sarif =
+            parse_cli_args(vec!["--reporter".to_owned(), "sarif".to_owned()]).expect("parse");
+        assert_eq!(github.reporter, Some(ReporterId::Github));
+        assert_eq!(sarif.reporter, Some(ReporterId::Sarif));
     }
 
     #[test]

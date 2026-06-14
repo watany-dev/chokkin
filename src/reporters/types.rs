@@ -15,6 +15,10 @@ pub enum ReporterId {
     Json,
     /// Markdown summary for CI.
     Markdown,
+    /// GitHub Actions workflow annotations.
+    Github,
+    /// SARIF v2.1.0 for code scanning.
+    Sarif,
 }
 
 impl ReporterId {
@@ -25,6 +29,8 @@ impl ReporterId {
             "compact" => Some(Self::Compact),
             "json" => Some(Self::Json),
             "markdown" => Some(Self::Markdown),
+            "github" => Some(Self::Github),
+            "sarif" => Some(Self::Sarif),
             _ => None,
         }
     }
@@ -37,6 +43,8 @@ impl ReporterId {
             Self::Compact => "compact",
             Self::Json => "json",
             Self::Markdown => "markdown",
+            Self::Github => "github",
+            Self::Sarif => "sarif",
         }
     }
 }

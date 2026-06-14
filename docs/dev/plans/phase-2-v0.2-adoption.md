@@ -84,9 +84,9 @@ chokkin --reporter sarif
 
 PR 分割:
 
-1. reporter enum と CLI parse を拡張する
-2. GitHub markdown/job summary reporter を追加する
-3. SARIF v2.1.0 の最小 schema serializer を追加する
+1. reporter enum と CLI parse を拡張する — 初期実装済み (`github`, `sarif`)
+2. GitHub markdown/job summary reporter を追加する — annotation reporter として初期実装済み
+3. SARIF v2.1.0 の最小 schema serializer を追加する — 初期実装済み
 4. fixtures で snapshot test を追加する
 
 ### P1: Workspace / Monorepo

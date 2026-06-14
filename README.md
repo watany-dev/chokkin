@@ -84,6 +84,8 @@ uvx chokkin --include CHK002,CHK003
 uvx chokkin --exclude CHK006
 uvx chokkin --reporter json
 uvx chokkin --reporter markdown
+uvx chokkin --reporter github
+uvx chokkin --reporter sarif
 uvx chokkin --confidence likely
 uvx chokkin --fix
 uvx chokkin --fix --dry-run
@@ -93,7 +95,6 @@ uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
 uvx chokkin --probe              # steps 1–4 summary only
 uvx chokkin --init                # v0.2
-uvx chokkin --reporter sarif      # v0.2
 ```
 
 Key flags:
@@ -102,6 +103,7 @@ Key flags:
 - `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
+- `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
 
 Exit codes are fixed for CI:

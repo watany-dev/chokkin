@@ -60,6 +60,37 @@ fn binary_json_reporter_outputs_schema_fields() {
 }
 
 #[test]
+fn binary_github_reporter_outputs_annotations() {
+    let root = fixture_path(&["deps", "unused_boto3"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--reporter")
+        .arg("github")
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("::error"));
+    assert!(stdout.contains("file=pyproject.toml"));
+    assert!(stdout.contains("title=CHK002 boto3"));
+}
+
+#[test]
+fn binary_sarif_reporter_outputs_minimal_schema() {
+    let root = fixture_path(&["deps", "unused_boto3"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--reporter")
+        .arg("sarif")
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("\"version\": \"2.1.0\""));
+    assert!(stdout.contains("\"ruleId\": \"CHK002\""));
+    assert!(stdout.contains("\"uri\": \"pyproject.toml\""));
+    assert!(stdout.contains("\"runs\""));
+}
+
+#[test]
 fn binary_probe_mode_still_available() {
     let root = fixture_path(&["probe", "empty"]);
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
