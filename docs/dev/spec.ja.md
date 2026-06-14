@@ -1030,7 +1030,7 @@ file content hash
 plugin version
 ```
 
-config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使い、result payload/backend は parse cache とは別PRで追加する。
+config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_record` / `write_scan_record` による disk backend は初期実装済みで、corrupt JSON と key mismatch はmiss扱いにする。result payload は parse cache とは別PRで追加する。
 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 

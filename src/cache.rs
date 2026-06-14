@@ -110,6 +110,63 @@ impl CacheOptions {
         }
         std::fs::rename(tmp, path)
     }
+
+    /// Read a persisted scan cache record.
+    ///
+    /// Corrupt JSON or key-mismatched entries are treated as misses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the cache file exists but cannot be read.
+    pub fn read_scan_record(
+        &self,
+        project_root: &Path,
+        key: &ScanCacheKey,
+    ) -> io::Result<Option<ScanCacheRecord>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let path = self.scan_entry_path(project_root, key);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Ok(record) = serde_json::from_slice::<ScanCacheRecord>(&bytes) else {
+            return Ok(None);
+        };
+        if record.key == *key {
+            Ok(Some(record))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Write a persisted scan cache record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the cache directory or file cannot be written.
+    pub fn write_scan_record(
+        &self,
+        project_root: &Path,
+        record: &ScanCacheRecord,
+    ) -> io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let path = self.scan_entry_path(project_root, &record.key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let bytes = serde_json::to_vec(record).map_err(io::Error::other)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, bytes)?;
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        std::fs::rename(tmp, path)
+    }
 }
 
 /// Stable inputs shared by cache units.
@@ -709,5 +766,95 @@ mod tests {
             serde_json::from_slice(&bytes).expect("deserialize scan record");
 
         assert_eq!(restored, record);
+    }
+
+    #[test]
+    fn scan_record_round_trips_to_disk() {
+        let root = temp_cache_test_dir("scan-disk");
+        let record = ScanCacheRecord {
+            key: ScanCacheKey {
+                context: CacheKeyContext {
+                    chokkin_version: "test".to_owned(),
+                    config_hash: "config".to_owned(),
+                    manifest_hash: "manifest".to_owned(),
+                    target_version: "py311".to_owned(),
+                    unit_version: "scan-v1".to_owned(),
+                },
+                inputs: ScanInputFingerprints::default(),
+            },
+            schema_version: "scan-record-v1".to_owned(),
+        };
+        let options = CacheOptions::default();
+
+        options
+            .write_scan_record(&root, &record)
+            .expect("write scan cache");
+        let restored = options
+            .read_scan_record(&root, &record.key)
+            .expect("read scan cache")
+            .expect("cache hit");
+
+        assert_eq!(restored, record);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_scan_record_is_cache_miss() {
+        let root = temp_cache_test_dir("scan-corrupt");
+        let key = ScanCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "scan-v1".to_owned(),
+            },
+            inputs: ScanInputFingerprints::default(),
+        };
+        let options = CacheOptions::default();
+        let path = options.scan_entry_path(&root, &key);
+        std::fs::create_dir_all(path.parent().expect("cache parent")).expect("create cache parent");
+        std::fs::write(&path, b"not json").expect("write corrupt cache");
+
+        assert_eq!(
+            options
+                .read_scan_record(&root, &key)
+                .expect("read corrupt cache"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mismatched_scan_record_key_is_cache_miss() {
+        let root = temp_cache_test_dir("scan-mismatch");
+        let expected = ScanCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "scan-v1".to_owned(),
+            },
+            inputs: ScanInputFingerprints::default(),
+        };
+        let mut stored = expected.clone();
+        stored.context.config_hash = "other-config".to_owned();
+        let path = CacheOptions::default().scan_entry_path(&root, &expected);
+        std::fs::create_dir_all(path.parent().expect("cache parent")).expect("create cache parent");
+        let record = ScanCacheRecord {
+            key: stored,
+            schema_version: "scan-record-v1".to_owned(),
+        };
+        std::fs::write(&path, serde_json::to_vec(&record).expect("serialize record"))
+            .expect("write mismatched cache");
+
+        assert_eq!(
+            CacheOptions::default()
+                .read_scan_record(&root, &expected)
+                .expect("read mismatched cache"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }
