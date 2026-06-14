@@ -1,4 +1,4 @@
-//! Load and merge yokei configuration layers.
+//! Load and merge chokkin configuration layers.
 //!
 //! Value validation happens at parse time so errors point at the file that
 //! actually contains the offending value.
@@ -9,9 +9,9 @@ use super::defaults::merge_layers;
 use super::error::ConfigError;
 use super::parse::{parse_pyproject_config, parse_standalone_config};
 use super::source::discover_config_files;
-use super::types::{ConfigSources, LoadedConfig, RuntimeOverrides, YokeiConfig};
+use super::types::{ChokkinConfig, ConfigSources, LoadedConfig, RuntimeOverrides};
 
-/// Load and merge yokei configuration for `root`.
+/// Load and merge chokkin configuration for `root`.
 ///
 /// Returns defaults when no config files exist. Never executes Python.
 pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
@@ -19,19 +19,19 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
     let mut layers = Vec::new();
     let mut sources = ConfigSources {
         used_defaults: true,
-        dot_yokei_toml: files.dot_yokei_toml.clone(),
-        yokei_toml: files.yokei_toml.clone(),
-        pyproject_tool_yokei: false,
+        dot_chokkin_toml: files.dot_chokkin_toml.clone(),
+        chokkin_toml: files.chokkin_toml.clone(),
+        pyproject_tool_chokkin: false,
     };
 
-    if let Some(path) = &files.dot_yokei_toml {
+    if let Some(path) = &files.dot_chokkin_toml {
         let partial = parse_standalone_config(path)?;
         if partial.has_any_field() {
             layers.push(partial);
         }
     }
 
-    if let Some(path) = &files.yokei_toml {
+    if let Some(path) = &files.chokkin_toml {
         let partial = parse_standalone_config(path)?;
         if partial.has_any_field() {
             layers.push(partial);
@@ -43,7 +43,7 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
         let (partial, uv_hint) = parse_pyproject_config(path)?;
         uv_workspace = uv_hint;
         if partial.has_any_field() {
-            sources.pyproject_tool_yokei = true;
+            sources.pyproject_tool_chokkin = true;
             layers.push(partial);
         }
     }
@@ -59,7 +59,7 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
 }
 
 /// Apply CLI/runtime overrides onto a loaded file configuration.
-pub fn apply_overrides(config: &mut YokeiConfig, overrides: &RuntimeOverrides) {
+pub fn apply_overrides(config: &mut ChokkinConfig, overrides: &RuntimeOverrides) {
     if let Some(production) = overrides.production {
         config.production = production;
     }

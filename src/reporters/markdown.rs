@@ -16,7 +16,7 @@ impl Reporter for MarkdownReporter {
     fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
         let mut out = String::new();
         let project = context.project_name.as_deref().unwrap_or("(unknown)");
-        let _ = writeln!(out, "# yokei report — {project}\n");
+        let _ = writeln!(out, "# chokkin report — {project}\n");
         let _ = writeln!(out, "- Version: `{}`", context.version);
         let _ = writeln!(
             out,
@@ -31,16 +31,16 @@ impl Reporter for MarkdownReporter {
         }
 
         let rules = [
-            RuleId::Yok001,
-            RuleId::Yok002,
-            RuleId::Yok003,
-            RuleId::Yok004,
-            RuleId::Yok005,
-            RuleId::Yok006,
-            RuleId::Yok007,
-            RuleId::Yok008,
-            RuleId::Yok009,
-            RuleId::Yok010,
+            RuleId::Chk001,
+            RuleId::Chk002,
+            RuleId::Chk003,
+            RuleId::Chk004,
+            RuleId::Chk005,
+            RuleId::Chk006,
+            RuleId::Chk007,
+            RuleId::Chk008,
+            RuleId::Chk009,
+            RuleId::Chk010,
         ];
 
         for rule in rules {

@@ -1,6 +1,6 @@
 //! First-party and workspace import classification.
 
-use crate::config::{UvWorkspaceHint, YokeiConfig};
+use crate::config::{ChokkinConfig, UvWorkspaceHint};
 use crate::manifest::ProjectMetadata;
 use crate::sources::LayoutInfo;
 
@@ -29,7 +29,7 @@ pub fn is_first_party_import(
 pub fn is_workspace_import(
     import_root: &str,
     workspace: Option<&UvWorkspaceHint>,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
 ) -> bool {
     if let Some(hint) = workspace {
         for member in &hint.members {

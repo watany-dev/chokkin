@@ -17,7 +17,7 @@ config / manifest / plugin / 自動推定から **到達性解析の起点（ent
 | --- | --- |
 | 解決する問題 | zero-config で **どのファイルから到達性を辿るか**を決定し、library / app で unused file 厳しさを切り替える |
 | 成果物 | `build_entry_roots(...) -> Result<EntryPlan, EntryError>` |
-| Phase 0 / 1 との関係 | v0.1 MVP 必須。YOK001 の前提 |
+| Phase 0 / 1 との関係 | v0.1 MVP 必須。CHK001 の前提 |
 | 後続ステップへの入力 | Step 9 (reachability)、Step 12 (confidence / mode 表示) |
 
 ## 2. スコープ
@@ -133,7 +133,7 @@ src/
 
 ```rust
 pub fn build_entry_roots(
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     plugins: &PluginHints,

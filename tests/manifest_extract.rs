@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     ConfigSources, DependencyContext, LoadedConfig, ManifestError, ManifestWarning, ProjectRoot,
     RootMarker, TargetVersion, default_config, discover_project_root, extract_manifest,
     load_config, resolve_target_version,
@@ -30,14 +30,14 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     }
 }
 
-fn extract_fixture(name: &str) -> yokei::LoadedManifest {
+fn extract_fixture(name: &str) -> chokkin::LoadedManifest {
     let path = fixture(name);
     let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
     let config = load_config(&root).expect("load config");
     extract_manifest(&root, &config).expect("extract manifest")
 }
 
-fn dependency_names(manifest: &yokei::LoadedManifest) -> Vec<&str> {
+fn dependency_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
     manifest
         .dependencies
         .iter()
@@ -236,9 +236,9 @@ fn broken_pyproject_is_error() {
         effective: default_config(),
         sources: ConfigSources {
             used_defaults: true,
-            dot_yokei_toml: None,
-            yokei_toml: None,
-            pyproject_tool_yokei: false,
+            dot_chokkin_toml: None,
+            chokkin_toml: None,
+            pyproject_tool_chokkin: false,
         },
         uv_workspace: None,
     };

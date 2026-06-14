@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::{EntrySpec, YokeiConfig};
+use crate::config::{ChokkinConfig, EntrySpec};
 use crate::manifest::LoadedManifest;
 use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_target};
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
@@ -20,7 +20,7 @@ use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryWarning};
 ///
 /// Returns [`EntryError`] only when an internal invariant is violated.
 pub fn build_entry_roots(
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     plugins: &PluginHints,
@@ -85,7 +85,7 @@ fn file_context_index(sources: &DiscoveredSources) -> BTreeMap<&str, FileContext
 }
 
 fn collect_config_entries(
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,

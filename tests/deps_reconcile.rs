@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     Confidence, GraphEdge, ProjectRoot, RootMarker, RuleId, Severity, add_parsed_imports,
     analyze_reachability, apply_entry_plan, apply_resolution_to_graph, build_entry_roots,
     build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
@@ -19,14 +19,14 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 struct DepsInputs {
-    manifest: yokei::LoadedManifest,
-    config: yokei::YokeiConfig,
-    sources: yokei::DiscoveredSources,
-    plugins: yokei::PluginHints,
-    parse: yokei::ParseSummary,
-    graph: yokei::ProjectGraph,
-    resolution: yokei::ResolutionIndex,
-    reachability: yokei::ReachabilityReport,
+    manifest: chokkin::LoadedManifest,
+    config: chokkin::ChokkinConfig,
+    sources: chokkin::DiscoveredSources,
+    plugins: chokkin::PluginHints,
+    parse: chokkin::ParseSummary,
+    graph: chokkin::ProjectGraph,
+    resolution: chokkin::ResolutionIndex,
+    reachability: chokkin::ReachabilityReport,
 }
 
 fn load_deps(path: &Path, production: bool) -> DepsInputs {
@@ -51,7 +51,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), yokei::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
         &root,
@@ -87,11 +87,11 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     }
 }
 
-fn reconcile_fixture(name: &str) -> yokei::DependencyReport {
+fn reconcile_fixture(name: &str) -> chokkin::DependencyReport {
     reconcile_fixture_with_strict(name, false)
 }
 
-fn reconcile_fixture_with_strict(name: &str, strict: bool) -> yokei::DependencyReport {
+fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::DependencyReport {
     let inputs = load_deps(&fixture(name), false);
     reconcile_dependencies(
         &inputs.manifest,
@@ -106,85 +106,85 @@ fn reconcile_fixture_with_strict(name: &str, strict: bool) -> yokei::DependencyR
     )
 }
 
-fn has_rule(report: &yokei::DependencyReport, rule: RuleId, name: &str) -> bool {
+fn has_rule(report: &chokkin::DependencyReport, rule: RuleId, name: &str) -> bool {
     report.candidates.iter().any(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
-                yokei::IssueSubject::Distribution { name: dist } if dist == name
+                chokkin::IssueSubject::Distribution { name: dist } if dist == name
             )
     })
 }
 
 fn candidate_for_distribution<'a>(
-    report: &'a yokei::DependencyReport,
+    report: &'a chokkin::DependencyReport,
     rule: RuleId,
     name: &str,
-) -> Option<&'a yokei::IssueCandidate> {
+) -> Option<&'a chokkin::IssueCandidate> {
     report.candidates.iter().find(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
-                yokei::IssueSubject::Distribution { name: dist } if dist == name
+                chokkin::IssueSubject::Distribution { name: dist } if dist == name
             )
     })
 }
 
 #[test]
-fn unused_boto3_emits_yok002() {
+fn unused_boto3_emits_chk002() {
     let report = reconcile_fixture("unused_boto3");
-    let boto3 = candidate_for_distribution(&report, RuleId::Yok002, "boto3").expect("boto3 unused");
+    let boto3 = candidate_for_distribution(&report, RuleId::Chk002, "boto3").expect("boto3 unused");
     assert_eq!(boto3.severity, Severity::Error);
     assert_eq!(boto3.confidence, Confidence::Certain);
-    assert!(!has_rule(&report, RuleId::Yok002, "requests"));
+    assert!(!has_rule(&report, RuleId::Chk002, "requests"));
 }
 
 #[test]
-fn missing_yaml_emits_yok003() {
+fn missing_yaml_emits_chk003() {
     let report = reconcile_fixture("missing_yaml");
     let yaml = report
         .candidates
         .iter()
-        .find(|candidate| candidate.rule == RuleId::Yok003 && candidate.message.contains("pyyaml"))
+        .find(|candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("pyyaml"))
         .expect("pyyaml missing");
     assert_eq!(yaml.severity, Severity::Error);
 }
 
 #[test]
-fn transitive_urllib3_emits_yok004() {
+fn transitive_urllib3_emits_chk004() {
     let report = reconcile_fixture("transitive_urllib3");
     let candidate = report
         .candidates
         .iter()
-        .find(|candidate| candidate.rule == RuleId::Yok004 && candidate.message.contains("urllib3"))
+        .find(|candidate| candidate.rule == RuleId::Chk004 && candidate.message.contains("urllib3"))
         .expect("urllib3 transitive");
     assert_eq!(candidate.severity, Severity::Error);
 }
 
 #[test]
-fn misplaced_pytest_emits_yok005() {
+fn misplaced_pytest_emits_chk005() {
     let report = reconcile_fixture("misplaced_pytest");
     let pytest =
-        candidate_for_distribution(&report, RuleId::Yok005, "pytest").expect("pytest misplaced");
+        candidate_for_distribution(&report, RuleId::Chk005, "pytest").expect("pytest misplaced");
     assert_eq!(pytest.severity, Severity::Warning);
 }
 
 #[test]
-fn unlisted_pytest_binary_emits_yok008() {
+fn unlisted_pytest_binary_emits_chk008() {
     let report = reconcile_fixture("unlisted_pytest");
     let binary = report
         .candidates
         .iter()
-        .find(|candidate| candidate.rule == RuleId::Yok008)
+        .find(|candidate| candidate.rule == RuleId::Chk008)
         .expect("pytest binary unlisted");
     assert_eq!(binary.severity, Severity::Warning);
     assert!(binary.message.contains("pytest"));
 }
 
 #[test]
-fn duplicate_requests_emits_yok009() {
+fn duplicate_requests_emits_chk009() {
     let report = reconcile_fixture("duplicate_requests");
-    let duplicate = candidate_for_distribution(&report, RuleId::Yok009, "requests")
+    let duplicate = candidate_for_distribution(&report, RuleId::Chk009, "requests")
         .expect("requests duplicate");
     assert_eq!(duplicate.severity, Severity::Warning);
     assert!(duplicate.message.contains("runtime"));
@@ -192,9 +192,9 @@ fn duplicate_requests_emits_yok009() {
 }
 
 #[test]
-fn marker_pywin32_emits_yok002_likely_in_strict_mode() {
+fn marker_pywin32_emits_chk002_likely_in_strict_mode() {
     let report = reconcile_fixture_with_strict("marker_pywin32", true);
-    let pywin32 = candidate_for_distribution(&report, RuleId::Yok002, "pywin32")
+    let pywin32 = candidate_for_distribution(&report, RuleId::Chk002, "pywin32")
         .expect("pywin32 unused with marker");
     assert_eq!(pywin32.confidence, Confidence::Likely);
     assert_eq!(pywin32.severity, Severity::Error);
@@ -203,7 +203,7 @@ fn marker_pywin32_emits_yok002_likely_in_strict_mode() {
 #[test]
 fn marker_pywin32_suppressed_by_default() {
     let report = reconcile_fixture("marker_pywin32");
-    assert!(!has_rule(&report, RuleId::Yok002, "pywin32"));
+    assert!(!has_rule(&report, RuleId::Chk002, "pywin32"));
 }
 
 #[test]
@@ -228,22 +228,22 @@ fn reachable_import_graph_is_consistent() {
 #[test]
 fn map_alias_import_resolves_to_python_multipart() {
     let report = reconcile_fixture("map_alias");
-    assert!(!has_rule(&report, RuleId::Yok002, "python-multipart"));
+    assert!(!has_rule(&report, RuleId::Chk002, "python-multipart"));
     assert!(report.used_distributions.contains("python-multipart"));
 }
 
 #[test]
 fn self_extra_dependency_is_not_unused() {
     let report = reconcile_fixture("self_extra");
-    assert!(!has_rule(&report, RuleId::Yok002, "self-extra"));
+    assert!(!has_rule(&report, RuleId::Chk002, "self-extra"));
     assert!(report.used_distributions.contains("self-extra"));
 }
 
 #[test]
 fn binary_tool_pyproject_marks_dev_tools_used() {
     let report = reconcile_fixture("binary_tool_pyproject");
-    assert!(!has_rule(&report, RuleId::Yok002, "mypy"));
-    assert!(!has_rule(&report, RuleId::Yok002, "ruff"));
+    assert!(!has_rule(&report, RuleId::Chk002, "mypy"));
+    assert!(!has_rule(&report, RuleId::Chk002, "ruff"));
     assert!(report.used_distributions.contains("mypy"));
     assert!(report.used_distributions.contains("ruff"));
 }
@@ -251,34 +251,34 @@ fn binary_tool_pyproject_marks_dev_tools_used() {
 #[test]
 fn binary_mkdocs_theme_marks_material_used() {
     let report = reconcile_fixture("binary_mkdocs_theme");
-    assert!(!has_rule(&report, RuleId::Yok002, "mkdocs"));
-    assert!(!has_rule(&report, RuleId::Yok002, "mkdocs-material"));
+    assert!(!has_rule(&report, RuleId::Chk002, "mkdocs"));
+    assert!(!has_rule(&report, RuleId::Chk002, "mkdocs-material"));
     assert!(report.used_distributions.contains("mkdocs"));
     assert!(report.used_distributions.contains("mkdocs-material"));
 }
 
 #[test]
-fn dev_group_only_suppresses_yok002_for_pytest() {
+fn dev_group_only_suppresses_chk002_for_pytest() {
     let report = reconcile_fixture("dev_group_only");
-    assert!(!has_rule(&report, RuleId::Yok002, "pytest"));
+    assert!(!has_rule(&report, RuleId::Chk002, "pytest"));
 }
 
 #[test]
-fn pdm_dev_dependencies_suppress_yok002() {
+fn pdm_dev_dependencies_suppress_chk002() {
     let report = reconcile_fixture("pdm_dev_deps");
-    assert!(!has_rule(&report, RuleId::Yok002, "pytest"));
+    assert!(!has_rule(&report, RuleId::Chk002, "pytest"));
 }
 
 #[test]
 fn optional_try_import_marks_brotli_used() {
     let report = reconcile_fixture("optional_try_import");
-    assert!(!has_rule(&report, RuleId::Yok002, "brotli"));
+    assert!(!has_rule(&report, RuleId::Chk002, "brotli"));
     assert!(report.used_distributions.contains("brotli"));
 }
 
 #[test]
 fn platform_guard_import_marks_tzdata_used() {
     let report = reconcile_fixture("platform_guard_import");
-    assert!(!has_rule(&report, RuleId::Yok002, "tzdata"));
+    assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
     assert!(report.used_distributions.contains("tzdata"));
 }

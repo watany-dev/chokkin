@@ -2,6 +2,6 @@
 name = "chain-import"
 version = "0.0.0"
 
-[tool.yokei]
+[tool.chokkin]
 mode = "app"
 entry = ["src/acme/main.py"]

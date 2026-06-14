@@ -45,7 +45,7 @@ Skill tool:
 (`.claude/hooks/stop-wrapup.sh`). When a session that edited files
 (`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) tries to end, the hook blocks and
 asks you to run `wrapup`. The hook tracks state via a marker file
-(`/tmp/yokei-wrapup-<session_id>`) instead of `stop_hook_active`; `wrapup` must
+(`/tmp/chokkin-wrapup-<session_id>`) instead of `stop_hook_active`; `wrapup` must
 `touch` that marker on completion or the Stop hook loops indefinitely. The hook
 needs `jq`; without it (or outside a git repo) it fails safe and lets the
 session end.

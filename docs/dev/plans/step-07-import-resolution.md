@@ -14,10 +14,10 @@ import 名と **PEP 508 distribution 名**の対応を解決する。Phase 0 exi
 
 | 項目 | 内容 |
 | --- | --- |
-| 解決する問題 | `import yaml` と `PyYAML`、`PIL` と `Pillow` のような **名前不一致**を多層戦略で解決し、YOK002–YOK004 / YOK010 の前提データを作る |
+| 解決する問題 | `import yaml` と `PyYAML`、`PIL` と `Pillow` のような **名前不一致**を多層戦略で解決し、CHK002–CHK004 / CHK010 の前提データを作る |
 | 成果物 | `resolve_imports(...) -> Result<ResolutionIndex, ResolveError>` + bundled map データ |
 | Phase 0 / 1 との関係 | Phase 0 exit の maps 初版を含む。resolver は v0.1 MVP 必須 |
-| 後続ステップへの入力 | Step 9–10 (reachability / dependency reconciliation)、Step 12 (`YOK010`) |
+| 後続ステップへの入力 | Step 9–10 (reachability / dependency reconciliation)、Step 12 (`CHK010`) |
 
 ## 2. スコープ
 
@@ -27,8 +27,8 @@ import 名と **PEP 508 distribution 名**の対応を解決する。Phase 0 exi
 - **`.venv` metadata 読み取り**（存在時のみ）: `dist-info/METADATA`, `top_level.txt`, `entry_points.txt`, `RECORD`
 - **bundled package-module-map 初版**（PyPI download 上位 ~500 → コンパイル時埋め込み）
 - **bundled binary map 初版**（主要 dev tool ~50）
-- `[tool.yokei].package_module_map` / `binary_map` のマージ（user > bundled）
-- `LockfileGraph` を使った **transitive 判定**入力（YOK004 — Step 10 が消費）
+- `[tool.chokkin].package_module_map` / `binary_map` のマージ（user > bundled）
+- `LockfileGraph` を使った **transitive 判定**入力（CHK004 — Step 10 が消費）
 - graph の `ModuleOrigin` 更新 + `Distribution provides Module` 辺
 - **stdlib リスト**（`target_version` 別、Rust 側静的テーブル）
 - **first-party** 判定（layout packages + namespace 考慮の簡易版）
@@ -38,7 +38,7 @@ import 名と **PEP 508 distribution 名**の対応を解決する。Phase 0 exi
 
 | 項目 | 担当 |
 | --- | --- |
-| YOK002–YOK010 判定ロジック | Step 10–12 |
+| CHK002–CHK010 判定ロジック | Step 10–12 |
 | uv workspace member ごとの resolver 境界 | v0.2 §16 |
 | Core Metadata `Import-Name` 優先（普及後） | v0.2 — 読み取りフックのみ v0.1 で用意 |
 | Poetry / PDM lock の transitive | v0.2 |
@@ -116,7 +116,7 @@ pub static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
 候補（順）:
   <root>/.venv
   <root>/venv
-  $VIRTUAL_ENV（yokei プロセスの env — project の venv と混同しないよう root 配下のみ採用）
+  $VIRTUAL_ENV（chokkin プロセスの env — project の venv と混同しないよう root 配下のみ採用）
 ```
 
 `dist-info` ディレクトリ名: `{name}-{version}.dist-info` を parse。
@@ -134,7 +134,7 @@ pub struct TransitiveIndex {
 }
 ```
 
-lockfile なし → `TransitiveIndex::empty()` + Step 10 で YOK004 縮退（§10）。
+lockfile なし → `TransitiveIndex::empty()` + Step 10 で CHK004 縮退（§10）。
 
 ## 4. モジュール構成
 
@@ -207,7 +207,7 @@ pub enum ResolveWarning {
     AmbiguousImport { import: String, candidates: Vec<String> },
     UnresolvedImport { import: String, file: String, line: u32 },
     VenvUnreadable { path: String, reason: String },
-    MissingBundledMapEntry { import: String }, // 情報用。YOK010 は Step 12
+    MissingBundledMapEntry { import: String }, // 情報用。CHK010 は Step 12
 }
 ```
 
@@ -218,7 +218,7 @@ pub enum ResolveWarning {
 ```rust
 pub fn resolve_imports(
     root: &ProjectRoot,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     parse: &ParseSummary,

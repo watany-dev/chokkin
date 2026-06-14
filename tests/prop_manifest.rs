@@ -15,10 +15,10 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use proptest::prelude::*;
-use yokei::{
+use chokkin::{
     ConfigSources, LoadedConfig, ProjectRoot, RootMarker, default_config, extract_manifest,
 };
+use proptest::prelude::*;
 
 fn project_root_at(path: &Path) -> ProjectRoot {
     let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -36,9 +36,9 @@ fn default_loaded_config(root: &ProjectRoot) -> LoadedConfig {
         effective: default_config(),
         sources: ConfigSources {
             used_defaults: true,
-            dot_yokei_toml: None,
-            yokei_toml: None,
-            pyproject_tool_yokei: false,
+            dot_chokkin_toml: None,
+            chokkin_toml: None,
+            pyproject_tool_chokkin: false,
         },
         uv_workspace: None,
     }

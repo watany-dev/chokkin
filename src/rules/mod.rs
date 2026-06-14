@@ -1,12 +1,12 @@
 //! Rule types and issue candidates shared across pipeline steps 10–12.
 
+mod chk001;
 pub mod deps;
 pub mod emit;
 mod filter;
 mod ignore;
 pub mod symbols;
 mod types;
-mod yok001;
 
 pub use deps::reconcile_dependencies;
 pub use emit::{emit_issues, explain_issue};

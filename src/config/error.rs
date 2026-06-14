@@ -1,4 +1,4 @@
-//! Errors raised while loading yokei configuration.
+//! Errors raised while loading chokkin configuration.
 
 use std::path::PathBuf;
 
@@ -35,7 +35,7 @@ pub enum ConfigError {
         message: String,
     },
 
-    /// Unknown key in a yokei config table such as `[tool.yokei]` or `plugins`.
+    /// Unknown key in a chokkin config table such as `[tool.chokkin]` or `plugins`.
     #[error("unknown config key {key} in {path}")]
     UnknownKey {
         /// Config file path.

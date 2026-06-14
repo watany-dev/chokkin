@@ -22,7 +22,7 @@ Before the first `v*` tag push, register a Trusted Publisher on pypi.org:
    reserved).
 2. Add a publisher with:
    - **Repository owner:** `watany-dev`
-   - **Repository name:** `yokei`
+   - **Repository name:** `chokkin`
    - **Workflow filename:** `release.yml`
    - **Environment name:** `pypi`
 3. Create the `pypi` environment in the GitHub repository settings
@@ -33,7 +33,7 @@ API token — authentication is handled entirely by OIDC.
 
 ## PyPI package name reservation
 
-The package name `yokei` on PyPI has not been reserved. Consider publishing an
+The package name `chokkin` on PyPI has not been reserved. Consider publishing an
 empty placeholder wheel early to prevent name squatting.
 
 ## Coverage threshold
@@ -57,7 +57,7 @@ provides meaningful coverage. Re-enable when Phase 1 is merged:
 `cargo nextest` on `windows-latest` can hit `PermissionDenied` when many
 parallel tests create directories under the default short-path user temp
 (`RUNNER~1\AppData\Local\Temp`). The `test` job redirects `TMP` / `TEMP` /
-`TMPDIR` to `$RUNNER_TEMP/yokei-test-tmp` before running nextest.
+`TMPDIR` to `$RUNNER_TEMP/chokkin-test-tmp` before running nextest.
 
 ## Deferred CI jobs (require code to exist)
 
@@ -90,7 +90,7 @@ additional_cargo_args = []
 
 ## crates.io
 
-yokei is distributed via PyPI only (maturin `bin` bindings). Publishing to
+chokkin is distributed via PyPI only (maturin `bin` bindings). Publishing to
 crates.io is not planned. The `publish-crates.yml` workflow from ptuf is omitted.
 
 ## stop-wrapup hook
@@ -98,4 +98,4 @@ crates.io is not planned. The `publish-crates.yml` workflow from ptuf is omitted
 ptuf's `.claude/hooks/stop-wrapup.sh` depends on ptuf's own wrapup skill
 (`/simplify`, `/update-docs`). It is not ported here because those skills are
 ptuf-specific. Add a project-specific stop hook when a similar wrapup workflow
-is established for yokei.
+is established for chokkin.

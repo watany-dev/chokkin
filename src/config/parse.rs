@@ -1,4 +1,4 @@
-//! TOML parsing for yokei configuration files.
+//! TOML parsing for chokkin configuration files.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -32,14 +32,14 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "workspaces",
 ];
 
-/// Read and parse a standalone `.yokei.toml` or `yokei.toml` file.
+/// Read and parse a standalone `.chokkin.toml` or `chokkin.toml` file.
 pub fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError> {
     let contents = read_to_string(path)?;
     let table = parse_table(path, &contents)?;
     partial_from_table(path, &table)
 }
 
-/// Read `[tool.yokei]` from `pyproject.toml` and optional `[tool.uv.workspace]` hint.
+/// Read `[tool.chokkin]` from `pyproject.toml` and optional `[tool.uv.workspace]` hint.
 pub fn parse_pyproject_config(
     path: &Path,
 ) -> Result<(PartialConfig, Option<UvWorkspaceHint>), ConfigError> {
@@ -51,12 +51,12 @@ pub fn parse_pyproject_config(
         return Ok((PartialConfig::default(), uv_workspace));
     };
 
-    let Some(yokei_value) = tool_table.get("yokei") else {
+    let Some(chokkin_value) = tool_table.get("chokkin") else {
         return Ok((PartialConfig::default(), uv_workspace));
     };
 
-    let yokei_table = value_as_table(path, yokei_value, "tool.yokei")?;
-    let partial = partial_from_table(path, yokei_table)?;
+    let chokkin_table = value_as_table(path, chokkin_value, "tool.chokkin")?;
+    let partial = partial_from_table(path, chokkin_table)?;
     Ok((partial, uv_workspace))
 }
 
@@ -460,16 +460,16 @@ fn parse_optional_workspaces(
 fn is_valid_ignore_rule(code: &str) -> bool {
     matches!(
         code,
-        "YOK001"
-            | "YOK002"
-            | "YOK003"
-            | "YOK004"
-            | "YOK005"
-            | "YOK006"
-            | "YOK007"
-            | "YOK008"
-            | "YOK009"
-            | "YOK010"
+        "CHK001"
+            | "CHK002"
+            | "CHK003"
+            | "CHK004"
+            | "CHK005"
+            | "CHK006"
+            | "CHK007"
+            | "CHK008"
+            | "CHK009"
+            | "CHK010"
     )
 }
 
@@ -517,13 +517,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn valid_ignore_rules_accept_yok001_through_yok010() {
+    fn valid_ignore_rules_accept_chk001_through_chk010() {
         for code in 1..=10 {
-            let rule = format!("YOK{code:03}");
+            let rule = format!("CHK{code:03}");
             assert!(is_valid_ignore_rule(&rule), "expected {rule} to be valid");
         }
-        assert!(!is_valid_ignore_rule("YOK000"));
-        assert!(!is_valid_ignore_rule("YOK011"));
-        assert!(!is_valid_ignore_rule("YOK099"));
+        assert!(!is_valid_ignore_rule("CHK000"));
+        assert!(!is_valid_ignore_rule("CHK011"));
+        assert!(!is_valid_ignore_rule("CHK099"));
     }
 }

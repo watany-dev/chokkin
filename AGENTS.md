@@ -1,11 +1,11 @@
-# AGENTS.md — Coding agent guidance for yokei
+# AGENTS.md — Coding agent guidance for chokkin
 
 This file is read by Claude Code, GitHub Copilot, Codex, Cursor, and other
 coding agents working on this repository.
 
 ## Project overview
 
-`yokei` is a Rust binary shipped as a Python wheel (via maturin `bin` bindings).
+`chokkin` is a Rust binary shipped as a Python wheel (via maturin `bin` bindings).
 It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
@@ -16,7 +16,7 @@ equivalent for Python.
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
-is the no-network in-repo skeleton. **The §17 YOK002 gate is met** (see
+is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
 budget. PyPI **v0.1** tag remains gated on Trusted Publishing setup. 
@@ -31,7 +31,7 @@ src/
   main.rs         CLI entry point — argument dispatch and process exit only
   lib.rs          Library crate — all logic goes here as the project grows
   discovery/      Project root discovery (pipeline step 1)
-  config/         Config loading ([tool.yokei], pipeline step 2)
+  config/         Config loading ([tool.chokkin], pipeline step 2)
   manifest/       Manifest extraction (pipeline step 3; util.rs shared helpers)
   sources/        Source file discovery (pipeline step 4)
   plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi)
@@ -46,7 +46,7 @@ src/
                   and issue emission (step 12: `emit_issues`, `explain_issue`)
   reporters/      Built-in reporters: default, compact, json, markdown
   fix/            Optional manifest fixes (step 13: `apply_fixes`; atomic writes, root containment)
-pyproject.toml    maturin bin bindings — yokei ships as a Python wheel
+pyproject.toml    maturin bin bindings — chokkin ships as a Python wheel
 docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing
   ci-porting-notes.md  Deferred CI items to enable as code matures
@@ -54,7 +54,7 @@ docs/dev/
 
 ## Critical design constraint: never execute project code
 
-yokei analyzes Python projects via **static parse only**. It must never
+chokkin analyzes Python projects via **static parse only**. It must never
 `import`, `exec`, or spawn the analyzed project's code. Django settings,
 `setup.py`, and similar entry points may have side effects (DB connections,
 env var dependencies, arbitrary code execution). Keep analysis in the static
@@ -72,7 +72,7 @@ explicit opt-in separated from the default flow.
 - **No debug helpers in production** — `dbg!`, `print!`, `println!`,
   `eprintln!` are denied by clippy except in tests and `main.rs` (which has
   `#![allow(clippy::print_stdout, clippy::print_stderr)]`).
-- **Cross-platform** — yokei ships wheels for Linux/macOS/Windows. Always use
+- **Cross-platform** — chokkin ships wheels for Linux/macOS/Windows. Always use
   `std::path` APIs; never assume POSIX path separators.
 
 ## Pre-commit gate
@@ -120,9 +120,9 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `scripts/oss-clones.manifest` — the 20-project set (pinned tags; resolved
   SHAs land in `target/oss-clones/clones.lock.tsv`).
 - `scripts/oss-fixtures.labels.tsv` — ground-truth `fp`/`tp` labels for
-  YOK002/YOK003 findings; the FP-rate gate requires every finding classified.
+  CHK002/CHK003 findings; the FP-rate gate requires every finding classified.
 - `docs/dev/oss-validation-report.md` — the committed scorecard from the latest
-  run. **Current status: YOK002 FP gate met** (0/0 after Phase 1.5; was 155/155
+  run. **Current status: CHK002 FP gate met** (0/0 after Phase 1.5; was 155/155
   before remediation). Crashes 0, cold-run speed within budget.
 
 ## PR hygiene

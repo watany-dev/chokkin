@@ -121,7 +121,7 @@ fn detect_unused_exports(
 
         let (severity, confidence) = unused_export_severity(mode, entry.in_all);
         candidates.push(IssueCandidate {
-            rule: RuleId::Yok006,
+            rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
                 module: entry.id.module.clone(),
                 name: entry.id.name.clone(),
@@ -168,7 +168,7 @@ fn detect_unused_reexports(
         }
         let (severity, confidence) = unused_reexport_severity(mode);
         candidates.push(IssueCandidate {
-            rule: RuleId::Yok007,
+            rule: RuleId::Chk007,
             subject: IssueSubject::Symbol {
                 module: reexport.package_module.clone(),
                 name: reexport.name.clone(),
@@ -246,7 +246,7 @@ fn detect_unresolved_imports(
         };
 
         candidates.push(IssueCandidate {
-            rule: RuleId::Yok010,
+            rule: RuleId::Chk010,
             subject: IssueSubject::Import {
                 module: import.clone(),
                 file: file.clone(),

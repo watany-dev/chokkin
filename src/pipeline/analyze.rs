@@ -225,7 +225,7 @@ mod tests {
                 .issues
                 .issues
                 .iter()
-                .any(|issue| issue.rule == RuleId::Yok002)
+                .any(|issue| issue.rule == RuleId::Chk002)
         );
         assert_eq!(report.issues.exit_status, ExitStatus::IssuesFound);
     }

@@ -6,21 +6,21 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::struct_field_names)]
 pub(super) struct ConfigFileSet {
-    pub dot_yokei_toml: Option<PathBuf>,
-    pub yokei_toml: Option<PathBuf>,
+    pub dot_chokkin_toml: Option<PathBuf>,
+    pub chokkin_toml: Option<PathBuf>,
     pub pyproject_toml: Option<PathBuf>,
 }
 
 /// Discover config file paths under `root` without reading their contents.
 #[must_use]
 pub fn discover_config_files(root: &Path) -> ConfigFileSet {
-    let dot_yokei = root.join(".yokei.toml");
-    let yokei = root.join("yokei.toml");
+    let dot_chokkin = root.join(".chokkin.toml");
+    let chokkin = root.join("chokkin.toml");
     let pyproject = root.join("pyproject.toml");
 
     ConfigFileSet {
-        dot_yokei_toml: file_if_exists(&dot_yokei),
-        yokei_toml: file_if_exists(&yokei),
+        dot_chokkin_toml: file_if_exists(&dot_chokkin),
+        chokkin_toml: file_if_exists(&chokkin),
         pyproject_toml: file_if_exists(&pyproject),
     }
 }

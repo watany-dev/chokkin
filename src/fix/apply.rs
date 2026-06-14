@@ -98,7 +98,7 @@ fn apply_action(
             let path = root.join(file);
             let description = move_group_to_runtime(&path, from_label, raw)?;
             Ok(AppliedFix {
-                rule: RuleId::Yok005,
+                rule: RuleId::Chk005,
                 subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
                 file: file.clone(),
                 description,
@@ -118,7 +118,7 @@ fn applied_preview(action: &FixAction) -> AppliedFix {
             description: format!("would remove `{name}` from {file}"),
         },
         FixAction::MoveToRuntime { name, file, .. } => AppliedFix {
-            rule: RuleId::Yok005,
+            rule: RuleId::Chk005,
             subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
             file: file.clone(),
             description: format!("would move `{name}` to runtime in {file}"),
@@ -133,7 +133,7 @@ fn skipped_from_error(action: &FixAction, error: &FixError) -> SkippedFix {
             crate::rules::IssueSubject::Distribution { name: name.clone() },
         ),
         FixAction::MoveToRuntime { name, .. } => (
-            RuleId::Yok005,
+            RuleId::Chk005,
             crate::rules::IssueSubject::Distribution { name: name.clone() },
         ),
     };
@@ -198,7 +198,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let issue = Issue {
-            rule: RuleId::Yok002,
+            rule: RuleId::Chk002,
             severity: Severity::Error,
             confidence: Confidence::Certain,
             message: "unused".to_owned(),

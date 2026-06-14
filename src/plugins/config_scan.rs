@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn detects_tool_tables_in_pyproject() {
-        let dir = std::env::temp_dir().join("yokei-config-scan-tools");
+        let dir = std::env::temp_dir().join("chokkin-config-scan-tools");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn detects_mkdocs_material_theme() {
-        let dir = std::env::temp_dir().join("yokei-config-scan-mkdocs");
+        let dir = std::env::temp_dir().join("chokkin-config-scan-mkdocs");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn tox_extras_mark_optional_dependencies_used() {
-        let dir = std::env::temp_dir().join("yokei-config-scan-tox");
+        let dir = std::env::temp_dir().join("chokkin-config-scan-tox");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(

@@ -34,7 +34,7 @@ Phase 0 spike（`parse_file` + トップレベル `import` 抽出）を拡張し
   - `__import__("pkg")`
 - **try-import** パターン検出 → `ImportRef::optional: true`
 - **`__all__`** リスト抽出（リテラル / 文字列連結の単純形）
-- **`# yokei: ignore[...]`** / `# yokei: file-ignore[...]`（§18）
+- **`# chokkin: ignore[...]`** / `# chokkin: file-ignore[...]`（§18）
 - **トップレベル symbol 定義**（function / class / assign）→ Step 11 入力
 - **装飾子名**の収集（`route` / `get` / `fixture` / `task` 等 — 完全一致リスト）
 - **`target_version`** による構文 gate（未対応構文は diagnostic、可能なら部分抽出継続）
@@ -76,7 +76,7 @@ Phase 0 spike（`parse_file` + トップレベル `import` 抽出）を拡張し
 3. level=2, module=`models` → `acme.models`
 ```
 
-flat layout / namespace / `__init__.py` 欠落は `ParseDiagnostic` + `ImportRef.module` 空で記録（Step 7 で `YOK010`）。
+flat layout / namespace / `__init__.py` 欠落は `ParseDiagnostic` + `ImportRef.module` 空で記録（Step 7 で `CHK010`）。
 
 ### 3.3 動的 import（§14）
 
@@ -89,8 +89,8 @@ flat layout / namespace / `__init__.py` 欠落は `ParseDiagnostic` + `ImportRef
 ### 3.4 ignore 指令（§18）
 
 ```python
-# yokei: file-ignore[YOK001,YOK006]
-from legacy import old  # yokei: ignore[YOK003]
+# chokkin: file-ignore[CHK001,CHK006]
+from legacy import old  # chokkin: ignore[CHK003]
 ```
 
 - **file-ignore**: ファイル先頭コメントブロック（最初の stmt より前）のみ

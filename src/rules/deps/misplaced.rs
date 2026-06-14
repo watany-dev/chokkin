@@ -1,8 +1,8 @@
-//! YOK005 misplaced dependency detection.
+//! CHK005 misplaced dependency detection.
 
 use std::collections::HashSet;
 
-use crate::config::{Confidence, YokeiConfig};
+use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::ModuleOrigin;
 use crate::resolver::ResolutionIndex;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
@@ -18,7 +18,7 @@ pub(super) fn detect_misplaced_dependencies(
     declared: &DeclaredIndex<'_>,
     resolution: &ResolutionIndex,
     reachable: &HashSet<String>,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     sources: &DiscoveredSources,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -74,7 +74,7 @@ pub(super) fn detect_misplaced_dependencies(
             .collect();
 
         candidates.push(IssueCandidate {
-            rule: RuleId::Yok005,
+            rule: RuleId::Chk005,
             subject: IssueSubject::Distribution {
                 name: distribution.clone(),
             },

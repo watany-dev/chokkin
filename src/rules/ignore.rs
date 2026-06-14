@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use globset::Glob;
 
-use crate::config::YokeiConfig;
+use crate::config::ChokkinConfig;
 use crate::parser::{IgnoreDirective, ParseSummary};
 use crate::rules::types::{Issue, IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
 
@@ -44,7 +44,7 @@ impl IgnoreMatcher {
     /// Build matchers from config and parsed modules.
     ///
     /// Invalid glob patterns are skipped (config validation should catch most).
-    pub fn build(config: &YokeiConfig, parse: &ParseSummary) -> Self {
+    pub fn build(config: &ChokkinConfig, parse: &ParseSummary) -> Self {
         let mut config_rules = BTreeMap::new();
         for (code, patterns) in &config.ignore {
             let Some(rule) = RuleId::parse_code(code) else {
@@ -173,7 +173,7 @@ fn config_pattern_matches(rule: RuleId, pattern: &str, subject: &IssueSubject) -
         IssueSubject::Distribution { name } if is_distribution_rule(rule) => {
             glob_match(pattern, name)
         },
-        IssueSubject::Binary { name } if rule == RuleId::Yok008 => glob_match(pattern, name),
+        IssueSubject::Binary { name } if rule == RuleId::Chk008 => glob_match(pattern, name),
         IssueSubject::Import { module, file, .. } => {
             glob_match(pattern, file) || glob_match(pattern, module)
         },
@@ -207,23 +207,23 @@ fn symbol_pattern_matches(
 }
 
 fn is_file_rule(rule: RuleId) -> bool {
-    matches!(rule, RuleId::Yok001 | RuleId::Yok010)
+    matches!(rule, RuleId::Chk001 | RuleId::Chk010)
 }
 
 fn is_distribution_rule(rule: RuleId) -> bool {
     matches!(
         rule,
-        RuleId::Yok002
-            | RuleId::Yok003
-            | RuleId::Yok004
-            | RuleId::Yok005
-            | RuleId::Yok008
-            | RuleId::Yok009
+        RuleId::Chk002
+            | RuleId::Chk003
+            | RuleId::Chk004
+            | RuleId::Chk005
+            | RuleId::Chk008
+            | RuleId::Chk009
     )
 }
 
 fn is_symbol_rule(rule: RuleId) -> bool {
-    matches!(rule, RuleId::Yok006 | RuleId::Yok007)
+    matches!(rule, RuleId::Chk006 | RuleId::Chk007)
 }
 
 fn glob_match(pattern: &str, value: &str) -> bool {
@@ -245,10 +245,10 @@ mod tests {
         let mut config = default_config();
         config
             .ignore
-            .insert("YOK002".to_owned(), vec!["boto3".to_owned()]);
+            .insert("CHK002".to_owned(), vec!["boto3".to_owned()]);
         let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
         let candidate = IssueCandidate {
-            rule: RuleId::Yok002,
+            rule: RuleId::Chk002,
             subject: IssueSubject::Distribution {
                 name: "boto3".to_owned(),
             },
@@ -273,7 +273,7 @@ mod tests {
             exports: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
-                codes: vec!["YOK003".to_owned()],
+                codes: vec!["CHK003".to_owned()],
                 line: 4,
             }],
             has_opaque_dynamic_import: false,
@@ -281,7 +281,7 @@ mod tests {
         });
         let matcher = IgnoreMatcher::build(&config, &parse);
         let candidate = IssueCandidate {
-            rule: RuleId::Yok003,
+            rule: RuleId::Chk003,
             subject: IssueSubject::Import {
                 module: "missing".to_owned(),
                 file: "src/acme/main.py".to_owned(),
@@ -312,7 +312,7 @@ mod tests {
             exports: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
-                codes: vec!["YOK006".to_owned()],
+                codes: vec!["CHK006".to_owned()],
                 line: 12,
             }],
             has_opaque_dynamic_import: false,
@@ -320,7 +320,7 @@ mod tests {
         });
         let matcher = IgnoreMatcher::build(&config, &parse);
         let candidate = IssueCandidate {
-            rule: RuleId::Yok006,
+            rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
                 module: "acme.api".to_owned(),
                 name: "dead_api".to_owned(),

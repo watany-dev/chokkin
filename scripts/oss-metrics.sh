@@ -2,8 +2,8 @@
 # Measure the Phase 1 §17 exit criteria over the OSS validation set.
 #
 # Exit criteria (docs/dev/spec.ja.md §17):
-#   1. unused-dependency (YOK002) false-positive rate < 5%
-#   2. crashes (yokei internal error, exit 3) == 0
+#   1. unused-dependency (CHK002) false-positive rate < 5%
+#   2. crashes (chokkin internal error, exit 3) == 0
 #   3. cold run on a `medium` project <= 2000 ms
 #
 # Usage:
@@ -15,7 +15,7 @@
 #   -R, --recall PATH     Recall sentinels (default: scripts/oss-recall.manifest)
 #   -c, --clones DIR      Clone root (default: target/oss-clones)
 #   -o, --output DIR      Report directory (default: target/oss-metrics)
-#   -b, --bin PATH        yokei binary (default: target/release/yokei)
+#   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
 #   -r, --runs N          Timed repetitions per project, median reported (default: 3)
 #   --build               cargo build --release before running
 #   --clone               Run clone-oss-fixtures.sh first
@@ -23,12 +23,12 @@
 #   -h, --help            Show help
 #
 # Outputs (under --output):
-#   <slug>.json     raw yokei JSON report
-#   findings.tsv    every YOK002/YOK003 finding with its ground-truth verdict
+#   <slug>.json     raw chokkin JSON report
+#   findings.tsv    every CHK002/CHK003 finding with its ground-truth verdict
 #   summary.tsv     per-project: size, exit, median_ms, totals, by-code counts
 #   report.md       human-readable §17 scorecard
 #
-# False-positive accounting: each reported YOK002/YOK003 finding is matched
+# False-positive accounting: each reported CHK002/CHK003 finding is matched
 # against the labels file on (slug, code, distribution). Verdict `fp` counts as
 # a false positive; `tp` as a true positive; anything unlabeled is `unknown`.
 # The FP-rate gate cannot pass while unknown findings remain — every finding
@@ -48,7 +48,7 @@ LABELS="${OSS_LABELS:-$ROOT/scripts/oss-fixtures.labels.tsv}"
 RECALL_MANIFEST="${OSS_RECALL_MANIFEST:-$ROOT/scripts/oss-recall.manifest}"
 CLONES="${OSS_CLONES_DIR:-$ROOT/target/oss-clones}"
 OUTPUT="${OSS_METRICS_DIR:-$ROOT/target/oss-metrics}"
-YOKEI_BIN="${YOKEI_BIN:-$ROOT/target/release/yokei}"
+CHOKKIN_BIN="${CHOKKIN_BIN:-$ROOT/target/release/chokkin}"
 RUNS=3
 DO_BUILD=0
 DO_CLONE=0
@@ -65,7 +65,7 @@ while [[ $# -gt 0 ]]; do
     -R | --recall) RECALL_MANIFEST="$2"; shift 2 ;;
     -c | --clones) CLONES="$2"; shift 2 ;;
     -o | --output) OUTPUT="$2"; shift 2 ;;
-    -b | --bin) YOKEI_BIN="$2"; shift 2 ;;
+    -b | --bin) CHOKKIN_BIN="$2"; shift 2 ;;
     -r | --runs) RUNS="$2"; shift 2 ;;
     --build) DO_BUILD=1; shift ;;
     --clone) DO_CLONE=1; shift ;;
@@ -78,24 +78,24 @@ done
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 2; }
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
-  (cd "$ROOT" && cargo build --release --locked --bin yokei) || exit 2
+  (cd "$ROOT" && cargo build --release --locked --bin chokkin) || exit 2
 fi
 if [[ "$DO_CLONE" -eq 1 ]]; then
   "$ROOT/scripts/clone-oss-fixtures.sh" -m "$MANIFEST" -o "$CLONES" || \
     echo "warning: some clones failed; continuing with what is present" >&2
 fi
 
-[[ -x "$YOKEI_BIN" ]] || { echo "yokei binary not found: $YOKEI_BIN (use --build)" >&2; exit 2; }
+[[ -x "$CHOKKIN_BIN" ]] || { echo "chokkin binary not found: $CHOKKIN_BIN (use --build)" >&2; exit 2; }
 [[ -f "$MANIFEST" ]] || { echo "manifest not found: $MANIFEST" >&2; exit 2; }
 
 mkdir -p "$OUTPUT"
 SUMMARY="$OUTPUT/summary.tsv"
 FINDINGS="$OUTPUT/findings.tsv"
 REPORT="$OUTPUT/report.md"
-printf 'slug\tcategory\tsize\texit\tmedian_ms\ttotal\tYOK002\tYOK003\n' >"$SUMMARY"
+printf 'slug\tcategory\tsize\texit\tmedian_ms\ttotal\tCHK002\tCHK003\n' >"$SUMMARY"
 printf 'slug\tcode\tdistribution\tverdict\tconfidence\tmessage\n' >"$FINDINGS"
 
-VERSION="$("$YOKEI_BIN" --version 2>/dev/null | awk '{print $2}')"
+VERSION="$("$CHOKKIN_BIN" --version 2>/dev/null | awk '{print $2}')"
 
 # Look up a ground-truth verdict for (slug, code, distribution).
 label_for() {
@@ -130,7 +130,7 @@ measure_one() {
   local times="" exit_code=0 start_ms end_ms i
   for ((i = 0; i < RUNS; i++)); do
     start_ms="$(date +%s%3N)"
-    "$YOKEI_BIN" --reporter json --no-exit-code "$proj" >"$json_out" 2>"$OUTPUT/$slug.stderr"
+    "$CHOKKIN_BIN" --reporter json --no-exit-code "$proj" >"$json_out" 2>"$OUTPUT/$slug.stderr"
     exit_code=$?
     end_ms="$(date +%s%3N)"
     times+=" $((end_ms - start_ms))"
@@ -140,16 +140,16 @@ measure_one() {
   local total=0 y002=0 y003=0
   if jq -e . "$json_out" >/dev/null 2>&1; then
     total="$(jq -r '.summary.total // 0' "$json_out")"
-    y002="$(jq -r '[.issues[]? | select(.code=="YOK002")] | length' "$json_out")"
-    y003="$(jq -r '[.issues[]? | select(.code=="YOK003")] | length' "$json_out")"
+    y002="$(jq -r '[.issues[]? | select(.code=="CHK002")] | length' "$json_out")"
+    y003="$(jq -r '[.issues[]? | select(.code=="CHK003")] | length' "$json_out")"
 
-    # Emit each YOK002/YOK003 finding with its ground-truth verdict.
+    # Emit each CHK002/CHK003 finding with its ground-truth verdict.
     local code dist conf msg verdict
     while IFS=$'\t' read -r code dist conf msg; do
       [[ -z "$code" ]] && continue
       verdict="$(label_for "$slug" "$code" "$dist")"
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$slug" "$code" "$dist" "$verdict" "$conf" "$msg" >>"$FINDINGS"
-    done < <(jq -r '.issues[]? | select(.code=="YOK002" or .code=="YOK003")
+    done < <(jq -r '.issues[]? | select(.code=="CHK002" or .code=="CHK003")
                     | [.code, (.distribution // "?"), (.confidence // "?"), (.message // "")] | @tsv' "$json_out")
   else
     echo "  non-JSON output (see $OUTPUT/$slug.stderr)" >&2
@@ -176,7 +176,7 @@ while IFS=$'\t' read -r slug category size ref url || [[ -n "$slug" ]]; do
   measure_one "$slug" "$category" "$size" "$proj"
 done <"$MANIFEST"
 
-# Recall sentinels: in-repo fixtures with a known-unused dependency that yokei
+# Recall sentinels: in-repo fixtures with a known-unused dependency that chokkin
 # must keep flagging. Measured alongside the clones (no network) so the recall
 # gate has true positives to verify even when every real project is clean.
 if [[ -f "$RECALL_MANIFEST" ]]; then
@@ -197,15 +197,15 @@ if [[ "$ran" -eq 0 ]]; then
   exit 2
 fi
 
-# ── Aggregate false-positive accounting over YOK002 (gate) and YOK003 (info) ──
+# ── Aggregate false-positive accounting over CHK002 (gate) and CHK003 (info) ──
 fp_count() { awk -F'\t' -v c="$1" -v v="$2" 'NR>1 && $2==c && $4==v {n++} END{print n+0}' "$FINDINGS"; }
-y002_total="$(awk -F'\t' 'NR>1 && $2=="YOK002"{n++} END{print n+0}' "$FINDINGS")"
-y002_fp="$(fp_count YOK002 fp)"
-y002_tp="$(fp_count YOK002 tp)"
-y002_unknown="$(fp_count YOK002 unknown)"
-y003_total="$(awk -F'\t' 'NR>1 && $2=="YOK003"{n++} END{print n+0}' "$FINDINGS")"
-y003_fp="$(fp_count YOK003 fp)"
-y003_unknown="$(fp_count YOK003 unknown)"
+y002_total="$(awk -F'\t' 'NR>1 && $2=="CHK002"{n++} END{print n+0}' "$FINDINGS")"
+y002_fp="$(fp_count CHK002 fp)"
+y002_tp="$(fp_count CHK002 tp)"
+y002_unknown="$(fp_count CHK002 unknown)"
+y003_total="$(awk -F'\t' 'NR>1 && $2=="CHK003"{n++} END{print n+0}' "$FINDINGS")"
+y003_fp="$(fp_count CHK003 fp)"
+y003_unknown="$(fp_count CHK003 unknown)"
 
 fp_rate="n/a"
 if [[ "$y002_total" -gt 0 ]]; then
@@ -213,7 +213,7 @@ if [[ "$y002_total" -gt 0 ]]; then
 fi
 
 # ── Recall accounting: every `tp` label must actually be reported ──
-# A `tp` label that is absent from findings is a false negative — yokei stopped
+# A `tp` label that is absent from findings is a false negative — chokkin stopped
 # detecting a genuinely-unused dependency. This is the over-suppression guard.
 tp_total=0; tp_missed=0; missed=()
 if [[ -f "$LABELS" ]]; then
@@ -243,7 +243,7 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
 {
   echo "# OSS validation — Phase 1 §17 scorecard"
   echo ""
-  echo "- yokei version: \`$VERSION\`"
+  echo "- chokkin version: \`$VERSION\`"
   echo "- projects measured: $ran"
   echo "- generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "- timed runs per project (median): $RUNS"
@@ -252,11 +252,11 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
   echo ""
   echo "| Criterion | Target | Measured | Result |"
   echo "|---|---|---|---|"
-  echo "| Unused-dep FP rate (YOK002) | < ${FP_GATE_PCT}% | ${fp_rate}% (${y002_fp} FP / ${y002_total} reported${y002_unknown:+, ${y002_unknown} unclassified}) | $(verdict "$pass_fp") |"
+  echo "| Unused-dep FP rate (CHK002) | < ${FP_GATE_PCT}% | ${fp_rate}% (${y002_fp} FP / ${y002_total} reported${y002_unknown:+, ${y002_unknown} unclassified}) | $(verdict "$pass_fp") |"
   if [[ "$tp_missed" -eq 0 ]]; then
-    echo "| Unused-dep recall (YOK002 tp) | all detected | ${tp_detected}/${tp_total} detected | $(verdict "$pass_recall") |"
+    echo "| Unused-dep recall (CHK002 tp) | all detected | ${tp_detected}/${tp_total} detected | $(verdict "$pass_recall") |"
   else
-    echo "| Unused-dep recall (YOK002 tp) | all detected | ${tp_detected}/${tp_total} detected (missed: ${missed[*]}) | $(verdict "$pass_recall") |"
+    echo "| Unused-dep recall (CHK002 tp) | all detected | ${tp_detected}/${tp_total} detected (missed: ${missed[*]}) | $(verdict "$pass_recall") |"
   fi
   echo "| Crashes (exit 3) | 0 | ${crashes} | $(verdict "$pass_crash") |"
   if [[ "${#medium_slow[@]}" -eq 0 ]]; then
@@ -267,11 +267,11 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
   echo ""
   echo "## Per-project results"
   echo ""
-  echo "| Project | Category | Size | Exit | Median ms | Issues | YOK002 | YOK003 |"
+  echo "| Project | Category | Size | Exit | Median ms | Issues | CHK002 | CHK003 |"
   echo "|---|---|---|---|---|---|---|---|"
   awk -F'\t' 'NR>1 {printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6,$7,$8}' "$SUMMARY"
   echo ""
-  echo "## YOK002 / YOK003 findings"
+  echo "## CHK002 / CHK003 findings"
   echo ""
   if [[ "$y002_total" -eq 0 && "$y003_total" -eq 0 ]]; then
     echo "_No unused- or missing-dependency findings across the set._"
@@ -283,9 +283,9 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
   echo ""
   echo "## Notes"
   echo ""
-  echo "- FP rate denominator is reported YOK002 findings (user-facing precision: when yokei says \"remove this\", how often is it wrong)."
+  echo "- FP rate denominator is reported CHK002 findings (user-facing precision: when chokkin says \"remove this\", how often is it wrong)."
   echo "- Recall gate counts \`tp\` labels (incl. in-repo sentinels) that failed to appear in findings — it fails the run if the FP remediation over-suppresses and stops detecting genuinely-unused dependencies."
-  echo "- YOK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_unknown} unclassified) — informational, not a §17 gate."
+  echo "- CHK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_unknown} unclassified) — informational, not a §17 gate."
   echo "- Large-size projects are reported but excluded from the medium cold-run gate."
 } >"$REPORT"
 

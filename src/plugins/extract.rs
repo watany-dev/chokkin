@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn disabled_plugins_are_skipped() {
-        let root_path = std::env::temp_dir().join("yokei-plugins-empty");
+        let root_path = std::env::temp_dir().join("chokkin-plugins-empty");
         let _ = std::fs::create_dir_all(&root_path);
         let root = ProjectRoot {
             path: root_path.clone(),
@@ -82,9 +82,9 @@ mod tests {
             effective: config,
             sources: crate::config::ConfigSources {
                 used_defaults: true,
-                dot_yokei_toml: None,
-                yokei_toml: None,
-                pyproject_tool_yokei: false,
+                dot_chokkin_toml: None,
+                chokkin_toml: None,
+                pyproject_tool_chokkin: false,
             },
             uv_workspace: None,
         };

@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     EntryOrigin, EntryWarning, GraphEdge, ProjectMode, ProjectRoot, RootMarker, apply_entry_plan,
     build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
     extract_manifest, extract_plugin_hints, load_config,
@@ -38,10 +38,10 @@ fn project_root_at(path: &Path) -> ProjectRoot {
 }
 
 struct PipelineInputs {
-    config: yokei::YokeiConfig,
-    manifest: yokei::LoadedManifest,
-    sources: yokei::DiscoveredSources,
-    plugins: yokei::PluginHints,
+    config: chokkin::ChokkinConfig,
+    manifest: chokkin::LoadedManifest,
+    sources: chokkin::DiscoveredSources,
+    plugins: chokkin::PluginHints,
 }
 
 fn load_pipeline(path: &Path) -> PipelineInputs {
@@ -59,7 +59,7 @@ fn load_pipeline(path: &Path) -> PipelineInputs {
     }
 }
 
-fn entry_paths(plan: &yokei::EntryPlan) -> Vec<&str> {
+fn entry_paths(plan: &chokkin::EntryPlan) -> Vec<&str> {
     plan.roots
         .iter()
         .map(|root| root.spec.path.as_str())

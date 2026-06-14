@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-yokei must parse Python source statically (never execute project code) to build
+chokkin must parse Python source statically (never execute project code) to build
 import edges for the reachability graph. Phase 0 evaluated:
 
 | Criterion | Ruff ecosystem (`ruff_python_parser`) | `rustpython-parser` 0.4 |

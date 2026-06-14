@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     DiscoveredSources, FileContext, FileKind, ProjectLayout, ProjectRoot, RootMarker, SourcesError,
     SourcesWarning, discover_project_root, discover_sources, extract_manifest, load_config,
 };
@@ -134,7 +134,7 @@ fn applies_mandatory_exclude_when_config_replaced() {
     std::fs::write(root_path.join(".venv/lib/site.py"), "").expect("write venv py");
     std::fs::write(
         root_path.join("pyproject.toml"),
-        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.yokei]\nexclude = [\"custom/**\"]\n",
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nexclude = [\"custom/**\"]\n",
     )
     .expect("write pyproject");
 

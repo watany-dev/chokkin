@@ -18,7 +18,7 @@ Step 3 (`extract_manifest`) の直後に位置し、解析対象となる **Pyth
 
 ### In scope
 
-- `[tool.yokei].project` glob の **展開**（空のときは layout 自動推定 globs を生成）
+- `[tool.chokkin].project` glob の **展開**（空のときは layout 自動推定 globs を生成）
 - **layout 推定**: src layout / flat layout / fallback（§2 UX、§8）
 - root 配下の **下方向スキャン**（Step 1 の上方向探索の対偶）
 - `exclude` glob と **既定除外**（`.venv/**` 等）の適用
@@ -38,9 +38,9 @@ Step 3 (`extract_manifest`) の直後に位置し、解析対象となる **Pyth
 | `mode = "auto"` の app / library 解決 | Step 8 前の `resolve_mode` |
 | plugin による追加 entry / config 参照 | Step 5 (config/plugin extraction) |
 | import 解決・到達性解析 | Step 7–9 |
-| YOK001 判定 | Step 12 (issue emission) |
+| CHK001 判定 | Step 12 (issue emission) |
 | workspace member ごとの別 `DiscoveredSources` | v0.2（Step 2 の `WorkspaceOverride` は読むが member 展開はしない） |
-| `# yokei: file-ignore` の解釈 | Step 6（コメント保持が必要） |
+| `# chokkin: file-ignore` の解釈 | Step 6（コメント保持が必要） |
 | `ignore` 設定パターンのマッチ | Step 12 |
 | CLI 縦スライス（ファイル件数表示） | 別 PR（Step 4 exit criteria 達成後） |
 
@@ -141,7 +141,7 @@ Test, Docs, Dev
 
 （lint / type は file 側ではなく dependency 側の概念。Step 4 では `Dev` に含めない。）
 
-`FileContext` は `Copy` な列挙型とし、Step 10 の YOK005 判定入力とする。
+`FileContext` は `Copy` な列挙型とし、Step 10 の CHK005 判定入力とする。
 
 ### 3.4 entry パス検証
 
@@ -395,10 +395,10 @@ tests/fixtures/sources/
   src_layout/              # src/acme/__init__.py + tests + scripts
   flat_layout/             # acme/__init__.py at root
   fallback_layout/         # lone manage.py at root, no package
-  explicit_globs/          # pyproject with [tool.yokei] project = [...]
+  explicit_globs/          # pyproject with [tool.chokkin] project = [...]
   exclude_tests/           # exclude = ["tests/**"]
   gitignore_respected/     # .gitignore ignores local/
-  production_mode/         # production = true in yokei.toml
+  production_mode/         # production = true in chokkin.toml
   missing_entry/           # entry points to nonexistent file
   ambiguous_flat/          # two packages at root + metadata.name
   nested_ignored/          # .venv/, __pycache__/ populated
@@ -457,7 +457,7 @@ let sources = discover_sources(&root, &loaded, &manifest)?;
 ```
 
 Step 4 完了時点の Phase 0 exit 寄与: **layout と `.py` 件数を CLI に表示**し、
-`uvx yokei` が manifest 件数に加えて **解析対象ファイルの存在** を示す。
+`uvx chokkin` が manifest 件数に加えて **解析対象ファイルの存在** を示す。
 
 ## 12. Exit criteria（Step 4 完了定義）
 
@@ -520,7 +520,7 @@ Step 4 完了時点の Phase 0 exit 寄与: **layout と `.py` 件数を CLI に
 | --- | ---: | ---: | --- |
 | モジュール / struct 設計 | 20 | 19 | `sources/` 単一責務。layout と walk を分離 |
 | 静的解析制約 | 20 | 20 | FS + glob のみ。Python 非実行を維持 |
-| ルール / ポリシー | 20 | 18 | file context は YOK005 入力。判定は Step 10 |
+| ルール / ポリシー | 20 | 18 | file context は CHK005 入力。判定は Step 10 |
 | エラー処理 | 20 | 19 | 致命エラーと warning の分離が明確 |
 | テスト容易性 | 20 | 19 | フィクスチャ 10 件・統合テスト 14 件を具体化 |
 | **合計** | **100** | **95** | **合格**（90 以上） |

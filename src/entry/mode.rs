@@ -1,6 +1,6 @@
 //! `mode = auto` resolution (§8).
 
-use crate::config::{ProjectMode, YokeiConfig};
+use crate::config::{ChokkinConfig, ProjectMode};
 use crate::manifest::LoadedManifest;
 use crate::resolver::ResolveConfidence;
 use crate::sources::DiscoveredSources;
@@ -12,7 +12,7 @@ const APP_ENTRY_FILE_NAMES: &[&str] = &["manage.py", "asgi.py", "wsgi.py", "app.
 /// Resolve effective project mode from config, manifest, and discovered entries.
 #[must_use]
 pub fn resolve_project_mode(
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     candidates: &[EntryCandidate],
@@ -55,7 +55,7 @@ pub fn resolve_project_mode(
     }
 }
 
-fn workspace_member_count(config: &YokeiConfig, manifest: &LoadedManifest) -> Option<usize> {
+fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> Option<usize> {
     if let Some(hint) = &manifest.uv_workspace {
         let count = hint.members.len();
         if count > 1 {

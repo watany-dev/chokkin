@@ -1,6 +1,6 @@
-//! YOK002 unused dependency detection.
+//! CHK002 unused dependency detection.
 
-use crate::config::{Confidence, YokeiConfig};
+use crate::config::{ChokkinConfig, Confidence};
 use crate::manifest::DeclaredDependency;
 use crate::manifest::normalize_distribution_name;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
@@ -11,7 +11,7 @@ use super::context::{DeclarationBucket, declaration_bucket};
 pub(super) fn detect_unused_dependencies(
     declared: &[&DeclaredDependency],
     used: &indexmap::IndexSet<String>,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     strict: bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -36,7 +36,7 @@ pub(super) fn detect_unused_dependencies(
 
         let (confidence, severity) = unused_confidence(dep, strict);
         candidates.push(IssueCandidate {
-            rule: RuleId::Yok002,
+            rule: RuleId::Chk002,
             subject: IssueSubject::Distribution {
                 name: dep.name.clone(),
             },
@@ -64,7 +64,7 @@ pub(super) fn detect_unused_dependencies(
 /// Dev, optional-extra, and setup-extra declarations are not reported unless `--strict`.
 fn should_suppress_unused_report(
     context: &crate::manifest::DependencyContext,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     strict: bool,
 ) -> bool {
     if strict {
@@ -137,7 +137,7 @@ mod tests {
         let candidates =
             detect_unused_dependencies(&[&dev_dep], &indexmap::IndexSet::new(), &config, true);
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].rule, RuleId::Yok002);
+        assert_eq!(candidates[0].rule, RuleId::Chk002);
     }
 
     #[test]

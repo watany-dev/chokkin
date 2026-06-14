@@ -2,5 +2,5 @@
 name = "user-map-demo"
 version = "0.1.0"
 
-[tool.yokei.package_module_map]
+[tool.chokkin.package_module_map]
 "custom-yaml" = ["yaml"]

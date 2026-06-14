@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::config::{LoadedConfig, TargetVersion, YokeiConfig};
+use crate::config::{ChokkinConfig, LoadedConfig, TargetVersion};
 use crate::discovery::ProjectRoot;
 
 use super::error::ManifestError;
@@ -149,9 +149,9 @@ fn requirements_txt_context(
     DependencyContext::Runtime
 }
 
-/// Prefer explicit `[tool.yokei].target_version`, else infer from `requires-python`.
+/// Prefer explicit `[tool.chokkin].target_version`, else infer from `requires-python`.
 #[must_use]
-pub fn resolve_target_version(config: &YokeiConfig, manifest: &LoadedManifest) -> TargetVersion {
+pub fn resolve_target_version(config: &ChokkinConfig, manifest: &LoadedManifest) -> TargetVersion {
     if let Some(explicit) = &config.target_version {
         return explicit.clone();
     }

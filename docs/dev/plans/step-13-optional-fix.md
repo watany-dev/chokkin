@@ -6,7 +6,7 @@
 > **関連プラン**
 >
 > - [`step-12-issue-emission.md`](./step-12-issue-emission.md) — fix 対象 issue
-> - [`step-10-dependency-reconciliation.md`](./step-10-dependency-reconciliation.md) — YOK002/005/009
+> - [`step-10-dependency-reconciliation.md`](./step-10-dependency-reconciliation.md) — CHK002/005/009
 
 ## 1. 目的
 
@@ -23,9 +23,9 @@
 
 | 対象 issue | 操作 |
 | --- | --- |
-| YOK002（confidence = **Certain** のみ） | `[project.dependencies]` 等から削除 |
-| YOK009 | 重複宣言の一方を削除（dev 側優先保持は設定なし — 辞書順で低優先 context を削除） |
-| YOK005（明確な case のみ） | dev group → runtime への **移動**（逆は手動） |
+| CHK002（confidence = **Certain** のみ） | `[project.dependencies]` 等から削除 |
+| CHK009 | 重複宣言の一方を削除（dev 側優先保持は設定なし — 辞書順で低優先 context を削除） |
+| CHK005（明確な case のみ） | dev group → runtime への **移動**（逆は手動） |
 
 **編集対象ファイル:**
 
@@ -50,7 +50,7 @@
 ```text
 1. fix 前に IssueReport のコピーを入力とする（再解析は fix 後にユーザーが実行）
 2. 各編集は単一 issue に 1:1 対応（バッチで複数可）
-3. 曖昧な YOK002（Likely のみ）は --fix 対象外（Certain のみ）
+3. 曖昧な CHK002（Likely のみ）は --fix 対象外（Certain のみ）
 4. 編集失敗は当該 issue を skip し FixDiagnostic を記録
 ```
 
@@ -128,7 +128,7 @@ pub fn apply_fixes(
 
 ## 7. Exit criteria
 
-- [ ] YOK002 Certain が pyproject から削除される
+- [ ] CHK002 Certain が pyproject から削除される
 - [ ] requirements line 削除
 - [ ] lockfile は変更しない + reminder 出力
 - [ ] `--allow-remove-files` なしでファイル削除しない
@@ -138,7 +138,7 @@ pub fn apply_fixes(
 
 | 項目 | 理由 | 再検討 |
 | --- | --- | --- |
-| YOK005 移動の自動化 | 曖昧 case 多い | v0.1 は明確 case のみ |
+| CHK005 移動の自動化 | 曖昧 case 多い | v0.1 は明確 case のみ |
 | `setup.py` fix | 静的限界 | v0.2 |
 
 ## 9. update-plan 検証サマリ（確定）
@@ -168,13 +168,13 @@ pub fn apply_fixes(
 | チェック項目 | 結果 |
 | --- | --- |
 | §13 禁止事項 | OK |
-| YOK002 scope vs 安全契約 | OK — P0 矛盾を修正（Certain のみ） |
+| CHK002 scope vs 安全契約 | OK — P0 矛盾を修正（Certain のみ） |
 
 ### Phase 4: 改善反映（課題分類）
 
 | 優先度 | 課題 | 対応 |
 | --- | --- | --- |
-| **P0** | §2 と §3.1 で YOK002 fix 条件が矛盾 | Certain のみに統一済み |
+| **P0** | §2 と §3.1 で CHK002 fix 条件が矛盾 | Certain のみに統一済み |
 
 ### 確定判定
 

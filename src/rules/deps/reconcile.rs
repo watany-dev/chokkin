@@ -1,6 +1,6 @@
 //! Dependency reconciliation orchestration (pipeline step 10).
 
-use crate::config::YokeiConfig;
+use crate::config::ChokkinConfig;
 use crate::graph::ProjectGraph;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::ParseSummary;
@@ -28,7 +28,7 @@ pub fn reconcile_dependencies(
     resolution: &ResolutionIndex,
     reachability: &ReachabilityReport,
     plugins: &PluginHints,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     sources: &DiscoveredSources,
     parse: &ParseSummary,
     graph: &ProjectGraph,
@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn unused_dependency_generates_yok002() {
+    fn unused_dependency_generates_chk002() {
         let dep = DeclaredDependency {
             name: "boto3".to_owned(),
             extras: Vec::new(),
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(report.candidates.len(), 1);
         assert_eq!(
             report.candidates[0].rule,
-            crate::rules::types::RuleId::Yok002
+            crate::rules::types::RuleId::Chk002
         );
     }
 
@@ -305,7 +305,7 @@ mod tests {
             !report
                 .candidates
                 .iter()
-                .any(|candidate| candidate.rule == crate::rules::types::RuleId::Yok002)
+                .any(|candidate| candidate.rule == crate::rules::types::RuleId::Chk002)
         );
     }
 }

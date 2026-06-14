@@ -35,16 +35,16 @@ pub fn format_subject(subject: &IssueSubject) -> String {
 /// Group title for the default reporter.
 pub(super) fn group_title(rule: RuleId, count: usize) -> String {
     let label = match rule {
-        RuleId::Yok001 => "Unused files",
-        RuleId::Yok002 => "Unused dependencies",
-        RuleId::Yok003 => "Missing dependencies",
-        RuleId::Yok004 => "Transitive dependencies",
-        RuleId::Yok005 => "Misplaced dependencies",
-        RuleId::Yok006 => "Unused exports",
-        RuleId::Yok007 => "Unused re-exports",
-        RuleId::Yok008 => "Unlisted binaries",
-        RuleId::Yok009 => "Duplicate dependencies",
-        RuleId::Yok010 => "Unresolved imports",
+        RuleId::Chk001 => "Unused files",
+        RuleId::Chk002 => "Unused dependencies",
+        RuleId::Chk003 => "Missing dependencies",
+        RuleId::Chk004 => "Transitive dependencies",
+        RuleId::Chk005 => "Misplaced dependencies",
+        RuleId::Chk006 => "Unused exports",
+        RuleId::Chk007 => "Unused re-exports",
+        RuleId::Chk008 => "Unlisted binaries",
+        RuleId::Chk009 => "Duplicate dependencies",
+        RuleId::Chk010 => "Unresolved imports",
     };
     format!("{label}  {count}")
 }

@@ -1,12 +1,12 @@
 //! Confidence and rule-set filters for issue emission.
 
-use crate::config::{Confidence, RuntimeOverrides, YokeiConfig};
+use crate::config::{ChokkinConfig, Confidence, RuntimeOverrides};
 use crate::rules::types::{Issue, RuleId};
 
 /// Effective confidence floor after config and overrides.
 #[must_use]
 pub fn effective_confidence_floor(
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
     strict: bool,
 ) -> Confidence {
@@ -83,22 +83,22 @@ mod tests {
 
     #[test]
     fn likely_issue_hidden_when_floor_is_certain() {
-        let issue = sample_issue(RuleId::Yok002, Confidence::Likely, Severity::Error);
+        let issue = sample_issue(RuleId::Chk002, Confidence::Likely, Severity::Error);
         assert!(!passes_confidence_filter(&issue, Confidence::Certain));
     }
 
     #[test]
     fn strict_exit_counts_warnings() {
-        let issue = sample_issue(RuleId::Yok002, Confidence::Maybe, Severity::Warning);
+        let issue = sample_issue(RuleId::Chk002, Confidence::Maybe, Severity::Warning);
         assert!(counts_toward_exit(&issue, true));
         assert!(!counts_toward_exit(&issue, false));
     }
 
     #[test]
     fn include_filter_limits_rules() {
-        let issue = sample_issue(RuleId::Yok002, Confidence::Certain, Severity::Error);
+        let issue = sample_issue(RuleId::Chk002, Confidence::Certain, Severity::Error);
         let overrides = RuntimeOverrides {
-            include_rules: Some(vec!["YOK003".to_owned()]),
+            include_rules: Some(vec!["CHK003".to_owned()]),
             ..RuntimeOverrides::default()
         };
         assert!(!passes_rule_filter(&issue, &overrides));

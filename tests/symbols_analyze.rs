@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     Confidence, ProjectRoot, RootMarker, RuleId, Severity, add_parsed_imports,
     analyze_reachability, analyze_symbols, apply_entry_plan, apply_resolution_to_graph,
     build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
@@ -19,14 +19,14 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 struct SymbolInputs {
-    manifest: yokei::LoadedManifest,
-    sources: yokei::DiscoveredSources,
-    plugins: yokei::PluginHints,
-    parse: yokei::ParseSummary,
-    graph: yokei::ProjectGraph,
-    resolution: yokei::ResolutionIndex,
-    reachability: yokei::ReachabilityReport,
-    entry: yokei::EntryPlan,
+    manifest: chokkin::LoadedManifest,
+    sources: chokkin::DiscoveredSources,
+    plugins: chokkin::PluginHints,
+    parse: chokkin::ParseSummary,
+    graph: chokkin::ProjectGraph,
+    resolution: chokkin::ResolutionIndex,
+    reachability: chokkin::ReachabilityReport,
+    entry: chokkin::EntryPlan,
 }
 
 fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
@@ -51,7 +51,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), yokei::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
         &root,
@@ -87,7 +87,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     }
 }
 
-fn analyze_fixture(name: &str) -> yokei::SymbolReport {
+fn analyze_fixture(name: &str) -> chokkin::SymbolReport {
     let inputs = load_symbols(&fixture(name), false);
     analyze_symbols(
         &inputs.parse,
@@ -102,29 +102,29 @@ fn analyze_fixture(name: &str) -> yokei::SymbolReport {
     )
 }
 
-fn has_symbol_rule(report: &yokei::SymbolReport, rule: RuleId, module: &str, name: &str) -> bool {
+fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, name: &str) -> bool {
     report.candidates.iter().any(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
-                yokei::IssueSubject::Symbol { module: m, name: n }
+                chokkin::IssueSubject::Symbol { module: m, name: n }
                     if m == module && n == name
             )
     })
 }
 
 #[test]
-fn unused_public_function_emits_yok006() {
+fn unused_public_function_emits_chk006() {
     let report = analyze_fixture("unused_export");
     assert!(has_symbol_rule(
         &report,
-        RuleId::Yok006,
+        RuleId::Chk006,
         "acme.utils",
         "dead_api"
     ));
     assert!(!has_symbol_rule(
         &report,
-        RuleId::Yok006,
+        RuleId::Chk006,
         "acme.utils",
         "helper"
     ));
@@ -132,10 +132,10 @@ fn unused_public_function_emits_yok006() {
         .candidates
         .iter()
         .find(|candidate| {
-            candidate.rule == RuleId::Yok006
+            candidate.rule == RuleId::Chk006
                 && matches!(
                     &candidate.subject,
-                    yokei::IssueSubject::Symbol { name, .. } if name == "dead_api"
+                    chokkin::IssueSubject::Symbol { name, .. } if name == "dead_api"
                 )
         })
         .expect("dead_api candidate");
@@ -148,7 +148,7 @@ fn pytest_fixture_is_not_reported() {
     let report = analyze_fixture("pytest_fixture");
     assert!(!has_symbol_rule(
         &report,
-        RuleId::Yok006,
+        RuleId::Chk006,
         "acme.conftest",
         "sample_data"
     ));
@@ -161,34 +161,34 @@ fn pytest_fixture_is_not_reported() {
 }
 
 #[test]
-fn unused_reexport_emits_yok007() {
+fn unused_reexport_emits_chk007() {
     let report = analyze_fixture("unused_reexport");
-    assert!(has_symbol_rule(&report, RuleId::Yok007, "acme", "foo"));
+    assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));
 }
 
 #[test]
-fn unresolved_import_emits_yok010() {
+fn unresolved_import_emits_chk010() {
     let report = analyze_fixture("unresolved_import");
     assert!(report.candidates.iter().any(|candidate| {
-        candidate.rule == RuleId::Yok010
+        candidate.rule == RuleId::Chk010
             && matches!(
                 &candidate.subject,
-                yokei::IssueSubject::Import { module, .. } if module == "NotARealPkg"
+                chokkin::IssueSubject::Import { module, .. } if module == "NotARealPkg"
             )
     }));
 }
 
 #[test]
-fn library_mode_downgrades_yok006_to_info() {
+fn library_mode_downgrades_chk006_to_info() {
     let report = analyze_fixture("library_mode");
     let unused = report
         .candidates
         .iter()
         .find(|candidate| {
-            candidate.rule == RuleId::Yok006
+            candidate.rule == RuleId::Chk006
                 && matches!(
                     &candidate.subject,
-                    yokei::IssueSubject::Symbol { name, .. } if name == "unused_public"
+                    chokkin::IssueSubject::Symbol { name, .. } if name == "unused_public"
                 )
         })
         .expect("unused_public candidate");

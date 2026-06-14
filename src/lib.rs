@@ -1,6 +1,6 @@
 #![allow(clippy::multiple_crate_versions)] // pep508_rs depends on thiserror 1.x
 
-//! `yokei` finds unused files, dependencies, and public symbols in Python
+//! `chokkin` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
 //! Pipeline steps 1–5 ([`discovery`], [`config`], [`manifest`], [`sources`],
@@ -34,9 +34,9 @@ pub mod sources;
 
 pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
-    Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
-    PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint, WorkspaceOverride,
-    YokeiConfig, apply_overrides, default_config, load_config,
+    ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
+    LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint,
+    WorkspaceOverride, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
@@ -91,7 +91,7 @@ pub use sources::{
     SourcesError, SourcesWarning, discover_sources,
 };
 
-/// The version of yokei, taken from `Cargo.toml`.
+/// The version of chokkin, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Exit codes reported by the CLI, fixed for CI usage.

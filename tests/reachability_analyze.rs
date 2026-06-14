@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     Confidence, GraphEdge, ProjectMode, ProjectRoot, RootMarker, add_parsed_imports,
     analyze_reachability, apply_entry_plan, apply_resolution_to_graph, build_entry_roots,
     build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
@@ -25,11 +25,11 @@ fn plugins_fixture(name: &str) -> PathBuf {
 }
 
 struct ReachabilityInputs {
-    sources: yokei::DiscoveredSources,
-    plugins: yokei::PluginHints,
-    parse: yokei::ParseSummary,
-    entry: yokei::EntryPlan,
-    graph: yokei::ProjectGraph,
+    sources: chokkin::DiscoveredSources,
+    plugins: chokkin::PluginHints,
+    parse: chokkin::ParseSummary,
+    entry: chokkin::EntryPlan,
+    graph: chokkin::ProjectGraph,
 }
 
 fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
@@ -54,7 +54,7 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), yokei::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
         &root,

@@ -1,6 +1,6 @@
 //! Read-only inputs for plugin extractors.
 
-use crate::config::YokeiConfig;
+use crate::config::ChokkinConfig;
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
 use crate::sources::DiscoveredSources;
@@ -9,9 +9,9 @@ use crate::sources::DiscoveredSources;
 pub struct PluginContext<'a> {
     /// Discovered project root.
     pub root: &'a ProjectRoot,
-    /// Effective yokei configuration.
+    /// Effective chokkin configuration.
     #[allow(dead_code)] // reserved for plugin-specific config overrides
-    pub config: &'a YokeiConfig,
+    pub config: &'a ChokkinConfig,
     /// Discovered source files.
     pub sources: &'a DiscoveredSources,
     /// Extracted manifest.

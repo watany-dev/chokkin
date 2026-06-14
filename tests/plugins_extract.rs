@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yokei::{
+use chokkin::{
     FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
     discover_sources, extract_manifest, extract_plugin_hints, load_config,
 };
@@ -29,7 +29,7 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     }
 }
 
-fn extract_fixture(name: &str) -> yokei::PluginHints {
+fn extract_fixture(name: &str) -> chokkin::PluginHints {
     let path = fixture(name);
     let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
     let config = load_config(&root).expect("load config");
@@ -38,7 +38,7 @@ fn extract_fixture(name: &str) -> yokei::PluginHints {
     extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
 }
 
-fn pytest_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
+fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
     hints
         .contributions
         .iter()
@@ -46,7 +46,7 @@ fn pytest_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
         .expect("pytest contribution")
 }
 
-fn django_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
+fn django_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
     hints
         .contributions
         .iter()
@@ -54,7 +54,7 @@ fn django_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
         .expect("django contribution")
 }
 
-fn fastapi_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
+fn fastapi_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
     hints
         .contributions
         .iter()
@@ -62,7 +62,7 @@ fn fastapi_contrib(hints: &yokei::PluginHints) -> &yokei::PluginContribution {
         .expect("fastapi contribution")
 }
 
-fn entry_paths(contrib: &yokei::PluginContribution) -> Vec<&str> {
+fn entry_paths(contrib: &chokkin::PluginContribution) -> Vec<&str> {
     contrib
         .entries
         .iter()
@@ -224,7 +224,7 @@ fn partial_settings_warns() {
     );
 }
 
-fn extract_fixture_from_deps(name: &str) -> yokei::PluginHints {
+fn extract_fixture_from_deps(name: &str) -> chokkin::PluginHints {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/deps")
         .join(name);

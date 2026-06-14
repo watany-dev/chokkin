@@ -69,7 +69,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $testTmp = Join-Path $env:RUNNER_TEMP 'yokei-test-tmp'
+          $testTmp = Join-Path $env:RUNNER_TEMP 'chokkin-test-tmp'
           New-Item -ItemType Directory -Force -Path $testTmp | Out-Null
           Add-Content -Path $env:GITHUB_ENV -Value "TMP=$testTmp"
           Add-Content -Path $env:GITHUB_ENV -Value "TEMP=$testTmp"

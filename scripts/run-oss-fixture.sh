@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run yokei against OSS / regression fixture paths (Phase 1 dogfooding skeleton).
+# Run chokkin against OSS / regression fixture paths (Phase 1 dogfooding skeleton).
 #
 # Usage:
 #   scripts/run-oss-fixture.sh [OPTIONS]
@@ -7,23 +7,23 @@
 # Options:
 #   -m, --manifest PATH   Fixture list (default: scripts/oss-fixtures.manifest)
 #   -o, --output DIR      Report directory (default: target/oss-fixtures)
-#   -b, --bin PATH        yokei binary (default: target/release/yokei)
+#   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
 #   --build               cargo build --release before running
 #   -h, --help            Show help
 #
 # Each fixture produces:
-#   <output>/<slug>.json   — yokei --reporter json --no-exit-code
+#   <output>/<slug>.json   — chokkin --reporter json --no-exit-code
 #   <output>/<slug>.meta   — exit code, duration, issue count
 #   summary.tsv            — aggregate row per fixture
 #
-# Exit 0 when all fixtures complete without yokei internal errors (exit 3).
+# Exit 0 when all fixtures complete without chokkin internal errors (exit 3).
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${OSS_FIXTURES_MANIFEST:-$ROOT/scripts/oss-fixtures.manifest}"
 REPORT_DIR="${OSS_FIXTURES_REPORT_DIR:-$ROOT/target/oss-fixtures}"
-YOKEI_BIN="${YOKEI_BIN:-$ROOT/target/release/yokei}"
+CHOKKIN_BIN="${CHOKKIN_BIN:-$ROOT/target/release/chokkin}"
 DO_BUILD=0
 
 usage() {
@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -b | --bin)
-      YOKEI_BIN="$2"
+      CHOKKIN_BIN="$2"
       shift 2
       ;;
     --build)
@@ -61,12 +61,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
-  (cd "$ROOT" && cargo build --release --locked --bin yokei)
+  (cd "$ROOT" && cargo build --release --locked --bin chokkin)
 fi
 
-if [[ ! -x "$YOKEI_BIN" ]]; then
-  echo "yokei binary not found or not executable: $YOKEI_BIN" >&2
-  echo "Run with --build or set YOKEI_BIN." >&2
+if [[ ! -x "$CHOKKIN_BIN" ]]; then
+  echo "chokkin binary not found or not executable: $CHOKKIN_BIN" >&2
+  echo "Run with --build or set CHOKKIN_BIN." >&2
   exit 2
 fi
 
@@ -78,7 +78,7 @@ fi
 mkdir -p "$REPORT_DIR"
 
 SUMMARY="$REPORT_DIR/summary.tsv"
-printf 'fixture\texit_code\tduration_ms\tissues\tyokei_version\n' >"$SUMMARY"
+printf 'fixture\texit_code\tduration_ms\tissues\tchokkin_version\n' >"$SUMMARY"
 
 failures=0
 ran=0
@@ -122,13 +122,13 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   echo "==> $line"
   start_ms="$(date +%s%3N)"
   set +e
-  "$YOKEI_BIN" --reporter json --no-exit-code "$fixture_path" >"$json_out" 2>"$REPORT_DIR/$slug.stderr"
+  "$CHOKKIN_BIN" --reporter json --no-exit-code "$fixture_path" >"$json_out" 2>"$REPORT_DIR/$slug.stderr"
   exit_code=$?
   set -e
   end_ms="$(date +%s%3N)"
   duration_ms=$((end_ms - start_ms))
 
-  version="$("$YOKEI_BIN" --version 2>/dev/null | awk '{print $2}')"
+  version="$("$CHOKKIN_BIN" --version 2>/dev/null | awk '{print $2}')"
   issues="$(issue_count_from_json "$json_out")"
 
   {
@@ -136,7 +136,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     echo "exit_code=$exit_code"
     echo "duration_ms=$duration_ms"
     echo "issues=$issues"
-    echo "yokei_version=$version"
+    echo "chokkin_version=$version"
   } >"$meta_out"
 
   printf '%s\t%s\t%s\t%s\t%s\n' "$line" "$exit_code" "$duration_ms" "$issues" "$version" >>"$SUMMARY"

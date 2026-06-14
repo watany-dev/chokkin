@@ -21,7 +21,7 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 session_id=$(echo "$input" | jq -r '.session_id // "default"')
 transcript=$(echo "$input" | jq -r '.transcript_path // ""')
-marker="${TMPDIR:-/tmp}/yokei-wrapup-$session_id"
+marker="${TMPDIR:-/tmp}/chokkin-wrapup-$session_id"
 
 # 編集系 tool_use 名のリスト。SKILL.md の手順で「編集」と扱うものと揃える。
 edit_tools_re='"name":"(Edit|Write|MultiEdit|NotebookEdit)"'

@@ -1,13 +1,13 @@
 [package]
-name = "yokei"
+name = "chokkin"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Find unused files, dependencies, and public symbols in Python projects"
 readme = "README.md"
 license = "MIT"
-repository = "https://github.com/watany-dev/yokei"
-homepage = "https://github.com/watany-dev/yokei"
+repository = "https://github.com/watany-dev/chokkin"
+homepage = "https://github.com/watany-dev/chokkin"
 keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -42,7 +42,7 @@ proptest = "1"
 bench = false
 
 [[bin]]
-name = "yokei"
+name = "chokkin"
 path = "src/main.rs"
 bench = false
 

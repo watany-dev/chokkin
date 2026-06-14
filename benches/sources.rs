@@ -11,11 +11,11 @@ use std::hint::black_box;
 use std::path::Path;
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use yokei::{
+use chokkin::{
     LoadedConfig, LoadedManifest, ProjectRoot, discover_project_root, discover_sources,
     extract_manifest, load_config,
 };
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 fn pipeline_inputs(root_dir: &Path) -> (ProjectRoot, LoadedConfig, LoadedManifest) {
     let root = discover_project_root(root_dir).expect("discover root");

@@ -1,8 +1,8 @@
-//! YOK003 missing and YOK004 transitive dependency detection.
+//! CHK003 missing and CHK004 transitive dependency detection.
 
 use std::collections::{HashSet, VecDeque};
 
-use crate::config::{Confidence, YokeiConfig};
+use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::ModuleOrigin;
 use crate::parser::ParseSummary;
 use crate::resolver::{ResolutionIndex, ResolvedImport, TransitiveIndex};
@@ -20,7 +20,7 @@ pub(super) fn detect_missing_dependencies(
     reachable: &HashSet<String>,
     optional_imports: &HashSet<(String, u32)>,
     has_lockfile: bool,
-    config: &YokeiConfig,
+    config: &ChokkinConfig,
     sources: &DiscoveredSources,
     strict: bool,
 ) -> Vec<IssueCandidate> {
@@ -78,7 +78,7 @@ fn optional_missing_candidate(
         Severity::Info
     };
     IssueCandidate {
-        rule: RuleId::Yok003,
+        rule: RuleId::Chk003,
         subject: IssueSubject::Import {
             module: import.full_module.clone(),
             file: import.file.clone(),
@@ -106,7 +106,7 @@ fn optional_missing_candidate(
 
 fn transitive_candidate(import: &ResolvedImport, distribution: &str) -> IssueCandidate {
     IssueCandidate {
-        rule: RuleId::Yok004,
+        rule: RuleId::Chk004,
         subject: IssueSubject::Import {
             module: import.full_module.clone(),
             file: import.file.clone(),
@@ -140,7 +140,7 @@ fn missing_candidate(
         " (no lockfile — transitive check skipped)".to_owned()
     };
     IssueCandidate {
-        rule: RuleId::Yok003,
+        rule: RuleId::Chk003,
         subject: IssueSubject::Import {
             module: import.full_module.clone(),
             file: import.file.clone(),

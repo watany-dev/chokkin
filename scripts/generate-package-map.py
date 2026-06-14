@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate bundled package-module and binary maps for yokei resolver."""
+"""Generate bundled package-module and binary maps for chokkin resolver."""
 
 from __future__ import annotations
 
