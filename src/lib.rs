@@ -66,7 +66,8 @@ pub use parser::{
 };
 pub use pipeline::{
     AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,
-    analyze_project, probe_project, trace_output, write_probe_report, write_probe_warnings,
+    WorkspaceMemberInputs, analyze_project, probe_project, trace_output, write_probe_report,
+    write_probe_warnings,
 };
 pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,

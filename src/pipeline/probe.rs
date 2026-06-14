@@ -8,7 +8,7 @@ use crate::config::{
     ChokkinConfig, ConfigSources, ResolvedWorkspaceMember, RuntimeOverrides, TargetVersion,
     apply_overrides, load_config,
 };
-use crate::discovery::{ProjectRoot, discover_project_root};
+use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{LoadedManifest, extract_manifest, resolve_target_version};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, discover_sources};
 
@@ -32,8 +32,21 @@ pub struct ProbeReport {
     pub sources: DiscoveredSources,
     /// Resolved workspace members below the project root.
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
+    /// Member-scoped manifest and source inventories.
+    pub workspace_inputs: Vec<WorkspaceMemberInputs>,
     /// Non-fatal warnings from manifest and source discovery.
     pub warnings: Vec<ProbeWarning>,
+}
+
+/// Probe data for one resolved workspace member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMemberInputs {
+    /// Resolved workspace member metadata.
+    pub member: ResolvedWorkspaceMember,
+    /// Member-local manifest extraction.
+    pub manifest: LoadedManifest,
+    /// Member-local source inventory.
+    pub sources: DiscoveredSources,
 }
 
 /// Run pipeline steps 1–4 and collect a probe report.
@@ -58,6 +71,7 @@ pub fn probe_project(
     loaded.effective.target_version = Some(target_version);
 
     let sources = discover_sources(&root, &loaded, &manifest)?;
+    let workspace_inputs = collect_workspace_inputs(&root, &loaded.workspace_members, overrides)?;
     let warnings = collect_warnings(&manifest, &sources);
 
     Ok(ProbeReport {
@@ -68,8 +82,44 @@ pub fn probe_project(
         manifest,
         sources,
         workspace_members: loaded.workspace_members,
+        workspace_inputs,
         warnings,
     })
+}
+
+fn collect_workspace_inputs(
+    root: &ProjectRoot,
+    members: &[ResolvedWorkspaceMember],
+    overrides: &RuntimeOverrides,
+) -> Result<Vec<WorkspaceMemberInputs>, ProbeError> {
+    let mut inputs = Vec::new();
+    for member in members {
+        let member_root = member_project_root(root, member);
+        if !member_root.path.is_dir() {
+            continue;
+        }
+        let mut loaded = load_config(&member_root)?;
+        apply_overrides(&mut loaded.effective, overrides);
+        let manifest = extract_manifest(&member_root, &loaded)?;
+        let target_version = resolve_target_version(&loaded.effective, &manifest);
+        loaded.effective.target_version = Some(target_version);
+        let sources = discover_sources(&member_root, &loaded, &manifest)?;
+        inputs.push(WorkspaceMemberInputs {
+            member: member.clone(),
+            manifest,
+            sources,
+        });
+    }
+    Ok(inputs)
+}
+
+fn member_project_root(root: &ProjectRoot, member: &ResolvedWorkspaceMember) -> ProjectRoot {
+    let path = root.path.join(&member.path);
+    ProjectRoot {
+        path,
+        marker: RootMarker::PyProjectToml,
+        start: root.start.clone(),
+    }
 }
 
 fn canonicalize_path(path: &Path) -> Result<PathBuf, ProbeError> {
@@ -110,7 +160,12 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     )?;
     writeln!(out, "Layout  : {}", format_layout(&report.sources))?;
     if !report.workspace_members.is_empty() {
-        writeln!(out, "Workspace: {} members", report.workspace_members.len())?;
+        writeln!(
+            out,
+            "Workspace: {} members ({} inventoried)",
+            report.workspace_members.len(),
+            report.workspace_inputs.len()
+        )?;
     }
     writeln!(
         out,
