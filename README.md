@@ -104,7 +104,7 @@ Key flags:
 - `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
-- `--no-cache` — disable Phase 2 cache reads/writes. Cache policy plumbing is present; parse/manifest cache units are still draft.
+- `--no-cache` — disable Phase 2 cache reads/writes. Parse, manifest/config scan, and module-index cache units are enabled by default and are conservative: corrupt or stale entries are treated as misses.
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
@@ -183,7 +183,7 @@ Dependencies and files are both assigned contexts (runtime / dev / test / docs /
 Frameworks reference modules through strings and decorators, which pure import analysis can't see. Plugins close that gap by adding entry files, string/module references, and binary usage:
 
 - **v0.1**: pytest, django, fastapi/uvicorn
-- **v0.2+**: tox/nox/pre-commit/GitHub Actions binary usage detection, static Flask/Celery app references, conventional Sphinx/MkDocs/Alembic config entries, and `.ipynb` code-cell parsing are in progress.
+- **v0.2+**: tox/nox/pre-commit/GitHub Actions binary usage detection, static Flask/Celery route/task references, conventional Sphinx/MkDocs/Alembic config entries, and `.ipynb` code-cell parsing.
 
 For example, the Django plugin treats `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` strings as module references and `migrations/**` as framework-used; the FastAPI plugin treats `@router.get`-decorated handlers as externally used.
 
@@ -211,6 +211,46 @@ For large existing projects, a baseline freezes current issues so CI only fails 
 ```bash
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
+```
+
+## CI adoption
+
+For an existing project, generate and review the baseline once:
+
+```bash
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
+git add chokkin-baseline.json
+```
+
+Then wire the baseline into pull request checks. This job emits GitHub
+annotations, writes SARIF for code scanning, and fails only for findings not
+already present in the baseline:
+
+```yaml
+name: chokkin
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  chokkin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Annotations
+        run: uvx chokkin --baseline chokkin-baseline.json --reporter github
+      - name: SARIF
+        if: always()
+        run: uvx chokkin --baseline chokkin-baseline.json --reporter sarif > chokkin.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: chokkin.sarif
 ```
 
 ## Installation

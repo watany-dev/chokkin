@@ -104,7 +104,7 @@ uvx chokkin --init                # v0.2
 - `--strict` — transitive依存の直接importを常にerror、workspace memberごとに直接依存宣言を要求、environment marker付き依存のunusedもerror扱い、confidence `maybe` のissueも表示します。
 - `--no-exit-code` — issueがあってもexit codeを0にします(config/CLI errorの2、internal errorの3は維持)。導入初期やGitHub Actions summary用に。
 - `--baseline PATH` / `--update-baseline` — 現在のissueをbaseline fileに凍結し、以後の実行では一致するissueを抑制して新規issueだけCIで落とします。
-- `--no-cache` — Phase 2 cache の read/write を無効化します。cache policy plumbing は実装済みですが、parse/manifest cache unit は draft です。
+- `--no-cache` — Phase 2 cache の read/write を無効化します。parse、manifest/config scan、module index cache はデフォルトで有効で、壊れた cache や stale cache は miss 扱いにします。
 - `--reporter github` / `--reporter sarif` — GitHub Actions annotation、または code scanning 用の SARIF 2.1.0 subset を出力します。
 - `--probe` — uv / chokkin workspace が検出された場合、解決済み・inventory済み workspace member 数も表示します。
 - `--explain` / `--trace` — issueが報告された理由・ファイルが到達可能と判定された経路を表示します。誤検知の調査・報告のための導線です。
@@ -183,7 +183,7 @@ fastapi = true
 frameworkは文字列やdecoratorでmoduleを参照するため、純粋なimport解析では見えません。pluginがentry file・string/module reference・binary usageを追加してこのギャップを埋めます。
 
 - **v0.1**: pytest, django, fastapi/uvicorn
-- **v0.2以降**: tox/nox/pre-commit/GitHub Actions の binary usage 検出、Flask/Celery の static app reference 検出、Sphinx/MkDocs/Alembic の慣例config/entry検出、`.ipynb` code cell parse は実装中です。
+- **v0.2以降**: tox/nox/pre-commit/GitHub Actions の binary usage 検出、Flask/Celery の route/task reference 検出、Sphinx/MkDocs/Alembic の慣例config/entry検出、`.ipynb` code cell parse。
 
 例えばDjango pluginは `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` の文字列をmodule referenceとして扱い、`migrations/**` をframework-used扱いにします。FastAPI pluginは `@router.get` 等で修飾されたhandlerをexternally used扱いにします。
 
@@ -211,6 +211,44 @@ CHK006 = ["src/acme/public_api.py:*"]
 ```bash
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
+```
+
+## CI 導入
+
+既存projectでは、まず baseline を生成して review します。
+
+```bash
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
+git add chokkin-baseline.json
+```
+
+その後、pull request check に baseline を組み込みます。この job は GitHub annotation を出し、code scanning 用 SARIF を保存し、baseline にない新規 finding だけで失敗します。
+
+```yaml
+name: chokkin
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  chokkin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Annotations
+        run: uvx chokkin --baseline chokkin-baseline.json --reporter github
+      - name: SARIF
+        if: always()
+        run: uvx chokkin --baseline chokkin-baseline.json --reporter sarif > chokkin.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: chokkin.sarif
 ```
 
 ## インストール
