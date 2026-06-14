@@ -25,6 +25,7 @@ pub struct BfsOutcome {
 struct BfsState<'a> {
     graph: &'a mut ProjectGraph,
     module_index: &'a ModuleIndex,
+    file_imports: HashMap<FileId, Vec<(ModuleId, u32)>>,
     queue: VecDeque<FileId>,
     reachable: HashSet<FileId>,
     predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
@@ -32,10 +33,15 @@ struct BfsState<'a> {
 }
 
 impl<'a> BfsState<'a> {
-    fn new(graph: &'a mut ProjectGraph, module_index: &'a ModuleIndex) -> Self {
+    fn new(
+        graph: &'a mut ProjectGraph,
+        module_index: &'a ModuleIndex,
+        file_imports: HashMap<FileId, Vec<(ModuleId, u32)>>,
+    ) -> Self {
         Self {
             graph,
             module_index,
+            file_imports,
             queue: VecDeque::new(),
             reachable: HashSet::new(),
             predecessors: indexmap::IndexMap::new(),
@@ -70,7 +76,8 @@ pub fn run_reachability_bfs(
     parse: &ParseSummary,
     module_index: &ModuleIndex,
 ) -> BfsOutcome {
-    let mut state = BfsState::new(graph, module_index);
+    let file_imports = build_file_import_adjacency(graph);
+    let mut state = BfsState::new(graph, module_index, file_imports);
     let parse_by_path = parse
         .modules
         .iter()
@@ -122,7 +129,11 @@ pub fn run_reachability_bfs(
 }
 
 fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
-    let imports = file_import_edges(state.graph, file_id);
+    let imports = state
+        .file_imports
+        .get(&file_id)
+        .cloned()
+        .unwrap_or_default();
     let source_path = state
         .graph
         .file(file_id)
@@ -203,15 +214,12 @@ fn enqueue_module_reference(state: &mut BfsState<'_>, module: &str, origin: &Ref
     );
 }
 
-fn file_import_edges(graph: &ProjectGraph, file_id: FileId) -> Vec<(ModuleId, u32)> {
-    graph
-        .edges()
-        .iter()
-        .filter_map(|edge| match edge {
-            GraphEdge::FileImportsModule { file, module, line } if *file == file_id => {
-                Some((*module, *line))
-            },
-            _ => None,
-        })
-        .collect()
+fn build_file_import_adjacency(graph: &ProjectGraph) -> HashMap<FileId, Vec<(ModuleId, u32)>> {
+    let mut adjacency: HashMap<FileId, Vec<(ModuleId, u32)>> = HashMap::new();
+    for edge in graph.edges() {
+        if let GraphEdge::FileImportsModule { file, module, line } = edge {
+            adjacency.entry(*file).or_default().push((*module, *line));
+        }
+    }
+    adjacency
 }
