@@ -55,7 +55,7 @@ PR 分割:
 1. `rules` に stable issue fingerprint を追加する — 初期実装済み (`src/baseline/` で `rule_id + stable target`)
 2. baseline read/filter を Step 12 issue emission 後に挿入する — 初期実装済み
 3. `--update-baseline` で atomic write する — 初期実装済み (`--baseline PATH` 必須)
-4. reporter に baseline summary を出す
+4. reporter に baseline summary を出す — 初期実装済み (`default`/`compact`/`json`/`markdown`/`github`)
 
 検証:
 
