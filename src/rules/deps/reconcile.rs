@@ -90,7 +90,13 @@ pub fn reconcile_dependencies(
     ));
 
     candidates.extend(detect_misplaced_dependencies(
-        &declared, resolution, &reachable, config, sources,
+        &declared,
+        resolution,
+        &reachable,
+        config,
+        sources,
+        &workspace_declared,
+        strict,
     ));
 
     candidates.extend(detect_unlisted_binaries(&declared, resolution, plugins));

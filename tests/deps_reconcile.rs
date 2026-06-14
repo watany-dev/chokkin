@@ -202,6 +202,21 @@ fn strict_workspace_member_requires_member_local_dependency() {
 }
 
 #[test]
+fn strict_workspace_member_reports_member_local_misplaced_dependency() {
+    let report = reconcile_fixture_with_strict("workspace_member_misplaced", true);
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| {
+            candidate.rule == RuleId::Chk005
+                && candidate.message.contains("pytest")
+                && candidate.message.contains("workspace member api")
+        })
+        .expect("member-local pytest context mismatch");
+    assert_eq!(candidate.severity, Severity::Warning);
+}
+
+#[test]
 fn misplaced_pytest_emits_chk005() {
     let report = reconcile_fixture("misplaced_pytest");
     let pytest =
