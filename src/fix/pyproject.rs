@@ -87,7 +87,9 @@ pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<Strin
         })?;
 
     if !push_runtime_dependency(&mut doc, raw)? {
-        return Ok(format!("`{raw}` already exists in project.dependencies in {rel}"));
+        return Ok(format!(
+            "`{raw}` already exists in project.dependencies in {rel}"
+        ));
     }
 
     atomic_write(path, &doc.to_string())?;
@@ -224,11 +226,7 @@ fn parse_hatch_env_dependency_label(label: &str) -> Option<(String, usize)> {
     Some((env.to_owned(), index))
 }
 
-fn remove_table_key(
-    doc: &mut DocumentMut,
-    path: &[&str],
-    key: &str,
-) -> Result<bool, FixError> {
+fn remove_table_key(doc: &mut DocumentMut, path: &[&str], key: &str) -> Result<bool, FixError> {
     let mut current = doc.as_item_mut();
     for segment in path {
         current = current
@@ -237,9 +235,11 @@ fn remove_table_key(
                 detail: format!("missing TOML path `{}`", path.join(".")),
             })?;
     }
-    let table = current.as_table_mut().ok_or_else(|| FixError::Unsupported {
-        detail: format!("`{}` is not a table", path.join(".")),
-    })?;
+    let table = current
+        .as_table_mut()
+        .ok_or_else(|| FixError::Unsupported {
+            detail: format!("`{}` is not a table", path.join(".")),
+        })?;
     Ok(table.remove(key).is_some())
 }
 

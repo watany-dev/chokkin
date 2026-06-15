@@ -16,6 +16,7 @@ use super::used::DeclaredIndex;
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub(super) fn detect_misplaced_dependencies(
     declared: &DeclaredIndex<'_>,
     resolution: &ResolutionIndex,

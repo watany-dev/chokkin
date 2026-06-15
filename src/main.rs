@@ -10,8 +10,8 @@ use std::process::ExitCode;
 
 use chokkin::{
     AnalysisReport, CliArgs, ExitStatus, FixReport, RenderContext, RuntimeOverrides, VERSION,
-    analyze_project, config_label_from_sources, explain_issue, format_subject, parse_cli_args,
-    init_project, probe_project, render_issues, trace_output, write_probe_report,
+    analyze_project, config_label_from_sources, explain_issue, format_subject, init_project,
+    parse_cli_args, probe_project, render_issues, trace_output, write_probe_report,
     write_probe_warnings,
 };
 
@@ -105,10 +105,7 @@ fn main() -> ExitCode {
 fn run_init(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverrides) -> ExitCode {
     match init_project(start, project_root, overrides) {
         Ok(report) => {
-            println!(
-                "wrote starter [tool.chokkin] to {}",
-                report.path.display()
-            );
+            println!("wrote starter [tool.chokkin] to {}", report.path.display());
             ExitCode::from(ExitStatus::Success.code())
         },
         Err(error) if error.is_usage_error() => {

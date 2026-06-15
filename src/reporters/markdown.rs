@@ -28,7 +28,7 @@ impl Reporter for MarkdownReporter {
         let _ = writeln!(out, "- Issues: **{}**", report.summary.total);
         let suppressed = baseline_suppressed_count(report);
         if suppressed > 0 {
-            let _ = writeln!(out, "- Baseline suppressed: **{}**", suppressed);
+            let _ = writeln!(out, "- Baseline suppressed: **{suppressed}**");
         }
         let _ = writeln!(out);
 

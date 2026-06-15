@@ -111,8 +111,11 @@ fn manifest_cache_revalidates_included_requirements() {
         "[project]\nname = \"cache-demo\"\nversion = \"0.1.0\"\n",
     )
     .expect("write pyproject");
-    std::fs::write(temp.path().join("requirements.txt"), "-r nested.txt\nrequests\n")
-        .expect("write requirements");
+    std::fs::write(
+        temp.path().join("requirements.txt"),
+        "-r nested.txt\nrequests\n",
+    )
+    .expect("write requirements");
     std::fs::write(temp.path().join("nested.txt"), "urllib3\n").expect("write nested");
 
     let root = project_root_at(temp.path());
@@ -278,9 +281,12 @@ fn broken_pyproject_is_error() {
 fn poetry_detected_emits_warning() {
     let manifest = extract_fixture("poetry_detected");
     assert!(manifest.sources.poetry);
-    assert!(manifest.dependencies.iter().any(|dep| {
-        dep.name == "requests" && dep.context == DependencyContext::Runtime
-    }));
+    assert!(
+        manifest
+            .dependencies
+            .iter()
+            .any(|dep| { dep.name == "requests" && dep.context == DependencyContext::Runtime })
+    );
     assert!(
         manifest
             .warnings

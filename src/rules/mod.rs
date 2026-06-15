@@ -12,7 +12,7 @@ pub use deps::reconcile_dependencies;
 pub use emit::{emit_issues, explain_issue};
 pub use symbols::{SymbolId, SymbolReport, analyze_symbols};
 pub use types::{
-    DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport,
-    IssueSubject, IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason,
-    SuppressedIssue, WorkspaceDependencyBoundary, issue_fingerprint, issue_stable_target,
+    DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
+    IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
+    WorkspaceDependencyBoundary, issue_fingerprint, issue_stable_target,
 };

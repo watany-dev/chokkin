@@ -153,9 +153,7 @@ fn relative_path(root: &Path, path: &Path) -> Result<String, ConfigError> {
 }
 
 fn normalize_relative_path(path: &str) -> String {
-    path.trim_matches('/')
-        .trim_matches('\\')
-        .replace('\\', "/")
+    path.trim_matches('/').trim_matches('\\').replace('\\', "/")
 }
 
 #[cfg(test)]

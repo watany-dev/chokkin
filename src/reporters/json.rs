@@ -140,7 +140,10 @@ fn optional_json_string(value: Option<&str>) -> String {
 }
 
 fn optional_json_path(value: Option<&str>) -> String {
-    value.map_or_else(|| "null".to_owned(), |path| json_string(&normalize_path(path)))
+    value.map_or_else(
+        || "null".to_owned(),
+        |path| json_string(&normalize_path(path)),
+    )
 }
 
 fn normalize_path(path: &str) -> String {
@@ -150,7 +153,11 @@ fn normalize_path(path: &str) -> String {
 fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
     match subject {
         IssueSubject::File { path } => {
-            let _ = writeln!(out, "      \"path\": {},", json_string(&normalize_path(path)));
+            let _ = writeln!(
+                out,
+                "      \"path\": {},",
+                json_string(&normalize_path(path))
+            );
             let _ = writeln!(out, "      \"distribution\": null,");
             let _ = writeln!(out, "      \"symbol\": null,");
             let _ = writeln!(out, "      \"binary\": null,");

@@ -310,6 +310,16 @@ fn normalize_issue_path(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+/// Stable sort key for issue candidates within a rule.
+pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
+    match subject {
+        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
+        IssueSubject::File { path } => path.clone(),
+        IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
+        IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,15 +393,5 @@ mod tests {
         };
 
         assert_eq!(issue_fingerprint(&issue), "CHK002:boto3");
-    }
-}
-
-/// Stable sort key for issue candidates within a rule.
-pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
-    match subject {
-        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
-        IssueSubject::File { path } => path.clone(),
-        IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
-        IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
     }
 }

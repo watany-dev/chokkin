@@ -148,6 +148,7 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, ProbeError> {
 }
 
 /// Write human-readable probe summary to `out`.
+#[allow(clippy::too_many_lines)]
 pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "chokkin {} (probe)", report.version)?;
     writeln!(out)?;

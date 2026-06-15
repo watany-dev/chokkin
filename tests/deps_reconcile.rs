@@ -179,11 +179,9 @@ fn transitive_urllib3_emits_chk004() {
 #[test]
 fn workspace_member_root_declared_dependency_is_allowed_by_default() {
     let report = reconcile_fixture("workspace_member_strict");
-    assert!(!report
-        .candidates
-        .iter()
-        .any(|candidate| candidate.rule == RuleId::Chk003
-            && candidate.message.contains("requests")));
+    assert!(!report.candidates.iter().any(
+        |candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("requests")
+    ));
 }
 
 #[test]

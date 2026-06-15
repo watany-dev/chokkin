@@ -25,7 +25,8 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     extract_shell_scripts(root, &mut contrib, &mut found);
     extract_task_modules(ctx, &mut contrib, &mut found);
 
-    let warnings = if found || !contrib.symbol_refs.is_empty() || !contrib.binary_usages.is_empty() {
+    let warnings = if found || !contrib.symbol_refs.is_empty() || !contrib.binary_usages.is_empty()
+    {
         Vec::new()
     } else {
         vec![PluginsWarning::PluginNoOp {

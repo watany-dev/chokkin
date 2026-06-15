@@ -41,7 +41,7 @@ pub fn extract(
             &["pre-commit", "pre_commit"],
         ),
         PluginId::GithubActions => extract_github_actions(ctx, &mut contrib),
-        _ => {}
+        _ => {},
     }
 
     let warnings = if contrib.binary_usages.is_empty() {
@@ -230,10 +230,7 @@ fn is_workflow_block_scalar(command: &str) -> bool {
     trimmed.starts_with('|') || trimmed.starts_with('>')
 }
 
-fn command_known_binaries(
-    command: &str,
-    binary_map: &BTreeMap<String, String>,
-) -> Vec<String> {
+fn command_known_binaries(command: &str, binary_map: &BTreeMap<String, String>) -> Vec<String> {
     let tokens = command
         .split_whitespace()
         .map(clean_command_token)
@@ -257,9 +254,7 @@ fn command_known_binaries(
 
 fn clean_command_token(token: &str) -> String {
     token
-        .trim_matches(|ch: char| {
-            !ch.is_ascii_alphanumeric() && !matches!(ch, '-' | '_' | '.')
-        })
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && !matches!(ch, '-' | '_' | '.'))
         .to_owned()
 }
 

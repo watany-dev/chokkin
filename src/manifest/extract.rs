@@ -154,7 +154,7 @@ pub fn extract_manifest_with_cache(
     };
     let key = manifest_cache_key(root, config)?;
     if let Some(payload) = cache
-        .read_scan_payload(root.path.as_path(), &key)
+        .read_scan_payload::<ManifestCachePayload>(root.path.as_path(), &key)
         .map_err(|source| ManifestError::Io {
             path: cache.scan_entry_path(root.path.as_path(), &key),
             source,
@@ -184,14 +184,12 @@ fn manifest_cache_key(
     root: &ProjectRoot,
     config: &LoadedConfig,
 ) -> Result<ScanCacheKey, ManifestError> {
-    let inputs = ScanInputFingerprints::collect_manifest_candidates(
-        root.path.as_path(),
-        &config.sources,
-    )
-    .map_err(|source| ManifestError::Io {
-        path: root.path.clone(),
-        source,
-    })?;
+    let inputs =
+        ScanInputFingerprints::collect_manifest_candidates(root.path.as_path(), &config.sources)
+            .map_err(|source| ManifestError::Io {
+                path: root.path.clone(),
+                source,
+            })?;
     let target = config
         .effective
         .target_version
@@ -214,11 +212,12 @@ fn manifest_inputs_for_payload(
     config: &LoadedConfig,
     manifest: &LoadedManifest,
 ) -> Result<ScanInputFingerprints, ManifestError> {
-    ScanInputFingerprints::collect(root.path.as_path(), &config.sources, &manifest.sources)
-        .map_err(|source| ManifestError::Io {
+    ScanInputFingerprints::collect(root.path.as_path(), &config.sources, &manifest.sources).map_err(
+        |source| ManifestError::Io {
             path: root.path.clone(),
             source,
-        })
+        },
+    )
 }
 
 /// When runtime deps are declared in pyproject/setup, root `requirements.txt` is dev tooling.

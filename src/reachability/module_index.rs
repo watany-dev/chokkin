@@ -44,10 +44,9 @@ impl ModuleIndex {
         let key = module_index_cache_key(sources)?;
         if let Some(payload) =
             cache.read_scan_payload::<ModuleIndexPayload>(sources.root.path.as_path(), &key)?
+            && let Some(index) = Self::from_payload(graph, &payload)
         {
-            if let Some(index) = Self::from_payload(graph, &payload) {
-                return Ok(index);
-            }
+            return Ok(index);
         }
 
         let index = Self::build(graph, sources);

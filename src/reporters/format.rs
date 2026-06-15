@@ -35,7 +35,8 @@ pub fn format_subject(subject: &IssueSubject) -> String {
 /// Short subject label annotated with workspace member metadata when present.
 pub fn format_issue_subject(issue: &Issue) -> String {
     let subject = format_subject(&issue.subject);
-    issue.workspace_member
+    issue
+        .workspace_member
         .as_ref()
         .map_or_else(|| subject.clone(), |member| format!("{member}:{subject}"))
 }

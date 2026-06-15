@@ -35,7 +35,8 @@ pub fn apply_fixes(
 /// # Errors
 ///
 /// Returns [`FixError`] when a manifest file cannot be read or written.
-pub(crate) fn apply_fixes_with_workspace(
+#[allow(clippy::unnecessary_wraps)]
+pub fn apply_fixes_with_workspace(
     report: &IssueReport,
     root: &ProjectRoot,
     manifest: &LoadedManifest,
@@ -418,7 +419,10 @@ mod tests {
         assert!(dir.path().join("src/legacy.py").exists());
         assert!(fix_report.applied.is_empty());
         assert_eq!(fix_report.skipped.len(), 1);
-        assert_eq!(fix_report.skipped[0].reason, SkippedReason::FileRemovalDenied);
+        assert_eq!(
+            fix_report.skipped[0].reason,
+            SkippedReason::FileRemovalDenied
+        );
     }
 
     #[test]
@@ -514,9 +518,12 @@ mod tests {
         )
         .expect("apply");
 
-        assert!(fix_report.reminders.iter().any(|reminder| {
-            reminder.contains("poetry lock")
-        }));
+        assert!(
+            fix_report
+                .reminders
+                .iter()
+                .any(|reminder| { reminder.contains("poetry lock") })
+        );
     }
 
     #[test]

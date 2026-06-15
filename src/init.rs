@@ -4,9 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::config::{
-    DependencyGroupsConfig, RuntimeOverrides, apply_overrides, load_config,
-};
+use crate::config::{DependencyGroupsConfig, RuntimeOverrides, apply_overrides, load_config};
 use crate::discovery::{DiscoveryError, discover_project_root};
 use crate::manifest::{ManifestError, extract_manifest, resolve_target_version};
 use crate::sources::{SourcesError, discover_sources};
@@ -93,12 +91,10 @@ pub fn init_project(
     let sources = discover_sources(&root, &config, &manifest)?;
     let pyproject = root.path.join("pyproject.toml");
     if !pyproject.is_file() {
-        return Err(InitError::MissingPyproject {
-            root: root.path.clone(),
-        });
+        return Err(InitError::MissingPyproject { root: root.path });
     }
 
-    let project_globs = sources.effective_globs.clone();
+    let project_globs = sources.effective_globs;
     let entry = infer_entry_roots(&root.path);
     let block = render_starter_config(
         &project_globs,
@@ -245,7 +241,11 @@ mod tests {
 
         let report = init_project(temp.path(), None, &RuntimeOverrides::default()).expect("init");
         assert_eq!(report.entry, vec!["manage.py"]);
-        assert!(report.project_globs.contains(&"src/**/*.py".to_owned()));
+        assert!(
+            report
+                .project_globs
+                .contains(&"src/**/*.{py,pyi,ipynb}".to_owned())
+        );
 
         let text = fs::read_to_string(report.path).expect("read pyproject");
         assert!(text.contains("[tool.chokkin]"));

@@ -6,17 +6,14 @@ use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{ResolvedMode, apply_entry_plan, build_entry_roots};
-use crate::fix::{
-    FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace,
-};
+use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::extract_plugin_hints_with_cache;
 use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
-    IssueReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
-    reconcile_dependencies,
+    IssueReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues, reconcile_dependencies,
 };
 
 use super::error::AnalyzeError;
@@ -64,14 +61,19 @@ pub struct AnalyzeOptions {
 /// # Errors
 ///
 /// Returns [`AnalyzeError`] when a pipeline step fails fatally.
+#[allow(clippy::needless_pass_by_value)]
 pub fn analyze_project(
     start: &Path,
     project_root_override: Option<&Path>,
     overrides: &RuntimeOverrides,
     options: AnalyzeOptions,
 ) -> Result<AnalysisReport, AnalyzeError> {
-    let probe =
-        probe_project_with_cache(start, project_root_override, overrides, Some(&options.cache))?;
+    let probe = probe_project_with_cache(
+        start,
+        project_root_override,
+        overrides,
+        Some(&options.cache),
+    )?;
     let mut core = run_analysis_core(&probe, overrides, &options)?;
     let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
     let fix = if options.fix_enabled {
@@ -130,6 +132,7 @@ struct AnalysisCore {
     warnings: Vec<ProbeWarning>,
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_analysis_core(
     probe: &ProbeReport,
     overrides: &RuntimeOverrides,

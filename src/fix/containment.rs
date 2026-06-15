@@ -28,21 +28,20 @@ pub fn resolve_contained_path(root: &Path, file: &str) -> Result<PathBuf, FixErr
 
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let joined = root.join(file);
-    let canonical_joined = match std::fs::canonicalize(&joined) {
-        Ok(path) => path,
-        Err(_) => {
-            let parent = joined.parent().ok_or_else(|| FixError::Unsupported {
-                detail: format!("fix target `{file}` has no parent directory"),
+    let canonical_joined = if let Ok(path) = std::fs::canonicalize(&joined) {
+        path
+    } else {
+        let parent = joined.parent().ok_or_else(|| FixError::Unsupported {
+            detail: format!("fix target `{file}` has no parent directory"),
+        })?;
+        let canonical_parent =
+            std::fs::canonicalize(parent).map_err(|_| FixError::Unsupported {
+                detail: format!("fix target parent for `{file}` cannot be resolved"),
             })?;
-            let canonical_parent =
-                std::fs::canonicalize(parent).map_err(|_| FixError::Unsupported {
-                    detail: format!("fix target parent for `{file}` cannot be resolved"),
-                })?;
-            let name = joined.file_name().ok_or_else(|| FixError::Unsupported {
-                detail: format!("fix target `{file}` has no file name"),
-            })?;
-            canonical_parent.join(name)
-        },
+        let name = joined.file_name().ok_or_else(|| FixError::Unsupported {
+            detail: format!("fix target `{file}` has no file name"),
+        })?;
+        canonical_parent.join(name)
     };
     if !canonical_joined.starts_with(&canonical_root) {
         return Err(FixError::Unsupported {
@@ -77,6 +76,10 @@ mod tests {
             .expect_err("symlink target should escape root");
 
         assert!(matches!(error, FixError::Unsupported { .. }));
-        assert!(error.to_string().contains("resolves outside the project root"));
+        assert!(
+            error
+                .to_string()
+                .contains("resolves outside the project root")
+        );
     }
 }

@@ -13,7 +13,7 @@ use super::types::{
 use super::util::relative_path;
 use super::warnings::PluginsWarning;
 
-/// Extract static Sphinx, MkDocs, and Alembic hints.
+/// Extract static Sphinx, `MkDocs`, and Alembic hints.
 #[must_use]
 pub fn extract(
     plugin: PluginId,
@@ -24,7 +24,7 @@ pub fn extract(
         PluginId::Sphinx => extract_sphinx(ctx.root.path.as_path(), &mut contrib),
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
         PluginId::Alembic => extract_alembic(ctx.root.path.as_path(), &mut contrib),
-        _ => {}
+        _ => {},
     }
 
     let warnings = if contrib.entries.is_empty()

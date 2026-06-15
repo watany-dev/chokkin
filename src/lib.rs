@@ -16,9 +16,9 @@
 //! Step 13 ([`fix`]) applies safe manifest edits when requested.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
-pub mod cli;
 pub mod baseline;
 pub mod cache;
+pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod entry;
@@ -35,7 +35,6 @@ pub mod resolver;
 pub mod rules;
 pub mod sources;
 
-pub use cli::{CliArgs, parse_cli_args};
 pub use baseline::{
     BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
 };
@@ -44,10 +43,11 @@ pub use cache::{
     ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
     ScanInputFingerprints, SourceFingerprint,
 };
+pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
     LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint,
-    WorkspaceOverride, apply_overrides, default_config, load_config,
+    WorkspaceMemberSource, WorkspaceOverride, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{

@@ -148,7 +148,6 @@ impl CliArgs {
                 dry_run: self.dry_run,
                 allow_remove_files: self.allow_remove_files,
                 add_missing: self.add_missing,
-                ..FixOptions::default()
             },
             baseline: self.baseline.clone(),
             update_baseline: self.update_baseline,
@@ -290,12 +289,11 @@ mod tests {
 
     #[test]
     fn parses_allow_remove_files() {
-        let args =
-            parse_cli_args(vec!["--fix".to_owned(), "--allow-remove-files".to_owned()])
-                .expect("parse");
+        let args = parse_cli_args(vec!["--fix".to_owned(), "--allow-remove-files".to_owned()])
+            .expect("parse");
         assert!(args.allow_remove_files);
         assert!(args.analyze_options().fix.allow_remove_files);
-        assert!(args.validate().is_ok());
+        args.validate().expect("validate");
     }
 
     #[test]
@@ -307,11 +305,11 @@ mod tests {
 
     #[test]
     fn parses_add_missing() {
-        let args = parse_cli_args(vec!["--fix".to_owned(), "--add-missing".to_owned()])
-            .expect("parse");
+        let args =
+            parse_cli_args(vec!["--fix".to_owned(), "--add-missing".to_owned()]).expect("parse");
         assert!(args.add_missing);
         assert!(args.analyze_options().fix.add_missing);
-        assert!(args.validate().is_ok());
+        args.validate().expect("validate");
     }
 
     #[test]

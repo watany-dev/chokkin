@@ -146,12 +146,17 @@ fn resolve_through_existing_ancestor(path: &Path) -> Result<PathBuf, BaselineErr
         ancestor = parent;
     }
 
-    let mut resolved = ancestor.canonicalize().map_err(|source| BaselineError::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
+    let mut resolved = ancestor
+        .canonicalize()
+        .map_err(|source| BaselineError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
     for component in missing.iter().rev() {
-        if !matches!(Path::new(component).components().next(), Some(Component::Normal(_))) {
+        if !matches!(
+            Path::new(component).components().next(),
+            Some(Component::Normal(_))
+        ) {
             return Err(BaselineError::OutsideRoot {
                 path: path.display().to_string(),
             });
@@ -303,10 +308,7 @@ mod tests {
     fn fingerprint_includes_workspace_member() {
         let mut issue = issue("src\\legacy.py");
         issue.workspace_member = Some("api".to_owned());
-        assert_eq!(
-            issue_fingerprint(&issue),
-            "CHK001:api:src/legacy.py"
-        );
+        assert_eq!(issue_fingerprint(&issue), "CHK001:api:src/legacy.py");
     }
 
     #[test]
@@ -416,9 +418,12 @@ mod tests {
             summary: IssueSummary::default(),
             exit_status: crate::ExitStatus::IssuesFound,
         };
-        let error =
-            apply_baseline(&mut report, root.path(), &outside.path().join("baseline.json"))
-                .expect_err("outside root");
+        let error = apply_baseline(
+            &mut report,
+            root.path(),
+            &outside.path().join("baseline.json"),
+        )
+        .expect_err("outside root");
         assert!(matches!(error, BaselineError::OutsideRoot { .. }));
     }
 }

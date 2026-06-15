@@ -127,7 +127,7 @@ pub enum PluginId {
     GithubActions,
     /// Sphinx documentation configuration.
     Sphinx,
-    /// MkDocs documentation configuration.
+    /// `MkDocs` documentation configuration.
     MkDocs,
     /// Alembic migration environment.
     Alembic,

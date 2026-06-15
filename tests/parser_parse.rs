@@ -236,7 +236,7 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
     let root = ProjectRoot {
         path: base.clone(),
         marker: RootMarker::PyProjectToml,
-        start: base.clone(),
+        start: base,
     };
     let sources = chokkin::DiscoveredSources {
         root: root.clone(),
@@ -258,12 +258,10 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
     let target = TargetVersion::default_py311();
     let mut cache = ParseCacheStore::new();
 
-    let first =
-        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
-            .expect("parse");
-    let second =
-        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
-            .expect("parse");
+    let first = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("parse");
+    let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("parse");
 
     assert_eq!(first, second);
     assert_eq!(cache.stats().misses, 1);
@@ -275,8 +273,7 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
 fn parse_project_sources_invalidates_cache_when_source_changes() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source_path = temp.path().join("src/app.py");
-    std::fs::create_dir_all(source_path.parent().expect("source parent"))
-        .expect("mkdir");
+    std::fs::create_dir_all(source_path.parent().expect("source parent")).expect("mkdir");
     std::fs::write(&source_path, "import requests\n").expect("write first source");
     let root = ProjectRoot {
         path: temp.path().to_path_buf(),
@@ -306,13 +303,17 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
     parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
         .expect("first parse");
     std::fs::write(&source_path, "import yaml\n").expect("write second source");
-    let second =
-        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
-            .expect("second parse");
+    let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("second parse");
 
     let module = second.modules.first().expect("parsed module");
     assert!(module.imports.iter().any(|import| import.module == "yaml"));
-    assert!(!module.imports.iter().any(|import| import.module == "requests"));
+    assert!(
+        !module
+            .imports
+            .iter()
+            .any(|import| import.module == "requests")
+    );
     assert_eq!(cache.stats().misses, 2);
     assert_eq!(cache.stats().hits, 0);
 }
@@ -323,7 +324,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
     let root_path = temp.path();
     std::fs::write(
         root_path.join("analysis.ipynb"),
-        r#"{
+        r##"{
   "cells": [
     {
       "cell_type": "markdown",
@@ -337,7 +338,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
   "metadata": {},
   "nbformat": 4,
   "nbformat_minor": 5
-}"#,
+}"##,
     )
     .expect("write notebook");
     let root = ProjectRoot {

@@ -1,8 +1,8 @@
 //! Config / plugin extraction (pipeline step 5).
 
+mod celery;
 mod config_scan;
 mod context;
-mod celery;
 mod devtools;
 mod django;
 mod doctools;

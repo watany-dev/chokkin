@@ -9,8 +9,8 @@ use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
 use crate::sources::DiscoveredSources;
 
-use super::config_scan;
 use super::celery;
+use super::config_scan;
 use super::context::PluginContext;
 use super::devtools;
 use super::django;
@@ -66,10 +66,10 @@ pub fn extract_plugin_hints_with_cache(
             PluginId::Celery => celery::extract(&ctx),
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
                 devtools::extract(*plugin, &ctx)
-            }
+            },
             PluginId::Sphinx | PluginId::MkDocs | PluginId::Alembic => {
                 doctools::extract(*plugin, &ctx)
-            }
+            },
         };
         warnings.extend(plugin_warnings);
         contributions.push(contrib);
@@ -205,11 +205,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn config_scan_uses_disk_cache_payload() {
-        let root_path = std::env::temp_dir().join(format!(
-            "chokkin-plugin-scan-cache-{}",
-            std::process::id()
-        ));
+        let root_path =
+            std::env::temp_dir().join(format!("chokkin-plugin-scan-cache-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root_path);
         std::fs::create_dir_all(&root_path).expect("create root");
         std::fs::write(

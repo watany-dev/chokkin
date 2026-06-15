@@ -61,16 +61,17 @@ pub(super) fn detect_missing_dependencies(
 
         if member_declared
             || (!strict && root_declared)
-            || (strict && workspace_member.is_none() && root_declared)
+            || (root_declared && workspace_member.is_none())
         {
             continue;
         }
 
-        if strict && root_declared {
-            if let Some(member_id) = workspace_member {
-                candidates.push(workspace_missing_candidate(import, distribution, member_id));
-                continue;
-            }
+        if strict
+            && root_declared
+            && let Some(member_id) = workspace_member
+        {
+            candidates.push(workspace_missing_candidate(import, distribution, member_id));
+            continue;
         }
 
         if optional_imports.contains(&(import.file.clone(), import.line)) {

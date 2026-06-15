@@ -10,8 +10,8 @@ mod setup_cfg;
 mod types;
 mod write;
 
-pub(crate) use apply::apply_fixes_with_workspace;
 pub use apply::apply_fixes;
+pub(crate) use apply::apply_fixes_with_workspace;
 pub use error::FixError;
-pub use types::{AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason};
 pub(crate) use types::WorkspaceFixManifest;
+pub use types::{AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason};

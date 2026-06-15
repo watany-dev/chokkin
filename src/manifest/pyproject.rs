@@ -276,8 +276,7 @@ fn extract_poetry_dependencies(
             let Some(group_table) = group_value.as_table() else {
                 continue;
             };
-            let Some(group_deps) = group_table.get("dependencies").and_then(Value::as_table)
-            else {
+            let Some(group_deps) = group_table.get("dependencies").and_then(Value::as_table) else {
                 continue;
             };
             for (name, dep_value) in group_deps {
@@ -295,6 +294,7 @@ fn extract_poetry_dependencies(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_poetry_dependency(
     dependencies: &mut Vec<DeclaredDependency>,
     warnings: &mut Vec<ManifestWarning>,
@@ -324,12 +324,7 @@ fn poetry_requirement_name(name: &str, value: &Value) -> String {
         .as_table()
         .and_then(|table| table.get("extras"))
         .and_then(Value::as_array)
-        .map(|extras| {
-            extras
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-        })
+        .map(|extras| extras.iter().filter_map(Value::as_str).collect::<Vec<_>>())
         .unwrap_or_default();
 
     if extras.is_empty() {
@@ -494,9 +489,12 @@ mod tests {
         .expect("valid pyproject");
         assert!(result.warnings.contains(&ManifestWarning::PoetryDetected));
         assert_eq!(result.dependencies.len(), 4);
-        assert!(result.dependencies.iter().any(|dep| {
-            dep.name == "requests" && dep.context == DependencyContext::Runtime
-        }));
+        assert!(
+            result
+                .dependencies
+                .iter()
+                .any(|dep| { dep.name == "requests" && dep.context == DependencyContext::Runtime })
+        );
         assert!(result.dependencies.iter().any(|dep| {
             dep.name == "httpx"
                 && dep.extras == vec!["http2".to_owned()]

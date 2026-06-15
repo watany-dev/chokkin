@@ -130,7 +130,7 @@ fn binary_dry_run_without_fix_errors() {
 
 #[test]
 fn binary_fix_reports_skipped_detail() {
-    let root = fixture_path(&["reachability", "library_orphan"]);
+    let root = fixture_path(&["reachability", "chain_import"]);
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .arg("--fix")
         .arg(&root)

@@ -220,9 +220,9 @@ fn root_relative_directory(directory: &Path) -> PathBuf {
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent")
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent"))?;
     let mut temp = tempfile::Builder::new()
         .prefix(".chokkin-cache-")
         .tempfile_in(parent)?;
@@ -467,10 +467,7 @@ impl ScanInputFingerprints {
     /// # Errors
     ///
     /// Returns an IO error when a candidate manifest input exists but cannot be read.
-    pub fn collect_manifest_candidates(
-        root: &Path,
-        config: &ConfigSources,
-    ) -> io::Result<Self> {
+    pub fn collect_manifest_candidates(root: &Path, config: &ConfigSources) -> io::Result<Self> {
         Ok(Self {
             config: config_input_fingerprints(root, config)?,
             manifest: manifest_candidate_fingerprints(root)?,
@@ -600,10 +597,8 @@ mod tests {
     use super::*;
 
     fn temp_cache_test_dir(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "chokkin-cache-test-{name}-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("chokkin-cache-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).expect("create temp cache dir");
         root
@@ -780,7 +775,10 @@ mod tests {
         let path = CacheOptions::default().parse_entry_path(Path::new("/repo"), &key);
 
         assert!(path.starts_with("/repo/.chokkin/cache/parse"));
-        assert_eq!(path.extension().and_then(std::ffi::OsStr::to_str), Some("json"));
+        assert_eq!(
+            path.extension().and_then(std::ffi::OsStr::to_str),
+            Some("json")
+        );
     }
 
     #[test]
@@ -909,7 +907,10 @@ mod tests {
         let path = CacheOptions::default().scan_entry_path(Path::new("/repo"), &key);
 
         assert!(path.starts_with("/repo/.chokkin/cache/scan"));
-        assert_eq!(path.extension().and_then(std::ffi::OsStr::to_str), Some("json"));
+        assert_eq!(
+            path.extension().and_then(std::ffi::OsStr::to_str),
+            Some("json")
+        );
     }
 
     #[test]
@@ -1041,8 +1042,11 @@ mod tests {
             schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
             payload: None,
         };
-        std::fs::write(&path, serde_json::to_vec(&record).expect("serialize record"))
-            .expect("write mismatched cache");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&record).expect("serialize record"),
+        )
+        .expect("write mismatched cache");
 
         assert_eq!(
             CacheOptions::default()
@@ -1073,8 +1077,11 @@ mod tests {
             schema_version: "scan-record-v0".to_owned(),
             payload: None,
         };
-        std::fs::write(&path, serde_json::to_vec(&record).expect("serialize record"))
-            .expect("write schema-mismatched cache");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&record).expect("serialize record"),
+        )
+        .expect("write schema-mismatched cache");
 
         assert_eq!(
             CacheOptions::default()

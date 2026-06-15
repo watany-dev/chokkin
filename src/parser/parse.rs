@@ -112,8 +112,8 @@ fn parse_notebook_file(
 }
 
 fn notebook_python_source(source: &str) -> Result<String, String> {
-    let value: Value = serde_json::from_str(source)
-        .map_err(|error| format!("invalid notebook JSON: {error}"))?;
+    let value: Value =
+        serde_json::from_str(source).map_err(|error| format!("invalid notebook JSON: {error}"))?;
     let Some(cells) = value.get("cells").and_then(Value::as_array) else {
         return Err("invalid notebook JSON: missing cells array".to_owned());
     };

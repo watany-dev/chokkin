@@ -112,6 +112,11 @@ mod tests {
             pyproject_toml: Some("services/api/pyproject.toml".to_owned()),
             source: WorkspaceMemberSource::Uv,
         };
-        assert!(is_workspace_import("api", &[member], None, &default_config()));
+        assert!(is_workspace_import(
+            "api",
+            &[member],
+            None,
+            &default_config()
+        ));
     }
 }

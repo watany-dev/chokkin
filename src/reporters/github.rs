@@ -33,11 +33,13 @@ fn render_annotation(out: &mut String, issue: &Issue) {
         crate::rules::Severity::Info => "notice",
     };
     let mut properties = Vec::new();
-    let file = issue
-        .location
-        .file
-        .as_deref()
-        .or(issue.location.manifest.as_ref().map(|origin| origin.file.as_str()));
+    let file = issue.location.file.as_deref().or_else(|| {
+        issue
+            .location
+            .manifest
+            .as_ref()
+            .map(|origin| origin.file.as_str())
+    });
     let line = issue.location.line.or_else(|| {
         issue
             .location
@@ -61,7 +63,9 @@ fn render_annotation(out: &mut String, issue: &Issue) {
 }
 
 fn escape_property(value: &str) -> String {
-    escape_message(value).replace(':', "%3A").replace(',', "%2C")
+    escape_message(value)
+        .replace(':', "%3A")
+        .replace(',', "%2C")
 }
 
 fn escape_message(value: &str) -> String {

@@ -8,8 +8,7 @@ use super::format::{json_string, severity_label};
 use super::traits::Reporter;
 use super::types::RenderContext;
 
-const SARIF_SCHEMA: &str =
-    "https://json.schemastore.org/sarif-2.1.0.json";
+const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 
 /// SARIF reporter.
 #[derive(Debug, Clone, Copy, Default)]
@@ -57,7 +56,11 @@ fn render_tool(out: &mut String, context: &RenderContext) {
 
 fn render_rule(out: &mut String, rule: RuleId) {
     let _ = writeln!(out, "            {{");
-    let _ = writeln!(out, "              \"id\": {},", json_string(rule.as_code()));
+    let _ = writeln!(
+        out,
+        "              \"id\": {},",
+        json_string(rule.as_code())
+    );
     let _ = writeln!(
         out,
         "              \"shortDescription\": {{ \"text\": {} }},",
@@ -121,11 +124,13 @@ fn render_result(out: &mut String, issue: &Issue) {
 }
 
 fn render_locations(out: &mut String, issue: &Issue) {
-    let file = issue
-        .location
-        .file
-        .as_deref()
-        .or(issue.location.manifest.as_ref().map(|origin| origin.file.as_str()));
+    let file = issue.location.file.as_deref().or_else(|| {
+        issue
+            .location
+            .manifest
+            .as_ref()
+            .map(|origin| origin.file.as_str())
+    });
     let line = issue.location.line.or_else(|| {
         issue
             .location
@@ -205,7 +210,6 @@ fn rule_default_severity(rule: RuleId) -> Severity {
 fn sarif_level(severity: Severity) -> &'static str {
     match severity_label(severity) {
         "error" => "error",
-        "warning" => "warning",
         "info" => "note",
         _ => "warning",
     }

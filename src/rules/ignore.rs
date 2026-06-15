@@ -353,9 +353,10 @@ mod tests {
     #[test]
     fn config_ignore_matches_symbol_file_path_pattern() {
         let mut config = default_config();
-        config
-            .ignore
-            .insert("CHK006".to_owned(), vec!["src/acme/api.py:dead_*".to_owned()]);
+        config.ignore.insert(
+            "CHK006".to_owned(),
+            vec!["src/acme/api.py:dead_*".to_owned()],
+        );
         let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,

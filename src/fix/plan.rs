@@ -4,9 +4,7 @@ use crate::config::Confidence;
 use crate::manifest::{DeclaredDependency, LoadedManifest};
 use crate::rules::{Issue, IssueReport, IssueSubject, RuleId};
 
-use super::types::{
-    FixOptions, SkippedFix, SkippedReason, WorkspaceFixManifest,
-};
+use super::types::{FixOptions, SkippedFix, SkippedReason, WorkspaceFixManifest};
 
 /// One planned manifest edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,9 +150,10 @@ fn plan_add_missing_workspace_dependency(
             &format!("workspace member `{member}` was not inventoried"),
         ));
     };
-    let file = workspace
-        .pyproject_toml
-        .map_or_else(|| format!("{}/pyproject.toml", workspace.path), ToOwned::to_owned);
+    let file = workspace.pyproject_toml.map_or_else(
+        || format!("{}/pyproject.toml", workspace.path),
+        ToOwned::to_owned,
+    );
     plan_add_missing_to_manifest(issue, workspace.manifest, file)
 }
 
@@ -191,10 +190,7 @@ fn plan_add_missing_to_manifest(
         )
     })?;
 
-    Ok(Some(FixAction::AddMissingDependency {
-        name,
-        file,
-    }))
+    Ok(Some(FixAction::AddMissingDependency { name, file }))
 }
 
 fn missing_distribution_name(issue: &Issue) -> Option<String> {
@@ -205,10 +201,7 @@ fn missing_distribution_name(issue: &Issue) -> Option<String> {
         .map(crate::manifest::normalize_distribution_name)
 }
 
-fn plan_remove_file(
-    issue: &Issue,
-    options: FixOptions,
-) -> Result<Option<FixAction>, SkippedFix> {
+fn plan_remove_file(issue: &Issue, options: FixOptions) -> Result<Option<FixAction>, SkippedFix> {
     let IssueSubject::File { path } = &issue.subject else {
         return Ok(None);
     };
@@ -434,7 +427,7 @@ mod tests {
             summary: IssueSummary::default(),
             exit_status: crate::ExitStatus::IssuesFound,
         };
-        let actions = plan_fixes(&report, &manifest, FixOptions::default()).expect("plan");
+        let actions = plan_fixes(&report, &manifest, &[], FixOptions::default()).expect("plan");
         assert_eq!(actions.len(), 1);
     }
 
@@ -473,6 +466,7 @@ mod tests {
         let actions = plan_fixes(
             &report,
             &manifest,
+            &[],
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -524,6 +518,7 @@ mod tests {
         let actions = plan_fixes(
             &report,
             &manifest,
+            &[],
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -569,6 +564,7 @@ mod tests {
         let skipped = plan_fixes(
             &report,
             &manifest,
+            &[],
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -578,6 +574,6 @@ mod tests {
 
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].detail.contains("workspace member `api`"));
-        assert!(skipped[0].detail.contains("own pyproject.toml"));
+        assert!(skipped[0].detail.contains("not inventoried"));
     }
 }

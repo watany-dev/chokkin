@@ -204,10 +204,7 @@ fn mkdocs_plugin_names(contents: &str) -> Vec<String> {
         if item.is_empty() {
             continue;
         }
-        let name = item
-            .split_once(':')
-            .map_or(item, |(name, _)| name)
-            .trim();
+        let name = item.split_once(':').map_or(item, |(name, _)| name).trim();
         if !name.is_empty() {
             names.push(unquote_yaml_scalar(name).to_owned());
         }
@@ -232,11 +229,7 @@ fn strip_yaml_comment(line: &str) -> &str {
 }
 
 fn unquote_yaml_scalar(value: &str) -> &str {
-    value
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim()
+    value.trim().trim_matches('"').trim_matches('\'').trim()
 }
 
 fn leading_spaces(line: &str) -> usize {
@@ -330,7 +323,7 @@ fn scan_tox_contents(ctx: &PluginContext<'_>, contents: &str, result: &mut Confi
                 ToxListKey::Deps => push_tox_dependency(trimmed, result),
                 ToxListKey::Extras => {
                     current_extras.extend(push_tox_extras(ctx, trimmed, result));
-                }
+                },
             }
             continue;
         }
