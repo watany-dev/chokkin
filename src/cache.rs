@@ -290,11 +290,10 @@ impl SourceFingerprint {
         let capacity = usize::try_from(metadata.len()).unwrap_or(0);
         let mut bytes = Vec::with_capacity(capacity);
         std::io::Read::read_to_end(&mut file, &mut bytes)?;
-        let key_path = path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
+        // `normalize_cache_path` already converts separators and trims a leading
+        // `./`, so feed it the borrowed path directly instead of pre-replacing
+        // (which allocated a second throwaway string per file on the warm path).
+        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
             path: normalize_cache_path(&key_path),
             size: metadata.len(),
@@ -606,7 +605,14 @@ impl ParseCacheStore {
 /// Normalize a path for cache keys.
 #[must_use]
 pub fn normalize_cache_path(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches("./").to_owned()
+    // Backslashes are rare (Windows-only); skip the replacement allocation on
+    // the common forward-slash path and trim the leading `./` in one owned copy.
+    if path.contains('\\') {
+        let slashed = path.replace('\\', "/");
+        slashed.trim_start_matches("./").to_owned()
+    } else {
+        path.trim_start_matches("./").to_owned()
+    }
 }
 
 /// Stable 64-bit FNV-1a hash rendered as lowercase hex.
