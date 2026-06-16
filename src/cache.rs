@@ -227,7 +227,12 @@ fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .prefix(".chokkin-cache-")
         .tempfile_in(parent)?;
     temp.write_all(bytes)?;
-    temp.as_file().sync_all()?;
+    // The atomic rename below keeps readers from ever seeing a torn entry. We
+    // deliberately skip `sync_all()` here: the parse/scan cache is fully
+    // regenerable, the read path treats any corrupt entry as a miss, and a
+    // per-entry fsync dominates cold-cache runs (one fsync per parsed module
+    // makes the first analysis of a large project an order of magnitude slower
+    // than `--no-cache`). Durability across power loss is not worth that cost.
     temp.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
