@@ -282,8 +282,14 @@ impl SourceFingerprint {
     ///
     /// Returns an IO error when metadata or file contents cannot be read.
     pub fn from_absolute(root: &Path, path: &Path) -> io::Result<Self> {
-        let metadata = std::fs::metadata(path)?;
-        let bytes = std::fs::read(path)?;
+        // Open once and read metadata from the handle. A separate
+        // `fs::metadata` call would add a redundant `stat` syscall per file,
+        // which dominates warm-cache fingerprinting over many small sources.
+        let mut file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        let capacity = usize::try_from(metadata.len()).unwrap_or(0);
+        let mut bytes = Vec::with_capacity(capacity);
+        std::io::Read::read_to_end(&mut file, &mut bytes)?;
         let key_path = path
             .strip_prefix(root)
             .unwrap_or(path)
@@ -481,12 +487,32 @@ impl ScanInputFingerprints {
 }
 
 /// Key for a cacheable parse result.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseCacheKey {
     /// Shared key context.
     pub context: CacheKeyContext,
     /// Source file fingerprint.
     pub source: SourceFingerprint,
+}
+
+// Ordering compares `source` before `context`. The `BTreeMap` parse cache holds
+// many keys that share one identical `context` within a run, so comparing the
+// context first would scan five equal strings at every tree level before
+// reaching the discriminating `source.path`. Leading with `source` lets each
+// comparison short-circuit on the path, which keeps warm-cache lookups close to
+// linear instead of paying that fixed string-compare cost per tree level.
+impl Ord for ParseCacheKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.source
+            .cmp(&other.source)
+            .then_with(|| self.context.cmp(&other.context))
+    }
+}
+
+impl PartialOrd for ParseCacheKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl ParseCacheKey {
