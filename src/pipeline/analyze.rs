@@ -2,18 +2,23 @@
 
 use std::path::Path;
 
+use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
+use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{ResolvedMode, apply_entry_plan, build_entry_roots};
-use crate::fix::{FixOptions, FixReport, apply_fixes};
+use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
-use crate::parser::parse_project_sources;
-use crate::plugins::extract_plugin_hints;
-use crate::reachability::{ReachabilityReport, analyze_reachability};
+use crate::parser::parse_project_sources_with_cache;
+use crate::plugins::extract_plugin_hints_with_cache;
+use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
-use crate::rules::{IssueReport, analyze_symbols, emit_issues, reconcile_dependencies};
+use crate::rules::{
+    IssueReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues, reconcile_dependencies,
+};
 
 use super::error::AnalyzeError;
-use super::probe::{ProbeReport, probe_project};
+use super::probe::{ProbeReport, probe_project_with_cache};
+use super::warnings::{ProbeWarning, actionable_plugin_warnings};
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,15 +35,25 @@ pub struct AnalysisReport {
     pub issues: IssueReport,
     /// Fix report when `--fix` was requested (step 13).
     pub fix: Option<FixReport>,
+    /// Baseline report when `--baseline` was requested.
+    pub baseline: Option<BaselineReport>,
+    /// Non-fatal warnings from the full analysis pipeline.
+    pub warnings: Vec<ProbeWarning>,
 }
 
 /// Options for the analysis run beyond [`RuntimeOverrides`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AnalyzeOptions {
     /// When true, run step 13 after issue emission.
     pub fix_enabled: bool,
     /// Fix behaviour when `fix_enabled` is true.
     pub fix: FixOptions,
+    /// Baseline file to read/filter after issue emission.
+    pub baseline: Option<std::path::PathBuf>,
+    /// Update the baseline file with the current issue set.
+    pub update_baseline: bool,
+    /// Cache policy for Phase 2 warm-run support.
+    pub cache: CacheOptions,
 }
 
 /// Run pipeline steps 1–12 and optionally step 13.
@@ -46,19 +61,37 @@ pub struct AnalyzeOptions {
 /// # Errors
 ///
 /// Returns [`AnalyzeError`] when a pipeline step fails fatally.
+#[allow(clippy::needless_pass_by_value)]
 pub fn analyze_project(
     start: &Path,
     project_root_override: Option<&Path>,
     overrides: &RuntimeOverrides,
     options: AnalyzeOptions,
 ) -> Result<AnalysisReport, AnalyzeError> {
-    let probe = probe_project(start, project_root_override, overrides)?;
-    let core = run_analysis_core(&probe, overrides)?;
+    let probe = probe_project_with_cache(
+        start,
+        project_root_override,
+        overrides,
+        Some(&options.cache),
+    )?;
+    let mut core = run_analysis_core(&probe, overrides, &options)?;
+    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
     let fix = if options.fix_enabled {
-        Some(apply_fixes(
+        let workspace_manifests = probe
+            .workspace_inputs
+            .iter()
+            .map(|input| WorkspaceFixManifest {
+                id: input.member.id.as_str(),
+                path: input.member.path.as_str(),
+                pyproject_toml: input.member.pyproject_toml.as_deref(),
+                manifest: &input.manifest,
+            })
+            .collect::<Vec<_>>();
+        Some(apply_fixes_with_workspace(
             &core.issues,
             &probe.root,
             &probe.manifest,
+            &workspace_manifests,
             options.fix,
         )?)
     } else {
@@ -72,7 +105,23 @@ pub fn analyze_project(
         entry_mode: core.entry_mode,
         issues: core.issues,
         fix,
+        baseline,
+        warnings: core.warnings,
     })
+}
+
+fn apply_baseline_options(
+    issues: &mut IssueReport,
+    root: &Path,
+    options: &AnalyzeOptions,
+) -> Result<Option<BaselineReport>, AnalyzeError> {
+    let Some(path) = &options.baseline else {
+        return Ok(None);
+    };
+    if options.update_baseline {
+        return Ok(Some(write_baseline(issues, root, path)?));
+    }
+    Ok(Some(apply_baseline(issues, root, path)?))
 }
 
 struct AnalysisCore {
@@ -80,21 +129,32 @@ struct AnalysisCore {
     reachability: ReachabilityReport,
     entry_mode: ResolvedMode,
     issues: IssueReport,
+    warnings: Vec<ProbeWarning>,
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_analysis_core(
     probe: &ProbeReport,
     overrides: &RuntimeOverrides,
+    options: &AnalyzeOptions,
 ) -> Result<AnalysisCore, AnalyzeError> {
     let production = probe.effective_config.production;
     let loaded = crate::config::LoadedConfig {
         root: probe.root.clone(),
         effective: probe.effective_config.clone(),
         sources: probe.config_sources.clone(),
-        uv_workspace: None,
+        uv_workspace: probe.manifest.uv_workspace.clone(),
+        workspace_members: probe.workspace_members.clone(),
     };
 
-    let plugins = extract_plugin_hints(&probe.root, &loaded, &probe.sources, &probe.manifest)?;
+    let plugins = extract_plugin_hints_with_cache(
+        &probe.root,
+        &loaded,
+        &probe.sources,
+        &probe.manifest,
+        Some(&options.cache),
+    )?;
+    let warnings = actionable_plugin_warnings(&plugins);
 
     let target = probe
         .effective_config
@@ -102,7 +162,14 @@ fn run_analysis_core(
         .clone()
         .unwrap_or_else(crate::config::TargetVersion::default_py311);
 
-    let parse = parse_project_sources(&probe.root, &probe.sources, &target)?;
+    let mut parse_cache = options.cache.enabled.then(ParseCacheStore::new);
+    let parse = parse_project_sources_with_cache(
+        &probe.root,
+        &probe.sources,
+        &target,
+        parse_cache.as_mut(),
+        Some(&options.cache),
+    )?;
 
     let entry = build_entry_roots(
         &probe.effective_config,
@@ -122,11 +189,12 @@ fn run_analysis_core(
         &probe.sources,
         &parse,
         &plugin_refs,
+        &probe.workspace_members,
     )?;
     apply_resolution_to_graph(&mut graph, &resolution)?;
     apply_entry_plan(&mut graph, &entry)?;
 
-    let reachability = analyze_reachability(
+    let reachability = analyze_reachability_with_cache(
         &mut graph,
         &probe.sources,
         &entry,
@@ -134,7 +202,17 @@ fn run_analysis_core(
         &parse,
         &entry.mode,
         production,
+        Some(&options.cache),
     )?;
+
+    let workspace_boundaries = probe
+        .workspace_inputs
+        .iter()
+        .map(|input| WorkspaceDependencyBoundary {
+            member_id: &input.member.id,
+            manifest: &input.manifest,
+        })
+        .collect::<Vec<_>>();
 
     let deps = reconcile_dependencies(
         &probe.manifest,
@@ -145,6 +223,7 @@ fn run_analysis_core(
         &probe.sources,
         &parse,
         &graph,
+        &workspace_boundaries,
         production,
     );
 
@@ -175,6 +254,7 @@ fn run_analysis_core(
         reachability,
         entry_mode: entry.mode,
         issues,
+        warnings,
     })
 }
 

@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::discovery::ProjectRoot;
 
 /// Project analysis mode (§5, §8). `Auto` is resolved in a later pipeline step.
@@ -111,6 +113,8 @@ pub enum PluginId {
     Django,
     /// `FastAPI` routes and uvicorn references.
     Fastapi,
+    /// Flask application references.
+    Flask,
     /// Celery tasks and autodiscover.
     Celery,
     /// tox environments.
@@ -121,6 +125,12 @@ pub enum PluginId {
     PreCommit,
     /// GitHub Actions workflows.
     GithubActions,
+    /// Sphinx documentation configuration.
+    Sphinx,
+    /// `MkDocs` documentation configuration.
+    MkDocs,
+    /// Alembic migration environment.
+    Alembic,
 }
 
 impl PluginId {
@@ -131,11 +141,15 @@ impl PluginId {
             Self::Pytest => "pytest",
             Self::Django => "django",
             Self::Fastapi => "fastapi",
+            Self::Flask => "flask",
             Self::Celery => "celery",
             Self::Tox => "tox",
             Self::Nox => "nox",
             Self::PreCommit => "pre_commit",
             Self::GithubActions => "github_actions",
+            Self::Sphinx => "sphinx",
+            Self::MkDocs => "mkdocs",
+            Self::Alembic => "alembic",
         }
     }
 
@@ -145,11 +159,15 @@ impl PluginId {
             "pytest" => Some(Self::Pytest),
             "django" => Some(Self::Django),
             "fastapi" => Some(Self::Fastapi),
+            "flask" => Some(Self::Flask),
             "celery" => Some(Self::Celery),
             "tox" => Some(Self::Tox),
             "nox" => Some(Self::Nox),
             "pre_commit" => Some(Self::PreCommit),
             "github_actions" => Some(Self::GithubActions),
+            "sphinx" => Some(Self::Sphinx),
+            "mkdocs" => Some(Self::MkDocs),
+            "alembic" => Some(Self::Alembic),
             _ => None,
         }
     }
@@ -161,11 +179,15 @@ impl PluginId {
             Self::Pytest,
             Self::Django,
             Self::Fastapi,
+            Self::Flask,
             Self::Celery,
             Self::Tox,
             Self::Nox,
             Self::PreCommit,
             Self::GithubActions,
+            Self::Sphinx,
+            Self::MkDocs,
+            Self::Alembic,
         ]
     }
 }
@@ -337,13 +359,38 @@ pub struct LoadedConfig {
     pub sources: ConfigSources,
     /// Raw `[tool.uv.workspace]` hint from root `pyproject.toml`, if present.
     pub uv_workspace: Option<UvWorkspaceHint>,
+    /// Resolved workspace members discovered below the project root.
+    pub workspace_members: Vec<ResolvedWorkspaceMember>,
 }
 
 /// Raw `[tool.uv.workspace]` members from `pyproject.toml` (unexpanded).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UvWorkspaceHint {
     /// Member glob patterns as written in `pyproject.toml`.
     pub members: Vec<String>,
+}
+
+/// Source that declared a workspace member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceMemberSource {
+    /// `[tool.uv.workspace].members`.
+    Uv,
+    /// `[tool.chokkin.workspaces.<id>]`.
+    Chokkin,
+}
+
+/// Workspace member resolved relative to the project root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWorkspaceMember {
+    /// Stable member id. Explicit chokkin workspaces use the table id; uv
+    /// workspaces use the member directory basename.
+    pub id: String,
+    /// Member directory path relative to the project root using `/`.
+    pub path: String,
+    /// Root-relative member `pyproject.toml` path when present.
+    pub pyproject_toml: Option<String>,
+    /// Declaration source.
+    pub source: WorkspaceMemberSource,
 }
 
 /// CLI flags that override file config (§2). Unset fields do not override.

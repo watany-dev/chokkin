@@ -147,6 +147,7 @@ mod tests {
                 import_root: "yaml".to_owned(),
                 full_module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
+                workspace_member: None,
                 line: 1,
                 context: ImportContext::Runtime,
                 optional: false,

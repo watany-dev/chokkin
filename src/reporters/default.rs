@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use crate::config::ConfigSources;
 use crate::rules::{IssueReport, RuleId};
 
-use super::format::{format_issue_line, group_title};
+use super::format::{baseline_suppressed_count, format_issue_line, group_title};
 use super::traits::Reporter;
 use super::types::RenderContext;
 
@@ -58,7 +58,16 @@ impl Reporter for DefaultReporter {
             let _ = writeln!(out);
         }
 
-        let _ = writeln!(out, "Summary: {} issues", report.summary.total);
+        let suppressed = baseline_suppressed_count(report);
+        if suppressed > 0 {
+            let _ = writeln!(
+                out,
+                "Summary: {} issues ({} baseline-suppressed)",
+                report.summary.total, suppressed
+            );
+        } else {
+            let _ = writeln!(out, "Summary: {} issues", report.summary.total);
+        }
         out
     }
 }

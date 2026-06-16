@@ -11,15 +11,20 @@ use crate::sources::DiscoveredSources;
 use super::context::{
     DeclarationBucket, UsageContext, declaration_bucket, usage_context_for_import,
 };
+use super::missing::WorkspaceDeclaredIndex;
 use super::used::DeclaredIndex;
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub(super) fn detect_misplaced_dependencies(
     declared: &DeclaredIndex<'_>,
     resolution: &ResolutionIndex,
     reachable: &HashSet<String>,
     config: &ChokkinConfig,
     sources: &DiscoveredSources,
+    workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+    strict: bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
     let mut reported = HashSet::new();
@@ -40,7 +45,23 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         }
 
-        let Some(declarations) = declared.get(distribution) else {
+        let workspace_member = import.workspace_member.as_deref();
+        let declarations = workspace_member
+            .filter(|_| strict)
+            .and_then(|member_id| {
+                workspace_declared
+                    .iter()
+                    .find(|boundary| boundary.member_id == member_id)
+                    .and_then(|boundary| boundary.declared.get(distribution))
+            })
+            .or_else(|| {
+                if strict && workspace_member.is_some() {
+                    None
+                } else {
+                    declared.get(distribution)
+                }
+            });
+        let Some(declarations) = declarations else {
             continue;
         };
 
@@ -64,7 +85,11 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         }
 
-        if !reported.insert(distribution.clone()) {
+        let report_key = (
+            workspace_member.unwrap_or_default().to_owned(),
+            distribution.clone(),
+        );
+        if !reported.insert(report_key) {
             continue;
         }
 
@@ -80,10 +105,8 @@ pub(super) fn detect_misplaced_dependencies(
             },
             severity: Severity::Warning,
             confidence: Confidence::Certain,
-            message: format!(
-                "{distribution} is used from runtime code but only declared in {}",
-                contexts.join(", ")
-            ),
+            message: misplaced_message(distribution, workspace_member, &contexts),
+            workspace_member: workspace_member.map(str::to_owned),
             origins: vec![Origin::Import {
                 file: import.file.clone(),
                 line: import.line,
@@ -97,4 +120,22 @@ pub(super) fn detect_misplaced_dependencies(
     }
 
     candidates
+}
+
+fn misplaced_message(
+    distribution: &str,
+    workspace_member: Option<&str>,
+    contexts: &[String],
+) -> String {
+    if let Some(member_id) = workspace_member {
+        return format!(
+            "{distribution} is used from runtime code in workspace member {member_id} but only declared in {}",
+            contexts.join(", ")
+        );
+    }
+
+    format!(
+        "{distribution} is used from runtime code but only declared in {}",
+        contexts.join(", ")
+    )
 }

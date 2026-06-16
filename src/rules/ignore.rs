@@ -72,37 +72,37 @@ impl IgnoreMatcher {
 
     /// Whether a pre-issue candidate should be suppressed.
     pub fn matches_candidate(&self, candidate: &IssueCandidate) -> IgnoreMatch {
-        if self.matches_config(candidate.rule, &candidate.subject) {
+        let file = file_path_for(&candidate.subject, &candidate.origins);
+        if self.matches_config(candidate.rule, &candidate.subject, file.as_deref()) {
             return IgnoreMatch::Config;
         }
-        let file = file_path_for(&candidate.subject, &candidate.origins);
         self.matches_directives(candidate.rule, file.as_deref(), candidate_line(candidate))
     }
 
     /// Whether a final issue should be suppressed.
     #[allow(dead_code)] // used by Phase 1 CLI re-filtering
     pub fn matches_issue(&self, issue: &Issue) -> IgnoreMatch {
-        if self.matches_config(issue.rule, &issue.subject) {
-            return IgnoreMatch::Config;
-        }
         let file = issue
             .location
             .file
             .as_deref()
             .or_else(|| subject_file_path(&issue.subject));
+        if self.matches_config(issue.rule, &issue.subject, file) {
+            return IgnoreMatch::Config;
+        }
         let line = issue.location.line;
         self.matches_directives(issue.rule, file, line)
     }
 }
 
 impl IgnoreMatcher {
-    fn matches_config(&self, rule: RuleId, subject: &IssueSubject) -> bool {
+    fn matches_config(&self, rule: RuleId, subject: &IssueSubject, file: Option<&str>) -> bool {
         let Some(patterns) = self.config.get(&rule) else {
             return false;
         };
         patterns
             .iter()
-            .any(|pattern| config_pattern_matches(rule, pattern, subject))
+            .any(|pattern| config_pattern_matches(rule, pattern, subject, file))
     }
 
     fn matches_directives(
@@ -163,9 +163,14 @@ fn subject_file_path(subject: &IssueSubject) -> Option<&str> {
     }
 }
 
-fn config_pattern_matches(rule: RuleId, pattern: &str, subject: &IssueSubject) -> bool {
+fn config_pattern_matches(
+    rule: RuleId,
+    pattern: &str,
+    subject: &IssueSubject,
+    file: Option<&str>,
+) -> bool {
     if let Some((path_pattern, symbol_pattern)) = pattern.split_once(':') {
-        return symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject);
+        return symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject, file);
     }
 
     match subject {
@@ -185,6 +190,7 @@ fn config_pattern_matches(rule: RuleId, pattern: &str, subject: &IssueSubject) -
                 module: module.clone(),
                 name: name.clone(),
             },
+            file,
         ),
         _ => false,
     }
@@ -195,6 +201,7 @@ fn symbol_pattern_matches(
     path_pattern: &str,
     symbol_pattern: &str,
     subject: &IssueSubject,
+    file: Option<&str>,
 ) -> bool {
     if !is_symbol_rule(rule) {
         return false;
@@ -202,8 +209,10 @@ fn symbol_pattern_matches(
     let IssueSubject::Symbol { module, name } = subject else {
         return false;
     };
-    let path = module.replace('.', "/");
-    glob_match(path_pattern, &path) && glob_match(symbol_pattern, name)
+    let module_path = module.replace('.', "/");
+    let path_matches = file.is_some_and(|path| glob_match(path_pattern, path))
+        || glob_match(path_pattern, &module_path);
+    path_matches && glob_match(symbol_pattern, name)
 }
 
 fn is_file_rule(rule: RuleId) -> bool {
@@ -255,6 +264,7 @@ mod tests {
             severity: Severity::Error,
             confidence: crate::config::Confidence::Certain,
             message: "unused".to_owned(),
+            workspace_member: None,
             origins: Vec::new(),
             explain: ExplainData::default(),
         };
@@ -290,6 +300,7 @@ mod tests {
             severity: Severity::Error,
             confidence: crate::config::Confidence::Certain,
             message: "missing".to_owned(),
+            workspace_member: None,
             origins: vec![Origin::Import {
                 file: "src/acme/main.py".to_owned(),
                 line: 4,
@@ -328,6 +339,7 @@ mod tests {
             severity: Severity::Warning,
             confidence: crate::config::Confidence::Likely,
             message: "unused export".to_owned(),
+            workspace_member: None,
             origins: vec![Origin::Import {
                 file: "src/acme/api.py".to_owned(),
                 line: 12,
@@ -336,5 +348,58 @@ mod tests {
             explain: ExplainData::default(),
         };
         assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Inline);
+    }
+
+    #[test]
+    fn config_ignore_matches_symbol_file_path_pattern() {
+        let mut config = default_config();
+        config.ignore.insert(
+            "CHK006".to_owned(),
+            vec!["src/acme/api.py:dead_*".to_owned()],
+        );
+        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let candidate = IssueCandidate {
+            rule: RuleId::Chk006,
+            subject: IssueSubject::Symbol {
+                module: "acme.api".to_owned(),
+                name: "dead_api".to_owned(),
+            },
+            severity: Severity::Warning,
+            confidence: crate::config::Confidence::Likely,
+            message: "unused export".to_owned(),
+            workspace_member: None,
+            origins: vec![Origin::Import {
+                file: "src/acme/api.py".to_owned(),
+                line: 12,
+                module: "acme.api".to_owned(),
+            }],
+            explain: ExplainData::default(),
+        };
+
+        assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Config);
+    }
+
+    #[test]
+    fn config_ignore_keeps_symbol_module_path_fallback() {
+        let mut config = default_config();
+        config
+            .ignore
+            .insert("CHK006".to_owned(), vec!["acme/api:dead_*".to_owned()]);
+        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let candidate = IssueCandidate {
+            rule: RuleId::Chk006,
+            subject: IssueSubject::Symbol {
+                module: "acme.api".to_owned(),
+                name: "dead_api".to_owned(),
+            },
+            severity: Severity::Warning,
+            confidence: crate::config::Confidence::Likely,
+            message: "unused export".to_owned(),
+            workspace_member: None,
+            origins: Vec::new(),
+            explain: ExplainData::default(),
+        };
+
+        assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Config);
     }
 }

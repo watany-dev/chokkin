@@ -16,12 +16,15 @@
 //! Step 13 ([`fix`]) applies safe manifest edits when requested.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
+pub mod baseline;
+pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod entry;
 pub mod fix;
 pub mod graph;
+pub mod init;
 pub mod manifest;
 pub mod parser;
 pub mod pipeline;
@@ -32,11 +35,19 @@ pub mod resolver;
 pub mod rules;
 pub mod sources;
 
+pub use baseline::{
+    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
+};
+pub use cache::{
+    CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheKey, ParseCacheStats,
+    ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
+    ScanInputFingerprints, SourceFingerprint,
+};
 pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
     LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint,
-    WorkspaceOverride, apply_overrides, default_config, load_config,
+    WorkspaceMemberSource, WorkspaceOverride, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
@@ -50,32 +61,36 @@ pub use graph::{
     DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
     ModuleId, ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
+pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
     LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
-    extract_manifest, resolve_target_version,
+    extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
     DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
     ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, parse_file,
-    parse_project_sources,
+    parse_project_sources, parse_project_sources_with_cache,
 };
 pub use pipeline::{
     AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,
-    analyze_project, probe_project, trace_output, write_probe_report, write_probe_warnings,
+    WorkspaceMemberInputs, analyze_project, probe_project, trace_output, write_probe_report,
+    write_probe_warnings,
 };
 pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
     PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
-    extract_plugin_hints,
+    extract_plugin_hints, extract_plugin_hints_with_cache,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
-    UnreachableReason, UsedModule, analyze_reachability, path_to_module, trace_to_file,
+    UnreachableReason, UsedModule, analyze_reachability, analyze_reachability_with_cache,
+    path_to_module, trace_to_file,
 };
 pub use reporters::{
-    CompactReporter, DefaultReporter, JsonReporter, MarkdownReporter, RenderContext, Reporter,
-    ReporterId, config_label_from_sources, format_subject, render_issues,
+    CompactReporter, DefaultReporter, GithubReporter, JsonReporter, MarkdownReporter,
+    RenderContext, Reporter, ReporterId, SarifReporter, config_label_from_sources, format_subject,
+    render_issues,
 };
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
@@ -84,7 +99,8 @@ pub use resolver::{
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
     IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
-    SymbolId, SymbolReport, analyze_symbols, emit_issues, explain_issue, reconcile_dependencies,
+    SymbolId, SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
+    explain_issue, issue_fingerprint, issue_stable_target, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

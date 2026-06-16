@@ -128,6 +128,7 @@ fn candidate_to_issue(candidate: IssueCandidate) -> Issue {
         severity: candidate.severity,
         confidence: candidate.confidence,
         message: candidate.message,
+        workspace_member: candidate.workspace_member,
         location,
         subject: candidate.subject,
         explain,
@@ -286,6 +287,7 @@ mod tests {
             severity: Severity::Error,
             confidence: Confidence::Certain,
             message: "unused boto3".to_owned(),
+            workspace_member: None,
             origins: vec![Origin::Manifest(DependencyOrigin {
                 file: "pyproject.toml".to_owned(),
                 line: Some(5),

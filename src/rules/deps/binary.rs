@@ -38,6 +38,7 @@ pub(super) fn detect_unlisted_binaries(
                 "binary {} resolves to {distribution} but it is not declared in the manifest",
                 usage.binary
             ),
+            workspace_member: None,
             origins: vec![Origin::Binary(usage.origin.clone())],
             explain: ExplainData {
                 summary: format!(

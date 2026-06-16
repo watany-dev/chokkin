@@ -1,10 +1,10 @@
-//! JSON reporter (v0.1 draft schema).
+//! JSON reporter (v0.2 draft schema).
 
 use std::fmt::Write as _;
 
-use crate::rules::{Issue, IssueReport, IssueSubject};
+use crate::rules::{Issue, IssueReport, IssueSubject, issue_fingerprint, issue_stable_target};
 
-use super::format::json_string;
+use super::format::{baseline_suppressed_count, json_string};
 use super::traits::Reporter;
 use super::types::RenderContext;
 
@@ -55,6 +55,13 @@ impl Reporter for JsonReporter {
             let _ = writeln!(out);
         }
         let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "  }},");
+        let _ = writeln!(out, "  \"suppressed\": {{");
+        let _ = writeln!(
+            out,
+            "    \"baseline\": {}",
+            baseline_suppressed_count(report)
+        );
         let _ = writeln!(out, "  }}");
         let _ = write!(out, "}}");
         out
@@ -79,16 +86,40 @@ fn render_issue(out: &mut String, issue: &Issue) {
         json_string(issue.confidence.as_str())
     );
     let _ = writeln!(out, "      \"message\": {},", json_string(&issue.message));
+    let target = issue_stable_target(issue);
+    let _ = writeln!(
+        out,
+        "      \"fingerprint\": {},",
+        json_string(&issue_fingerprint(issue))
+    );
+    let _ = writeln!(out, "      \"target\": {},", json_string(&target));
+    let _ = writeln!(
+        out,
+        "      \"workspace_member\": {},",
+        optional_json_string(issue.workspace_member.as_deref())
+    );
     let _ = writeln!(
         out,
         "      \"file\": {},",
-        optional_json_string(issue.location.file.as_deref())
+        optional_json_path(issue.location.file.as_deref())
+    );
+    let _ = writeln!(
+        out,
+        "      \"line\": {},",
+        issue
+            .location
+            .line
+            .map_or_else(|| "null".to_owned(), |line| line.to_string())
     );
     append_subject_fields(out, &issue.subject);
     let _ = write!(out, "      \"manifest\": ");
     if let Some(origin) = &issue.location.manifest {
         let _ = writeln!(out, "{{");
-        let _ = writeln!(out, "        \"file\": {},", json_string(&origin.file));
+        let _ = writeln!(
+            out,
+            "        \"file\": {},",
+            json_string(&normalize_path(&origin.file))
+        );
         let _ = writeln!(
             out,
             "        \"line\": {}",
@@ -108,10 +139,25 @@ fn optional_json_string(value: Option<&str>) -> String {
     value.map_or_else(|| "null".to_owned(), json_string)
 }
 
+fn optional_json_path(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "null".to_owned(),
+        |path| json_string(&normalize_path(path)),
+    )
+}
+
+fn normalize_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
     match subject {
         IssueSubject::File { path } => {
-            let _ = writeln!(out, "      \"path\": {},", json_string(path));
+            let _ = writeln!(
+                out,
+                "      \"path\": {},",
+                json_string(&normalize_path(path))
+            );
             let _ = writeln!(out, "      \"distribution\": null,");
             let _ = writeln!(out, "      \"symbol\": null,");
             let _ = writeln!(out, "      \"binary\": null,");
@@ -139,12 +185,13 @@ fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
             let _ = writeln!(out, "      \"binary\": {},", json_string(name));
         },
         IssueSubject::Import { module, file, line } => {
-            let _ = writeln!(out, "      \"path\": {},", json_string(file));
+            let path = normalize_path(file);
+            let _ = writeln!(out, "      \"path\": {},", json_string(&path));
             let _ = writeln!(out, "      \"distribution\": null,");
             let _ = writeln!(
                 out,
                 "      \"symbol\": {},",
-                json_string(&format!("{file}:{line} {module}"))
+                json_string(&format!("{path}:{line} {module}"))
             );
             let _ = writeln!(out, "      \"binary\": null,");
         },

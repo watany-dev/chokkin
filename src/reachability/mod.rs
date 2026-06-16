@@ -7,7 +7,7 @@ mod module_index;
 mod trace;
 mod types;
 
-pub use build::analyze_reachability;
+pub use build::{analyze_reachability, analyze_reachability_with_cache};
 pub use error::ReachabilityError;
 pub use module_index::{ModuleIndex, path_to_module};
 pub use trace::trace_to_file;

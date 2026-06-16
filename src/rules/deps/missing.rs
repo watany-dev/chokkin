@@ -12,6 +12,12 @@ use crate::sources::DiscoveredSources;
 use super::context::{is_directly_declared, usage_context_for_import};
 use super::used::DeclaredIndex;
 
+/// Precomputed declaration index for a workspace member manifest.
+pub(super) struct WorkspaceDeclaredIndex<'a> {
+    pub(super) member_id: &'a str,
+    pub(super) declared: DeclaredIndex<'a>,
+}
+
 /// Detect missing and transitive-only dependency imports.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn detect_missing_dependencies(
@@ -22,6 +28,7 @@ pub(super) fn detect_missing_dependencies(
     has_lockfile: bool,
     config: &ChokkinConfig,
     sources: &DiscoveredSources,
+    workspace_declared: &[WorkspaceDeclaredIndex<'_>],
     strict: bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -44,10 +51,26 @@ pub(super) fn detect_missing_dependencies(
         }
 
         let usage = usage_context_for_import(&import.file, import.context, sources);
-        if declared
+        let root_declared = declared
             .get(distribution)
-            .is_some_and(|deps| is_directly_declared(deps, usage, config))
+            .is_some_and(|deps| is_directly_declared(deps, usage, config));
+        let workspace_member = import.workspace_member.as_deref();
+        let member_declared = workspace_member.is_some_and(|member_id| {
+            workspace_member_declares(workspace_declared, member_id, distribution, usage, config)
+        });
+
+        if member_declared
+            || (!strict && root_declared)
+            || (root_declared && workspace_member.is_none())
         {
+            continue;
+        }
+
+        if strict
+            && root_declared
+            && let Some(member_id) = workspace_member
+        {
+            candidates.push(workspace_missing_candidate(import, distribution, member_id));
             continue;
         }
 
@@ -65,6 +88,53 @@ pub(super) fn detect_missing_dependencies(
     }
 
     candidates
+}
+
+fn workspace_member_declares(
+    workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+    member_id: &str,
+    distribution: &str,
+    usage: super::context::UsageContext,
+    config: &ChokkinConfig,
+) -> bool {
+    workspace_declared
+        .iter()
+        .find(|boundary| boundary.member_id == member_id)
+        .and_then(|boundary| boundary.declared.get(distribution))
+        .is_some_and(|deps| is_directly_declared(deps, usage, config))
+}
+
+fn workspace_missing_candidate(
+    import: &ResolvedImport,
+    distribution: &str,
+    member_id: &str,
+) -> IssueCandidate {
+    IssueCandidate {
+        rule: RuleId::Chk003,
+        subject: IssueSubject::Import {
+            module: import.full_module.clone(),
+            file: import.file.clone(),
+            line: import.line,
+        },
+        severity: Severity::Error,
+        confidence: Confidence::Certain,
+        message: format!(
+            "imported {distribution} in {}:{} but workspace member {member_id} does not declare it directly",
+            import.file, import.line
+        ),
+        workspace_member: Some(member_id.to_owned()),
+        origins: vec![Origin::Import {
+            file: import.file.clone(),
+            line: import.line,
+            module: import.full_module.clone(),
+        }],
+        explain: ExplainData {
+            summary: format!(
+                "{distribution} is declared at the workspace root but not by member {member_id}"
+            ),
+            details: vec![format!("import at {}:{}", import.file, import.line)],
+        },
+    }
 }
 
 fn optional_missing_candidate(
@@ -89,6 +159,7 @@ fn optional_missing_candidate(
         message: format!(
             "optional try-import of {distribution} is not declared in any dependency context"
         ),
+        workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
             line: import.line,
@@ -117,6 +188,7 @@ fn transitive_candidate(import: &ResolvedImport, distribution: &str) -> IssueCan
         message: format!(
             "imported {distribution} directly but it is only available as a transitive dependency"
         ),
+        workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
             line: import.line,
@@ -152,6 +224,7 @@ fn missing_candidate(
             "imported {distribution} in {}:{}{} but not declared in matching dependency context",
             import.file, import.line, lockfile_note
         ),
+        workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
             line: import.line,
@@ -258,6 +331,7 @@ mod tests {
             import_root: "requests".to_owned(),
             full_module: "requests".to_owned(),
             file: "src/app.py".to_owned(),
+            workspace_member: None,
             line: 1,
             context: crate::parser::ImportContext::Runtime,
             optional: false,
@@ -296,6 +370,7 @@ mod tests {
                 files: Vec::new(),
                 warnings: Vec::new(),
             },
+            &[],
             false,
         );
         assert!(candidates.is_empty());

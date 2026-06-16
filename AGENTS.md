@@ -10,16 +10,32 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.1 alpha. Default CLI runs `analyze_project` (pipeline steps
-1–13) with `default` / `compact` / `json` / `markdown` reporters, `--explain`,
-`--trace`, and `--fix`. `--probe` runs steps 1–4 only (`probe_project`). PyPI
+**Status:** v0.2 development on top of released v0.1.0. Default CLI runs
+`analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
+`markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
+and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
+reports resolved/inventoried workspace member counts when uv/chokkin workspaces are found;
+resolver tags member-owned imports, treats cross-member imports as first-party, `--strict`
+requires member-local direct dependency declarations, and reporters expose member ids on
+workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `--no-cache`
+(`.chokkin/cache`), and parse cache key primitives exist (`CacheKeyContext`,
+`SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse and disk
+`ParsedModule` JSON entries under `.chokkin/cache/parse/`. Config/manifest scan input
+fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
+`ScanCacheRecord`; typed scan payload storage is wired for config scan, manifest
+extraction, and module index cache. v0.2 release validation measurements were
+recorded on 2026-06-15 with Rust 1.93: `make check`, OSS fixtures, full
+20-project OSS gate, and Criterion cache benches passed; synthetic 10k warm
+cache measured under 205 ms. Baseline CI adoption is dogfooded by this repo's
+`chokkin-baseline` workflow job and checked-in `chokkin-baseline.json` (see
+`docs/dev/v0.2-release-validation.md`). PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
 is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
-budget. PyPI **v0.1** tag remains gated on Trusted Publishing setup. 
+budget. PyPI **v0.1.0** has been released.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
@@ -34,9 +50,12 @@ src/
   config/         Config loading ([tool.chokkin], pipeline step 2)
   manifest/       Manifest extraction (pipeline step 3; util.rs shared helpers)
   sources/        Source file discovery (pipeline step 4)
-  plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi)
+  plugins/        Config/plugin extraction (pipeline step 5; pytest/django/fastapi,
+                  Flask/Celery static app refs, tox/nox/pre-commit/GitHub Actions
+                  binary usage detection, Sphinx/MkDocs/Alembic config entries)
   graph/          Project graph skeleton + import edges (Phase 0; extended in step 6)
-  parser/         Python parse (`parse_file`, `parse_project_sources`, pipeline step 6)
+  parser/         Python parse and notebook code-cell parsing (`parse_file`,
+                  `parse_project_sources`, pipeline step 6)
   cli.rs          CLI argument parsing (`clap`, Phase 1 flags)
   pipeline/       `probe_project` (steps 1–4), `analyze_project` (steps 1–13)
   resolver/       Import resolution (`resolve_imports`, bundled maps, venv RECORD/entry_points, pipeline step 7)
@@ -91,8 +110,8 @@ Install tools once with `make tools`.
 ## Benchmarks
 
 Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy
-extraction, `sources` for the file-discovery walk) with synthetic fixtures
-generated in `benches/support/mod.rs`. They are not part of `make check`;
+extraction, `sources` for the file-discovery walk, `cache` for warm parse-cache
+reuse) with synthetic fixtures generated in `benches/support/mod.rs`. They are not part of `make check`;
 run them when touching hot paths:
 
 ```bash

@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use toml::Value;
 
 use crate::manifest::{DependencyContext, normalize_distribution_name};
@@ -13,7 +14,7 @@ use super::types::{BinaryUsage, ReferenceOrigin};
 use super::util::{read_pyproject_table, relative_path};
 
 /// Output from config scanning.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ConfigScanResult {
     /// CLI binaries referenced from configuration.
     pub binary_usages: Vec<BinaryUsage>,
@@ -117,20 +118,122 @@ fn scan_mkdocs_config(
                 label: name.to_owned(),
             },
         );
-        if let Ok(contents) = std::fs::read_to_string(&path)
-            && mkdocs_uses_material_theme(&contents)
-        {
-            push_distribution(result, "mkdocs-material");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            for distribution in mkdocs_used_distributions(&contents) {
+                push_distribution(result, distribution);
+            }
         }
         break;
     }
 }
 
-fn mkdocs_uses_material_theme(contents: &str) -> bool {
-    contents.contains("name: material")
-        || contents.contains("name: 'material'")
-        || contents.contains("name: \"material\"")
+fn mkdocs_used_distributions(contents: &str) -> Vec<&'static str> {
+    let mut distributions = Vec::new();
+    if mkdocs_theme_name(contents).is_some_and(|theme| theme == "material")
         || contents.contains("mkdocs-material")
+    {
+        distributions.push("mkdocs-material");
+    }
+
+    for plugin in mkdocs_plugin_names(contents) {
+        if let Some(distribution) = mkdocs_plugin_distribution(&plugin) {
+            distributions.push(distribution);
+        }
+    }
+
+    distributions.sort_unstable();
+    distributions.dedup();
+    distributions
+}
+
+fn mkdocs_theme_name(contents: &str) -> Option<String> {
+    let mut in_theme = false;
+    let mut theme_indent = 0usize;
+
+    for line in contents.lines() {
+        let trimmed = strip_yaml_comment(line).trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let indent = leading_spaces(line);
+        if trimmed == "theme:" {
+            in_theme = true;
+            theme_indent = indent;
+            continue;
+        }
+        if in_theme && indent <= theme_indent {
+            in_theme = false;
+        }
+        if let Some(value) = trimmed.strip_prefix("theme:") {
+            return Some(unquote_yaml_scalar(value.trim()).to_owned());
+        }
+        if in_theme && let Some(value) = trimmed.strip_prefix("name:") {
+            return Some(unquote_yaml_scalar(value.trim()).to_owned());
+        }
+    }
+
+    None
+}
+
+fn mkdocs_plugin_names(contents: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut in_plugins = false;
+    let mut plugins_indent = 0usize;
+
+    for line in contents.lines() {
+        let trimmed = strip_yaml_comment(line).trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let indent = leading_spaces(line);
+        if trimmed == "plugins:" {
+            in_plugins = true;
+            plugins_indent = indent;
+            continue;
+        }
+        if in_plugins && indent <= plugins_indent {
+            in_plugins = false;
+        }
+        if !in_plugins {
+            continue;
+        }
+        let Some(item) = trimmed.strip_prefix('-') else {
+            continue;
+        };
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let name = item.split_once(':').map_or(item, |(name, _)| name).trim();
+        if !name.is_empty() {
+            names.push(unquote_yaml_scalar(name).to_owned());
+        }
+    }
+
+    names
+}
+
+fn mkdocs_plugin_distribution(plugin: &str) -> Option<&'static str> {
+    match plugin {
+        "mkdocstrings" => Some("mkdocstrings"),
+        "autorefs" => Some("mkdocs-autorefs"),
+        "include-markdown" => Some("mkdocs-include-markdown-plugin"),
+        "redirects" => Some("mkdocs-redirects"),
+        "minify" => Some("mkdocs-minify-plugin"),
+        _ => None,
+    }
+}
+
+fn strip_yaml_comment(line: &str) -> &str {
+    line.split_once('#').map_or(line, |(before, _)| before)
+}
+
+fn unquote_yaml_scalar(value: &str) -> &str {
+    value.trim().trim_matches('"').trim_matches('\'').trim()
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 fn scan_pre_commit_config(
@@ -193,35 +296,81 @@ fn scan_tox_config(
     scan_lines_for_binaries(&contents, result, seen, &origin);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToxListKey {
+    Deps,
+    Extras,
+}
+
 fn scan_tox_contents(ctx: &PluginContext<'_>, contents: &str, result: &mut ConfigScanResult) {
     let mut current_extras: Vec<String> = Vec::new();
+    let mut current_key: Option<ToxListKey> = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
             current_extras.clear();
+            current_key = None;
             continue;
         }
-        if let Some(value) = trimmed.strip_prefix("extras =") {
-            current_extras = value
-                .split([',', '\n'])
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(str::to_owned)
-                .collect();
-            for extra in &current_extras {
-                mark_optional_extra_dependencies(ctx, extra, result);
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(key) = current_key
+            && line.chars().next().is_some_and(char::is_whitespace)
+        {
+            match key {
+                ToxListKey::Deps => push_tox_dependency(trimmed, result),
+                ToxListKey::Extras => {
+                    current_extras.extend(push_tox_extras(ctx, trimmed, result));
+                },
             }
             continue;
         }
+        current_key = None;
+        if let Some(value) = trimmed.strip_prefix("extras =") {
+            current_key = Some(ToxListKey::Extras);
+            current_extras = push_tox_extras(ctx, value, result);
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("extras +=") {
+            current_key = Some(ToxListKey::Extras);
+            current_extras.extend(push_tox_extras(ctx, value, result));
+            continue;
+        }
         if let Some(value) = trimmed.strip_prefix("deps =") {
-            push_tox_dependency(value, result);
+            current_key = Some(ToxListKey::Deps);
+            if value.trim().is_empty() {
+                for extra in &current_extras {
+                    mark_optional_extra_dependencies(ctx, extra, result);
+                }
+            } else {
+                push_tox_dependency(value, result);
+            }
             continue;
         }
         if let Some(value) = trimmed.strip_prefix("deps +=") {
+            current_key = Some(ToxListKey::Deps);
             push_tox_dependency(value, result);
         }
     }
+}
+
+fn push_tox_extras(
+    ctx: &PluginContext<'_>,
+    raw: &str,
+    result: &mut ConfigScanResult,
+) -> Vec<String> {
+    let extras = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for extra in &extras {
+        mark_optional_extra_dependencies(ctx, extra, result);
+    }
+    extras
 }
 
 fn push_tox_dependency(raw: &str, result: &mut ConfigScanResult) {
@@ -303,7 +452,9 @@ fn scan_lines_for_binaries(
     seen: &mut HashSet<(String, String)>,
     origin: &ReferenceOrigin,
 ) {
-    for line in contents.lines() {
+    for (line_index, line) in contents.lines().enumerate() {
+        let mut line_origin = origin.clone();
+        line_origin.line = u32::try_from(line_index + 1).ok();
         for token in line.split_whitespace() {
             let token =
                 token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '.');
@@ -313,10 +464,10 @@ fn scan_lines_for_binaries(
                 .unwrap_or(token);
             let token = token.strip_prefix("venv/bin/").unwrap_or(token);
             if is_known_binary(token) {
-                push_binary(result, seen, token, origin.clone());
+                push_binary(result, seen, token, line_origin.clone());
             }
             if token == "sphinx-build" {
-                push_binary(result, seen, "sphinx-build", origin.clone());
+                push_binary(result, seen, "sphinx-build", line_origin.clone());
                 push_distribution(result, "sphinx");
             }
         }
@@ -329,7 +480,10 @@ fn push_binary(
     binary: &str,
     origin: ReferenceOrigin,
 ) {
-    let key = (binary.to_owned(), origin.file.clone());
+    let key = (
+        binary.to_owned(),
+        format!("{}:{}", origin.file, origin.line.unwrap_or_default()),
+    );
     if !seen.insert(key) {
         return;
     }
@@ -472,7 +626,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create dir");
         std::fs::write(
             dir.join("mkdocs.yml"),
-            "site_name: demo\ntheme:\n  name: material\n",
+            "site_name: demo\ntheme:\n  name: material\nplugins:\n  - search\n  - mkdocstrings:\n      handlers:\n        python: {}\n  - autorefs\n",
         )
         .expect("write mkdocs");
 
@@ -513,6 +667,16 @@ mod tests {
             result
                 .used_distributions
                 .contains(&"mkdocs-material".to_owned())
+        );
+        assert!(
+            result
+                .used_distributions
+                .contains(&"mkdocstrings".to_owned())
+        );
+        assert!(
+            result
+                .used_distributions
+                .contains(&"mkdocs-autorefs".to_owned())
         );
     }
 
@@ -576,5 +740,68 @@ mod tests {
                 .iter()
                 .any(|usage| usage.binary == "tox")
         );
+        assert!(result.binary_usages.iter().any(|usage| {
+            usage.binary == "sphinx-build"
+                && usage.origin.file == "tox.ini"
+                && usage.origin.line == Some(3)
+        }));
+    }
+
+    #[test]
+    fn tox_multiline_deps_and_extras_mark_distributions_used() {
+        let dir = std::env::temp_dir().join("chokkin-config-scan-tox-multiline");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(
+            dir.join("tox.ini"),
+            "[testenv:docs]\nextras =\n    docs\ndeps =\n    pytest\n    requests>=2\n",
+        )
+        .expect("write tox");
+
+        let root = ProjectRoot {
+            path: dir.clone(),
+            marker: RootMarker::PyProjectToml,
+            start: dir,
+        };
+        let mut manifest = empty_manifest(root.clone());
+        manifest
+            .dependencies
+            .push(crate::manifest::DeclaredDependency {
+                name: "sphinx".to_owned(),
+                extras: Vec::new(),
+                marker: None,
+                specifier: None,
+                context: DependencyContext::OptionalExtra("docs".to_owned()),
+                origin: DependencyOrigin {
+                    file: "pyproject.toml".to_owned(),
+                    line: Some(1),
+                    label: "project.optional-dependencies.docs[0]".to_owned(),
+                },
+                opaque: false,
+            });
+        let config = crate::default_config();
+        let sources = DiscoveredSources {
+            root: root.clone(),
+            layout: LayoutInfo {
+                layout: ProjectLayout::Unknown,
+                packages: Vec::new(),
+                inferred_globs: Vec::new(),
+                flat_candidates: Vec::new(),
+                ambiguous_flat_resolution: false,
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let ctx = PluginContext {
+            root: &root,
+            config: &config,
+            sources: &sources,
+            manifest: &manifest,
+        };
+        let result = scan_config(&ctx);
+        assert!(result.used_distributions.contains(&"sphinx".to_owned()));
+        assert!(result.used_distributions.contains(&"pytest".to_owned()));
+        assert!(result.used_distributions.contains(&"requests".to_owned()));
     }
 }

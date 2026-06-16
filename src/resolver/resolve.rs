@@ -1,6 +1,6 @@
 //! Import resolution orchestration.
 
-use crate::config::{ChokkinConfig, TargetVersion};
+use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::discovery::ProjectRoot;
 use crate::graph::ModuleOrigin;
 use crate::manifest::LoadedManifest;
@@ -20,6 +20,9 @@ use super::venv::load_venv_index;
 
 /// Resolve parsed imports and plugin module references to origins and distributions.
 ///
+/// `workspace_members` marks cross-member imports as first-party so workspace
+/// packages do not become false missing-dependency findings.
+///
 /// # Errors
 ///
 /// Returns [`ResolveError`] only for internal invariant failures (v0.1).
@@ -31,6 +34,7 @@ pub fn resolve_imports(
     sources: &DiscoveredSources,
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
+    workspace_members: &[ResolvedWorkspaceMember],
 ) -> Result<ResolutionIndex, ResolveError> {
     let _ = root;
     let target = config
@@ -60,6 +64,7 @@ pub fn resolve_imports(
                 sources,
                 manifest,
                 config,
+                workspace_members,
                 &import_map,
                 &venv_index.imports,
                 &mut warnings,
@@ -77,6 +82,7 @@ pub fn resolve_imports(
                 sources,
                 manifest,
                 config,
+                workspace_members,
                 &import_map,
                 &venv_index.imports,
                 &mut warnings,
@@ -96,6 +102,7 @@ pub fn resolve_imports(
             sources,
             manifest,
             config,
+            workspace_members,
             &import_map,
             &venv_index.imports,
             &mut warnings,
@@ -122,17 +129,20 @@ fn resolve_module(
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     config: &ChokkinConfig,
+    workspace_members: &[ResolvedWorkspaceMember],
     import_map: &ImportMap,
     venv_imports: &std::collections::BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
+    let workspace_member = workspace_member_for_file(file, workspace_members);
 
     if is_stdlib_import(&root_name, target) {
         return ResolvedImport {
             import_root: root_name,
             full_module: full_module.to_owned(),
             file: file.to_owned(),
+            workspace_member,
             line,
             context,
             optional,
@@ -148,6 +158,7 @@ fn resolve_module(
             import_root: root_name,
             full_module: full_module.to_owned(),
             file: file.to_owned(),
+            workspace_member,
             line,
             context,
             optional,
@@ -158,11 +169,17 @@ fn resolve_module(
         };
     }
 
-    if is_workspace_import(&root_name, manifest.uv_workspace.as_ref(), config) {
+    if is_workspace_import(
+        &root_name,
+        workspace_members,
+        manifest.uv_workspace.as_ref(),
+        config,
+    ) {
         return ResolvedImport {
             import_root: root_name,
             full_module: full_module.to_owned(),
             file: file.to_owned(),
+            workspace_member,
             line,
             context,
             optional,
@@ -184,6 +201,7 @@ fn resolve_module(
             platform_guarded,
             distributions,
             None,
+            workspace_member,
             warnings,
         );
     }
@@ -209,6 +227,7 @@ fn resolve_module(
             platform_guarded,
             &distributions,
             Some(confidence),
+            workspace_member,
             warnings,
         );
     }
@@ -221,6 +240,7 @@ fn resolve_module(
         import_root: root_name,
         full_module: full_module.to_owned(),
         file: file.to_owned(),
+        workspace_member,
         line,
         context,
         optional,
@@ -229,6 +249,20 @@ fn resolve_module(
         distribution: None,
         confidence: ResolveConfidence::Maybe,
     }
+}
+
+fn workspace_member_for_file(
+    file: &str,
+    workspace_members: &[ResolvedWorkspaceMember],
+) -> Option<String> {
+    let normalized = file.replace('\\', "/");
+    workspace_members
+        .iter()
+        .filter(|member| {
+            normalized == member.path || normalized.starts_with(&format!("{}/", member.path))
+        })
+        .max_by_key(|member| member.path.len())
+        .map(|member| member.id.clone())
 }
 
 fn confidence_rank(confidence: ResolveConfidence) -> u8 {
@@ -250,6 +284,7 @@ fn resolve_from_candidates(
     platform_guarded: bool,
     candidates: &[String],
     confidence_override: Option<ResolveConfidence>,
+    workspace_member: Option<String>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> ResolvedImport {
     if candidates.len() > 1 {
@@ -272,6 +307,7 @@ fn resolve_from_candidates(
         import_root: root_name.to_owned(),
         full_module: full_module.to_owned(),
         file: file.to_owned(),
+        workspace_member,
         line,
         context,
         optional,

@@ -1,0 +1,17 @@
+name: CI # zizmor: ignore[excessive-permissions] fixture workflow for static extraction tests
+
+on:
+  pull_request: # zizmor: ignore[concurrency-limits] fixture workflow for static extraction tests
+
+jobs:
+  test: # zizmor: ignore[anonymous-definition,excessive-permissions] fixture workflow for static extraction tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # zizmor: ignore[artipacked,unpinned-uses] fixture workflow for static extraction tests
+      - run: ruff check .
+      - run: mypy src
+      - run: python -m pytest tests
+      - name: block scalar commands
+        run: |
+          pytest
+          uv run ruff format --check .

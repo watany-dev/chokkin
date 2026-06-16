@@ -5,8 +5,9 @@
 use std::path::PathBuf;
 
 use chokkin::{
-    FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout, ProjectRoot,
-    RootMarker, TargetVersion, parse_file, parse_project_sources,
+    FileContext, ImportContext, ImportKind, LayoutInfo, ParseCacheStore, ParseSeverity,
+    ProjectLayout, ProjectRoot, RootMarker, TargetVersion, parse_file, parse_project_sources,
+    parse_project_sources_with_cache,
 };
 
 fn spike_fixture(name: &str) -> PathBuf {
@@ -227,6 +228,200 @@ fn parse_project_sources_fixture_suite() {
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
     assert!(summary.parsed_count >= 3);
     assert_eq!(summary.skipped_count, 0);
+}
+
+#[test]
+fn parse_project_sources_reuses_cache_when_inputs_match() {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parse");
+    let root = ProjectRoot {
+        path: base.clone(),
+        marker: RootMarker::PyProjectToml,
+        start: base,
+    };
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        },
+        effective_globs: Vec::new(),
+        files: vec![chokkin::DiscoveredFile {
+            path: "imports/absolute_import.py".to_owned(),
+            kind: chokkin::FileKind::Python,
+            context: FileContext::Runtime,
+        }],
+        warnings: Vec::new(),
+    };
+    let target = TargetVersion::default_py311();
+    let mut cache = ParseCacheStore::new();
+
+    let first = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("parse");
+    let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("parse");
+
+    assert_eq!(first, second);
+    assert_eq!(cache.stats().misses, 1);
+    assert_eq!(cache.stats().stores, 1);
+    assert_eq!(cache.stats().hits, 1);
+}
+
+#[test]
+fn parse_project_sources_invalidates_cache_when_source_changes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_path = temp.path().join("src/app.py");
+    std::fs::create_dir_all(source_path.parent().expect("source parent")).expect("mkdir");
+    std::fs::write(&source_path, "import requests\n").expect("write first source");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: temp.path().to_path_buf(),
+    };
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: vec!["app".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        },
+        effective_globs: Vec::new(),
+        files: vec![chokkin::DiscoveredFile {
+            path: "src/app.py".to_owned(),
+            kind: chokkin::FileKind::Python,
+            context: FileContext::Runtime,
+        }],
+        warnings: Vec::new(),
+    };
+    let target = TargetVersion::default_py311();
+    let mut cache = ParseCacheStore::new();
+
+    parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("first parse");
+    std::fs::write(&source_path, "import yaml\n").expect("write second source");
+    let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+        .expect("second parse");
+
+    let module = second.modules.first().expect("parsed module");
+    assert!(module.imports.iter().any(|import| import.module == "yaml"));
+    assert!(
+        !module
+            .imports
+            .iter()
+            .any(|import| import.module == "requests")
+    );
+    assert_eq!(cache.stats().misses, 2);
+    assert_eq!(cache.stats().hits, 0);
+}
+
+#[test]
+fn parse_project_sources_extracts_notebook_code_cells() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root_path = temp.path();
+    std::fs::write(
+        root_path.join("analysis.ipynb"),
+        r##"{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "source": ["# ignored\n"]
+    },
+    {
+      "cell_type": "code",
+      "source": ["import pandas as pd\n", "from pathlib import Path\n"]
+    }
+  ],
+  "metadata": {},
+  "nbformat": 4,
+  "nbformat_minor": 5
+}"##,
+    )
+    .expect("write notebook");
+    let root = ProjectRoot {
+        path: root_path.to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: root_path.to_path_buf(),
+    };
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        },
+        effective_globs: Vec::new(),
+        files: vec![chokkin::DiscoveredFile {
+            path: "analysis.ipynb".to_owned(),
+            kind: chokkin::FileKind::Notebook,
+            context: FileContext::Runtime,
+        }],
+        warnings: Vec::new(),
+    };
+
+    let summary =
+        parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
+    assert_eq!(summary.parsed_count, 1);
+    assert_eq!(summary.skipped_count, 0);
+    let module = summary.modules.first().expect("module");
+    assert_eq!(module.path, "analysis.ipynb");
+    assert!(
+        module
+            .imports
+            .iter()
+            .any(|import| import.module == "pandas")
+    );
+    assert!(
+        module
+            .imports
+            .iter()
+            .any(|import| import.module == "pathlib")
+    );
+}
+
+#[test]
+fn parse_project_sources_reports_invalid_notebook_as_warning() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root_path = temp.path();
+    std::fs::write(root_path.join("broken.ipynb"), "not json").expect("write notebook");
+    let root = ProjectRoot {
+        path: root_path.to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: root_path.to_path_buf(),
+    };
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        },
+        effective_globs: Vec::new(),
+        files: vec![chokkin::DiscoveredFile {
+            path: "broken.ipynb".to_owned(),
+            kind: chokkin::FileKind::Notebook,
+            context: FileContext::Runtime,
+        }],
+        warnings: Vec::new(),
+    };
+
+    let summary =
+        parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
+    assert_eq!(summary.parsed_count, 1);
+    assert_eq!(summary.error_count, 0);
+    let module = summary.modules.first().expect("module");
+    assert!(module.imports.is_empty());
+    assert!(module.diagnostics.iter().any(|diagnostic| {
+        diagnostic.severity == ParseSeverity::Warning
+            && diagnostic.message.contains("invalid notebook JSON")
+    }));
 }
 
 fn collect_py_files(

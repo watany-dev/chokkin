@@ -39,16 +39,9 @@ pub fn extract_python_list_literals(
     out
 }
 
-/// Extract a single uppercase-assigned string literal (e.g. `ROOT_URLCONF`).
-pub fn extract_python_string_assignment(contents: &str, field_name: &str) -> Option<String> {
-    let pos = find_uppercase_assignment(contents, field_name)?;
-    let after = contents[pos + field_name.len()..].trim_start();
-    let after = after.strip_prefix('=')?;
-    next_string_literal(after.trim_start()).map(|(value, _)| value)
-}
-
-fn extract_uppercase_list_literal(contents: &str, field_name: &str) -> Option<LiteralScan> {
-    let pos = find_uppercase_assignment(contents, field_name)?;
+/// Extract a list literal assigned to a Python name.
+pub fn extract_python_list_assignment(contents: &str, field_name: &str) -> Option<LiteralScan> {
+    let pos = find_python_assignment(contents, field_name)?;
     let after = contents[pos + field_name.len()..].trim_start();
     let after = after.strip_prefix('=')?;
     let after = after.trim_start();
@@ -57,7 +50,19 @@ fn extract_uppercase_list_literal(contents: &str, field_name: &str) -> Option<Li
     Some(scan_string_literals(list_body))
 }
 
-fn find_uppercase_assignment(contents: &str, field_name: &str) -> Option<usize> {
+/// Extract a single uppercase-assigned string literal (e.g. `ROOT_URLCONF`).
+pub fn extract_python_string_assignment(contents: &str, field_name: &str) -> Option<String> {
+    let pos = find_python_assignment(contents, field_name)?;
+    let after = contents[pos + field_name.len()..].trim_start();
+    let after = after.strip_prefix('=')?;
+    next_string_literal(after.trim_start()).map(|(value, _)| value)
+}
+
+fn extract_uppercase_list_literal(contents: &str, field_name: &str) -> Option<LiteralScan> {
+    extract_python_list_assignment(contents, field_name)
+}
+
+fn find_python_assignment(contents: &str, field_name: &str) -> Option<usize> {
     let bytes = contents.as_bytes();
     let mut search_start = 0;
     while let Some(rel) = contents[search_start..].find(field_name) {
@@ -239,6 +244,22 @@ INSTALLED_APPS = [
         assert_eq!(
             scan.values,
             vec!["django.contrib.admin".to_owned(), "myapp".to_owned()]
+        );
+    }
+
+    #[test]
+    fn extract_python_list_assignment_finds_lowercase_name() {
+        let contents = r#"
+extensions = [
+    "sphinx.ext.autodoc",
+    "myst_parser",
+]
+"#;
+        let scan = extract_python_list_assignment(contents, "extensions").expect("found");
+        assert!(scan.complete);
+        assert_eq!(
+            scan.values,
+            vec!["sphinx.ext.autodoc".to_owned(), "myst_parser".to_owned()]
         );
     }
 

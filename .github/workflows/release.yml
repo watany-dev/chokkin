@@ -147,7 +147,7 @@ jobs:
           path: dist
           merge-multiple: true
       # TODO: pin pypa/gh-action-pypi-publish to a commit SHA.
-      # PyPI Trusted Publishing requires the environment named "pypi" to be
+      # PyPI Trusted Publishing requires the environment named "pypi-chokkin" to be
       # registered in pypi.org settings: repo=watany-dev/chokkin, workflow=release.yml.
       # See docs/dev/ci-porting-notes.md for setup instructions.
       - uses: pypa/gh-action-pypi-publish@release/v1

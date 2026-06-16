@@ -9,10 +9,12 @@ use crate::rules::{IssueReport, RuleId};
 use super::containment::resolve_contained_path;
 use super::error::FixError;
 use super::plan::{FixAction, plan_fixes};
-use super::pyproject::{move_group_to_runtime, remove_by_label};
+use super::pyproject::{add_runtime_dependency, move_group_to_runtime, remove_by_label};
 use super::requirements::remove_dependency_line;
 use super::setup_cfg::remove_dependency as remove_setup_cfg_dependency;
-use super::types::{AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason};
+use super::types::{
+    AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason, WorkspaceFixManifest,
+};
 
 /// Apply safe automatic fixes for fixable issues in `report`.
 ///
@@ -25,9 +27,25 @@ pub fn apply_fixes(
     manifest: &LoadedManifest,
     options: FixOptions,
 ) -> Result<FixReport, FixError> {
+    apply_fixes_with_workspace(report, root, manifest, &[], options)
+}
+
+/// Apply safe automatic fixes with workspace member manifest context.
+///
+/// # Errors
+///
+/// Returns [`FixError`] when a manifest file cannot be read or written.
+#[allow(clippy::unnecessary_wraps)]
+pub fn apply_fixes_with_workspace(
+    report: &IssueReport,
+    root: &ProjectRoot,
+    manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
+    options: FixOptions,
+) -> Result<FixReport, FixError> {
     let mut report_out = FixReport::default();
 
-    let actions = match plan_fixes(report, manifest, options) {
+    let actions = match plan_fixes(report, manifest, workspace_manifests, options) {
         Ok(actions) => actions,
         Err(skipped) => {
             report_out.skipped = skipped;
@@ -46,6 +64,11 @@ pub fn apply_fixes(
         report_out
             .reminders
             .push("Run `uv lock` to refresh uv.lock".to_owned());
+    }
+    if manifest.sources.poetry && !report_out.applied.is_empty() {
+        report_out
+            .reminders
+            .push("Run `poetry lock` to refresh poetry.lock".to_owned());
     }
 
     Ok(report_out)
@@ -95,13 +118,36 @@ fn apply_action(
             from_label,
             raw,
         } => {
-            let path = root.join(file);
+            let path = resolve_contained_path(root, file)?;
             let description = move_group_to_runtime(&path, from_label, raw)?;
             Ok(AppliedFix {
                 rule: RuleId::Chk005,
                 subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
                 file: file.clone(),
                 description,
+            })
+        },
+        FixAction::AddMissingDependency { name, file } => {
+            let path = resolve_contained_path(root, file)?;
+            let description = add_runtime_dependency(&path, name)?;
+            Ok(AppliedFix {
+                rule: RuleId::Chk003,
+                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
+                file: file.clone(),
+                description,
+            })
+        },
+        FixAction::RemoveFile { path: file } => {
+            let path = resolve_contained_path(root, file)?;
+            std::fs::remove_file(&path).map_err(|source| FixError::Io {
+                path: file.clone(),
+                source,
+            })?;
+            Ok(AppliedFix {
+                rule: RuleId::Chk001,
+                subject: crate::rules::IssueSubject::File { path: file.clone() },
+                file: file.clone(),
+                description: format!("removed unreachable file `{file}`"),
             })
         },
     }
@@ -123,6 +169,18 @@ fn applied_preview(action: &FixAction) -> AppliedFix {
             file: file.clone(),
             description: format!("would move `{name}` to runtime in {file}"),
         },
+        FixAction::AddMissingDependency { name, file } => AppliedFix {
+            rule: RuleId::Chk003,
+            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
+            file: file.clone(),
+            description: format!("would add `{name}` to {file}"),
+        },
+        FixAction::RemoveFile { path } => AppliedFix {
+            rule: RuleId::Chk001,
+            subject: crate::rules::IssueSubject::File { path: path.clone() },
+            file: path.clone(),
+            description: format!("would remove unreachable file `{path}`"),
+        },
     }
 }
 
@@ -135,6 +193,14 @@ fn skipped_from_error(action: &FixAction, error: &FixError) -> SkippedFix {
         FixAction::MoveToRuntime { name, .. } => (
             RuleId::Chk005,
             crate::rules::IssueSubject::Distribution { name: name.clone() },
+        ),
+        FixAction::AddMissingDependency { name, .. } => (
+            RuleId::Chk003,
+            crate::rules::IssueSubject::Distribution { name: name.clone() },
+        ),
+        FixAction::RemoveFile { path } => (
+            RuleId::Chk001,
+            crate::rules::IssueSubject::File { path: path.clone() },
         ),
     };
     SkippedFix {
@@ -154,7 +220,104 @@ mod tests {
         DeclaredDependency, DependencyContext, DependencyOrigin, LockfileGraph, ManifestSources,
         ProjectMetadata,
     };
-    use crate::rules::{Issue, IssueLocation, IssueReport, IssueSummary, Severity};
+    use crate::rules::{ExplainData, Issue, IssueLocation, IssueReport, IssueSummary, Severity};
+
+    fn empty_manifest(root: &ProjectRoot) -> LoadedManifest {
+        LoadedManifest {
+            root: root.clone(),
+            metadata: ProjectMetadata::default(),
+            dependencies: Vec::new(),
+            constraints: Vec::new(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: LockfileGraph::default(),
+            sources: ManifestSources::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn project_root(path: &std::path::Path) -> ProjectRoot {
+        ProjectRoot {
+            path: path.to_path_buf(),
+            marker: RootMarker::PyProjectToml,
+            start: path.to_path_buf(),
+        }
+    }
+
+    fn issue_report(issue: Issue) -> IssueReport {
+        IssueReport {
+            issues: vec![issue],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        }
+    }
+
+    fn unused_file_issue(path: &str) -> Issue {
+        Issue {
+            rule: RuleId::Chk001,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "unused".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: Some(path.to_owned()),
+                line: None,
+                manifest: None,
+            },
+            subject: crate::rules::IssueSubject::File {
+                path: path.to_owned(),
+            },
+            explain: None,
+        }
+    }
+
+    fn unused_dependency_issue(name: &str) -> Issue {
+        Issue {
+            rule: RuleId::Chk002,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "unused".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: None,
+                line: None,
+                manifest: Some(DependencyOrigin {
+                    file: "pyproject.toml".to_owned(),
+                    line: None,
+                    label: "project.dependencies[0]".to_owned(),
+                }),
+            },
+            subject: crate::rules::IssueSubject::Distribution {
+                name: name.to_owned(),
+            },
+            explain: None,
+        }
+    }
+
+    fn missing_dependency_issue(distribution: &str) -> Issue {
+        Issue {
+            rule: RuleId::Chk003,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "missing".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: Some("src/app.py".to_owned()),
+                line: Some(1),
+                manifest: None,
+            },
+            subject: crate::rules::IssueSubject::Import {
+                module: "yaml".to_owned(),
+                file: "src/app.py".to_owned(),
+                line: 1,
+            },
+            explain: Some(ExplainData {
+                summary: format!("{distribution} is imported but not declared"),
+                details: Vec::new(),
+            }),
+        }
+    }
 
     #[test]
     fn dry_run_does_not_write_files() {
@@ -202,6 +365,7 @@ mod tests {
             severity: Severity::Error,
             confidence: Confidence::Certain,
             message: "unused".to_owned(),
+            workspace_member: None,
             location: IssueLocation {
                 file: None,
                 line: None,
@@ -237,5 +401,217 @@ mod tests {
         assert_eq!(fix_report.applied.len(), 1);
         let contents = std::fs::read_to_string(&path).expect("read");
         assert!(contents.contains("boto3"));
+    }
+
+    #[test]
+    fn file_removal_requires_allow_flag() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/legacy.py"), "").expect("write");
+
+        let root = project_root(dir.path());
+        let manifest = empty_manifest(&root);
+        let report = issue_report(unused_file_issue("src/legacy.py"));
+
+        let fix_report =
+            apply_fixes(&report, &root, &manifest, FixOptions::default()).expect("apply");
+
+        assert!(dir.path().join("src/legacy.py").exists());
+        assert!(fix_report.applied.is_empty());
+        assert_eq!(fix_report.skipped.len(), 1);
+        assert_eq!(
+            fix_report.skipped[0].reason,
+            SkippedReason::FileRemovalDenied
+        );
+    }
+
+    #[test]
+    fn file_removal_dry_run_keeps_file() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/legacy.py"), "").expect("write");
+
+        let root = project_root(dir.path());
+        let manifest = empty_manifest(&root);
+        let report = issue_report(unused_file_issue("src/legacy.py"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                dry_run: true,
+                allow_remove_files: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert!(dir.path().join("src/legacy.py").exists());
+        assert_eq!(fix_report.applied.len(), 1);
+        assert_eq!(fix_report.applied[0].rule, RuleId::Chk001);
+    }
+
+    #[test]
+    fn file_removal_deletes_unreachable_file() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/legacy.py"), "").expect("write");
+
+        let root = project_root(dir.path());
+        let manifest = empty_manifest(&root);
+        let report = issue_report(unused_file_issue("src/legacy.py"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                allow_remove_files: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert!(!dir.path().join("src/legacy.py").exists());
+        assert_eq!(fix_report.applied.len(), 1);
+        assert_eq!(fix_report.applied[0].rule, RuleId::Chk001);
+    }
+
+    #[test]
+    fn poetry_manifest_fix_reminds_to_refresh_lockfile() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\"boto3>=1.0\"]\n",
+        )
+        .expect("write");
+
+        let root = project_root(dir.path());
+        let mut manifest = empty_manifest(&root);
+        manifest.dependencies.push(DeclaredDependency {
+            name: "boto3".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: Some(">=1.0".to_owned()),
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+        });
+        manifest.sources.pyproject_toml = true;
+        manifest.sources.poetry = true;
+        let report = issue_report(unused_dependency_issue("boto3"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                dry_run: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert!(
+            fix_report
+                .reminders
+                .iter()
+                .any(|reminder| { reminder.contains("poetry lock") })
+        );
+    }
+
+    #[test]
+    fn add_missing_dependency_updates_pyproject() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(&path, "[project]\nname = \"demo\"\n").expect("write");
+
+        let root = project_root(dir.path());
+        let mut manifest = empty_manifest(&root);
+        manifest.sources.pyproject_toml = true;
+        let report = issue_report(missing_dependency_issue("pyyaml"));
+
+        let fix_report = apply_fixes(
+            &report,
+            &root,
+            &manifest,
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert_eq!(fix_report.applied.len(), 1);
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\"pyyaml\"]"));
+    }
+
+    #[test]
+    fn add_missing_dependency_updates_workspace_member_pyproject() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let member_dir = dir.path().join("services/api");
+        std::fs::create_dir_all(&member_dir).expect("mkdir member");
+        let member_pyproject = member_dir.join("pyproject.toml");
+        std::fs::write(&member_pyproject, "[project]\nname = \"api\"\n").expect("write member");
+
+        let root = project_root(dir.path());
+        let root_manifest = empty_manifest(&root);
+        let member_root = ProjectRoot {
+            path: member_dir,
+            marker: RootMarker::PyProjectToml,
+            start: dir.path().to_path_buf(),
+        };
+        let mut member_manifest = empty_manifest(&member_root);
+        member_manifest.sources.pyproject_toml = true;
+        let workspace_manifest = WorkspaceFixManifest {
+            id: "api",
+            path: "services/api",
+            pyproject_toml: Some("services/api/pyproject.toml"),
+            manifest: &member_manifest,
+        };
+        let mut issue = missing_dependency_issue("pyyaml");
+        issue.workspace_member = Some("api".to_owned());
+        let report = issue_report(issue);
+
+        let fix_report = apply_fixes_with_workspace(
+            &report,
+            &root,
+            &root_manifest,
+            &[workspace_manifest],
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        )
+        .expect("apply");
+
+        assert_eq!(fix_report.applied.len(), 1);
+        assert_eq!(fix_report.applied[0].file, "services/api/pyproject.toml");
+        let updated = std::fs::read_to_string(&member_pyproject).expect("read member");
+        assert!(updated.contains("dependencies = [\"pyyaml\"]"));
+    }
+
+    #[test]
+    fn move_to_runtime_rejects_escaped_manifest_path() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let action = FixAction::MoveToRuntime {
+            name: "pytest".to_owned(),
+            file: "../outside.toml".to_owned(),
+            from_label: "dependency-groups.dev[0]".to_owned(),
+            raw: "pytest".to_owned(),
+        };
+
+        let error = apply_action(dir.path(), &action, FixOptions::default())
+            .expect_err("escaped path should be rejected");
+
+        assert!(matches!(error, FixError::Unsupported { .. }));
+        assert!(error.to_string().contains("escapes the project root"));
     }
 }

@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.1 alpha.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`), plus `--explain`, `--trace`, and `--fix`. Use `--probe` for steps 1–4 summary only. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`). PyPI **v0.1** tag awaits Trusted Publishing setup.
+> **Status: v0.2 development.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it now reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`), Rust 1.93 v0.2 validation measurements are recorded (`docs/dev/v0.2-release-validation.md`), and **v0.1.0 has been released**.
 
 ## Why chokkin?
 
@@ -20,7 +20,7 @@ deptry   : consistency between dependency manifests and imports
 chokkin    : unused files, dependencies, and public symbols from the whole project graph
 ```
 
-`chokkin` is not a style/lint tool. It answers a different question: starting from your entry points, what can actually be reached — and what is just sitting there? It reads `pyproject.toml`, requirements files, uv/Poetry lockfiles, and framework/tool configs (Django, FastAPI, pytest, tox, nox, pre-commit, GitHub Actions, …) to build that picture.
+`chokkin` is not a style/lint tool. It answers a different question: starting from your entry points, what can actually be reached — and what is just sitting there? It reads `pyproject.toml` (including Poetry/PDM/Hatch dependency sections), requirements files, uv lockfiles, and framework/tool configs (Django, FastAPI, pytest, tox, nox, pre-commit, GitHub Actions, …) to build that picture.
 
 ## Quick start
 
@@ -31,7 +31,7 @@ uvx chokkin
 No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, `uv.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
 
 ```text
-chokkin 0.1.0
+chokkin 0.2.0
 
 Project: acme-api
 Config : pyproject.toml
@@ -84,14 +84,20 @@ uvx chokkin --include CHK002,CHK003
 uvx chokkin --exclude CHK006
 uvx chokkin --reporter json
 uvx chokkin --reporter markdown
+uvx chokkin --reporter github
+uvx chokkin --reporter sarif
 uvx chokkin --confidence likely
 uvx chokkin --fix
 uvx chokkin --fix --dry-run
+uvx chokkin --fix --allow-remove-files
+uvx chokkin --fix --add-missing
+uvx chokkin --baseline chokkin-baseline.json
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
+uvx chokkin --no-cache
 uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
 uvx chokkin --probe              # steps 1–4 summary only
 uvx chokkin --init                # v0.2
-uvx chokkin --reporter sarif      # v0.2
 ```
 
 Key flags:
@@ -99,6 +105,11 @@ Key flags:
 - `--production` — drop dev/test/docs/lint/type contexts and judge reachability from runtime context only. Dev-only files and dependencies are no longer reported, and "unused in production" becomes strict.
 - `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
+- `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files. `--add-missing` adds Certain CHK003 findings to non-Poetry `[project].dependencies` when the distribution is unambiguous; workspace findings are inserted into the member `pyproject.toml` when that member manifest was inventoried. Unsupported cases are reported as skipped fixes with details on stderr.
+- `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
+- `--no-cache` — disable Phase 2 cache reads/writes. Parse, manifest/config scan, and module-index cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
+- `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
+- `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
 
 Exit codes are fixed for CI:
@@ -175,7 +186,7 @@ Dependencies and files are both assigned contexts (runtime / dev / test / docs /
 Frameworks reference modules through strings and decorators, which pure import analysis can't see. Plugins close that gap by adding entry files, string/module references, and binary usage:
 
 - **v0.1**: pytest, django, fastapi/uvicorn
-- **v0.2+**: flask, celery, tox, nox, pre-commit, github-actions, sphinx, mkdocs, alembic
+- **v0.2+**: tox/nox/pre-commit/GitHub Actions binary usage detection, static Flask/Celery route/task references, conventional Sphinx/MkDocs/Alembic config entries, and `.ipynb` code-cell parsing.
 
 For example, the Django plugin treats `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` strings as module references and `migrations/**` as framework-used; the FastAPI plugin treats `@router.get`-decorated handlers as externally used.
 
@@ -201,8 +212,48 @@ CHK006 = ["src/acme/public_api.py:*"]
 For large existing projects, a baseline freezes current issues so CI only fails on new ones (v0.2):
 
 ```bash
-uvx chokkin --update-baseline
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
+```
+
+## CI adoption
+
+For an existing project, generate and review the baseline once:
+
+```bash
+uvx chokkin --baseline chokkin-baseline.json --update-baseline
+git add chokkin-baseline.json
+```
+
+Then wire the baseline into pull request checks. This job emits GitHub
+annotations, writes SARIF for code scanning, and fails only for findings not
+already present in the baseline:
+
+```yaml
+name: chokkin
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  chokkin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Annotations
+        run: uvx chokkin --baseline chokkin-baseline.json --reporter github
+      - name: SARIF
+        if: always()
+        run: uvx chokkin --baseline chokkin-baseline.json --reporter sarif > chokkin.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: chokkin.sarif
 ```
 
 ## Installation

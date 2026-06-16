@@ -27,6 +27,21 @@ fn fs_canonicalize(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn has_project_marker_ancestor(path: &Path) -> bool {
+    path.ancestors().skip(1).any(|ancestor| {
+        [
+            "pyproject.toml",
+            "uv.lock",
+            "setup.cfg",
+            "setup.py",
+            "requirements.txt",
+            ".git",
+        ]
+        .iter()
+        .any(|marker| ancestor.join(marker).exists())
+    })
+}
+
 #[test]
 fn discovers_pyproject_at_start() {
     let root = fixture("pyproject_only");
@@ -119,6 +134,10 @@ fn returns_io_error_for_unreadable_start_dir() {
 #[test]
 fn returns_not_found_for_empty_tree() {
     let temp = tempfile::tempdir().expect("tempdir");
+
+    if has_project_marker_ancestor(temp.path()) {
+        return;
+    }
 
     let error = discover_project_root(temp.path()).expect_err("expected not found");
     assert!(matches!(error, DiscoveryError::NotFound { .. }));

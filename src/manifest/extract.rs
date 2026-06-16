@@ -2,6 +2,10 @@
 
 use std::collections::BTreeSet;
 
+use crate::VERSION;
+use crate::cache::{
+    CacheKeyContext, CacheOptions, ScanCacheKey, ScanInputFingerprints, stable_hex_hash,
+};
 use crate::config::{ChokkinConfig, LoadedConfig, TargetVersion};
 use crate::discovery::ProjectRoot;
 
@@ -16,6 +20,12 @@ use super::types::{
 };
 use super::uv_lock::extract_uv_lock;
 use super::warnings::ManifestWarning;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct ManifestCachePayload {
+    manifest: LoadedManifest,
+    inputs: ScanInputFingerprints,
+}
 
 /// Extract declared dependencies, entry points, and lockfile graph.
 #[allow(clippy::too_many_lines)]
@@ -37,7 +47,7 @@ pub fn extract_manifest(
         metadata = extracted.metadata;
         dependencies.extend(extracted.dependencies);
         entry_points.extend(extracted.entry_points);
-        sources.skipped_poetry = extracted
+        sources.poetry = extracted
             .warnings
             .iter()
             .any(|w| matches!(w, ManifestWarning::PoetryDetected));
@@ -129,6 +139,85 @@ pub fn extract_manifest(
         sources,
         warnings,
     })
+}
+
+/// Extract a manifest, optionally using the Phase 2 scan cache payload slot.
+///
+/// Cache misses and incompatible payloads fall back to static extraction.
+pub fn extract_manifest_with_cache(
+    root: &ProjectRoot,
+    config: &LoadedConfig,
+    cache: Option<&CacheOptions>,
+) -> Result<LoadedManifest, ManifestError> {
+    let Some(cache) = cache.filter(|cache| cache.enabled) else {
+        return extract_manifest(root, config);
+    };
+    let key = manifest_cache_key(root, config)?;
+    if let Some(payload) = cache
+        .read_scan_payload::<ManifestCachePayload>(root.path.as_path(), &key)
+        .map_err(|source| ManifestError::Io {
+            path: cache.scan_entry_path(root.path.as_path(), &key),
+            source,
+        })?
+    {
+        let current_inputs = manifest_inputs_for_payload(root, config, &payload.manifest)?;
+        if current_inputs == payload.inputs {
+            return Ok(payload.manifest);
+        }
+    }
+
+    let manifest = extract_manifest(root, config)?;
+    let payload = ManifestCachePayload {
+        inputs: manifest_inputs_for_payload(root, config, &manifest)?,
+        manifest: manifest.clone(),
+    };
+    cache
+        .write_scan_payload(root.path.as_path(), key, &payload)
+        .map_err(|source| ManifestError::Io {
+            path: cache.directory_path(root.path.as_path()),
+            source,
+        })?;
+    Ok(manifest)
+}
+
+fn manifest_cache_key(
+    root: &ProjectRoot,
+    config: &LoadedConfig,
+) -> Result<ScanCacheKey, ManifestError> {
+    let inputs =
+        ScanInputFingerprints::collect_manifest_candidates(root.path.as_path(), &config.sources)
+            .map_err(|source| ManifestError::Io {
+                path: root.path.clone(),
+                source,
+            })?;
+    let target = config
+        .effective
+        .target_version
+        .clone()
+        .unwrap_or_else(TargetVersion::default_py311);
+    Ok(ScanCacheKey {
+        context: CacheKeyContext {
+            chokkin_version: VERSION.to_owned(),
+            config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
+            manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
+            target_version: target.as_str().to_owned(),
+            unit_version: "manifest-extract-v1".to_owned(),
+        },
+        inputs,
+    })
+}
+
+fn manifest_inputs_for_payload(
+    root: &ProjectRoot,
+    config: &LoadedConfig,
+    manifest: &LoadedManifest,
+) -> Result<ScanInputFingerprints, ManifestError> {
+    ScanInputFingerprints::collect(root.path.as_path(), &config.sources, &manifest.sources).map_err(
+        |source| ManifestError::Io {
+            path: root.path.clone(),
+            source,
+        },
+    )
 }
 
 /// When runtime deps are declared in pyproject/setup, root `requirements.txt` is dev tooling.

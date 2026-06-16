@@ -14,7 +14,7 @@ mod uv_lock;
 mod warnings;
 
 pub use error::ManifestError;
-pub use extract::{extract_manifest, resolve_target_version};
+pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub use pep508_util::normalize_distribution_name;
 pub use types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,

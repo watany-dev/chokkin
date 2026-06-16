@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::cache::CacheOptions;
 use crate::config::{Confidence, RuntimeOverrides};
 use crate::fix::FixOptions;
 use crate::pipeline::AnalyzeOptions;
@@ -47,7 +48,7 @@ pub struct CliArgs {
     #[arg(long, value_delimiter = ',')]
     pub exclude: Option<Vec<String>>,
 
-    /// Output reporter (`default`, `compact`, `json`, `markdown`).
+    /// Output reporter (`default`, `compact`, `json`, `markdown`, `github`, `sarif`).
     #[arg(long, value_parser = parse_reporter)]
     pub reporter: Option<ReporterId>,
 
@@ -71,9 +72,33 @@ pub struct CliArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Allow `--fix` to remove unreachable project files.
+    #[arg(long)]
+    pub allow_remove_files: bool,
+
+    /// Allow `--fix` to add missing dependency declarations when unambiguous.
+    #[arg(long)]
+    pub add_missing: bool,
+
+    /// Suppress issues already recorded in this baseline file.
+    #[arg(long, value_name = "PATH")]
+    pub baseline: Option<PathBuf>,
+
+    /// Write the current issue set to the baseline file.
+    #[arg(long)]
+    pub update_baseline: bool,
+
+    /// Disable cache reads and writes.
+    #[arg(long)]
+    pub no_cache: bool,
+
     /// Run probe mode (pipeline steps 1–4 only).
     #[arg(long)]
     pub probe: bool,
+
+    /// Append a starter `[tool.chokkin]` config to pyproject.toml.
+    #[arg(long)]
+    pub init: bool,
 
     /// Print help and exit.
     #[arg(short = 'h', long = "help")]
@@ -121,7 +146,15 @@ impl CliArgs {
             fix_enabled: self.fix,
             fix: FixOptions {
                 dry_run: self.dry_run,
-                ..FixOptions::default()
+                allow_remove_files: self.allow_remove_files,
+                add_missing: self.add_missing,
+            },
+            baseline: self.baseline.clone(),
+            update_baseline: self.update_baseline,
+            cache: if self.no_cache {
+                CacheOptions::disabled()
+            } else {
+                CacheOptions::default()
             },
         }
     }
@@ -130,6 +163,38 @@ impl CliArgs {
     pub fn validate(&self) -> Result<(), String> {
         if self.dry_run && !self.fix {
             return Err("`--dry-run` requires `--fix`".to_owned());
+        }
+        if self.allow_remove_files && !self.fix {
+            return Err("`--allow-remove-files` requires `--fix`".to_owned());
+        }
+        if self.add_missing && !self.fix {
+            return Err("`--add-missing` requires `--fix`".to_owned());
+        }
+        if self.update_baseline && self.baseline.is_none() {
+            return Err("`--update-baseline` requires `--baseline <PATH>`".to_owned());
+        }
+        if self.init && self.probe {
+            return Err("`--init` cannot be combined with `--probe`".to_owned());
+        }
+        if self.init
+            && (self.fix
+                || self.dry_run
+                || self.allow_remove_files
+                || self.add_missing
+                || self.production
+                || self.strict
+                || self.no_exit_code
+                || self.include.is_some()
+                || self.exclude.is_some()
+                || self.reporter.is_some()
+                || self.confidence.is_some()
+                || self.baseline.is_some()
+                || self.update_baseline
+                || self.no_cache
+                || self.explain.is_some()
+                || self.trace.is_some())
+        {
+            return Err("`--init` cannot be combined with analysis or fix flags".to_owned());
         }
         Ok(())
     }
@@ -182,6 +247,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_v02_reporters() {
+        let github =
+            parse_cli_args(vec!["--reporter".to_owned(), "github".to_owned()]).expect("parse");
+        let sarif =
+            parse_cli_args(vec!["--reporter".to_owned(), "sarif".to_owned()]).expect("parse");
+        assert_eq!(github.reporter, Some(ReporterId::Github));
+        assert_eq!(sarif.reporter, Some(ReporterId::Sarif));
+    }
+
+    #[test]
+    fn parses_init_flag() {
+        let args = parse_cli_args(vec!["--init".to_owned()]).expect("parse");
+        assert!(args.init);
+    }
+
+    #[test]
+    fn rejects_init_probe_combination() {
+        let args = parse_cli_args(vec!["--init".to_owned(), "--probe".to_owned()]).expect("parse");
+        let err = args.validate().expect_err("invalid combination");
+        assert!(err.contains("--init"));
+    }
+
+    #[test]
     fn rejects_unknown_flag() {
         let err = parse_cli_args(vec!["--unknown".to_owned()]).expect_err("error");
         assert!(err.contains("unknown"));
@@ -197,5 +285,50 @@ mod tests {
     fn dry_run_requires_fix() {
         let args = parse_cli_args(vec!["--dry-run".to_owned()]).expect("parse");
         assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn parses_allow_remove_files() {
+        let args = parse_cli_args(vec!["--fix".to_owned(), "--allow-remove-files".to_owned()])
+            .expect("parse");
+        assert!(args.allow_remove_files);
+        assert!(args.analyze_options().fix.allow_remove_files);
+        args.validate().expect("validate");
+    }
+
+    #[test]
+    fn allow_remove_files_requires_fix() {
+        let args = parse_cli_args(vec!["--allow-remove-files".to_owned()]).expect("parse");
+        let err = args.validate().expect_err("missing fix");
+        assert!(err.contains("--fix"));
+    }
+
+    #[test]
+    fn parses_add_missing() {
+        let args =
+            parse_cli_args(vec!["--fix".to_owned(), "--add-missing".to_owned()]).expect("parse");
+        assert!(args.add_missing);
+        assert!(args.analyze_options().fix.add_missing);
+        args.validate().expect("validate");
+    }
+
+    #[test]
+    fn add_missing_requires_fix() {
+        let args = parse_cli_args(vec!["--add-missing".to_owned()]).expect("parse");
+        let err = args.validate().expect_err("missing fix");
+        assert!(err.contains("--fix"));
+    }
+
+    #[test]
+    fn update_baseline_requires_baseline_path() {
+        let args = parse_cli_args(vec!["--update-baseline".to_owned()]).expect("parse");
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn parses_no_cache() {
+        let args = parse_cli_args(vec!["--no-cache".to_owned()]).expect("parse");
+        assert!(args.no_cache);
+        assert!(!args.analyze_options().cache.enabled);
     }
 }

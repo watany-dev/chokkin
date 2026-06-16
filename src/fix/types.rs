@@ -1,5 +1,6 @@
 //! Fix types for pipeline step 13.
 
+use crate::manifest::LoadedManifest;
 use crate::rules::{IssueSubject, RuleId};
 
 /// Options controlling automatic fixes.
@@ -7,10 +8,23 @@ use crate::rules::{IssueSubject, RuleId};
 pub struct FixOptions {
     /// When true, skip writing files (dry-run).
     pub dry_run: bool,
-    /// Reserved for future file deletion support (always rejected in v0.1).
+    /// Allow explicit deletion of unreachable project files.
     pub allow_remove_files: bool,
-    /// Reserved for missing-dependency insertion (not implemented in v0.1).
+    /// Request missing-dependency insertion when it becomes unambiguous.
     pub add_missing: bool,
+}
+
+/// Member manifest metadata available to workspace-aware fixes.
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspaceFixManifest<'a> {
+    /// Stable workspace member id.
+    pub id: &'a str,
+    /// Member directory path relative to the project root.
+    pub path: &'a str,
+    /// Root-relative member `pyproject.toml` path when present.
+    pub pyproject_toml: Option<&'a str>,
+    /// Member-local manifest extraction.
+    pub manifest: &'a LoadedManifest,
 }
 
 /// One successfully applied manifest edit.

@@ -1,0 +1,6 @@
+[project]
+name = "nox-config"
+version = "0.1.0"
+
+[tool.chokkin.plugins]
+nox = true

@@ -2,6 +2,7 @@
 
 use std::io;
 
+use crate::baseline::BaselineError;
 use crate::config::ConfigError;
 use crate::discovery::DiscoveryError;
 use crate::entry::EntryError;
@@ -79,6 +80,9 @@ pub enum AnalyzeError {
     /// Fix application failed.
     #[error(transparent)]
     Fix(#[from] FixError),
+    /// Baseline read/write failed.
+    #[error(transparent)]
+    Baseline(#[from] BaselineError),
     /// Invalid CLI invocation.
     #[error("invalid CLI: {0}")]
     Usage(String),
@@ -91,7 +95,11 @@ impl AnalyzeError {
         match self {
             Self::Probe(error) => error.is_usage_error(),
             Self::Plugins(_) | Self::Parse(_) | Self::Entry(_) | Self::Usage(_) => true,
-            Self::Graph(_) | Self::Resolve(_) | Self::Reachability(_) | Self::Fix(_) => false,
+            Self::Graph(_)
+            | Self::Resolve(_)
+            | Self::Reachability(_)
+            | Self::Fix(_)
+            | Self::Baseline(_) => false,
         }
     }
 }

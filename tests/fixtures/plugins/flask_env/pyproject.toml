@@ -1,0 +1,7 @@
+[project]
+name = "flask-env"
+version = "0.1.0"
+dependencies = ["flask"]
+
+[tool.chokkin.plugins]
+flask = true

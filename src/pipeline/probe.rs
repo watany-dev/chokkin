@@ -4,11 +4,13 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::VERSION;
+use crate::cache::CacheOptions;
 use crate::config::{
-    ChokkinConfig, ConfigSources, RuntimeOverrides, TargetVersion, apply_overrides, load_config,
+    ChokkinConfig, ConfigSources, ResolvedWorkspaceMember, RuntimeOverrides, TargetVersion,
+    apply_overrides, load_config,
 };
-use crate::discovery::{ProjectRoot, discover_project_root};
-use crate::manifest::{LoadedManifest, extract_manifest, resolve_target_version};
+use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
+use crate::manifest::{LoadedManifest, extract_manifest_with_cache, resolve_target_version};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, discover_sources};
 
 use super::error::ProbeError;
@@ -29,8 +31,23 @@ pub struct ProbeReport {
     pub manifest: LoadedManifest,
     /// Discovered source files and layout.
     pub sources: DiscoveredSources,
+    /// Resolved workspace members below the project root.
+    pub workspace_members: Vec<ResolvedWorkspaceMember>,
+    /// Member-scoped manifest and source inventories.
+    pub workspace_inputs: Vec<WorkspaceMemberInputs>,
     /// Non-fatal warnings from manifest and source discovery.
     pub warnings: Vec<ProbeWarning>,
+}
+
+/// Probe data for one resolved workspace member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMemberInputs {
+    /// Resolved workspace member metadata.
+    pub member: ResolvedWorkspaceMember,
+    /// Member-local manifest extraction.
+    pub manifest: LoadedManifest,
+    /// Member-local source inventory.
+    pub sources: DiscoveredSources,
 }
 
 /// Run pipeline steps 1–4 and collect a probe report.
@@ -43,6 +60,20 @@ pub fn probe_project(
     project_root_override: Option<&Path>,
     overrides: &RuntimeOverrides,
 ) -> Result<ProbeReport, ProbeError> {
+    probe_project_with_cache(start, project_root_override, overrides, None)
+}
+
+/// Run pipeline steps 1–4 with optional manifest cache support.
+///
+/// # Errors
+///
+/// Returns [`ProbeError`] when a pipeline step fails fatally.
+pub fn probe_project_with_cache(
+    start: &Path,
+    project_root_override: Option<&Path>,
+    overrides: &RuntimeOverrides,
+    cache: Option<&CacheOptions>,
+) -> Result<ProbeReport, ProbeError> {
     let discovery_start = project_root_override.unwrap_or(start);
     let canonical_start = canonicalize_path(discovery_start)?;
 
@@ -50,11 +81,13 @@ pub fn probe_project(
     let mut loaded = load_config(&root)?;
     apply_overrides(&mut loaded.effective, overrides);
 
-    let manifest = extract_manifest(&root, &loaded)?;
+    let manifest = extract_manifest_with_cache(&root, &loaded, cache)?;
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
 
     let sources = discover_sources(&root, &loaded, &manifest)?;
+    let workspace_inputs =
+        collect_workspace_inputs(&root, &loaded.workspace_members, overrides, cache)?;
     let warnings = collect_warnings(&manifest, &sources);
 
     Ok(ProbeReport {
@@ -64,8 +97,46 @@ pub fn probe_project(
         effective_config: loaded.effective,
         manifest,
         sources,
+        workspace_members: loaded.workspace_members,
+        workspace_inputs,
         warnings,
     })
+}
+
+fn collect_workspace_inputs(
+    root: &ProjectRoot,
+    members: &[ResolvedWorkspaceMember],
+    overrides: &RuntimeOverrides,
+    cache: Option<&CacheOptions>,
+) -> Result<Vec<WorkspaceMemberInputs>, ProbeError> {
+    let mut inputs = Vec::new();
+    for member in members {
+        let member_root = member_project_root(root, member);
+        if !member_root.path.is_dir() {
+            continue;
+        }
+        let mut loaded = load_config(&member_root)?;
+        apply_overrides(&mut loaded.effective, overrides);
+        let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
+        let target_version = resolve_target_version(&loaded.effective, &manifest);
+        loaded.effective.target_version = Some(target_version);
+        let sources = discover_sources(&member_root, &loaded, &manifest)?;
+        inputs.push(WorkspaceMemberInputs {
+            member: member.clone(),
+            manifest,
+            sources,
+        });
+    }
+    Ok(inputs)
+}
+
+fn member_project_root(root: &ProjectRoot, member: &ResolvedWorkspaceMember) -> ProjectRoot {
+    let path = root.path.join(&member.path);
+    ProjectRoot {
+        path,
+        marker: RootMarker::PyProjectToml,
+        start: root.start.clone(),
+    }
 }
 
 fn canonicalize_path(path: &Path) -> Result<PathBuf, ProbeError> {
@@ -77,6 +148,7 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, ProbeError> {
 }
 
 /// Write human-readable probe summary to `out`.
+#[allow(clippy::too_many_lines)]
 pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "chokkin {} (probe)", report.version)?;
     writeln!(out)?;
@@ -105,6 +177,14 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         report.effective_config.mode
     )?;
     writeln!(out, "Layout  : {}", format_layout(&report.sources))?;
+    if !report.workspace_members.is_empty() {
+        writeln!(
+            out,
+            "Workspace: {} members ({} inventoried)",
+            report.workspace_members.len(),
+            report.workspace_inputs.len()
+        )?;
+    }
     writeln!(
         out,
         "Target  : {}",
@@ -134,11 +214,12 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     )?;
     writeln!(out)?;
 
-    let (python_count, stub_count) = count_files(&report.sources);
+    let (python_count, stub_count, notebook_count) = count_files(&report.sources);
     let context_counts = count_contexts(&report.sources);
     writeln!(out, "Sources")?;
-    writeln!(out, "  python files     : {python_count}")?;
-    writeln!(out, "  stub files (.pyi): {stub_count}")?;
+    writeln!(out, "  python files      : {python_count}")?;
+    writeln!(out, "  stub files (.pyi) : {stub_count}")?;
+    writeln!(out, "  notebooks (.ipynb): {notebook_count}")?;
     writeln!(
         out,
         "  contexts         : runtime {}, test {}, dev {}, docs {}",
@@ -206,16 +287,18 @@ struct ContextCounts {
     docs: usize,
 }
 
-fn count_files(sources: &DiscoveredSources) -> (usize, usize) {
+fn count_files(sources: &DiscoveredSources) -> (usize, usize, usize) {
     let mut python = 0;
     let mut stub = 0;
+    let mut notebook = 0;
     for file in &sources.files {
         match file.kind {
             FileKind::Python => python += 1,
             FileKind::Stub => stub += 1,
+            FileKind::Notebook => notebook += 1,
         }
     }
-    (python, stub)
+    (python, stub, notebook)
 }
 
 fn count_contexts(sources: &DiscoveredSources) -> ContextCounts {
@@ -226,7 +309,7 @@ fn count_contexts(sources: &DiscoveredSources) -> ContextCounts {
         docs: 0,
     };
     for file in &sources.files {
-        if file.kind != FileKind::Python {
+        if !matches!(file.kind, FileKind::Python | FileKind::Notebook) {
             continue;
         }
         match file.context {

@@ -39,8 +39,8 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
     let rel = relative_path(root, path);
     let mut result = PyprojectExtraction::default();
 
-    detect_unsupported_tools(&table, &mut result.warnings);
-    extract_pdm_hatch_dependencies(&table, &rel, &mut result.dependencies, &mut result.warnings);
+    detect_tool_sections(&table, &mut result.warnings);
+    extract_tool_dependencies(&table, &rel, &mut result.dependencies, &mut result.warnings);
 
     if let Some(project) = table.get("project").and_then(Value::as_table) {
         result.metadata = parse_project_metadata(project);
@@ -203,7 +203,7 @@ fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
     }
 }
 
-fn detect_unsupported_tools(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) {
+fn detect_tool_sections(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) {
     let Some(tool) = table.get("tool").and_then(Value::as_table) else {
         return;
     };
@@ -219,7 +219,7 @@ fn detect_unsupported_tools(table: &toml::Table, warnings: &mut Vec<ManifestWarn
     }
 }
 
-fn extract_pdm_hatch_dependencies(
+fn extract_tool_dependencies(
     table: &toml::Table,
     rel: &str,
     dependencies: &mut Vec<DeclaredDependency>,
@@ -228,8 +228,110 @@ fn extract_pdm_hatch_dependencies(
     let Some(tool) = table.get("tool").and_then(Value::as_table) else {
         return;
     };
+    extract_poetry_dependencies(tool, rel, dependencies, warnings);
     extract_pdm_dependencies(tool, rel, dependencies, warnings);
     extract_hatch_dependencies(tool, rel, dependencies, warnings);
+}
+
+fn extract_poetry_dependencies(
+    tool: &toml::Table,
+    rel: &str,
+    dependencies: &mut Vec<DeclaredDependency>,
+    warnings: &mut Vec<ManifestWarning>,
+) {
+    let Some(poetry) = tool.get("poetry").and_then(Value::as_table) else {
+        return;
+    };
+
+    if let Some(runtime) = poetry.get("dependencies").and_then(Value::as_table) {
+        for (name, dep_value) in runtime {
+            push_poetry_dependency(
+                dependencies,
+                warnings,
+                name,
+                dep_value,
+                DependencyContext::Runtime,
+                rel,
+                format!("tool.poetry.dependencies.{name}"),
+            );
+        }
+    }
+
+    if let Some(dev) = poetry.get("dev-dependencies").and_then(Value::as_table) {
+        for (name, dep_value) in dev {
+            push_poetry_dependency(
+                dependencies,
+                warnings,
+                name,
+                dep_value,
+                DependencyContext::Group("dev".to_owned()),
+                rel,
+                format!("tool.poetry.dev-dependencies.{name}"),
+            );
+        }
+    }
+
+    if let Some(groups) = poetry.get("group").and_then(Value::as_table) {
+        for (group, group_value) in groups {
+            let Some(group_table) = group_value.as_table() else {
+                continue;
+            };
+            let Some(group_deps) = group_table.get("dependencies").and_then(Value::as_table) else {
+                continue;
+            };
+            for (name, dep_value) in group_deps {
+                push_poetry_dependency(
+                    dependencies,
+                    warnings,
+                    name,
+                    dep_value,
+                    DependencyContext::Group(group.clone()),
+                    rel,
+                    format!("tool.poetry.group.{group}.dependencies.{name}"),
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_poetry_dependency(
+    dependencies: &mut Vec<DeclaredDependency>,
+    warnings: &mut Vec<ManifestWarning>,
+    name: &str,
+    value: &Value,
+    context: DependencyContext,
+    file: &str,
+    label: String,
+) {
+    if name == "python" {
+        return;
+    }
+    let raw = poetry_requirement_name(name, value);
+    push_dependency(DependencyPush {
+        dependencies,
+        warnings,
+        raw: &raw,
+        context,
+        file,
+        label,
+        line: None,
+    });
+}
+
+fn poetry_requirement_name(name: &str, value: &Value) -> String {
+    let extras = value
+        .as_table()
+        .and_then(|table| table.get("extras"))
+        .and_then(Value::as_array)
+        .map(|extras| extras.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    if extras.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{name}[{}]", extras.join(","))
+    }
 }
 
 fn extract_pdm_dependencies(
@@ -380,7 +482,36 @@ mod tests {
     }
 
     #[test]
-    fn detects_all_unsupported_tools() {
+    fn extracts_poetry_dependencies() {
+        let result = extract(
+            "[tool.poetry]\nname = \"x\"\n[tool.poetry.dependencies]\npython = \"^3.11\"\nrequests = \"^2.32\"\nhttpx = { version = \"^0.27\", extras = [\"http2\"] }\n[tool.poetry.group.dev.dependencies]\npytest = \"^8\"\n[tool.poetry.dev-dependencies]\nruff = \"^0.6\"\n",
+        )
+        .expect("valid pyproject");
+        assert!(result.warnings.contains(&ManifestWarning::PoetryDetected));
+        assert_eq!(result.dependencies.len(), 4);
+        assert!(
+            result
+                .dependencies
+                .iter()
+                .any(|dep| { dep.name == "requests" && dep.context == DependencyContext::Runtime })
+        );
+        assert!(result.dependencies.iter().any(|dep| {
+            dep.name == "httpx"
+                && dep.extras == vec!["http2".to_owned()]
+                && dep.context == DependencyContext::Runtime
+        }));
+        assert!(result.dependencies.iter().any(|dep| {
+            dep.name == "pytest"
+                && matches!(&dep.context, DependencyContext::Group(group) if group == "dev")
+        }));
+        assert!(result.dependencies.iter().any(|dep| {
+            dep.name == "ruff"
+                && matches!(&dep.context, DependencyContext::Group(group) if group == "dev")
+        }));
+    }
+
+    #[test]
+    fn detects_all_tool_sections() {
         let result = extract("[tool.poetry]\n[tool.pdm]\n[tool.hatch]\n").expect("valid pyproject");
         assert_eq!(
             result.warnings,
@@ -526,7 +657,7 @@ mod tests {
             }
 
             #[test]
-            fn unsupported_tool_warnings_match_subset(
+            fn tool_section_warnings_match_subset(
                 poetry in proptest::bool::ANY,
                 pdm in proptest::bool::ANY,
                 hatch in proptest::bool::ANY,

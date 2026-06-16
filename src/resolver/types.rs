@@ -25,6 +25,8 @@ pub struct ResolvedImport {
     pub full_module: String,
     /// Source file path.
     pub file: String,
+    /// Workspace member id that owns `file`, when the import comes from a member.
+    pub workspace_member: Option<String>,
     /// 1-based line number.
     pub line: u32,
     /// Import context from the parser.

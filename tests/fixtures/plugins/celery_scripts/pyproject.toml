@@ -1,0 +1,10 @@
+[project]
+name = "celery-scripts"
+version = "0.1.0"
+dependencies = ["celery"]
+
+[tool.chokkin.plugins]
+celery = true
+
+[project.scripts]
+worker = "celery -A worker.app:celery worker --loglevel=info"

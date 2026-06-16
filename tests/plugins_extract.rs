@@ -62,6 +62,14 @@ fn fastapi_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution
         .expect("fastapi contribution")
 }
 
+fn plugin_contrib(hints: &chokkin::PluginHints, plugin: PluginId) -> &chokkin::PluginContribution {
+    hints
+        .contributions
+        .iter()
+        .find(|contrib| contrib.plugin == plugin)
+        .expect("plugin contribution")
+}
+
 fn entry_paths(contrib: &chokkin::PluginContribution) -> Vec<&str> {
     contrib
         .entries
@@ -191,6 +199,214 @@ fn fastapi_scripts_symbol() {
 fn disabled_plugin_skipped() {
     let hints = extract_fixture("plugins_disabled");
     assert!(hints.contributions.is_empty());
+}
+
+#[test]
+fn tox_plugin_records_config_binary() {
+    let hints = extract_fixture("tox_config");
+    let contrib = plugin_contrib(&hints, PluginId::Tox);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "tox" && usage.origin.file == "tox.ini")
+    );
+    assert!(!hints.warnings.iter().any(|warning| {
+        matches!(
+            warning,
+            PluginsWarning::PluginNoOp {
+                plugin: PluginId::Tox
+            }
+        )
+    }));
+}
+
+#[test]
+fn nox_plugin_records_config_binary() {
+    let hints = extract_fixture("nox_config");
+    let contrib = plugin_contrib(&hints, PluginId::Nox);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "nox" && usage.origin.file == "noxfile.py")
+    );
+}
+
+#[test]
+fn pre_commit_plugin_records_config_binary() {
+    let hints = extract_fixture("pre_commit_config");
+    let contrib = plugin_contrib(&hints, PluginId::PreCommit);
+    assert!(contrib.binary_usages.iter().any(|usage| {
+        usage.binary == "pre-commit" && usage.origin.file == ".pre-commit-config.yaml"
+    }));
+}
+
+#[test]
+fn github_actions_plugin_records_run_binaries() {
+    let hints = extract_fixture("github_actions_workflow");
+    let contrib = plugin_contrib(&hints, PluginId::GithubActions);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "ruff"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(11))
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "mypy"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(12))
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "pytest"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(13))
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "uv"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(15))
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "pytest"
+                && usage.origin.file == ".github/workflows/ci.yml"
+                && usage.origin.line == Some(15))
+    );
+}
+
+#[test]
+fn flask_plugin_records_flask_app_symbol() {
+    let hints = extract_fixture("flask_env");
+    let contrib = plugin_contrib(&hints, PluginId::Flask);
+    assert!(
+        contrib
+            .symbol_refs
+            .iter()
+            .any(|reference| reference.module == "web.app" && reference.symbol == "app")
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "flask" && usage.origin.file == ".flaskenv")
+    );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "web.routes"
+                && reference.origin.file == "src/web/routes.py"
+                && reference.origin.line == Some(4))
+    );
+}
+
+#[test]
+fn celery_plugin_records_app_symbol() {
+    let hints = extract_fixture("celery_scripts");
+    let contrib = plugin_contrib(&hints, PluginId::Celery);
+    assert!(
+        contrib
+            .symbol_refs
+            .iter()
+            .any(|reference| reference.module == "worker.app" && reference.symbol == "celery")
+    );
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "celery" && usage.origin.file == "pyproject.toml")
+    );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.file == "src/worker/tasks.py"
+                && reference.origin.line == Some(4))
+    );
+}
+
+#[test]
+fn sphinx_plugin_records_docs_conf_entry() {
+    let hints = extract_fixture("sphinx_docs");
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"docs/conf.py"));
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "sphinx-build" && usage.origin.file == "docs/conf.py")
+    );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "sphinx.ext.autodoc"
+                && reference.origin.file == "docs/conf.py")
+    );
+    assert!(
+        contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "myst_parser"
+                && reference.origin.file == "docs/conf.py")
+    );
+}
+
+#[test]
+fn mkdocs_plugin_records_config_binary() {
+    let hints = extract_fixture("mkdocs_config");
+    let contrib = plugin_contrib(&hints, PluginId::MkDocs);
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "mkdocs" && usage.origin.file == "mkdocs.yml")
+    );
+    assert!(
+        hints
+            .config_used_distributions
+            .contains(&"mkdocs-material".to_owned())
+    );
+    assert!(
+        hints
+            .config_used_distributions
+            .contains(&"mkdocstrings".to_owned())
+    );
+    assert!(
+        hints
+            .config_used_distributions
+            .contains(&"mkdocs-autorefs".to_owned())
+    );
+}
+
+#[test]
+fn alembic_plugin_records_env_entry() {
+    let hints = extract_fixture("alembic_env");
+    let contrib = plugin_contrib(&hints, PluginId::Alembic);
+    let paths = entry_paths(contrib);
+    assert!(paths.contains(&"alembic/env.py"));
+    assert!(
+        contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "alembic" && usage.origin.file == "alembic.ini")
+    );
 }
 
 #[test]

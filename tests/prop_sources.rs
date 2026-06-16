@@ -40,6 +40,7 @@ fn default_loaded_config(root: &ProjectRoot) -> LoadedConfig {
             pyproject_tool_chokkin: false,
         },
         uv_workspace: None,
+        workspace_members: Vec::new(),
     }
 }
 
@@ -50,12 +51,43 @@ fn write_file(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write file");
 }
 
+fn path_segment(max_suffix_len: usize) -> impl Strategy<Value = String> {
+    proptest::string::string_regex(&format!("[a-z][a-z0-9_]{{0,{max_suffix_len}}}"))
+        .expect("valid segment regex")
+        .prop_filter("segment is not a Windows reserved device name", |segment| {
+            !matches!(
+                segment.as_str(),
+                "aux"
+                    | "con"
+                    | "nul"
+                    | "prn"
+                    | "com1"
+                    | "com2"
+                    | "com3"
+                    | "com4"
+                    | "com5"
+                    | "com6"
+                    | "com7"
+                    | "com8"
+                    | "com9"
+                    | "lpt1"
+                    | "lpt2"
+                    | "lpt3"
+                    | "lpt4"
+                    | "lpt5"
+                    | "lpt6"
+                    | "lpt7"
+                    | "lpt8"
+                    | "lpt9"
+            )
+        })
+}
+
 /// Root-relative file paths: 1-3 short lowercase segments plus an extension.
 fn tree_paths() -> impl Strategy<Value = Vec<String>> {
-    let segment = "[a-z][a-z0-9_]{0,6}";
     let extension = prop_oneof![Just("py"), Just("pyi"), Just("txt"), Just("md")];
     prop::collection::btree_set(
-        (prop::collection::vec(segment, 1..4), extension)
+        (prop::collection::vec(path_segment(6), 1..4), extension)
             .prop_map(|(segments, ext)| format!("{}.{ext}", segments.join("/"))),
         0..15,
     )
@@ -132,8 +164,8 @@ proptest! {
 
     #[test]
     fn pycache_files_are_never_discovered(
-        package in "[a-z][a-z0-9_]{0,8}",
-        module in "[a-z][a-z0-9_]{0,8}",
+        package in path_segment(8),
+        module in path_segment(8),
     ) {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(&temp.path().join("pyproject.toml"), "[project]\nname = \"acme\"\n");
@@ -157,9 +189,9 @@ proptest! {
 
     #[test]
     fn gitignored_files_are_skipped(
-        package in "[a-z][a-z0-9_]{0,8}",
-        kept in "[a-z][a-z0-9_]{0,8}",
-        ignored in "[a-z][a-z0-9_]{0,8}",
+        package in path_segment(8),
+        kept in path_segment(8),
+        ignored in path_segment(8),
     ) {
         prop_assume!(kept != ignored);
         let temp = tempfile::tempdir().expect("tempdir");

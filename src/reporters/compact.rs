@@ -4,7 +4,9 @@ use std::fmt::Write as _;
 
 use crate::rules::IssueReport;
 
-use super::format::{format_location_column, format_subject, severity_label};
+use super::format::{
+    baseline_suppressed_count, format_issue_subject, format_location_column, severity_label,
+};
 use super::traits::Reporter;
 use super::types::RenderContext;
 
@@ -22,7 +24,7 @@ impl Reporter for CompactReporter {
                 issue.rule.as_code(),
                 severity_label(issue.severity),
                 issue.confidence.as_str(),
-                format_subject(&issue.subject),
+                format_issue_subject(issue),
                 format_location_column(&issue.location),
             );
         }
@@ -32,6 +34,10 @@ impl Reporter for CompactReporter {
                 "chokkin {} — no issues ({})",
                 context.version, context.mode.mode
             );
+        }
+        let suppressed = baseline_suppressed_count(report);
+        if suppressed > 0 {
+            let _ = writeln!(out, "baseline suppressed {suppressed}");
         }
         out
     }

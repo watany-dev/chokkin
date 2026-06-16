@@ -2,13 +2,15 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::config::UvWorkspaceHint;
 use crate::discovery::ProjectRoot;
 
 use super::warnings::ManifestWarning;
 
 /// Where a dependency was declared (manifest stage).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DependencyContext {
     /// `[project.dependencies]` or runtime `requirements.txt`.
     Runtime,
@@ -21,7 +23,7 @@ pub enum DependencyContext {
 }
 
 /// Declaration location for reports, `--explain`, and fix.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencyOrigin {
     /// Root-relative path, e.g. `pyproject.toml`.
     pub file: String,
@@ -32,7 +34,7 @@ pub struct DependencyOrigin {
 }
 
 /// A declared third-party or path dependency from manifest sources.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeclaredDependency {
     /// PEP 508 distribution name (normalized to lowercase hyphen form).
     pub name: String,
@@ -51,7 +53,7 @@ pub struct DeclaredDependency {
 }
 
 /// Console script or entry-point declaration from packaging metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntryPointDecl {
     /// Distribution-local name, e.g. `acme-cli`.
     pub name: String,
@@ -64,7 +66,7 @@ pub struct EntryPointDecl {
 }
 
 /// Project metadata from packaging manifests.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ProjectMetadata {
     /// `[project].name`.
     pub name: Option<String>,
@@ -77,7 +79,7 @@ pub struct ProjectMetadata {
 }
 
 /// Resolved dependency graph from a lockfile.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
@@ -86,7 +88,7 @@ pub struct LockfileGraph {
 }
 
 /// Which manifest files contributed to extraction.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct ManifestSources {
     /// `pyproject.toml` contributed project metadata or dependencies.
@@ -99,13 +101,13 @@ pub struct ManifestSources {
     pub setup_py: bool,
     /// `uv.lock` contributed.
     pub uv_lock: bool,
-    /// Poetry sections were detected and skipped.
-    pub skipped_poetry: bool,
+    /// Poetry sections were detected.
+    pub poetry: bool,
 }
 
 /// Fully extracted manifest for a project root.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoadedManifest {
     /// Project root from discovery step 1.
     pub root: ProjectRoot,

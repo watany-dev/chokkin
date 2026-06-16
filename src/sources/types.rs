@@ -55,6 +55,8 @@ pub enum FileKind {
     Python,
     /// A `.pyi` stub file.
     Stub,
+    /// A Jupyter notebook (`.ipynb`) with Python code cells.
+    Notebook,
 }
 
 /// One discovered file under the project root.
@@ -113,5 +115,12 @@ impl DiscoveredSources {
         self.files
             .iter()
             .filter(|file| file.kind == FileKind::Python)
+    }
+
+    /// Iterate files that can be parsed as Python source.
+    pub fn parseable_python_files(&self) -> impl Iterator<Item = &DiscoveredFile> {
+        self.files
+            .iter()
+            .filter(|file| matches!(file.kind, FileKind::Python | FileKind::Notebook))
     }
 }
