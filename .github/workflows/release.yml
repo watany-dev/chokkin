@@ -60,7 +60,9 @@ jobs:
           target: ${{ matrix.platform.target }}
           # Pass manylinux only for Linux targets; empty string disables it for macOS/Windows.
           manylinux: ${{ matrix.platform.manylinux }}
-          args: --release --locked --out dist
+          # Use the fat-LTO `dist` profile (Cargo.toml [profile.dist]) for the
+          # smallest, most-optimized wheel binaries shipped to PyPI.
+          args: --profile dist --locked --out dist
           sccache: "true"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
