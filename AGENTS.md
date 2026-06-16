@@ -22,7 +22,13 @@ workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `-
 `SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse and disk
 `ParsedModule` JSON entries under `.chokkin/cache/parse/`. Config/manifest scan input
 fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
-`ScanCacheRecord`; scan result payload storage is still draft. PyPI
+`ScanCacheRecord`; typed scan payload storage is wired for config scan, manifest
+extraction, and module index cache. v0.2 release validation measurements were
+recorded on 2026-06-15 with Rust 1.93: `make check`, OSS fixtures, full
+20-project OSS gate, and Criterion cache benches passed; synthetic 10k warm
+cache measured under 205 ms. Baseline CI adoption is dogfooded by this repo's
+`chokkin-baseline` workflow job and checked-in `chokkin-baseline.json` (see
+`docs/dev/v0.2-release-validation.md`). PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`

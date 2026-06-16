@@ -6,17 +6,18 @@ deferred or require manual setup before they become fully effective.
 ## SHA pinning for third-party actions
 
 The following actions in `release.yml` are currently referenced by semver tag,
-not commit SHA. Pin them to a SHA before the first production release and remove
-the corresponding `zizmor.yml` suppressions.
+not commit SHA. Pin them to a SHA as post-v0.2 release hardening and remove the
+corresponding `zizmor.yml` suppressions.
 
 | Action | Current ref | Why deferred |
 |--------|-------------|--------------|
-| `PyO3/maturin-action` | `@v1` | SHA to be confirmed on first release run |
-| `pypa/gh-action-pypi-publish` | `@release/v1` | SHA to be confirmed on first release run |
+| `PyO3/maturin-action` | `@v1` | Post-v0.2 hardening; SHA to be confirmed from a successful release run |
+| `pypa/gh-action-pypi-publish` | `@release/v1` | Post-v0.2 hardening; SHA to be confirmed from a successful release run |
 
 ## PyPI Trusted Publishing setup
 
-Before the first `v*` tag push, register a Trusted Publisher on pypi.org:
+Trusted Publishing is configured for the released `chokkin` package on PyPI.
+For future releases, keep the PyPI publisher and GitHub environment aligned:
 
 1. Go to https://pypi.org/manage/account/publishing/ (or the project page once
    reserved).
@@ -24,17 +25,17 @@ Before the first `v*` tag push, register a Trusted Publisher on pypi.org:
    - **Repository owner:** `watany-dev`
    - **Repository name:** `chokkin`
    - **Workflow filename:** `release.yml`
-   - **Environment name:** `pypi`
-3. Create the `pypi` environment in the GitHub repository settings
-   (Settings → Environments → New environment → name it `pypi`).
+   - **Environment name:** `pypi-chokkin`
+3. Keep the `pypi-chokkin` environment in the GitHub repository settings
+   (Settings → Environments) because `.github/workflows/release.yml` publishes
+   through that environment.
 
 The workflow uses `id-token: write` + `pypa/gh-action-pypi-publish` with no
 API token — authentication is handled entirely by OIDC.
 
 ## PyPI package name reservation
 
-The package name `chokkin` on PyPI has not been reserved. Consider publishing an
-empty placeholder wheel early to prevent name squatting.
+The package name `chokkin` is reserved by the published v0.1.0 release.
 
 ## Coverage threshold
 

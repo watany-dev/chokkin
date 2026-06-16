@@ -51,7 +51,7 @@ uvx chokkin
 出力例。
 
 ```text
-chokkin 0.1.0
+chokkin 0.2.0
 
 Project: acme-api
 Config : pyproject.toml
@@ -729,7 +729,7 @@ build-backend = "maturin"
 
 [project]
 name = "chokkin"
-version = "0.1.0"
+version = "0.2.0"
 description = "Find unused files, dependencies, and public symbols in Python projects"
 readme = "README.md"
 requires-python = ">=3.10"  # 3.9は2025年10月にEOL
@@ -1045,7 +1045,7 @@ config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ 
 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 
-warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。
+warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
