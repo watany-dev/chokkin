@@ -59,8 +59,13 @@ mod tests {
     fn resolves_missing_file_under_existing_root_parent() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let resolved = resolve_contained_path(dir.path(), "pyproject.toml").expect("resolve");
+        let expected = dir
+            .path()
+            .canonicalize()
+            .expect("canonical tempdir")
+            .join("pyproject.toml");
 
-        assert_eq!(resolved, dir.path().join("pyproject.toml"));
+        assert_eq!(resolved, expected);
     }
 
     #[cfg(unix)]
