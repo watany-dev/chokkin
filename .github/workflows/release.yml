@@ -53,9 +53,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      # TODO: pin PyO3/maturin-action to a commit SHA once the first release confirms
-      # the exact SHA in use. See docs/dev/ci-porting-notes.md.
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
           # Pass manylinux only for Linux targets; empty string disables it for macOS/Windows.
@@ -79,7 +77,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: PyO3/maturin-action@v1 # TODO: pin to SHA
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           command: sdist
           args: --out dist
@@ -148,10 +146,9 @@ jobs:
           pattern: wheel-*
           path: dist
           merge-multiple: true
-      # TODO: pin pypa/gh-action-pypi-publish to a commit SHA.
       # PyPI Trusted Publishing requires the environment named "pypi-chokkin" to be
       # registered in pypi.org settings: repo=watany-dev/chokkin, workflow=release.yml.
       # See docs/dev/ci-porting-notes.md for setup instructions.
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0 (release/v1)
         with:
           packages-dir: dist/

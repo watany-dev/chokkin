@@ -3,17 +3,6 @@
 This document tracks items ported from `watany-dev/ptuf` that are intentionally
 deferred or require manual setup before they become fully effective.
 
-## SHA pinning for third-party actions
-
-The following actions in `release.yml` are currently referenced by semver tag,
-not commit SHA. Pin them to a SHA as post-v0.2 release hardening and remove the
-corresponding `zizmor.yml` suppressions.
-
-| Action | Current ref | Why deferred |
-|--------|-------------|--------------|
-| `PyO3/maturin-action` | `@v1` | Post-v0.2 hardening; SHA to be confirmed from a successful release run |
-| `pypa/gh-action-pypi-publish` | `@release/v1` | Post-v0.2 hardening; SHA to be confirmed from a successful release run |
-
 ## PyPI Trusted Publishing setup
 
 Trusted Publishing is configured for the released `chokkin` package on PyPI.

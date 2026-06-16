@@ -9,11 +9,3 @@ rules:
     ignore:
       - ci.yml
       - audit.yml
-
-  # PyO3/maturin-action and pypa/gh-action-pypi-publish are referenced by
-  # semver tag, not SHA, while we verify the exact SHA on first release.
-  # Tracked in docs/dev/ci-porting-notes.md — remove these entries once SHA
-  # pins are in place.
-  unpinned-uses:
-    ignore:
-      - release.yml

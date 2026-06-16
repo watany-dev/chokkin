@@ -200,7 +200,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install actionlint
-        run: bash <(curl -Ls https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.11
+        run: bash <(curl -Ls https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash) 1.7.11
       - run: ./actionlint -color
 
   zizmor:
