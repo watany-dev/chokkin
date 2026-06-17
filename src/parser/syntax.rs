@@ -17,7 +17,7 @@ pub enum SyntaxFeature {
 /// Returns whether `target` supports `feature`.
 #[must_use]
 pub fn supports_syntax(target: &TargetVersion, feature: SyntaxFeature) -> bool {
-    let minor = target_minor(target);
+    let minor = target.minor();
     match feature {
         SyntaxFeature::MatchStatement => minor >= 10,
         SyntaxFeature::TypeAliasStatement | SyntaxFeature::Pep695Generics => minor >= 12,
@@ -31,12 +31,6 @@ pub fn feature_requirement(feature: SyntaxFeature) -> &'static str {
         SyntaxFeature::MatchStatement => "py310",
         SyntaxFeature::TypeAliasStatement | SyntaxFeature::Pep695Generics => "py312",
     }
-}
-
-fn target_minor(target: &TargetVersion) -> u32 {
-    let value = target.as_str();
-    let suffix = value.strip_prefix("py3").unwrap_or("11");
-    suffix.parse().unwrap_or(11)
 }
 
 #[cfg(test)]

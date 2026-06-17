@@ -17,7 +17,7 @@ pub fn is_stdlib_import(import_root: &str, target: &TargetVersion) -> bool {
 }
 
 fn stdlib_modules(target: &TargetVersion) -> &'static HashSet<&'static str> {
-    match target_minor(target) {
+    match target.minor() {
         0..=10 => PY310_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py310.txt"))),
         11 => PY311_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py311.txt"))),
         12 => PY312_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py312.txt"))),
@@ -27,12 +27,6 @@ fn stdlib_modules(target: &TargetVersion) -> &'static HashSet<&'static str> {
 
 fn load_modules(contents: &'static str) -> HashSet<&'static str> {
     contents.lines().filter(|line| !line.is_empty()).collect()
-}
-
-fn target_minor(target: &TargetVersion) -> u32 {
-    let value = target.as_str();
-    let suffix = value.strip_prefix("py3").unwrap_or("11");
-    suffix.parse().unwrap_or(11)
 }
 
 #[cfg(test)]
