@@ -342,15 +342,13 @@ mod tests {
             AnalyzeOptions::default(),
         )
         .expect("analyze");
-        assert!(
-            !default_report.issues.issues.iter().any(|issue| {
-                issue.rule == RuleId::Chk002
-                    && matches!(
-                        &issue.subject,
-                        IssueSubject::Distribution { name } if name == "pywin32"
-                    )
-            })
-        );
+        assert!(!default_report.issues.issues.iter().any(|issue| {
+            issue.rule == RuleId::Chk002
+                && matches!(
+                    &issue.subject,
+                    IssueSubject::Distribution { name } if name == "pywin32"
+                )
+        }));
 
         let strict_report = analyze_project(
             &root,
