@@ -287,6 +287,7 @@ mod tests {
                     relative_level: 0,
                 }],
                 dynamic_imports: Vec::new(),
+                attribute_accesses: Vec::new(),
                 symbols: Vec::new(),
                 exports: Vec::new(),
                 ignores: Vec::new(),
