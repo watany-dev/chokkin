@@ -14,7 +14,7 @@ use super::binary::detect_unlisted_binaries;
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::detect_misplaced_dependencies;
 use super::missing::{collect_optional_imports, detect_missing_dependencies};
-use super::unused::{detect_unused_dependencies, is_types_stub};
+use super::unused::{UnusedEvidenceContext, detect_unused_dependencies, is_types_stub};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
     mark_self_referential_distribution, reachable_paths,
@@ -72,9 +72,21 @@ pub fn reconcile_dependencies(
     }
 
     let mut candidates = Vec::new();
+    let evidence = UnusedEvidenceContext {
+        resolution,
+        reachability,
+        graph,
+        reachable: &reachable,
+    };
 
     for deps in declared.values() {
-        candidates.extend(detect_unused_dependencies(deps, &used, config, strict));
+        candidates.extend(detect_unused_dependencies(
+            deps,
+            &used,
+            config,
+            strict,
+            Some(&evidence),
+        ));
     }
 
     candidates.extend(detect_missing_dependencies(
