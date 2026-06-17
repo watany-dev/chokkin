@@ -1,6 +1,6 @@
 {
   "chokkin_version": "0.2.0",
-  "generated_at": "unix:1781683918",
+  "generated_at": "unix:1781710992",
   "issues": [
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",
@@ -628,16 +628,6 @@
       "target": "tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest"
     },
     {
-      "fingerprint": "CHK003:tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme.reached_via_main",
-      "code": "CHK003",
-      "target": "tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme.reached_via_main"
-    },
-    {
-      "fingerprint": "CHK003:tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme",
-      "code": "CHK003",
-      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme"
-    },
-    {
       "fingerprint": "CHK003:tests/fixtures/symbols/pytest_fixture/src/acme/conftest.py:pytest",
       "code": "CHK003",
       "target": "tests/fixtures/symbols/pytest_fixture/src/acme/conftest.py:pytest"
@@ -901,6 +891,16 @@
       "fingerprint": "CHK008:wheel",
       "code": "CHK008",
       "target": "wheel"
+    },
+    {
+      "fingerprint": "CHK010:tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme",
+      "code": "CHK010",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme"
+    },
+    {
+      "fingerprint": "CHK010:tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme",
+      "code": "CHK010",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme"
     }
   ]
 }
