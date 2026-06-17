@@ -1,6 +1,6 @@
 {
   "chokkin_version": "0.2.0",
-  "generated_at": "unix:1781589628",
+  "generated_at": "unix:1781677460",
   "issues": [
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",
@@ -553,6 +553,11 @@
       "target": "tests/fixtures/symbols/unused_reexport/src/acme/sub.py"
     },
     {
+      "fingerprint": "CHK003:scripts/generate-package-map.py:__future__",
+      "code": "CHK003",
+      "target": "scripts/generate-package-map.py:__future__"
+    },
+    {
       "fingerprint": "CHK003:tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest",
       "code": "CHK003",
       "target": "tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest"
@@ -766,11 +771,6 @@
       "fingerprint": "CHK008:wheel",
       "code": "CHK008",
       "target": "wheel"
-    },
-    {
-      "fingerprint": "CHK010:scripts/generate-package-map.py:__future__",
-      "code": "CHK010",
-      "target": "scripts/generate-package-map.py:__future__"
     }
   ]
 }

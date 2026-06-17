@@ -1,5 +1,7 @@
 //! Import resolution orchestration.
 
+use std::collections::BTreeMap;
+
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::discovery::ProjectRoot;
 use crate::graph::ModuleOrigin;
@@ -47,13 +49,14 @@ pub fn resolve_imports(
     let venv_index = load_venv_index(&manifest.root, &mut warnings);
     let binary_resolutions = build_binary_map(config, &venv_index);
     let mut imports = Vec::new();
+    let mut root_cache: BTreeMap<String, RootResolution> = BTreeMap::new();
 
     for module in &parse.modules {
         for import in &module.imports {
             if import.module.is_empty() {
                 continue;
             }
-            imports.push(resolve_module(
+            imports.push(resolve_import_site(
                 &import.module,
                 &module.path,
                 import.line,
@@ -68,10 +71,11 @@ pub fn resolve_imports(
                 &import_map,
                 &venv_index.imports,
                 &mut warnings,
+                &mut root_cache,
             ));
         }
         for dynamic in &module.dynamic_imports {
-            imports.push(resolve_module(
+            imports.push(resolve_import_site(
                 &dynamic.module,
                 &module.path,
                 dynamic.line,
@@ -86,12 +90,13 @@ pub fn resolve_imports(
                 &import_map,
                 &venv_index.imports,
                 &mut warnings,
+                &mut root_cache,
             ));
         }
     }
 
     for reference in plugin_refs {
-        imports.push(resolve_module(
+        imports.push(resolve_import_site(
             &reference.module,
             &reference.origin.file,
             reference.origin.line.unwrap_or(0),
@@ -106,6 +111,7 @@ pub fn resolve_imports(
             &import_map,
             &venv_index.imports,
             &mut warnings,
+            &mut root_cache,
         ));
     }
 
@@ -117,8 +123,15 @@ pub fn resolve_imports(
     })
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-fn resolve_module(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RootResolution {
+    origin: ModuleOrigin,
+    distribution: Option<String>,
+    confidence: ResolveConfidence,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_import_site(
     full_module: &str,
     file: &str,
     line: u32,
@@ -131,38 +144,73 @@ fn resolve_module(
     config: &ChokkinConfig,
     workspace_members: &[ResolvedWorkspaceMember],
     import_map: &ImportMap,
-    venv_imports: &std::collections::BTreeMap<String, Vec<String>>,
+    venv_imports: &BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
+    root_cache: &mut BTreeMap<String, RootResolution>,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
-    let workspace_member = workspace_member_for_file(file, workspace_members);
+    let core = root_cache
+        .entry(root_name.clone())
+        .or_insert_with(|| {
+            resolve_import_root(
+                &root_name,
+                target,
+                sources,
+                manifest,
+                config,
+                workspace_members,
+                import_map,
+                venv_imports,
+                warnings,
+            )
+        })
+        .clone();
 
-    if is_stdlib_import(&root_name, target) {
-        return ResolvedImport {
-            import_root: root_name,
-            full_module: full_module.to_owned(),
+    if core.origin == ModuleOrigin::Unknown {
+        warnings.push(ResolveWarning::UnresolvedImport {
+            import: root_name.clone(),
             file: file.to_owned(),
-            workspace_member,
             line,
-            context,
-            optional,
-            platform_guarded,
+        });
+    }
+
+    ResolvedImport {
+        import_root: root_name,
+        full_module: full_module.to_owned(),
+        file: file.to_owned(),
+        workspace_member: workspace_member_for_file(file, workspace_members),
+        line,
+        context,
+        optional,
+        platform_guarded,
+        origin: core.origin,
+        distribution: core.distribution,
+        confidence: core.confidence,
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn resolve_import_root(
+    root_name: &str,
+    target: &TargetVersion,
+    sources: &DiscoveredSources,
+    manifest: &LoadedManifest,
+    config: &ChokkinConfig,
+    workspace_members: &[ResolvedWorkspaceMember],
+    import_map: &ImportMap,
+    venv_imports: &BTreeMap<String, Vec<String>>,
+    warnings: &mut Vec<ResolveWarning>,
+) -> RootResolution {
+    if is_stdlib_import(root_name, target) {
+        return RootResolution {
             origin: ModuleOrigin::Stdlib,
             distribution: None,
             confidence: ResolveConfidence::Certain,
         };
     }
 
-    if is_first_party_import(&root_name, &sources.layout, &manifest.metadata) {
-        return ResolvedImport {
-            import_root: root_name,
-            full_module: full_module.to_owned(),
-            file: file.to_owned(),
-            workspace_member,
-            line,
-            context,
-            optional,
-            platform_guarded,
+    if is_first_party_import(root_name, &sources.layout, &manifest.metadata) {
+        return RootResolution {
             origin: ModuleOrigin::FirstParty,
             distribution: None,
             confidence: ResolveConfidence::Certain,
@@ -170,43 +218,23 @@ fn resolve_module(
     }
 
     if is_workspace_import(
-        &root_name,
+        root_name,
         workspace_members,
         manifest.uv_workspace.as_ref(),
         config,
     ) {
-        return ResolvedImport {
-            import_root: root_name,
-            full_module: full_module.to_owned(),
-            file: file.to_owned(),
-            workspace_member,
-            line,
-            context,
-            optional,
-            platform_guarded,
+        return RootResolution {
             origin: ModuleOrigin::FirstParty,
             distribution: None,
             confidence: ResolveConfidence::Certain,
         };
     }
 
-    if let Some(distributions) = venv_imports.get(&root_name) {
-        return resolve_from_candidates(
-            &root_name,
-            full_module,
-            file,
-            line,
-            context,
-            optional,
-            platform_guarded,
-            distributions,
-            None,
-            workspace_member,
-            warnings,
-        );
+    if let Some(distributions) = venv_imports.get(root_name) {
+        return root_resolution_from_candidates(root_name, distributions, None, warnings);
     }
 
-    let map_candidates = import_map.candidates(&root_name);
+    let map_candidates = import_map.candidates(root_name);
     if !map_candidates.is_empty() {
         let distributions: Vec<String> = map_candidates
             .iter()
@@ -217,34 +245,15 @@ fn resolve_module(
             .map(|candidate| candidate.confidence)
             .max_by_key(|confidence| confidence_rank(*confidence))
             .unwrap_or(ResolveConfidence::Maybe);
-        return resolve_from_candidates(
-            &root_name,
-            full_module,
-            file,
-            line,
-            context,
-            optional,
-            platform_guarded,
+        return root_resolution_from_candidates(
+            root_name,
             &distributions,
             Some(confidence),
-            workspace_member,
             warnings,
         );
     }
-    warnings.push(ResolveWarning::UnresolvedImport {
-        import: root_name.clone(),
-        file: file.to_owned(),
-        line,
-    });
-    ResolvedImport {
-        import_root: root_name,
-        full_module: full_module.to_owned(),
-        file: file.to_owned(),
-        workspace_member,
-        line,
-        context,
-        optional,
-        platform_guarded,
+
+    RootResolution {
         origin: ModuleOrigin::Unknown,
         distribution: None,
         confidence: ResolveConfidence::Maybe,
@@ -273,20 +282,12 @@ fn confidence_rank(confidence: ResolveConfidence) -> u8 {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn resolve_from_candidates(
+fn root_resolution_from_candidates(
     root_name: &str,
-    full_module: &str,
-    file: &str,
-    line: u32,
-    context: ImportContext,
-    optional: bool,
-    platform_guarded: bool,
     candidates: &[String],
     confidence_override: Option<ResolveConfidence>,
-    workspace_member: Option<String>,
     warnings: &mut Vec<ResolveWarning>,
-) -> ResolvedImport {
+) -> RootResolution {
     if candidates.len() > 1 {
         warnings.push(ResolveWarning::AmbiguousImport {
             import: root_name.to_owned(),
@@ -303,15 +304,7 @@ fn resolve_from_candidates(
             }
         },
     };
-    ResolvedImport {
-        import_root: root_name.to_owned(),
-        full_module: full_module.to_owned(),
-        file: file.to_owned(),
-        workspace_member,
-        line,
-        context,
-        optional,
-        platform_guarded,
+    RootResolution {
         origin: ModuleOrigin::ThirdParty,
         distribution: candidates.first().cloned(),
         confidence,

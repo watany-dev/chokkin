@@ -94,4 +94,61 @@ mod tests {
         );
         assert!(graph.distribution_id("pyyaml").is_some());
     }
+
+    #[test]
+    fn module_origin_merge_keeps_resolved_classification() {
+        let mut graph = ProjectGraph::new(ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        });
+        graph
+            .intern_file(FileNode {
+                path: "app.py".to_owned(),
+                context: FileContext::Runtime,
+                kind: FileKind::Python,
+            })
+            .expect("file");
+        let module_id = graph.intern_module("yaml".to_owned(), ModuleOrigin::Unknown);
+
+        let index = ResolutionIndex {
+            imports: vec![
+                ResolvedImport {
+                    import_root: "yaml".to_owned(),
+                    full_module: "yaml".to_owned(),
+                    file: "app.py".to_owned(),
+                    workspace_member: None,
+                    line: 1,
+                    context: ImportContext::Runtime,
+                    optional: false,
+                    platform_guarded: false,
+                    origin: ModuleOrigin::Unknown,
+                    distribution: None,
+                    confidence: ResolveConfidence::Maybe,
+                },
+                ResolvedImport {
+                    import_root: "yaml".to_owned(),
+                    full_module: "yaml".to_owned(),
+                    file: "app.py".to_owned(),
+                    workspace_member: None,
+                    line: 2,
+                    context: ImportContext::Runtime,
+                    optional: false,
+                    platform_guarded: false,
+                    origin: ModuleOrigin::ThirdParty,
+                    distribution: Some("pyyaml".to_owned()),
+                    confidence: ResolveConfidence::Certain,
+                },
+            ],
+            warnings: Vec::new(),
+            transitive: TransitiveIndex::empty(),
+            binary_resolutions: BTreeMap::new(),
+        };
+
+        apply_resolution_to_graph(&mut graph, &index).expect("apply");
+        assert_eq!(
+            graph.module(module_id).map(|node| node.origin),
+            Some(ModuleOrigin::ThirdParty)
+        );
+    }
 }
