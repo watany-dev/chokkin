@@ -1,0 +1,54 @@
+{
+  "mode": "app",
+  "mode_confidence": "certain",
+  "entry_roots": [
+    {
+      "path": "src/acme/__main__.py",
+      "origins": [
+        "auto:auto:__main__.py"
+      ]
+    },
+    {
+      "path": "src/acme/cli.py",
+      "origins": [
+        "manifest:console:cli"
+      ]
+    },
+    {
+      "path": "src/acme/plugin.py",
+      "origins": [
+        "manifest:acme.plugins:helper"
+      ]
+    },
+    {
+      "path": "tests/test_sample.py",
+      "origins": [
+        "plugin:pytest:pytest defaults"
+      ]
+    }
+  ],
+  "reachable": [
+    "src/acme/__main__.py",
+    "src/acme/cli.py",
+    "src/acme/plugin.py",
+    "src/acme/reached_via_main.py",
+    "src/acme/used_by_cli.py",
+    "tests/test_sample.py"
+  ],
+  "unreachable": [
+    {
+      "path": "src/acme/old_api.py",
+      "confidence": "certain",
+      "reasons": [
+        "not_reachable"
+      ]
+    },
+    {
+      "path": "src/acme/orphan.py",
+      "confidence": "certain",
+      "reasons": [
+        "not_reachable"
+      ]
+    }
+  ]
+}
