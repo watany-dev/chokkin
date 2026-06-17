@@ -110,7 +110,7 @@ Key flags:
 - `--no-cache` — disable Phase 2 cache reads/writes. Parse, manifest/config scan, and module-index cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
-- `--explain` / `--trace` — show why an issue was reported / why a file is considered reachable. These are the intended path for investigating and reporting false positives.
+- `--explain` / `--trace` — show why an issue was reported and how reachability was judged. `CHK002` explain includes top-level modules and reachable/unreachable import evidence; `--trace` prints a positive path for reachable files and a negative trace (reason, entry roots, incoming import chain) for unreachable files. These are the intended path for investigating and reporting false positives.
 
 Exit codes are fixed for CI:
 
