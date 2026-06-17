@@ -1,17 +1,31 @@
 //! Baseline file data structures and errors.
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+
+use crate::schema::{BASELINE_DRAFT_SCHEMA_VERSION, BASELINE_SCHEMA_VERSION};
 
 /// Baseline file schema written by `--update-baseline`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaselineFile {
+    /// Baseline schema version (`"1"` in v0.3; omitted files are v0.2 draft).
+    #[serde(default = "default_baseline_schema_version")]
+    pub schema_version: String,
     /// chokkin version that generated the file.
     pub chokkin_version: String,
     /// Generation time as `unix:<seconds>` in the v0.2 draft schema.
     pub generated_at: String,
     /// Frozen issue entries.
     pub issues: Vec<BaselineEntry>,
+}
+
+fn default_baseline_schema_version() -> String {
+    BASELINE_DRAFT_SCHEMA_VERSION.to_owned()
+}
+
+/// Current baseline schema version written by chokkin v0.3+.
+#[must_use]
+pub fn current_baseline_schema_version() -> &'static str {
+    BASELINE_SCHEMA_VERSION
 }
 
 /// One frozen issue fingerprint.
@@ -37,7 +51,7 @@ pub struct BaselineReport {
 }
 
 /// Fatal baseline read/write error.
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum BaselineError {
     /// Baseline path escapes the project root.
     #[error("baseline path `{path}` must stay inside the project root")]

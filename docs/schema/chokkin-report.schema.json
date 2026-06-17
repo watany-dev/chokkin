@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/watany-dev/chokkin/blob/main/docs/schema/chokkin-report.schema.json",
+  "title": "chokkin JSON report",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "version",
+    "project",
+    "mode",
+    "production",
+    "issues",
+    "summary",
+    "suppressed"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "version": {
+      "type": "string",
+      "description": "chokkin version that produced the report"
+    },
+    "project": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["auto", "app", "library"]
+    },
+    "production": {
+      "type": "boolean"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "by_code"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "by_code": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "additionalProperties": true
+    },
+    "suppressed": {
+      "type": "object",
+      "required": ["baseline"],
+      "properties": {
+        "baseline": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "code",
+        "severity",
+        "confidence",
+        "message",
+        "fingerprint",
+        "target",
+        "workspace_member",
+        "file",
+        "line",
+        "path",
+        "distribution",
+        "symbol",
+        "binary",
+        "manifest"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^CHK00[1-9]|CHK010$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning", "info"]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["certain", "likely", "maybe"]
+        },
+        "message": { "type": "string" },
+        "fingerprint": { "type": "string" },
+        "target": { "type": "string" },
+        "workspace_member": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "file": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "line": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "path": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "distribution": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "symbol": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "binary": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "manifest": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["file", "line"],
+              "properties": {
+                "file": { "type": "string" },
+                "line": {
+                  "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+                }
+              },
+              "additionalProperties": true
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

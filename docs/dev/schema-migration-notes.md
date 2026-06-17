@@ -26,8 +26,12 @@ artifact URIs, GitHub annotation `file=` properties, and baseline fingerprints.
 
 ## Compatibility Policy
 
-Until Phase 3, the JSON reporter and baseline file are draft schemas. v0.2
-still treats the following as breaking changes and should avoid them unless a
+Until Phase 3, the JSON reporter and baseline file are draft schemas. v0.3
+stabilizes `schema_version` and publishes JSON Schema files under
+`docs/schema/`. v0.2 readers should continue to work when `schema_version` is
+omitted on baseline files.
+
+v0.2 still treats the following as breaking changes and should avoid them unless a
 release note and migration path are provided:
 
 - removing or renaming an existing field
@@ -56,7 +60,8 @@ Consumers should ignore unknown fields and should not depend on field order.
 
 ```json
 {
-  "version": "0.2.0",
+  "schema_version": "1",
+  "version": "0.3.0",
   "project": "project-name",
   "mode": "app",
   "production": false,
@@ -75,6 +80,7 @@ Top-level fields:
 
 | Field | Type | Notes |
 | --- | --- | --- |
+| `schema_version` | string | stable report schema version (`"1"` in v0.3) |
 | `version` | string | chokkin version that produced the report |
 | `project` | string | project name, or `"(unknown)"` when unavailable |
 | `mode` | string | effective analysis mode |
@@ -144,7 +150,8 @@ should remain readable through the v0.2 draft compatibility window.
 
 ```json
 {
-  "chokkin_version": "0.2.0",
+  "schema_version": "1",
+  "chokkin_version": "0.3.0",
   "generated_at": "unix:1710000000",
   "issues": [
     {
@@ -160,6 +167,7 @@ Fields:
 
 | Field | Type | Notes |
 | --- | --- | --- |
+| `schema_version` | string | baseline schema version (`"1"` in v0.3; omitted = v0.2 draft) |
 | `chokkin_version` | string | chokkin version that generated the baseline |
 | `generated_at` | string | `unix:<seconds>` in the v0.2 draft schema |
 | `issues` | array | frozen issue entries |
@@ -200,9 +208,22 @@ For future schema migrations:
 - Cache schema changes do not require migration; users can remove
   `.chokkin/cache` or run with `--no-cache`.
 
-## Phase 3 Handoff
+## Phase 3 (v0.3) status
 
-Phase 3 should turn this draft into a stable contract by:
+v0.3 contract stabilization shipped:
+
+- JSON Schema files: `docs/schema/chokkin-report.schema.json`,
+  `docs/schema/chokkin-baseline.schema.json`
+- `[tool.chokkin.severity]` rule overrides (`off` / `info` / `warning` / `error`)
+- SARIF `helpUri` and `fullDescription` metadata for CHK001–CHK010
+- Frozen ignore directive regression tests
+- Plugin API RFC: `docs/adr/0002-plugin-api-rfc.md`
+
+Readers must continue accepting v0.2 baseline files without `schema_version`.
+
+## Phase 3 Handoff (historical)
+
+Phase 3 turned the v0.2 draft into the v0.3 stable contract by:
 
 - publishing a JSON Schema for `--reporter json`
 - deciding whether baseline files need an explicit `schema_version` field in

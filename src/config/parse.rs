@@ -9,7 +9,7 @@ use toml::Value;
 use super::defaults::{PartialConfig, PartialDependencyGroups};
 use super::error::ConfigError;
 use super::types::{
-    Confidence, EntrySpec, PluginId, ProjectMode, TargetVersion, UvWorkspaceHint,
+    Confidence, EntrySpec, PluginId, ProjectMode, SeverityLevel, TargetVersion, UvWorkspaceHint,
     WorkspaceOverride, is_absolute_path_str,
 };
 
@@ -29,6 +29,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "binary_map",
     "plugins",
     "ignore",
+    "severity",
     "workspaces",
 ];
 
@@ -138,6 +139,7 @@ fn partial_from_table(path: &Path, table: &toml::Table) -> Result<PartialConfig,
         binary_map: parse_optional_string_map(path, table.get("binary_map"), "binary_map")?,
         plugins: parse_optional_plugins(path, table.get("plugins"))?,
         ignore: parse_optional_ignore(path, table.get("ignore"))?,
+        severity: parse_optional_severity(path, table.get("severity"))?,
         workspaces: parse_optional_workspaces(path, table.get("workspaces"))?,
     })
 }
@@ -399,6 +401,34 @@ fn parse_optional_ignore(
             });
         }
         map.insert(key.clone(), value_as_string_array(path, item, "ignore")?);
+    }
+    Ok(Some(map))
+}
+
+fn parse_optional_severity(
+    path: &Path,
+    value: Option<&Value>,
+) -> Result<Option<BTreeMap<String, SeverityLevel>>, ConfigError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let table = value_as_table(path, value, "severity")?;
+    let mut map = BTreeMap::new();
+    for (key, item) in table {
+        if !is_valid_ignore_rule(key) {
+            return Err(ConfigError::Validation {
+                path: path.to_path_buf(),
+                field: format!("severity.{key}"),
+                message: "unknown rule code".to_owned(),
+            });
+        }
+        let level = value_as_string(path, item, "severity")?;
+        let parsed = SeverityLevel::parse(&level).ok_or_else(|| ConfigError::Validation {
+            path: path.to_path_buf(),
+            field: format!("severity.{key}"),
+            message: "expected one of off, info, warning, error".to_owned(),
+        })?;
+        map.insert(key.clone(), parsed);
     }
     Ok(Some(map))
 }

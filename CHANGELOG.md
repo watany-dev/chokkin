@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-17
+
+### Added
+- `schema_version` on JSON reporter (`"1"`) and baseline files, with v0.2 baseline
+  reader compatibility when the field is omitted.
+- Published JSON Schema files under `docs/schema/` for report and baseline formats.
+- `[tool.chokkin.severity]` per-rule overrides (`off` / `info` / `warning` / `error`)
+  wired through issue emission, reporters, and exit codes.
+- SARIF rule metadata stabilization: `helpUri`, `fullDescription`, and shared CHK
+  rule metadata.
+- Ignore directive syntax regression tests (`# chokkin: ignore[...]`,
+  `# chokkin: file-ignore[...]`).
+- Plugin API RFC at `docs/adr/0002-plugin-api-rfc.md` (documentation only; no
+  external plugin loading).
+
+### Changed
+- Version bumped to 0.3.0 as the contract stabilization release (Phase 3).
+
 ## [0.2.0] - 2026-06-16
 
 ### Added

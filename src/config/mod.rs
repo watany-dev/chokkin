@@ -13,6 +13,6 @@ pub use error::ConfigError;
 pub use load::{apply_overrides, load_config};
 pub use types::{
     ChokkinConfig, Confidence, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
-    PluginId, ProjectMode, ResolvedWorkspaceMember, RuntimeOverrides, TargetVersion,
+    PluginId, ProjectMode, ResolvedWorkspaceMember, RuntimeOverrides, SeverityLevel, TargetVersion,
     UvWorkspaceHint, WorkspaceMemberSource, WorkspaceOverride,
 };

@@ -33,6 +33,7 @@ pub mod reachability;
 pub mod reporters;
 pub mod resolver;
 pub mod rules;
+pub mod schema;
 pub mod sources;
 
 pub use baseline::{
@@ -46,8 +47,9 @@ pub use cache::{
 pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
-    LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, TargetVersion, UvWorkspaceHint,
-    WorkspaceMemberSource, WorkspaceOverride, apply_overrides, default_config, load_config,
+    LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, SeverityLevel, TargetVersion,
+    UvWorkspaceHint, WorkspaceMemberSource, WorkspaceOverride, apply_overrides, default_config,
+    load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
@@ -69,8 +71,8 @@ pub use manifest::{
 };
 pub use parser::{
     DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
-    ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, parse_file,
-    parse_project_sources, parse_project_sources_with_cache,
+    ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, extract_ignores,
+    parse_file, parse_project_sources, parse_project_sources_with_cache,
 };
 pub use pipeline::{
     AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,

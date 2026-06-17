@@ -12,7 +12,9 @@ use crate::rules::{
     issue_stable_target,
 };
 
-use super::types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
+use super::types::{
+    BaselineEntry, BaselineError, BaselineFile, BaselineReport, current_baseline_schema_version,
+};
 
 /// Apply a baseline file by suppressing matching issues.
 pub fn apply_baseline(
@@ -86,6 +88,7 @@ pub fn write_baseline(
         .collect::<Vec<_>>();
     let written = u32::try_from(issues.len()).unwrap_or(u32::MAX);
     let file = BaselineFile {
+        schema_version: current_baseline_schema_version().to_owned(),
         chokkin_version: VERSION.to_owned(),
         generated_at: generated_at(),
         issues,
@@ -386,6 +389,42 @@ mod tests {
     }
 
     #[test]
+    fn baseline_reads_v02_without_schema_version() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join("chokkin-baseline.json");
+        fs::write(
+            &baseline,
+            r#"{
+  "chokkin_version": "0.2.0",
+  "generated_at": "unix:1",
+  "issues": [
+    {
+      "fingerprint": "CHK001:src/legacy.py",
+      "code": "CHK001",
+      "target": "src/legacy.py"
+    }
+  ]
+}
+"#,
+        )
+        .expect("write baseline");
+
+        let mut report = IssueReport {
+            issues: vec![issue("src/legacy.py")],
+            suppressed: Vec::new(),
+            summary: IssueSummary {
+                total: 1,
+                by_rule: std::iter::once((RuleId::Chk001, 1)).collect(),
+            },
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        assert_eq!(result.suppressed, 1);
+        assert!(report.issues.is_empty());
+    }
+
+    #[test]
     fn write_baseline_creates_missing_parent_directory() {
         let dir = TempDir::new().expect("tempdir");
         let baseline = dir.path().join(".chokkin").join("baseline.json");
@@ -403,6 +442,7 @@ mod tests {
         let written = read_baseline(&baseline).expect("read baseline");
 
         assert_eq!(result.written, 1);
+        assert_eq!(written.schema_version, "1");
         assert_eq!(written.issues[0].fingerprint, "CHK001:src/legacy.py");
         assert_eq!(written.issues[0].target, "src/legacy.py");
         assert!(baseline.exists());

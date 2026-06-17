@@ -19,6 +19,7 @@ use super::filter::{
     counts_toward_exit, effective_confidence_floor, passes_confidence_filter, passes_rule_filter,
 };
 use super::ignore::IgnoreMatcher;
+use super::severity::apply_severity_override;
 use super::types::RuleId;
 
 /// Merge candidates, apply ignore/confidence filters, and compute exit status.
@@ -52,6 +53,9 @@ pub fn emit_issues(
     let mut suppressed = Vec::new();
 
     for candidate in candidates {
+        let Some(candidate) = apply_severity_override(candidate, config) else {
+            continue;
+        };
         let ignore = matcher.matches_candidate(&candidate);
         let issue = candidate_to_issue(candidate);
 
@@ -275,6 +279,44 @@ mod tests {
             &resolved_app_mode(),
         );
         assert_eq!(issues.exit_status, ExitStatus::Success);
+    }
+
+    #[test]
+    fn severity_off_skips_rule() {
+        let candidate = IssueCandidate {
+            rule: RuleId::Chk002,
+            subject: IssueSubject::Distribution {
+                name: "boto3".to_owned(),
+            },
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "unused boto3".to_owned(),
+            workspace_member: None,
+            origins: vec![Origin::Manifest(DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(5),
+                label: "project.dependencies[0]".to_owned(),
+            })],
+            explain: ExplainData::default(),
+        };
+        let deps = DependencyReport {
+            candidates: vec![candidate],
+            ..DependencyReport::default()
+        };
+        let mut config = default_config();
+        config
+            .severity
+            .insert("CHK002".to_owned(), crate::config::SeverityLevel::Off);
+        let report = emit_issues(
+            &ReachabilityReport::empty(),
+            &deps,
+            &SymbolReport::default(),
+            &ParseSummary::empty(),
+            &config,
+            &RuntimeOverrides::default(),
+            &resolved_app_mode(),
+        );
+        assert!(report.issues.is_empty());
     }
 
     #[test]

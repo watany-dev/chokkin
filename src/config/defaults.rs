@@ -47,6 +47,7 @@ pub(super) struct PartialConfig {
     pub binary_map: Option<BTreeMap<String, String>>,
     pub plugins: Option<BTreeMap<PluginId, bool>>,
     pub ignore: Option<BTreeMap<String, Vec<String>>>,
+    pub severity: Option<BTreeMap<String, super::types::SeverityLevel>>,
     pub workspaces: Option<BTreeMap<String, super::types::WorkspaceOverride>>,
 }
 
@@ -67,6 +68,7 @@ impl PartialConfig {
             || self.binary_map.is_some()
             || self.plugins.is_some()
             || self.ignore.is_some()
+            || self.severity.is_some()
             || self.workspaces.is_some()
     }
 }
@@ -112,6 +114,7 @@ pub fn default_config() -> ChokkinConfig {
         binary_map: BTreeMap::new(),
         plugins,
         ignore: BTreeMap::new(),
+        severity: BTreeMap::new(),
         workspaces: BTreeMap::new(),
     }
 }
@@ -162,6 +165,9 @@ pub fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
         }
         if let Some(ignore) = &layer.ignore {
             config.ignore.clone_from(ignore);
+        }
+        if let Some(severity) = &layer.severity {
+            config.severity.clone_from(severity);
         }
         if let Some(workspaces) = &layer.workspaces {
             config.workspaces.clone_from(workspaces);
