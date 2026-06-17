@@ -1,6 +1,5 @@
 __future__
 abc
-aifc
 argparse
 array
 ast
@@ -14,7 +13,6 @@ builtins
 bz2
 cProfile
 calendar
-cgi
 cmath
 cmd
 code
@@ -28,7 +26,6 @@ contextlib
 contextvars
 copy
 copyreg
-crypt
 csv
 ctypes
 curses
@@ -66,7 +63,6 @@ html
 http
 idlelib
 imaplib
-imghdr
 importlib
 inspect
 io
@@ -74,13 +70,11 @@ ipaddress
 itertools
 json
 keyword
-lib2to3
 linecache
 locale
 logging
 lzma
 mailbox
-mailcap
 marshal
 math
 mimetypes
@@ -88,7 +82,6 @@ mmap
 modulefinder
 multiprocessing
 netrc
-nntplib
 numbers
 operator
 optparse
@@ -97,7 +90,6 @@ pathlib
 pdb
 pickle
 pickletools
-pipes
 pkgutil
 platform
 plistlib
@@ -145,7 +137,6 @@ sys
 sysconfig
 tabnanny
 tarfile
-telnetlib
 tempfile
 termios
 test

@@ -1,6 +1,6 @@
 {
   "chokkin_version": "0.2.0",
-  "generated_at": "unix:1781677460",
+  "generated_at": "unix:1781678710",
   "issues": [
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",
@@ -553,11 +553,6 @@
       "target": "tests/fixtures/symbols/unused_reexport/src/acme/sub.py"
     },
     {
-      "fingerprint": "CHK003:scripts/generate-package-map.py:__future__",
-      "code": "CHK003",
-      "target": "scripts/generate-package-map.py:__future__"
-    },
-    {
       "fingerprint": "CHK003:tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest",
       "code": "CHK003",
       "target": "tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest"
@@ -626,6 +621,51 @@
       "fingerprint": "CHK006:scripts/generate-package-map.py:render_packages",
       "code": "CHK006",
       "target": "scripts/generate-package-map.py:render_packages"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:ADDED_IN_311",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:ADDED_IN_311"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:ALWAYS_INCLUDE",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:ALWAYS_INCLUDE"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:BASE_311",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:BASE_311"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:OUT_DIR",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:OUT_DIR"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:REMOVED_IN_313",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:REMOVED_IN_313"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:ROOT",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:ROOT"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:build_set",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:build_set"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:main",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:main"
+    },
+    {
+      "fingerprint": "CHK006:scripts/generate-stdlib-modules.py:write_version",
+      "code": "CHK006",
+      "target": "scripts/generate-stdlib-modules.py:write_version"
     },
     {
       "fingerprint": "CHK006:tests/fixtures/deps/unlisted_pytest/tests/test_sample.py:test_placeholder",

@@ -156,7 +156,6 @@ timeit
 tkinter
 token
 tokenize
-tomllib
 trace
 traceback
 tracemalloc

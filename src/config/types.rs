@@ -223,6 +223,13 @@ impl TargetVersion {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Return the Python 3 minor version number (`py311` → `11`).
+    #[must_use]
+    pub fn minor(&self) -> u32 {
+        let suffix = self.0.strip_prefix("py3").unwrap_or("11");
+        suffix.parse().unwrap_or(11)
+    }
 }
 
 impl fmt::Display for TargetVersion {
