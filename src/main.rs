@@ -167,7 +167,13 @@ fn run_analysis(args: &CliArgs, report: AnalysisReport) -> ExitCode {
     }
 
     if let Some(target) = &args.trace {
-        let text = trace_output(&report.reachability, &report.graph, target);
+        let text = trace_output(
+            &report.reachability,
+            &report.graph,
+            &report.entry,
+            &report.probe.sources,
+            target,
+        );
         if writeln!(std::io::stderr(), "{text}").is_err() {
             return ExitCode::from(ExitStatus::InternalError.code());
         }

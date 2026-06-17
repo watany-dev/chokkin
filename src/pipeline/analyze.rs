@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
-use crate::entry::{ResolvedMode, apply_entry_plan, build_entry_roots};
+use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
@@ -29,6 +29,8 @@ pub struct AnalysisReport {
     pub graph: ProjectGraph,
     /// Reachability analysis output (step 9).
     pub reachability: ReachabilityReport,
+    /// Entry root plan used for reachability (step 8).
+    pub entry: EntryPlan,
     /// Resolved project mode from entry construction (step 8).
     pub entry_mode: ResolvedMode,
     /// Final issue report (step 12).
@@ -102,6 +104,7 @@ pub fn analyze_project(
         probe,
         graph: core.graph,
         reachability: core.reachability,
+        entry: core.entry,
         entry_mode: core.entry_mode,
         issues: core.issues,
         fix,
@@ -127,6 +130,7 @@ fn apply_baseline_options(
 struct AnalysisCore {
     graph: ProjectGraph,
     reachability: ReachabilityReport,
+    entry: EntryPlan,
     entry_mode: ResolvedMode,
     issues: IssueReport,
     warnings: Vec<ProbeWarning>,
@@ -249,10 +253,13 @@ fn run_analysis_core(
         &entry.mode,
     );
 
+    let entry_mode = entry.mode.clone();
+
     Ok(AnalysisCore {
         graph,
         reachability,
-        entry_mode: entry.mode,
+        entry,
+        entry_mode,
         issues,
         warnings,
     })
