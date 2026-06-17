@@ -195,3 +195,20 @@ fn library_mode_downgrades_chk006_to_info() {
         .expect("unused_public candidate");
     assert_eq!(unused.severity, Severity::Info);
 }
+
+#[test]
+fn import_module_attribute_access_counts_as_external_reference() {
+    let report = analyze_fixture("import_attr_access");
+    assert!(!has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.utils",
+        "helper"
+    ));
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.utils",
+        "dead_api"
+    ));
+}

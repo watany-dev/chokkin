@@ -1,5 +1,6 @@
 //! Python source parser (pipeline step 6).
 
+mod attributes;
 mod decorators;
 mod dynamic;
 mod error;
@@ -17,6 +18,6 @@ pub use error::ParseError;
 pub use parse::{parse_file, parse_project_sources, parse_project_sources_with_cache};
 pub use relative::{file_module_name, resolve_relative_import};
 pub use types::{
-    DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
-    ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,
+    AttributeAccess, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,
+    ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,
 };

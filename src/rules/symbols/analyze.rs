@@ -146,7 +146,8 @@ fn detect_unused_exports(
                     entry.id.module, entry.id.name
                 ),
                 details: vec![
-                    "only `from … import name` references are tracked in v0.1".to_owned(),
+                    "`from … import name` and `import module; module.name` references are tracked"
+                        .to_owned(),
                     "decorated handlers, fixtures, and entry targets are excluded".to_owned(),
                 ],
             },

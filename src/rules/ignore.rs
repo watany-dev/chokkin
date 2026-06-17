@@ -279,6 +279,7 @@ mod tests {
             path: "src/acme/main.py".to_owned(),
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
+            attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
             ignores: vec![IgnoreDirective {
@@ -319,6 +320,7 @@ mod tests {
             path: "src/acme/api.py".to_owned(),
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
+            attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
             ignores: vec![IgnoreDirective {

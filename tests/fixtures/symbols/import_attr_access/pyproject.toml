@@ -1,0 +1,9 @@
+[project]
+name = "import-attr-access"
+version = "0.0.0"
+
+[project.scripts]
+main = "acme.main:main"
+
+[tool.chokkin]
+mode = "app"

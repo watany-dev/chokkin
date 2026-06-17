@@ -6,6 +6,7 @@ use rustpython_parser::source_code::RandomLocator;
 
 use crate::sources::{FileContext, LayoutInfo};
 
+use super::attributes::collect_attribute_accesses;
 use super::decorators::normalize_decorator;
 use super::dynamic::collect_dynamic_imports;
 use super::exports::extract_exports;
@@ -67,6 +68,7 @@ impl<'a> ModuleVisitor<'a> {
             &mut self.parsed.dynamic_imports,
             &mut self.parsed.has_opaque_dynamic_import,
         );
+        collect_attribute_accesses(stmts, self.locator, &mut self.parsed.attribute_accesses);
         for stmt in stmts {
             self.visit_stmt(stmt);
         }
