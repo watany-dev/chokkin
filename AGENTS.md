@@ -55,12 +55,12 @@ src/
                   binary usage detection, Sphinx/MkDocs/Alembic config entries)
   graph/          Project graph skeleton + import edges (Phase 0; extended in step 6)
   parser/         Python parse and notebook code-cell parsing (`parse_file`,
-                  `parse_project_sources`, pipeline step 6)
+                  `parse_project_sources`, attribute access collection; pipeline step 6)
   cli.rs          CLI argument parsing (`clap`, Phase 1 flags)
   pipeline/       `probe_project` (steps 1–4), `analyze_project` (steps 1–13)
   resolver/       Import resolution (`resolve_imports`, bundled maps, venv RECORD/entry_points, pipeline step 7)
   entry/          Entry root construction (`build_entry_roots`, pipeline step 8)
-  reachability/   Reachability analysis (`analyze_reachability`, pipeline step 9)
+  reachability/   Reachability analysis (`analyze_reachability`, positive/negative `--trace`; pipeline step 9)
   rules/          Dependency reconciliation (step 10), symbol usage (step 11),
                   and issue emission (step 12: `emit_issues`, `explain_issue`)
   reporters/      Built-in reporters: default, compact, json, markdown

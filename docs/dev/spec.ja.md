@@ -116,6 +116,10 @@ exit codeはCI向けに固定する。
                  (4) confidence maybe のissueも表示
 --no-exit-code : issueがあってもexit codeを0にする。config/CLI errorの2、
                  internal errorの3はこのflagでも維持する。
+--explain      : `CHK002:<distribution>` など selector に対し、宣言箇所と到達性
+                 evidence（top-level modules、reachable/unreachable import）を出す。
+--trace        : 到達可能な file には entry からの positive trace、未到達 file には
+                 negative trace（UnreachableReason、entry roots、incoming import 連鎖）を出す。
 ```
 
 `--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、v0.2でSARIF/GitHub reporterを追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
@@ -300,7 +304,7 @@ File reaches File
 3. manifest extraction     # 実装済み: src/manifest/ (`extract_manifest`)
 4. source file discovery     # 実装済み: src/sources/ (`discover_sources`)
 5. config/plugin extraction  # 実装済み: src/plugins/ (`extract_plugin_hints`)
-6. Python parse              # 実装済み: src/parser/ (`parse_file`, `parse_project_sources`)
+6. Python parse              # 実装済み: src/parser/ (`parse_file`, `parse_project_sources`, attribute access)
 7. import resolution         # 実装済み: src/resolver/ (`resolve_imports`, bundled maps)
 8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`, `apply_entry_plan`)
 9. reachability analysis     # 実装済み: src/reachability/ (`analyze_reachability`, `trace_to_file`)
@@ -607,6 +611,17 @@ __init__.py でreexportされた名前
 ```
 
 ただし `_` 始まりの名前は慣習的privateとして対象外にする(`__all__` に明示されている場合を除く)。
+
+外部参照として追跡する import パターンは次の通り。
+
+```text
+from acme.utils import helper          # certain
+import acme.utils; acme.utils.helper() # likely（attribute access）
+```
+
+`import module; module.name` 形式は parser が同一 file 内の attribute access を収集し、
+symbol usage analysis が `module.name` を外部参照として扱う。chain access や動的 attribute
+は v0.2 では追跡しない。
 
 ただし、以下はused扱いにする。
 

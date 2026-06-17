@@ -110,7 +110,7 @@ uvx chokkin --init                # v0.2
 - `--no-cache` — Phase 2 cache の read/write を無効化します。parse、manifest/config scan、module index cache はデフォルトで project root 配下に作られ、壊れた cache や stale cache は miss 扱いにします。
 - `--reporter github` / `--reporter sarif` — GitHub Actions annotation、または code scanning 用の SARIF 2.1.0 subset を出力します。
 - `--probe` — uv / chokkin workspace が検出された場合、解決済み・inventory済み workspace member 数も表示します。
-- `--explain` / `--trace` — issueが報告された理由・ファイルが到達可能と判定された経路を表示します。誤検知の調査・報告のための導線です。
+- `--explain` / `--trace` — issue が報告された理由と到達性の根拠を表示します。`CHK002` explain には top-level modules と reachable/unreachable import evidence を含み、`--trace` は到達可能な file には positive trace、未到達 file には negative trace（理由・entry roots・incoming import 連鎖）を出します。誤検知の調査・報告のための導線です。
 
 exit codeはCI向けに固定です。
 

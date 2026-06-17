@@ -139,6 +139,7 @@ fn run_analysis_core(
     options: &AnalyzeOptions,
 ) -> Result<AnalysisCore, AnalyzeError> {
     let production = probe.effective_config.production;
+    let strict = overrides.strict.unwrap_or(false);
     let loaded = crate::config::LoadedConfig {
         root: probe.root.clone(),
         effective: probe.effective_config.clone(),
@@ -224,7 +225,7 @@ fn run_analysis_core(
         &parse,
         &graph,
         &workspace_boundaries,
-        production,
+        strict,
     );
 
     let symbols = analyze_symbols(
@@ -289,6 +290,8 @@ mod tests {
     use super::*;
     use crate::ExitStatus;
     use crate::RuleId;
+    use crate::Severity;
+    use crate::rules::IssueSubject;
 
     #[test]
     fn analyze_unused_dependency_fixture() {
@@ -327,5 +330,48 @@ mod tests {
         )
         .expect("analyze");
         assert!(report.issues.issues.is_empty());
+    }
+
+    #[test]
+    fn analyze_strict_passes_strict_to_dependency_reconciliation() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/deps/marker_pywin32");
+        let default_report = analyze_project(
+            &root,
+            None,
+            &RuntimeOverrides::default(),
+            AnalyzeOptions::default(),
+        )
+        .expect("analyze");
+        assert!(!default_report.issues.issues.iter().any(|issue| {
+            issue.rule == RuleId::Chk002
+                && matches!(
+                    &issue.subject,
+                    IssueSubject::Distribution { name } if name == "pywin32"
+                )
+        }));
+
+        let strict_report = analyze_project(
+            &root,
+            None,
+            &RuntimeOverrides {
+                strict: Some(true),
+                ..RuntimeOverrides::default()
+            },
+            AnalyzeOptions::default(),
+        )
+        .expect("analyze");
+        let pywin32 = strict_report
+            .issues
+            .issues
+            .iter()
+            .find(|issue| {
+                issue.rule == RuleId::Chk002
+                    && matches!(
+                        &issue.subject,
+                        IssueSubject::Distribution { name } if name == "pywin32"
+                    )
+            })
+            .expect("pywin32 CHK002 in strict mode");
+        assert_eq!(pywin32.severity, Severity::Error);
     }
 }
