@@ -369,7 +369,10 @@ mod golden {
         }
     }
 
-    fn analyze_fixture(path: &Path, production: bool) -> (ReachabilityInputs, chokkin::ReachabilityReport) {
+    fn analyze_fixture(
+        path: &Path,
+        production: bool,
+    ) -> (ReachabilityInputs, chokkin::ReachabilityReport) {
         let mut inputs = load_reachability(path, production);
         let report = analyze_reachability(
             &mut inputs.graph,
@@ -389,11 +392,15 @@ mod golden {
         let (inputs, report) = analyze_fixture(&path, production);
         let snapshot = snapshot_from_inputs(&inputs, &report);
         let golden_path = path.join("golden").join(golden_name);
-        let expected = fs::read_to_string(&golden_path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", golden_path.display()));
+        let expected = fs::read_to_string(&golden_path).expect("read golden file");
         let expected_snapshot: ReachabilitySnapshot =
             serde_json::from_str(&expected).expect("parse golden json");
-        assert_eq!(snapshot, expected_snapshot, "golden mismatch for {}", golden_path.display());
+        assert_eq!(
+            snapshot,
+            expected_snapshot,
+            "golden mismatch for {}",
+            golden_path.display()
+        );
     }
 
     #[test]
@@ -435,11 +442,16 @@ mod golden {
         let path = fixture("shipped_entries");
         let (mut inputs, full_report) = analyze_fixture(&path, false);
         let used_by_cli = "src/acme/used_by_cli.py";
-        assert!(full_report
-            .reachable
-            .contains(&inputs.graph.file_id(used_by_cli).expect("used_by_cli")));
+        assert!(
+            full_report
+                .reachable
+                .contains(&inputs.graph.file_id(used_by_cli).expect("used_by_cli"))
+        );
 
-        inputs.entry.roots.retain(|root| root.spec.path != "src/acme/cli.py");
+        inputs
+            .entry
+            .roots
+            .retain(|root| root.spec.path != "src/acme/cli.py");
         let reduced_report = analyze_reachability(
             &mut inputs.graph,
             &inputs.sources,
@@ -451,14 +463,18 @@ mod golden {
         )
         .expect("reachability");
 
-        assert!(!reduced_report.reachable.contains(
-            &inputs
-                .graph
-                .file_id(used_by_cli)
-                .expect("used_by_cli id")
-        ));
-        assert!(reduced_report
-            .reachable
-            .contains(&inputs.graph.file_id("src/acme/reached_via_main.py").expect("main chain")));
+        assert!(
+            !reduced_report
+                .reachable
+                .contains(&inputs.graph.file_id(used_by_cli).expect("used_by_cli id"))
+        );
+        assert!(
+            reduced_report.reachable.contains(
+                &inputs
+                    .graph
+                    .file_id("src/acme/reached_via_main.py")
+                    .expect("main chain")
+            )
+        );
     }
 }

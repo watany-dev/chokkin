@@ -1,6 +1,6 @@
 {
   "chokkin_version": "0.2.0",
-  "generated_at": "unix:1781678710",
+  "generated_at": "unix:1781683918",
   "issues": [
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",
@@ -393,6 +393,76 @@
       "target": "tests/fixtures/reachability/plugin_module_ref/mysite/settings.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/docs/guide.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries/docs/guide.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/cli.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/cli.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/old_api.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/old_api.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/orphan.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/orphan.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/plugin.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/plugin.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/reached_via_main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/reached_via_main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/used_by_cli.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/used_by_cli.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/docs/guide.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries_library/docs/guide.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/cli.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/cli.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/old_api.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/old_api.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/orphan.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/orphan.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/plugin.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/plugin.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/reached_via_main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/reached_via_main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/used_by_cli.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/used_by_cli.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/resolver/first_party/src/acme/app.py",
       "code": "CHK001",
       "target": "tests/fixtures/resolver/first_party/src/acme/app.py"
@@ -558,6 +628,16 @@
       "target": "tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest"
     },
     {
+      "fingerprint": "CHK003:tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme.reached_via_main",
+      "code": "CHK003",
+      "target": "tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme.reached_via_main"
+    },
+    {
+      "fingerprint": "CHK003:tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme",
+      "code": "CHK003",
+      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme"
+    },
+    {
       "fingerprint": "CHK003:tests/fixtures/symbols/pytest_fixture/src/acme/conftest.py:pytest",
       "code": "CHK003",
       "target": "tests/fixtures/symbols/pytest_fixture/src/acme/conftest.py:pytest"
@@ -691,6 +771,16 @@
       "fingerprint": "CHK006:tests/fixtures/plugins/pytest_setup_cfg/tests/test_cfg.py:test_cfg",
       "code": "CHK006",
       "target": "tests/fixtures/plugins/pytest_setup_cfg/tests/test_cfg.py:test_cfg"
+    },
+    {
+      "fingerprint": "CHK006:tests/fixtures/reachability/shipped_entries/tests/test_sample.py:test_sample",
+      "code": "CHK006",
+      "target": "tests/fixtures/reachability/shipped_entries/tests/test_sample.py:test_sample"
+    },
+    {
+      "fingerprint": "CHK006:tests/fixtures/reachability/shipped_entries_library/tests/test_sample.py:test_sample",
+      "code": "CHK006",
+      "target": "tests/fixtures/reachability/shipped_entries_library/tests/test_sample.py:test_sample"
     },
     {
       "fingerprint": "CHK008:black",
