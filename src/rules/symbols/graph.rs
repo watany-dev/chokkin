@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{ParsedModule, SymbolDef};
+use crate::parser::{ImportKind, ParsedModule, SymbolDef};
 
 /// Rules-local symbol identifier (distinct from graph `SymbolId` if added later).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -90,6 +90,8 @@ pub(super) struct SymbolReference {
     pub target: SymbolId,
     /// 1-based source line.
     pub line: u32,
+    /// `true` when the reference came from `import module; module.name` attribute access.
+    pub via_attribute: bool,
 }
 
 /// Collect symbol references from `from … import name` statements (v0.1 conservative).
@@ -107,14 +109,33 @@ pub(super) fn collect_import_references(
             if import.module.is_empty() {
                 continue;
             }
-            let Some(name) = import.name.as_ref() else {
-                continue;
-            };
-            references.push(SymbolReference {
-                importer: importer.clone(),
-                target: SymbolId::new(import.module.clone(), name.clone()),
-                line: import.line,
-            });
+            match import.kind {
+                ImportKind::ImportFrom => {
+                    let Some(name) = import.name.as_ref() else {
+                        continue;
+                    };
+                    references.push(SymbolReference {
+                        importer: importer.clone(),
+                        target: SymbolId::new(import.module.clone(), name.clone()),
+                        line: import.line,
+                        via_attribute: false,
+                    });
+                },
+                ImportKind::Import => {
+                    let binding = import.alias.as_deref().unwrap_or(&import.module);
+                    for access in &module.attribute_accesses {
+                        if access.receiver != import.module && access.receiver != binding {
+                            continue;
+                        }
+                        references.push(SymbolReference {
+                            importer: importer.clone(),
+                            target: SymbolId::new(import.module.clone(), access.name.clone()),
+                            line: access.line,
+                            via_attribute: true,
+                        });
+                    }
+                },
+            }
         }
     }
 

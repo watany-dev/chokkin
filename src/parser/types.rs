@@ -56,6 +56,17 @@ pub struct DynamicImport {
     pub line: u32,
 }
 
+/// Attribute access against an imported module binding (`module.attr`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttributeAccess {
+    /// Receiver expression as a dotted name (`acme.utils` or local alias).
+    pub receiver: String,
+    /// Accessed attribute name.
+    pub name: String,
+    /// 1-based source line.
+    pub line: u32,
+}
+
 /// Kind of top-level symbol definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolKind {
@@ -124,6 +135,8 @@ pub struct ParsedModule {
     pub imports: Vec<ImportRef>,
     /// Literal dynamic imports.
     pub dynamic_imports: Vec<DynamicImport>,
+    /// Attribute accesses for `import module; module.name` symbol tracking.
+    pub attribute_accesses: Vec<AttributeAccess>,
     /// Top-level symbol definitions.
     pub symbols: Vec<SymbolDef>,
     /// Names listed in `__all__`.
@@ -157,6 +170,7 @@ impl ParsedModule {
             path,
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
+            attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
             ignores: Vec::new(),
