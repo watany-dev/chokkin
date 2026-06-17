@@ -588,6 +588,16 @@
       "target": "tests/fixtures/sources/src_layout/src/acme/module.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/symbols/import_attr_access/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/import_attr_access/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/symbols/import_attr_access/src/acme/utils.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/import_attr_access/src/acme/utils.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/symbols/library_mode/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/symbols/library_mode/src/acme/main.py"
