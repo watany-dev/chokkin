@@ -1,0 +1,9 @@
+[project]
+name = "shipped-entries-library"
+version = "0.0.0"
+
+[project.scripts]
+cli = "acme.cli:main"
+
+[tool.chokkin]
+mode = "library"

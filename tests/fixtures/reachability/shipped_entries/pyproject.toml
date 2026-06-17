@@ -1,0 +1,12 @@
+[project]
+name = "shipped-entries"
+version = "0.0.0"
+
+[project.scripts]
+cli = "acme.cli:main"
+
+[project.entry-points."acme.plugins"]
+helper = "acme.plugin:register"
+
+[tool.chokkin]
+mode = "app"
