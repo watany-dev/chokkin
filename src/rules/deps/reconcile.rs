@@ -22,7 +22,7 @@ use super::used::{
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
 #[must_use]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn reconcile_dependencies(
     manifest: &LoadedManifest,
     resolution: &ResolutionIndex,

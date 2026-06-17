@@ -370,21 +370,20 @@ mod tests {
                 kind: FileKind::Python,
             })
             .expect("legacy file");
-        let _ = graph.intern_module(
-            "boto3".to_owned(),
-            ModuleOrigin::ThirdParty,
-        );
+        let _ = graph.intern_module("boto3".to_owned(), ModuleOrigin::ThirdParty);
         let _ = graph.ensure_distribution("boto3");
         let _ = graph.intern_module("botocore".to_owned(), ModuleOrigin::ThirdParty);
 
         let mut reachability = ReachabilityReport::empty();
         reachability.reachable.insert(reachable_file);
-        reachability.unreachable.push(crate::reachability::UnreachableFile {
-            file: legacy_file,
-            path: "src/legacy/aws.py".to_owned(),
-            reasons: vec![UnreachableReason::NotReachable],
-            max_confidence: Confidence::Certain,
-        });
+        reachability
+            .unreachable
+            .push(crate::reachability::UnreachableFile {
+                file: legacy_file,
+                path: "src/legacy/aws.py".to_owned(),
+                reasons: vec![UnreachableReason::NotReachable],
+                max_confidence: Confidence::Certain,
+            });
 
         let mut resolution = ResolutionIndex::empty();
         resolution.imports.push(ResolvedImport {
@@ -417,14 +416,20 @@ mod tests {
             Some(&evidence),
         );
         let explain = &candidates[0].explain;
-        assert!(explain.details.iter().any(|line| line.contains("top-level modules:")));
-        assert!(explain
-            .details
-            .iter()
-            .any(|line| line.contains("no reachable file imports")));
+        assert!(
+            explain
+                .details
+                .iter()
+                .any(|line| line.contains("top-level modules:"))
+        );
+        assert!(
+            explain
+                .details
+                .iter()
+                .any(|line| line.contains("no reachable file imports"))
+        );
         assert!(explain.details.iter().any(|line| {
-            line.contains("src/legacy/aws.py:5 imports boto3")
-                && line.contains("CHK001")
+            line.contains("src/legacy/aws.py:5 imports boto3") && line.contains("CHK001")
         }));
     }
 }
