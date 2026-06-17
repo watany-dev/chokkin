@@ -130,6 +130,7 @@ fn collect_from_stmt(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn inspect_expr(
     expr: &Expr,
     locator: &mut RandomLocator<'_>,
@@ -357,7 +358,8 @@ mod tests {
 
     #[test]
     fn extracts_importlib_from_return() {
-        let source = "import importlib\ndef load():\n    return importlib.import_module(\"acme.plugins\")\n";
+        let source =
+            "import importlib\ndef load():\n    return importlib.import_module(\"acme.plugins\")\n";
         let stmts = Suite::parse(source, "<test>").expect("parse");
         let mut imports = Vec::new();
         let mut opaque = false;

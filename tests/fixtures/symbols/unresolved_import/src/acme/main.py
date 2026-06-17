@@ -1,5 +1,5 @@
-import NotARealPkg
+import notarealpkg
 
 
 def main() -> None:
-    NotARealPkg.run()
+    notarealpkg.run()

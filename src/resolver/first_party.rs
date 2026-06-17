@@ -1,7 +1,7 @@
 //! First-party and workspace import classification.
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
-use crate::manifest::ProjectMetadata;
+use crate::manifest::{ProjectMetadata, normalize_distribution_name};
 use crate::sources::LayoutInfo;
 
 /// Returns `true` when `import_root` matches a first-party package.
@@ -11,15 +11,16 @@ pub fn is_first_party_import(
     layout: &LayoutInfo,
     metadata: &ProjectMetadata,
 ) -> bool {
-    if layout.packages.iter().any(|package| package == import_root) {
+    let import_norm = normalize_distribution_name(import_root);
+    if layout
+        .packages
+        .iter()
+        .any(|package| normalize_distribution_name(package) == import_norm)
+    {
         return true;
     }
     if let Some(name) = &metadata.name {
-        for candidate in normalized_project_names(name) {
-            if candidate == import_root {
-                return true;
-            }
-        }
+        return normalize_distribution_name(name) == import_norm;
     }
     false
 }
@@ -61,13 +62,6 @@ fn member_basename(pattern: &str) -> &str {
         .unwrap_or(pattern)
 }
 
-fn normalized_project_names(name: &str) -> Vec<String> {
-    let mut names = vec![name.replace('-', "_"), name.replace('_', "-")];
-    names.sort();
-    names.dedup();
-    names
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +83,22 @@ mod tests {
             &layout,
             &ProjectMetadata::default()
         ));
+    }
+
+    #[test]
+    fn metadata_name_matches_normalized_import_root() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        };
+        let metadata = ProjectMetadata {
+            name: Some("my-package".to_owned()),
+            ..ProjectMetadata::default()
+        };
+        assert!(is_first_party_import("my_package", &layout, &metadata));
     }
 
     #[test]

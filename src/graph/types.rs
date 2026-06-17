@@ -244,9 +244,12 @@ impl ProjectGraph {
     }
 
     /// Updates the origin classification for an existing module node.
+    ///
+    /// Origins are merged monotonically so repeated writes for the same module
+    /// name never downgrade a resolved classification to [`ModuleOrigin::Unknown`].
     pub fn set_module_origin(&mut self, module: ModuleId, origin: ModuleOrigin) {
         if let Some(node) = self.modules.get_mut(&module) {
-            node.origin = origin;
+            node.origin = merge_module_origin(node.origin, origin);
         }
     }
 
@@ -337,6 +340,49 @@ impl ProjectGraph {
         self.next_entry_id = self.next_entry_id.saturating_add(1);
         self.entries.insert(id, node);
         id
+    }
+}
+
+/// Merge two module origins, keeping the more specific classification.
+#[must_use]
+pub fn merge_module_origin(current: ModuleOrigin, candidate: ModuleOrigin) -> ModuleOrigin {
+    fn rank(origin: ModuleOrigin) -> u8 {
+        match origin {
+            ModuleOrigin::Stdlib | ModuleOrigin::FirstParty => 3,
+            ModuleOrigin::ThirdParty => 2,
+            ModuleOrigin::Unknown => 1,
+        }
+    }
+
+    if rank(candidate) > rank(current) {
+        candidate
+    } else {
+        current
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    #[test]
+    fn merge_prefers_resolved_over_unknown() {
+        assert_eq!(
+            merge_module_origin(ModuleOrigin::Unknown, ModuleOrigin::ThirdParty),
+            ModuleOrigin::ThirdParty
+        );
+        assert_eq!(
+            merge_module_origin(ModuleOrigin::ThirdParty, ModuleOrigin::Unknown),
+            ModuleOrigin::ThirdParty
+        );
+    }
+
+    #[test]
+    fn merge_prefers_first_party_over_third_party() {
+        assert_eq!(
+            merge_module_origin(ModuleOrigin::ThirdParty, ModuleOrigin::FirstParty),
+            ModuleOrigin::FirstParty
+        );
     }
 }
 

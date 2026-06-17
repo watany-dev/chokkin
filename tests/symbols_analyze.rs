@@ -174,7 +174,7 @@ fn unresolved_import_emits_chk010() {
         candidate.rule == RuleId::Chk010
             && matches!(
                 &candidate.subject,
-                chokkin::IssueSubject::Import { module, .. } if module == "NotARealPkg"
+                chokkin::IssueSubject::Import { module, .. } if module == "notarealpkg"
             )
     }));
 }

@@ -41,34 +41,14 @@ impl ImportMap {
     /// Build merged import map from bundled data and user config.
     #[must_use]
     pub fn build(config: &ChokkinConfig) -> Self {
-        let mut bundled: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (distribution, imports) in PACKAGE_TO_IMPORTS {
-            let dist = normalize_distribution_name(distribution);
-            for import in *imports {
-                bundled
-                    .entry(import.to_string())
-                    .or_default()
-                    .push(dist.clone());
-            }
-        }
-        for imports in bundled.values_mut() {
-            let entries: &mut Vec<String> = imports;
-            entries.sort();
-            entries.dedup();
-        }
-
-        let mut user: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (distribution, imports) in &config.package_module_map {
-            let dist = normalize_distribution_name(distribution);
-            for import in imports {
-                user.entry(import.clone()).or_default().push(dist.clone());
-            }
-        }
-        for imports in user.values_mut() {
-            let entries: &mut Vec<String> = imports;
-            entries.sort();
-            entries.dedup();
-        }
+        let bundled = build_reverse_map(
+            PACKAGE_TO_IMPORTS
+                .iter()
+                .map(|(distribution, imports)| (*distribution, imports.iter().copied())),
+        );
+        let user = build_reverse_map(config.package_module_map.iter().map(
+            |(distribution, imports)| (distribution.as_str(), imports.iter().map(String::as_str)),
+        ));
 
         Self { bundled, user }
     }
@@ -116,12 +96,34 @@ impl ImportMap {
     }
 }
 
-fn canonicalize_match(import_root: &str) -> Option<String> {
-    let guess = normalize_distribution_name(import_root);
-    if guess.replace('-', "_") == import_root {
-        return Some(guess);
+fn build_reverse_map<'a>(
+    entries: impl IntoIterator<Item = (&'a str, impl IntoIterator<Item = &'a str>)>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (distribution, imports) in entries {
+        let dist = normalize_distribution_name(distribution);
+        for import in imports {
+            map.entry(import.to_owned()).or_default().push(dist.clone());
+        }
     }
-    None
+    sort_dedup_map_values(&mut map);
+    map
+}
+
+fn sort_dedup_map_values(map: &mut BTreeMap<String, Vec<String>>) {
+    for values in map.values_mut() {
+        values.sort();
+        values.dedup();
+    }
+}
+
+fn canonicalize_match(import_root: &str) -> Option<String> {
+    let normalized = normalize_distribution_name(import_root);
+    if normalized.is_empty() || normalized == import_root {
+        None
+    } else {
+        Some(normalized)
+    }
 }
 
 /// Build merged binary name → distribution map.
@@ -185,5 +187,15 @@ mod tests {
                 "expected {import_root} -> {distribution}, got {candidates:?}"
             );
         }
+    }
+
+    #[test]
+    fn canonicalize_matches_mixed_case_import_root() {
+        let import_map = ImportMap::build(&default_config());
+        let candidates = import_map.candidates("DefinitelyNotInBundledMap");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].distribution, "definitelynotinbundledmap");
+        assert_eq!(candidates[0].source, MapSource::Canonicalize);
+        assert_eq!(candidates[0].confidence, ResolveConfidence::Maybe);
     }
 }
