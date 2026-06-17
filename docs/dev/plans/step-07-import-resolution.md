@@ -258,9 +258,11 @@ DistributionProvidesModule {
 
 ## 7. stdlib テーブル
 
-**方式:** `resolver/stdlib/py311.txt` 等を `include_str!` で埋め込み。
+**方式:** `resolver/stdlib/py310.txt` 〜 `py313.txt` を `include_str!` で埋め込み、`target_version` の minor に応じて選択する。
 
-- ソース: Python 公式 `sys.stdlib_module_names`（3.10–3.13 各 1 ファイル）
+- ソース: 3.11 向け curated リスト + `scripts/generate-stdlib-modules.py` で 3.10/3.12/3.13 差分を生成
+- `tomllib` は 3.11+、PEP 594 削除モジュールは 3.13 未満のみ stdlib
+- `__future__` など curated リストに無かった汎用 stdlib も含める
 - `target_version` で選択
 - `sys` / `typing` 等は常に stdlib
 
