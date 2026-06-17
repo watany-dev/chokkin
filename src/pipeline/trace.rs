@@ -1,8 +1,12 @@
 //! Reachability trace formatting for `--trace`.
 
+use std::fmt::Write;
+
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::graph::{FileId, GraphEdge, ProjectGraph};
-use crate::reachability::{ModuleIndex, ReachabilityReport, TracePath, TraceStep, UnreachableReason, trace_to_file};
+use crate::reachability::{
+    ModuleIndex, ReachabilityReport, TracePath, TraceStep, UnreachableReason, trace_to_file,
+};
 use crate::sources::DiscoveredSources;
 
 /// Normalize a user-supplied path for graph lookup.
@@ -63,6 +67,7 @@ pub fn trace_output(
     format_negative_trace(report, graph, entry, sources, target, file_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn format_negative_trace(
     report: &ReachabilityReport,
     graph: &ProjectGraph,
@@ -72,10 +77,11 @@ fn format_negative_trace(
     file_id: FileId,
 ) -> String {
     let mut out = format!("Negative trace for {target}:\n\n");
-    out.push_str(&format!(
+    let _ = write!(
+        out,
         "  reason: {}\n\n",
         unreachable_reason_label(report, target)
-    ));
+    );
 
     out.push_str("  entry roots analyzed:\n");
     if entry.roots.is_empty() {
@@ -90,12 +96,8 @@ fn format_negative_trace(
             let origin = root
                 .origins
                 .first()
-                .map(format_entry_origin)
-                .unwrap_or_else(|| "entry".to_owned());
-            out.push_str(&format!(
-                "    {prefix}{} ({origin})\n",
-                root.spec.path
-            ));
+                .map_or_else(|| "entry".to_owned(), format_entry_origin);
+            let _ = writeln!(out, "    {prefix}{} ({origin})", root.spec.path);
         }
     }
 
@@ -116,9 +118,7 @@ fn format_negative_trace(
             } else {
                 " (file also unreachable)".to_owned()
             };
-            out.push_str(&format!(
-                "    {prefix}{path}:{line} imports {module}{suffix}\n"
-            ));
+            let _ = writeln!(out, "    {prefix}{path}:{line} imports {module}{suffix}");
         }
     }
 
@@ -138,12 +138,13 @@ fn unreachable_reason_label(report: &ReachabilityReport, target: &str) -> String
 
     file.reasons
         .iter()
+        .copied()
         .map(format_unreachable_reason)
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn format_unreachable_reason(reason: &UnreachableReason) -> String {
+fn format_unreachable_reason(reason: UnreachableReason) -> String {
     match reason {
         UnreachableReason::NotReachable => "not reachable from any entry root".to_owned(),
         UnreachableReason::ExcludedInit => "excluded __init__.py".to_owned(),
@@ -196,14 +197,16 @@ fn collect_incoming_imports(
 mod tests {
     use super::*;
     use crate::config::EntrySpec;
+    use crate::config::{Confidence, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::entry::{EntryPlan, EntryRoot, ResolvedMode};
     use crate::graph::{FileNode, ModuleOrigin, add_parsed_imports};
     use crate::parser::ParsedModule;
     use crate::reachability::UnreachableFile;
-    use crate::config::{Confidence, ProjectMode};
     use crate::resolver::ResolveConfidence;
-    use crate::sources::{DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout};
+    use crate::sources::{
+        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
+    };
 
     fn src_layout() -> LayoutInfo {
         LayoutInfo {
@@ -246,6 +249,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn negative_trace_lists_entry_roots_and_incoming_imports() {
         let sources = sources_with(&[
             "src/acme/cli.py",
@@ -264,7 +268,8 @@ mod tests {
         let legacy_id = graph.file_id("src/acme/legacy.py").expect("legacy");
         let old_api_id = graph.file_id("src/acme/old_api.py").expect("old api");
 
-        let _legacy_module = graph.intern_module("acme.legacy".to_owned(), ModuleOrigin::FirstParty);
+        let _legacy_module =
+            graph.intern_module("acme.legacy".to_owned(), ModuleOrigin::FirstParty);
         add_parsed_imports(
             &mut graph,
             old_api_id,
