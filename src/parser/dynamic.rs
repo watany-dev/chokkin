@@ -107,6 +107,22 @@ fn collect_from_stmt(
                 collect_from_stmt(inner, locator, out, opaque);
             }
         },
+        Stmt::Assign(assign) => {
+            inspect_expr(&assign.value, locator, out, opaque);
+        },
+        Stmt::AnnAssign(ann_assign) => {
+            if let Some(value) = &ann_assign.value {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Stmt::AugAssign(aug_assign) => {
+            inspect_expr(&aug_assign.value, locator, out, opaque);
+        },
+        Stmt::Return(return_stmt) => {
+            if let Some(value) = &return_stmt.value {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
         Stmt::Expr(expr_stmt) => {
             inspect_expr(&expr_stmt.value, locator, out, opaque);
         },
@@ -120,15 +136,156 @@ fn inspect_expr(
     out: &mut Vec<DynamicImport>,
     opaque: &mut bool,
 ) {
-    if let Expr::Call(call) = expr {
-        if let Some(module) = extract_literal_module_call(&call.func, &call.args) {
-            let line = locator.locate(call.start()).row.get();
-            out.push(DynamicImport { module, line });
-            return;
-        }
-        if is_import_module_call(&call.func) && !call.args.is_empty() {
-            *opaque = true;
-        }
+    match expr {
+        Expr::Call(call) => {
+            if let Some(module) = extract_literal_module_call(&call.func, &call.args) {
+                let line = locator.locate(call.start()).row.get();
+                out.push(DynamicImport { module, line });
+            } else if is_import_module_call(&call.func) && !call.args.is_empty() {
+                *opaque = true;
+            }
+            inspect_expr(&call.func, locator, out, opaque);
+            for arg in &call.args {
+                inspect_expr(arg, locator, out, opaque);
+            }
+            for keyword in &call.keywords {
+                inspect_expr(&keyword.value, locator, out, opaque);
+            }
+        },
+        Expr::BoolOp(bool_op) => {
+            for value in &bool_op.values {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Expr::NamedExpr(named) => {
+            inspect_expr(&named.value, locator, out, opaque);
+        },
+        Expr::BinOp(bin_op) => {
+            inspect_expr(&bin_op.left, locator, out, opaque);
+            inspect_expr(&bin_op.right, locator, out, opaque);
+        },
+        Expr::UnaryOp(unary) => {
+            inspect_expr(&unary.operand, locator, out, opaque);
+        },
+        Expr::IfExp(if_exp) => {
+            inspect_expr(&if_exp.test, locator, out, opaque);
+            inspect_expr(&if_exp.body, locator, out, opaque);
+            inspect_expr(&if_exp.orelse, locator, out, opaque);
+        },
+        Expr::Dict(dict) => {
+            for (key, value) in dict.keys.iter().zip(&dict.values) {
+                if let Some(key) = key {
+                    inspect_expr(key, locator, out, opaque);
+                }
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Expr::Set(set) => {
+            for value in &set.elts {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Expr::ListComp(list_comp) => {
+            inspect_expr(&list_comp.elt, locator, out, opaque);
+            for comprehension in &list_comp.generators {
+                inspect_expr(&comprehension.target, locator, out, opaque);
+                inspect_expr(&comprehension.iter, locator, out, opaque);
+                for if_clause in &comprehension.ifs {
+                    inspect_expr(if_clause, locator, out, opaque);
+                }
+            }
+        },
+        Expr::SetComp(set_comp) => {
+            inspect_expr(&set_comp.elt, locator, out, opaque);
+            for comprehension in &set_comp.generators {
+                inspect_expr(&comprehension.target, locator, out, opaque);
+                inspect_expr(&comprehension.iter, locator, out, opaque);
+                for if_clause in &comprehension.ifs {
+                    inspect_expr(if_clause, locator, out, opaque);
+                }
+            }
+        },
+        Expr::DictComp(dict_comp) => {
+            inspect_expr(&dict_comp.key, locator, out, opaque);
+            inspect_expr(&dict_comp.value, locator, out, opaque);
+            for comprehension in &dict_comp.generators {
+                inspect_expr(&comprehension.target, locator, out, opaque);
+                inspect_expr(&comprehension.iter, locator, out, opaque);
+                for if_clause in &comprehension.ifs {
+                    inspect_expr(if_clause, locator, out, opaque);
+                }
+            }
+        },
+        Expr::GeneratorExp(generator) => {
+            inspect_expr(&generator.elt, locator, out, opaque);
+            for comprehension in &generator.generators {
+                inspect_expr(&comprehension.target, locator, out, opaque);
+                inspect_expr(&comprehension.iter, locator, out, opaque);
+                for if_clause in &comprehension.ifs {
+                    inspect_expr(if_clause, locator, out, opaque);
+                }
+            }
+        },
+        Expr::Await(await_expr) => {
+            inspect_expr(&await_expr.value, locator, out, opaque);
+        },
+        Expr::Yield(yield_expr) => {
+            if let Some(value) = &yield_expr.value {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Expr::YieldFrom(yield_from) => {
+            inspect_expr(&yield_from.value, locator, out, opaque);
+        },
+        Expr::Compare(compare) => {
+            inspect_expr(&compare.left, locator, out, opaque);
+            for comparator in &compare.comparators {
+                inspect_expr(comparator, locator, out, opaque);
+            }
+        },
+        Expr::Attribute(attribute) => {
+            inspect_expr(&attribute.value, locator, out, opaque);
+        },
+        Expr::Subscript(subscript) => {
+            inspect_expr(&subscript.value, locator, out, opaque);
+            inspect_expr(&subscript.slice, locator, out, opaque);
+        },
+        Expr::Starred(starred) => {
+            inspect_expr(&starred.value, locator, out, opaque);
+        },
+        Expr::List(list) => {
+            for value in &list.elts {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Expr::Tuple(tuple) => {
+            for value in &tuple.elts {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Expr::FormattedValue(formatted) => {
+            inspect_expr(&formatted.value, locator, out, opaque);
+        },
+        Expr::JoinedStr(joined) => {
+            for value in &joined.values {
+                inspect_expr(value, locator, out, opaque);
+            }
+        },
+        Expr::Slice(slice) => {
+            if let Some(lower) = &slice.lower {
+                inspect_expr(lower, locator, out, opaque);
+            }
+            if let Some(upper) = &slice.upper {
+                inspect_expr(upper, locator, out, opaque);
+            }
+            if let Some(step) = &slice.step {
+                inspect_expr(step, locator, out, opaque);
+            }
+        },
+        Expr::Lambda(lambda) => {
+            inspect_expr(&lambda.body, locator, out, opaque);
+        },
+        Expr::Constant(_) | Expr::Name(_) => {},
     }
 }
 
@@ -182,5 +339,59 @@ mod tests {
         assert_eq!(imports[0].module, "acme.plugins");
         assert_eq!(imports[0].line, 2);
         assert!(!opaque);
+    }
+
+    #[test]
+    fn extracts_importlib_from_assignment() {
+        let source = "import importlib\nmod = importlib.import_module(\"acme.plugins\")\n";
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let mut imports = Vec::new();
+        let mut opaque = false;
+        let mut locator = RandomLocator::new(source);
+        collect_dynamic_imports(&stmts, &mut locator, &mut imports, &mut opaque);
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].module, "acme.plugins");
+        assert_eq!(imports[0].line, 2);
+        assert!(!opaque);
+    }
+
+    #[test]
+    fn extracts_importlib_from_return() {
+        let source = "import importlib\ndef load():\n    return importlib.import_module(\"acme.plugins\")\n";
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let mut imports = Vec::new();
+        let mut opaque = false;
+        let mut locator = RandomLocator::new(source);
+        collect_dynamic_imports(&stmts, &mut locator, &mut imports, &mut opaque);
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].module, "acme.plugins");
+        assert_eq!(imports[0].line, 3);
+        assert!(!opaque);
+    }
+
+    #[test]
+    fn extracts_importlib_from_call_argument() {
+        let source = "import importlib\ndef run(fn):\n    pass\nrun(importlib.import_module(\"acme.plugins\"))\n";
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let mut imports = Vec::new();
+        let mut opaque = false;
+        let mut locator = RandomLocator::new(source);
+        collect_dynamic_imports(&stmts, &mut locator, &mut imports, &mut opaque);
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].module, "acme.plugins");
+        assert_eq!(imports[0].line, 4);
+        assert!(!opaque);
+    }
+
+    #[test]
+    fn marks_opaque_assignment_with_non_literal() {
+        let source = "import importlib\nmod = importlib.import_module(name)\n";
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let mut imports = Vec::new();
+        let mut opaque = false;
+        let mut locator = RandomLocator::new(source);
+        collect_dynamic_imports(&stmts, &mut locator, &mut imports, &mut opaque);
+        assert!(imports.is_empty());
+        assert!(opaque);
     }
 }
