@@ -10,6 +10,7 @@ use chokkin::{
     ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId, Severity,
     apply_baseline, render_issues, write_baseline,
 };
+use jsonschema::Validator;
 use serde_json::Value;
 
 fn context() -> RenderContext {
@@ -65,25 +66,41 @@ fn load_schema(name: &str) -> Value {
     serde_json::from_str(&contents).expect("parse schema")
 }
 
+fn validator_for(name: &str) -> Validator {
+    Validator::new(&load_schema(name)).expect("compile schema")
+}
+
 #[test]
-fn json_report_matches_published_schema_shape() {
+fn json_report_validates_against_published_schema() {
     let rendered = render_issues(ReporterId::Json, &sample_report(), &context());
     let report: Value = serde_json::from_str(&rendered).expect("valid json report");
-    let schema = load_schema("chokkin-report.schema.json");
+    let validator = validator_for("chokkin-report.schema.json");
 
-    assert_required_fields(&report, schema["required"].as_array().expect("required"));
+    validator
+        .validate(&report)
+        .expect("json report should match published schema");
     assert_eq!(report["schema_version"], "1");
+}
 
-    let issue = &report["issues"][0];
-    let issue_schema = &schema["$defs"]["issue"];
-    assert_required_fields(
-        issue,
-        issue_schema["required"].as_array().expect("issue required"),
+#[test]
+fn json_schema_rejects_invalid_rule_code_prefix() {
+    let validator = validator_for("chokkin-report.schema.json");
+    let mut report: Value = serde_json::from_str(&render_issues(
+        ReporterId::Json,
+        &sample_report(),
+        &context(),
+    ))
+    .expect("valid json report");
+    report["issues"][0]["code"] = Value::String("CHK002EXTRA".to_owned());
+
+    assert!(
+        validator.validate(&report).is_err(),
+        "invalid rule code prefix should fail schema validation"
     );
 }
 
 #[test]
-fn baseline_v03_writes_schema_version_and_reads_v02_without_it() {
+fn baseline_v03_validates_and_reads_v02_without_schema_version() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let baseline = dir.path().join("chokkin-baseline.json");
 
@@ -91,6 +108,9 @@ fn baseline_v03_writes_schema_version_and_reads_v02_without_it() {
     let written = fs::read_to_string(&baseline).expect("read baseline");
     let parsed: Value = serde_json::from_str(&written).expect("parse baseline");
     assert_eq!(parsed["schema_version"], "1");
+    validator_for("chokkin-baseline.schema.json")
+        .validate(&parsed)
+        .expect("v0.3 baseline should match published schema");
 
     let v02 = r#"{
   "chokkin_version": "0.2.0",
@@ -109,14 +129,4 @@ fn baseline_v03_writes_schema_version_and_reads_v02_without_it() {
     apply_baseline(&mut report, dir.path(), &baseline).expect("apply v0.2 baseline");
     assert!(report.issues.is_empty());
     assert_eq!(report.exit_status, ExitStatus::Success);
-}
-
-fn assert_required_fields(value: &Value, required: &[Value]) {
-    for field in required {
-        let key = field.as_str().expect("field name");
-        assert!(
-            value.get(key).is_some(),
-            "missing required field `{key}` in {value}"
-        );
-    }
 }

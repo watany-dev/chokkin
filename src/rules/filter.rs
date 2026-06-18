@@ -50,7 +50,7 @@ pub fn counts_toward_exit(issue: &Issue, strict: bool) -> bool {
     } else {
         (crate::rules::types::Severity::Error, Confidence::Likely)
     };
-    issue.severity >= min_severity && issue.confidence.meets_floor(min_confidence)
+    issue.severity.rank() >= min_severity.rank() && issue.confidence.meets_floor(min_confidence)
 }
 
 #[cfg(test)]
@@ -86,6 +86,12 @@ mod tests {
     fn likely_issue_hidden_when_floor_is_certain() {
         let issue = sample_issue(RuleId::Chk002, Confidence::Likely, Severity::Error);
         assert!(!passes_confidence_filter(&issue, Confidence::Certain));
+    }
+
+    #[test]
+    fn info_issue_does_not_count_toward_exit_in_default_mode() {
+        let issue = sample_issue(RuleId::Chk002, Confidence::Certain, Severity::Info);
+        assert!(!counts_toward_exit(&issue, false));
     }
 
     #[test]

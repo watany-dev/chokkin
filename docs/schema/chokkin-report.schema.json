@@ -83,7 +83,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "pattern": "^CHK00[1-9]|CHK010$"
+          "pattern": "^(CHK00[1-9]|CHK010)$"
         },
         "severity": {
           "type": "string",

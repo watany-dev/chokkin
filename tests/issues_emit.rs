@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, ExitStatus, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, add_parsed_imports,
-    analyze_reachability, analyze_symbols, apply_entry_plan, apply_resolution_to_graph,
-    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources, emit_issues,
-    extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    reconcile_dependencies, resolve_imports, resolve_target_version,
+    Confidence, ExitStatus, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, SeverityLevel,
+    add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
+    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
+    discover_sources, emit_issues, extract_manifest, extract_plugin_hints, load_config,
+    parse_project_sources, reconcile_dependencies, resolve_imports, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -173,4 +173,122 @@ fn likely_unused_dependency_hidden_when_confidence_is_certain() {
             .iter()
             .all(|issue| issue.rule != RuleId::Chk002)
     );
+}
+
+fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> chokkin::IssueReport {
+    emit_issues(
+        &inputs.reachability,
+        &inputs.deps,
+        &inputs.symbols,
+        &inputs.parse,
+        config,
+        &RuntimeOverrides::default(),
+        &inputs.entry.mode,
+    )
+}
+
+fn emit_with_config_and_overrides(
+    inputs: &EmitInputs,
+    config: &chokkin::ChokkinConfig,
+    overrides: &RuntimeOverrides,
+) -> chokkin::IssueReport {
+    emit_issues(
+        &inputs.reachability,
+        &inputs.deps,
+        &inputs.symbols,
+        &inputs.parse,
+        config,
+        overrides,
+        &inputs.entry.mode,
+    )
+}
+
+#[test]
+fn severity_off_disables_rule_without_suppressed_entry() {
+    let inputs = load_emit(&fixture("unused_boto3"));
+    let mut config = inputs.config.clone();
+    config
+        .severity
+        .insert("CHK002".to_owned(), SeverityLevel::Off);
+    let report = emit_with_config(&inputs, &config);
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|issue| issue.rule != RuleId::Chk002)
+    );
+    assert!(report.suppressed.is_empty());
+    assert_eq!(report.exit_status, ExitStatus::Success);
+}
+
+#[test]
+fn severity_info_downgrades_exit_code_in_default_mode() {
+    let inputs = load_emit(&fixture("unused_boto3"));
+    let mut config = inputs.config.clone();
+    config
+        .severity
+        .insert("CHK002".to_owned(), SeverityLevel::Info);
+    let report = emit_with_config(&inputs, &config);
+    let chk002 = report
+        .issues
+        .iter()
+        .find(|issue| issue.rule == RuleId::Chk002)
+        .expect("CHK002 should still be reported");
+    assert_eq!(chk002.severity, chokkin::Severity::Info);
+    assert_eq!(report.exit_status, ExitStatus::Success);
+}
+
+#[test]
+fn severity_warning_counts_toward_exit_only_in_strict_mode() {
+    let inputs = load_emit(&fixture("unused_boto3"));
+    let mut config = inputs.config.clone();
+    config
+        .severity
+        .insert("CHK002".to_owned(), SeverityLevel::Warning);
+    let default_report = emit_with_config(&inputs, &config);
+    let strict_report = emit_with_config_and_overrides(
+        &inputs,
+        &config,
+        &RuntimeOverrides {
+            strict: Some(true),
+            ..RuntimeOverrides::default()
+        },
+    );
+    let chk002 = default_report
+        .issues
+        .iter()
+        .find(|issue| issue.rule == RuleId::Chk002)
+        .expect("CHK002 should still be reported");
+    assert_eq!(chk002.severity, chokkin::Severity::Warning);
+    assert_eq!(default_report.exit_status, ExitStatus::Success);
+    assert_eq!(strict_report.exit_status, ExitStatus::IssuesFound);
+}
+
+#[test]
+fn severity_error_upgrade_counts_toward_exit_in_default_mode() {
+    let inputs = load_emit(&fixture("unused_boto3"));
+    let mut warning_config = inputs.config.clone();
+    warning_config
+        .severity
+        .insert("CHK002".to_owned(), SeverityLevel::Warning);
+    let mut error_config = warning_config.clone();
+    error_config
+        .severity
+        .insert("CHK002".to_owned(), SeverityLevel::Error);
+    let warning_report = emit_with_config(&inputs, &warning_config);
+    let error_report = emit_with_config(&inputs, &error_config);
+    let warning_issue = warning_report
+        .issues
+        .iter()
+        .find(|issue| issue.rule == RuleId::Chk002)
+        .expect("CHK002");
+    let error_issue = error_report
+        .issues
+        .iter()
+        .find(|issue| issue.rule == RuleId::Chk002)
+        .expect("CHK002");
+    assert_eq!(warning_issue.severity, chokkin::Severity::Warning);
+    assert_eq!(error_issue.severity, chokkin::Severity::Error);
+    assert_eq!(warning_report.exit_status, ExitStatus::Success);
+    assert_eq!(error_report.exit_status, ExitStatus::IssuesFound);
 }
