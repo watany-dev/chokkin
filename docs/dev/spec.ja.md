@@ -246,6 +246,12 @@ tox = true
 nox = true
 pre_commit = true
 github_actions = true
+
+# ルール別 severity override (off / info / warning / error)
+[tool.chokkin.severity]
+CHK001 = "off"
+CHK006 = "info"
+CHK002 = "error"
 ```
 
 workspace設定。
@@ -831,20 +837,21 @@ v0.2で入れるもの。
 - cache
 ```
 
-v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。stable JSON schema は Phase 3 で凍結し、v1.0 で semver 契約の一部にする。
+v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。
 
 v1.0で安定させるもの。
 
 ```text
-- plugin API
-- rule severity設定
-- stable JSON schema
+- plugin API (外部loading; v0.3ではRFCのみ)
+- stable JSON schema (v0.3で schema_version + JSON Schema 公開済み)
 - stable exit code
-- stable ignore syntax
+- stable ignore syntax (v0.3で回帰テスト固定)
 - safe autofix contract
 - large monorepo performance
 - editor/LSP連携
 ```
+
+v0.3 で実装済み: `[tool.chokkin.severity]` による rule severity override、SARIF rule metadata 安定化。
 
 ## 17. ロードマップ
 
@@ -955,28 +962,28 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
-### Phase 3: v0.3〜v0.x 安定化(継続)
+### Phase 3: v0.3〜v0.x 安定化(継続) — 🟡 v0.3 実装中
 
 ```text
 目標   : v1.0で凍結する契約の準備
 v0.3   : Contract Stabilization
 成果物 :
-  - JSON reporterに schema_version を追加し、JSON Schemaを公開する
-  - baseline fileに schema_version を追加し、v0.2 draft baseline reader互換を維持する
-  - SARIF rule metadata (help text / help URI / default severity) を安定化する
-  - rule severity override設定を追加する
+  - JSON reporterに schema_version を追加し、JSON Schemaを公開する ✅
+  - baseline fileに schema_version を追加し、v0.2 draft baseline reader互換を維持する ✅
+  - SARIF rule metadata (help text / help URI / default severity) を安定化する ✅
+  - rule severity override設定を追加する ✅
     (例: CHK006 = "info" / CHK001 = "off" / CHK002 = "error")
   - inline/file-level ignore構文 (`# chokkin: ignore[...]` /
-    `# chokkin: file-ignore[...]`) をdraft凍結する
-  - plugin API RFCを作り、外部plugin試作のI/O境界を文書化する
+    `# chokkin: file-ignore[...]`) をdraft凍結する ✅
+  - plugin API RFCを作り、外部plugin試作のI/O境界を文書化する ✅
   - 誤検知報告から package-module-map / binary map / plugin database を継続更新する
 非目標 :
   - v0.3では外部plugin loadingを安定APIとして公開しない
   - v0.3では新規大規模検出より契約安定化を優先する
 exit   :
-  - v0.2 JSON / baselineを読み続けられる
-  - v0.3 JSON Schemaがsnapshot/regression testで固定される
-  - severity overrideがconfig / reporter / exit codeに反映される
+  - v0.2 JSON / baselineを読み続けられる ✅
+  - v0.3 JSON Schemaがsnapshot/regression testで固定される ✅
+  - severity overrideがconfig / reporter / exit codeに反映される ✅
   - make check と make oss-metrics ARGS=--gate が合格する
   - v1.0条件「2 minor version連続でbreaking changeなし」の起点をv0.3にする
 ```

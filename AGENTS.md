@@ -10,7 +10,7 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.2 development on top of released v0.1.0. Default CLI runs
+**Status:** v0.3 development on top of released v0.1.0 / v0.2.0. Default CLI runs
 `analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
 `markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
 and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
@@ -28,14 +28,19 @@ recorded on 2026-06-15 with Rust 1.93: `make check`, OSS fixtures, full
 20-project OSS gate, and Criterion cache benches passed; synthetic 10k warm
 cache measured under 205 ms. Baseline CI adoption is dogfooded by this repo's
 `chokkin-baseline` workflow job and checked-in `chokkin-baseline.json` (see
-`docs/dev/v0.2-release-validation.md`). PyPI
+`docs/dev/v0.2-release-validation.md`). Phase 3 (v0.3) adds `schema_version` on
+JSON reporter and baseline output, published JSON Schema under `docs/schema/`,
+`[tool.chokkin.severity]` per-rule overrides wired through emit/reporters/exit codes,
+stabilized SARIF rule metadata (`helpUri`, `fullDescription`), ignore-syntax
+regression tests, and plugin API RFC (`docs/adr/0002-plugin-api-rfc.md`; no
+external plugin loading). PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
 is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
-budget. PyPI **v0.1.0** has been released.
+budget. PyPI **v0.1.0** and **v0.2.0** have been released.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
@@ -62,12 +67,16 @@ src/
   entry/          Entry root construction (`build_entry_roots`, pipeline step 8)
   reachability/   Reachability analysis (`analyze_reachability`, positive/negative `--trace`; pipeline step 9)
   rules/          Dependency reconciliation (step 10), symbol usage (step 11),
-                  and issue emission (step 12: `emit_issues`, `explain_issue`)
-  reporters/      Built-in reporters: default, compact, json, markdown
+                  and issue emission (step 12: `emit_issues`, `explain_issue`;
+                  `severity.rs` / `metadata.rs` for Phase 3 overrides)
+  reporters/      Built-in reporters: default, compact, json, markdown,
+                  github, sarif
+  schema/         JSON/baseline `schema_version` constants (Phase 3)
   fix/            Optional manifest fixes (step 13: `apply_fixes`; atomic writes, root containment)
 pyproject.toml    maturin bin bindings — chokkin ships as a Python wheel
 docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing
+  schema/         Published JSON Schema for report and baseline (Phase 3)
   ci-porting-notes.md  Deferred CI items to enable as code matures
 ```
 

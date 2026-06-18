@@ -1,8 +1,12 @@
-//! Minimal SARIF v2.1.0 reporter for GitHub code scanning (Phase 2 / v0.2).
+//! Minimal SARIF v2.1.0 reporter for GitHub code scanning (Phase 3 / v0.3).
 
 use std::fmt::Write as _;
 
-use crate::rules::{Issue, IssueReport, RuleId, Severity, issue_fingerprint};
+use crate::rules::metadata::default_rule_severity;
+use crate::rules::{
+    Issue, IssueReport, RuleId, Severity, issue_fingerprint, rule_help_text, rule_help_uri,
+    rule_title,
+};
 
 use super::format::{json_string, severity_label};
 use super::traits::Reporter;
@@ -68,8 +72,18 @@ fn render_rule(out: &mut String, rule: RuleId) {
     );
     let _ = writeln!(
         out,
+        "              \"fullDescription\": {{ \"text\": {} }},",
+        json_string(rule_help_text(rule))
+    );
+    let _ = writeln!(
+        out,
+        "              \"helpUri\": {},",
+        json_string(&rule_help_uri(rule))
+    );
+    let _ = writeln!(
+        out,
         "              \"defaultConfiguration\": {{ \"level\": {} }}",
-        json_string(sarif_level(rule_default_severity(rule)))
+        json_string(sarif_level(default_rule_severity(rule)))
     );
     let _ = write!(out, "            }}");
 }
@@ -177,34 +191,6 @@ fn all_rules() -> [RuleId; 10] {
         RuleId::Chk009,
         RuleId::Chk010,
     ]
-}
-
-fn rule_title(rule: RuleId) -> &'static str {
-    match rule {
-        RuleId::Chk001 => "unused file",
-        RuleId::Chk002 => "unused dependency",
-        RuleId::Chk003 => "missing dependency",
-        RuleId::Chk004 => "transitive dependency",
-        RuleId::Chk005 => "misplaced dependency",
-        RuleId::Chk006 => "unused export",
-        RuleId::Chk007 => "unused re-export",
-        RuleId::Chk008 => "unlisted binary",
-        RuleId::Chk009 => "duplicate dependency",
-        RuleId::Chk010 => "unresolved import",
-    }
-}
-
-fn rule_default_severity(rule: RuleId) -> Severity {
-    match rule {
-        RuleId::Chk002 | RuleId::Chk003 | RuleId::Chk004 => Severity::Error,
-        RuleId::Chk001
-        | RuleId::Chk005
-        | RuleId::Chk006
-        | RuleId::Chk007
-        | RuleId::Chk008
-        | RuleId::Chk009
-        | RuleId::Chk010 => Severity::Warning,
-    }
 }
 
 fn sarif_level(severity: Severity) -> &'static str {

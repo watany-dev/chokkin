@@ -119,6 +119,8 @@ fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     assert!(rendered.contains("\"uri\": \"src/acme/app.py\""));
     assert!(rendered.contains("\"startLine\": 7"));
     assert!(rendered.contains("\"workspaceMember\": \"api\""));
+    assert!(rendered.contains("\"helpUri\": \"https://github.com/watany-dev/chokkin/blob/main/docs/dev/spec.ja.md#chk003\""));
+    assert!(rendered.contains("\"fullDescription\": { \"text\": \"Source imports a distribution"));
     assert_eq!(parsed["version"], "2.1.0");
 }
 
@@ -127,6 +129,7 @@ fn json_reporter_renders_valid_json() {
     let rendered = render_issues(ReporterId::Json, &report(), &context());
     let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json report");
 
+    assert_eq!(parsed["schema_version"], "1");
     assert_eq!(parsed["version"], "0.2.0-test");
     assert_eq!(parsed["issues"][0]["code"], "CHK003");
     assert_eq!(

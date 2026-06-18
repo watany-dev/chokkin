@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.2 development.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it now reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`), Rust 1.93 v0.2 validation measurements are recorded (`docs/dev/v0.2-release-validation.md`), and **v0.1.0 has been released**.
+> **Status: v0.3 development.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.3 adds `schema_version` on JSON/baseline output, published JSON Schema under `docs/schema/`, per-rule `[tool.chokkin.severity]` overrides, and stabilized SARIF rule metadata. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`), v0.2 validation is recorded (`docs/dev/v0.2-release-validation.md`), and **v0.1.0 / v0.2.0 have been released**.
 
 ## Why chokkin?
 
@@ -31,7 +31,7 @@ uvx chokkin
 No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, `uv.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
 
 ```text
-chokkin 0.2.0
+chokkin 0.3.0
 
 Project: acme-api
 Config : pyproject.toml
@@ -97,7 +97,7 @@ uvx chokkin --no-cache
 uvx chokkin --explain CHK002:boto3
 uvx chokkin --trace src/acme/legacy.py
 uvx chokkin --probe              # steps 1–4 summary only
-uvx chokkin --init                # v0.2
+uvx chokkin --init
 ```
 
 Key flags:
@@ -167,6 +167,12 @@ type_groups = ["types", "typing", "mypy"]
 pytest = true
 django = true
 fastapi = true
+
+# Per-rule severity overrides (off / info / warning / error)
+[tool.chokkin.severity]
+CHK001 = "off"
+CHK006 = "info"
+CHK002 = "error"
 ```
 
 ### Modes
@@ -209,12 +215,14 @@ CHK002 = ["boto3", "google-cloud-*"]
 CHK006 = ["src/acme/public_api.py:*"]
 ```
 
-For large existing projects, a baseline freezes current issues so CI only fails on new ones (v0.2):
+For large existing projects, a baseline freezes current issues so CI only fails on new ones:
 
 ```bash
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
 ```
+
+Baseline and `--reporter json` output include `schema_version: "1"`. v0.2 baseline files without that field remain readable. Published JSON Schema files live under [`docs/schema/`](./docs/schema/); migration notes are in [`docs/dev/schema-migration-notes.md`](./docs/dev/schema-migration-notes.md).
 
 ## CI adoption
 

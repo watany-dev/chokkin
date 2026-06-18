@@ -104,6 +104,43 @@ impl fmt::Display for Confidence {
     }
 }
 
+/// Per-rule severity override level (Phase 3 / v0.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeverityLevel {
+    /// Disable the rule entirely.
+    Off,
+    /// Informational severity.
+    Info,
+    /// Warning severity.
+    Warning,
+    /// Error severity.
+    Error,
+}
+
+impl SeverityLevel {
+    /// Parse a `[tool.chokkin.severity]` value.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "info" => Some(Self::Info),
+            "warning" => Some(Self::Warning),
+            "error" => Some(Self::Error),
+            _ => None,
+        }
+    }
+
+    /// Stable identifier for config and reporters.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
 /// Known chokkin plugins (§5, §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PluginId {
@@ -338,6 +375,8 @@ pub struct ChokkinConfig {
     pub plugins: BTreeMap<PluginId, bool>,
     /// Per-rule ignore patterns (loaded only; matching is a later step).
     pub ignore: BTreeMap<String, Vec<String>>,
+    /// Per-rule severity overrides (`off` / `info` / `warning` / `error`).
+    pub severity: BTreeMap<String, SeverityLevel>,
     /// Explicit workspace member overrides.
     pub workspaces: BTreeMap<String, WorkspaceOverride>,
 }

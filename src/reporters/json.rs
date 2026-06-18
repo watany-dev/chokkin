@@ -1,8 +1,9 @@
-//! JSON reporter (v0.2 draft schema).
+//! JSON reporter (v0.3 stable schema).
 
 use std::fmt::Write as _;
 
 use crate::rules::{Issue, IssueReport, IssueSubject, issue_fingerprint, issue_stable_target};
+use crate::schema::JSON_REPORT_SCHEMA_VERSION;
 
 use super::format::{baseline_suppressed_count, json_string};
 use super::traits::Reporter;
@@ -16,6 +17,11 @@ impl Reporter for JsonReporter {
     fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
         let mut out = String::new();
         let _ = writeln!(out, "{{");
+        let _ = writeln!(
+            out,
+            "  \"schema_version\": {},",
+            json_string(JSON_REPORT_SCHEMA_VERSION)
+        );
         let _ = writeln!(out, "  \"version\": {},", json_string(context.version));
         let _ = writeln!(
             out,

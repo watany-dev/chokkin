@@ -78,6 +78,18 @@ pub enum Severity {
     Info,
 }
 
+impl Severity {
+    /// Numeric rank for exit-code thresholds (`Error` is strongest).
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Error => 3,
+            Self::Warning => 2,
+            Self::Info => 1,
+        }
+    }
+}
+
 /// Subject of an issue candidate or final issue.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IssueSubject {
