@@ -962,7 +962,7 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
-### Phase 3: v0.3〜v0.x 安定化(継続) — 🟡 v0.3 実装中
+### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.3.0 リリース済み
 
 ```text
 目標   : v1.0で凍結する契約の準備

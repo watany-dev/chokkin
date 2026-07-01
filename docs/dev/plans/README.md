@@ -35,7 +35,7 @@
 | OSS dogfooding + §17 gate | `scripts/oss-metrics.sh` | 確定 | ✅ 計測済み |
 | **v0.1 誤検知是正** | [phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md) | 確定 | ✅ |
 | **v0.2 導入支援** | [phase-2-v0.2-adoption.md](./phase-2-v0.2-adoption.md) | 中期計画 | ✅ |
-| **v0.3 契約安定化** | spec §17 Phase 3 | 中期計画 | 🟡 |
+| **v0.3 契約安定化** | spec §17 Phase 3 | 中期計画 | ✅ |
 
 ## 推奨実装順（クリティカルパス）
 
@@ -104,7 +104,7 @@ cache / plugin 拡充を順に進めた。詳細は
 [`phase-2-v0.2-adoption.md`](./phase-2-v0.2-adoption.md)。
 v0.2 release validation は `docs/dev/v0.2-release-validation.md` に記録済み。
 
-## v0.3 契約安定化 — 🟡 実装中
+## v0.3 契約安定化 — ✅ 完了
 
 Phase 3 (v0.3) は JSON/baseline の `schema_version`、公開 JSON Schema
 (`docs/schema/`)、`[tool.chokkin.severity]` override、SARIF rule metadata、

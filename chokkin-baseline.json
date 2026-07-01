@@ -1,6 +1,7 @@
 {
-  "chokkin_version": "0.2.0",
-  "generated_at": "unix:1781710992",
+  "schema_version": "1",
+  "chokkin_version": "0.3.0",
+  "generated_at": "unix:1782888518",
   "issues": [
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",

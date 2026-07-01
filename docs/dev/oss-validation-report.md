@@ -1,10 +1,10 @@
 # OSS validation report — Phase 1 §17 release gate
 
-Run before the v0.1 release to measure the §17 exit criteria over a fixed set
+Measured for the v0.3 release to verify the §17 exit criteria over a fixed set
 of 20 real OSS Python projects.
 
-- chokkin version: `0.1.0`
-- date: 2026-06-14
+- chokkin version: `0.3.0`
+- date: 2026-07-01 (re-measured for the v0.3 release)
 - harness: `scripts/clone-oss-fixtures.sh` + `scripts/oss-metrics.sh`
   (`make oss-metrics`)
 - validation set: `scripts/oss-clones.manifest` (pinned tags; resolved SHAs in
