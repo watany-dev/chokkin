@@ -34,8 +34,8 @@
 | **フル CLI + reporter** | [phase-1-cli-reporter.md](./phase-1-cli-reporter.md) | 確定 | ✅ |
 | OSS dogfooding + §17 gate | `scripts/oss-metrics.sh` | 確定 | ✅ 計測済み |
 | **v0.1 誤検知是正** | [phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md) | 確定 | ✅ |
-| **v0.2 導入支援** | [phase-2-v0.2-adoption.md](./phase-2-v0.2-adoption.md) | 中期計画 | ✅ |
-| **v0.3 契約安定化** | spec §17 Phase 3 | 中期計画 | ✅ |
+| **v0.2 導入支援** | [phase-2-v0.2-adoption.md](./phase-2-v0.2-adoption.md) | 完了 | ✅ |
+| **v0.3 契約安定化** | spec §17 Phase 3 | 完了 | ✅ |
 
 ## 推奨実装順（クリティカルパス）
 
@@ -59,25 +59,37 @@ flowchart TB
     P15[Phase 1.5 FP remediation]
   end
 
-  subgraph released [v0.1.0 / v0.2.0 リリース済み]
+  subgraph released [v0.1.0 / v0.2.0 / v0.3.0 リリース済み]
     GATE[oss-metrics --gate ✅]
     TAG[PyPI v0.1.0 tag ✅]
     V02[v0.2 adoption ✅]
+    V03[v0.3 contract stabilization ✅]
   end
 
-  subgraph current [Phase 3: v0.3 契約安定化]
-    SCHEMA[schema_version + JSON Schema]
-    SEVERITY[severity override]
-    SARIF[SARIF metadata]
+  subgraph current [Phase 3.x: v0.4 信頼性 + 契約形式化]
+    CHK003[Step 0: CHK003 計測/分類]
+    A1[CHK003 FP 是正]
+    A2[map 自動化]
+    B1[autofix ADR]
+    B2[semver ADR]
   end
 
   done --> GATE
   GATE --> TAG
   TAG --> V02
-  V02 --> SCHEMA
-  SCHEMA --> SEVERITY
-  SEVERITY --> SARIF
+  V02 --> V03
+  V03 --> CHK003
+  CHK003 --> A1
+  CHK003 --> B1
+  A1 --> A2
+  CHK003 --> B2
 ```
+
+## v0.4 計画
+
+| 項目 | 状態 |
+| --- | --- |
+| [v0.4 信頼性＋契約形式化](phase-3x-v0.4-reliability-contract.md) | 計画済み |
 
 ## v0.1.0 リリース結果（§17 exit criteria）
 
