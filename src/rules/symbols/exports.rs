@@ -90,7 +90,7 @@ pub(super) fn collect_reexports(
 /// Returns `true` when the package-level re-export name is referenced.
 pub(super) fn is_reexport_used(
     reexport: &ReExport,
-    references: &super::graph::ReferenceIndex<'_>,
+    references: &super::graph::ReferenceIndex,
 ) -> bool {
     let package_symbol = SymbolId::new(&reexport.package_module, &reexport.name);
     references.is_referenced(&package_symbol)

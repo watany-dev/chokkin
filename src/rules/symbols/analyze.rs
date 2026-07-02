@@ -18,9 +18,7 @@ use crate::sources::DiscoveredSources;
 
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
-use super::graph::{
-    ReferenceIndex, SymbolId, SymbolRegistry, build_registry, collect_import_references,
-};
+use super::graph::{ReferenceIndex, SymbolId, SymbolRegistry, build_registry};
 use super::types::SymbolReport;
 
 /// Analyze public symbol usage and unresolved imports (§12).
@@ -46,8 +44,7 @@ pub fn analyze_symbols(
         .collect();
 
     let registry = build_registry(&reachable_modules, &module_names);
-    let references = collect_import_references(&reachable_modules, &module_names);
-    let reference_index = ReferenceIndex::build(&references);
+    let reference_index = ReferenceIndex::build(&reachable_modules, &module_names);
     let reexports = collect_reexports(&reachable_modules, &module_names, &sources.layout);
     let external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
@@ -109,7 +106,7 @@ fn build_module_names<'a>(
 
 fn detect_unused_exports(
     registry: &SymbolRegistry,
-    references: &ReferenceIndex<'_>,
+    references: &ReferenceIndex,
     external_symbols: &indexmap::IndexSet<SymbolId>,
     mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
@@ -163,7 +160,7 @@ fn detect_unused_exports(
 
 fn detect_unused_reexports(
     reexports: &[ReExport],
-    references: &ReferenceIndex<'_>,
+    references: &ReferenceIndex,
     mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
