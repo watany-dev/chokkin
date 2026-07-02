@@ -19,8 +19,7 @@ use crate::sources::DiscoveredSources;
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
 use super::graph::{
-    SymbolId, SymbolReference, SymbolRegistry, build_registry, collect_import_references,
-    is_externally_referenced,
+    ReferenceIndex, SymbolId, SymbolRegistry, build_registry, collect_import_references,
 };
 use super::types::SymbolReport;
 
@@ -48,13 +47,18 @@ pub fn analyze_symbols(
 
     let registry = build_registry(&reachable_modules, &module_names);
     let references = collect_import_references(&reachable_modules, &module_names);
+    let reference_index = ReferenceIndex::build(&references);
     let reexports = collect_reexports(&reachable_modules, &module_names, &sources.layout);
     let external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
 
     let mut candidates =
-        detect_unused_exports(&registry, &references, &external_symbols, mode.mode);
-    candidates.extend(detect_unused_reexports(&reexports, &references, mode.mode));
+        detect_unused_exports(&registry, &reference_index, &external_symbols, mode.mode);
+    candidates.extend(detect_unused_reexports(
+        &reexports,
+        &reference_index,
+        mode.mode,
+    ));
     candidates.extend(detect_unresolved_imports(
         resolution, &reachable, manifest, sources,
     ));
@@ -105,7 +109,7 @@ fn build_module_names<'a>(
 
 fn detect_unused_exports(
     registry: &SymbolRegistry,
-    references: &[SymbolReference],
+    references: &ReferenceIndex<'_>,
     external_symbols: &indexmap::IndexSet<SymbolId>,
     mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
@@ -115,7 +119,7 @@ fn detect_unused_exports(
         if external_symbols.contains(&entry.id) {
             continue;
         }
-        if is_externally_referenced(&entry.id, references) {
+        if references.is_externally_referenced(&entry.id) {
             continue;
         }
 
@@ -159,7 +163,7 @@ fn detect_unused_exports(
 
 fn detect_unused_reexports(
     reexports: &[ReExport],
-    references: &[SymbolReference],
+    references: &ReferenceIndex<'_>,
     mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();

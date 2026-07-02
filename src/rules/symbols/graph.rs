@@ -1,6 +1,6 @@
 //! Symbol identity and registry for usage analysis.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::parser::{ImportKind, ParsedModule, SymbolDef};
 
@@ -142,9 +142,37 @@ pub(super) fn collect_import_references(
     references
 }
 
-/// Returns `true` when `target` is referenced from a different module.
-pub(super) fn is_externally_referenced(target: &SymbolId, references: &[SymbolReference]) -> bool {
-    references
-        .iter()
-        .any(|reference| reference.target == *target && reference.importer != target.module)
+/// Precomputed lookup over collected [`SymbolReference`]s.
+///
+/// Usage checks run once per registered symbol, so scanning the reference
+/// list each time is quadratic in project size; this index makes each
+/// lookup O(1).
+#[derive(Debug, Default)]
+pub(super) struct ReferenceIndex<'a> {
+    referenced: HashSet<&'a SymbolId>,
+    externally_referenced: HashSet<&'a SymbolId>,
+}
+
+impl<'a> ReferenceIndex<'a> {
+    /// Build the index in one pass over `references`.
+    pub(super) fn build(references: &'a [SymbolReference]) -> Self {
+        let mut index = Self::default();
+        for reference in references {
+            index.referenced.insert(&reference.target);
+            if reference.importer != reference.target.module {
+                index.externally_referenced.insert(&reference.target);
+            }
+        }
+        index
+    }
+
+    /// Returns `true` when `target` is referenced from any module.
+    pub(super) fn is_referenced(&self, target: &SymbolId) -> bool {
+        self.referenced.contains(target)
+    }
+
+    /// Returns `true` when `target` is referenced from a different module.
+    pub(super) fn is_externally_referenced(&self, target: &SymbolId) -> bool {
+        self.externally_referenced.contains(target)
+    }
 }
