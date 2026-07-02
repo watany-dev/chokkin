@@ -81,70 +81,71 @@ pub(super) fn build_registry(
     registry
 }
 
-/// A symbol reference from an import statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct SymbolReference {
-    /// Module containing the import statement.
-    pub importer: String,
-    /// Referenced symbol.
-    pub target: SymbolId,
-    /// 1-based source line.
-    pub line: u32,
-    /// `true` when the reference came from `import module; module.name` attribute access.
-    pub via_attribute: bool,
+/// Precomputed lookup of symbol references collected from import statements.
+///
+/// Usage checks run once per registered symbol, so scanning a reference list
+/// each time is quadratic in project size; this index is built in one pass
+/// over the parsed modules and resolves each lookup in O(1). The value marks
+/// whether the symbol was referenced from a module other than its own.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct ReferenceIndex {
+    entries: HashMap<SymbolId, bool>,
 }
 
-/// Collect symbol references from `from … import name` statements (v0.1 conservative).
-pub(super) fn collect_import_references(
-    modules: &[&ParsedModule],
-    module_names: &HashMap<&str, String>,
-) -> Vec<SymbolReference> {
-    let mut references = Vec::new();
+impl ReferenceIndex {
+    /// Collect symbol references from `from … import name` statements and
+    /// `import module; module.name` attribute access (v0.1 conservative).
+    pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
+        let mut index = Self::default();
 
-    for module in modules {
-        let Some(importer) = module_names.get(module.path.as_str()) else {
-            continue;
-        };
-        for import in &module.imports {
-            if import.module.is_empty() {
+        for module in modules {
+            let Some(importer) = module_names.get(module.path.as_str()) else {
                 continue;
-            }
-            match import.kind {
-                ImportKind::ImportFrom => {
-                    let Some(name) = import.name.as_ref() else {
-                        continue;
-                    };
-                    references.push(SymbolReference {
-                        importer: importer.clone(),
-                        target: SymbolId::new(import.module.clone(), name.clone()),
-                        line: import.line,
-                        via_attribute: false,
-                    });
-                },
-                ImportKind::Import => {
-                    let binding = import.alias.as_deref().unwrap_or(&import.module);
-                    for access in &module.attribute_accesses {
-                        if access.receiver != import.module && access.receiver != binding {
+            };
+            for import in &module.imports {
+                if import.module.is_empty() {
+                    continue;
+                }
+                match import.kind {
+                    ImportKind::ImportFrom => {
+                        let Some(name) = import.name.as_ref() else {
                             continue;
+                        };
+                        let target = SymbolId::new(import.module.clone(), name.clone());
+                        index.record(importer, target);
+                    },
+                    ImportKind::Import => {
+                        let binding = import.alias.as_deref().unwrap_or(&import.module);
+                        for access in &module.attribute_accesses {
+                            if access.receiver != import.module && access.receiver != binding {
+                                continue;
+                            }
+                            let target = SymbolId::new(import.module.clone(), access.name.clone());
+                            index.record(importer, target);
                         }
-                        references.push(SymbolReference {
-                            importer: importer.clone(),
-                            target: SymbolId::new(import.module.clone(), access.name.clone()),
-                            line: access.line,
-                            via_attribute: true,
-                        });
-                    }
-                },
+                    },
+                }
             }
         }
+
+        index
     }
 
-    references
-}
+    fn record(&mut self, importer: &str, target: SymbolId) {
+        let external = importer != target.module;
+        self.entries
+            .entry(target)
+            .and_modify(|is_external| *is_external |= external)
+            .or_insert(external);
+    }
 
-/// Returns `true` when `target` is referenced from a different module.
-pub(super) fn is_externally_referenced(target: &SymbolId, references: &[SymbolReference]) -> bool {
-    references
-        .iter()
-        .any(|reference| reference.target == *target && reference.importer != target.module)
+    /// Returns `true` when `target` is referenced from any module.
+    pub(super) fn is_referenced(&self, target: &SymbolId) -> bool {
+        self.entries.contains_key(target)
+    }
+
+    /// Returns `true` when `target` is referenced from a different module.
+    pub(super) fn is_externally_referenced(&self, target: &SymbolId) -> bool {
+        matches!(self.entries.get(target), Some(true))
+    }
 }

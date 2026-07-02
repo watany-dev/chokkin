@@ -1092,6 +1092,8 @@ Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/c
 
 notebook parsing は v0.2 plugin 拡充の初期実装として、source discovery が `.ipynb` を `FileKind::Notebook` として拾い、parser が `cells[].cell_type == "code"` の `source` だけを連結して既存の Python static parser に渡す。markdown/raw cell と outputs は無視し、notebook JSON が壊れている場合は per-file warning diagnostic に留める。
 
+step 11 symbol usage analysis (`src/rules/symbols/`) は、CHK006/CHK007 の参照有無判定に `ReferenceIndex` (`graph.rs`) を使う。旧実装は登録済みシンボルごとに参照一覧を線形走査しており project size に対し二乗コストになっていた (10k/20k合成fixtureで実行命令数の約4割を占有)。`ReferenceIndex::build` が reachable module 群を一度だけ走査して `HashMap<SymbolId, bool>` (値は「他moduleから参照されたか」) を構築し、以降のlookupをO(1)にする。2k/10k/20k合成fixtureでissue出力が修正前後で完全一致することを確認済み。
+
 ## 20. 注意点
 
 最も重要な設計判断は、project codeを実行しないこと。PythonではDjango settingsやsetup.pyをimportして解析する設計にすると、DB接続、環境変数依存、副作用、任意コード実行の問題が出る。`chokkin` はstatic parseに徹し、runtime traceは将来の明示opt-inに分離する。
