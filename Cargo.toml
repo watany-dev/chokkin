@@ -20,7 +20,15 @@ struct_marked_non_exhaustive = "warn"
 enum_marked_non_exhaustive = "warn"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+# Minimal features: help/version output is hand-rolled in main.rs (USAGE), so
+# clap only needs parsing + error rendering; dropping the default
+# color/suggestions/help features shrinks the binary.
+clap = { version = "4", default-features = false, features = [
+  "std",
+  "derive",
+  "usage",
+  "error-context",
+] }
 globset = "0.4"
 ignore = "0.4"
 indexmap = "2"
@@ -134,6 +142,21 @@ debug = false
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+# Size-optimize the wheel binary except the parsing hot path below: measured
+# ~15% smaller (6.25 MB -> 5.28 MB) for ~6% slower cold analysis, well within
+# the §17 "medium project cold run <= 2 s" budget. `release` stays opt-level 3
+# so benchmarks keep tracking full-speed codegen.
+opt-level = "s"
+
+# Keep the hot path (Python parsing) at full speed. With fat LTO the final
+# LTO pass runs at the bin crate's opt-level, so overriding the root `chokkin`
+# package back to 3 would undo the size win — only the parser crates get 3.
+[profile.dist.package.rustpython-parser]
+opt-level = 3
+[profile.dist.package.rustpython-ast]
+opt-level = 3
+[profile.dist.package.rustpython-parser-core]
+opt-level = 3
 
 [profile.dev]
 opt-level = 0
