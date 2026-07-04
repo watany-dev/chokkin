@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use crate::path_util::normalize_rel_path;
+
 use super::error::ManifestError;
 use super::pep508_util::parse_requirement;
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
@@ -10,10 +12,8 @@ use super::warnings::ManifestWarning;
 /// Root-relative path for manifest origin reporting.
 #[must_use]
 pub fn relative_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root).map_or_else(
-        |_| path.to_string_lossy().replace('\\', "/"),
-        |p| p.to_string_lossy().replace('\\', "/"),
-    )
+    path.strip_prefix(root)
+        .map_or_else(|_| normalize_rel_path(path), normalize_rel_path)
 }
 
 /// Returns `true` when `path` resolves under `root`.

@@ -43,7 +43,6 @@ pub fn discover_sources(
         respect_gitignore: config.effective.respect_gitignore,
         gitignore: gitignore.as_ref(),
         production: config.effective.production,
-        layout: &layout,
     };
     let (files, walk_warnings) = collect_files(&collect_options)?;
 

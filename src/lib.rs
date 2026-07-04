@@ -27,6 +27,7 @@ pub mod graph;
 pub mod init;
 pub mod manifest;
 pub mod parser;
+mod path_util;
 pub mod pipeline;
 pub mod plugins;
 pub mod reachability;
