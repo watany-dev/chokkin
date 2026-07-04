@@ -22,12 +22,11 @@ pub struct PyprojectExtraction {
     pub entry_points: Vec<EntryPointDecl>,
     /// Non-fatal warnings.
     pub warnings: Vec<ManifestWarning>,
-    /// When true, `[project].dependencies` is dynamic and should come from requirements.
-    pub skip_project_dependencies: bool,
+    /// `[tool.poetry]` section was detected.
+    pub poetry_detected: bool,
 }
 
 /// Extract manifest data from `pyproject.toml`.
-#[allow(clippy::too_many_lines)]
 pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction, ManifestError> {
     let contents = read_to_string(path)?;
     let table: toml::Table =
@@ -39,135 +38,163 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
     let rel = relative_path(root, path);
     let mut result = PyprojectExtraction::default();
 
-    detect_tool_sections(&table, &mut result.warnings);
+    result.poetry_detected = detect_tool_sections(&table, &mut result.warnings);
     extract_tool_dependencies(&table, &rel, &mut result.dependencies, &mut result.warnings);
 
     if let Some(project) = table.get("project").and_then(Value::as_table) {
-        result.metadata = parse_project_metadata(project);
-        result.skip_project_dependencies = result
-            .metadata
-            .dynamic
-            .iter()
-            .any(|item| item == "dependencies");
+        extract_project_table(project, &rel, &mut result);
+    }
 
-        if !result.skip_project_dependencies
-            && let Some(deps) = project.get("dependencies").and_then(Value::as_array)
-        {
-            for (index, dep) in deps.iter().enumerate() {
-                if let Some(raw) = dep.as_str() {
-                    push_dependency(DependencyPush {
-                        dependencies: &mut result.dependencies,
-                        warnings: &mut result.warnings,
-                        raw,
-                        context: DependencyContext::Runtime,
-                        file: &rel,
-                        label: format!("project.dependencies[{index}]"),
-                        line: None,
-                    });
-                }
-            }
-        }
+    extract_dependency_groups(&table, &rel, &mut result);
 
-        if let Some(optional) = project
-            .get("optional-dependencies")
-            .and_then(Value::as_table)
-        {
-            for (extra, deps_value) in optional {
-                if let Some(deps) = deps_value.as_array() {
-                    for (index, dep) in deps.iter().enumerate() {
-                        if let Some(raw) = dep.as_str() {
-                            push_dependency(DependencyPush {
-                                dependencies: &mut result.dependencies,
-                                warnings: &mut result.warnings,
-                                raw,
-                                context: DependencyContext::OptionalExtra(extra.clone()),
-                                file: &rel,
-                                label: format!("project.optional-dependencies.{extra}[{index}]"),
-                                line: None,
-                            });
-                        }
-                    }
-                }
-            }
-        }
+    Ok(result)
+}
 
-        if let Some(scripts) = project.get("scripts").and_then(Value::as_table) {
-            for (name, target) in scripts {
-                if let Some(target_str) = target.as_str() {
-                    result.entry_points.push(EntryPointDecl {
-                        name: name.clone(),
-                        target: target_str.to_owned(),
-                        group: "console".to_owned(),
-                        origin: DependencyOrigin {
-                            file: rel.clone(),
-                            line: None,
-                            label: format!("project.scripts.{name}"),
-                        },
-                    });
-                }
-            }
-        }
+fn extract_project_table(project: &toml::Table, rel: &str, result: &mut PyprojectExtraction) {
+    result.metadata = parse_project_metadata(project);
+    let skip_project_dependencies = result
+        .metadata
+        .dynamic
+        .iter()
+        .any(|item| item == "dependencies");
 
-        if let Some(scripts) = project.get("gui-scripts").and_then(Value::as_table) {
-            for (name, target) in scripts {
-                if let Some(target_str) = target.as_str() {
-                    result.entry_points.push(EntryPointDecl {
-                        name: name.clone(),
-                        target: target_str.to_owned(),
-                        group: "gui".to_owned(),
-                        origin: DependencyOrigin {
-                            file: rel.clone(),
-                            line: None,
-                            label: format!("project.gui-scripts.{name}"),
-                        },
-                    });
-                }
-            }
-        }
+    if !skip_project_dependencies
+        && let Some(deps) = project.get("dependencies").and_then(Value::as_array)
+    {
+        push_dependency_array(DependencyArrayPush {
+            deps,
+            rel,
+            context: &DependencyContext::Runtime,
+            label_prefix: "project.dependencies",
+            dependencies: &mut result.dependencies,
+            warnings: &mut result.warnings,
+        });
+    }
 
-        if let Some(entry_points) = project.get("entry-points").and_then(Value::as_table) {
-            for (group, entries) in entry_points {
-                if let Some(entries_table) = entries.as_table() {
-                    for (name, target) in entries_table {
-                        if let Some(target_str) = target.as_str() {
-                            result.entry_points.push(EntryPointDecl {
-                                name: name.clone(),
-                                target: target_str.to_owned(),
-                                group: group.clone(),
-                                origin: DependencyOrigin {
-                                    file: rel.clone(),
-                                    line: None,
-                                    label: format!("project.entry-points.{group}.{name}"),
-                                },
-                            });
-                        }
-                    }
-                }
+    if let Some(optional) = project
+        .get("optional-dependencies")
+        .and_then(Value::as_table)
+    {
+        for (extra, deps_value) in optional {
+            if let Some(deps) = deps_value.as_array() {
+                push_dependency_array(DependencyArrayPush {
+                    deps,
+                    rel,
+                    context: &DependencyContext::OptionalExtra(extra.clone()),
+                    label_prefix: &format!("project.optional-dependencies.{extra}"),
+                    dependencies: &mut result.dependencies,
+                    warnings: &mut result.warnings,
+                });
             }
         }
     }
 
+    if let Some(scripts) = project.get("scripts").and_then(Value::as_table) {
+        push_entry_point_table(
+            scripts,
+            rel,
+            "console",
+            "project.scripts",
+            &mut result.entry_points,
+        );
+    }
+
+    if let Some(scripts) = project.get("gui-scripts").and_then(Value::as_table) {
+        push_entry_point_table(
+            scripts,
+            rel,
+            "gui",
+            "project.gui-scripts",
+            &mut result.entry_points,
+        );
+    }
+
+    if let Some(entry_points) = project.get("entry-points").and_then(Value::as_table) {
+        for (group, entries) in entry_points {
+            if let Some(entries_table) = entries.as_table() {
+                push_entry_point_table(
+                    entries_table,
+                    rel,
+                    group,
+                    &format!("project.entry-points.{group}"),
+                    &mut result.entry_points,
+                );
+            }
+        }
+    }
+}
+
+fn extract_dependency_groups(table: &toml::Table, rel: &str, result: &mut PyprojectExtraction) {
     if let Some(groups) = table.get("dependency-groups").and_then(Value::as_table) {
         for (group, deps_value) in groups {
             if let Some(deps) = deps_value.as_array() {
-                for (index, dep) in deps.iter().enumerate() {
-                    if let Some(raw) = dep.as_str() {
-                        push_dependency(DependencyPush {
-                            dependencies: &mut result.dependencies,
-                            warnings: &mut result.warnings,
-                            raw,
-                            context: DependencyContext::Group(group.clone()),
-                            file: &rel,
-                            label: format!("dependency-groups.{group}[{index}]"),
-                            line: None,
-                        });
-                    }
-                }
+                push_dependency_array(DependencyArrayPush {
+                    deps,
+                    rel,
+                    context: &DependencyContext::Group(group.clone()),
+                    label_prefix: &format!("dependency-groups.{group}"),
+                    dependencies: &mut result.dependencies,
+                    warnings: &mut result.warnings,
+                });
             }
         }
     }
+}
 
-    Ok(result)
+struct DependencyArrayPush<'a> {
+    deps: &'a [Value],
+    rel: &'a str,
+    context: &'a DependencyContext,
+    label_prefix: &'a str,
+    dependencies: &'a mut Vec<DeclaredDependency>,
+    warnings: &'a mut Vec<ManifestWarning>,
+}
+
+fn push_dependency_array(push: DependencyArrayPush<'_>) {
+    let DependencyArrayPush {
+        deps,
+        rel,
+        context,
+        label_prefix,
+        dependencies,
+        warnings,
+    } = push;
+    for (index, dep) in deps.iter().enumerate() {
+        if let Some(raw) = dep.as_str() {
+            push_dependency(DependencyPush {
+                dependencies,
+                warnings,
+                raw,
+                context: context.clone(),
+                file: rel,
+                label: format!("{label_prefix}[{index}]"),
+                line: None,
+            });
+        }
+    }
+}
+
+fn push_entry_point_table(
+    table: &toml::map::Map<String, Value>,
+    rel: &str,
+    group: &str,
+    label_prefix: &str,
+    entry_points: &mut Vec<EntryPointDecl>,
+) {
+    for (name, target) in table {
+        if let Some(target_str) = target.as_str() {
+            entry_points.push(EntryPointDecl {
+                name: name.clone(),
+                target: target_str.to_owned(),
+                group: group.to_owned(),
+                origin: DependencyOrigin {
+                    file: rel.to_owned(),
+                    line: None,
+                    label: format!("{label_prefix}.{name}"),
+                },
+            });
+        }
+    }
 }
 
 fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
@@ -203,12 +230,13 @@ fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
     }
 }
 
-fn detect_tool_sections(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) {
+fn detect_tool_sections(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) -> bool {
     let Some(tool) = table.get("tool").and_then(Value::as_table) else {
-        return;
+        return false;
     };
 
-    if tool.contains_key("poetry") {
+    let poetry_detected = tool.contains_key("poetry");
+    if poetry_detected {
         warnings.push(ManifestWarning::PoetryDetected);
     }
     if tool.contains_key("pdm") {
@@ -217,6 +245,7 @@ fn detect_tool_sections(table: &toml::Table, warnings: &mut Vec<ManifestWarning>
     if tool.contains_key("hatch") {
         warnings.push(ManifestWarning::HatchDetected);
     }
+    poetry_detected
 }
 
 fn extract_tool_dependencies(
@@ -444,7 +473,6 @@ mod tests {
         )
         .expect("valid pyproject");
 
-        assert!(result.skip_project_dependencies);
         assert!(result.dependencies.is_empty());
     }
 
@@ -488,6 +516,7 @@ mod tests {
         )
         .expect("valid pyproject");
         assert!(result.warnings.contains(&ManifestWarning::PoetryDetected));
+        assert!(result.poetry_detected);
         assert_eq!(result.dependencies.len(), 4);
         assert!(
             result
@@ -562,6 +591,10 @@ mod tests {
                     "dynamic".into(),
                     Value::Array(dynamic.iter().cloned().map(Value::String).collect()),
                 );
+                project.insert(
+                    "dependencies".into(),
+                    Value::Array(vec![Value::String("requests".into())]),
+                );
                 let mut doc = toml::Table::new();
                 doc.insert("project".into(), Value::Table(project));
 
@@ -573,7 +606,7 @@ mod tests {
                 prop_assert_eq!(&result.metadata.dynamic, &dynamic);
 
                 let dynamic_deps = result.metadata.dynamic.iter().any(|d| d == "dependencies");
-                prop_assert_eq!(result.skip_project_dependencies, dynamic_deps);
+                prop_assert_eq!(result.dependencies.is_empty(), dynamic_deps);
             }
 
             #[test]
