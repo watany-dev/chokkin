@@ -889,8 +889,13 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 検証ハーネスは `scripts/oss-clones.manifest` (20 project、tag pinned) と
 `scripts/clone-oss-fixtures.sh` / `scripts/oss-metrics.sh` (`make oss-clones` /
 `make oss-metrics`)。誤検知のground truthは `scripts/oss-fixtures.labels.tsv`
-に `fp`/`tp` で記録し、未分類が残るとFP gateは通らない。最新の計測結果は
-`docs/dev/oss-validation-report.md` に scorecard として残す。
+に `fp`/`tp` で記録し、未分類の CHK002 が残るとFP gateは通らない。最新の計測
+結果は `docs/dev/oss-validation-report.md` に scorecard として残す。
+
+ハーネスは全CHKルールのfindingsをルール別の安定キーで `findings.tsv` に記録し、
+ルール別ラベルカバレッジ表を `coverage.md` に出す (issue #85 WS1)。gate基準は
+CHK002のみで不変 — 他ルールのunknownはカバレッジ欠損として可視化されるだけで
+gateには影響しない。初回棚卸しは `docs/dev/v0.3-stocktake-coverage.md`。
 
 FP gateは「報告された CHK002」を分母にするため、**何も報告しなければ自明に通る**。
 これを塞ぐため、ハーネスは `scripts/oss-recall.manifest` の **recall sentinel**
