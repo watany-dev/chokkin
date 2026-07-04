@@ -24,21 +24,25 @@
 #
 # Outputs (under --output):
 #   <slug>.json     raw chokkin JSON report
-#   findings.tsv    every CHK002/CHK003 finding with its ground-truth verdict
+#   findings.tsv    every finding (all CHK rules) with its ground-truth verdict
 #   summary.tsv     per-project: size, exit, median_ms, totals, by-code counts
+#   coverage.md     per-rule label-coverage table (tp/fp/unknown)
 #   report.md       human-readable §17 scorecard
 #
-# False-positive accounting: each reported CHK002/CHK003 finding is matched
-# against the labels file on (slug, code, distribution). Verdict `fp` counts as
-# a false positive; `tp` as a true positive; anything unlabeled is `unknown`.
-# The FP-rate gate cannot pass while unknown findings remain — every finding
-# must be classified.
+# False-positive accounting: every reported finding is matched against the
+# labels file on (slug, code, key). The key is the finding's stable subject:
+# distribution name for CHK002/CHK005/CHK009, `file:module` (import site) for
+# CHK003/CHK004/CHK010, file path for CHK001, `path:symbol` for CHK006/CHK007,
+# and binary name for CHK008. Verdict `fp` counts as a false positive; `tp` as a
+# true positive; anything unlabeled is `unknown`. The §17 FP-rate gate stays
+# CHK002-only: it cannot pass while unknown CHK002 findings remain. Other
+# rules' unknowns are surfaced as label-coverage gaps but never gate.
 #
 # Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
 # separate recall gate measures in-repo sentinel fixtures (--recall manifest)
-# whose deliberately-unused dependencies are labelled `tp`. Every `tp` label
-# must appear in the run's findings or the recall gate fails — this is what
-# stops the FP remediation from silently collapsing into "report nothing".
+# whose deliberately-unused dependencies are labelled `tp`. Every CHK002 `tp`
+# label must appear in the run's findings or the recall gate fails — this is
+# what stops the FP remediation from silently collapsing into "report nothing".
 
 set -uo pipefail
 
@@ -56,7 +60,7 @@ DO_GATE=0
 MEDIUM_GATE_MS=2000
 FP_GATE_PCT=5
 
-usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -92,12 +96,13 @@ mkdir -p "$OUTPUT"
 SUMMARY="$OUTPUT/summary.tsv"
 FINDINGS="$OUTPUT/findings.tsv"
 REPORT="$OUTPUT/report.md"
-printf 'slug\tcategory\tsize\texit\tmedian_ms\ttotal\tCHK002\tCHK003\n' >"$SUMMARY"
-printf 'slug\tcode\tdistribution\tverdict\tconfidence\tmessage\n' >"$FINDINGS"
+ALL_CODES=(CHK001 CHK002 CHK003 CHK004 CHK005 CHK006 CHK007 CHK008 CHK009 CHK010)
+printf 'slug\tcategory\tsize\texit\tmedian_ms\ttotal\t%s\n' "$(IFS=$'\t'; echo "${ALL_CODES[*]}")" >"$SUMMARY"
+printf 'slug\tcode\tkey\tverdict\tconfidence\tmessage\n' >"$FINDINGS"
 
 VERSION="$("$CHOKKIN_BIN" --version 2>/dev/null | awk '{print $2}')"
 
-# Look up a ground-truth verdict for (slug, code, distribution).
+# Look up a ground-truth verdict for (slug, code, key).
 label_for() {
   local slug="$1" code="$2" dist="$3"
   [[ -f "$LABELS" ]] || { echo unknown; return; }
@@ -137,26 +142,30 @@ measure_one() {
   done
   local median_ms; median_ms="$(median_of "$times")"
 
-  local total=0 y002=0 y003=0
+  local total=0
+  local code_counts=$'0\t0\t0\t0\t0\t0\t0\t0\t0\t0'
   if jq -e . "$json_out" >/dev/null 2>&1; then
     total="$(jq -r '.summary.total // 0' "$json_out")"
-    y002="$(jq -r '[.issues[]? | select(.code=="CHK002")] | length' "$json_out")"
-    y003="$(jq -r '[.issues[]? | select(.code=="CHK003")] | length' "$json_out")"
+    code_counts="$(jq -r --argjson codes "$(printf '%s\n' "${ALL_CODES[@]}" | jq -R . | jq -s .)" '
+      [.issues[]? | .code] as $seen
+      | $codes | map(. as $c | ($seen | map(select(. == $c)) | length)) | @tsv' "$json_out")"
 
-    # Emit each CHK002/CHK003 finding with its ground-truth verdict.
-    local code dist conf msg verdict
-    while IFS=$'\t' read -r code dist conf msg; do
+    # Emit every finding with its ground-truth verdict, keyed by the stable
+    # subject: distribution name when the subject is a distribution, else the
+    # reporter's stable `target` (path / path:symbol / binary / file:module).
+    local code key conf msg verdict
+    while IFS=$'\t' read -r code key conf msg; do
       [[ -z "$code" ]] && continue
-      verdict="$(label_for "$slug" "$code" "$dist")"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$slug" "$code" "$dist" "$verdict" "$conf" "$msg" >>"$FINDINGS"
-    done < <(jq -r '.issues[]? | select(.code=="CHK002" or .code=="CHK003")
-                    | [.code, (.distribution // "?"), (.confidence // "?"), (.message // "")] | @tsv' "$json_out")
+      verdict="$(label_for "$slug" "$code" "$key")"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$slug" "$code" "$key" "$verdict" "$conf" "$msg" >>"$FINDINGS"
+    done < <(jq -r '.issues[]?
+                    | [.code, (.distribution // .target // "?"), (.confidence // "?"), (.message // "")] | @tsv' "$json_out")
   else
     echo "  non-JSON output (see $OUTPUT/$slug.stderr)" >&2
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$slug" "$category" "$size" "$exit_code" "$median_ms" "$total" "$y002" "$y003" >>"$SUMMARY"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$slug" "$category" "$size" "$exit_code" "$median_ms" "$total" "$code_counts" >>"$SUMMARY"
 
   ran=$((ran + 1))
   [[ "$exit_code" -eq 3 ]] && crashes=$((crashes + 1))
@@ -212,9 +221,35 @@ if [[ "$y002_total" -gt 0 ]]; then
   fp_rate="$(awk -v f="$y002_fp" -v t="$y002_total" 'BEGIN{printf "%.1f", 100*f/t}')"
 fi
 
-# ── Recall accounting: every `tp` label must actually be reported ──
+# ── Per-rule label coverage (issue #85 WS1) ──
+# Bucket every finding across the set into tp/fp/unknown per rule so the label
+# blind spots are visible. Informational only — never part of the §17 gate.
+COVERAGE="$OUTPUT/coverage.md"
+{
+  echo "| Rule | Findings | tp | fp | unknown | Label coverage | FP rate (labelled) |"
+  echo "|---|---|---|---|---|---|---|"
+  for code in "${ALL_CODES[@]}"; do
+    c_total="$(awk -F'\t' -v c="$code" 'NR>1 && $2==c {n++} END{print n+0}' "$FINDINGS")"
+    c_tp="$(fp_count "$code" tp)"
+    c_fp="$(fp_count "$code" fp)"
+    c_unknown="$(fp_count "$code" unknown)"
+    c_labelled=$((c_tp + c_fp))
+    c_cov="n/a"
+    [[ "$c_total" -gt 0 ]] &&
+      c_cov="$(awk -v l="$c_labelled" -v t="$c_total" 'BEGIN{printf "%.0f%%", 100*l/t}')"
+    c_rate="n/a"
+    [[ "$c_labelled" -gt 0 ]] &&
+      c_rate="$(awk -v f="$c_fp" -v l="$c_labelled" 'BEGIN{printf "%.1f%%", 100*f/l}')"
+    printf '| %s | %s | %s | %s | %s | %s | %s |\n' \
+      "$code" "$c_total" "$c_tp" "$c_fp" "$c_unknown" "$c_cov" "$c_rate"
+  done
+} >"$COVERAGE"
+
+# ── Recall accounting: every CHK002 `tp` label must actually be reported ──
 # A `tp` label that is absent from findings is a false negative — chokkin stopped
 # detecting a genuinely-unused dependency. This is the over-suppression guard.
+# Deliberately CHK002-only: adding tp labels for other rules (per-rule coverage
+# above) must not change the §17 gate criteria.
 tp_total=0; tp_missed=0; missed=()
 if [[ -f "$LABELS" ]]; then
   while IFS=$'\t' read -r lslug lcode ldist; do
@@ -223,7 +258,7 @@ if [[ -f "$LABELS" ]]; then
     awk -F'\t' -v s="$lslug" -v c="$lcode" -v d="$ldist" \
       'NR>1 && $1==s && $2==c && $3==d {found=1} END{exit !found}' "$FINDINGS" ||
       { tp_missed=$((tp_missed + 1)); missed+=("$lslug/$lcode/$ldist"); }
-  done < <(awk -F'\t' '/^#/ || NF<4 {next} $4=="tp" {print $1"\t"$2"\t"$3}' "$LABELS")
+  done < <(awk -F'\t' '/^#/ || NF<4 {next} $2=="CHK002" && $4=="tp" {print $1"\t"$2"\t"$3}' "$LABELS")
 fi
 tp_detected=$((tp_total - tp_missed))
 
@@ -265,18 +300,23 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
     echo "| Cold run, medium project | <= ${MEDIUM_GATE_MS} ms | over: ${medium_slow[*]} | $(verdict "$pass_speed") |"
   fi
   echo ""
+  echo "## Per-rule label coverage"
+  echo ""
+  cat "$COVERAGE"
+  echo ""
   echo "## Per-project results"
   echo ""
-  echo "| Project | Category | Size | Exit | Median ms | Issues | CHK002 | CHK003 |"
-  echo "|---|---|---|---|---|---|---|---|"
-  awk -F'\t' 'NR>1 {printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6,$7,$8}' "$SUMMARY"
+  awk -F'\t' 'NR==1 { printf "|"; for (i=1;i<=NF;i++) printf " %s |", $i; printf "\n|"
+                      for (i=1;i<=NF;i++) printf "---|"; printf "\n"; next }
+              { printf "|"; for (i=1;i<=NF;i++) printf " %s |", $i; printf "\n" }' "$SUMMARY"
   echo ""
-  echo "## CHK002 / CHK003 findings"
+  echo "## Findings"
   echo ""
-  if [[ "$y002_total" -eq 0 && "$y003_total" -eq 0 ]]; then
-    echo "_No unused- or missing-dependency findings across the set._"
+  findings_total="$(awk 'NR>1 {n++} END{print n+0}' "$FINDINGS")"
+  if [[ "$findings_total" -eq 0 ]]; then
+    echo "_No findings across the set._"
   else
-    echo "| Project | Code | Distribution | Verdict | Confidence | Message |"
+    echo "| Project | Code | Key | Verdict | Confidence | Message |"
     echo "|---|---|---|---|---|---|"
     awk -F'\t' 'NR>1 {printf "| %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6}' "$FINDINGS"
   fi
@@ -284,17 +324,23 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
   echo "## Notes"
   echo ""
   echo "- FP rate denominator is reported CHK002 findings (user-facing precision: when chokkin says \"remove this\", how often is it wrong)."
-  echo "- Recall gate counts \`tp\` labels (incl. in-repo sentinels) that failed to appear in findings — it fails the run if the FP remediation over-suppresses and stops detecting genuinely-unused dependencies."
+  echo "- Recall gate counts CHK002 \`tp\` labels (incl. in-repo sentinels) that failed to appear in findings — it fails the run if the FP remediation over-suppresses and stops detecting genuinely-unused dependencies."
   echo "- CHK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_unknown} unclassified) — informational, not a §17 gate."
+  echo "- Per-rule label coverage is informational (issue #85 WS1): unknowns outside CHK002 surface blind spots but never gate."
+  echo "- Findings are keyed by \`distribution\` when the subject is a distribution, else by the reporter's stable \`target\`."
   echo "- Large-size projects are reported but excluded from the medium cold-run gate."
 } >"$REPORT"
 
 echo ""
 echo "Summary : $SUMMARY"
 echo "Findings: $FINDINGS"
+echo "Coverage: $COVERAGE"
 echo "Report  : $REPORT"
 echo ""
-sed -n '/## Exit criteria/,/## Per-project/p' "$REPORT" | sed '$d'
+sed -n '/## Exit criteria/,/## Per-rule/p' "$REPORT" | sed '$d'
+echo "Per-rule label coverage:"
+echo ""
+cat "$COVERAGE"
 
 if [[ "$DO_GATE" -eq 1 ]]; then
   if [[ "$pass_fp" -eq 1 && "$pass_crash" -eq 1 && "$pass_speed" -eq 1 && "$pass_recall" -eq 1 ]]; then

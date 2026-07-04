@@ -1,21 +1,29 @@
-# Ground-truth labels for CHK002 (unused dependency) / CHK003 (missing
-# dependency) findings on the §17 OSS validation set.
+# Ground-truth labels for chokkin findings (all CHK rules) on the §17 OSS
+# validation set.
 #
 # Tab-separated columns (lines starting with # and blank lines are ignored):
 #   slug          project slug from scripts/oss-clones.manifest
-#   code          CHK002 | CHK003
-#   distribution  distribution name reported in the finding
+#   code          CHK001..CHK010
+#   key           stable subject of the finding, by rule:
+#                   CHK002, CHK005, CHK009  distribution name (`distribution` in JSON)
+#                   CHK003, CHK004, CHK010  file:module (import site)
+#                   CHK001                  normalized file path
+#                   CHK006, CHK007          path:symbol
+#                   CHK008                  binary name
+#                 (for non-distribution subjects this equals the JSON `target`)
 #   verdict       fp | tp
-#                   fp = false positive (the dependency is in fact used /
-#                        correctly declared; chokkin is wrong)
+#                   fp = false positive (the finding is wrong; e.g. the
+#                        dependency is in fact used / correctly declared)
 #                   tp = true positive (genuinely unused / genuinely missing)
 #   note          short justification (how it was verified)
 #
-# scripts/oss-metrics.sh matches findings on (slug, code, distribution).
-# Any finding not listed here is counted `unknown`, which blocks the FP gate
-# until classified. Populate this file after the first metrics run.
+# scripts/oss-metrics.sh matches findings on (slug, code, key).
+# Any finding not listed here is counted `unknown`. Unknown CHK002 findings
+# block the §17 FP gate; unknowns for other rules only show up as label-
+# coverage gaps in coverage.md (issue #85 WS1) and never gate. The recall
+# gate reads CHK002 `tp` rows only.
 #
-# slug	code	distribution	verdict	note
+# slug	code	key	verdict	note
 requests	CHK002	httpbin	fp	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
 requests	CHK002	pysocks	fp	runtime dep used via import name != distribution name (package-module-map gap)
 requests	CHK002	pytest-cov	fp	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
