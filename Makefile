@@ -3,10 +3,10 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.47.0
 
-.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics help
+.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics check-generated help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
-check: fmt-check lint test deny machete
+check: fmt-check lint test deny machete check-generated
 
 ## ─── Core ─────────────────────────────────────────────────────────────────────
 build:
@@ -62,6 +62,11 @@ audit:
 
 machete:
 	cargo machete
+
+## ─── Generated artifacts ───────────────────────────────────────────────────────
+check-generated:
+	python3 scripts/generate-package-map.py
+	git diff --exit-code src/resolver/bundled/
 
 ## ─── Code coverage ────────────────────────────────────────────────────────────
 # NOTE: --fail-under is intentionally omitted until the analyzer is implemented.

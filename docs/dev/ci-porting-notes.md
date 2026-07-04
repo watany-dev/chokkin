@@ -22,6 +22,22 @@ For future releases, keep the PyPI publisher and GitHub environment aligned:
 The workflow uses `id-token: write` + `pypa/gh-action-pypi-publish` with no
 API token — authentication is handled entirely by OIDC.
 
+Release workflow actions are SHA-pinned (including `PyO3/maturin-action` and
+`pypa/gh-action-pypi-publish` in `.github/workflows/release.yml`). When bumping
+those actions, resolve the commit SHA from the tag and update the inline comment.
+
+## Generated bundled resolver maps
+
+`src/resolver/bundled/*.rs` are generated from `data/*.seed.json` via
+`scripts/generate-package-map.py`. Regenerate after seed or script changes:
+
+```bash
+python3 scripts/generate-package-map.py
+```
+
+`make check-generated` (also part of `make check`) reruns the script and fails
+when `src/resolver/bundled/` would drift from the committed output.
+
 ## PyPI package name reservation
 
 The package name `chokkin` is reserved by the published v0.1.0 release.
