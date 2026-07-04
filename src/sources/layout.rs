@@ -15,7 +15,7 @@ const NON_PACKAGE_DIRS: &[&str] = &["tests", "scripts", "docs", "build", "dist",
 pub fn infer_layout(root: &Path, metadata: &ProjectMetadata) -> LayoutInfo {
     let src_dir = root.join("src");
     if src_dir.is_dir() {
-        let packages = packages_with_init(&src_dir);
+        let packages = packages_with_init(&src_dir, None);
         if !packages.is_empty() {
             let inferred_globs = default_globs(ProjectLayout::Src, &packages);
             return LayoutInfo {
@@ -28,7 +28,7 @@ pub fn infer_layout(root: &Path, metadata: &ProjectMetadata) -> LayoutInfo {
         }
     }
 
-    let flat_candidates = flat_package_candidates(root);
+    let flat_candidates = packages_with_init(root, Some(NON_PACKAGE_DIRS));
     if !flat_candidates.is_empty() {
         let resolution = resolve_flat_packages(&flat_candidates, metadata);
         let inferred_globs = default_globs(ProjectLayout::Flat, &resolution.packages);
@@ -91,7 +91,7 @@ fn entry_is_dir(entry: &fs::DirEntry) -> bool {
         .is_ok_and(|ft| ft.is_dir() || (ft.is_symlink() && entry.path().is_dir()))
 }
 
-fn packages_with_init(parent: &Path) -> Vec<String> {
+fn packages_with_init(parent: &Path, skip_names: Option<&[&str]>) -> Vec<String> {
     let Ok(entries) = fs::read_dir(parent) else {
         return Vec::new();
     };
@@ -105,29 +105,7 @@ fn packages_with_init(parent: &Path) -> Vec<String> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if path.join("__init__.py").is_file() {
-            packages.push(name.to_owned());
-        }
-    }
-    packages.sort();
-    packages
-}
-
-fn flat_package_candidates(root: &Path) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(root) else {
-        return Vec::new();
-    };
-
-    let mut packages = Vec::new();
-    for entry in entries.flatten() {
-        if !entry_is_dir(&entry) {
-            continue;
-        }
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if NON_PACKAGE_DIRS.contains(&name) {
+        if skip_names.is_some_and(|names| names.contains(&name)) {
             continue;
         }
         if path.join("__init__.py").is_file() {

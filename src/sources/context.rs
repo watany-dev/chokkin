@@ -1,13 +1,13 @@
 //! File context assignment (§10).
 
-use super::types::{FileContext, LayoutInfo, ProjectLayout};
+use super::types::{FileContext, LayoutInfo};
 
 /// Assign a file context from a root-relative path and layout info.
 ///
 /// `path` must already be in normalized forward-slash form (as produced by the
 /// source file walk).
 #[must_use]
-pub fn assign_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
+pub fn assign_file_context(path: &str, _layout: &LayoutInfo) -> FileContext {
     if is_test_path(path) {
         return FileContext::Test;
     }
@@ -19,16 +19,6 @@ pub fn assign_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
     }
     if path.starts_with("src/") {
         return FileContext::Runtime;
-    }
-    if layout.layout == ProjectLayout::Flat {
-        for package in &layout.packages {
-            if path
-                .strip_prefix(package.as_str())
-                .is_some_and(|rest| rest.starts_with('/'))
-            {
-                return FileContext::Runtime;
-            }
-        }
     }
 
     FileContext::Runtime

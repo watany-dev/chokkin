@@ -8,6 +8,7 @@ use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder};
 
 use crate::config::EntrySpec;
+use crate::path_util::normalize_rel_path;
 
 use super::context::assign_file_context;
 use super::error::SourcesError;
@@ -255,17 +256,6 @@ pub fn large_project_warning(file_count: usize) -> Option<SourcesWarning> {
         Some(SourcesWarning::LargeProject { file_count })
     } else {
         None
-    }
-}
-
-/// Normalize a path to root-relative forward-slash form.
-#[must_use]
-pub fn normalize_rel_path(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    if raw.contains('\\') {
-        raw.replace('\\', "/")
-    } else {
-        raw.into_owned()
     }
 }
 

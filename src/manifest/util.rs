@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use crate::path_util::normalize_path_str;
+
 use super::error::ManifestError;
 use super::pep508_util::parse_requirement;
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
@@ -11,8 +13,8 @@ use super::warnings::ManifestWarning;
 #[must_use]
 pub fn relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root).map_or_else(
-        |_| path.to_string_lossy().replace('\\', "/"),
-        |p| p.to_string_lossy().replace('\\', "/"),
+        |_| normalize_path_str(&path.to_string_lossy()),
+        |p| normalize_path_str(&p.to_string_lossy()),
     )
 }
 
