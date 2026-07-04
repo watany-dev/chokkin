@@ -173,6 +173,8 @@ hosts reuse the same files via symlink, so a skill is authored once:
 
 Available skills:
 
+**Project skills** (authored in-repo):
+
 - `wrapup` — clean up changed code (`simplify`) then `update-docs`, run
   `make check` if files changed, then remind to compact context.
 - `update-docs` — sync `src/` changes into `README.md`, `README.ja.md`,
@@ -182,6 +184,24 @@ Available skills:
 - `update-plan` — validate a plan to `update-design` standards before finalizing.
 - `grill-me` — interview you about a plan/design, then record an ADR under
   `docs/adr/`.
+
+**Ponytail skills** ([DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail);
+vendored via `skills-lock.json`; on-demand in Cursor with `/ponytail`, `@ponytail`, or
+by name):
+
+- `ponytail` — lazy senior dev mode: YAGNI ladder, stdlib-first, shortest diff.
+- `ponytail-review` — over-engineering review of a change or file.
+- `ponytail-audit` — whole-repo over-engineering audit (ranked deletion list).
+- `ponytail-debt` — harvest `ponytail:` shortcut comments into a tracked ledger.
+- `ponytail-gain` — measured-impact scoreboard from the benchmark harness.
+- `ponytail-help` — quick reference for ponytail modes and commands.
+
+Refresh vendored ponytail skills:
+
+```bash
+npx skills@latest add https://github.com/DietrichGebert/ponytail/tree/main/skills -y
+mv .agents/skills/ponytail* .claude/skills/ && rm -rf .agents
+```
 
 **Host-specific notes.** The Stop-hook auto-trigger, `/compact`, `simplify`,
 and `ExitPlanMode` referenced by some skills are Claude Code features. On Codex
