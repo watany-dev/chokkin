@@ -302,30 +302,24 @@ fn merge_metadata(
     kept_source: &str,
     overlay_source: &str,
 ) -> ProjectMetadata {
-    merge_optional_field(
-        &mut base.name,
-        overlay.name,
-        warnings,
-        "name",
-        kept_source,
-        overlay_source,
-    );
-    merge_optional_field(
-        &mut base.version,
-        overlay.version,
-        warnings,
-        "version",
-        kept_source,
-        overlay_source,
-    );
-    merge_optional_field(
-        &mut base.requires_python,
-        overlay.requires_python,
-        warnings,
-        "requires-python",
-        kept_source,
-        overlay_source,
-    );
+    for (field, base, overlay_value) in [
+        ("name", &mut base.name, overlay.name),
+        ("version", &mut base.version, overlay.version),
+        (
+            "requires-python",
+            &mut base.requires_python,
+            overlay.requires_python,
+        ),
+    ] {
+        merge_optional_field(
+            base,
+            overlay_value,
+            warnings,
+            field,
+            kept_source,
+            overlay_source,
+        );
+    }
 
     if !overlay.dynamic.is_empty() {
         let mut seen = BTreeSet::new();
