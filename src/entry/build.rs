@@ -86,13 +86,13 @@ fn file_context_index(sources: &DiscoveredSources) -> BTreeMap<&str, FileContext
 
 fn collect_config_entries(
     config: &ChokkinConfig,
-    sources: &DiscoveredSources,
+    _sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,
     candidates: &mut Vec<EntryCandidate>,
 ) {
     for entry in &config.entry {
-        let context = context_for_path(&entry.path, sources, known_paths, file_contexts);
+        let context = context_for_path(&entry.path, known_paths, file_contexts);
         candidates.push(EntryCandidate {
             spec: entry.clone(),
             context,
@@ -166,7 +166,7 @@ fn collect_symbol_ref_entries(
             });
             continue;
         };
-        let context = context_for_path(&path, sources, known_paths, file_contexts);
+        let context = context_for_path(&path, known_paths, file_contexts);
         candidates.push(EntryCandidate {
             spec: EntrySpec {
                 path,
@@ -198,7 +198,6 @@ fn parse_manifest_target(target: &str) -> Option<(String, Option<String>)> {
 
 fn context_for_path(
     path: &str,
-    sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,
 ) -> FileContext {
@@ -206,9 +205,9 @@ fn context_for_path(
         file_contexts
             .get(path)
             .copied()
-            .unwrap_or_else(|| assign_file_context(path, &sources.layout))
+            .unwrap_or_else(|| assign_file_context(path))
     } else {
-        assign_file_context(path, &sources.layout)
+        assign_file_context(path)
     }
 }
 

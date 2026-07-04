@@ -1,13 +1,13 @@
 //! File context assignment (§10).
 
-use super::types::{FileContext, LayoutInfo};
+use super::types::FileContext;
 
-/// Assign a file context from a root-relative path and layout info.
+/// Assign a file context from a root-relative path.
 ///
 /// `path` must already be in normalized forward-slash form (as produced by the
 /// source file walk).
 #[must_use]
-pub fn assign_file_context(path: &str, _layout: &LayoutInfo) -> FileContext {
+pub fn assign_file_context(path: &str) -> FileContext {
     if is_test_path(path) {
         return FileContext::Test;
     }
@@ -58,147 +58,94 @@ fn ends_with_ignore_ascii_case(value: &str, suffix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sources::types::ProjectLayout;
-
-    fn layout(layout: ProjectLayout, packages: &[&str]) -> LayoutInfo {
-        LayoutInfo {
-            layout,
-            packages: packages.iter().map(|p| (*p).to_owned()).collect(),
-            inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
-        }
-    }
 
     #[test]
     fn assigns_test_context_for_tests_tree() {
-        let info = layout(ProjectLayout::Src, &["acme"]);
-        assert_eq!(
-            assign_file_context("tests/test_foo.py", &info),
-            FileContext::Test
-        );
+        assert_eq!(assign_file_context("tests/test_foo.py"), FileContext::Test);
     }
 
     #[test]
     fn assigns_test_context_for_conftest() {
-        let info = layout(ProjectLayout::Src, &["acme"]);
+        assert_eq!(assign_file_context("tests/conftest.py"), FileContext::Test);
         assert_eq!(
-            assign_file_context("tests/conftest.py", &info),
-            FileContext::Test
-        );
-        assert_eq!(
-            assign_file_context("src/acme/conftest.py", &info),
+            assign_file_context("src/acme/conftest.py"),
             FileContext::Test
         );
     }
 
     #[test]
     fn assigns_test_context_for_test_module_pattern() {
-        let info = layout(ProjectLayout::Src, &["acme"]);
         assert_eq!(
-            assign_file_context("src/acme/test_utils.py", &info),
+            assign_file_context("src/acme/test_utils.py"),
             FileContext::Test
         );
     }
 
     #[test]
     fn assigns_test_context_for_test_pyi_stub() {
-        let info = layout(ProjectLayout::Src, &["acme"]);
         assert_eq!(
-            assign_file_context("src/acme/test_utils.pyi", &info),
+            assign_file_context("src/acme/test_utils.pyi"),
             FileContext::Test
         );
     }
 
     #[test]
     fn assigns_test_context_for_uppercase_py_extension() {
-        let info = layout(ProjectLayout::Src, &["acme"]);
         assert_eq!(
-            assign_file_context("src/acme/test_utils.PY", &info),
+            assign_file_context("src/acme/test_utils.PY"),
             FileContext::Test
         );
         assert_eq!(
-            assign_file_context("src/acme/module_test.PYI", &info),
+            assign_file_context("src/acme/module_test.PYI"),
             FileContext::Test
         );
     }
 
     #[test]
     fn assigns_dev_context_for_scripts() {
-        let info = layout(ProjectLayout::Src, &["acme"]);
-        assert_eq!(
-            assign_file_context("scripts/run.py", &info),
-            FileContext::Dev
-        );
+        assert_eq!(assign_file_context("scripts/run.py"), FileContext::Dev);
     }
 
     #[test]
     fn assigns_runtime_for_src_tree() {
-        let info = layout(ProjectLayout::Src, &["acme"]);
         assert_eq!(
-            assign_file_context("src/acme/module.py", &info),
+            assign_file_context("src/acme/module.py"),
             FileContext::Runtime
         );
     }
 
     #[test]
     fn assigns_runtime_for_flat_package() {
-        let info = layout(ProjectLayout::Flat, &["acme"]);
-        assert_eq!(
-            assign_file_context("acme/module.py", &info),
-            FileContext::Runtime
-        );
+        assert_eq!(assign_file_context("acme/module.py"), FileContext::Runtime);
     }
 
     #[test]
     fn assigns_runtime_for_root_manage_py() {
-        let info = layout(ProjectLayout::Unknown, &[]);
-        assert_eq!(
-            assign_file_context("manage.py", &info),
-            FileContext::Runtime
-        );
+        assert_eq!(assign_file_context("manage.py"), FileContext::Runtime);
     }
 
     mod props {
         use super::*;
         use proptest::prelude::*;
 
-        fn any_layout() -> impl Strategy<Value = LayoutInfo> {
-            (
-                prop_oneof![
-                    Just(ProjectLayout::Src),
-                    Just(ProjectLayout::Flat),
-                    Just(ProjectLayout::Unknown),
-                ],
-                prop::collection::vec("[a-z][a-z0-9_]{0,8}", 0..3),
-            )
-                .prop_map(|(layout, packages)| LayoutInfo {
-                    layout,
-                    packages,
-                    inferred_globs: Vec::new(),
-                    flat_candidates: Vec::new(),
-                    ambiguous_flat_resolution: false,
-                })
-        }
-
         proptest! {
             #[test]
-            fn assign_file_context_never_panics(path in "\\PC{0,80}", info in any_layout()) {
-                let _ = assign_file_context(&path, &info);
+            fn assign_file_context_never_panics(path in "\\PC{0,80}") {
+                let _ = assign_file_context(&path);
             }
 
             #[test]
-            fn assign_file_context_is_deterministic(path in "\\PC{0,80}", info in any_layout()) {
+            fn assign_file_context_is_deterministic(path in "\\PC{0,80}") {
                 prop_assert_eq!(
-                    assign_file_context(&path, &info),
-                    assign_file_context(&path, &info)
+                    assign_file_context(&path),
+                    assign_file_context(&path)
                 );
             }
 
             #[test]
-            fn tests_tree_is_always_test_context(rest in "[a-z0-9_/]{0,30}", info in any_layout()) {
+            fn tests_tree_is_always_test_context(rest in "[a-z0-9_/]{0,30}") {
                 prop_assert_eq!(
-                    assign_file_context(&format!("tests/{rest}.py"), &info),
+                    assign_file_context(&format!("tests/{rest}.py")),
                     FileContext::Test
                 );
             }
@@ -207,26 +154,22 @@ mod tests {
             fn test_prefix_files_are_test_context_anywhere(
                 dir in "[a-z][a-z0-9_/]{0,20}",
                 name in "[a-z][a-z0-9_]{0,12}",
-                info in any_layout(),
             ) {
                 prop_assert_eq!(
-                    assign_file_context(&format!("{dir}/test_{name}.py"), &info),
+                    assign_file_context(&format!("{dir}/test_{name}.py")),
                     FileContext::Test
                 );
                 prop_assert_eq!(
-                    assign_file_context(&format!("{dir}/{name}_test.py"), &info),
+                    assign_file_context(&format!("{dir}/{name}_test.py")),
                     FileContext::Test
                 );
             }
 
             #[test]
-            fn src_tree_non_test_files_are_runtime(
-                name in "[a-z][a-z0-9_]{0,12}",
-                info in any_layout(),
-            ) {
+            fn src_tree_non_test_files_are_runtime(name in "[a-z][a-z0-9_]{0,12}") {
                 prop_assume!(!name.starts_with("test_") && !name.ends_with("_test"));
                 prop_assert_eq!(
-                    assign_file_context(&format!("src/pkg/{name}.py"), &info),
+                    assign_file_context(&format!("src/pkg/{name}.py")),
                     FileContext::Runtime
                 );
             }
