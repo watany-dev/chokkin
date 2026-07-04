@@ -47,10 +47,7 @@ pub fn extract_manifest(
         metadata = extracted.metadata;
         dependencies.extend(extracted.dependencies);
         entry_points.extend(extracted.entry_points);
-        sources.poetry = extracted
-            .warnings
-            .iter()
-            .any(|w| matches!(w, ManifestWarning::PoetryDetected));
+        sources.poetry = extracted.poetry_detected;
         warnings.extend(extracted.warnings);
         sources.pyproject_toml = true;
     }
@@ -305,30 +302,24 @@ fn merge_metadata(
     kept_source: &str,
     overlay_source: &str,
 ) -> ProjectMetadata {
-    merge_optional_field(MetadataFieldMerge {
-        base: &mut base.name,
-        overlay: overlay.name,
-        warnings,
-        field: "name",
-        kept_source,
-        overlay_source,
-    });
-    merge_optional_field(MetadataFieldMerge {
-        base: &mut base.version,
-        overlay: overlay.version,
-        warnings,
-        field: "version",
-        kept_source,
-        overlay_source,
-    });
-    merge_optional_field(MetadataFieldMerge {
-        base: &mut base.requires_python,
-        overlay: overlay.requires_python,
-        warnings,
-        field: "requires-python",
-        kept_source,
-        overlay_source,
-    });
+    for (field, base, overlay_value) in [
+        ("name", &mut base.name, overlay.name),
+        ("version", &mut base.version, overlay.version),
+        (
+            "requires-python",
+            &mut base.requires_python,
+            overlay.requires_python,
+        ),
+    ] {
+        merge_optional_field(
+            base,
+            overlay_value,
+            warnings,
+            field,
+            kept_source,
+            overlay_source,
+        );
+    }
 
     if !overlay.dynamic.is_empty() {
         let mut seen = BTreeSet::new();
@@ -345,24 +336,15 @@ fn merge_metadata(
     base
 }
 
-struct MetadataFieldMerge<'a> {
-    base: &'a mut Option<String>,
+#[allow(clippy::too_many_arguments)]
+fn merge_optional_field(
+    base: &mut Option<String>,
     overlay: Option<String>,
-    warnings: &'a mut Vec<ManifestWarning>,
-    field: &'a str,
-    kept_source: &'a str,
-    overlay_source: &'a str,
-}
-
-fn merge_optional_field(merge: MetadataFieldMerge<'_>) {
-    let MetadataFieldMerge {
-        base,
-        overlay,
-        warnings,
-        field,
-        kept_source,
-        overlay_source,
-    } = merge;
+    warnings: &mut Vec<ManifestWarning>,
+    field: &str,
+    kept_source: &str,
+    overlay_source: &str,
+) {
     let Some(overlay_value) = overlay else {
         return;
     };

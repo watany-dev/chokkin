@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use super::error::ManifestError;
-use super::pep508_util::{extract_egg_name, normalize_distribution_name, parse_requirement};
+use super::pep508_util::{
+    extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement,
+};
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::util::{DependencyPush, path_is_within_root, push_dependency, relative_path};
 use super::warnings::ManifestWarning;
@@ -92,6 +94,7 @@ fn parse_requirements_file_path(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_requirements_line(
     ctx: &mut RequirementsParseContext<'_>,
     rel: &str,
@@ -104,7 +107,8 @@ fn parse_requirements_line(
         return Ok(());
     }
 
-    if let Some(include_path) = flag_value(trimmed, "-r", "--requirement") {
+    if let Some(include_path) = flag_value(trimmed, "-r", "--requirement", ShortAttachPolicy::Allow)
+    {
         let resolved = resolve_requirements_include(ctx.root, ctx.path, include_path);
         let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
             path: include_path.to_owned(),
@@ -120,7 +124,9 @@ fn parse_requirements_line(
         });
     }
 
-    if let Some(constraint_path) = flag_value(trimmed, "-c", "--constraint") {
+    if let Some(constraint_path) =
+        flag_value(trimmed, "-c", "--constraint", ShortAttachPolicy::Allow)
+    {
         if let Some(resolved) = resolve_requirements_include(ctx.root, ctx.path, constraint_path) {
             parse_requirements_file_path(RequirementsParseContext {
                 root: ctx.root,
@@ -242,8 +248,21 @@ fn strip_comment(line: &str) -> &str {
 }
 
 /// pip-compatible flag parsing: long form before short; long form requires `=` or whitespace.
+#[derive(Clone, Copy)]
+enum ShortAttachPolicy {
+    /// `-rfoo`, `-cfoo`, and spaced forms are accepted.
+    Allow,
+    /// `-efoo` is accepted only when the value looks like a path or URL.
+    EditablePath,
+}
+
 #[must_use]
-fn flag_value<'a>(line: &'a str, short: &str, long: &str) -> Option<&'a str> {
+fn flag_value<'a>(
+    line: &'a str,
+    short: &str,
+    long: &str,
+    policy: ShortAttachPolicy,
+) -> Option<&'a str> {
     if let Some(rest) = line.strip_prefix(long) {
         return match rest.as_bytes().first() {
             Some(b'=') => Some(rest[1..].trim()),
@@ -251,37 +270,36 @@ fn flag_value<'a>(line: &'a str, short: &str, long: &str) -> Option<&'a str> {
             _ => None,
         };
     }
-    line.strip_prefix(short).map(str::trim)
+    let rest = line.strip_prefix(short)?;
+    let direct_attach =
+        line.len() > short.len() && !matches!(line.as_bytes().get(short.len()), Some(b' ' | b'\t'));
+    if direct_attach {
+        let value = rest.trim();
+        return match policy {
+            ShortAttachPolicy::Allow => Some(value),
+            ShortAttachPolicy::EditablePath if editable_short_attach_valid(value) => Some(value),
+            ShortAttachPolicy::EditablePath => None,
+        };
+    }
+    Some(rest.trim())
+}
+
+#[must_use]
+fn editable_short_attach_valid(value: &str) -> bool {
+    value.starts_with('.')
+        || value.starts_with('/')
+        || value.starts_with("git+")
+        || value.contains("://")
 }
 
 #[must_use]
 fn editable_flag_value(line: &str) -> Option<&str> {
-    let value = flag_value(line, "-e", "--editable")?;
-    if line.starts_with("-e")
-        && !line.starts_with("-e ")
-        && !line.starts_with("-e.")
-        && !line.starts_with("-e/")
-        && !line.starts_with("-e..")
-        && !value.starts_with("git+")
-        && !value.contains("://")
-    {
-        return None;
-    }
-    Some(value)
+    flag_value(line, "-e", "--editable", ShortAttachPolicy::EditablePath)
 }
 
 #[must_use]
 fn is_local_path(spec: &str) -> bool {
     spec.starts_with("./") || spec.starts_with("../") || spec.starts_with('.')
-}
-
-#[must_use]
-fn is_url_like(spec: &str) -> bool {
-    spec.contains("://")
-        || spec.starts_with("git+")
-        || spec.starts_with("hg+")
-        || spec.starts_with("bzr+")
-        || spec.starts_with("svn+")
 }
 
 fn resolve_requirements_include(root: &Path, base: &Path, include: &str) -> Option<PathBuf> {
@@ -358,7 +376,20 @@ mod tests {
     #[test]
     fn flag_value_parses_long_requirement_form() {
         assert_eq!(
-            flag_value("--requirement=dev.txt", "-r", "--requirement"),
+            flag_value(
+                "--requirement=dev.txt",
+                "-r",
+                "--requirement",
+                ShortAttachPolicy::Allow
+            ),
+            Some("dev.txt")
+        );
+    }
+
+    #[test]
+    fn flag_value_parses_short_constraint_form() {
+        assert_eq!(
+            flag_value("-cdev.txt", "-c", "--constraint", ShortAttachPolicy::Allow),
             Some("dev.txt")
         );
     }
@@ -423,12 +454,12 @@ mod tests {
             fn flag_value_parses_long_forms(value in "[^\\r\\n=][^\\r\\n]{0,60}") {
                 let equals_form = format!("--requirement={value}");
                 prop_assert_eq!(
-                    flag_value(&equals_form, "-r", "--requirement"),
+                    flag_value(&equals_form, "-r", "--requirement", ShortAttachPolicy::Allow),
                     Some(value.trim())
                 );
                 let space_form = format!("--requirement {value}");
                 prop_assert_eq!(
-                    flag_value(&space_form, "-r", "--requirement"),
+                    flag_value(&space_form, "-r", "--requirement", ShortAttachPolicy::Allow),
                     Some(value.trim())
                 );
             }
@@ -437,12 +468,12 @@ mod tests {
             fn flag_value_parses_short_forms(value in "[^\\r\\n]{0,60}") {
                 let attached_form = format!("-r{value}");
                 prop_assert_eq!(
-                    flag_value(&attached_form, "-r", "--requirement"),
+                    flag_value(&attached_form, "-r", "--requirement", ShortAttachPolicy::Allow),
                     Some(value.trim())
                 );
                 let spaced_form = format!("-r {value}");
                 prop_assert_eq!(
-                    flag_value(&spaced_form, "-r", "--requirement"),
+                    flag_value(&spaced_form, "-r", "--requirement", ShortAttachPolicy::Allow),
                     Some(value.trim())
                 );
             }
@@ -453,7 +484,10 @@ mod tests {
                 rest in "[^\\r\\n]{0,30}",
             ) {
                 let line = format!("--requirement{ch}{rest}");
-                prop_assert_eq!(flag_value(&line, "-r", "--requirement"), None);
+                prop_assert_eq!(
+                    flag_value(&line, "-r", "--requirement", ShortAttachPolicy::Allow),
+                    None
+                );
             }
 
             #[test]
