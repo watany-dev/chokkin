@@ -137,13 +137,10 @@ fn parse_dict_entry(input: &str) -> Option<(String, &str, &str)> {
     }
 
     let (key, after_key) = if let Some(stripped) = trimmed.strip_prefix('"') {
-        let (value, remaining) = super::literals::read_quoted_string(stripped, '"')?;
-        (value, remaining)
-    } else if let Some(stripped) = trimmed.strip_prefix('\'') {
-        let (value, remaining) = super::literals::read_quoted_string(stripped, '\'')?;
-        (value, remaining)
+        super::literals::read_quoted_string(stripped, '"')?
     } else {
-        return None;
+        let stripped = trimmed.strip_prefix('\'')?;
+        super::literals::read_quoted_string(stripped, '\'')?
     };
 
     let after_colon = after_key.split_once(':')?.1;
