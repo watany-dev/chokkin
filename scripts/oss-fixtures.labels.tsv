@@ -8,17 +8,14 @@
 #   verdict       fp | tp | deferred
 #   bucket        root-cause bucket for CHK003 fp; use - otherwise
 #   note          short justification (how it was verified)
-#                   fp = false positive (the dependency is in fact used /
-#                        correctly declared; chokkin is wrong)
-#                   tp = true positive (genuinely unused / genuinely missing)
-#   note          short justification (how it was verified)
+#
+# Bucket vocabulary (CHK003 fp): map-gap | workspace-boundary | optional-import |
+# dev-context | transitive-policy | metadata-gap
 #
 # scripts/oss-metrics.sh matches findings on (slug, code, target).
 # Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
-# Any finding not listed here is counted `unknown`, which blocks the FP gate
-# until classified. Populate this file after the first metrics run.
 #
-# slug	code	distribution	verdict	note
+# slug	code	target	verdict	bucket	note
 requests	CHK002	httpbin	fp	-	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
 requests	CHK002	pysocks	fp	-	runtime dep used via import name != distribution name (package-module-map gap)
 requests	CHK002	pytest-cov	fp	-	dev/test/docs tool used via CLI/CI, not imported (binary+config usage not detected)
@@ -181,3 +178,4 @@ django	CHK002	tzdata	fp	-	optional/conditional/platform-guarded runtime import n
 # fails the run instead of passing trivially.
 unused_boto3	CHK002	boto3	tp	-	recall sentinel: declared runtime dep with no import anywhere; must stay detected
 optional_try_import	CHK002	requests	tp	-	recall sentinel: unused runtime dep coexisting with a correctly-suppressed optional import — guards 4.C against over-suppression
+missing_yaml	CHK003	src/acme/main.py:yaml	tp	-	recall sentinel: undeclared pyyaml import must stay detected as CHK003
