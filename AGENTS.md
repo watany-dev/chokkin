@@ -147,11 +147,19 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 
 - `scripts/oss-clones.manifest` — the 20-project set (pinned tags; resolved
   SHAs land in `target/oss-clones/clones.lock.tsv`).
-- `scripts/oss-fixtures.labels.tsv` — ground-truth `fp`/`tp` labels for
-  CHK002/CHK003 findings; the FP-rate gate requires every finding classified.
-- `docs/dev/oss-validation-report.md` — the committed scorecard from the latest
-  run. **Current status: CHK002 FP gate met** (0/0 after Phase 1.5; was 155/155
-  before remediation). Crashes 0, cold-run speed within budget.
+- `scripts/oss-fixtures.labels.tsv` — ground-truth labels keyed by
+  `(slug, code, target)` for CHK001–CHK010 findings (`fp` / `tp` / `deferred`);
+  the §17 FP gate requires every **CHK002** finding classified (unknown and
+  `deferred` both block the gate). CHK003 labels and per-rule coverage are
+  informational; see `docs/dev/v0.3-stocktake-coverage.md`.
+- `scripts/oss-recall.manifest` — in-repo recall sentinels (CHK002 unused deps +
+  CHK003 missing dep) measured alongside clones; every `tp` label must appear in
+  findings or the recall gate fails.
+- `scripts/generate-chk003-labels.py` — heuristic CHK003 label generator (re-run
+  after `make oss-metrics` when refreshing CHK003 triage).
+- `docs/dev/oss-validation-report.md` — committed §17 CHK002 scorecard.
+  **Current status: CHK002 FP gate met** (0/0 after Phase 1.5). Per-rule label
+  coverage stocktake: `docs/dev/v0.3-stocktake-coverage.md`.
 
 ## PR hygiene
 
