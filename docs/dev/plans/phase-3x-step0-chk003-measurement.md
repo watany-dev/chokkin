@@ -1,6 +1,6 @@
 # Phase 3.x Step 0: CHK003 計測・分類 + 全ルール label coverage 棚卸し
 
-- 状態: **確定**
+- 状態: **完了**
 - 親: [`phase-3x-v0.4-reliability-contract.md`](./phase-3x-v0.4-reliability-contract.md) §3 (Step 0) / issue #85 WS1
 - 日付: 2026-08-11
 - 対応リリース: v0.4.0 (PR 1–2 相当)

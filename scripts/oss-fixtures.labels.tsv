@@ -179,3 +179,969 @@ django	CHK002	tzdata	fp	-	optional/conditional/platform-guarded runtime import n
 unused_boto3	CHK002	boto3	tp	-	recall sentinel: declared runtime dep with no import anywhere; must stay detected
 optional_try_import	CHK002	requests	tp	-	recall sentinel: unused runtime dep coexisting with a correctly-suppressed optional import — guards 4.C against over-suppression
 missing_yaml	CHK003	src/acme/main.py:yaml	tp	-	recall sentinel: undeclared pyyaml import must stay detected as CHK003
+
+# --- CHK003 OSS corpus (auto-generated from target/oss-metrics/findings.tsv) ---
+# Regenerate: python3 scripts/generate-chk003-labels.py target/oss-metrics/findings.tsv
+anyio	CHK003	src/anyio/_core/_fileio.py:_typeshed	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	src/anyio/pytest_plugin.py:_pytest.outcomes	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/conftest.py:_pytest.fixtures	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/streams/test_file.py:_pytest.fixtures	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/streams/test_file.py:_pytest.tmpdir	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_fileio.py:_pytest.tmpdir	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_from_thread.py:_pytest.logging	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_pytest_plugin.py:_pytest.logging	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_pytest_plugin.py:_pytest.pytester	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_sockets.py:_pytest.fixtures	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_sockets.py:_pytest.logging	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_sockets.py:_pytest.monkeypatch	fp	dev-context	auto: test/docs/typing import context
+anyio	CHK003	tests/test_sockets.py:_pytest.tmpdir	fp	dev-context	auto: test/docs/typing import context
+attrs	CHK003	src/attr/_compat.py:typing_extensions	fp	optional-import	auto: optional try-import not treated as hard missing dep
+black	CHK003	scripts/check_pre_commit_rev_in_example.py:bs4	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	scripts/check_pre_commit_rev_in_example.py:yaml	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	scripts/check_version_in_basics_example.py:bs4	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	scripts/diff_shades_gha_helper.py:diff_shades	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	scripts/diff_shades_gha_helper.py:urllib3	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	scripts/fuzz.py:hypothesis	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	scripts/fuzz.py:hypothesis	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	scripts/make_width_table.py:wcwidth	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	src/black/__init__.py:_black_version	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	src/black/cache.py:_black_version	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	src/blackd/__init__.py:_black_version	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+black	CHK003	src/blackd/__init__.py:multidict	fp	optional-import	auto: optional try-import not treated as hard missing dep
+black	CHK003	tests/conftest.py:pytest	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_black.py:pytest	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_blackd.py:pytest	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_docs.py:pytest	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_format.py:pytest	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_ipynb.py:_pytest.monkeypatch	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_ipynb.py:pytest	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_no_ipynb.py:pytest	fp	dev-context	auto: test/docs/typing import context
+black	CHK003	tests/test_ranges.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	src/click/core.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+click	CHK003	src/click/decorators.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+click	CHK003	src/click/globals.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+click	CHK003	src/click/parser.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+click	CHK003	src/click/types.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+click	CHK003	src/click/utils.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+click	CHK003	tests/conftest.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_arguments.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_basic.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_chain.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_commands.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_context.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_info_dict.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_options.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_parser.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_shell_completion.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_termui.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_testing.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_types.py:pytest	fp	dev-context	auto: test/docs/typing import context
+click	CHK003	tests/test_utils.py:pytest	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.ui	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.ui	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.wait	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/contrib/admindocs/utils.py:docutils.core	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/contrib/admindocs/utils.py:docutils.nodes	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/contrib/admindocs/utils.py:docutils.parsers.rst.roles	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/contrib/gis/db/backends/postgis/adapter.py:psycopg2.extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/contrib/gis/shortcuts.py:numpy	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/contrib/postgres/signals.py:psycopg.types	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/contrib/postgres/signals.py:psycopg2	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/contrib/postgres/signals.py:psycopg2.extras	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/core/files/images.py:PIL	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/core/management/color.py:colorama	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/core/validators.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/base/base.py:_thread	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/db/backends/oracle/oracledb_any.py:cx_Oracle	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/operations.py:psycopg.types	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.postgres	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.datetime	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.json	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.range	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.string	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg2	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg2.extras	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/db/models/fields/files.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/forms/fields.py:PIL	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/template/backends/jinja2.py:jinja2	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	django/test/selenium.py:selenium	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/test/selenium.py:selenium.webdriver.common.desired_capabilities	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	django/test/utils.py:jinja2	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/utils/autoreload.py:__main__	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+django	CHK003	tests/admin_docs/test_utils.py:docutils	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.common	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.common.exceptions	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.keys	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.keys	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.support	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.support.ui	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.support.ui	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_history_view.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_password_form.py:selenium.common	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_password_form.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_password_form.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.support.select	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.action_chains	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.keys	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.keys	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.keys	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/backends/mysql/test_schema.py:MySQLdb	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/contenttypes_tests/test_order_with_respect_to.py:order_with_respect_to.base_tests	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/forms_tests/field_tests/test_filefield.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/forms_tests/field_tests/test_floatfield.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/forms_tests/field_tests/test_imagefield.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/forms_tests/field_tests/test_imagefield.py:PIL.BmpImagePlugin	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/forms_tests/tests/test_renderers.py:jinja2	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/forms_tests/tests/test_widgets.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/i18n/test_extraction.py:admin_scripts.tests	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/invalid_models_tests/test_ordinary_fields.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/migrations/test_writer.py:custom_migration_operations.more_operations	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/migrations/test_writer.py:custom_migration_operations.operations	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/project_template/test_settings.py:test_settings	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/serializers/test_yaml.py:yaml	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/sphinx/test_github_links.py:github_links	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/staticfiles_tests/test_management.py:admin_scripts.tests	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/template_backends/test_django.py:template_tests.test_response	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/template_backends/test_jinja2.py:jinja2	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/template_tests/syntax_tests/i18n/test_get_current_language.py:template_tests.utils	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/template_tests/syntax_tests/i18n/test_get_current_language_bidi.py:template_tests.utils	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/template_tests/syntax_tests/i18n/test_language.py:template_tests.utils	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/template_tests/syntax_tests/test_numpy.py:numpy	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/test_runner/tests.py:admin_scripts.tests	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/view_tests/tests/test_i18n.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+django	CHK003	tests/view_tests/tests/test_i18n.py:selenium.webdriver.common.by	fp	dev-context	auto: test/docs/typing import context
+djangorestframework	CHK003	rest_framework/compat.py:inflection	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:markdown	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:markdown.preprocessors	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+djangorestframework	CHK003	rest_framework/compat.py:pygments	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:pygments.formatters	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:pygments.lexers	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:requests	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:yaml	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/fields.py:pytz	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	tests/test_fields.py:pytz	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	tests/test_relations.py:_pytest.monkeypatch	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	fastapi/_compat.py:pydantic_core	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+fastapi	CHK003	fastapi/_compat.py:pydantic_core	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+fastapi	CHK003	fastapi/_compat.py:pydantic_core	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+fastapi	CHK003	fastapi/_compat.py:pydantic_core.core_schema	fp	optional-import	auto: optional try-import not treated as hard missing dep
+fastapi	CHK003	fastapi/_compat.py:pydantic_core.core_schema	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+fastapi	CHK003	fastapi/concurrency.py:anyio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+fastapi	CHK003	fastapi/concurrency.py:anyio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+fastapi	CHK003	fastapi/dependencies/utils.py:anyio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+fastapi	CHK003	tests/test_tutorial/test_additional_responses/test_tutorial001.py:docs_src.additional_responses.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_responses/test_tutorial002.py:docs_src.additional_responses.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_responses/test_tutorial003.py:docs_src.additional_responses.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_responses/test_tutorial004.py:docs_src.additional_responses.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_status_codes/test_tutorial001.py:docs_src.additional_status_codes.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_status_codes/test_tutorial001_an.py:docs_src.additional_status_codes.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_status_codes/test_tutorial001_an_py310.py:docs_src.additional_status_codes.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_status_codes/test_tutorial001_an_py39.py:docs_src.additional_status_codes.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_additional_status_codes/test_tutorial001_py310.py:docs_src.additional_status_codes.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_advanced_middleware/test_tutorial001.py:docs_src.advanced_middleware.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_advanced_middleware/test_tutorial002.py:docs_src.advanced_middleware.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_advanced_middleware/test_tutorial003.py:docs_src.advanced_middleware.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_async_sql_databases/test_tutorial001.py:docs_src.async_sql_databases.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_async_tests/test_main.py:docs_src.async_tests.test_main	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_background_tasks/test_tutorial001.py:docs_src.background_tasks.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_background_tasks/test_tutorial002.py:docs_src.background_tasks.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_background_tasks/test_tutorial002_an.py:docs_src.background_tasks.tutorial002_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_background_tasks/test_tutorial002_an_py310.py:docs_src.background_tasks.tutorial002_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_background_tasks/test_tutorial002_an_py39.py:docs_src.background_tasks.tutorial002_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_background_tasks/test_tutorial002_py310.py:docs_src.background_tasks.tutorial002_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_behind_a_proxy/test_tutorial001.py:docs_src.behind_a_proxy.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_behind_a_proxy/test_tutorial002.py:docs_src.behind_a_proxy.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_behind_a_proxy/test_tutorial003.py:docs_src.behind_a_proxy.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_behind_a_proxy/test_tutorial004.py:docs_src.behind_a_proxy.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_bigger_applications/test_main.py:docs_src.bigger_applications.app.main	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_bigger_applications/test_main_an.py:docs_src.bigger_applications.app_an.main	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_bigger_applications/test_main_an_py39.py:docs_src.bigger_applications.app_an_py39.main	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body/test_tutorial001.py:docs_src.body.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body/test_tutorial001_py310.py:docs_src.body.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_fields/test_tutorial001.py:docs_src.body_fields.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_fields/test_tutorial001_an.py:docs_src.body_fields.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_fields/test_tutorial001_an_py310.py:docs_src.body_fields.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_fields/test_tutorial001_an_py39.py:docs_src.body_fields.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_fields/test_tutorial001_py310.py:docs_src.body_fields.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial001.py:docs_src.body_multiple_params.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial001_an.py:docs_src.body_multiple_params.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial001_an_py310.py:docs_src.body_multiple_params.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial001_an_py39.py:docs_src.body_multiple_params.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial001_py310.py:docs_src.body_multiple_params.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial003.py:docs_src.body_multiple_params.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial003_an.py:docs_src.body_multiple_params.tutorial003_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial003_an_py310.py:docs_src.body_multiple_params.tutorial003_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial003_an_py39.py:docs_src.body_multiple_params.tutorial003_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_multiple_params/test_tutorial003_py310.py:docs_src.body_multiple_params.tutorial003_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_nested_models/test_tutorial009.py:docs_src.body_nested_models.tutorial009	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_nested_models/test_tutorial009_py39.py:docs_src.body_nested_models.tutorial009_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_updates/test_tutorial001.py:docs_src.body_updates.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_updates/test_tutorial001_py310.py:docs_src.body_updates.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_body_updates/test_tutorial001_py39.py:docs_src.body_updates.tutorial001_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_conditional_openapi/test_tutorial001.py:docs_src.conditional_openapi	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_configure_swagger_ui/test_tutorial001.py:docs_src.configure_swagger_ui.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_configure_swagger_ui/test_tutorial002.py:docs_src.configure_swagger_ui.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_configure_swagger_ui/test_tutorial003.py:docs_src.configure_swagger_ui.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001.py:docs_src.cookie_params.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an.py:docs_src.cookie_params.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py310.py:docs_src.cookie_params.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py310.py:docs_src.cookie_params.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py39.py:docs_src.cookie_params.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py39.py:docs_src.cookie_params.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_py310.py:docs_src.cookie_params.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_py310.py:docs_src.cookie_params.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_cors/test_tutorial001.py:docs_src.cors.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_docs_ui/test_tutorial001.py:docs_src.custom_docs_ui.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_docs_ui/test_tutorial002.py:docs_src.custom_docs_ui.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_request_and_route/test_tutorial001.py:docs_src.custom_request_and_route.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_request_and_route/test_tutorial002.py:docs_src.custom_request_and_route.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_request_and_route/test_tutorial003.py:docs_src.custom_request_and_route.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial001.py:docs_src.custom_response.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial001b.py:docs_src.custom_response.tutorial001b	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial004.py:docs_src.custom_response.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial005.py:docs_src.custom_response.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial006.py:docs_src.custom_response.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial006b.py:docs_src.custom_response.tutorial006b	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial006c.py:docs_src.custom_response.tutorial006c	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial007.py:docs_src.custom_response.tutorial007	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial008.py:docs_src.custom_response	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial008.py:docs_src.custom_response.tutorial008	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial009.py:docs_src.custom_response	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial009.py:docs_src.custom_response.tutorial009	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial009b.py:docs_src.custom_response	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial009b.py:docs_src.custom_response.tutorial009b	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_custom_response/test_tutorial009c.py:docs_src.custom_response.tutorial009c	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dataclasses/test_tutorial001.py:docs_src.dataclasses.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dataclasses/test_tutorial002.py:docs_src.dataclasses.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dataclasses/test_tutorial003.py:docs_src.dataclasses.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial001.py:docs_src.dependencies.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial001_an.py:docs_src.dependencies.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial001_an_py310.py:docs_src.dependencies.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial001_an_py39.py:docs_src.dependencies.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial001_py310.py:docs_src.dependencies.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial004.py:docs_src.dependencies.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial004_an.py:docs_src.dependencies.tutorial004_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial004_an_py310.py:docs_src.dependencies.tutorial004_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial004_an_py39.py:docs_src.dependencies.tutorial004_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial004_py310.py:docs_src.dependencies.tutorial004_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial006.py:docs_src.dependencies.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial006_an.py:docs_src.dependencies.tutorial006_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial006_an_py39.py:docs_src.dependencies.tutorial006_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008b.py:docs_src.dependencies.tutorial008b	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008b_an.py:docs_src.dependencies.tutorial008b_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008b_an_py39.py:docs_src.dependencies.tutorial008b_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c.py:docs_src.dependencies.tutorial008c	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c.py:docs_src.dependencies.tutorial008c	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an.py:docs_src.dependencies.tutorial008c_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an.py:docs_src.dependencies.tutorial008c_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an_py39.py:docs_src.dependencies.tutorial008c_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an_py39.py:docs_src.dependencies.tutorial008c_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d.py:docs_src.dependencies.tutorial008d	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d.py:docs_src.dependencies.tutorial008d	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d.py:docs_src.dependencies.tutorial008d	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an.py:docs_src.dependencies.tutorial008d_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an.py:docs_src.dependencies.tutorial008d_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an.py:docs_src.dependencies.tutorial008d_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an_py39.py:docs_src.dependencies.tutorial008d_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an_py39.py:docs_src.dependencies.tutorial008d_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an_py39.py:docs_src.dependencies.tutorial008d_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial012.py:docs_src.dependencies.tutorial012	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial012_an.py:docs_src.dependencies.tutorial012_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial012_an_py39.py:docs_src.dependencies.tutorial012_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_events/test_tutorial001.py:docs_src.events.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_events/test_tutorial002.py:docs_src.events.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_events/test_tutorial003.py:docs_src.events.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extending_openapi/test_tutorial001.py:docs_src.extending_openapi.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_data_types/test_tutorial001.py:docs_src.extra_data_types.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_data_types/test_tutorial001_an.py:docs_src.extra_data_types.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_data_types/test_tutorial001_an_py310.py:docs_src.extra_data_types.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_data_types/test_tutorial001_an_py39.py:docs_src.extra_data_types.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_data_types/test_tutorial001_py310.py:docs_src.extra_data_types.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_models/test_tutorial003.py:docs_src.extra_models.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_models/test_tutorial003_py310.py:docs_src.extra_models.tutorial003_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_models/test_tutorial004.py:docs_src.extra_models.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_models/test_tutorial004_py39.py:docs_src.extra_models.tutorial004_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_models/test_tutorial005.py:docs_src.extra_models.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_extra_models/test_tutorial005_py39.py:docs_src.extra_models.tutorial005_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_first_steps/test_tutorial001.py:docs_src.first_steps.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_generate_clients/test_tutorial003.py:docs_src.generate_clients.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_handling_errors/test_tutorial001.py:docs_src.handling_errors.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_handling_errors/test_tutorial002.py:docs_src.handling_errors.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_handling_errors/test_tutorial003.py:docs_src.handling_errors.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_handling_errors/test_tutorial004.py:docs_src.handling_errors.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_handling_errors/test_tutorial005.py:docs_src.handling_errors.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_handling_errors/test_tutorial006.py:docs_src.handling_errors.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial001.py:docs_src.header_params.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial001_an.py:docs_src.header_params.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial001_an_py310.py:docs_src.header_params.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial001_py310.py:docs_src.header_params.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002.py:docs_src.header_params.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an.py:docs_src.header_params.tutorial002_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an_py310.py:docs_src.header_params.tutorial002_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an_py39.py:docs_src.header_params.tutorial002_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an_py39.py:docs_src.header_params.tutorial002_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_py310.py:docs_src.header_params.tutorial002_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_py310.py:docs_src.header_params.tutorial002_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial003.py:docs_src.header_params.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial003_an.py:docs_src.header_params.tutorial003_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial003_an_py310.py:docs_src.header_params.tutorial003_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial003_an_py39.py:docs_src.header_params.tutorial003_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial003_py310.py:docs_src.header_params.tutorial003_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_metadata/test_tutorial001.py:docs_src.metadata.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_metadata/test_tutorial001_1.py:docs_src.metadata.tutorial001_1	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_metadata/test_tutorial004.py:docs_src.metadata.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_openapi_callbacks/test_tutorial001.py:docs_src.openapi_callbacks.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_openapi_webhooks/test_tutorial001.py:docs_src.openapi_webhooks.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial001.py:docs_src.path_operation_advanced_configuration.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial002.py:docs_src.path_operation_advanced_configuration.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial003.py:docs_src.path_operation_advanced_configuration.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial004.py:docs_src.path_operation_advanced_configuration.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial005.py:docs_src.path_operation_advanced_configuration.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial006.py:docs_src.path_operation_advanced_configuration.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial007.py:docs_src.path_operation_advanced_configuration.tutorial007	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_advanced_configurations/test_tutorial007_pv1.py:docs_src.path_operation_advanced_configuration.tutorial007_pv1	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_configurations/test_tutorial002b.py:docs_src.path_operation_configuration.tutorial002b	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_configurations/test_tutorial005.py:docs_src.path_operation_configuration.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_configurations/test_tutorial005_py310.py:docs_src.path_operation_configuration.tutorial005_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_configurations/test_tutorial005_py39.py:docs_src.path_operation_configuration.tutorial005_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_operation_configurations/test_tutorial006.py:docs_src.path_operation_configuration.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_params/test_tutorial004.py:docs_src.path_params.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_path_params/test_tutorial005.py:docs_src.path_params.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params/test_tutorial005.py:docs_src.query_params.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params/test_tutorial006.py:docs_src.query_params.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params/test_tutorial006_py310.py:docs_src.query_params.tutorial006_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial010.py:docs_src.query_params_str_validations.tutorial010	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial010_an.py:docs_src.query_params_str_validations.tutorial010_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial010_an_py310.py:docs_src.query_params_str_validations.tutorial010_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial010_an_py39.py:docs_src.query_params_str_validations.tutorial010_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial010_py310.py:docs_src.query_params_str_validations.tutorial010_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial011.py:docs_src.query_params_str_validations.tutorial011	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial011_an.py:docs_src.query_params_str_validations.tutorial011_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial011_an_py310.py:docs_src.query_params_str_validations.tutorial011_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial011_an_py39.py:docs_src.query_params_str_validations.tutorial011_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial011_py310.py:docs_src.query_params_str_validations.tutorial011_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial011_py39.py:docs_src.query_params_str_validations.tutorial011_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial012.py:docs_src.query_params_str_validations.tutorial012	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial012_an.py:docs_src.query_params_str_validations.tutorial012_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial012_an_py39.py:docs_src.query_params_str_validations.tutorial012_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial012_py39.py:docs_src.query_params_str_validations.tutorial012_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial013.py:docs_src.query_params_str_validations.tutorial013	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial013_an.py:docs_src.query_params_str_validations.tutorial013_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial013_an_py39.py:docs_src.query_params_str_validations.tutorial013_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial014.py:docs_src.query_params_str_validations.tutorial014	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial014_an.py:docs_src.query_params_str_validations.tutorial014_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial014_an_py310.py:docs_src.query_params_str_validations.tutorial014_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial014_an_py39.py:docs_src.query_params_str_validations.tutorial014_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_query_params_str_validations/test_tutorial014_py310.py:docs_src.query_params_str_validations.tutorial014_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001.py:docs_src.request_files.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_02.py:docs_src.request_files.tutorial001_02	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_02_an.py:docs_src.request_files.tutorial001_02_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_02_an_py310.py:docs_src.request_files.tutorial001_02_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_02_an_py39.py:docs_src.request_files.tutorial001_02_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_02_py310.py:docs_src.request_files.tutorial001_02_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_03.py:docs_src.request_files.tutorial001_03	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_03_an.py:docs_src.request_files.tutorial001_03_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_03_an_py39.py:docs_src.request_files.tutorial001_03_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_an.py:docs_src.request_files.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial001_an_py39.py:docs_src.request_files.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial002.py:docs_src.request_files.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial002_an.py:docs_src.request_files.tutorial002_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial002_an_py39.py:docs_src.request_files.tutorial002_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial002_py39.py:docs_src.request_files.tutorial002_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial003.py:docs_src.request_files.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial003_an.py:docs_src.request_files.tutorial003_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial003_an_py39.py:docs_src.request_files.tutorial003_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_files/test_tutorial003_py39.py:docs_src.request_files.tutorial003_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial001.py:docs_src.request_form_models.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial001_an.py:docs_src.request_form_models.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial001_an_py39.py:docs_src.request_form_models.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial002.py:docs_src.request_form_models.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial002_an.py:docs_src.request_form_models.tutorial002_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial002_an_py39.py:docs_src.request_form_models.tutorial002_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial002_pv1.py:docs_src.request_form_models.tutorial002_pv1	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial002_pv1_an.py:docs_src.request_form_models.tutorial002_pv1_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_form_models/test_tutorial002_pv1_an_p39.py:docs_src.request_form_models.tutorial002_pv1_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_forms/test_tutorial001.py:docs_src.request_forms.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_forms/test_tutorial001_an.py:docs_src.request_forms.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_forms/test_tutorial001_an_py39.py:docs_src.request_forms.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_forms_and_files/test_tutorial001.py:docs_src.request_forms_and_files.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_forms_and_files/test_tutorial001_an.py:docs_src.request_forms_and_files.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_request_forms_and_files/test_tutorial001_an_py39.py:docs_src.request_forms_and_files.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_change_status_code/test_tutorial001.py:docs_src.response_change_status_code.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_cookies/test_tutorial001.py:docs_src.response_cookies.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_cookies/test_tutorial002.py:docs_src.response_cookies.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_headers/test_tutorial001.py:docs_src.response_headers.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_headers/test_tutorial002.py:docs_src.response_headers.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003.py:docs_src.response_model.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_01.py:docs_src.response_model.tutorial003_01	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_01_py310.py:docs_src.response_model.tutorial003_01_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_02.py:docs_src.response_model.tutorial003_02	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_03.py:docs_src.response_model.tutorial003_03	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_04.py:docs_src.response_model.tutorial003_04	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_04_py310.py:docs_src.response_model.tutorial003_04_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_05.py:docs_src.response_model.tutorial003_05	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_05_py310.py:docs_src.response_model.tutorial003_05_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial003_py310.py:docs_src.response_model.tutorial003_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial004.py:docs_src.response_model.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial004_py310.py:docs_src.response_model.tutorial004_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial004_py39.py:docs_src.response_model.tutorial004_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial005.py:docs_src.response_model.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial005_py310.py:docs_src.response_model.tutorial005_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial006.py:docs_src.response_model.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_response_model/test_tutorial006_py310.py:docs_src.response_model.tutorial006_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial001.py:docs_src.schema_extra_example.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial001_pv1.py:docs_src.schema_extra_example.tutorial001_pv1	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial001_py310.py:docs_src.schema_extra_example.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial001_py310_pv1.py:docs_src.schema_extra_example.tutorial001_py310_pv1	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial004.py:docs_src.schema_extra_example.tutorial004	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial004_an.py:docs_src.schema_extra_example.tutorial004_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial004_an_py310.py:docs_src.schema_extra_example.tutorial004_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial004_an_py39.py:docs_src.schema_extra_example.tutorial004_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial004_py310.py:docs_src.schema_extra_example.tutorial004_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial005.py:docs_src.schema_extra_example.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial005_an.py:docs_src.schema_extra_example.tutorial005_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial005_an_py310.py:docs_src.schema_extra_example.tutorial005_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial005_an_py39.py:docs_src.schema_extra_example.tutorial005_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_schema_extra_example/test_tutorial005_py310.py:docs_src.schema_extra_example.tutorial005_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial001.py:docs_src.security.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial001_an.py:docs_src.security.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial001_an_py39.py:docs_src.security.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial003.py:docs_src.security.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial003_an.py:docs_src.security.tutorial003_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial003_an_py310.py:docs_src.security.tutorial003_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial003_an_py39.py:docs_src.security.tutorial003_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial003_py310.py:docs_src.security.tutorial003_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005.py:docs_src.security.tutorial005	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an.py:docs_src.security.tutorial005_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial006.py:docs_src.security.tutorial006	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial006_an.py:docs_src.security.tutorial006_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial006_an_py39.py:docs_src.security.tutorial006_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial001.py:docs_src.separate_openapi_schemas.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial001_py310.py:docs_src.separate_openapi_schemas.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial001_py39.py:docs_src.separate_openapi_schemas.tutorial001_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial002.py:docs_src.separate_openapi_schemas.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial002_py310.py:docs_src.separate_openapi_schemas.tutorial002_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial002_py39.py:docs_src.separate_openapi_schemas.tutorial002_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_settings/test_app02.py:docs_src.settings.app02	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_settings/test_app02.py:docs_src.settings.app02	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_settings/test_tutorial001.py:docs_src.settings.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_settings/test_tutorial001_pv1.py:docs_src.settings.tutorial001_pv1	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_sql_databases.py:docs_src.sql_databases.sql_app	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_sql_databases_middleware.py:docs_src.sql_databases.sql_app	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_sql_databases_middleware_py310.py:docs_src.sql_databases.sql_app_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_sql_databases_middleware_py39.py:docs_src.sql_databases.sql_app_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_sql_databases_py310.py:docs_src.sql_databases.sql_app_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_sql_databases_py39.py:docs_src.sql_databases.sql_app_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_testing_databases.py:docs_src.sql_databases.sql_app.tests	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_testing_databases_py310.py:docs_src.sql_databases.sql_app_py310.tests	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sql_databases/test_testing_databases_py39.py:docs_src.sql_databases.sql_app_py39.tests	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_sub_applications/test_tutorial001.py:docs_src.sub_applications.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_templates/test_tutorial001.py:docs_src.templates.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_main.py:docs_src.app_testing.test_main	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_main_b.py:docs_src.app_testing.app_b	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_main_b_an.py:docs_src.app_testing.app_b_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_main_b_an_py310.py:docs_src.app_testing.app_b_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_main_b_an_py39.py:docs_src.app_testing.app_b_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_main_b_py310.py:docs_src.app_testing.app_b_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_tutorial001.py:docs_src.app_testing.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_tutorial002.py:docs_src.app_testing.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing/test_tutorial003.py:docs_src.app_testing.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001.py:docs_src.dependency_testing.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an.py:docs_src.dependency_testing.tutorial001_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial001.py:docs_src.websockets.tutorial001	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002.py:docs_src.websockets.tutorial002	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002_an.py:docs_src.websockets.tutorial002_an	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002_an_py310.py:docs_src.websockets.tutorial002_an_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002_an_py39.py:docs_src.websockets.tutorial002_an_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002_py310.py:docs_src.websockets.tutorial002_py310	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial003.py:docs_src.websockets.tutorial003	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial003_py39.py:docs_src.websockets.tutorial003_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial003_py39.py:docs_src.websockets.tutorial003_py39	fp	dev-context	auto: test/docs/typing import context
+fastapi	CHK003	tests/test_tutorial/test_wsgi/test_tutorial001.py:docs_src.wsgi.tutorial001	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/app.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/app.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/cli.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/cli.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/cli.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/cli.py:cryptography	fp	optional-import	auto: optional try-import not treated as hard missing dep
+flask	CHK003	src/flask/config.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+flask	CHK003	src/flask/ctx.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/json/tag.py:markupsafe	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+flask	CHK003	src/flask/sessions.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+flask	CHK003	src/flask/testing.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	src/flask/typing.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/conftest.py:_pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/conftest.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_appctx.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_async.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_basic.py:markupsafe	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_basic.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_blueprints.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_cli.py:_pytest.monkeypatch	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_cli.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_config.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_helpers.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_instance_config.py:config_module_app	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_instance_config.py:config_package_app	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_instance_config.py:installed_package	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_instance_config.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_instance_config.py:site_app	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_instance_config.py:site_package	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_json.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_json_tag.py:markupsafe	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_json_tag.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_logging.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_reqctx.py:greenlet	fp	optional-import	auto: optional try-import not treated as hard missing dep
+flask	CHK003	tests/test_reqctx.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_templating.py:markupsafe	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_templating.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_testing.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_user_error_handler.py:pytest	fp	dev-context	auto: test/docs/typing import context
+flask	CHK003	tests/test_views.py:pytest	fp	dev-context	auto: test/docs/typing import context
+httpx	CHK003	httpx/_transports/asgi.py:trio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+httpx	CHK003	httpx/_transports/asgi.py:trio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+httpx	CHK003	httpx/_transports/wsgi.py:_typeshed	fp	dev-context	auto: test/docs/typing import context
+httpx	CHK003	httpx/_transports/wsgi.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+httpx	CHK003	httpx/_utils.py:trio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+httpx	CHK003	tests/test_wsgi.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	src/jinja2/bccache.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/compiler.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/defaults.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/environment.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/ext.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/filters.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/lexer.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/nodes.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/parser.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/runtime.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/sandbox.py:_string	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/utils.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	src/jinja2/visitor.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+jinja	CHK003	tests/conftest.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_api.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_async.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_async_filters.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_bytecode_cache.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_core_tags.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_debug.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_ext.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_filters.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_imports.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_inheritance.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_lexnparse.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_loader.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_nativetypes.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_regression.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_security.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_tests.py:pytest	fp	dev-context	auto: test/docs/typing import context
+jinja	CHK003	tests/test_utils.py:pytest	fp	dev-context	auto: test/docs/typing import context
+pluggy	CHK003	scripts/release.py:colorama	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+pluggy	CHK003	scripts/release.py:colorama	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+python-dotenv	CHK003	src/dotenv/ipython.py:IPython.core.magic	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+python-dotenv	CHK003	src/dotenv/ipython.py:IPython.core.magic_arguments	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+python-dotenv	CHK003	src/dotenv/main.py:__main__	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/__init__.py:charset_normalizer	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/__init__.py:cryptography	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/__init__.py:urllib3	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/__init__.py:urllib3.contrib	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/__init__.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.contrib.socks	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/adapters.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.poolmanager	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.util	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.util	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.util.retry	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/adapters.py:urllib3.util.ssl_	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/certs.py:certifi	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/compat.py:simplejson	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/compat.py:simplejson	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/cookies.py:dummy_threading	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/exceptions.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/help.py:OpenSSL	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/help.py:charset_normalizer	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/help.py:cryptography	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/help.py:idna	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/help.py:urllib3	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/help.py:urllib3.contrib	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/models.py:idna	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/models.py:urllib3.exceptions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/models.py:urllib3.fields	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/models.py:urllib3.filepost	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/models.py:urllib3.util	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	src/requests/utils.py:urllib3.util	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+requests	CHK003	tests/conftest.py:BaseHTTPServer	fp	dev-context	auto: test/docs/typing import context
+requests	CHK003	tests/conftest.py:SimpleHTTPServer	fp	dev-context	auto: test/docs/typing import context
+requests	CHK003	tests/test_requests.py:urllib3	fp	dev-context	auto: test/docs/typing import context
+requests	CHK003	tests/test_requests.py:urllib3.util	fp	dev-context	auto: test/docs/typing import context
+requests	CHK003	tests/test_requests.py:urllib3.util	fp	dev-context	auto: test/docs/typing import context
+starlette	CHK003	tests/test_testclient.py:sniffio	fp	dev-context	auto: test/docs/typing import context
+structlog	CHK003	src/structlog/_greenlets.py:greenlet	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+structlog	CHK003	src/structlog/dev.py:better_exceptions	fp	optional-import	auto: optional try-import not treated as hard missing dep
+structlog	CHK003	src/structlog/dev.py:colorama	fp	optional-import	auto: optional try-import not treated as hard missing dep
+structlog	CHK003	tests/test_threadlocal.py:greenlet	fp	optional-import	auto: optional try-import not treated as hard missing dep
+tenacity	CHK003	tenacity/asyncio/__init__.py:sniffio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+tenacity	CHK003	tenacity/asyncio/__init__.py:trio	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+tenacity	CHK003	tests/test_asyncio.py:trio	fp	optional-import	auto: optional try-import not treated as hard missing dep
+typer	CHK003	scripts/deploy_docs_status.py:pydantic	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+typer	CHK003	scripts/deploy_docs_status.py:pydantic_settings	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+typer	CHK003	tests/test_completion/test_completion.py:docs_src.commands.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_completion/test_completion_complete.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_completion/test_completion_complete_no_help.py:docs_src.commands.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_completion/test_completion_install.py:docs_src.commands.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_completion/test_completion_show.py:docs_src.commands.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_default/test_tutorial001.py:docs_src.arguments.default	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_default/test_tutorial001_an.py:docs_src.arguments.default	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_default/test_tutorial002.py:docs_src.arguments.default	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_default/test_tutorial002_an.py:docs_src.arguments.default	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_envvar/test_tutorial001.py:docs_src.arguments.envvar	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_envvar/test_tutorial001_an.py:docs_src.arguments.envvar	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_envvar/test_tutorial002.py:docs_src.arguments.envvar	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_envvar/test_tutorial002_an.py:docs_src.arguments.envvar	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_envvar/test_tutorial003.py:docs_src.arguments.envvar	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_envvar/test_tutorial003_an.py:docs_src.arguments.envvar	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial001.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial001_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial002.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial002_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial003.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial003_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial004.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial004_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial005.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial005_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial006.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial006_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial007.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial007_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial008.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_help/test_tutorial008_an.py:docs_src.arguments.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_optional/test_tutorial001.py:docs_src.arguments.optional	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_optional/test_tutorial001_an.py:docs_src.arguments.optional	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_optional/test_tutorial002.py:docs_src.arguments.optional	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_optional/test_tutorial002_an.py:docs_src.arguments.optional	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_arguments/test_optional/test_tutorial003.py:docs_src.arguments.optional	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_arguments/test_tutorial001.py:docs_src.commands.arguments	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_callback/test_tutorial001.py:docs_src.commands.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_callback/test_tutorial002.py:docs_src.commands.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_callback/test_tutorial003.py:docs_src.commands.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_callback/test_tutorial004.py:docs_src.commands.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_context/test_tutorial001.py:docs_src.commands.context	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_context/test_tutorial002.py:docs_src.commands.context	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_context/test_tutorial003.py:docs_src.commands.context	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_context/test_tutorial004.py:docs_src.commands.context	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial001.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial001_an.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial002.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial003.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial004.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial004_an.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial005.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial005_an.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial006.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial007.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial007_an.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_help/test_tutorial008.py:docs_src.commands.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_index/test_tutorial001.py:docs_src.commands.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_index/test_tutorial002.py:docs_src.commands.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_index/test_tutorial003.py:docs_src.commands.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_name/test_tutorial001.py:docs_src.commands.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_one_or_multiple/test_tutorial001.py:docs_src.commands.one_or_multiple	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_one_or_multiple/test_tutorial002.py:docs_src.commands.one_or_multiple	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_options/test_tutorial001.py:docs_src.commands.options	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_commands/test_options/test_tutorial001_an.py:docs_src.commands.options	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_exceptions/test_tutorial001.py:docs_src.exceptions	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_exceptions/test_tutorial002.py:docs_src.exceptions	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_exceptions/test_tutorial003.py:docs_src.exceptions	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_exceptions/test_tutorial004.py:docs_src.exceptions	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_first_steps/test_tutorial001.py:docs_src.first_steps	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_first_steps/test_tutorial002.py:docs_src.first_steps	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_first_steps/test_tutorial003.py:docs_src.first_steps	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_first_steps/test_tutorial004.py:docs_src.first_steps	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_first_steps/test_tutorial005.py:docs_src.first_steps	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_first_steps/test_tutorial006.py:docs_src.first_steps	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_arguments_with_multiple_values/test_tutorial001.py:docs_src.multiple_values.arguments_with_multiple_values	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_arguments_with_multiple_values/test_tutorial002.py:docs_src.multiple_values.arguments_with_multiple_values	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_arguments_with_multiple_values/test_tutorial002_an.py:docs_src.multiple_values.arguments_with_multiple_values	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_multiple_options/test_tutorial001.py:docs_src.multiple_values.multiple_options	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_multiple_options/test_tutorial001_an.py:docs_src.multiple_values.multiple_options	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_multiple_options/test_tutorial002.py:docs_src.multiple_values.multiple_options	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_multiple_options/test_tutorial002_an.py:docs_src.multiple_values.multiple_options	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_options_with_multiple_values/test_tutorial001.py:docs_src.multiple_values.options_with_multiple_values	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_multiple_values/test_options_with_multiple_values/test_tutorial001_an.py:docs_src.multiple_values.options_with_multiple_values	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_callback/test_tutorial001.py:docs_src.options.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_callback/test_tutorial001_an.py:docs_src.options.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_callback/test_tutorial003.py:docs_src.options.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_callback/test_tutorial003_an.py:docs_src.options.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_callback/test_tutorial004.py:docs_src.options.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_callback/test_tutorial004_an.py:docs_src.options.callback	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_help/test_tutorial001.py:docs_src.options.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_help/test_tutorial001_an.py:docs_src.options.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_help/test_tutorial002.py:docs_src.options.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_help/test_tutorial002_an.py:docs_src.options.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_help/test_tutorial003.py:docs_src.options.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_help/test_tutorial003_an.py:docs_src.options.help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial001.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial001_an.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial002.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial002_an.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial003.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial003_an.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial004.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial004_an.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial005.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_name/test_tutorial005_an.py:docs_src.options.name	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_prompt/test_tutorial001.py:docs_src.options.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_prompt/test_tutorial001_an.py:docs_src.options.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_prompt/test_tutorial002.py:docs_src.options.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_prompt/test_tutorial002_an.py:docs_src.options.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_prompt/test_tutorial003.py:docs_src.options.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_prompt/test_tutorial003_an.py:docs_src.options.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_required/test_tutorial001.py:docs_src.options.required	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_required/test_tutorial001_an.py:docs_src.options.required	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_version/test_tutorial003.py:docs_src.options.version	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options/test_version/test_tutorial003_an.py:docs_src.options.version	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial002.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial002_an.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial003.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial003_an.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial004.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial004_an.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial007.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial007_an.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial008.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial008_an.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial009.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_options_autocompletion/test_tutorial009_an.py:docs_src.options_autocompletion	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial001.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial001_an.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial002.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial002_an.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial003.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial003_an.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial004.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_bool/test_tutorial004_an.py:docs_src.parameter_types.bool	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_custom_types/test_tutorial001.py:docs_src.parameter_types.custom_types	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_custom_types/test_tutorial001_an.py:docs_src.parameter_types.custom_types	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_custom_types/test_tutorial002.py:docs_src.parameter_types.custom_types	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_custom_types/test_tutorial002_an.py:docs_src.parameter_types.custom_types	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_datetime/test_tutorial001.py:docs_src.parameter_types.datetime	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_datetime/test_tutorial002.py:docs_src.parameter_types.datetime	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_datetime/test_tutorial002_an.py:docs_src.parameter_types.datetime	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_enum/test_tutorial001.py:docs_src.parameter_types.enum	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_enum/test_tutorial002.py:docs_src.parameter_types.enum	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_enum/test_tutorial002_an.py:docs_src.parameter_types.enum	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_enum/test_tutorial003.py:docs_src.parameter_types.enum	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_enum/test_tutorial003_an.py:docs_src.parameter_types.enum	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial001.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial001_an.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial002.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial002_an.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial003.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial003_an.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial004.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial004_an.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial005.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_file/test_tutorial005_an.py:docs_src.parameter_types.file	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_index/test_tutorial001.py:docs_src.parameter_types.index	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_number/test_tutorial001.py:docs_src.parameter_types.number	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_number/test_tutorial001_an.py:docs_src.parameter_types.number	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_number/test_tutorial002.py:docs_src.parameter_types.number	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_number/test_tutorial002_an.py:docs_src.parameter_types.number	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_number/test_tutorial003.py:docs_src.parameter_types.number	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_number/test_tutorial003_an.py:docs_src.parameter_types.number	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_path/test_tutorial001.py:docs_src.parameter_types.path	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_path/test_tutorial001_an.py:docs_src.parameter_types.path	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_path/test_tutorial002.py:docs_src.parameter_types.path	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_path/test_tutorial002_an.py:docs_src.parameter_types.path	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_parameter_types/test_uuid/test_tutorial001.py:docs_src.parameter_types.uuid	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_prompt/test_tutorial001.py:docs_src.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_prompt/test_tutorial002.py:docs_src.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_prompt/test_tutorial003.py:docs_src.prompt	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_callback_override/test_tutorial001.py:docs_src.subcommands.callback_override	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_callback_override/test_tutorial002.py:docs_src.subcommands.callback_override	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_callback_override/test_tutorial003.py:docs_src.subcommands.callback_override	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_callback_override/test_tutorial004.py:docs_src.subcommands.callback_override	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial001.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial002.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial003.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial004.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial005.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial006.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial007.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial008.py:docs_src.subcommands.name_help	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial001.py:docs_src.subcommands	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial001.py:docs_src.subcommands.tutorial001	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial001.py:docs_src.subcommands.tutorial001	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial002.py:docs_src.subcommands.tutorial002	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands.tutorial003	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands.tutorial003	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands.tutorial003	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_terminating/test_tutorial001.py:docs_src.terminating	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_terminating/test_tutorial002.py:docs_src.terminating	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_terminating/test_tutorial003.py:docs_src.terminating	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app01.py:docs_src.testing.app01	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app01.py:docs_src.testing.app01.test_main	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app02.py:docs_src.testing.app02	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app02.py:docs_src.testing.app02.test_main	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app02_an.py:docs_src.testing.app02_an	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app02_an.py:docs_src.testing.app02_an.test_main	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app03.py:docs_src.testing.app03	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_testing/test_app03.py:docs_src.testing.app03.test_main	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_using_click/test_tutorial003.py:docs_src.using_click	fp	dev-context	auto: test/docs/typing import context
+typer	CHK003	tests/test_tutorial/test_using_click/test_tutorial004.py:docs_src.using_click	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/_internal.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/_internal.py:colorama	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/datastructures/auth.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+werkzeug	CHK003	src/werkzeug/debug/__init__.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/debug/__init__.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/debug/__init__.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/exceptions.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/exceptions.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/formparser.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/http.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/dispatcher.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/dispatcher.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/dispatcher.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/http_proxy.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/http_proxy.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/http_proxy.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/lint.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/lint.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/lint.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/profiler.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/profiler.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/profiler.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/proxy_fix.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/proxy_fix.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/proxy_fix.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/shared_data.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/shared_data.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/middleware/shared_data.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/routing/exceptions.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/routing/map.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/routing/map.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/serving.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/serving.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/serving.py:colorama	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.backends	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives.asymmetric	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives.asymmetric.rsa	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.x509	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.x509.oid	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/test.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/test.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/test.py:typing_extensions	fp	transitive-policy	auto: no lockfile — declaration/transitive boundary
+werkzeug	CHK003	src/werkzeug/utils.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/wrappers/request.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/wrappers/request.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/wrappers/response.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/wrappers/response.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/wrappers/response.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/wsgi.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	src/werkzeug/wsgi.py:_typeshed.wsgi	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/conftest.py:ephemeral_port_reserve	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/conftest.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/middleware/test_http_proxy.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/middleware/test_lint.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/middleware/test_proxy_fix.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/sansio/test_multipart.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/sansio/test_request.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/sansio/test_utils.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_datastructures.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_debug.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_exceptions.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_formparser.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_http.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_local.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_routing.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_security.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_send_file.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_serving.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_test.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_urls.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_utils.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_wrappers.py:pytest	fp	dev-context	auto: test/docs/typing import context
+werkzeug	CHK003	tests/test_wsgi.py:pytest	fp	dev-context	auto: test/docs/typing import context
