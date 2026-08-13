@@ -1,14 +1,15 @@
 # Recall sentinels for scripts/oss-metrics.sh.
 #
-# In-repo fixtures with a deliberately UNUSED dependency that chokkin must keep
-# reporting as CHK002. They are measured alongside the OSS clones (no network)
-# so the recall gate always has true positives to verify. Every CHK002 reported
-# here is labelled `tp` in scripts/oss-fixtures.labels.tsv; a missing one fails
-# the recall gate, which is the guard that stops the Phase 1.5 FP remediation
-# from quietly collapsing into "report nothing".
+# In-repo fixtures that chokkin must keep reporting so the recall gate has true
+# positives to verify. Measured alongside OSS clones (no network). Every `tp`
+# label in scripts/oss-fixtures.labels.tsv must appear in findings or recall fails.
+#
+# CHK002 sentinels guard against over-suppressing unused dependencies.
+# CHK003 sentinels guard against over-suppressing missing dependencies.
 #
 # Format: slug<TAB>path (path absolute or relative to repo root).
 #
 # slug<TAB>path
 unused_boto3	tests/fixtures/deps/unused_boto3
 optional_try_import	tests/fixtures/deps/optional_try_import
+missing_yaml	tests/fixtures/deps/missing_yaml

@@ -17,7 +17,7 @@ of 20 real OSS Python projects.
 | §17 criterion | Target | Measured | Result |
 |---|---|---|---|
 | Unused-dependency FP rate (CHK002) | < 5% | **0.0%** (0 FP / 2 reported) | ✅ PASS |
-| Unused-dependency recall (CHK002 tp) | all detected | **2/2** detected | ✅ PASS |
+| Unused-dependency recall (`tp` labels) | all detected | **3/3** detected | ✅ PASS |
 | Crashes (chokkin internal error, exit 3) | 0 | 0 | ✅ PASS |
 | Cold run, medium project | ≤ 2000 ms | all within budget | ✅ PASS |
 
@@ -33,19 +33,25 @@ into silent over-suppression, the harness also measures in-repo **recall
 sentinels** — fixtures with a deliberately-unused dependency that chokkin must
 keep flagging, labelled `tp` in the ground truth:
 
-| Sentinel | Expected CHK002 | Guards |
-|---|---|---|
-| `unused_boto3` | `boto3` | a declared runtime dep with no import anywhere stays detected |
-| `optional_try_import` | `requests` | an unused dep coexisting with a correctly-suppressed optional import — 4.C must not over-suppress |
+| Sentinel | Rule | Target | Guards |
+|---|---|---|---|
+| `unused_boto3` | CHK002 | `boto3` | a declared runtime dep with no import anywhere stays detected |
+| `optional_try_import` | CHK002 | `requests` | an unused dep coexisting with a correctly-suppressed optional import — 4.C must not over-suppress |
+| `missing_yaml` | CHK003 | `src/acme/main.py:yaml` | an undeclared third-party import stays detected as missing dependency |
 
 Every `tp` label must appear in the run's findings or the recall gate fails
-(`pass_recall=0`, exit 1). The two sentinels also keep the FP-rate denominator
-non-zero (0 FP / 2 reported), so the precision figure reflects real
-true-positive detection rather than an empty set.
+(`pass_recall=0`, exit 1). The CHK002 sentinels also keep the FP-rate denominator
+non-zero (0 FP / 2 reported on the 20-project set), so the precision figure
+reflects real true-positive detection rather than an empty set.
 
-Real-OSS `tp` labels (a genuinely-unused dependency confirmed in one of the 20
-clones) remain future work — the current 20 projects are all correctly clean
-of CHK002, so recall is anchored on the deterministic in-repo sentinels.
+## Phase 3.x Step 0 — per-rule label coverage (2026-08-11)
+
+The metrics harness now emits **CHK001–CHK010** findings (not only CHK002/CHK003)
+and prints a per-rule label-coverage table in `target/oss-metrics/report.md`.
+§17 gate conditions are unchanged (CHK002 FP / crash / speed / recall).
+
+Full stocktake (CHK003 baseline, blind spots for CHK001/CHK004–010): see
+[`v0.3-stocktake-coverage.md`](./v0.3-stocktake-coverage.md).
 
 ## Validation set (20 projects)
 

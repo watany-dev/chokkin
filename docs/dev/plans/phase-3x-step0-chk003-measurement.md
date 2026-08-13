@@ -1,6 +1,6 @@
 # Phase 3.x Step 0: CHK003 計測・分類 + 全ルール label coverage 棚卸し
 
-- 状態: **確定**
+- 状態: **完了**
 - 親: [`phase-3x-v0.4-reliability-contract.md`](./phase-3x-v0.4-reliability-contract.md) §3 (Step 0) / issue #85 WS1
 - 日付: 2026-08-11
 - 対応リリース: v0.4.0 (PR 1–2 相当)
@@ -116,7 +116,8 @@ bucket 列に `-` を入れる機械移行とする。
 | Bucket | Count | 代表例 (slug/target) |
 ```
 
-Coverage % = (tp + fp + deferred) / reported。集計は awk で行い、
+Coverage % = (tp + fp) / reported。`deferred` は bucket 済みでも ground
+truth ではないため分子に含めない。集計は awk で行い、
 既存の `fp_count` 系ヘルパーを code パラメタ化して再利用する。
 
 ### 3.5 label 移行の無損失検証
