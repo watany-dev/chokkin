@@ -16,6 +16,6 @@ pub use metadata::{default_rule_severity, rule_help_text, rule_help_uri, rule_ti
 pub use symbols::{SymbolId, SymbolReport, analyze_symbols};
 pub use types::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
+    IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue,
     WorkspaceDependencyBoundary, issue_fingerprint, issue_stable_target,
 };

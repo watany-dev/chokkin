@@ -316,10 +316,8 @@ mod golden {
         match reason {
             UnreachableReason::NotReachable => "not_reachable",
             UnreachableReason::ExcludedInit => "excluded_init",
-            UnreachableReason::ExcludedStub => "excluded_stub",
             UnreachableReason::ExcludedTestContext => "excluded_test_context",
             UnreachableReason::ExcludedProductionContext => "excluded_production_context",
-            UnreachableReason::FrameworkUsed => "framework_used",
         }
         .to_owned()
     }
