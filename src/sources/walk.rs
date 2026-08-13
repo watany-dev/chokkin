@@ -8,10 +8,11 @@ use ignore::overrides::OverrideBuilder;
 use ignore::{DirEntry, WalkBuilder};
 
 use crate::config::EntrySpec;
+use crate::path_util::normalize_rel_path;
 
 use super::context::assign_file_context;
 use super::error::SourcesError;
-use super::types::{DiscoveredFile, FileKind, LayoutInfo};
+use super::types::{DiscoveredFile, FileKind};
 use super::warnings::SourcesWarning;
 
 const LARGE_PROJECT_THRESHOLD: usize = 10_000;
@@ -33,8 +34,6 @@ pub struct CollectOptions<'a> {
     pub gitignore: Option<&'a Gitignore>,
     /// Whether to drop non-runtime contexts.
     pub production: bool,
-    /// Inferred layout information.
-    pub layout: &'a LayoutInfo,
 }
 
 /// Load `.gitignore` from the project root when present.
@@ -146,7 +145,6 @@ pub fn collect_files(
     let project_matcher = options.project_matcher;
     let exclude_matcher = options.exclude_matcher;
     let production = options.production;
-    let layout = options.layout;
     let gitignore = options.gitignore;
 
     let builder = configure_walker(
@@ -210,7 +208,7 @@ pub fn collect_files(
             }
         }
 
-        let context = assign_file_context(&rel_str, layout);
+        let context = assign_file_context(&rel_str);
         if production && !context.is_included_in_production() {
             continue;
         }
@@ -258,22 +256,11 @@ pub fn large_project_warning(file_count: usize) -> Option<SourcesWarning> {
     }
 }
 
-/// Normalize a path to root-relative forward-slash form.
-#[must_use]
-pub fn normalize_rel_path(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    if raw.contains('\\') {
-        raw.replace('\\', "/")
-    } else {
-        raw.into_owned()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sources::glob::{build_glob_set, effective_exclude};
-    use crate::sources::types::ProjectLayout;
+    use crate::sources::types::{LayoutInfo, ProjectLayout};
     use std::fs;
     use tempfile::tempdir;
 
@@ -315,7 +302,6 @@ mod tests {
             respect_gitignore: false,
             gitignore: None,
             production: false,
-            layout: &layout,
         };
         let (files, _) = collect_files(&options).expect("collect");
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
@@ -354,7 +340,6 @@ mod tests {
             respect_gitignore: false,
             gitignore: None,
             production: true,
-            layout: &layout,
         };
         let (files, _) = collect_files(&options).expect("collect");
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
@@ -388,7 +373,6 @@ mod tests {
             respect_gitignore: false,
             gitignore: None,
             production: false,
-            layout: &layout,
         };
         let (files, _) = collect_files(&options).expect("collect");
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
@@ -418,18 +402,6 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
-            #[test]
-            fn normalize_rel_path_strips_backslashes(raw in "\\PC{0,60}") {
-                let normalized = normalize_rel_path(Path::new(&raw));
-                prop_assert!(!normalized.contains('\\'));
-            }
-
-            #[test]
-            fn normalize_rel_path_is_idempotent(raw in "\\PC{0,60}") {
-                let once = normalize_rel_path(Path::new(&raw));
-                prop_assert_eq!(normalize_rel_path(Path::new(&once)), once);
-            }
-
             #[test]
             fn large_project_warning_triggers_exactly_above_threshold(count in 0usize..30_000) {
                 let warning = large_project_warning(count);

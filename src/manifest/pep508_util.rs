@@ -154,7 +154,7 @@ fn is_strict_pep508_name(name: &str) -> bool {
 }
 
 #[must_use]
-fn is_url_like(spec: &str) -> bool {
+pub(super) fn is_url_like(spec: &str) -> bool {
     spec.contains("://")
         || spec.starts_with("git+")
         || spec.starts_with("hg+")

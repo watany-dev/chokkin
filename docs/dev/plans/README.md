@@ -67,7 +67,7 @@ flowchart TB
   end
 
   subgraph current [Phase 3.x: v0.4 信頼性 + 契約形式化]
-    CHK003[Step 0: CHK003 計測/分類]
+    CHK003[Step 0: CHK003 計測/分類 ✅]
     A1[CHK003 FP 是正]
     A2[map 自動化]
     B1[autofix ADR]
@@ -90,6 +90,7 @@ flowchart TB
 | 項目 | 状態 |
 | --- | --- |
 | [v0.4 信頼性＋契約形式化](phase-3x-v0.4-reliability-contract.md) | 計画済み |
+| [Step 0: CHK003 計測 + label coverage 棚卸し](phase-3x-step0-chk003-measurement.md) | ✅ 完了（2026-08-11） |
 
 ## v0.1.0 リリース結果（§17 exit criteria）
 

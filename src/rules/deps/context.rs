@@ -99,12 +99,12 @@ pub(super) fn declaration_matches_usage(
 pub(super) fn usage_context_for_import(
     file: &str,
     import_context: ImportContext,
-    sources: &DiscoveredSources,
+    _sources: &DiscoveredSources,
 ) -> UsageContext {
     match import_context {
         ImportContext::Type => UsageContext::Type,
         ImportContext::Test => UsageContext::Test,
-        ImportContext::Runtime => match assign_file_context(file, &sources.layout) {
+        ImportContext::Runtime => match assign_file_context(file) {
             FileContext::Test => UsageContext::Test,
             FileContext::Docs => UsageContext::Docs,
             FileContext::Dev => UsageContext::Dev,

@@ -226,14 +226,14 @@ mod tests {
                 marker: RootMarker::PyProjectToml,
                 start: std::env::temp_dir(),
             },
-            layout: layout.clone(),
+            layout,
             effective_globs: Vec::new(),
             files: paths
                 .iter()
                 .map(|path| DiscoveredFile {
                     path: (*path).to_owned(),
                     kind: FileKind::Python,
-                    context: crate::sources::assign_file_context(path, &layout),
+                    context: crate::sources::assign_file_context(path),
                 })
                 .collect(),
             warnings: Vec::new(),

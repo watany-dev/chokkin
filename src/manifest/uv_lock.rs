@@ -1,5 +1,6 @@
 //! `uv.lock` graph extraction.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use toml::Value;
@@ -26,7 +27,7 @@ pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
         .and_then(Value::as_str)
         .map(str::to_owned);
 
-    let mut edges = super::types::LockfileGraph::default().edges;
+    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     if let Some(packages) = table.get("package").and_then(Value::as_array) {
         for package in packages {

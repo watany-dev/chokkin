@@ -113,7 +113,7 @@ mod tests {
                 .map(|path| DiscoveredFile {
                     path: (*path).to_owned(),
                     kind: FileKind::Python,
-                    context: assign_file_context(path, layout),
+                    context: assign_file_context(path),
                 })
                 .collect(),
             warnings: Vec::new(),
