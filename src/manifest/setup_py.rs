@@ -131,20 +131,7 @@ fn extract_extras_require(body: &str) -> Vec<(String, LiteralScan)> {
 }
 
 fn parse_dict_entry(input: &str) -> Option<(String, &str, &str)> {
-    let trimmed = input.trim_start_matches([',', ' ', '\n', '\r', '\t']);
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let (key, after_key) = if let Some(stripped) = trimmed.strip_prefix('"') {
-        let (value, remaining) = super::literals::read_quoted_string(stripped, '"')?;
-        (value, remaining)
-    } else if let Some(stripped) = trimmed.strip_prefix('\'') {
-        let (value, remaining) = super::literals::read_quoted_string(stripped, '\'')?;
-        (value, remaining)
-    } else {
-        return None;
-    };
+    let (key, after_key) = super::literals::next_string_literal(input)?;
 
     let after_colon = after_key.split_once(':')?.1;
     let after_colon = after_colon.trim_start();
