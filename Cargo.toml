@@ -148,16 +148,6 @@ codegen-units = 1
 # so benchmarks keep tracking full-speed codegen.
 opt-level = "s"
 
-# Keep the hot path (Python parsing) at full speed. With fat LTO the final
-# LTO pass runs at the bin crate's opt-level, so overriding the root `chokkin`
-# package back to 3 would undo the size win — only the parser crates get 3.
-[profile.dist.package.rustpython-parser]
-opt-level = 3
-[profile.dist.package.rustpython-ast]
-opt-level = 3
-[profile.dist.package.rustpython-parser-core]
-opt-level = 3
-
 [profile.dev]
 opt-level = 0
 panic = "unwind"
