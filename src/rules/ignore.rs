@@ -6,7 +6,7 @@ use globset::Glob;
 
 use crate::config::ChokkinConfig;
 use crate::parser::{IgnoreDirective, ParseSummary};
-use crate::rules::types::{Issue, IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
+use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
 
 /// Compiled ignore matchers for config and source directives.
 #[derive(Debug)]
@@ -77,21 +77,6 @@ impl IgnoreMatcher {
             return IgnoreMatch::Config;
         }
         self.matches_directives(candidate.rule, file.as_deref(), candidate_line(candidate))
-    }
-
-    /// Whether a final issue should be suppressed.
-    #[allow(dead_code)] // used by Phase 1 CLI re-filtering
-    pub fn matches_issue(&self, issue: &Issue) -> IgnoreMatch {
-        let file = issue
-            .location
-            .file
-            .as_deref()
-            .or_else(|| subject_file_path(&issue.subject));
-        if self.matches_config(issue.rule, &issue.subject, file) {
-            return IgnoreMatch::Config;
-        }
-        let line = issue.location.line;
-        self.matches_directives(issue.rule, file, line)
     }
 }
 
