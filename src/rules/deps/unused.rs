@@ -199,6 +199,8 @@ fn unreachable_file_suffix(path: &str, reachability: &ReachabilityReport) -> Str
             UnreachableReason::ExcludedProductionContext => Some("excluded in production"),
             UnreachableReason::ExcludedTestContext => Some("excluded test context"),
             UnreachableReason::ExcludedInit => Some("excluded __init__.py"),
+            UnreachableReason::ExcludedStub => Some("excluded stub"),
+            UnreachableReason::FrameworkUsed => Some("framework-used"),
             UnreachableReason::NotReachable => None,
         })
         .unwrap_or("unreachable");

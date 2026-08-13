@@ -125,7 +125,11 @@ pub fn reconcile_dependencies(
             .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
     });
 
-    DependencyReport { candidates }
+    DependencyReport {
+        candidates,
+        used_distributions: used,
+        diagnostics: Vec::new(),
+    }
 }
 
 /// Map a `types-*` stub name to its runtime package when the pattern is known.
@@ -327,6 +331,7 @@ mod tests {
             &[],
             false,
         );
+        assert!(report.used_distributions.contains("types-PyYAML"));
         assert!(
             !report
                 .candidates

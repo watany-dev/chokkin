@@ -81,9 +81,9 @@ pub use pipeline::{
     write_probe_warnings,
 };
 pub use plugins::{
-    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry, PluginHints,
-    PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference, extract_plugin_hints,
-    extract_plugin_hints_with_cache,
+    BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
+    PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
+    extract_plugin_hints, extract_plugin_hints_with_cache,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
@@ -101,9 +101,9 @@ pub use resolver::{
 };
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue, SymbolId, SymbolReport,
-    WorkspaceDependencyBoundary, analyze_symbols, emit_issues, explain_issue, issue_fingerprint,
-    issue_stable_target, reconcile_dependencies,
+    IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
+    SymbolId, SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
+    explain_issue, issue_fingerprint, issue_stable_target, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

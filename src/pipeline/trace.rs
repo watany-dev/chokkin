@@ -39,6 +39,7 @@ pub fn format_trace(path: &TracePath) -> String {
 
 fn format_step(step: &TraceStep) -> String {
     match step {
+        TraceStep::Entry { label, .. } => format!("entry {label}"),
         TraceStep::File { path, .. } => format!("file {path}"),
         TraceStep::Import { module, line } => format!("import {module} (line {line})"),
         TraceStep::PluginRef { module, label } => format!("plugin ref {module} ({label})"),
@@ -147,8 +148,10 @@ fn format_unreachable_reason(reason: UnreachableReason) -> String {
     match reason {
         UnreachableReason::NotReachable => "not reachable from any entry root".to_owned(),
         UnreachableReason::ExcludedInit => "excluded __init__.py".to_owned(),
+        UnreachableReason::ExcludedStub => "excluded stub".to_owned(),
         UnreachableReason::ExcludedTestContext => "excluded test context".to_owned(),
         UnreachableReason::ExcludedProductionContext => "excluded in production".to_owned(),
+        UnreachableReason::FrameworkUsed => "framework-used".to_owned(),
     }
 }
 

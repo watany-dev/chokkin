@@ -172,6 +172,7 @@ fn is_hard_excluded(reasons: &[UnreachableReason]) -> bool {
         matches!(
             reason,
             UnreachableReason::ExcludedInit
+                | UnreachableReason::ExcludedStub
                 | UnreachableReason::ExcludedTestContext
                 | UnreachableReason::ExcludedProductionContext
         )

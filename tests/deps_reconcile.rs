@@ -262,8 +262,8 @@ fn marker_pywin32_suppressed_by_default() {
 #[test]
 fn used_distributions_tracks_runtime_imports() {
     let report = reconcile_fixture("unused_boto3");
-    assert!(!has_rule(&report, RuleId::Chk002, "requests"));
-    assert!(has_rule(&report, RuleId::Chk002, "boto3"));
+    assert!(report.used_distributions.contains("requests"));
+    assert!(!report.used_distributions.contains("boto3"));
 }
 
 #[test]
@@ -282,12 +282,14 @@ fn reachable_import_graph_is_consistent() {
 fn map_alias_import_resolves_to_python_multipart() {
     let report = reconcile_fixture("map_alias");
     assert!(!has_rule(&report, RuleId::Chk002, "python-multipart"));
+    assert!(report.used_distributions.contains("python-multipart"));
 }
 
 #[test]
 fn self_extra_dependency_is_not_unused() {
     let report = reconcile_fixture("self_extra");
     assert!(!has_rule(&report, RuleId::Chk002, "self-extra"));
+    assert!(report.used_distributions.contains("self-extra"));
 }
 
 #[test]
@@ -295,6 +297,8 @@ fn binary_tool_pyproject_marks_dev_tools_used() {
     let report = reconcile_fixture("binary_tool_pyproject");
     assert!(!has_rule(&report, RuleId::Chk002, "mypy"));
     assert!(!has_rule(&report, RuleId::Chk002, "ruff"));
+    assert!(report.used_distributions.contains("mypy"));
+    assert!(report.used_distributions.contains("ruff"));
 }
 
 #[test]
@@ -302,6 +306,8 @@ fn binary_mkdocs_theme_marks_material_used() {
     let report = reconcile_fixture("binary_mkdocs_theme");
     assert!(!has_rule(&report, RuleId::Chk002, "mkdocs"));
     assert!(!has_rule(&report, RuleId::Chk002, "mkdocs-material"));
+    assert!(report.used_distributions.contains("mkdocs"));
+    assert!(report.used_distributions.contains("mkdocs-material"));
 }
 
 #[test]
@@ -320,10 +326,12 @@ fn pdm_dev_dependencies_suppress_chk002() {
 fn optional_try_import_marks_brotli_used() {
     let report = reconcile_fixture("optional_try_import");
     assert!(!has_rule(&report, RuleId::Chk002, "brotli"));
+    assert!(report.used_distributions.contains("brotli"));
 }
 
 #[test]
 fn platform_guard_import_marks_tzdata_used() {
     let report = reconcile_fixture("platform_guard_import");
     assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
+    assert!(report.used_distributions.contains("tzdata"));
 }

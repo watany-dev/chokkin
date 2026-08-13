@@ -3,7 +3,7 @@
 use indexmap::IndexSet;
 
 use crate::config::Confidence;
-use crate::graph::{FileId, ModuleOrigin};
+use crate::graph::{EntryId, FileId, ModuleOrigin};
 
 /// Why a file is excluded from or downgraded in unused-file candidacy (§11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,10 +12,14 @@ pub enum UnreachableReason {
     NotReachable,
     /// `__init__.py` files are excluded from CHK001.
     ExcludedInit,
+    /// Stub files are excluded from CHK001.
+    ExcludedStub,
     /// Test-context files are excluded in library mode.
     ExcludedTestContext,
     /// Non-runtime context excluded when `production = true`.
     ExcludedProductionContext,
+    /// Matched a framework-used glob from a plugin.
+    FrameworkUsed,
 }
 
 /// A module import recorded for dependency reconciliation (Step 10).
@@ -49,6 +53,13 @@ pub struct UnreachableFile {
 /// One step in a reachability trace path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceStep {
+    /// Entry root that started the path.
+    Entry {
+        /// Entry node id.
+        entry: EntryId,
+        /// Human-readable label.
+        label: String,
+    },
     /// Traversal through a project file.
     File {
         /// Graph file id.
