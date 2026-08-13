@@ -90,6 +90,7 @@ flowchart TB
 | 項目 | 状態 |
 | --- | --- |
 | [v0.4 信頼性＋契約形式化](phase-3x-v0.4-reliability-contract.md) | 計画済み |
+| [Step 0: CHK003 計測 + label coverage 棚卸し](phase-3x-step0-chk003-measurement.md) | 確定（update-plan 94/100） |
 
 ## v0.1.0 リリース結果（§17 exit criteria）
 
