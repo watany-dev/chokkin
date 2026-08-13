@@ -163,7 +163,7 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     writeln!(
         out,
         "Root    : {} ({})",
-        report.root.path.display(),
+        crate::path_util::display_path(&report.root.path),
         report.root.marker
     )?;
     writeln!(
