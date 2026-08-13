@@ -344,13 +344,13 @@ fn setup_py_partial_comment_emits_warning() {
             .iter()
             .any(|dep| dep.name == "requests")
     );
-    assert!(
+    assert_eq!(
         manifest
             .dependencies
             .iter()
             .filter(|dep| dep.name == "requests")
-            .count()
-            == 1
+            .count(),
+        1
     );
 }
 
