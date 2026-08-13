@@ -147,8 +147,9 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 
 - `scripts/oss-clones.manifest` — the 20-project set (pinned tags; resolved
   SHAs land in `target/oss-clones/clones.lock.tsv`).
-- `scripts/oss-fixtures.labels.tsv` — ground-truth labels keyed by
-  `(slug, code, target)` for CHK001–CHK010 findings (`fp` / `tp` / `deferred`);
+- `scripts/oss-fixtures.labels.tsv` — labels keyed by `(slug, code, target)`
+  for CHK001–CHK010 findings (`fp` / `tp` are ground truth; `deferred` is
+  heuristic triage awaiting validation);
   the §17 FP gate requires every **CHK002** finding classified (unknown and
   `deferred` both block the gate). CHK003 labels and per-rule coverage are
   informational; see `docs/dev/v0.3-stocktake-coverage.md`.

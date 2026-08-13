@@ -251,7 +251,7 @@ coverage_pct() {
   local code="$1"
   awk -F'\t' -v c="$code" '
     NR > 1 && $2 == c { reported++ }
-    NR > 1 && $2 == c && ($4 == "tp" || $4 == "fp" || $4 == "deferred") { classified++ }
+    NR > 1 && $2 == c && ($4 == "tp" || $4 == "fp") { classified++ }
     END {
       if (reported == 0) print "n/a"
       else printf "%.1f", 100 * classified / reported
@@ -286,7 +286,8 @@ coverage_pct() {
   echo ""
   echo "## Per-rule label coverage"
   echo ""
-  echo "Coverage % = (tp + fp + deferred) / reported. Reported=0 means the rule"
+  echo "Coverage % = (tp + fp) / reported. Deferred triage is not ground truth."
+  echo "Reported=0 means the rule"
   echo "emitted nothing on this corpus — precision and recall are both unverified."
   echo ""
   echo "| Rule | Reported | tp | fp | deferred | unknown | Coverage % |"

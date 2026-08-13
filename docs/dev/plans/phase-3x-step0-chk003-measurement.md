@@ -116,7 +116,8 @@ bucket 列に `-` を入れる機械移行とする。
 | Bucket | Count | 代表例 (slug/target) |
 ```
 
-Coverage % = (tp + fp + deferred) / reported。集計は awk で行い、
+Coverage % = (tp + fp) / reported。`deferred` は bucket 済みでも ground
+truth ではないため分子に含めない。集計は awk で行い、
 既存の `fp_count` 系ヘルパーを code パラメタ化して再利用する。
 
 ### 3.5 label 移行の無損失検証

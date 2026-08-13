@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate CHK003 ground-truth labels from oss-metrics findings.tsv.
+"""Generate CHK003 triage labels from oss-metrics findings.tsv.
 
 Heuristic triage for Step 0 volume (see docs/dev/plans/phase-3x-step0-chk003-measurement.md).
 Re-run after `make oss-metrics` when the OSS clone set or chokkin version changes.
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 
-def classify(slug: str, target: str, message: str) -> tuple[str, str, str] | None:
+def _classify(slug: str, target: str, message: str) -> tuple[str, str, str] | None:
     if message.startswith("optional try-import"):
         return (
             "fp",
@@ -34,17 +34,21 @@ def classify(slug: str, target: str, message: str) -> tuple[str, str, str] | Non
             "tests/",
         )
     ):
-        return ("fp", "dev-context", "auto: test/docs/typing import context")
+        return (
+            "deferred",
+            "dev-context",
+            "deferred: verify test/docs/typing dependency policy",
+        )
     if "no lockfile" in message:
         return (
-            "fp",
+            "deferred",
             "transitive-policy",
-            "auto: no lockfile — declaration/transitive boundary",
+            "deferred: no lockfile — declaration/transitive boundary needs validation",
         )
     return None
 
 
-def main() -> int:
+def _main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
         return 2
@@ -64,7 +68,7 @@ def main() -> int:
             slug, _code, target, _verdict, _bucket, _conf, message = row[:7]
             if slug == "missing_yaml" and target == "src/acme/main.py:yaml":
                 continue
-            verdict = classify(slug, target, message)
+            verdict = _classify(slug, target, message)
             if verdict is None:
                 print(
                     f"unclassified CHK003: {slug}\t{target}\t{message}",
@@ -82,4 +86,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_main())
