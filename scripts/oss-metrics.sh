@@ -208,9 +208,7 @@ rule_reported() {
 
 y002_total="$(rule_reported CHK002)"
 y002_fp="$(verdict_count CHK002 fp)"
-y002_deferred="$(verdict_count CHK002 deferred)"
-y002_unknown="$(verdict_count CHK002 unknown)"
-y002_unclassified=$((y002_unknown + y002_deferred))
+y002_unclassified="$(($(verdict_count CHK002 unknown) + $(verdict_count CHK002 deferred)))"
 
 y003_total="$(rule_reported CHK003)"
 y003_fp="$(verdict_count CHK003 fp)"
