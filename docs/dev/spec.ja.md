@@ -536,7 +536,9 @@ stub package (types-* / *-stubs)
   -> runtime package自体が未使用なら、stubも併せてunused報告する
 ```
 
-`TYPE_CHECKING` 配下のimportはtype contextにする。runtime dependencyとしては扱わない。
+`TYPE_CHECKING` 配下のimportはtype contextにする。`import typing as t` や
+`from typing import TYPE_CHECKING as TC` の alias も静的に追跡し、runtime dependency
+としては扱わない。
 
 ```python
 from typing import TYPE_CHECKING
@@ -545,7 +547,7 @@ if TYPE_CHECKING:
     from pandas import DataFrame
 ```
 
-この場合、`pandas` がruntime依存にある必要はない。ただし、type checkerを実行する環境で必要なら `type_groups = ["types", "mypy"]` 側にあるべき、という判断にできる。
+この場合、`pandas` がruntime依存にある必要はない。ただし、type checkerを実行する環境で必要なら `type_groups = ["types", "mypy"]` 側にあるべき、という判断にできる。v0.4 では CHK003 の default 表示を runtime import に絞り、type/test/docs/dev context の未宣言 import は `--strict` 時だけ報告する。
 
 `try import` はoptional扱いにする。
 
@@ -556,7 +558,7 @@ except ImportError:
     orjson = None
 ```
 
-この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ `optional_missing` としてdefaultはinfo、`--strict` 時はwarningにする。
+この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
 
 ## 11. unused files判定
 
@@ -965,11 +967,12 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
-### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.3.0 リリース済み
+### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.4.0 リリース済み
 
 ```text
 目標   : v1.0で凍結する契約の準備
 v0.3   : Contract Stabilization
+v0.4   : CHK003 Reliability + Contract Formalization
 成果物 :
   - JSON reporterに schema_version を追加し、JSON Schemaを公開する ✅
   - baseline fileに schema_version を追加し、v0.2 draft baseline reader互換を維持する ✅
@@ -979,6 +982,10 @@ v0.3   : Contract Stabilization
   - inline/file-level ignore構文 (`# chokkin: ignore[...]` /
     `# chokkin: file-ignore[...]`) をdraft凍結する ✅
   - plugin API RFCを作り、外部plugin試作のI/O境界を文書化する ✅
+  - default CHK003をruntime import中心にし、conditional importをinfo候補にする ✅
+  - alias付きTYPE_CHECKINGを追跡し、parse cacheをversion更新する ✅
+  - wheel metadataのoffline deterministic harvest flowを追加する ✅
+  - safe autofix / semver契約をADR 0003 / 0004で明文化する ✅
   - 誤検知報告から package-module-map / binary map / plugin database を継続更新する
 非目標 :
   - v0.3では外部plugin loadingを安定APIとして公開しない
@@ -997,7 +1004,7 @@ exit   :
 目標   : §16 v1.0 list の安定性保証
 内容   :
   - stable JSON schema / exit code / ignore syntax / safe autofix contract
-  - semver契約の明文化 (何がbreaking changeか)
+  - ADR 0003 / 0004で合意したsafe autofix / semver契約を安定保証として運用する
   - editor/LSP連携
   - large monorepo performance の最終チューニング
 ```
