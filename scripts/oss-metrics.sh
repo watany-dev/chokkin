@@ -330,7 +330,7 @@ coverage_pct() {
   echo ""
   echo "## Findings (CHK001–CHK010)"
   echo ""
-  finding_rows="$(awk -F'\t' 'NR>1' "$FINDINGS" | wc -l | tr -d ' ')"
+  finding_rows="$(awk 'END {print NR - 1}' "$FINDINGS")"
   if [[ "$finding_rows" -eq 0 ]]; then
     echo "_No findings across the set._"
   else
