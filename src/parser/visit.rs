@@ -1,5 +1,7 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
+use std::collections::HashSet;
+
 use rustpython_parser::ast::Ranged;
 use rustpython_parser::ast::{Alias, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom};
 use rustpython_parser::source_code::RandomLocator;
@@ -28,6 +30,8 @@ pub struct ModuleVisitor<'a> {
     try_depth: u32,
     platform_guard_depth: u32,
     module_level: bool,
+    typing_aliases: HashSet<String>,
+    type_checking_names: HashSet<String>,
     parsed: ParsedModule,
 }
 
@@ -49,6 +53,8 @@ impl<'a> ModuleVisitor<'a> {
             try_depth: 0,
             platform_guard_depth: 0,
             module_level: true,
+            typing_aliases: HashSet::from(["typing".to_owned()]),
+            type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             parsed: ParsedModule::empty(path.to_owned()),
         }
     }
@@ -154,7 +160,7 @@ impl<'a> ModuleVisitor<'a> {
             Stmt::If(if_stmt) => {
                 let was_type_checking = self.in_type_checking;
                 let was_platform_guard = self.platform_guard_depth;
-                if is_type_checking_if(stmt) {
+                if is_type_checking_if(stmt, &self.typing_aliases, &self.type_checking_names) {
                     self.in_type_checking = true;
                 }
                 if is_platform_guard_if(stmt) {
@@ -239,6 +245,14 @@ impl<'a> ModuleVisitor<'a> {
         let optional = self.try_depth > 0;
         let platform_guarded = self.platform_guard_depth > 0;
         for alias in &import.names {
+            if alias.name.as_str() == "typing" {
+                self.typing_aliases.insert(
+                    alias
+                        .asname
+                        .as_ref()
+                        .map_or_else(|| "typing".to_owned(), ToString::to_string),
+                );
+            }
             self.push_import(ImportRef {
                 module: alias.name.to_string(),
                 name: None,
@@ -268,6 +282,18 @@ impl<'a> ModuleVisitor<'a> {
         for alias in &import_from.names {
             if alias.name.as_str() == "*" {
                 continue;
+            }
+
+            if level == 0
+                && module_suffix.as_deref() == Some("typing")
+                && alias.name.as_str() == "TYPE_CHECKING"
+            {
+                self.type_checking_names.insert(
+                    alias
+                        .asname
+                        .as_ref()
+                        .map_or_else(|| "TYPE_CHECKING".to_owned(), ToString::to_string),
+                );
             }
 
             let (module, name) = if level == 0 {

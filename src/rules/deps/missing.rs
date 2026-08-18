@@ -66,6 +66,18 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
+        if !strict
+            && matches!(
+                usage,
+                super::context::UsageContext::Type
+                    | super::context::UsageContext::Test
+                    | super::context::UsageContext::Docs
+                    | super::context::UsageContext::Dev
+            )
+        {
+            continue;
+        }
+
         if strict
             && root_declared
             && let Some(member_id) = workspace_member
@@ -147,6 +159,17 @@ fn optional_missing_candidate(
     } else {
         Severity::Info
     };
+    let (kind, detail) = if import.platform_guarded {
+        (
+            "platform-guarded import",
+            "platform-guarded import — not treated as a hard missing dependency",
+        )
+    } else {
+        (
+            "optional try-import",
+            "try/except ImportError import — not treated as a hard missing dependency",
+        )
+    };
     IssueCandidate {
         rule: RuleId::Chk003,
         subject: IssueSubject::Import {
@@ -156,9 +179,7 @@ fn optional_missing_candidate(
         },
         severity,
         confidence: Confidence::Likely,
-        message: format!(
-            "optional try-import of {distribution} is not declared in any dependency context"
-        ),
+        message: format!("{kind} of {distribution} is not declared in any dependency context"),
         workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
@@ -166,11 +187,8 @@ fn optional_missing_candidate(
             module: import.full_module.clone(),
         }],
         explain: ExplainData {
-            summary: format!("optional import of {distribution} has no declaration"),
-            details: vec![
-                "try/except ImportError import — not treated as a hard missing dependency"
-                    .to_owned(),
-            ],
+            summary: format!("conditional import of {distribution} has no declaration"),
+            details: vec![detail.to_owned()],
         },
     }
 }
@@ -271,12 +289,12 @@ pub(super) fn is_transitive_only(
     false
 }
 
-/// Build a set of optional try-import locations from parse output.
+/// Build a set of conditional import locations from parse output.
 pub(super) fn collect_optional_imports(parse: &ParseSummary) -> HashSet<(String, u32)> {
     let mut optional = HashSet::new();
     for module in &parse.modules {
         for import in &module.imports {
-            if import.optional {
+            if import.optional || import.platform_guarded {
                 optional.insert((module.path.clone(), import.line));
             }
         }

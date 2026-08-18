@@ -284,7 +284,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
         manifest_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v1".to_owned(),
+        unit_version: "parse-v2".to_owned(),
     }
 }
 

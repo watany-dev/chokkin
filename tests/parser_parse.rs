@@ -125,6 +125,19 @@ fn collects_type_checking_import_context() {
 }
 
 #[test]
+fn collects_type_checking_alias_import_context() {
+    let parsed = parse_fixture_dir("imports", "type_checking_block.py");
+    for module in ["httpx", "boto3"] {
+        let import = parsed
+            .imports
+            .iter()
+            .find(|import| import.module == module)
+            .unwrap_or_else(|| panic!("missing {module}"));
+        assert_eq!(import.context, ImportContext::Type);
+    }
+}
+
+#[test]
 fn parses_match_statement_file() {
     let parsed = parse_fixture("p7_match.py");
     assert!(parsed.diagnostics.is_empty());

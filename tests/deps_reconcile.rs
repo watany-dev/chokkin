@@ -166,6 +166,48 @@ fn missing_yaml_emits_chk003() {
 }
 
 #[test]
+fn non_runtime_missing_is_suppressed_by_default_and_reported_in_strict_mode() {
+    let default = reconcile_fixture("dev_missing");
+    assert!(!default.candidates.iter().any(|candidate| {
+        candidate.rule == RuleId::Chk003
+            && (candidate.message.contains("pyyaml") || candidate.message.contains("boto3"))
+    }));
+
+    let strict = reconcile_fixture_with_strict("dev_missing", true);
+    assert!(strict.candidates.iter().any(|candidate| {
+        candidate.rule == RuleId::Chk003 && candidate.message.contains("pyyaml")
+    }));
+    assert!(strict.candidates.iter().any(|candidate| {
+        candidate.rule == RuleId::Chk003 && candidate.message.contains("boto3")
+    }));
+}
+
+#[test]
+fn optional_missing_remains_an_informational_candidate() {
+    let report = reconcile_fixture("optional_missing");
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("pyyaml"))
+        .expect("optional pyyaml missing");
+    assert_eq!(candidate.severity, Severity::Info);
+    assert_eq!(candidate.confidence, Confidence::Likely);
+}
+
+#[test]
+fn platform_guard_missing_is_not_a_hard_error() {
+    let report = reconcile_fixture("platform_guard_missing");
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("tzdata"))
+        .expect("platform-guarded tzdata missing");
+    assert_eq!(candidate.severity, Severity::Info);
+    assert_eq!(candidate.confidence, Confidence::Likely);
+    assert!(candidate.message.contains("platform-guarded"));
+}
+
+#[test]
 fn transitive_urllib3_emits_chk004() {
     let report = reconcile_fixture("transitive_urllib3");
     let candidate = report

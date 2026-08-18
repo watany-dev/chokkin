@@ -1,0 +1,6 @@
+[project]
+name = "optional-missing"
+version = "0.1.0"
+
+[project.scripts]
+optional-missing = "acme.main:main"
