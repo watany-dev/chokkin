@@ -10,7 +10,7 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.3.0 released on top of released v0.1.0 / v0.2.0. Default CLI runs
+**Status:** v0.4.0 released on top of v0.1.0–v0.3.0. Default CLI runs
 `analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
 `markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
 and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
@@ -33,14 +33,19 @@ JSON reporter and baseline output, published JSON Schema under `docs/schema/`,
 `[tool.chokkin.severity]` per-rule overrides wired through emit/reporters/exit codes,
 stabilized SARIF rule metadata (`helpUri`, `fullDescription`), ignore-syntax
 regression tests, and plugin API RFC (`docs/adr/0002-plugin-api-rfc.md`; no
-external plugin loading). PyPI
+external plugin loading). v0.4 focuses default CHK003 reporting on runtime
+imports, keeps optional/platform-guarded missing imports informational, recognizes
+aliased `TYPE_CHECKING` guards, adds an offline deterministic wheel metadata
+harvester, and records safe-autofix/semver contracts in ADR 0003/0004. The fixed
+20-project corpus reports 131 CHK003 findings (down from 964 at Step 0), with
+0 unknown labels and all §17 gates passing. PyPI
 v0.1 release is gated on §17 exit criteria (OSS dogfooding, false-positive
 rate, cold-run performance) — measured by `make oss-clones` + `make oss-metrics`
 over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
 is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
-budget. PyPI **v0.1.0** and **v0.2.0** have been released.
+budget. PyPI **v0.1.0** through **v0.4.0** have been released.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.

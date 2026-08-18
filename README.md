@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.3.0 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.3 adds `schema_version` on JSON/baseline output, published JSON Schema under `docs/schema/`, per-rule `[tool.chokkin.severity]` overrides, and stabilized SARIF rule metadata. The §17 **CHK002 false-positive gate passed** after Phase 1.5 (`make oss-metrics ARGS=--gate`), v0.2 validation is recorded (`docs/dev/v0.2-release-validation.md`), and **v0.1.0 / v0.2.0 / v0.3.0 have been released**.
+> **Status: v0.4.0 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. **v0.1.0 through v0.4.0 have been released.**
 
 ## Why chokkin?
 
@@ -31,7 +31,7 @@ uvx chokkin
 No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, `uv.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
 
 ```text
-chokkin 0.3.0
+chokkin 0.4.0
 
 Project: acme-api
 Config : pyproject.toml
@@ -103,7 +103,7 @@ uvx chokkin --init
 Key flags:
 
 - `--production` — drop dev/test/docs/lint/type contexts and judge reachability from runtime context only. Dev-only files and dependencies are no longer reported, and "unused in production" becomes strict.
-- `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
+- `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, CHK003 also includes type/test/docs/dev imports, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
 - `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files. `--add-missing` adds Certain CHK003 findings to non-Poetry `[project].dependencies` when the distribution is unambiguous; workspace findings are inserted into the member `pyproject.toml` when that member manifest was inventoried. Unsupported cases are reported as skipped fixes with details on stderr.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
@@ -185,7 +185,7 @@ CHK002 = "error"
 
 ### Dependency contexts
 
-Dependencies and files are both assigned contexts (runtime / dev / test / docs / lint / type / optional extras). That's what powers `CHK005`: `import pytest` in `tests/` with pytest in your dev group is fine; the same import in `src/` is a misplaced dependency. `TYPE_CHECKING`-only imports are type-context, and `try: import orjson / except ImportError` is treated as optional rather than missing.
+Dependencies and files are both assigned contexts (runtime / dev / test / docs / lint / type / optional extras). That's what powers `CHK005`: `import pytest` in `tests/` with pytest in your dev group is fine; the same import in `src/` is a misplaced dependency. Default CHK003 reporting focuses on runtime imports; `--strict` also reports undeclared type/test/docs/dev imports. `TYPE_CHECKING`-only imports (including `typing` aliases) are type-context, while `try: import orjson / except ImportError` and platform-guarded imports remain informational conditional candidates when undeclared.
 
 ## Plugins
 

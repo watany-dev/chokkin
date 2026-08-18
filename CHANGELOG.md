@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-17
+
+### Added
+- Offline, deterministic wheel-metadata harvesting for package-map candidates;
+  harvested data is review-only and never overwrites bundled seeds.
+- Accepted safe-autofix and semver contracts in ADR 0003 and ADR 0004.
+- Regression fixtures for dev/type, optional, and platform-guarded missing imports.
+
+### Changed
+- Default CHK003 reporting now focuses on runtime imports; type, test, docs, and
+  dev imports remain available under `--strict`.
+- Optional and platform-guarded undeclared imports are retained as conditional,
+  informational CHK003 candidates instead of hard errors.
+- `TYPE_CHECKING` detection now follows aliases such as `import typing as t` and
+  invalidates earlier parse-cache entries.
+- The fixed 20-project corpus reports 131 CHK003 findings, down from the v0.4
+  Step 0 baseline of 964, with 0 unknown labels and all §17 gates passing.
+
 ## [0.3.0] - 2026-07-01
 
 ### Added
