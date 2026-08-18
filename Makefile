@@ -65,6 +65,7 @@ machete:
 
 ## ─── Generated artifacts ───────────────────────────────────────────────────────
 check-generated:
+	python3 tests/test_harvest_package_map.py
 	python3 scripts/generate-package-map.py
 	python3 scripts/generate-stdlib-modules.py
 	git diff --exit-code src/resolver/bundled/ src/resolver/stdlib/
