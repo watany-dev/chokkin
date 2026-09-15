@@ -35,8 +35,6 @@ import sys
 
 from z3 import And, Bool, Implies, Not, Or, Solver, sat
 
-RUNTIME, TYPE, TEST, DOCS, DEV = range(5)
-
 
 def build():
     # usage context (one-hot over UsageContext)

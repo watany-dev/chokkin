@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import sys
 
-from z3 import And, Bool, If, Implies, Int, Not, Or, Solver, sat
+from z3 import And, Bool, If, Int, Not, Or, Solver, sat
 
 INFO, WARNING, ERROR = 0, 1, 2
 MAYBE, LIKELY, CERTAIN = 0, 1, 2

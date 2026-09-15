@@ -183,16 +183,6 @@ def cpython_resolve(package: str, level: int, module_suffix: str | None, name: s
     raise ImportErrorModel("nothing to import")
 
 
-def cpython_module_name(path: str, layout: Layout) -> str | None:
-    """Module name a file would get when the project is installed / on sys.path.
-
-    Src layout: ``src`` is the sys.path root.  Flat: the project root is.  Unknown:
-    chokkin itself picks ``src/`` first and otherwise falls back to flat packages,
-    which we accept as the intended semantics (``path_to_module``).
-    """
-    return path_to_module(path, layout)
-
-
 # --------------------------------------------------------------------------
 # Universe
 # --------------------------------------------------------------------------
@@ -225,39 +215,48 @@ SUFFIXES = [None, "", "models", "models.user"]
 NAMES = [None, "thing"]
 
 
+def cpython_package(path: str, layout: Layout) -> str | None:
+    """``__package__`` of ``path`` when the project is on sys.path (PEP 366).
+
+    ``path_to_module`` is the module name chokkin's index assigns (src/ first,
+    then flat packages), accepted here as the intended semantics.  ``None`` when
+    the file is not importable under the layout (covered by P2, skipped by P1).
+    """
+    module = path_to_module(path, layout)
+    if module is None:
+        return None
+    return module if path.endswith("__init__.py") else containing_package(module, False)
+
+
 def check_p1() -> list[str]:
     failures = []
-    for layout, path, level, suffix, name in itertools.product(
-        LAYOUTS, PATHS, LEVELS, SUFFIXES, NAMES
-    ):
-        if level == 0:
+    for layout, path in itertools.product(LAYOUTS, PATHS):
+        pkg = cpython_package(path, layout)
+        if pkg is None:
             continue
-        if not suffix and name is None:
-            continue
-        got = resolve_relative_import(path, layout, level, suffix, name)
-        if got is None:
-            continue  # chokkin declines -> diagnostic; always sound
-        module = cpython_module_name(path, layout)
-        if module is None:
-            # File is not importable under this layout; chokkin should not
-            # invent a module (covered by P2), skip here.
-            continue
-        pkg = module if path.endswith("__init__.py") else containing_package(module, False)
-        try:
-            expected = cpython_resolve(pkg, level, suffix, name)
-        except ImportErrorModel as exc:
-            failures.append(
-                f"P1 layout={layout.kind}{list(layout.packages)} file={path} "
-                f"level={level} suffix={suffix!r} name={name!r}: chokkin={got!r} "
-                f"but CPython raises ImportError({exc})"
-            )
-            continue
-        if expected != got:
-            failures.append(
-                f"P1 layout={layout.kind} file={path} level={level} suffix={suffix!r} "
-                f"name={name!r}: chokkin={got!r} cpython={expected!r}"
-            )
+        for level, suffix, name in itertools.product(LEVELS, SUFFIXES, NAMES):
+            if level == 0 or (not suffix and name is None):
+                continue
+            got = resolve_relative_import(path, layout, level, suffix, name)
+            if got is None:
+                continue  # chokkin declines -> diagnostic; always sound
+            mismatch = p1_mismatch(pkg, level, suffix, name, got)
+            if mismatch is not None:
+                failures.append(
+                    f"P1 layout={layout.kind}{list(layout.packages)} file={path} "
+                    f"level={level} suffix={suffix!r} name={name!r}: chokkin={got!r} "
+                    f"but {mismatch}"
+                )
     return failures
+
+
+def p1_mismatch(pkg: str, level: int, suffix, name, got: str) -> str | None:
+    """Describe how CPython disagrees with chokkin's result, or None if it agrees."""
+    try:
+        expected = cpython_resolve(pkg, level, suffix, name)
+    except ImportErrorModel as exc:
+        return f"CPython raises ImportError({exc})"
+    return None if expected == got else f"CPython resolves to {expected!r}"
 
 
 def check_p2() -> list[str]:

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Exhaustive model of config ignore matching (spec §18 vs src/rules/ignore.rs).
 
-Port of ``config_pattern_matches`` / ``symbol_pattern_matches`` from
-``src/rules/ignore.rs``.  ``glob_match`` is approximated with ``fnmatch`` (the
-patterns used here contain only ``*`` and literals, on which ``globset`` and
-``fnmatch`` agree).
+Port of the dependency-rule branches of ``config_pattern_matches`` from
+``src/rules/ignore.rs`` (the File / Symbol / Binary branches are irrelevant to
+I1 and omitted).  ``glob_match`` is approximated with ``fnmatch`` (the patterns
+used here contain only ``*`` and literals, on which ``globset`` and ``fnmatch``
+agree).
 
 Spec (docs/dev/spec.ja.md line 1044):
 
@@ -29,8 +30,8 @@ from fnmatch import fnmatchcase
 
 @dataclass(frozen=True)
 class Subject:
-    kind: str  # "Import" | "Distribution" | "File" | "Symbol" | "Binary"
-    name: str = ""  # distribution / binary / symbol name
+    kind: str  # "Import" | "Distribution"
+    name: str = ""  # distribution name
     module: str = ""
     file: str = ""
 
@@ -42,8 +43,6 @@ class Candidate:
     distribution: str  # what the spec calls the rule's target (not stored in subject)
 
 
-SYMBOL_RULES = {"CHK006", "CHK007"}
-FILE_RULES = {"CHK001", "CHK010"}
 DIST_RULES = {"CHK002", "CHK003", "CHK004", "CHK005", "CHK008", "CHK009"}
 
 
@@ -51,32 +50,11 @@ def glob_match(pattern: str, value: str) -> bool:
     return fnmatchcase(value, pattern)
 
 
-def symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject, file):
-    if rule not in SYMBOL_RULES:
-        return False
-    if subject.kind != "Symbol":
-        return False
-    module_path = subject.module.replace(".", "/")
-    path_ok = (file is not None and glob_match(path_pattern, file)) or glob_match(
-        path_pattern, module_path
-    )
-    return path_ok and glob_match(symbol_pattern, subject.name)
-
-
-def config_pattern_matches(rule: str, pattern: str, subject: Subject, file: str | None) -> bool:
-    if ":" in pattern:
-        path_pattern, symbol_pattern = pattern.split(":", 1)
-        return symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject, file)
-    if subject.kind == "File" and rule in FILE_RULES:
-        return glob_match(pattern, subject.file)
+def config_pattern_matches(rule: str, pattern: str, subject: Subject) -> bool:
     if subject.kind == "Distribution" and rule in DIST_RULES:
-        return glob_match(pattern, subject.name)
-    if subject.kind == "Binary" and rule == "CHK008":
         return glob_match(pattern, subject.name)
     if subject.kind == "Import":
         return glob_match(pattern, subject.file) or glob_match(pattern, subject.module)
-    if subject.kind == "Symbol" and rule in SYMBOL_RULES:
-        return symbol_pattern_matches(rule, pattern, "*", subject, file)
     return False
 
 
@@ -107,8 +85,7 @@ PATTERNS = ["pyyaml", "google-cloud-*", "setuptools", "yaml", "src/acme/*", "goo
 def main() -> int:
     failures = []
     for cand, pattern in itertools.product(CANDIDATES, PATTERNS):
-        file = cand.subject.file or None
-        got = config_pattern_matches(cand.rule, pattern, cand.subject, file)
+        got = config_pattern_matches(cand.rule, pattern, cand.subject)
         expected = glob_match(pattern, cand.distribution)
         if got != expected:
             failures.append(

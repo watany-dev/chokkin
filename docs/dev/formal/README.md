@@ -16,10 +16,7 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 
 ```bash
 pip install z3-solver
-python3 docs/dev/formal/relative_import_model.py
-python3 docs/dev/formal/deps_rules_z3.py
-python3 docs/dev/formal/exit_status_z3.py
-python3 docs/dev/formal/ignore_model.py
+make formal   # Python モデルを全て実行 (個別実行: python3 docs/dev/formal/<name>.py)
 
 # TLA+ (tla2tools.jar は https://github.com/tlaplus/tlaplus/releases から取得)
 cd docs/dev/formal
