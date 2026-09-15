@@ -1,6 +1,8 @@
 //! Rule types and issue candidates shared across pipeline steps 10–12.
 
 mod chk001;
+mod context;
+pub(crate) use context::{DependencyRuleContext, RuleContext};
 pub mod deps;
 pub mod emit;
 mod filter;

@@ -2,11 +2,10 @@
 
 use std::collections::HashSet;
 
-use crate::config::{ChokkinConfig, Confidence};
+use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
-use crate::resolver::ResolutionIndex;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
-use crate::sources::DiscoveredSources;
+use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::context::{
     DeclarationBucket, UsageContext, declaration_bucket, usage_context_for_import,
@@ -15,17 +14,23 @@ use super::missing::WorkspaceDeclaredIndex;
 use super::used::DeclaredIndex;
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 pub(super) fn detect_misplaced_dependencies(
     declared: &DeclaredIndex<'_>,
-    resolution: &ResolutionIndex,
+    dependency: &DependencyRuleContext<'_>,
     reachable: &HashSet<String>,
-    config: &ChokkinConfig,
-    sources: &DiscoveredSources,
     workspace_declared: &[WorkspaceDeclaredIndex<'_>],
-    strict: bool,
 ) -> Vec<IssueCandidate> {
+    let DependencyRuleContext {
+        rules: context,
+        config,
+        strict,
+    } = *dependency;
+    let RuleContext {
+        resolution,
+        sources,
+        ..
+    } = *context;
     let mut candidates = Vec::new();
     let mut reported = HashSet::new();
 
