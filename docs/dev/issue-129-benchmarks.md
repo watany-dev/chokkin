@@ -39,5 +39,6 @@ key は graph のパス列（順序保持）と layout だけを使い、ソー�
 検証: fmt / clippy / cargo doc / 全639 tests / cargo machete は成功。
 ソース本文を削除しても index の cache hit が成立し、graph のパス追加・順序変更と
 layout 変更で key が変わることを regression test で確認する。
-`make check` の cargo deny は既存 lockfile の RUSTSEC-2026-0258 (h2) と
-RUSTSEC-2026-0285 (rustls) により失敗。Cargo.lock は変更していない。
+初回の `make check` は lockfile の RUSTSEC-2026-0258 (h2) と
+RUSTSEC-2026-0285 (rustls) により cargo deny で失敗した。
+後続の CI 修正で修正版へ更新し、`make check` の全項目が成功した。
