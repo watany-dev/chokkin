@@ -13,7 +13,7 @@ use crate::plugins::extract_plugin_hints_with_cache;
 use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
-    IssueReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues, reconcile_dependencies,
+    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
 
 use super::error::AnalyzeError;
@@ -219,28 +219,29 @@ fn run_analysis_core(
         })
         .collect::<Vec<_>>();
 
-    let deps = reconcile_dependencies(
+    let context = RuleContext {
+        resolution: &resolution,
+        reachability: &reachability,
+        graph: &graph,
+        sources: &probe.sources,
+        parse: &parse,
+    };
+    let deps = crate::rules::deps::reconcile_with_context(
+        &DependencyRuleContext {
+            rules: &context,
+            config: &probe.effective_config,
+            strict,
+        },
         &probe.manifest,
-        &resolution,
-        &reachability,
         &plugins,
-        &probe.effective_config,
-        &probe.sources,
-        &parse,
-        &graph,
         &workspace_boundaries,
-        strict,
     );
 
-    let symbols = analyze_symbols(
-        &parse,
-        &resolution,
-        &reachability,
+    let symbols = crate::rules::symbols::analyze_with_context(
+        &context,
         &entry,
         &plugins,
         &entry.mode,
-        &graph,
-        &probe.sources,
         &probe.manifest,
     );
 

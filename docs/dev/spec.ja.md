@@ -215,6 +215,7 @@ respect_gitignore = true
 confidence = "likely"     # certain | likely | maybe
 exclude = [
   ".venv/**",
+  ".chokkin/**",
   "build/**",
   "dist/**",
   "**/__pycache__/**",
@@ -253,6 +254,8 @@ CHK001 = "off"
 CHK006 = "info"
 CHK002 = "error"
 ```
+
+ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
 
 workspace設定。
 
@@ -1088,7 +1091,7 @@ file content hash
 plugin version
 ```
 
-config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_record` / `write_scan_record` による disk backend と、`read_scan_payload` / `write_scan_payload` による typed JSON payload slot は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。module index は path-based payload として保存し、current graph の `FileId` に再解決する。
+config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_record` / `write_scan_record` による disk backend と、`read_scan_payload` / `write_scan_payload` による typed JSON payload slot は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。module index は path-based payload として保存し、current graph の `FileId` に再解決する。`module-index-v2` の key は layout と graph のパス列（順序保持）を hash し、ソース本文・mtime は読まない。パス追加・削除・順序変更と layout 変更で無効化する。v1 の cache は unit version により miss になる。
 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 
@@ -1103,6 +1106,14 @@ Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/c
 notebook parsing は v0.2 plugin 拡充の初期実装として、source discovery が `.ipynb` を `FileKind::Notebook` として拾い、parser が `cells[].cell_type == "code"` の `source` だけを連結して既存の Python static parser に渡す。markdown/raw cell と outputs は無視し、notebook JSON が壊れている場合は per-file warning diagnostic に留める。
 
 step 11 symbol usage analysis (`src/rules/symbols/`) は、CHK006/CHK007 の参照有無判定に `ReferenceIndex` (`graph.rs`) を使う。旧実装は登録済みシンボルごとに参照一覧を線形走査しており project size に対し二乗コストになっていた (10k/20k合成fixtureで実行命令数の約4割を占有)。`ReferenceIndex::build` が reachable module 群を一度だけ走査して `HashMap<SymbolId, bool>` (値は「他moduleから参照されたか」) を構築し、以降のlookupをO(1)にする。2k/10k/20k合成fixtureでissue出力が修正前後で完全一致することを確認済み。
+
+### ルール解析の内部入力
+
+step 10/11 は借用 `RuleContext` で resolution / reachability / graph / sources /
+parse を共有する。設定と strict は依存ルール固有の `DependencyRuleContext` にまとめる。
+公開 `reconcile_dependencies` / `analyze_symbols` のシグネチャは互換 wrapper として維持し、
+pipeline は context を直接渡す。候補の安定 sort（rule code → subject）は
+step 10/11/12 で同じ helper を使い、同一キーの入力順を保持する。
 
 ### bundled resolver map の再利用
 

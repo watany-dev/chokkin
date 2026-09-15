@@ -95,6 +95,7 @@ pub fn default_config() -> ChokkinConfig {
         confidence: Confidence::Likely,
         exclude: vec![
             ".venv/**".to_owned(),
+            ".chokkin/**".to_owned(),
             "build/**".to_owned(),
             "dist/**".to_owned(),
             "**/__pycache__/**".to_owned(),

@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 
 use crate::VERSION;
-use crate::cache::{
-    CacheKeyContext, CacheOptions, ScanCacheKey, SourceFingerprint, stable_hex_hash,
-};
+use crate::cache::{CacheKeyContext, CacheOptions, ScanCacheKey, stable_hex_hash};
 use crate::graph::{FileId, ProjectGraph};
 use crate::sources::{DiscoveredSources, LayoutInfo, ProjectLayout};
 
@@ -32,7 +30,7 @@ impl ModuleIndex {
     ///
     /// # Errors
     ///
-    /// Returns an I/O error when reading source fingerprints or cache files fails.
+    /// Returns an I/O error when reading or writing cache files fails.
     pub fn build_with_cache(
         graph: &ProjectGraph,
         sources: &DiscoveredSources,
@@ -41,10 +39,10 @@ impl ModuleIndex {
         let Some(cache) = cache.filter(|cache| cache.enabled) else {
             return Ok(Self::build(graph, sources));
         };
-        let key = module_index_cache_key(sources)?;
+        let key = module_index_cache_key(graph, sources)?;
         if let Some(payload) =
             cache.read_scan_payload::<ModuleIndexPayload>(sources.root.path.as_path(), &key)?
-            && let Some(index) = Self::from_payload(graph, &payload)
+            && let Some(index) = Self::from_payload(graph, payload)
         {
             return Ok(index);
         }
@@ -60,11 +58,11 @@ impl ModuleIndex {
         self.module_to_file.get(module).copied()
     }
 
-    fn from_payload(graph: &ProjectGraph, payload: &ModuleIndexPayload) -> Option<Self> {
-        let mut module_to_file = HashMap::new();
-        for entry in &payload.entries {
+    fn from_payload(graph: &ProjectGraph, payload: ModuleIndexPayload) -> Option<Self> {
+        let mut module_to_file = HashMap::with_capacity(payload.entries.len());
+        for entry in payload.entries {
             let file_id = graph.file_id(&entry.path)?;
-            module_to_file.insert(entry.module.clone(), file_id);
+            module_to_file.insert(entry.module, file_id);
         }
         Some(Self { module_to_file })
     }
@@ -95,27 +93,23 @@ struct ModuleIndexEntry {
     path: String,
 }
 
-fn module_index_cache_key(sources: &DiscoveredSources) -> Result<ScanCacheKey, std::io::Error> {
-    let mut fingerprints = Vec::new();
-    for file in &sources.files {
-        fingerprints.push(SourceFingerprint::from_root_relative(
-            sources.root.path.as_path(),
-            &file.path,
-        )?);
-    }
-    fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+fn module_index_cache_key(
+    graph: &ProjectGraph,
+    sources: &DiscoveredSources,
+) -> Result<ScanCacheKey, std::io::Error> {
+    // The index depends on graph paths and layout, never source bytes. Preserve
+    // graph order because build() keeps the first file for duplicate modules.
+    let paths: Vec<_> = graph.files().map(|(_, file)| file.path.as_str()).collect();
+    let paths = serde_json::to_vec(&paths)?;
     Ok(ScanCacheKey {
         context: CacheKeyContext {
             chokkin_version: VERSION.to_owned(),
             config_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
-            manifest_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
+            manifest_hash: stable_hex_hash(&paths),
             target_version: "n/a".to_owned(),
-            unit_version: "module-index-v1".to_owned(),
+            unit_version: "module-index-v2".to_owned(),
         },
-        inputs: crate::cache::ScanInputFingerprints {
-            config: Vec::new(),
-            manifest: fingerprints,
-        },
+        inputs: crate::cache::ScanInputFingerprints::default(),
     })
 }
 
@@ -205,6 +199,42 @@ mod tests {
         };
         let index = ModuleIndex::build(&graph, &sources);
         assert_eq!(index.resolve("acme.foo"), Some(file_id));
+        let original_key = module_index_cache_key(&graph, &sources).expect("key");
+        let added = graph
+            .intern_file(FileNode {
+                path: "src/acme/bar.py".to_owned(),
+                context: FileContext::Runtime,
+                kind: FileKind::Python,
+            })
+            .expect("new file");
+        assert_ne!(
+            module_index_cache_key(&graph, &sources).expect("key"),
+            original_key
+        );
+        let updated = ModuleIndex::build(&graph, &sources);
+        assert_eq!(updated.resolve("acme.bar"), Some(added));
+
+        let mut reordered = ProjectGraph::new(graph.root.clone());
+        for path in ["src/acme/bar.py", "src/acme/foo.py"] {
+            reordered
+                .intern_file(FileNode {
+                    path: path.to_owned(),
+                    context: FileContext::Runtime,
+                    kind: FileKind::Python,
+                })
+                .expect("file");
+        }
+        assert_ne!(
+            module_index_cache_key(&reordered, &sources).expect("key"),
+            module_index_cache_key(&graph, &sources).expect("key")
+        );
+
+        let mut flat = sources.clone();
+        flat.layout.layout = ProjectLayout::Flat;
+        assert_ne!(
+            module_index_cache_key(&graph, &flat).expect("key"),
+            module_index_cache_key(&graph, &sources).expect("key")
+        );
     }
 
     #[test]
@@ -251,5 +281,14 @@ mod tests {
             ModuleIndex::build_with_cache(&graph, &sources, Some(&cache)).expect("cached build");
         assert_eq!(first.resolve("acme.foo"), Some(file_id));
         assert_eq!(second.resolve("acme.foo"), Some(file_id));
+        let original_key = module_index_cache_key(&graph, &sources).expect("key");
+        std::fs::remove_file(src.join("foo.py")).expect("remove source bytes");
+        let cached =
+            ModuleIndex::build_with_cache(&graph, &sources, Some(&cache)).expect("no source read");
+        assert_eq!(cached, first);
+        assert_eq!(
+            module_index_cache_key(&graph, &sources).expect("key"),
+            original_key
+        );
     }
 }

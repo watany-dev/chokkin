@@ -11,7 +11,7 @@ use crate::rules::symbols::SymbolReport;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
     Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject, IssueSummary, Origin,
-    SuppressedIssue, subject_sort_key,
+    SuppressedIssue, sort_candidates,
 };
 
 use super::chk001::chk001_candidates;
@@ -42,12 +42,7 @@ pub fn emit_issues(
     candidates.extend(deps.candidates.clone());
     candidates.extend(symbols.candidates.clone());
 
-    candidates.sort_by(|left, right| {
-        left.rule
-            .as_code()
-            .cmp(right.rule.as_code())
-            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
-    });
+    sort_candidates(&mut candidates);
 
     let mut issues = Vec::new();
     let mut suppressed = Vec::new();
