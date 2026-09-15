@@ -1124,6 +1124,13 @@ parse を共有する。設定と strict は依存ルール固有の `Dependency
 pipeline は context を直接渡す。候補の安定 sort（rule code → subject）は
 step 10/11/12 で同じ helper を使い、同一キーの入力順を保持する。
 
+### bundled resolver map の再利用
+
+bundled import reverse map と binary map は `LazyLock` でプロセス内に一度だけ構築する。
+import map は静的参照を持ち、user map は解析ごとに構築する。binary map は公開返却型
+`BTreeMap` を維持するため静的 map を clone し、user → venv の順で上書きする。
+候補の sort / dedup、user import override の優先順位は変えない。
+
 ## 20. 注意点
 
 最も重要な設計判断は、project codeを実行しないこと。PythonではDjango settingsやsetup.pyをimportして解析する設計にすると、DB接続、環境変数依存、副作用、任意コード実行の問題が出る。`chokkin` はstatic parseに徹し、runtime traceは将来の明示opt-inに分離する。

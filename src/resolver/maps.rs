@@ -1,6 +1,27 @@
 //! Import root → distribution candidate maps.
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
+
+static BUNDLED_IMPORTS: LazyLock<BTreeMap<String, Vec<String>>> = LazyLock::new(|| {
+    build_reverse_map(
+        PACKAGE_TO_IMPORTS
+            .iter()
+            .map(|(distribution, imports)| (*distribution, imports.iter().copied())),
+    )
+});
+
+static BUNDLED_BINARIES: LazyLock<BTreeMap<String, String>> = LazyLock::new(|| {
+    super::bundled::binaries::BINARY_TO_DISTRIBUTION
+        .iter()
+        .map(|(binary, distribution)| {
+            (
+                (*binary).to_owned(),
+                normalize_distribution_name(distribution),
+            )
+        })
+        .collect()
+});
 
 use crate::config::ChokkinConfig;
 use crate::manifest::normalize_distribution_name;
@@ -33,7 +54,7 @@ pub struct DistributionCandidate {
 /// Reverse index from import root to distribution candidates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportMap {
-    bundled: BTreeMap<String, Vec<String>>,
+    bundled: &'static BTreeMap<String, Vec<String>>,
     user: BTreeMap<String, Vec<String>>,
 }
 
@@ -41,11 +62,7 @@ impl ImportMap {
     /// Build merged import map from bundled data and user config.
     #[must_use]
     pub fn build(config: &ChokkinConfig) -> Self {
-        let bundled = build_reverse_map(
-            PACKAGE_TO_IMPORTS
-                .iter()
-                .map(|(distribution, imports)| (*distribution, imports.iter().copied())),
-        );
+        let bundled = &*BUNDLED_IMPORTS;
         let user = build_reverse_map(config.package_module_map.iter().map(
             |(distribution, imports)| (distribution.as_str(), imports.iter().map(String::as_str)),
         ));
@@ -132,13 +149,7 @@ pub fn build_binary_map(
     config: &ChokkinConfig,
     venv: &super::venv::VenvIndex,
 ) -> BTreeMap<String, String> {
-    let mut map: BTreeMap<String, String> = BTreeMap::new();
-    for (binary, distribution) in super::bundled::binaries::BINARY_TO_DISTRIBUTION {
-        map.insert(
-            binary.to_string(),
-            normalize_distribution_name(distribution),
-        );
-    }
+    let mut map = BUNDLED_BINARIES.clone();
     for (binary, distribution) in &config.binary_map {
         map.insert(binary.clone(), normalize_distribution_name(distribution));
     }
@@ -152,6 +163,38 @@ pub fn build_binary_map(
 mod tests {
     use super::*;
     use crate::config::default_config;
+
+    #[test]
+    fn overlays_do_not_mutate_bundled_defaults() {
+        let defaults = default_config();
+        let mut custom = defaults.clone();
+        custom
+            .package_module_map
+            .insert("custom-yaml".to_owned(), vec!["yaml".to_owned()]);
+        custom
+            .binary_map
+            .insert("pytest".to_owned(), "custom-test".to_owned());
+        let mut venv = super::super::venv::VenvIndex::default();
+        venv.binaries
+            .insert("pytest".to_owned(), "venv-test".to_owned());
+        assert_eq!(
+            ImportMap::build(&custom).candidates("yaml")[0].distribution,
+            "custom-yaml"
+        );
+        assert_eq!(
+            ImportMap::build(&defaults).candidates("yaml")[0].distribution,
+            "pyyaml"
+        );
+        assert_eq!(build_binary_map(&custom, &venv)["pytest"], "venv-test");
+        assert_eq!(
+            build_binary_map(&custom, &super::super::venv::VenvIndex::default())["pytest"],
+            "custom-test"
+        );
+        assert_eq!(
+            build_binary_map(&defaults, &super::super::venv::VenvIndex::default())["pytest"],
+            "pytest"
+        );
+    }
 
     #[test]
     fn resolves_pyyaml_from_bundled_map() {
