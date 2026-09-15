@@ -1,7 +1,7 @@
 # Tool versions — keep in sync with .github/workflows/ci.yml
 CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
-CARGO_SEMVER_CHECKS_VERSION ?= 0.47.0
+CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
 
 .PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics check-generated help
 
