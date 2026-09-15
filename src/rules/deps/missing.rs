@@ -5,9 +5,9 @@ use std::collections::{HashSet, VecDeque};
 use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::ModuleOrigin;
 use crate::parser::ParseSummary;
-use crate::resolver::{ResolutionIndex, ResolvedImport, TransitiveIndex};
+use crate::resolver::{ResolvedImport, TransitiveIndex};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
-use crate::sources::DiscoveredSources;
+use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::context::{is_directly_declared, usage_context_for_import};
 use super::used::DeclaredIndex;
@@ -19,18 +19,24 @@ pub(super) struct WorkspaceDeclaredIndex<'a> {
 }
 
 /// Detect missing and transitive-only dependency imports.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn detect_missing_dependencies(
     declared: &DeclaredIndex<'_>,
-    resolution: &ResolutionIndex,
+    dependency: &DependencyRuleContext<'_>,
     reachable: &HashSet<String>,
-    optional_imports: &HashSet<(String, u32)>,
     has_lockfile: bool,
-    config: &ChokkinConfig,
-    sources: &DiscoveredSources,
     workspace_declared: &[WorkspaceDeclaredIndex<'_>],
-    strict: bool,
 ) -> Vec<IssueCandidate> {
+    let DependencyRuleContext {
+        rules: context,
+        config,
+        strict,
+    } = *dependency;
+    let RuleContext {
+        resolution,
+        sources,
+        ..
+    } = *context;
+    let optional_imports = collect_optional_imports(context.parse);
     let mut candidates = Vec::new();
     let mut reported = HashSet::new();
 
@@ -309,7 +315,7 @@ mod tests {
     use super::*;
     use crate::config::default_config;
     use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
-    use crate::resolver::TransitiveIndex;
+    use crate::resolver::{ResolutionIndex, TransitiveIndex};
 
     fn declared_dep(name: &str) -> DeclaredDependency {
         DeclaredDependency {
@@ -359,37 +365,46 @@ mod tests {
             confidence: crate::resolver::ResolveConfidence::Certain,
         };
         let reachable = HashSet::from(["src/app.py".to_owned()]);
+        let sources = crate::sources::DiscoveredSources {
+            root: crate::discovery::ProjectRoot {
+                path: std::env::temp_dir(),
+                marker: crate::discovery::RootMarker::PyProjectToml,
+                start: std::env::temp_dir(),
+            },
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Src,
+                packages: vec!["acme".to_owned()],
+                inferred_globs: Vec::new(),
+                flat_candidates: Vec::new(),
+                ambiguous_flat_resolution: false,
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![import],
+            warnings: Vec::new(),
+            transitive: TransitiveIndex::empty(),
+            binary_resolutions: BTreeMap::new(),
+        };
+        let graph = crate::graph::ProjectGraph::new(sources.root.clone());
         let candidates = detect_missing_dependencies(
             &index,
-            &ResolutionIndex {
-                imports: vec![import],
-                warnings: Vec::new(),
-                transitive: TransitiveIndex::empty(),
-                binary_resolutions: BTreeMap::new(),
+            &DependencyRuleContext {
+                rules: &RuleContext {
+                    resolution: &resolution,
+                    sources: &sources,
+                    graph: &graph,
+                    reachability: &crate::reachability::ReachabilityReport::empty(),
+                    parse: &ParseSummary::empty(),
+                },
+                config: &config,
+                strict: false,
             },
             &reachable,
-            &HashSet::new(),
             true,
-            &config,
-            &crate::sources::DiscoveredSources {
-                root: crate::discovery::ProjectRoot {
-                    path: std::env::temp_dir(),
-                    marker: crate::discovery::RootMarker::PyProjectToml,
-                    start: std::env::temp_dir(),
-                },
-                layout: crate::sources::LayoutInfo {
-                    layout: crate::sources::ProjectLayout::Src,
-                    packages: vec!["acme".to_owned()],
-                    inferred_globs: Vec::new(),
-                    flat_candidates: Vec::new(),
-                    ambiguous_flat_resolution: false,
-                },
-                effective_globs: Vec::new(),
-                files: Vec::new(),
-                warnings: Vec::new(),
-            },
             &[],
-            false,
         );
         assert!(candidates.is_empty());
     }

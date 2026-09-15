@@ -144,6 +144,7 @@ respect_gitignore = true
 confidence = "likely"     # certain | likely | maybe
 exclude = [
   ".venv/**",
+  ".chokkin/**",
   "build/**",
   "dist/**",
   "**/__pycache__/**",
@@ -174,6 +175,8 @@ CHK001 = "off"
 CHK006 = "info"
 CHK002 = "error"
 ```
+
+The root `.chokkin/` directory is reserved for analyzer data and is always excluded, even with custom excludes. Keep analyzed source files outside it.
 
 ### Modes
 

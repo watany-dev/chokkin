@@ -144,6 +144,7 @@ respect_gitignore = true
 confidence = "likely"     # certain | likely | maybe
 exclude = [
   ".venv/**",
+  ".chokkin/**",
   "build/**",
   "dist/**",
   "**/__pycache__/**",
@@ -174,6 +175,8 @@ CHK001 = "off"
 CHK006 = "info"
 CHK002 = "error"
 ```
+
+ルートの `.chokkin/` は解析データ専用で、exclude を上書きしても常に探索から除外します。分析対象のソースは置かないでください。
 
 ### モード
 
