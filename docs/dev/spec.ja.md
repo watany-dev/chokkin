@@ -215,6 +215,7 @@ respect_gitignore = true
 confidence = "likely"     # certain | likely | maybe
 exclude = [
   ".venv/**",
+  ".chokkin/**",
   "build/**",
   "dist/**",
   "**/__pycache__/**",
@@ -253,6 +254,8 @@ CHK001 = "off"
 CHK006 = "info"
 CHK002 = "error"
 ```
+
+ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
 
 workspace設定。
 
