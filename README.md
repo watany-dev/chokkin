@@ -280,6 +280,8 @@ chokkin never executes your project's code — analysis is fully static. It also
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). The full design specification (analysis engine, import resolution strategy, roadmap) is in [`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md) (Japanese).
 
+The `pipeline` benchmark covers full cold/warm analysis, disk parse caching, reachability caching, and discovery after cache population with ~2 KiB modules. Run `cargo bench --bench pipeline`; set `CHOKKIN_BENCH_LARGE=1` to add 5k/10k to the default 1k case.
+
 ## License
 
 [MIT](./LICENSE)

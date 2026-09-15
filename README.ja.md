@@ -278,6 +278,8 @@ chokkinは解析対象projectのコードを実行しません — 解析は完�
 
 [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。設計仕様の全文(解析エンジン、import resolution戦略、ロードマップ)は [`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md) にあります。
 
+`pipeline` ベンチは約 2KiB のモジュールで全解析の cold/warm、parse の disk cache、到達性 cache、cache 作成後の探索を測ります。`cargo bench --bench pipeline` で通常の 1k、`CHOKKIN_BENCH_LARGE=1` で 5k/10k も実行できます。
+
 ## License
 
 [MIT](./LICENSE)
