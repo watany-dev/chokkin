@@ -332,6 +332,16 @@ pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
     }
 }
 
+/// Keep equal-key candidates in their original order across every reporting path.
+pub(super) fn sort_candidates(candidates: &mut [IssueCandidate]) {
+    candidates.sort_by(|left, right| {
+        left.rule
+            .as_code()
+            .cmp(right.rule.as_code())
+            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,6 +364,36 @@ mod tests {
             },
             explain: None,
         }
+    }
+
+    #[test]
+    fn candidate_sort_preserves_equal_key_order() {
+        let candidate = |rule, path: &str, message: &str| IssueCandidate {
+            rule,
+            subject: IssueSubject::File {
+                path: path.to_owned(),
+            },
+            severity: Severity::Warning,
+            confidence: Confidence::Certain,
+            message: message.to_owned(),
+            workspace_member: None,
+            origins: Vec::new(),
+            explain: ExplainData::default(),
+        };
+        let mut candidates = vec![
+            candidate(RuleId::Chk002, "a.py", "last"),
+            candidate(RuleId::Chk001, "b.py", "third"),
+            candidate(RuleId::Chk001, "a.py", "first"),
+            candidate(RuleId::Chk001, "a.py", "second"),
+        ];
+        sort_candidates(&mut candidates);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|c| c.message.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second", "third", "last"]
+        );
     }
 
     #[test]

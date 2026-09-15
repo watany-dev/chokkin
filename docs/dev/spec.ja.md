@@ -1104,6 +1104,14 @@ notebook parsing は v0.2 plugin 拡充の初期実装として、source discove
 
 step 11 symbol usage analysis (`src/rules/symbols/`) は、CHK006/CHK007 の参照有無判定に `ReferenceIndex` (`graph.rs`) を使う。旧実装は登録済みシンボルごとに参照一覧を線形走査しており project size に対し二乗コストになっていた (10k/20k合成fixtureで実行命令数の約4割を占有)。`ReferenceIndex::build` が reachable module 群を一度だけ走査して `HashMap<SymbolId, bool>` (値は「他moduleから参照されたか」) を構築し、以降のlookupをO(1)にする。2k/10k/20k合成fixtureでissue出力が修正前後で完全一致することを確認済み。
 
+### ルール解析の内部入力
+
+step 10/11 は借用 `RuleContext` で resolution / reachability / graph / sources /
+parse を共有する。設定と strict は依存ルール固有の `DependencyRuleContext` にまとめる。
+公開 `reconcile_dependencies` / `analyze_symbols` のシグネチャは互換 wrapper として維持し、
+pipeline は context を直接渡す。候補の安定 sort（rule code → subject）は
+step 10/11/12 で同じ helper を使い、同一キーの入力順を保持する。
+
 ## 20. 注意点
 
 最も重要な設計判断は、project codeを実行しないこと。PythonではDjango settingsやsetup.pyをimportして解析する設計にすると、DB接続、環境変数依存、副作用、任意コード実行の問題が出る。`chokkin` はstatic parseに徹し、runtime traceは将来の明示opt-inに分離する。

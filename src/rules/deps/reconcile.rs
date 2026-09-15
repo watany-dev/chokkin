@@ -7,13 +7,14 @@ use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, subject_sort_key};
+use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, sort_candidates};
+use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::DiscoveredSources;
 
 use super::binary::detect_unlisted_binaries;
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::detect_misplaced_dependencies;
-use super::missing::{collect_optional_imports, detect_missing_dependencies};
+use super::missing::detect_missing_dependencies;
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies, is_types_stub};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
@@ -22,7 +23,7 @@ use super::used::{
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
 #[must_use]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub fn reconcile_dependencies(
     manifest: &LoadedManifest,
     resolution: &ResolutionIndex,
@@ -35,6 +36,41 @@ pub fn reconcile_dependencies(
     workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
     strict: bool,
 ) -> DependencyReport {
+    reconcile_with_context(
+        &DependencyRuleContext {
+            rules: &RuleContext {
+                resolution,
+                reachability,
+                graph,
+                sources,
+                parse,
+            },
+            config,
+            strict,
+        },
+        manifest,
+        plugins,
+        workspace_boundaries,
+    )
+}
+
+pub fn reconcile_with_context(
+    dependency: &DependencyRuleContext<'_>,
+    manifest: &LoadedManifest,
+    plugins: &PluginHints,
+    workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
+) -> DependencyReport {
+    let DependencyRuleContext {
+        rules: context,
+        config,
+        strict,
+    } = *dependency;
+    let RuleContext {
+        resolution,
+        reachability,
+        graph,
+        ..
+    } = *context;
     let declared = build_declared_index(manifest);
     let workspace_declared = workspace_boundaries
         .iter()
@@ -45,15 +81,8 @@ pub fn reconcile_dependencies(
         .collect::<Vec<_>>();
     let lockfile_present = has_lockfile(manifest, resolution);
     let reachable = reachable_paths(graph, reachability);
-    let optional_imports = collect_optional_imports(parse);
 
-    let mut used = collect_used_distributions(
-        resolution,
-        reachability,
-        plugins,
-        graph,
-        &resolution.binary_resolutions,
-    );
+    let mut used = collect_used_distributions(context, plugins);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
 
@@ -91,24 +120,17 @@ pub fn reconcile_dependencies(
 
     candidates.extend(detect_missing_dependencies(
         &declared,
-        resolution,
+        dependency,
         &reachable,
-        &optional_imports,
         lockfile_present,
-        config,
-        sources,
         &workspace_declared,
-        strict,
     ));
 
     candidates.extend(detect_misplaced_dependencies(
         &declared,
-        resolution,
+        dependency,
         &reachable,
-        config,
-        sources,
         &workspace_declared,
-        strict,
     ));
 
     candidates.extend(detect_unlisted_binaries(&declared, resolution, plugins));
@@ -118,12 +140,7 @@ pub fn reconcile_dependencies(
         config,
     ));
 
-    candidates.sort_by(|left, right| {
-        left.rule
-            .as_code()
-            .cmp(right.rule.as_code())
-            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
-    });
+    sort_candidates(&mut candidates);
 
     DependencyReport {
         candidates,
