@@ -160,3 +160,7 @@ strip = "none"
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[[bench]]
+name = "reachability"
+harness = false
