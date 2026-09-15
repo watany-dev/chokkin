@@ -5,7 +5,13 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use super::error::SourcesError;
 
 const CACHE_PATTERN: &str = "**/__pycache__/**";
-const MANDATORY_EXCLUDES: &[&str] = &[".venv/**", "build/**", "dist/**", CACHE_PATTERN];
+const MANDATORY_EXCLUDES: &[&str] = &[
+    ".venv/**",
+    ".chokkin/**",
+    "build/**",
+    "dist/**",
+    CACHE_PATTERN,
+];
 
 /// Build a glob matcher from pattern strings.
 pub fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
@@ -27,7 +33,7 @@ pub fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
 
 /// Merge config excludes with mandatory safety patterns.
 ///
-/// `.venv`, `build`, `dist`, and `__pycache__` are always excluded even when
+/// `.venv`, `.chokkin`, `build`, `dist`, and `__pycache__` are always excluded even when
 /// the user replaces `config.exclude`.
 #[must_use]
 pub fn effective_exclude(config_exclude: &[String]) -> Vec<String> {
