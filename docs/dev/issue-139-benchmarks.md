@@ -32,5 +32,6 @@ in-memory store を渡さず disk JSON を再利用する。reachability は gra
 この branch は回帰の計測範囲を追加するもので、解析自体の性能改善は含まない。
 
 検証: fmt / clippy / cargo doc / 全639 tests / cargo machete は成功。
-`make check` の cargo deny は既存 lockfile の RUSTSEC-2026-0258 (h2) と
-RUSTSEC-2026-0285 (rustls) により失敗。Cargo.lock は変更していない。
+初回の `make check` は lockfile の RUSTSEC-2026-0258 (h2) と
+RUSTSEC-2026-0285 (rustls) により cargo deny で失敗した。
+後続の CI 修正で修正版へ更新し、`make check` の全項目が成功した。
