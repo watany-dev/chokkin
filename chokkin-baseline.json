@@ -1,8 +1,28 @@
 {
   "schema_version": "1",
   "chokkin_version": "0.4.0",
-  "generated_at": "unix:1787022065",
+  "generated_at": "unix:1789523849",
   "issues": [
+    {
+      "fingerprint": "CHK001:docs/dev/formal/deps_rules_z3.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/deps_rules_z3.py"
+    },
+    {
+      "fingerprint": "CHK001:docs/dev/formal/exit_status_z3.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/exit_status_z3.py"
+    },
+    {
+      "fingerprint": "CHK001:docs/dev/formal/ignore_model.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/ignore_model.py"
+    },
+    {
+      "fingerprint": "CHK001:docs/dev/formal/relative_import_model.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/relative_import_model.py"
+    },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",
       "code": "CHK001",
