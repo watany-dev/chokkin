@@ -83,6 +83,8 @@ docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing
   schema/         Published JSON Schema for report and baseline (Phase 3)
   ci-porting-notes.md  Deferred CI items to enable as code matures
+  formal/         Executable formal models (Python/Z3, TLA+) of src/ decision
+                  logic checked against the spec; run with `make formal`
 ```
 
 ## Critical design constraint: never execute project code
