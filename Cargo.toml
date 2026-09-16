@@ -44,7 +44,9 @@ tempfile = "3"
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
-jsonschema = "0.47"
+# Local schema tests only; skip resolve-http so reqwest/h2/rustls stay out of
+# the tree (RUSTSEC-2026-0258 / RUSTSEC-2026-0285).
+jsonschema = { version = "0.47", default-features = false }
 proptest = "1"
 
 # Route `cargo bench` to the criterion targets only; the default libtest
