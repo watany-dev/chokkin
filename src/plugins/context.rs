@@ -3,6 +3,7 @@
 use crate::config::ChokkinConfig;
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
+use crate::parser::ParseSummary;
 use crate::sources::DiscoveredSources;
 
 /// Read-only inputs for plugin extractors.
@@ -16,5 +17,9 @@ pub struct PluginContext<'a> {
     pub sources: &'a DiscoveredSources,
     /// Extracted manifest.
     pub manifest: &'a LoadedManifest,
-    // Step 6+: `parsed_files: Option<&ParsedFileCache>`
+    /// Step 6 parse output when the caller already has it.
+    ///
+    /// `None` keeps the standalone entry points usable before step 6; the
+    /// extractors then fall back to reading sources themselves.
+    pub parse: Option<&'a ParseSummary>,
 }

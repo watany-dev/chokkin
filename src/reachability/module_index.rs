@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::VERSION;
-use crate::cache::{CacheKeyContext, CacheOptions, ScanCacheKey, stable_hex_hash};
+use crate::cache::{CacheKeyContext, CacheOptions, ScanCacheKey, stable_list_hash};
 use crate::graph::{FileId, ProjectGraph};
 use crate::sources::{DiscoveredSources, path_to_module};
 
@@ -39,7 +39,7 @@ impl ModuleIndex {
         let Some(cache) = cache.filter(|cache| cache.enabled) else {
             return Ok(Self::build(graph, sources));
         };
-        let key = module_index_cache_key(graph, sources)?;
+        let key = module_index_cache_key(graph, sources);
         if let Some(payload) =
             cache.read_scan_payload::<ModuleIndexPayload>(sources.root.path.as_path(), &key)?
             && let Some(index) = Self::from_payload(graph, payload)
@@ -93,24 +93,19 @@ struct ModuleIndexEntry {
     path: String,
 }
 
-fn module_index_cache_key(
-    graph: &ProjectGraph,
-    sources: &DiscoveredSources,
-) -> Result<ScanCacheKey, std::io::Error> {
+fn module_index_cache_key(graph: &ProjectGraph, sources: &DiscoveredSources) -> ScanCacheKey {
     // The index depends on graph paths and layout, never source bytes. Preserve
     // graph order because build() keeps the first file for duplicate modules.
-    let paths: Vec<_> = graph.files().map(|(_, file)| file.path.as_str()).collect();
-    let paths = serde_json::to_vec(&paths)?;
-    Ok(ScanCacheKey {
+    ScanCacheKey {
         context: CacheKeyContext {
             chokkin_version: VERSION.to_owned(),
-            config_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
-            manifest_hash: stable_hex_hash(&paths),
+            config_hash: sources.layout.cache_key_hash(),
+            manifest_hash: stable_list_hash(graph.files().map(|(_, file)| file.path.as_str())),
             target_version: "n/a".to_owned(),
-            unit_version: "module-index-v2".to_owned(),
+            unit_version: "module-index-v3".to_owned(),
         },
         inputs: crate::cache::ScanInputFingerprints::default(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -150,7 +145,7 @@ mod tests {
         };
         let index = ModuleIndex::build(&graph, &sources);
         assert_eq!(index.resolve("acme.foo"), Some(file_id));
-        let original_key = module_index_cache_key(&graph, &sources).expect("key");
+        let original_key = module_index_cache_key(&graph, &sources);
         let added = graph
             .intern_file(FileNode {
                 path: "src/acme/bar.py".to_owned(),
@@ -158,10 +153,7 @@ mod tests {
                 kind: FileKind::Python,
             })
             .expect("new file");
-        assert_ne!(
-            module_index_cache_key(&graph, &sources).expect("key"),
-            original_key
-        );
+        assert_ne!(module_index_cache_key(&graph, &sources), original_key);
         let updated = ModuleIndex::build(&graph, &sources);
         assert_eq!(updated.resolve("acme.bar"), Some(added));
 
@@ -176,15 +168,15 @@ mod tests {
                 .expect("file");
         }
         assert_ne!(
-            module_index_cache_key(&reordered, &sources).expect("key"),
-            module_index_cache_key(&graph, &sources).expect("key")
+            module_index_cache_key(&reordered, &sources),
+            module_index_cache_key(&graph, &sources)
         );
 
         let mut flat = sources.clone();
         flat.layout.layout = ProjectLayout::Flat;
         assert_ne!(
-            module_index_cache_key(&graph, &flat).expect("key"),
-            module_index_cache_key(&graph, &sources).expect("key")
+            module_index_cache_key(&graph, &flat),
+            module_index_cache_key(&graph, &sources)
         );
     }
 
@@ -232,14 +224,11 @@ mod tests {
             ModuleIndex::build_with_cache(&graph, &sources, Some(&cache)).expect("cached build");
         assert_eq!(first.resolve("acme.foo"), Some(file_id));
         assert_eq!(second.resolve("acme.foo"), Some(file_id));
-        let original_key = module_index_cache_key(&graph, &sources).expect("key");
+        let original_key = module_index_cache_key(&graph, &sources);
         std::fs::remove_file(src.join("foo.py")).expect("remove source bytes");
         let cached =
             ModuleIndex::build_with_cache(&graph, &sources, Some(&cache)).expect("no source read");
         assert_eq!(cached, first);
-        assert_eq!(
-            module_index_cache_key(&graph, &sources).expect("key"),
-            original_key
-        );
+        assert_eq!(module_index_cache_key(&graph, &sources), original_key);
     }
 }

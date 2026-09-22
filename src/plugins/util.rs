@@ -12,12 +12,33 @@ use crate::manifest::literals::LiteralScan;
 use crate::manifest::util::{
     path_is_within_root, read_to_string, relative_path as manifest_relative_path,
 };
+use crate::parser::ParsedModule;
 
 use super::error::PluginsError;
 use super::types::ReferenceOrigin;
 
 /// INI section key-value pairs.
 pub type IniSection = BTreeMap<String, String>;
+
+/// Line of the earliest decorator in `module` whose normalized name matches.
+///
+/// Decorator sites come from the step 6 AST walk in visit order, so nested
+/// definitions can precede later top-level ones; take the minimum line to keep
+/// reporting the first occurrence in the file.
+pub fn decorator_line(module: &ParsedModule, matches: fn(&str) -> bool) -> Option<u32> {
+    module
+        .decorator_sites
+        .iter()
+        .filter(|site| matches(&site.name))
+        .map(|site| site.line)
+        .min()
+}
+
+/// Split a normalized decorator name into its receiver and final attribute.
+pub fn decorator_suffix(name: &str) -> (Option<&str>, &str) {
+    name.rsplit_once('.')
+        .map_or((None, name), |(receiver, suffix)| (Some(receiver), suffix))
+}
 
 /// Read a single INI section from a config file.
 pub fn read_ini_section(path: &Path, section_name: &str) -> Result<IniSection, PluginsError> {

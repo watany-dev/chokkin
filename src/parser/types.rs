@@ -78,6 +78,18 @@ pub enum SymbolKind {
     Variable,
 }
 
+/// One decorator occurrence, at any nesting level.
+///
+/// Plugins need the decorator's own line, which `SymbolDef` cannot carry: it
+/// records the definition line and only for module-level symbols.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecoratorSite {
+    /// Normalized dotted decorator name (`app.route`, `shared_task`, …).
+    pub name: String,
+    /// 1-based line of the decorator itself.
+    pub line: u32,
+}
+
 /// A top-level symbol definition for Step 11.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolDef {
@@ -139,6 +151,8 @@ pub struct ParsedModule {
     pub attribute_accesses: Vec<AttributeAccess>,
     /// Top-level symbol definitions.
     pub symbols: Vec<SymbolDef>,
+    /// Normalized decorators seen anywhere in the module.
+    pub decorator_sites: Vec<DecoratorSite>,
     /// Names listed in `__all__`.
     pub exports: Vec<String>,
     /// Extracted ignore directives.
@@ -172,6 +186,7 @@ impl ParsedModule {
             dynamic_imports: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
+            decorator_sites: Vec::new(),
             exports: Vec::new(),
             ignores: Vec::new(),
             has_opaque_dynamic_import: false,

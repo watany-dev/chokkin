@@ -1074,7 +1074,7 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の `.chokkin/cache` を既定directoryにする。cache directory は root 配下に閉じ込め、absolute path や `..` を含む custom `CacheOptions` でも project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scan / module index の各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせ、mtime/sizeに加えてfile bytesのstable content hashを含める。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/<key>.json` に `ParsedModule` JSON を保存する。corrupt JSON はmiss扱いにしてsourceを再parseする。
+cache は project root 配下の `.chokkin/cache` を既定directoryにする。cache directory は root 配下に閉じ込め、absolute path や `..` を含む custom `CacheOptions` でも project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scan / module index の各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/<key>.json` に `ParsedModule` JSON を保存する。corrupt JSON はmiss扱いにしてsourceを再parseする。
 
 cache keyは以下を使う。
 

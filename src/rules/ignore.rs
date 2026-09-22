@@ -414,6 +414,7 @@ mod tests {
                 line: 4,
             }],
             has_opaque_dynamic_import: false,
+            decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());
@@ -455,6 +456,7 @@ mod tests {
                 line: 12,
             }],
             has_opaque_dynamic_import: false,
+            decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());

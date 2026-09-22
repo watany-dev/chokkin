@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::VERSION;
 use crate::cache::{
     CacheKeyContext, CacheOptions, ParseCacheKey, ParseCacheStore, SourceFingerprint,
-    stable_hex_hash,
+    stable_list_hash,
 };
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
@@ -187,6 +187,9 @@ pub fn parse_project_sources_with_cache(
     let layout = &sources.layout;
     let context = provisional_parse_cache_context(sources, target);
     let use_cache = cache.is_some() || disk_cache.is_some();
+    if let Some(cache_store) = cache.as_deref_mut() {
+        cache_store.reserve(sources.files.len());
+    }
 
     let mut summary = ParseSummary::empty();
     let mut pending: Vec<PendingFile<'_>> = Vec::with_capacity(sources.files.len());
@@ -394,10 +397,10 @@ fn provisional_parse_cache_context(
 ) -> CacheKeyContext {
     CacheKeyContext {
         chokkin_version: VERSION.to_owned(),
-        config_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
-        manifest_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
+        config_hash: stable_list_hash(&sources.effective_globs),
+        manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v2".to_owned(),
+        unit_version: "parse-v3".to_owned(),
     }
 }
 
@@ -406,14 +409,20 @@ fn parse_cache_key(
     path: &str,
     context: &CacheKeyContext,
 ) -> Result<ParseCacheKey, ParseError> {
-    let source = SourceFingerprint::from_root_relative(&root.path, path).map_err(|source| {
-        ParseError::Io {
-            path: root.path.join(path),
-            source,
-        }
-    })?;
+    // Parallel workers each need an owned key, so the shared context is cloned
+    // per file here rather than mutated in place across a sequential loop.
     Ok(ParseCacheKey {
         context: context.clone(),
+        source: source_fingerprint(root, path)?,
+    })
+}
+
+fn source_fingerprint(root: &ProjectRoot, path: &str) -> Result<SourceFingerprint, ParseError> {
+    // `from_root_relative_stat` identifies an unchanged source by `(size,
+    // mtime)` and only reads bytes when that is ambiguous. On a warm run the
+    // whole project used to be read and hashed just to build lookup keys.
+    SourceFingerprint::from_root_relative_stat(&root.path, path).map_err(|source| ParseError::Io {
+        path: root.path.join(path),
         source,
     })
 }
@@ -495,6 +504,30 @@ mod tests {
             flat_candidates: Vec::new(),
             ambiguous_flat_resolution: false,
         }
+    }
+
+    #[test]
+    fn records_decorator_sites_including_nested_definitions() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = write_temp_py(
+            temp.path(),
+            "app.py",
+            "from flask import Flask\n\n\n@shared_task\ndef refresh():\n    return None\n\n\ndef create_app():\n    app = Flask(__name__)\n\n    @app.route(\"/\")\n    def index():\n        return \"ok\"\n\n    return app\n",
+        );
+        let parsed = parse_file(
+            &root,
+            "app.py",
+            &empty_layout(),
+            FileContext::Runtime,
+            &TargetVersion::default_py311(),
+        )
+        .expect("parse");
+        let sites: Vec<_> = parsed
+            .decorator_sites
+            .iter()
+            .map(|site| (site.name.as_str(), site.line))
+            .collect();
+        assert_eq!(sites, vec![("shared_task", 4), ("app.route", 12)]);
     }
 
     #[test]

@@ -608,6 +608,7 @@ mod tests {
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: None,
         };
         let result = scan_config(&ctx);
         let binaries: BTreeSet<_> = result
@@ -655,6 +656,7 @@ mod tests {
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: None,
         };
         let result = scan_config(&ctx);
         assert!(
@@ -731,6 +733,7 @@ mod tests {
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: None,
         };
         let result = scan_config(&ctx);
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
@@ -798,6 +801,7 @@ mod tests {
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: None,
         };
         let result = scan_config(&ctx);
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
