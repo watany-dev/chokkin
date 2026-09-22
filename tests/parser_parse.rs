@@ -557,7 +557,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
 
     let both = chokkin::DiscoveredSources {
         root: root.clone(),
-        layout: layout.clone(),
+        layout,
         effective_globs: Vec::new(),
         files: vec![discovered("src/kept.py"), discovered("src/gone.py")],
         warnings: Vec::new(),
