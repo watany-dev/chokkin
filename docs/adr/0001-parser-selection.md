@@ -45,3 +45,19 @@ Rationale:
 - Step 6 fixture failures on Python 3.12+ syntax.
 - `rustpython-parser` unmaintained for > 12 months.
 - Astral publishes stable `ruff_python_parser` on crates.io.
+
+## Amendment 2026-09-22 (issue #140)
+
+Two of the triggers above have since fired, and the decision was re-examined:
+
+- `rustpython-parser` 0.4.0 was last published 2024-08-06, about 25 months ago.
+- `ruff_python_parser` is now on crates.io, but at 0.0.14 and self-described as
+  "an internal component crate of Ruff" — published, not stable.
+
+The decision stands: **keep `rustpython-parser` 0.4** for now. `ruff_python_parser`
+does not yet offer the stable public API this ADR made a precondition, and no
+head-to-head 10k measurement exists to back the switch on speed. The comparison
+table, the known PEP 695 coverage gap, the reproducible spike recipe, and the
+replacement re-evaluation conditions are recorded in
+[`docs/dev/issue-140-parser-reevaluation.md`](../dev/issue-140-parser-reevaluation.md);
+those conditions supersede the trigger list above.
