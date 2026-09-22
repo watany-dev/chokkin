@@ -3,8 +3,8 @@
 
 Faithful ports of:
 
-- ``src/parser/relative.rs``            (``file_module_name``, ``resolve_relative_import``)
-- ``src/reachability/module_index.rs``  (``path_to_module``)
+- ``src/parser/relative.rs``  (``resolve_relative_import``)
+- ``src/sources/layout.rs``   (``path_to_module``)
 
 The reference model is CPython's ``importlib._bootstrap._resolve_name`` plus the
 ``__package__`` derivation rule (PEP 366): for ``pkg/__init__.py`` the package is
@@ -18,11 +18,12 @@ P1  (soundness of relative resolution)
     Violations mean chokkin fabricates a module name CPython would reject.
 
 P2  (module-name consistency)
-    file_module_name(path, layout) == path_to_module(path, layout)
-    whenever path_to_module is Some.  Every relative import is resolved through
-    ``file_module_name`` and then looked up in the ``ModuleIndex`` which is keyed
-    by ``path_to_module``; a divergence means the relative import can never hit
-    the index (silent unreachability / CHK001 false positives).
+    path_to_module(path, layout) is None  ==>  resolve_relative_import declines.
+    A relative import is resolved against the current file's module name and the
+    result is looked up in the ``ModuleIndex``, which is keyed by
+    ``path_to_module``; deriving the current name any other way lets the parser
+    fabricate a name the index can never contain (silent unreachability /
+    CHK001 false positives).
 
 Run:  python3 docs/dev/formal/relative_import_model.py
 Exit status 1 when any property is violated (counterexamples are printed).
@@ -47,27 +48,6 @@ class Layout:
 # --------------------------------------------------------------------------
 # Port of src/parser/relative.rs
 # --------------------------------------------------------------------------
-def file_module_name(path: str, layout: Layout) -> str | None:
-    if not path.endswith(".py"):
-        return None
-    path = path[: -len(".py")]
-    if path == "":
-        return None
-    parts = [p for p in path.split("/") if p]
-    if not parts:
-        return None
-    if layout.kind == "Src":
-        module_parts = parts[1:] if (parts[0] == "src" and len(parts) > 1) else parts
-    else:  # Flat | Unknown
-        module_parts = parts
-    name_parts = list(module_parts)
-    if name_parts and name_parts[-1] == "__init__":
-        name_parts.pop()
-    if not name_parts:
-        return None
-    return ".".join(name_parts)
-
-
 def containing_package(module: str, is_init: bool) -> str:
     if is_init:
         return module
@@ -106,7 +86,7 @@ def resolve_relative_import(
 ) -> str | None:
     if level == 0:
         return module_suffix
-    current_module = file_module_name(file_path, layout)
+    current_module = path_to_module(file_path, layout)
     if current_module is None:
         return None
     is_init = file_path.endswith("__init__.py")
@@ -124,7 +104,7 @@ def resolve_relative_import(
 
 
 # --------------------------------------------------------------------------
-# Port of src/reachability/module_index.rs::path_to_module
+# Port of src/sources/layout.rs::path_to_module
 # --------------------------------------------------------------------------
 def flat_module_name(path: str, layout: Layout) -> str | None:
     for package in layout.packages:
@@ -258,25 +238,21 @@ def p1_mismatch(pkg: str, level: int, suffix, name, got: str) -> str | None:
 def check_p2() -> list[str]:
     failures = []
     for layout, path in itertools.product(LAYOUTS, PATHS):
-        fm = file_module_name(path, layout)
-        pm = path_to_module(path, layout)
-        if pm is None:
-            # Index has no entry.  Relative imports from this file resolve to a
-            # name that can never be found; only a problem when chokkin still
-            # produces a module name for it.
-            if fm is not None and layout.kind in ("Src", "Unknown"):
-                failures.append(
-                    f"P2 layout={layout.kind}{list(layout.packages)} file={path}: "
-                    f"file_module_name={fm!r} but ModuleIndex has no key for this "
-                    f"file (path_to_module=None) -> relative imports from it can "
-                    f"never resolve"
-                )
+        if path_to_module(path, layout) is not None:
             continue
-        if fm != pm:
-            failures.append(
-                f"P2 layout={layout.kind}{list(layout.packages)} file={path}: "
-                f"file_module_name={fm!r} != path_to_module={pm!r}"
-            )
+        # The index has no entry for this file.  Any module name the parser
+        # invents for it resolves to a key ``ModuleIndex`` can never contain.
+        for level, suffix, name in itertools.product(LEVELS, SUFFIXES, NAMES):
+            if level == 0 or (not suffix and name is None):
+                continue
+            got = resolve_relative_import(path, layout, level, suffix, name)
+            if got is not None:
+                failures.append(
+                    f"P2 layout={layout.kind}{list(layout.packages)} file={path} "
+                    f"level={level} suffix={suffix!r} name={name!r}: "
+                    f"path_to_module=None but resolve_relative_import={got!r} -> "
+                    f"the name can never be found in the ModuleIndex"
+                )
     return failures
 
 
@@ -284,11 +260,9 @@ def classify(line: str) -> str:
     if "beyond top-level" in line:
         return "A: bare-name fabricated beyond top-level package (level == depth+1)"
     if line.startswith("P1") and "chokkin='src." in line:
-        return "B: Unknown layout keeps `src.` prefix (file_module_name vs path_to_module)"
-    if line.startswith("P2") and "path_to_module=None" in line:
-        return "C: file outside index root gets a module name that ModuleIndex never contains"
+        return "B: Unknown layout keeps `src.` prefix (parser name vs path_to_module)"
     if line.startswith("P2"):
-        return "D: file_module_name != path_to_module"
+        return "C: file outside index root gets a module name that ModuleIndex never contains"
     return "E: other"
 
 

@@ -158,6 +158,43 @@ fn normalized_project_names(name: &str) -> Vec<String> {
     names
 }
 
+/// Infer a dotted module name from a root-relative `.py` path.
+///
+/// This is the single source of truth for "which module is this file": the
+/// `ModuleIndex` is keyed by it and relative imports are resolved against it,
+/// so the two must never disagree. `None` means the file is not importable
+/// under the inferred layout (outside `src/` and outside every package), and
+/// callers treat imports from it as unresolved rather than inventing a name.
+#[must_use]
+pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
+    let stem = path.strip_suffix(".py")?;
+    let module_path = stem.strip_suffix("/__init__").unwrap_or(stem);
+
+    match layout.layout {
+        ProjectLayout::Src => src_module_name(module_path),
+        ProjectLayout::Flat => flat_module_name(module_path, layout),
+        ProjectLayout::Unknown => {
+            src_module_name(module_path).or_else(|| flat_module_name(module_path, layout))
+        },
+    }
+}
+
+fn src_module_name(path: &str) -> Option<String> {
+    path.strip_prefix("src/").map(|rest| rest.replace('/', "."))
+}
+
+fn flat_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
+    for package in &layout.packages {
+        if path == *package {
+            return Some(package.clone());
+        }
+        if let Some(suffix) = path.strip_prefix(&format!("{package}/")) {
+            return Some(format!("{package}.{}", suffix.replace('/', ".")));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +205,58 @@ mod tests {
             name: Some(name.to_owned()),
             ..ProjectMetadata::default()
         }
+    }
+
+    #[test]
+    fn path_to_module_src_layout() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        };
+        assert_eq!(
+            path_to_module("src/acme/api/routes.py", &layout),
+            Some("acme.api.routes".to_owned())
+        );
+        assert_eq!(
+            path_to_module("src/acme/__init__.py", &layout),
+            Some("acme".to_owned())
+        );
+        assert_eq!(path_to_module("tests/unit/test_core.py", &layout), None);
+    }
+
+    #[test]
+    fn path_to_module_unknown_layout_strips_src_prefix() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        };
+        assert_eq!(
+            path_to_module("src/acme/api/__init__.py", &layout),
+            Some("acme.api".to_owned())
+        );
+        assert_eq!(path_to_module("tests/conftest.py", &layout), None);
+    }
+
+    #[test]
+    fn path_to_module_flat_layout_requires_known_package() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        };
+        assert_eq!(
+            path_to_module("acme/core.py", &layout),
+            Some("acme.core".to_owned())
+        );
+        assert_eq!(path_to_module("scripts/run.py", &layout), None);
     }
 
     #[test]

@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{ImportKind, ParsedModule, file_module_name, resolve_relative_import};
-use crate::sources::LayoutInfo;
+use crate::parser::{ImportKind, ParsedModule, resolve_relative_import};
+use crate::sources::{LayoutInfo, path_to_module};
 
 use super::graph::SymbolId;
 
@@ -37,7 +37,7 @@ pub(super) fn collect_reexports(
         let Some(package_module) = module_names
             .get(module.path.as_str())
             .cloned()
-            .or_else(|| file_module_name(&module.path, layout))
+            .or_else(|| path_to_module(&module.path, layout))
         else {
             continue;
         };
