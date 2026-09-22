@@ -90,7 +90,7 @@ fn containing_package(module: &str, is_init: bool) -> String {
     }
 }
 
-/// Ascend `level - 1` packages, mirroring CPython's
+/// Ascend `level - 1` packages, mirroring `CPython`'s
 /// `importlib._bootstrap._resolve_name`: `package.rsplit('.', level - 1)` must
 /// yield at least `level` parts, otherwise the import reaches beyond the
 /// top-level package and is an `ImportError`.
