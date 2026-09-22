@@ -321,7 +321,7 @@ impl SourceFingerprint {
     /// identify the file, so a warm cache lookup costs one `stat` per source
     /// instead of reading and hashing every byte of the project. Falls back to
     /// [`Self::from_absolute`] when the modified time is missing or falls
-    /// inside [`RACY_MTIME_WINDOW`].
+    /// inside the racy-mtime window.
     ///
     /// # Errors
     ///
