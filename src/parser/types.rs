@@ -53,6 +53,8 @@ pub struct ImportRef {
 }
 
 /// Serialization helper: `relative_level` is `0` for the common absolute import.
+// serde's `skip_serializing_if` hands the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero_level(level: &u8) -> bool {
     *level == 0
 }
