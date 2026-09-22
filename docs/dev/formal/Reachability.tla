@@ -5,15 +5,14 @@
 (*                                                                         *)
 (* Files import modules either statically (`parsed.imports`) or            *)
 (* dynamically (`parsed.dynamic_imports`).  `add_parsed_imports` pushes a  *)
-(* `FileImportsModule` edge for BOTH kinds, and the BFS then               *)
-(*   (1) walks every `FileImportsModule` edge of the dequeued file          *)
-(*       (`record_file_imports`, tagging the step as `Import`), and         *)
-(*   (2) walks `parsed.dynamic_imports` again (tagging as `DynamicImport`). *)
+(* `FileImportsModule` edge for both kinds, carrying a `dynamic` flag, and *)
+(* `record_file_imports` walks that adjacency exactly once, tagging each   *)
+(* site `Import` or `DynamicImport` from the flag.  Edge order puts a      *)
+(* file's static sites before its dynamic ones.                            *)
 (*                                                                         *)
-(* Each walk that resolves to a first-party file pushes a                  *)
-(* `FileReachesFile{from,to,via}` edge unconditionally (before the         *)
-(* `enqueue_file` dedupe), and `enqueue_file` records the predecessor only *)
-(* for the first arrival.                                                  *)
+(* A walk that resolves to a first-party file pushes one                   *)
+(* `FileReachesFile{from,to,via}` edge per (from, to) pair, and            *)
+(* `enqueue_file` records the predecessor only for the first arrival.      *)
 (*                                                                         *)
 (* Checked properties                                                      *)
 (*   ReachSound      : reachable = transitive closure from roots           *)
@@ -40,8 +39,10 @@ SetToSeq(S) ==
     IF S = {} THEN <<>>
     ELSE LET x == CHOOSE x \in S : TRUE IN <<x>> \o SetToSeq(S \ {x})
 
-(* FileImportsModule adjacency as built by add_parsed_imports: both kinds. *)
+(* FileImportsModule adjacency as built by add_parsed_imports: both kinds, *)
+(* static sites first, each dynamic-only site tagged `dynamic`.            *)
 Adj(f) == Static[f] \cup Dynamic[f]
+DynamicOnly(f) == Dynamic[f] \ Static[f]
 
 VARIABLES queue,       \* sequence of files
           reachable,   \* set of files
@@ -53,8 +54,9 @@ vars == <<queue, reachable, pred, edges, pc>>
 
 EdgeRec(f, t, v) == [from |-> f, to |-> t, via |-> v]
 
+(* push_edge guarded by the (from, to) dedupe set in BfsState. *)
 AddEdge(bag, e) ==
-    IF e \in DOMAIN bag THEN [bag EXCEPT ![e] = @ + 1]
+    IF \E d \in DOMAIN bag : d.from = e.from /\ d.to = e.to THEN bag
     ELSE bag @@ (e :> 1)
 
 (* enqueue_file: only the first arrival is recorded *)
@@ -84,8 +86,8 @@ Step ==
     /\ pc = "loop"
     /\ queue # <<>>
     /\ LET f == Head(queue)
-           s1 == Walk(f, SetToSeq(Adj(f)), 1, "Import", Tail(queue), reachable, pred, edges)
-           s2 == Walk(f, SetToSeq(Dynamic[f]), 1, "DynamicImport", s1[1], s1[2], s1[3], s1[4])
+           s1 == Walk(f, SetToSeq(Static[f]), 1, "Import", Tail(queue), reachable, pred, edges)
+           s2 == Walk(f, SetToSeq(DynamicOnly(f)), 1, "DynamicImport", s1[1], s1[2], s1[3], s1[4])
        IN /\ queue' = s2[1]
           /\ reachable' = s2[2]
           /\ pred' = s2[3]

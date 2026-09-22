@@ -9,7 +9,7 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 | `relative_import_model.py` | `parser/relative.rs`, `sources/layout.rs` | 有限領域の全数探索 vs CPython `_resolve_name` | P1 相対 import 解決の健全性、P2 index に無いファイルからの相対 import を解決しない |
 | `Reachability.tla` + `MCReachability.{tla,cfg}` | `reachability/bfs.rs`, `graph/edges.rs`, `reachability/trace.rs` | TLA+ / TLC | ReachSound, NoDuplicateEdge, ViaFaithful, TraceNonEmpty |
 | `deps_rules_z3.py` | `rules/deps/{missing,misplaced,context}.rs` (§10) | Z3 (SMT) | S1 CHK004 は未宣言のときのみ、S2 dev/type-only の runtime 使用は CHK005 のみ |
-| `exit_status_z3.py` | `rules/emit.rs`, `baseline/store.rs`, `rules/filter.rs` | Z3 (SMT) | E1 baseline 適用後の exit status が emit と同じ意味論 |
+| `exit_status_z3.py` | `rules/emit.rs`, `baseline/store.rs`, `rules/filter.rs` | Z3 (SMT) | E1 baseline 適用後の exit status が emit と同じ意味論 / E2 baseline が exit 0 を exit 1 に変えない |
 | `ignore_model.py` | `rules/ignore.rs` (§18) | 有限領域の全数探索 | I1 dependency 系 rule の config ignore は distribution 名 glob |
 
 ## 実行方法

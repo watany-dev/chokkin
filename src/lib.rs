@@ -38,7 +38,8 @@ pub mod schema;
 pub mod sources;
 
 pub use baseline::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
+    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline,
+    apply_baseline_with_overrides, write_baseline,
 };
 pub use cache::{
     CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheKey, ParseCacheStats,
