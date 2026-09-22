@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config,
+    discover_sources, extract_manifest, extract_plugin_hints, extract_plugin_hints_with_parse,
+    load_config, parse_project_sources,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -36,6 +37,23 @@ fn extract_fixture(name: &str) -> chokkin::PluginHints {
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
     extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+}
+
+/// Same as [`extract_fixture`] but feeding step 6 parse output into step 5.
+fn extract_fixture_with_parse(name: &str) -> chokkin::PluginHints {
+    let path = fixture(name);
+    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
+    let target = config
+        .effective
+        .target_version
+        .clone()
+        .unwrap_or_else(chokkin::TargetVersion::default_py311);
+    let parse = parse_project_sources(&root, &sources, &target).expect("parse sources");
+    extract_plugin_hints_with_parse(&root, &config, &sources, &manifest, Some(&parse), None)
+        .expect("extract plugin hints")
 }
 
 fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
@@ -481,4 +499,37 @@ fn no_django_no_panic() {
             }
         )
     }));
+}
+
+#[test]
+fn flask_route_modules_match_between_scan_and_parse() {
+    let scanned = extract_fixture("flask_env");
+    let parsed = extract_fixture_with_parse("flask_env");
+    let expected = &plugin_contrib(&scanned, PluginId::Flask).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "web.routes" && reference.origin.line == Some(4))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Flask).module_refs,
+        expected
+    );
+}
+
+#[test]
+fn celery_task_modules_match_between_scan_and_parse() {
+    let scanned = extract_fixture("celery_scripts");
+    let parsed = extract_fixture_with_parse("celery_scripts");
+    let expected = &plugin_contrib(&scanned, PluginId::Celery).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.line == Some(4))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Celery).module_refs,
+        expected
+    );
 }

@@ -7,6 +7,7 @@ use crate::cache::{
 use crate::config::{LoadedConfig, PluginId};
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
+use crate::parser::ParseSummary;
 use crate::sources::DiscoveredSources;
 
 use super::celery;
@@ -39,11 +40,27 @@ pub fn extract_plugin_hints_with_cache(
     manifest: &LoadedManifest,
     cache: Option<&CacheOptions>,
 ) -> Result<PluginHints, PluginsError> {
+    extract_plugin_hints_with_parse(root, config, sources, manifest, None, cache)
+}
+
+/// Extract framework hints, reusing step 6 parse output when available.
+///
+/// Passing `parse` keeps Flask and Celery from re-reading every `.py` file the
+/// parser is about to read anyway.
+pub fn extract_plugin_hints_with_parse(
+    root: &ProjectRoot,
+    config: &LoadedConfig,
+    sources: &DiscoveredSources,
+    manifest: &LoadedManifest,
+    parse: Option<&ParseSummary>,
+    cache: Option<&CacheOptions>,
+) -> Result<PluginHints, PluginsError> {
     let ctx = PluginContext {
         root,
         config: &config.effective,
         sources,
         manifest,
+        parse,
     };
     let mut contributions = Vec::new();
     let mut warnings = Vec::new();

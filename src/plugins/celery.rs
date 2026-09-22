@@ -10,7 +10,8 @@ use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, ReferenceOrigin, SymbolReference,
 };
 use super::util::{
-    manifest_has_dependency, parse_module_symbol, read_pyproject_table, relative_path,
+    decorator_line, decorator_suffix, manifest_has_dependency, parse_module_symbol,
+    read_pyproject_table, relative_path,
 };
 use super::warnings::PluginsWarning;
 
@@ -109,6 +110,17 @@ fn extract_task_modules(
     contrib: &mut PluginContribution,
     found: &mut bool,
 ) {
+    if let Some(parse) = ctx.parse {
+        for module in &parse.modules {
+            let Some(line) = decorator_line(module, is_task_decorator) else {
+                continue;
+            };
+            push_task_module(ctx, contrib, found, &module.path, line);
+        }
+        return;
+    }
+
+    // Standalone callers run before step 6, so there is nothing to reuse.
     for file in &ctx.sources.files {
         if file.kind != FileKind::Python {
             continue;
@@ -120,18 +132,39 @@ fn extract_task_modules(
         let Some(line) = celery_task_decorator_line(&contents) else {
             continue;
         };
-        let Some(module) = path_to_module(&file.path, &ctx.sources.layout) else {
-            continue;
-        };
-        *found = true;
-        contrib.module_refs.push(ModuleReference {
-            module,
-            origin: ReferenceOrigin {
-                file: file.path.clone(),
-                line: Some(line),
-                label: "celery task decorator".to_owned(),
-            },
-        });
+        push_task_module(ctx, contrib, found, &file.path, line);
+    }
+}
+
+fn push_task_module(
+    ctx: &PluginContext<'_>,
+    contrib: &mut PluginContribution,
+    found: &mut bool,
+    file: &str,
+    line: u32,
+) {
+    let Some(module) = file_module_name(file, &ctx.sources.layout) else {
+        return;
+    };
+    *found = true;
+    contrib.module_refs.push(ModuleReference {
+        module,
+        origin: ReferenceOrigin {
+            file: file.to_owned(),
+            line: Some(line),
+            label: "celery task decorator".to_owned(),
+        },
+    });
+}
+
+/// Mirrors [`celery_task_decorator_line`]: bare `@shared_task` or any
+/// `@<receiver>.task` / `@<receiver>.shared_task`.
+fn is_task_decorator(name: &str) -> bool {
+    let (receiver, suffix) = decorator_suffix(name);
+    match suffix {
+        "shared_task" => true,
+        "task" => receiver.is_some(),
+        _ => false,
     }
 }
 
