@@ -10,9 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, extract_plugin_hints_with_parse,
-    load_config, parse_project_sources,
+    FileContext, PluginExtractRequest, PluginId, PluginsWarning, ProjectRoot, RootMarker,
+    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints,
+    extract_plugin_hints_with_parse, load_config, parse_project_sources,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -52,8 +52,15 @@ fn extract_fixture_with_parse(name: &str) -> chokkin::PluginHints {
         .clone()
         .unwrap_or_else(chokkin::TargetVersion::default_py311);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse sources");
-    extract_plugin_hints_with_parse(&root, &config, &sources, &manifest, Some(&parse), None)
-        .expect("extract plugin hints")
+    extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &config,
+        sources: &sources,
+        manifest: &manifest,
+        parse: Some(&parse),
+        cache: None,
+    })
+    .expect("extract plugin hints")
 }
 
 fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {

@@ -40,7 +40,31 @@ pub fn extract_plugin_hints_with_cache(
     manifest: &LoadedManifest,
     cache: Option<&CacheOptions>,
 ) -> Result<PluginHints, PluginsError> {
-    extract_plugin_hints_with_parse(root, config, sources, manifest, None, cache)
+    extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root,
+        config,
+        sources,
+        manifest,
+        parse: None,
+        cache,
+    })
+}
+
+/// Inputs for [`extract_plugin_hints_with_parse`].
+#[derive(Clone, Copy)]
+pub struct PluginExtractRequest<'a> {
+    /// Discovered project root.
+    pub root: &'a ProjectRoot,
+    /// Loaded chokkin configuration.
+    pub config: &'a LoadedConfig,
+    /// Discovered source files.
+    pub sources: &'a DiscoveredSources,
+    /// Extracted manifest.
+    pub manifest: &'a LoadedManifest,
+    /// Step 6 parse output when the caller already has it.
+    pub parse: Option<&'a ParseSummary>,
+    /// Disk cache used for the generic config scan.
+    pub cache: Option<&'a CacheOptions>,
 }
 
 /// Extract framework hints, reusing step 6 parse output when available.
@@ -48,13 +72,16 @@ pub fn extract_plugin_hints_with_cache(
 /// Passing `parse` keeps Flask and Celery from re-reading every `.py` file the
 /// parser is about to read anyway.
 pub fn extract_plugin_hints_with_parse(
-    root: &ProjectRoot,
-    config: &LoadedConfig,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    parse: Option<&ParseSummary>,
-    cache: Option<&CacheOptions>,
+    request: &PluginExtractRequest<'_>,
 ) -> Result<PluginHints, PluginsError> {
+    let PluginExtractRequest {
+        root,
+        config,
+        sources,
+        manifest,
+        parse,
+        cache,
+    } = *request;
     let ctx = PluginContext {
         root,
         config: &config.effective,
