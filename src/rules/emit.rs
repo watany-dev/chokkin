@@ -7,6 +7,7 @@ use crate::config::{ChokkinConfig, RuntimeOverrides};
 use crate::entry::ResolvedMode;
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
+use crate::resolver::ResolutionIndex;
 use crate::rules::symbols::SymbolReport;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
@@ -23,6 +24,9 @@ use super::severity::apply_severity_override;
 use super::types::RuleId;
 
 /// Merge candidates, apply ignore/confidence filters, and compute exit status.
+///
+/// Config ignores for dependency rules need resolved distribution names (§18);
+/// call [`emit_issues_with_resolution`] when the resolution index is available.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn emit_issues(
@@ -34,8 +38,34 @@ pub fn emit_issues(
     overrides: &RuntimeOverrides,
     mode: &ResolvedMode,
 ) -> IssueReport {
+    emit_issues_with_resolution(
+        unreachable,
+        deps,
+        symbols,
+        parse,
+        config,
+        overrides,
+        mode,
+        &ResolutionIndex::empty(),
+    )
+}
+
+/// [`emit_issues`], resolving dependency-rule ignore patterns against
+/// distribution names taken from `resolution`.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn emit_issues_with_resolution(
+    unreachable: &ReachabilityReport,
+    deps: &DependencyReport,
+    symbols: &SymbolReport,
+    parse: &ParseSummary,
+    config: &ChokkinConfig,
+    overrides: &RuntimeOverrides,
+    mode: &ResolvedMode,
+    resolution: &ResolutionIndex,
+) -> IssueReport {
     let strict = overrides.strict.unwrap_or(false);
-    let matcher = IgnoreMatcher::build(config, parse);
+    let matcher = IgnoreMatcher::build(config, parse, resolution);
     let confidence_floor = effective_confidence_floor(config, overrides, strict);
 
     let mut candidates = chk001_candidates(&unreachable.unreachable, mode);

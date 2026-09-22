@@ -6,13 +6,20 @@ use globset::Glob;
 
 use crate::config::ChokkinConfig;
 use crate::parser::{IgnoreDirective, ParseSummary};
+use crate::resolver::ResolutionIndex;
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
+
+/// Import site (file, line, dotted module) used to recover a distribution name.
+type ImportSite = (String, u32, String);
 
 /// Compiled ignore matchers for config and source directives.
 #[derive(Debug)]
 pub struct IgnoreMatcher {
     config: BTreeMap<RuleId, Vec<String>>,
     directives: BTreeMap<String, Vec<IgnoreDirective>>,
+    // CHK003/CHK004 carry an `Import` subject, but §18 matches dependency rules
+    // on the distribution name, which only the resolver knows.
+    distributions: BTreeMap<ImportSite, String>,
 }
 
 /// Outcome of ignore evaluation.
@@ -41,10 +48,17 @@ impl IgnoreMatch {
 }
 
 impl IgnoreMatcher {
-    /// Build matchers from config and parsed modules.
+    /// Build matchers from config, parsed modules, and resolved imports.
     ///
     /// Invalid glob patterns are skipped (config validation should catch most).
-    pub fn build(config: &ChokkinConfig, parse: &ParseSummary) -> Self {
+    /// `resolution` supplies the distribution names that dependency-rule
+    /// ignores match against (§18); pass [`ResolutionIndex::empty`] when it is
+    /// not available.
+    pub fn build(
+        config: &ChokkinConfig,
+        parse: &ParseSummary,
+        resolution: &ResolutionIndex,
+    ) -> Self {
         let mut config_rules = BTreeMap::new();
         for (code, patterns) in &config.ignore {
             let Some(rule) = RuleId::parse_code(code) else {
@@ -64,9 +78,20 @@ impl IgnoreMatcher {
             directives.insert(module.path.clone(), module.ignores.clone());
         }
 
+        let mut distributions = BTreeMap::new();
+        for import in &resolution.imports {
+            if let Some(distribution) = &import.distribution {
+                distributions.insert(
+                    (import.file.clone(), import.line, import.full_module.clone()),
+                    distribution.clone(),
+                );
+            }
+        }
+
         Self {
             config: config_rules,
             directives,
+            distributions,
         }
     }
 
@@ -85,9 +110,20 @@ impl IgnoreMatcher {
         let Some(patterns) = self.config.get(&rule) else {
             return false;
         };
-        patterns
-            .iter()
-            .any(|pattern| config_pattern_matches(rule, pattern, subject, file))
+        let distribution = self.distribution_for(subject);
+        patterns.iter().any(|pattern| {
+            config_pattern_matches(rule, pattern, subject, file, distribution.as_deref())
+        })
+    }
+
+    /// Distribution the candidate is really about, for `Import` subjects.
+    fn distribution_for(&self, subject: &IssueSubject) -> Option<String> {
+        let IssueSubject::Import { module, file, line } = subject else {
+            return None;
+        };
+        self.distributions
+            .get(&(file.clone(), *line, module.clone()))
+            .cloned()
     }
 
     fn matches_directives(
@@ -153,6 +189,7 @@ fn config_pattern_matches(
     pattern: &str,
     subject: &IssueSubject,
     file: Option<&str>,
+    distribution: Option<&str>,
 ) -> bool {
     if let Some((path_pattern, symbol_pattern)) = pattern.split_once(':') {
         return symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject, file);
@@ -164,6 +201,11 @@ fn config_pattern_matches(
             glob_match(pattern, name)
         },
         IssueSubject::Binary { name } if rule == RuleId::Chk008 => glob_match(pattern, name),
+        // §18 matches dependency rules on the distribution name even when the
+        // candidate points at an import site, so a path glob must not match.
+        IssueSubject::Import { .. } if is_distribution_rule(rule) => {
+            distribution.is_some_and(|name| glob_match(pattern, name))
+        },
         IssueSubject::Import { module, file, .. } => {
             glob_match(pattern, file) || glob_match(pattern, module)
         },
@@ -240,7 +282,8 @@ mod tests {
         config
             .ignore
             .insert("CHK002".to_owned(), vec!["boto3".to_owned()]);
-        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk002,
             subject: IssueSubject::Distribution {
@@ -254,6 +297,104 @@ mod tests {
             explain: ExplainData::default(),
         };
         assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Config);
+    }
+
+    const APP: &str = "src/acme/app.py";
+
+    fn import_candidate(rule: RuleId, module: &str) -> IssueCandidate {
+        IssueCandidate {
+            rule,
+            subject: IssueSubject::Import {
+                module: module.to_owned(),
+                file: APP.to_owned(),
+                line: 1,
+            },
+            severity: Severity::Error,
+            confidence: crate::config::Confidence::Certain,
+            message: "missing".to_owned(),
+            workspace_member: None,
+            origins: vec![Origin::Import {
+                file: APP.to_owned(),
+                line: 1,
+                module: module.to_owned(),
+            }],
+            explain: ExplainData::default(),
+        }
+    }
+
+    fn resolution_for(module: &str, distribution: &str) -> ResolutionIndex {
+        ResolutionIndex {
+            imports: vec![crate::resolver::ResolvedImport {
+                import_root: module.split('.').next().unwrap_or(module).to_owned(),
+                full_module: module.to_owned(),
+                file: APP.to_owned(),
+                workspace_member: None,
+                line: 1,
+                context: crate::parser::ImportContext::Runtime,
+                optional: false,
+                platform_guarded: false,
+                origin: crate::graph::ModuleOrigin::ThirdParty,
+                distribution: Some(distribution.to_owned()),
+                confidence: crate::resolver::ResolveConfidence::Certain,
+            }],
+            ..ResolutionIndex::empty()
+        }
+    }
+
+    fn ignores(patterns: &[&str], rule: RuleId, module: &str, distribution: &str) -> bool {
+        let mut config = default_config();
+        config.ignore.insert(
+            rule.as_code().to_owned(),
+            patterns.iter().map(|p| (*p).to_owned()).collect(),
+        );
+        let matcher = IgnoreMatcher::build(
+            &config,
+            &ParseSummary::empty(),
+            &resolution_for(module, distribution),
+        );
+        matcher.matches_candidate(&import_candidate(rule, module)) == IgnoreMatch::Config
+    }
+
+    /// §18: dependency-rule ignores are distribution-name globs, even though
+    /// CHK003/CHK004 candidates point at an import site.
+    #[test]
+    fn config_ignore_matches_distribution_for_import_subject() {
+        assert!(ignores(&["pyyaml"], RuleId::Chk003, "yaml", "pyyaml"));
+        assert!(ignores(
+            &["google-cloud-*"],
+            RuleId::Chk004,
+            "google.cloud.storage",
+            "google-cloud-storage"
+        ));
+        assert!(ignores(
+            &["setuptools"],
+            RuleId::Chk003,
+            "pkg_resources",
+            "setuptools"
+        ));
+    }
+
+    /// Module names and path globs are not distribution names, so they must not
+    /// silence a dependency rule.
+    #[test]
+    fn config_ignore_rejects_module_and_path_patterns_for_dependency_rules() {
+        assert!(!ignores(&["yaml"], RuleId::Chk003, "yaml", "pyyaml"));
+        assert!(!ignores(&["src/acme/*"], RuleId::Chk004, "yaml", "pyyaml"));
+    }
+
+    /// Without a resolved distribution there is nothing to match against.
+    #[test]
+    fn config_ignore_without_resolution_leaves_dependency_candidate() {
+        let mut config = default_config();
+        config
+            .ignore
+            .insert("CHK003".to_owned(), vec!["pyyaml".to_owned()]);
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
+        assert_eq!(
+            matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml")),
+            IgnoreMatch::None
+        );
     }
 
     #[test]
@@ -275,7 +416,7 @@ mod tests {
             has_opaque_dynamic_import: false,
             diagnostics: Vec::new(),
         });
-        let matcher = IgnoreMatcher::build(&config, &parse);
+        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk003,
             subject: IssueSubject::Import {
@@ -316,7 +457,7 @@ mod tests {
             has_opaque_dynamic_import: false,
             diagnostics: Vec::new(),
         });
-        let matcher = IgnoreMatcher::build(&config, &parse);
+        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -344,7 +485,8 @@ mod tests {
             "CHK006".to_owned(),
             vec!["src/acme/api.py:dead_*".to_owned()],
         );
-        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -372,7 +514,8 @@ mod tests {
         config
             .ignore
             .insert("CHK006".to_owned(), vec!["acme/api:dead_*".to_owned()]);
-        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
