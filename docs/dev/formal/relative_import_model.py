@@ -77,11 +77,9 @@ def containing_package(module: str, is_init: bool) -> str:
 
 
 def parent_of(package: str) -> str | None:
-    if package == "":
-        return None
     if "." in package:
         return package.rsplit(".", 1)[0]
-    return ""
+    return None
 
 
 def ascend_package(package: str, level: int) -> str | None:
@@ -89,12 +87,10 @@ def ascend_package(package: str, level: int) -> str | None:
         return package
     current = package
     for _ in range(1, level):  # Rust: for _ in 1..level
-        if current == "":
-            return None
         current = parent_of(current)
         if current is None:
             return None
-    return current
+    return None if current == "" else current
 
 
 def join_module(base: str, suffix: str) -> str:

@@ -90,28 +90,29 @@ fn containing_package(module: &str, is_init: bool) -> String {
     }
 }
 
+/// Ascend `level - 1` packages, mirroring CPython's
+/// `importlib._bootstrap._resolve_name`: `package.rsplit('.', level - 1)` must
+/// yield at least `level` parts, otherwise the import reaches beyond the
+/// top-level package and is an `ImportError`.
 fn ascend_package(package: &str, level: u8) -> Option<String> {
     if level == 0 {
         return Some(package.to_owned());
     }
     let mut current = package.to_owned();
     for _ in 1..level {
-        if current.is_empty() {
-            return None;
-        }
         current = parent_of(&current)?;
     }
-    Some(current)
+    if current.is_empty() {
+        None
+    } else {
+        Some(current)
+    }
 }
 
 fn parent_of(package: &str) -> Option<String> {
-    if package.is_empty() {
-        None
-    } else if let Some((parent, _)) = package.rsplit_once('.') {
-        Some(parent.to_owned())
-    } else {
-        Some(String::new())
-    }
+    package
+        .rsplit_once('.')
+        .map(|(parent, _)| parent.to_owned())
 }
 
 fn join_module(base: &str, suffix: &str) -> String {
@@ -164,6 +165,25 @@ mod tests {
         let resolved =
             resolve_relative_import("src/acme/api/routes.py", &layout, 1, None, Some("sibling"));
         assert_eq!(resolved, Some("acme.api.sibling".to_owned()));
+    }
+
+    #[test]
+    fn relative_import_beyond_top_level_package_is_unresolved() {
+        let layout = src_layout();
+        // `from .. import thing` inside the top-level package: CPython raises
+        // `ImportError: attempted relative import beyond top-level package`.
+        assert_eq!(
+            resolve_relative_import("src/acme/__init__.py", &layout, 2, None, Some("thing")),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("src/acme/core.py", &layout, 2, Some("models"), None),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("src/acme/api/routes.py", &layout, 3, Some("models"), None),
+            None
+        );
     }
 
     #[test]
