@@ -117,15 +117,12 @@ pub fn run_reachability_bfs(
 }
 
 fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
-    let imports = state
-        .file_imports
-        .get(&file_id)
-        .cloned()
-        .unwrap_or_default();
-    let source_path = state
-        .graph
-        .file(file_id)
-        .map_or_else(String::new, |node| node.path.clone());
+    // Taking the adjacency list out of the map avoids cloning it. Each file is
+    // enqueued at most once, so it is never visited again after this.
+    let imports = state.file_imports.remove(&file_id).unwrap_or_default();
+    // Only third-party and stdlib imports name the source file, so projects
+    // whose imports are mostly first-party never build this string.
+    let mut source_path: Option<String> = None;
 
     for (module_id, line) in imports {
         let dynamic = state.dynamic_sites.contains(&(file_id, module_id, line));
@@ -136,10 +133,15 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
         let module_origin = module_node.origin;
         match module_origin {
             ModuleOrigin::FirstParty => {
+                // Resolving before the step is built lets the step own the
+                // module name instead of taking a second copy of it.
+                let Some(target) = state.module_index.resolve(&module_name) else {
+                    continue;
+                };
                 let (step, via) = if dynamic {
                     (
                         TraceStep::DynamicImport {
-                            module: module_name.clone(),
+                            module: module_name,
                             line,
                         },
                         FileReachVia::DynamicImport,
@@ -147,21 +149,29 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
                 } else {
                     (
                         TraceStep::Import {
-                            module: module_name.clone(),
+                            module: module_name,
                             line,
                         },
                         FileReachVia::Import,
                     )
                 };
-                enqueue_resolved_module(state, &module_name, file_id, step, via);
+                enqueue_resolved_module(state, target, file_id, step, via);
             },
             ModuleOrigin::Stdlib | ModuleOrigin::ThirdParty => {
                 let import_root = import_root(&module_name).to_owned();
+                let file = source_path
+                    .get_or_insert_with(|| {
+                        state
+                            .graph
+                            .file(file_id)
+                            .map_or_else(String::new, |node| node.path.clone())
+                    })
+                    .clone();
                 state.used_modules.push(UsedModule {
                     full_module: module_name,
                     import_root,
                     origin: module_origin,
-                    file: source_path.clone(),
+                    file,
                     line,
                 });
             },
@@ -172,14 +182,11 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
 
 fn enqueue_resolved_module(
     state: &mut BfsState<'_>,
-    module: &str,
+    target: FileId,
     from_file: FileId,
     step: TraceStep,
     via: FileReachVia,
 ) {
-    let Some(target) = state.module_index.resolve(module) else {
-        return;
-    };
     // One edge per (from, to): the same pair is otherwise pushed again for
     // every further import site that resolves to the target file.
     if from_file != target && state.reach_edges.insert((from_file, target)) {
