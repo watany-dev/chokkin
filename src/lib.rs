@@ -38,7 +38,8 @@ pub mod schema;
 pub mod sources;
 
 pub use baseline::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
+    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline,
+    apply_baseline_with_overrides, write_baseline,
 };
 pub use cache::{
     CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheKey, ParseCacheStats,
@@ -71,9 +72,9 @@ pub use manifest::{
     extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
-    DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
-    ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, extract_ignores,
-    parse_file, parse_project_sources, parse_project_sources_with_cache,
+    DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,
+    ParseDiagnostic, ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,
+    extract_ignores, parse_file, parse_project_sources, parse_project_sources_with_cache,
 };
 pub use pipeline::{
     AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,
@@ -82,8 +83,9 @@ pub use pipeline::{
 };
 pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
-    PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
-    extract_plugin_hints, extract_plugin_hints_with_cache,
+    PluginEntry, PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
+    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_cache,
+    extract_plugin_hints_with_parse,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
@@ -103,7 +105,8 @@ pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
     IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
     SymbolId, SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
-    explain_issue, issue_fingerprint, issue_stable_target, reconcile_dependencies,
+    emit_issues_with_resolution, explain_issue, issue_fingerprint, issue_stable_target,
+    reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

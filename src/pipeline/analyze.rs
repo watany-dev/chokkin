@@ -2,18 +2,19 @@
 
 use std::path::Path;
 
-use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
+use crate::baseline::{BaselineReport, apply_baseline_with_overrides, write_baseline};
 use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
-use crate::plugins::extract_plugin_hints_with_cache;
+use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
-    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
+    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary,
+    emit_issues_with_resolution,
 };
 
 use super::error::AnalyzeError;
@@ -77,7 +78,7 @@ pub fn analyze_project(
         Some(&options.cache),
     )?;
     let mut core = run_analysis_core(&probe, overrides, &options)?;
-    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
+    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, overrides, &options)?;
     let fix = if options.fix_enabled {
         let workspace_manifests = probe
             .workspace_inputs
@@ -116,6 +117,7 @@ pub fn analyze_project(
 fn apply_baseline_options(
     issues: &mut IssueReport,
     root: &Path,
+    overrides: &RuntimeOverrides,
     options: &AnalyzeOptions,
 ) -> Result<Option<BaselineReport>, AnalyzeError> {
     let Some(path) = &options.baseline else {
@@ -124,7 +126,9 @@ fn apply_baseline_options(
     if options.update_baseline {
         return Ok(Some(write_baseline(issues, root, path)?));
     }
-    Ok(Some(apply_baseline(issues, root, path)?))
+    Ok(Some(apply_baseline_with_overrides(
+        issues, root, path, overrides,
+    )?))
 }
 
 struct AnalysisCore {
@@ -152,15 +156,6 @@ fn run_analysis_core(
         workspace_members: probe.workspace_members.clone(),
     };
 
-    let plugins = extract_plugin_hints_with_cache(
-        &probe.root,
-        &loaded,
-        &probe.sources,
-        &probe.manifest,
-        Some(&options.cache),
-    )?;
-    let warnings = actionable_plugin_warnings(&plugins);
-
     let target = probe
         .effective_config
         .target_version
@@ -175,6 +170,19 @@ fn run_analysis_core(
         parse_cache.as_mut(),
         Some(&options.cache),
     )?;
+
+    // Step 5 runs after step 6 so Flask and Celery can read decorators off the
+    // parse output instead of re-opening every source file. Nothing in parse
+    // depends on plugin hints.
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &probe.root,
+        config: &loaded,
+        sources: &probe.sources,
+        manifest: &probe.manifest,
+        parse: Some(&parse),
+        cache: Some(&options.cache),
+    })?;
+    let warnings = actionable_plugin_warnings(&plugins);
 
     let entry = build_entry_roots(
         &probe.effective_config,
@@ -245,7 +253,7 @@ fn run_analysis_core(
         &probe.manifest,
     );
 
-    let issues = emit_issues(
+    let issues = emit_issues_with_resolution(
         &reachability,
         &deps,
         &symbols,
@@ -253,6 +261,7 @@ fn run_analysis_core(
         &probe.effective_config,
         overrides,
         &entry.mode,
+        &resolution,
     );
 
     let entry_mode = entry.mode.clone();

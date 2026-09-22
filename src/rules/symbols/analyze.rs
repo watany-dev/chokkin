@@ -6,7 +6,7 @@ use crate::config::{Confidence, ProjectMode};
 use crate::entry::{EntryPlan, ResolvedMode};
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
-use crate::parser::{ParseSummary, file_module_name};
+use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
@@ -15,7 +15,7 @@ use crate::rules::RuleContext;
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, sort_candidates,
 };
-use crate::sources::DiscoveredSources;
+use crate::sources::{DiscoveredSources, path_to_module};
 
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
@@ -122,7 +122,7 @@ fn build_module_names<'a>(
         if !reachable.contains(&module.path) {
             continue;
         }
-        if let Some(name) = file_module_name(&module.path, &sources.layout) {
+        if let Some(name) = path_to_module(&module.path, &sources.layout) {
             names.insert(module.path.as_str(), name);
         }
     }

@@ -1050,7 +1050,7 @@ CHK001 = [
   "src/acme/generated/**/*.py",
 ]
 CHK002 = ["boto3", "google-cloud-*"]
-CHK003 = ["pkg_resources"]
+CHK003 = ["setuptools"]  # module名 (pkg_resources) ではなく distribution名
 CHK006 = ["src/acme/public_api.py:*"]
 ```
 

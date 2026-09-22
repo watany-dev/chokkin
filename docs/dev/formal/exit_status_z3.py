@@ -16,6 +16,8 @@ issues so that *only new issues* fail CI.
 Property E1: after ``apply_baseline`` the exit status must equal the status
 that ``emit.rs`` would compute over the remaining (non-suppressed) issues.
 
+Property E2: applying a baseline never turns a passing run into a failing one.
+
 Two issues suffice as a universe; severity/confidence are small integers in
 rank order (Info=0 < Warning=1 < Error=2; Maybe=0 < Likely=1 < Certain=2).
 
@@ -27,7 +29,7 @@ from __future__ import annotations
 
 import sys
 
-from z3 import And, Bool, If, Int, Not, Or, Solver, sat
+from z3 import And, Bool, If, Implies, Int, Not, Or, Solver, sat
 
 INFO, WARNING, ERROR = 0, 1, 2
 MAYBE, LIKELY, CERTAIN = 0, 1, 2
@@ -49,25 +51,44 @@ def main() -> int:
 
     domain = And(*[And(s >= INFO, s <= ERROR) for s in sev], *[And(c >= MAYBE, c <= CERTAIN) for c in conf])
 
-    # emit.rs::compute_exit_status over the full issue list -> "previous"
-    any_counts_all = Or(*[counts_toward_exit(sev[i], conf[i], strict) for i in range(n)])
-    emit_issues_found = And(Not(no_exit_code), any_counts_all)
+    def exit_issues_found(kept):
+        """``emit.rs::compute_exit_status`` over the issues selected by ``kept``."""
+        return And(
+            Not(no_exit_code),
+            Or(
+                *[
+                    And(kept(i), counts_toward_exit(sev[i], conf[i], strict))
+                    for i in range(n)
+                ]
+            ),
+        )
 
-    # baseline/store.rs::compute_exit_status(remaining, previous)
-    remaining_nonempty = Or(*[Not(suppressed[i]) for i in range(n)])
-    baseline_issues_found = And(emit_issues_found, remaining_nonempty)
+    # step 12, before any baseline is applied
+    emit_issues_found = exit_issues_found(lambda i: True)
+    # apply_baseline_with_overrides recomputes over the issues it kept, using
+    # the same thresholds and the same --no-exit-code override as emit.rs.
+    baseline_issues_found = exit_issues_found(lambda i: Not(suppressed[i]))
+    expected_issues_found = exit_issues_found(lambda i: Not(suppressed[i]))
 
-    # expected: emit.rs semantics over the remaining issues
-    any_counts_remaining = Or(
-        *[And(Not(suppressed[i]), counts_toward_exit(sev[i], conf[i], strict)) for i in range(n)]
-    )
-    expected_issues_found = And(Not(no_exit_code), any_counts_remaining)
+    props = {
+        "E1 baseline exit status == emit.rs semantics over remaining issues": (
+            baseline_issues_found == expected_issues_found
+        ),
+        "E2 a baseline never turns a passing run into a failing one": Implies(
+            baseline_issues_found, emit_issues_found
+        ),
+    }
 
-    solver = Solver()
-    solver.add(domain, baseline_issues_found != expected_issues_found)
-    if solver.check() == sat:
+    failed = 0
+    for label, prop in props.items():
+        solver = Solver()
+        solver.add(domain, Not(prop))
+        if solver.check() != sat:
+            print(f"OK       {label}")
+            continue
+        failed += 1
         m = solver.model()
-        print("VIOLATED E1: baseline exit status differs from emit.rs semantics")
+        print(f"VIOLATED {label}")
         print(f"  strict={m.eval(strict, True)} no_exit_code={m.eval(no_exit_code, True)}")
         for i in range(n):
             print(
@@ -75,12 +96,11 @@ def main() -> int:
                 f"suppressed_by_baseline={m.eval(suppressed[i], True)}"
             )
         print(
-            f"  baseline_exit=IssuesFound:{m.eval(baseline_issues_found, True)} "
+            f"  emit_exit=IssuesFound:{m.eval(emit_issues_found, True)} "
+            f"baseline_exit=IssuesFound:{m.eval(baseline_issues_found, True)} "
             f"expected=IssuesFound:{m.eval(expected_issues_found, True)}"
         )
-        return 1
-    print("OK E1")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

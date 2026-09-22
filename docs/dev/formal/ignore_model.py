@@ -50,9 +50,15 @@ def glob_match(pattern: str, value: str) -> bool:
     return fnmatchcase(value, pattern)
 
 
-def config_pattern_matches(rule: str, pattern: str, subject: Subject) -> bool:
+def config_pattern_matches(
+    rule: str, pattern: str, subject: Subject, distribution: str | None
+) -> bool:
     if subject.kind == "Distribution" and rule in DIST_RULES:
         return glob_match(pattern, subject.name)
+    # An Import subject on a dependency rule is matched on the distribution the
+    # resolver attached to that import site, never on the module name or path.
+    if subject.kind == "Import" and rule in DIST_RULES:
+        return distribution is not None and glob_match(pattern, distribution)
     if subject.kind == "Import":
         return glob_match(pattern, subject.file) or glob_match(pattern, subject.module)
     return False
@@ -85,13 +91,22 @@ PATTERNS = ["pyyaml", "google-cloud-*", "setuptools", "yaml", "src/acme/*", "goo
 def main() -> int:
     failures = []
     for cand, pattern in itertools.product(CANDIDATES, PATTERNS):
-        got = config_pattern_matches(cand.rule, pattern, cand.subject)
+        got = config_pattern_matches(cand.rule, pattern, cand.subject, cand.distribution)
         expected = glob_match(pattern, cand.distribution)
         if got != expected:
             failures.append(
                 f"I1 rule={cand.rule} pattern={pattern!r} subject={cand.subject.kind}"
                 f"(module={cand.subject.module!r}, file={cand.subject.file!r}) "
                 f"distribution={cand.distribution!r}: ignored={got} expected={expected}"
+            )
+    # I1b: with no resolved distribution there is nothing to match, so a
+    # dependency-rule candidate is never ignored by a config pattern.
+    for cand, pattern in itertools.product(CANDIDATES, PATTERNS):
+        if cand.subject.kind != "Import":
+            continue
+        if config_pattern_matches(cand.rule, pattern, cand.subject, None):
+            failures.append(
+                f"I1b rule={cand.rule} pattern={pattern!r} ignored an unresolved import"
             )
     if not failures:
         print("OK: I1 holds")

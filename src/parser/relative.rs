@@ -1,42 +1,18 @@
 //! Relative import normalization using project layout.
 
-use crate::sources::{LayoutInfo, ProjectLayout};
+use crate::sources::{LayoutInfo, path_to_module};
 
 use super::types::ParseDiagnostic;
 use super::types::ParseSeverity;
 
 /// Resolve a file path to its dotted module name.
+///
+/// Kept as the historical name for [`crate::sources::path_to_module`], which is
+/// now the single source of truth: this function used to derive module names of
+/// its own and could disagree with the `ModuleIndex` key for the same file.
 #[must_use]
 pub fn file_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
-    let path = path.strip_suffix(".py")?;
-    if path.is_empty() {
-        return None;
-    }
-
-    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let module_parts: &[&str] = match layout.layout {
-        ProjectLayout::Src => {
-            if parts.first() == Some(&"src") && parts.len() > 1 {
-                &parts[1..]
-            } else {
-                &parts[..]
-            }
-        },
-        ProjectLayout::Flat | ProjectLayout::Unknown => &parts[..],
-    };
-
-    let mut name_parts: Vec<&str> = module_parts.to_vec();
-    if name_parts.last() == Some(&"__init__") {
-        name_parts.pop();
-    }
-    if name_parts.is_empty() {
-        return None;
-    }
-    Some(name_parts.join("."))
+    path_to_module(path, layout)
 }
 
 /// Resolve a relative import to an absolute dotted module name.
@@ -54,7 +30,7 @@ pub fn resolve_relative_import(
         return module_suffix.map(str::to_owned);
     }
 
-    let current_module = file_module_name(file_path, layout)?;
+    let current_module = path_to_module(file_path, layout)?;
     let is_init = file_path.ends_with("__init__.py");
     let containing_package = containing_package(&current_module, is_init);
     if containing_package.is_empty() && level > 0 {
@@ -90,28 +66,29 @@ fn containing_package(module: &str, is_init: bool) -> String {
     }
 }
 
+/// Ascend `level - 1` packages, mirroring `CPython`'s
+/// `importlib._bootstrap._resolve_name`: `package.rsplit('.', level - 1)` must
+/// yield at least `level` parts, otherwise the import reaches beyond the
+/// top-level package and is an `ImportError`.
 fn ascend_package(package: &str, level: u8) -> Option<String> {
     if level == 0 {
         return Some(package.to_owned());
     }
     let mut current = package.to_owned();
     for _ in 1..level {
-        if current.is_empty() {
-            return None;
-        }
         current = parent_of(&current)?;
     }
-    Some(current)
+    if current.is_empty() {
+        None
+    } else {
+        Some(current)
+    }
 }
 
 fn parent_of(package: &str) -> Option<String> {
-    if package.is_empty() {
-        None
-    } else if let Some((parent, _)) = package.rsplit_once('.') {
-        Some(parent.to_owned())
-    } else {
-        Some(String::new())
-    }
+    package
+        .rsplit_once('.')
+        .map(|(parent, _)| parent.to_owned())
 }
 
 fn join_module(base: &str, suffix: &str) -> String {
@@ -138,19 +115,6 @@ mod tests {
     }
 
     #[test]
-    fn file_module_name_src_layout() {
-        let layout = src_layout();
-        assert_eq!(
-            file_module_name("src/acme/api/routes.py", &layout),
-            Some("acme.api.routes".to_owned())
-        );
-        assert_eq!(
-            file_module_name("src/acme/__init__.py", &layout),
-            Some("acme".to_owned())
-        );
-    }
-
-    #[test]
     fn resolve_parent_relative_import() {
         let layout = src_layout();
         let resolved =
@@ -164,6 +128,57 @@ mod tests {
         let resolved =
             resolve_relative_import("src/acme/api/routes.py", &layout, 1, None, Some("sibling"));
         assert_eq!(resolved, Some("acme.api.sibling".to_owned()));
+    }
+
+    #[test]
+    fn relative_import_from_file_outside_the_index_is_unresolved() {
+        // `tests/` is walked under an Unknown layout but has no ModuleIndex
+        // entry, so a name derived for it could never be looked up.
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        };
+        assert_eq!(
+            resolve_relative_import("tests/unit/test_core.py", &layout, 1, None, Some("helpers")),
+            None
+        );
+    }
+
+    #[test]
+    fn relative_import_beyond_top_level_package_is_unresolved() {
+        let layout = src_layout();
+        // `from .. import thing` inside the top-level package: CPython raises
+        // `ImportError: attempted relative import beyond top-level package`.
+        assert_eq!(
+            resolve_relative_import("src/acme/__init__.py", &layout, 2, None, Some("thing")),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("src/acme/core.py", &layout, 2, Some("models"), None),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("src/acme/api/routes.py", &layout, 3, Some("models"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn relative_import_under_unknown_layout_drops_src_prefix() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        };
+        assert_eq!(
+            resolve_relative_import("src/acme/api/__init__.py", &layout, 1, Some("models"), None),
+            Some("acme.api.models".to_owned())
+        );
     }
 
     #[test]

@@ -3,14 +3,15 @@
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::parser::file_module_name;
-use crate::sources::FileKind;
+use crate::sources::{FileKind, path_to_module};
 
 use super::context::PluginContext;
 use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, ReferenceOrigin, SymbolReference,
 };
-use super::util::{manifest_has_dependency, parse_module_symbol, relative_path};
+use super::util::{
+    decorator_line, decorator_suffix, manifest_has_dependency, parse_module_symbol, relative_path,
+};
 use super::warnings::PluginsWarning;
 
 /// Extract Flask app references from static configuration.
@@ -111,6 +112,17 @@ fn extract_route_modules(
     contrib: &mut PluginContribution,
     found: &mut bool,
 ) {
+    if let Some(parse) = ctx.parse {
+        for module in &parse.modules {
+            let Some(line) = decorator_line(module, is_route_decorator) else {
+                continue;
+            };
+            push_route_module(ctx, contrib, found, &module.path, line);
+        }
+        return;
+    }
+
+    // Standalone callers run before step 6, so there is nothing to reuse.
     for file in &ctx.sources.files {
         if file.kind != FileKind::Python {
             continue;
@@ -122,19 +134,40 @@ fn extract_route_modules(
         let Some(line) = flask_route_decorator_line(&contents) else {
             continue;
         };
-        let Some(module) = file_module_name(&file.path, &ctx.sources.layout) else {
-            continue;
-        };
-        *found = true;
-        contrib.module_refs.push(ModuleReference {
-            module,
-            origin: ReferenceOrigin {
-                file: file.path.clone(),
-                line: Some(line),
-                label: "flask route decorator".to_owned(),
-            },
-        });
+        push_route_module(ctx, contrib, found, &file.path, line);
     }
+}
+
+fn push_route_module(
+    ctx: &PluginContext<'_>,
+    contrib: &mut PluginContribution,
+    found: &mut bool,
+    file: &str,
+    line: u32,
+) {
+    let Some(module) = path_to_module(file, &ctx.sources.layout) else {
+        return;
+    };
+    *found = true;
+    contrib.module_refs.push(ModuleReference {
+        module,
+        origin: ReferenceOrigin {
+            file: file.to_owned(),
+            line: Some(line),
+            label: "flask route decorator".to_owned(),
+        },
+    });
+}
+
+/// Mirrors [`flask_route_decorator_line`]: only method calls on a receiver
+/// (`@app.route`, `@bp.post`) count, never a bare `@get`.
+fn is_route_decorator(name: &str) -> bool {
+    let (receiver, suffix) = decorator_suffix(name);
+    receiver.is_some()
+        && matches!(
+            suffix,
+            "route" | "get" | "post" | "put" | "patch" | "delete"
+        )
 }
 
 fn flask_route_decorator_line(contents: &str) -> Option<u32> {

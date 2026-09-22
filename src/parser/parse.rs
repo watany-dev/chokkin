@@ -382,6 +382,30 @@ mod tests {
     }
 
     #[test]
+    fn records_decorator_sites_including_nested_definitions() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = write_temp_py(
+            temp.path(),
+            "app.py",
+            "from flask import Flask\n\n\n@shared_task\ndef refresh():\n    return None\n\n\ndef create_app():\n    app = Flask(__name__)\n\n    @app.route(\"/\")\n    def index():\n        return \"ok\"\n\n    return app\n",
+        );
+        let parsed = parse_file(
+            &root,
+            "app.py",
+            &empty_layout(),
+            FileContext::Runtime,
+            &TargetVersion::default_py311(),
+        )
+        .expect("parse");
+        let sites: Vec<_> = parsed
+            .decorator_sites
+            .iter()
+            .map(|site| (site.name.as_str(), site.line))
+            .collect();
+        assert_eq!(sites, vec![("shared_task", 4), ("app.route", 12)]);
+    }
+
+    #[test]
     fn parses_simple_import() {
         let temp = TempDir::new().expect("tempdir");
         let root = write_temp_py(
