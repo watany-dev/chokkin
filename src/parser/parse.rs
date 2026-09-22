@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::VERSION;
 use crate::cache::{
-    CacheKeyContext, CacheOptions, ParseCacheKey, ParseCacheStore, SourceFingerprint,
-    stable_hex_hash,
+    CacheKeyContext, CacheOptions, ParseCacheBundle, ParseCacheKey, ParseCacheStore,
+    SourceFingerprint, stable_hex_hash,
 };
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
@@ -185,6 +185,14 @@ pub fn parse_project_sources_with_cache(
     let mut summary = ParseSummary::empty();
     let context = provisional_parse_cache_context(sources, target);
 
+    // The bundle is read once up front and written once at the end. Keeping
+    // only the entries this run touched prunes results for sources that have
+    // since changed or disappeared, so the file tracks the project instead of
+    // growing with every edit.
+    let stored = read_disk_parse_bundle(disk_cache, &root.path, &context)?;
+    let mut retained = ParseCacheBundle::default();
+    let mut bundle_changed = false;
+
     for file in &sources.files {
         if file.kind == FileKind::Stub {
             summary.skipped_count = summary.skipped_count.saturating_add(1);
@@ -194,24 +202,28 @@ pub fn parse_project_sources_with_cache(
         let use_cache = cache.is_some() || disk_cache.is_some();
         let parsed = if use_cache {
             let key = parse_cache_key(root, &file.path, &context)?;
-            if let Some(parsed) = cache
+            let parsed = if let Some(parsed) = cache
                 .as_deref_mut()
                 .and_then(|cache_store| cache_store.get(&key))
             {
                 parsed
-            } else if let Some(parsed) = read_disk_parse_cache(disk_cache, &root.path, &key)? {
+            } else if let Some(parsed) = stored.get(&key).cloned() {
                 if let Some(cache_store) = cache.as_deref_mut() {
-                    cache_store.insert(key, parsed.clone());
+                    cache_store.insert(key.clone(), parsed.clone());
                 }
                 parsed
             } else {
                 let parsed = parse_discovered_file(root, file, layout, target)?;
-                write_disk_parse_cache(disk_cache, &root.path, &key, &parsed)?;
+                bundle_changed = true;
                 if let Some(cache_store) = cache.as_deref_mut() {
-                    cache_store.insert(key, parsed.clone());
+                    cache_store.insert(key.clone(), parsed.clone());
                 }
                 parsed
+            };
+            if disk_cache.is_some() {
+                retained.insert(&key, parsed.clone());
             }
+            parsed
         } else {
             parse_discovered_file(root, file, layout, target)?
         };
@@ -224,6 +236,10 @@ pub fn parse_project_sources_with_cache(
         }
         summary.parsed_count = summary.parsed_count.saturating_add(1);
         summary.modules.push(parsed);
+    }
+
+    if bundle_changed || retained.entries.len() != stored.entries.len() {
+        write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
     }
 
     Ok(summary)
@@ -242,35 +258,35 @@ fn parse_discovered_file(
     }
 }
 
-fn read_disk_parse_cache(
+fn read_disk_parse_bundle(
     cache: Option<&CacheOptions>,
     project_root: &std::path::Path,
-    key: &ParseCacheKey,
-) -> Result<Option<ParsedModule>, ParseError> {
+    context: &CacheKeyContext,
+) -> Result<ParseCacheBundle, ParseError> {
     let Some(cache) = cache else {
-        return Ok(None);
+        return Ok(ParseCacheBundle::default());
     };
     cache
-        .read_parse_entry(project_root, key)
+        .read_parse_bundle(project_root, context)
         .map_err(|source| ParseError::Io {
-            path: cache.parse_entry_path(project_root, key),
+            path: cache.parse_bundle_path(project_root, context),
             source,
         })
 }
 
-fn write_disk_parse_cache(
+fn write_disk_parse_bundle(
     cache: Option<&CacheOptions>,
     project_root: &std::path::Path,
-    key: &ParseCacheKey,
-    parsed: &ParsedModule,
+    context: &CacheKeyContext,
+    bundle: &ParseCacheBundle,
 ) -> Result<(), ParseError> {
     let Some(cache) = cache else {
         return Ok(());
     };
     cache
-        .write_parse_entry(project_root, key, parsed)
+        .write_parse_bundle(project_root, context, bundle)
         .map_err(|source| ParseError::Io {
-            path: cache.parse_entry_path(project_root, key),
+            path: cache.parse_bundle_path(project_root, context),
             source,
         })
 }
@@ -284,7 +300,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
         manifest_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v2".to_owned(),
+        unit_version: "parse-v3".to_owned(),
     }
 }
 
