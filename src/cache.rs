@@ -1,6 +1,6 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -238,7 +238,7 @@ fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Stable inputs shared by cache units.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CacheKeyContext {
     /// chokkin version string.
     pub chokkin_version: String,
@@ -252,8 +252,22 @@ pub struct CacheKeyContext {
     pub unit_version: String,
 }
 
+impl CacheKeyContext {
+    /// Feed the context fields into a cache key hash.
+    pub fn hash_into(&self, hasher: &mut CacheKeyHasher) {
+        hasher.field_str(&self.chokkin_version);
+        hasher.field_str(&self.config_hash);
+        hasher.field_str(&self.manifest_hash);
+        hasher.field_str(&self.target_version);
+        hasher.field_str(&self.unit_version);
+    }
+}
+
 /// Fingerprint for one root-relative source file.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+///
+/// The `Default` value is an empty placeholder: it names no file and matches
+/// no cache entry. Callers overwrite it before using a key.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceFingerprint {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -313,6 +327,14 @@ impl SourceFingerprint {
                 .map(|duration| duration.as_nanos()),
             content_hash: stable_hex_hash(&bytes),
         })
+    }
+
+    /// Feed the fingerprint fields into a cache key hash.
+    pub fn hash_into(&self, hasher: &mut CacheKeyHasher) {
+        hasher.field_str(&self.path);
+        hasher.field_u64(self.size);
+        hasher.field_opt_u128(self.modified_ns);
+        hasher.field_str(&self.content_hash);
     }
 
     /// Build a file fingerprint from `stat` alone where that is unambiguous.
@@ -460,17 +482,11 @@ impl ScanCacheKey {
     /// Stable filename for the cached scan result.
     #[must_use]
     pub fn file_name(&self) -> String {
-        let mut input = format!(
-            "{}\n{}\n{}\n{}\n{}",
-            self.context.chokkin_version,
-            self.context.config_hash,
-            self.context.manifest_hash,
-            self.context.target_version,
-            self.context.unit_version
-        );
-        append_fingerprints(&mut input, "config", &self.inputs.config);
-        append_fingerprints(&mut input, "manifest", &self.inputs.manifest);
-        format!("{}.json", stable_hex_hash(input.as_bytes()))
+        let mut hasher = CacheKeyHasher::new();
+        self.context.hash_into(&mut hasher);
+        hash_fingerprints(&mut hasher, "config", &self.inputs.config);
+        hash_fingerprints(&mut hasher, "manifest", &self.inputs.manifest);
+        format!("{}.json", hasher.finish())
     }
 
     /// Project-root-relative path for a persisted scan cache entry.
@@ -480,21 +496,11 @@ impl ScanCacheKey {
     }
 }
 
-fn append_fingerprints(out: &mut String, label: &str, fingerprints: &[SourceFingerprint]) {
-    out.push('\n');
-    out.push_str(label);
+fn hash_fingerprints(hasher: &mut CacheKeyHasher, label: &str, fingerprints: &[SourceFingerprint]) {
+    hasher.field_str(label);
+    hasher.field_u64(u64::try_from(fingerprints.len()).unwrap_or(u64::MAX));
     for fingerprint in fingerprints {
-        use std::fmt::Write as _;
-        let _ = write!(
-            out,
-            "\n{}\t{}\t{}\t{}",
-            fingerprint.path,
-            fingerprint.size,
-            fingerprint
-                .modified_ns
-                .map_or_else(String::new, |value| value.to_string()),
-            fingerprint.content_hash
-        );
+        fingerprint.hash_into(hasher);
     }
 }
 
@@ -544,7 +550,7 @@ impl ScanInputFingerprints {
 }
 
 /// Key for a cacheable parse result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParseCacheKey {
     /// Shared key context.
     pub context: CacheKeyContext,
@@ -552,12 +558,11 @@ pub struct ParseCacheKey {
     pub source: SourceFingerprint,
 }
 
-// Ordering compares `source` before `context`. The `BTreeMap` parse cache holds
-// many keys that share one identical `context` within a run, so comparing the
-// context first would scan five equal strings at every tree level before
-// reaching the discriminating `source.path`. Leading with `source` lets each
-// comparison short-circuit on the path, which keeps warm-cache lookups close to
-// linear instead of paying that fixed string-compare cost per tree level.
+// Ordering compares `source` before `context`. Every key produced by one run
+// shares an identical `context`, so comparing the context first would scan five
+// equal strings before reaching the discriminating `source.path`. Leading with
+// `source` lets each comparison short-circuit on the path. The in-memory store
+// is a `HashMap`, so this only affects callers that sort keys themselves.
 impl Ord for ParseCacheKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.source
@@ -576,21 +581,10 @@ impl ParseCacheKey {
     /// Stable filename for the cached parse result.
     #[must_use]
     pub fn file_name(&self) -> String {
-        let input = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-            self.context.chokkin_version,
-            self.context.config_hash,
-            self.context.manifest_hash,
-            self.context.target_version,
-            self.context.unit_version,
-            self.source.path,
-            self.source.size,
-            self.source
-                .modified_ns
-                .map_or_else(String::new, |value| value.to_string()),
-            self.source.content_hash
-        );
-        format!("{}.json", stable_hex_hash(input.as_bytes()))
+        let mut hasher = CacheKeyHasher::new();
+        self.context.hash_into(&mut hasher);
+        self.source.hash_into(&mut hasher);
+        format!("{}.json", hasher.finish())
     }
 
     /// Project-root-relative path for a persisted parse cache entry.
@@ -614,7 +608,7 @@ pub struct ParseCacheStats {
 /// In-memory parse cache used as the first conservative cache backend.
 #[derive(Debug, Default)]
 pub struct ParseCacheStore {
-    entries: BTreeMap<ParseCacheKey, ParsedModule>,
+    entries: HashMap<ParseCacheKey, ParsedModule>,
     stats: ParseCacheStats,
 }
 
@@ -623,6 +617,14 @@ impl ParseCacheStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Reserve capacity for at least `additional` more entries.
+    ///
+    /// The parse loop knows the file count up front, so pre-sizing avoids the
+    /// repeated rehash-and-move that growing from zero costs on large projects.
+    pub fn reserve(&mut self, additional: usize) {
+        self.entries.reserve(additional);
     }
 
     /// Return cached parse output for `key` when available.
@@ -676,15 +678,108 @@ pub fn normalize_cache_path(path: &str) -> String {
 /// Stable 64-bit FNV-1a hash rendered as lowercase hex.
 #[must_use]
 pub fn stable_hex_hash(bytes: &[u8]) -> String {
+    let mut hasher = CacheKeyHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
+/// Stable hash of an ordered list of strings.
+///
+/// Order is part of the key: callers such as the module index depend on the
+/// first entry winning for duplicate modules, so two permutations of the same
+/// list must not share a cache entry.
+#[must_use]
+pub fn stable_list_hash<I, S>(values: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut hasher = CacheKeyHasher::new();
+    for value in values {
+        hasher.field(value.as_ref().as_bytes());
+    }
+    hasher.finish()
+}
+
+/// Streaming FNV-1a hasher for cache key inputs.
+///
+/// Cache keys are built from many small fields. Feeding them through one
+/// hasher keeps key construction allocation-free; the previous approach
+/// `format!`-ed every field into one throwaway `String` per file, which the
+/// warm path pays once per source.
+///
+/// [`CacheKeyHasher::field`] length-prefixes its input, so no concatenation of
+/// field values can be mistaken for a different split of the same bytes.
+#[derive(Debug, Clone)]
+pub struct CacheKeyHasher {
+    state: u64,
+}
+
+impl Default for CacheKeyHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CacheKeyHasher {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-    let mut hash = FNV_OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
+    /// Start an empty hash state.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: Self::FNV_OFFSET,
+        }
     }
-    format!("{hash:016x}")
+
+    /// Hash raw bytes without a field boundary.
+    pub fn write(&mut self, bytes: &[u8]) -> &mut Self {
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(Self::FNV_PRIME);
+        }
+        self
+    }
+
+    /// Hash one length-prefixed field.
+    pub fn field(&mut self, bytes: &[u8]) -> &mut Self {
+        let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        self.write(&len.to_le_bytes());
+        self.write(bytes)
+    }
+
+    /// Hash one length-prefixed string field.
+    pub fn field_str(&mut self, value: &str) -> &mut Self {
+        self.field(value.as_bytes())
+    }
+
+    /// Hash one `u64` field.
+    pub fn field_u64(&mut self, value: u64) -> &mut Self {
+        self.write(&value.to_le_bytes())
+    }
+
+    /// Hash one optional `u128` field.
+    pub fn field_opt_u128(&mut self, value: Option<u128>) -> &mut Self {
+        match value {
+            Some(value) => {
+                self.write(&[1]);
+                self.write(&value.to_le_bytes())
+            },
+            None => self.write(&[0]),
+        }
+    }
+
+    /// Hash one boolean field.
+    pub fn field_bool(&mut self, value: bool) -> &mut Self {
+        self.write(&[u8::from(value)])
+    }
+
+    /// Render the current state as lowercase hex.
+    #[must_use]
+    pub fn finish(&self) -> String {
+        format!("{:016x}", self.state)
+    }
 }
 
 #[cfg(test)]
