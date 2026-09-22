@@ -195,8 +195,12 @@ Available skills:
 
 **Project skills** (authored in-repo):
 
-- `wrapup` — clean up changed code (`simplify`) then `update-docs`, run
-  `make check` if files changed, then remind to compact context.
+- `wrapup` — post-work review gate: `make check`, a correctness review and an
+  over-engineering review (`ponytail-review`), take in only the findings that
+  meet its criteria, then `cleanup-comments`. Invoked manually.
+- `cleanup-comments` — sweep code comments, keep only the "why" that cannot be
+  reconstructed from the code, turn TODO-like comments into issues. Invoked
+  manually.
 - `update-docs` — sync `src/` changes into `README.md`, `README.ja.md`,
   `docs/dev/spec.ja.md`, `CLAUDE.md`, and `AGENTS.md`.
 - `update-design` — score `docs/dev/spec.ja.md` (5 categories × 20 pts) and
@@ -223,13 +227,12 @@ npx skills@latest add https://github.com/DietrichGebert/ponytail/tree/main/skill
 mv .agents/skills/ponytail* .claude/skills/ && rm -rf .agents
 ```
 
-**Host-specific notes.** The Stop-hook auto-trigger, `/compact`, `simplify`,
-and `ExitPlanMode` referenced by some skills are Claude Code features. On Codex
-and Cursor the agent auto-selects skills by relevance (or you invoke them by
-name); run the `simplify` → `update-docs` → `make check` core manually and skip
-the Claude-only marker/compact steps. The Stop-hook enforcement that nags
-`wrapup` after edits lives only in `.claude/` (`hooks/stop-wrapup.sh` +
-`settings.json`).
+**Host-specific notes.** `/code-review`, `/compact`, and `ExitPlanMode`
+referenced by some skills are Claude Code features. On Codex and Cursor the
+agent auto-selects skills by relevance (or you invoke them by name); in
+`wrapup`, substitute a hand-written correctness review of
+`git diff <base>...HEAD` for `/code-review`. No hook auto-triggers `wrapup` on
+any host — it is invoked manually.
 
 ## Guardrail: ptuf
 

@@ -12,18 +12,5 @@
       "Bash(git:*)",
       "Bash(uvx:*)"
     ]
-  },
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/stop-wrapup.sh"
-          }
-        ]
-      }
-    ]
   }
 }

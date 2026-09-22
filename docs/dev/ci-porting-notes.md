@@ -108,7 +108,9 @@ crates.io is not planned. The `publish-crates.yml` workflow from ptuf is omitted
 
 ## stop-wrapup hook
 
-ptuf's `.claude/hooks/stop-wrapup.sh` depends on ptuf's own wrapup skill
-(`/simplify`, `/update-docs`). It is not ported here because those skills are
-ptuf-specific. Add a project-specific stop hook when a similar wrapup workflow
-is established for chokkin.
+ptuf's `.claude/hooks/stop-wrapup.sh` nags `wrapup` when a session that edited
+files tries to end. It is not used here: chokkin's `wrapup` follows the
+[zghalint](https://github.com/watany-dev/zghalint) shape — a review gate the
+developer invokes when the implementation is done — so there is no completion
+marker for a stop hook to track. chokkin registers no hooks in
+`.claude/settings.json`.
