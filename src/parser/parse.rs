@@ -299,7 +299,10 @@ fn provisional_parse_cache_context(
 }
 
 fn source_fingerprint(root: &ProjectRoot, path: &str) -> Result<SourceFingerprint, ParseError> {
-    SourceFingerprint::from_root_relative(&root.path, path).map_err(|source| ParseError::Io {
+    // `from_root_relative_stat` identifies an unchanged source by `(size,
+    // mtime)` and only reads bytes when that is ambiguous. On a warm run the
+    // whole project used to be read and hashed just to build lookup keys.
+    SourceFingerprint::from_root_relative_stat(&root.path, path).map_err(|source| ParseError::Io {
         path: root.path.join(path),
         source,
     })
