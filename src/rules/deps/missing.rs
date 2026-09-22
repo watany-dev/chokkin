@@ -92,6 +92,13 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
+        // Declared, only in a bucket that does not match this usage context.
+        // §10 hands that case to CHK005 alone: it is neither missing (CHK003)
+        // nor transitive-only (CHK004).
+        if declared.contains_key(distribution) {
+            continue;
+        }
+
         if optional_imports.contains(&(import.file.clone(), import.line)) {
             candidates.push(optional_missing_candidate(import, distribution, strict));
             continue;
@@ -261,7 +268,8 @@ fn missing_candidate(
     }
 }
 
-/// Whether `distribution` appears in the transitive closure of declared direct deps.
+/// Whether `distribution` is reachable only through the transitive closure of the
+/// *other* declared direct dependencies.
 #[must_use]
 pub(super) fn is_transitive_only(
     distribution: &str,
@@ -271,9 +279,11 @@ pub(super) fn is_transitive_only(
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
 
+    // Seeding with `distribution` itself would make any directly declared
+    // dependency look transitive before a single edge is walked.
     for deps in declared.values() {
         for dep in deps {
-            if visited.insert(dep.name.clone()) {
+            if dep.name != distribution && visited.insert(dep.name.clone()) {
                 queue.push_back(dep.name.clone());
             }
         }
@@ -317,13 +327,19 @@ mod tests {
     use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
     use crate::resolver::{ResolutionIndex, TransitiveIndex};
 
+    const FILE: &str = "src/app.py";
+
     fn declared_dep(name: &str) -> DeclaredDependency {
+        declared_dep_in(name, DependencyContext::Runtime)
+    }
+
+    fn declared_dep_in(name: &str, context: DependencyContext) -> DeclaredDependency {
         DeclaredDependency {
             name: name.to_owned(),
             extras: Vec::new(),
             marker: None,
             specifier: None,
-            context: DependencyContext::Runtime,
+            context,
             origin: DependencyOrigin {
                 file: "pyproject.toml".to_owned(),
                 line: Some(1),
@@ -333,39 +349,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn finds_transitive_dependency_in_lockfile_closure() {
-        let requests = declared_dep("requests");
-        let mut index: DeclaredIndex<'_> = BTreeMap::new();
-        index.insert("requests".to_owned(), vec![&requests]);
-        let transitive = TransitiveIndex {
-            edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
-        };
-        assert!(is_transitive_only("urllib3", &index, &transitive));
-        assert!(!is_transitive_only("certifi", &index, &transitive));
-    }
-
-    #[test]
-    fn direct_declaration_skips_missing() {
-        let config = default_config();
-        let requests = declared_dep("requests");
-        let mut index: DeclaredIndex<'_> = BTreeMap::new();
-        index.insert("requests".to_owned(), vec![&requests]);
-        let import = ResolvedImport {
-            import_root: "requests".to_owned(),
-            full_module: "requests".to_owned(),
-            file: "src/app.py".to_owned(),
+    fn runtime_import(distribution: &str) -> ResolvedImport {
+        ResolvedImport {
+            import_root: distribution.to_owned(),
+            full_module: distribution.to_owned(),
+            file: FILE.to_owned(),
             workspace_member: None,
             line: 1,
             context: crate::parser::ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some("requests".to_owned()),
+            distribution: Some(distribution.to_owned()),
             confidence: crate::resolver::ResolveConfidence::Certain,
-        };
-        let reachable = HashSet::from(["src/app.py".to_owned()]);
-        let sources = crate::sources::DiscoveredSources {
+        }
+    }
+
+    fn sources() -> crate::sources::DiscoveredSources {
+        crate::sources::DiscoveredSources {
             root: crate::discovery::ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: crate::discovery::RootMarker::PyProjectToml,
@@ -381,16 +382,26 @@ mod tests {
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
-        };
+        }
+    }
+
+    /// Run the rule on a single runtime import of `distribution` from `src/app.py`.
+    fn detect(
+        declared: &DeclaredIndex<'_>,
+        distribution: &str,
+        transitive: TransitiveIndex,
+    ) -> Vec<IssueCandidate> {
+        let config = default_config();
+        let sources = sources();
         let resolution = ResolutionIndex {
-            imports: vec![import],
+            imports: vec![runtime_import(distribution)],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
+            transitive,
             binary_resolutions: BTreeMap::new(),
         };
         let graph = crate::graph::ProjectGraph::new(sources.root.clone());
-        let candidates = detect_missing_dependencies(
-            &index,
+        detect_missing_dependencies(
+            declared,
             &DependencyRuleContext {
                 rules: &RuleContext {
                     resolution: &resolution,
@@ -402,10 +413,57 @@ mod tests {
                 config: &config,
                 strict: false,
             },
-            &reachable,
+            &HashSet::from([FILE.to_owned()]),
             true,
             &[],
-        );
-        assert!(candidates.is_empty());
+        )
+    }
+
+    #[test]
+    fn finds_transitive_dependency_in_lockfile_closure() {
+        let requests = declared_dep("requests");
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("requests".to_owned(), vec![&requests]);
+        let transitive = TransitiveIndex {
+            edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
+        };
+        assert!(is_transitive_only("urllib3", &index, &transitive));
+        assert!(!is_transitive_only("certifi", &index, &transitive));
+    }
+
+    #[test]
+    fn declared_distribution_is_never_transitive_only() {
+        let requests = declared_dep("requests");
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("requests".to_owned(), vec![&requests]);
+        assert!(!is_transitive_only(
+            "requests",
+            &index,
+            &TransitiveIndex::empty()
+        ));
+    }
+
+    #[test]
+    fn direct_declaration_skips_missing() {
+        let requests = declared_dep("requests");
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("requests".to_owned(), vec![&requests]);
+        assert!(detect(&index, "requests", TransitiveIndex::empty()).is_empty());
+    }
+
+    /// §10: a dev-group-only dependency used at runtime is CHK005 territory,
+    /// so this rule must stay silent instead of adding CHK003/CHK004.
+    #[test]
+    fn dev_group_only_declaration_is_left_to_misplaced() {
+        let pytest = declared_dep_in("pytest", DependencyContext::Group("dev".to_owned()));
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("pytest".to_owned(), vec![&pytest]);
+
+        assert!(detect(&index, "pytest", TransitiveIndex::empty()).is_empty());
+
+        let transitive = TransitiveIndex {
+            edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),
+        };
+        assert!(detect(&index, "pytest", transitive).is_empty());
     }
 }

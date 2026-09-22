@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
+use crate::baseline::{BaselineReport, apply_baseline_with_overrides, write_baseline};
 use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
@@ -78,7 +78,7 @@ pub fn analyze_project(
         Some(&options.cache),
     )?;
     let mut core = run_analysis_core(&probe, overrides, &options)?;
-    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
+    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, overrides, &options)?;
     let fix = if options.fix_enabled {
         let workspace_manifests = probe
             .workspace_inputs
@@ -117,6 +117,7 @@ pub fn analyze_project(
 fn apply_baseline_options(
     issues: &mut IssueReport,
     root: &Path,
+    overrides: &RuntimeOverrides,
     options: &AnalyzeOptions,
 ) -> Result<Option<BaselineReport>, AnalyzeError> {
     let Some(path) = &options.baseline else {
@@ -125,7 +126,9 @@ fn apply_baseline_options(
     if options.update_baseline {
         return Ok(Some(write_baseline(issues, root, path)?));
     }
-    Ok(Some(apply_baseline(issues, root, path)?))
+    Ok(Some(apply_baseline_with_overrides(
+        issues, root, path, overrides,
+    )?))
 }
 
 struct AnalysisCore {
