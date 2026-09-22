@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use indexmap::IndexSet;
 
 use crate::entry::EntryPlan;
-use crate::parser::file_module_name;
 use crate::plugins::PluginHints;
-use crate::sources::LayoutInfo;
+use crate::sources::{LayoutInfo, path_to_module};
 
 use super::graph::{SymbolId, SymbolRegistry};
 
@@ -28,7 +27,7 @@ pub(super) fn collect_external_symbols(
         if let Some(module) = module_names
             .get(entry.spec.path.as_str())
             .cloned()
-            .or_else(|| file_module_name(&entry.spec.path, layout))
+            .or_else(|| path_to_module(&entry.spec.path, layout))
         {
             external.insert(SymbolId::new(module, symbol.clone()));
         }

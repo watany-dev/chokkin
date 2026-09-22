@@ -3,8 +3,7 @@
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::parser::file_module_name;
-use crate::sources::FileKind;
+use crate::sources::{FileKind, path_to_module};
 
 use super::context::PluginContext;
 use super::types::{
@@ -122,7 +121,7 @@ fn extract_route_modules(
         let Some(line) = flask_route_decorator_line(&contents) else {
             continue;
         };
-        let Some(module) = file_module_name(&file.path, &ctx.sources.layout) else {
+        let Some(module) = path_to_module(&file.path, &ctx.sources.layout) else {
             continue;
         };
         *found = true;
