@@ -184,6 +184,9 @@ pub fn parse_project_sources_with_cache(
     let layout = &sources.layout;
     let mut summary = ParseSummary::empty();
     let context = provisional_parse_cache_context(sources, target);
+    if let Some(cache_store) = cache.as_deref_mut() {
+        cache_store.reserve(sources.files.len());
+    }
 
     for file in &sources.files {
         if file.kind == FileKind::Stub {

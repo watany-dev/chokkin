@@ -1,6 +1,6 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -238,7 +238,7 @@ fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Stable inputs shared by cache units.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CacheKeyContext {
     /// chokkin version string.
     pub chokkin_version: String,
@@ -253,7 +253,7 @@ pub struct CacheKeyContext {
 }
 
 /// Fingerprint for one root-relative source file.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceFingerprint {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -486,7 +486,7 @@ impl ScanInputFingerprints {
 }
 
 /// Key for a cacheable parse result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParseCacheKey {
     /// Shared key context.
     pub context: CacheKeyContext,
@@ -494,12 +494,11 @@ pub struct ParseCacheKey {
     pub source: SourceFingerprint,
 }
 
-// Ordering compares `source` before `context`. The `BTreeMap` parse cache holds
-// many keys that share one identical `context` within a run, so comparing the
-// context first would scan five equal strings at every tree level before
-// reaching the discriminating `source.path`. Leading with `source` lets each
-// comparison short-circuit on the path, which keeps warm-cache lookups close to
-// linear instead of paying that fixed string-compare cost per tree level.
+// Ordering compares `source` before `context`. Every key produced by one run
+// shares an identical `context`, so comparing the context first would scan five
+// equal strings before reaching the discriminating `source.path`. Leading with
+// `source` lets each comparison short-circuit on the path. The in-memory store
+// is a `HashMap`, so this only affects callers that sort keys themselves.
 impl Ord for ParseCacheKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.source
@@ -556,7 +555,7 @@ pub struct ParseCacheStats {
 /// In-memory parse cache used as the first conservative cache backend.
 #[derive(Debug, Default)]
 pub struct ParseCacheStore {
-    entries: BTreeMap<ParseCacheKey, ParsedModule>,
+    entries: HashMap<ParseCacheKey, ParsedModule>,
     stats: ParseCacheStats,
 }
 
@@ -565,6 +564,14 @@ impl ParseCacheStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Reserve capacity for at least `additional` more entries.
+    ///
+    /// The parse loop knows the file count up front, so pre-sizing avoids the
+    /// repeated rehash-and-move that growing from zero costs on large projects.
+    pub fn reserve(&mut self, additional: usize) {
+        self.entries.reserve(additional);
     }
 
     /// Return cached parse output for `key` when available.
