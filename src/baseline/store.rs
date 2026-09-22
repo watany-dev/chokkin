@@ -7,9 +7,10 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
+use crate::config::RuntimeOverrides;
 use crate::rules::{
-    Issue, IssueReport, IssueSummary, SuppressReason, SuppressedIssue, issue_fingerprint,
-    issue_stable_target,
+    Issue, IssueReport, IssueSummary, SuppressReason, SuppressedIssue, counts_toward_exit,
+    issue_fingerprint, issue_stable_target,
 };
 
 use super::types::{
@@ -17,10 +18,28 @@ use super::types::{
 };
 
 /// Apply a baseline file by suppressing matching issues.
+///
+/// The recomputed exit status uses default (non-`--strict`) thresholds; call
+/// [`apply_baseline_with_overrides`] to honour the runtime flags.
 pub fn apply_baseline(
     report: &mut IssueReport,
     root: &Path,
     baseline_path: &Path,
+) -> Result<BaselineReport, BaselineError> {
+    apply_baseline_with_overrides(report, root, baseline_path, &RuntimeOverrides::default())
+}
+
+/// Apply a baseline file, recomputing the exit status under `overrides`.
+///
+/// # Errors
+///
+/// Returns [`BaselineError`] when the baseline path escapes the project root or
+/// the file cannot be read or parsed.
+pub fn apply_baseline_with_overrides(
+    report: &mut IssueReport,
+    root: &Path,
+    baseline_path: &Path,
+    overrides: &RuntimeOverrides,
 ) -> Result<BaselineReport, BaselineError> {
     let path = resolve_baseline_path(root, baseline_path)?;
     if !path.exists() {
@@ -54,7 +73,7 @@ pub fn apply_baseline(
 
     report.issues = kept;
     report.summary = build_summary(&report.issues);
-    report.exit_status = compute_exit_status(&report.issues, report.exit_status);
+    report.exit_status = compute_exit_status(&report.issues, overrides);
 
     Ok(BaselineReport {
         path: Some(display_path(root, &path)),
@@ -237,11 +256,20 @@ fn build_summary(issues: &[Issue]) -> IssueSummary {
     }
 }
 
-fn compute_exit_status(issues: &[Issue], previous: crate::ExitStatus) -> crate::ExitStatus {
-    if previous == crate::ExitStatus::Success || issues.is_empty() {
-        crate::ExitStatus::Success
-    } else {
+/// Recompute the exit status over the issues the baseline left in place.
+///
+/// Mirrors `rules::emit::compute_exit_status`: an issue only fails the run when
+/// it passes the severity/confidence thresholds, so a baseline that silences
+/// every error leaves a warning-only run at exit 0 (spec §16, §24).
+fn compute_exit_status(issues: &[Issue], overrides: &RuntimeOverrides) -> crate::ExitStatus {
+    if overrides.no_exit_code == Some(true) {
+        return crate::ExitStatus::Success;
+    }
+    let strict = overrides.strict.unwrap_or(false);
+    if issues.iter().any(|issue| counts_toward_exit(issue, strict)) {
         crate::ExitStatus::IssuesFound
+    } else {
+        crate::ExitStatus::Success
     }
 }
 
@@ -333,6 +361,7 @@ mod tests {
 
         let mut current = issue("src/shared.py");
         current.workspace_member = Some("worker".to_owned());
+        current.severity = Severity::Error;
         let mut current_report = IssueReport {
             issues: vec![current],
             suppressed: Vec::new(),
@@ -369,6 +398,69 @@ mod tests {
         assert!(report.issues.is_empty());
         assert_eq!(report.exit_status, crate::ExitStatus::Success);
         assert_eq!(report.suppressed[0].reason, SuppressReason::Baseline);
+    }
+
+    /// The baseline silences the only exit-worthy issue, so the warning left
+    /// behind must not keep the run at exit 1 (spec §16, §24).
+    #[test]
+    fn baseline_exit_status_honours_severity_thresholds() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join("chokkin-baseline.json");
+        let mut blocking = issue("src/legacy.py");
+        blocking.severity = Severity::Error;
+        let frozen = IssueReport {
+            issues: vec![blocking.clone()],
+            suppressed: Vec::new(),
+            summary: build_summary(std::slice::from_ref(&blocking)),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        write_baseline(&frozen, dir.path(), &baseline).expect("write baseline");
+
+        let warning = issue("src/new.py");
+        let issues = vec![blocking, warning];
+        let mut report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+
+        assert_eq!(result.suppressed, 1);
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.exit_status, crate::ExitStatus::Success);
+    }
+
+    /// `--strict` lowers the thresholds, so the same remaining warning fails.
+    #[test]
+    fn baseline_exit_status_follows_strict_override() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join("chokkin-baseline.json");
+        write_baseline(&IssueReport::empty(), dir.path(), &baseline).expect("write baseline");
+        let warning = issue("src/new.py");
+        let issues = vec![warning];
+        let mut report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let overrides = RuntimeOverrides {
+            strict: Some(true),
+            ..RuntimeOverrides::default()
+        };
+        apply_baseline_with_overrides(&mut report, dir.path(), &baseline, &overrides)
+            .expect("apply baseline");
+        assert_eq!(report.exit_status, crate::ExitStatus::IssuesFound);
+
+        let overrides = RuntimeOverrides {
+            strict: Some(true),
+            no_exit_code: Some(true),
+            ..RuntimeOverrides::default()
+        };
+        apply_baseline_with_overrides(&mut report, dir.path(), &baseline, &overrides)
+            .expect("apply baseline");
+        assert_eq!(report.exit_status, crate::ExitStatus::Success);
     }
 
     #[test]
