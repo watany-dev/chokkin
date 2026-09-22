@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::VERSION;
 use crate::cache::{CacheKeyContext, CacheOptions, ScanCacheKey, stable_hex_hash};
 use crate::graph::{FileId, ProjectGraph};
-use crate::sources::{DiscoveredSources, LayoutInfo, ProjectLayout};
+use crate::sources::{DiscoveredSources, path_to_module};
 
 /// Maps dotted module names to project files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,62 +113,13 @@ fn module_index_cache_key(
     })
 }
 
-/// Infer a dotted module name from a root-relative `.py` path.
-#[must_use]
-pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
-    let stem = path.strip_suffix(".py")?;
-    let module_path = stem.strip_suffix("/__init__").unwrap_or(stem);
-
-    match layout.layout {
-        ProjectLayout::Src => module_path
-            .strip_prefix("src/")
-            .map(|rest| rest.replace('/', ".")),
-        ProjectLayout::Flat => flat_module_name(module_path, layout),
-        ProjectLayout::Unknown => module_path
-            .strip_prefix("src/")
-            .map(|rest| rest.replace('/', "."))
-            .or_else(|| flat_module_name(module_path, layout)),
-    }
-}
-
-fn flat_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
-    for package in &layout.packages {
-        if path == *package {
-            return Some(package.clone());
-        }
-        if let Some(suffix) = path.strip_prefix(&format!("{package}/")) {
-            return Some(format!("{package}.{}", suffix.replace('/', ".")));
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cache::CacheOptions;
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::graph::{FileNode, ProjectGraph};
-    use crate::sources::{FileContext, FileKind};
-
-    #[test]
-    fn path_to_module_src_layout() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            packages: vec!["acme".to_owned()],
-            inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
-        };
-        assert_eq!(
-            path_to_module("src/acme/api/routes.py", &layout),
-            Some("acme.api.routes".to_owned())
-        );
-        assert_eq!(
-            path_to_module("src/acme/__init__.py", &layout),
-            Some("acme".to_owned())
-        );
-    }
+    use crate::sources::{FileContext, FileKind, LayoutInfo, ProjectLayout};
 
     #[test]
     fn module_index_resolves_registered_file() {
