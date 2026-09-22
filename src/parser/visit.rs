@@ -16,7 +16,7 @@ use super::platform_guard::is_platform_guard_if;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_if;
 use super::types::{
-    ImportContext, ImportKind, ImportRef, ParsedModule, SymbolDef, SymbolKind,
+    DecoratorSite, ImportContext, ImportKind, ImportRef, ParsedModule, SymbolDef, SymbolKind,
     import_context_for_file,
 };
 
@@ -86,6 +86,7 @@ impl<'a> ModuleVisitor<'a> {
             Stmt::Import(import) => self.visit_import(import),
             Stmt::ImportFrom(import_from) => self.visit_import_from(import_from),
             Stmt::FunctionDef(function) => {
+                self.record_decorators(&function.decorator_list);
                 if self.module_level {
                     let line = self.line_number(function);
                     self.record_symbol(
@@ -103,6 +104,7 @@ impl<'a> ModuleVisitor<'a> {
                 self.module_level = saved;
             },
             Stmt::AsyncFunctionDef(function) => {
+                self.record_decorators(&function.decorator_list);
                 if self.module_level {
                     let line = self.line_number(function);
                     self.record_symbol(
@@ -120,6 +122,7 @@ impl<'a> ModuleVisitor<'a> {
                 self.module_level = saved;
             },
             Stmt::ClassDef(class) => {
+                self.record_decorators(&class.decorator_list);
                 if self.module_level {
                     let line = self.line_number(class);
                     self.record_symbol(
@@ -366,6 +369,23 @@ impl<'a> ModuleVisitor<'a> {
             decorators: normalized,
             in_type_checking: self.in_type_checking,
         });
+    }
+
+    /// Record every recognized decorator, nested definitions included.
+    ///
+    /// Plugins (Flask routes, Celery tasks) read these instead of re-opening
+    /// each source file, so app-factory patterns that decorate inside a
+    /// function must land here too.
+    fn record_decorators(&mut self, decorators: &[Expr]) {
+        for decorator in decorators {
+            let Some(name) = normalize_decorator(decorator) else {
+                continue;
+            };
+            let line = self.line_number(decorator);
+            self.parsed
+                .decorator_sites
+                .push(DecoratorSite { name, line });
+        }
     }
 
     fn line_number<R: Ranged>(&mut self, node: &R) -> u32 {

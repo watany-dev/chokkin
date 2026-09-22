@@ -9,7 +9,7 @@ use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots}
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
-use crate::plugins::extract_plugin_hints_with_cache;
+use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
@@ -156,15 +156,6 @@ fn run_analysis_core(
         workspace_members: probe.workspace_members.clone(),
     };
 
-    let plugins = extract_plugin_hints_with_cache(
-        &probe.root,
-        &loaded,
-        &probe.sources,
-        &probe.manifest,
-        Some(&options.cache),
-    )?;
-    let warnings = actionable_plugin_warnings(&plugins);
-
     let target = probe
         .effective_config
         .target_version
@@ -179,6 +170,19 @@ fn run_analysis_core(
         parse_cache.as_mut(),
         Some(&options.cache),
     )?;
+
+    // Step 5 runs after step 6 so Flask and Celery can read decorators off the
+    // parse output instead of re-opening every source file. Nothing in parse
+    // depends on plugin hints.
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &probe.root,
+        config: &loaded,
+        sources: &probe.sources,
+        manifest: &probe.manifest,
+        parse: Some(&parse),
+        cache: Some(&options.cache),
+    })?;
+    let warnings = actionable_plugin_warnings(&plugins);
 
     let entry = build_entry_roots(
         &probe.effective_config,

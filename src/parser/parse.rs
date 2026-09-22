@@ -284,7 +284,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
         manifest_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v2".to_owned(),
+        unit_version: "parse-v3".to_owned(),
     }
 }
 
@@ -382,6 +382,30 @@ mod tests {
             flat_candidates: Vec::new(),
             ambiguous_flat_resolution: false,
         }
+    }
+
+    #[test]
+    fn records_decorator_sites_including_nested_definitions() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = write_temp_py(
+            temp.path(),
+            "app.py",
+            "from flask import Flask\n\n\n@shared_task\ndef refresh():\n    return None\n\n\ndef create_app():\n    app = Flask(__name__)\n\n    @app.route(\"/\")\n    def index():\n        return \"ok\"\n\n    return app\n",
+        );
+        let parsed = parse_file(
+            &root,
+            "app.py",
+            &empty_layout(),
+            FileContext::Runtime,
+            &TargetVersion::default_py311(),
+        )
+        .expect("parse");
+        let sites: Vec<_> = parsed
+            .decorator_sites
+            .iter()
+            .map(|site| (site.name.as_str(), site.line))
+            .collect();
+        assert_eq!(sites, vec![("shared_task", 4), ("app.route", 12)]);
     }
 
     #[test]
