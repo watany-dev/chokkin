@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::VERSION;
 use crate::cache::{
     CacheKeyContext, CacheOptions, ParseCacheKey, ParseCacheStore, SourceFingerprint,
-    stable_hex_hash,
+    stable_list_hash,
 };
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
@@ -184,6 +184,10 @@ pub fn parse_project_sources_with_cache(
     let layout = &sources.layout;
     let mut summary = ParseSummary::empty();
     let context = provisional_parse_cache_context(sources, target);
+    let mut key = ParseCacheKey {
+        context,
+        source: SourceFingerprint::default(),
+    };
 
     for file in &sources.files {
         if file.kind == FileKind::Stub {
@@ -193,7 +197,10 @@ pub fn parse_project_sources_with_cache(
 
         let use_cache = cache.is_some() || disk_cache.is_some();
         let parsed = if use_cache {
-            let key = parse_cache_key(root, &file.path, &context)?;
+            // One key is reused across the loop: every file in a run shares the
+            // same context, so only `source` changes. Cloning the context per
+            // file allocated five strings per source on the warm path.
+            key.source = source_fingerprint(root, &file.path)?;
             if let Some(parsed) = cache
                 .as_deref_mut()
                 .and_then(|cache_store| cache_store.get(&key))
@@ -201,14 +208,14 @@ pub fn parse_project_sources_with_cache(
                 parsed
             } else if let Some(parsed) = read_disk_parse_cache(disk_cache, &root.path, &key)? {
                 if let Some(cache_store) = cache.as_deref_mut() {
-                    cache_store.insert(key, parsed.clone());
+                    cache_store.insert(key.clone(), parsed.clone());
                 }
                 parsed
             } else {
                 let parsed = parse_discovered_file(root, file, layout, target)?;
                 write_disk_parse_cache(disk_cache, &root.path, &key, &parsed)?;
                 if let Some(cache_store) = cache.as_deref_mut() {
-                    cache_store.insert(key, parsed.clone());
+                    cache_store.insert(key.clone(), parsed.clone());
                 }
                 parsed
             }
@@ -281,26 +288,16 @@ fn provisional_parse_cache_context(
 ) -> CacheKeyContext {
     CacheKeyContext {
         chokkin_version: VERSION.to_owned(),
-        config_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
-        manifest_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
+        config_hash: stable_list_hash(&sources.effective_globs),
+        manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
         unit_version: "parse-v3".to_owned(),
     }
 }
 
-fn parse_cache_key(
-    root: &ProjectRoot,
-    path: &str,
-    context: &CacheKeyContext,
-) -> Result<ParseCacheKey, ParseError> {
-    let source = SourceFingerprint::from_root_relative(&root.path, path).map_err(|source| {
-        ParseError::Io {
-            path: root.path.join(path),
-            source,
-        }
-    })?;
-    Ok(ParseCacheKey {
-        context: context.clone(),
+fn source_fingerprint(root: &ProjectRoot, path: &str) -> Result<SourceFingerprint, ParseError> {
+    SourceFingerprint::from_root_relative(&root.path, path).map_err(|source| ParseError::Io {
+        path: root.path.join(path),
         source,
     })
 }
