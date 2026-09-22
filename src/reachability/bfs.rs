@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::entry::EntryPlan;
 use crate::graph::{FileId, FileReachVia, GraphEdge, ModuleId, ModuleOrigin, ProjectGraph};
+use crate::parser::ParseSummary;
 use crate::plugins::{PluginHints, ReferenceOrigin};
 use crate::resolver::import_root;
 
@@ -21,8 +22,8 @@ pub struct BfsOutcome {
     pub used_modules: Vec<UsedModule>,
 }
 
-/// One import site on a file, in graph edge order (static imports first).
-type ImportSite = (ModuleId, u32, bool);
+/// One import site on a file: the module it names and the line it sits on.
+type ImportSite = (ModuleId, u32);
 
 struct BfsState<'a> {
     graph: &'a mut ProjectGraph,
@@ -32,14 +33,19 @@ struct BfsState<'a> {
     reachable: HashSet<FileId>,
     predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
     used_modules: Vec<UsedModule>,
+    dynamic_sites: HashSet<ImportSiteRef>,
     reach_edges: HashSet<(FileId, FileId)>,
 }
+
+/// An import site tagged with the file it appears in.
+type ImportSiteRef = (FileId, ModuleId, u32);
 
 impl<'a> BfsState<'a> {
     fn new(
         graph: &'a mut ProjectGraph,
         module_index: &'a ModuleIndex,
         file_imports: HashMap<FileId, Vec<ImportSite>>,
+        dynamic_sites: HashSet<ImportSiteRef>,
     ) -> Self {
         Self {
             graph,
@@ -49,6 +55,7 @@ impl<'a> BfsState<'a> {
             reachable: HashSet::new(),
             predecessors: indexmap::IndexMap::new(),
             used_modules: Vec::new(),
+            dynamic_sites,
             reach_edges: HashSet::new(),
         }
     }
@@ -77,10 +84,12 @@ pub fn run_reachability_bfs(
     graph: &mut ProjectGraph,
     entry: &EntryPlan,
     plugins: &PluginHints,
+    parse: &ParseSummary,
     module_index: &ModuleIndex,
 ) -> BfsOutcome {
     let file_imports = build_file_import_adjacency(graph);
-    let mut state = BfsState::new(graph, module_index, file_imports);
+    let dynamic_sites = build_dynamic_sites(graph, parse);
+    let mut state = BfsState::new(graph, module_index, file_imports, dynamic_sites);
 
     for root in &entry.roots {
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
@@ -118,7 +127,8 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
         .file(file_id)
         .map_or_else(String::new, |node| node.path.clone());
 
-    for (module_id, line, dynamic) in imports {
+    for (module_id, line) in imports {
+        let dynamic = state.dynamic_sites.contains(&(file_id, module_id, line));
         let Some(module_node) = state.graph.module(module_id) else {
             continue;
         };
@@ -206,20 +216,29 @@ fn enqueue_module_reference(state: &mut BfsState<'_>, module: &str, origin: &Ref
 fn build_file_import_adjacency(graph: &ProjectGraph) -> HashMap<FileId, Vec<ImportSite>> {
     let mut adjacency: HashMap<FileId, Vec<ImportSite>> = HashMap::new();
     for edge in graph.edges() {
-        if let GraphEdge::FileImportsModule {
-            file,
-            module,
-            line,
-            dynamic,
-        } = edge
-        {
-            adjacency
-                .entry(*file)
-                .or_default()
-                .push((*module, *line, *dynamic));
+        if let GraphEdge::FileImportsModule { file, module, line } = edge {
+            adjacency.entry(*file).or_default().push((*module, *line));
         }
     }
     adjacency
+}
+
+/// Import sites that came from `importlib.import_module("m")` rather than an
+/// `import` statement. Both kinds share one `FileImportsModule` edge, so the
+/// parse summary is what distinguishes them.
+fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<ImportSiteRef> {
+    let mut sites = HashSet::new();
+    for module in &parse.modules {
+        let Some(file_id) = graph.file_id(&module.path) else {
+            continue;
+        };
+        for dynamic in &module.dynamic_imports {
+            if let Some(module_id) = graph.module_id(&dynamic.module) {
+                sites.insert((file_id, module_id, dynamic.line));
+            }
+        }
+    }
+    sites
 }
 
 #[cfg(test)]
@@ -235,9 +254,15 @@ mod tests {
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
     };
 
+    const PATHS: [&str; 4] = [
+        "src/acme/main.py",
+        "src/acme/a.py",
+        "src/acme/b.py",
+        "src/acme/c.py",
+    ];
+
     fn parsed(path: &str, imports: &[(&str, u32)], dynamic: &[(&str, u32)]) -> ParsedModule {
         ParsedModule {
-            path: path.to_owned(),
             imports: imports
                 .iter()
                 .map(|(module, line)| ImportRef {
@@ -259,39 +284,26 @@ mod tests {
                     line: *line,
                 })
                 .collect(),
-            attribute_accesses: Vec::new(),
-            symbols: Vec::new(),
-            exports: Vec::new(),
-            ignores: Vec::new(),
-            has_opaque_dynamic_import: false,
-            diagnostics: Vec::new(),
+            ..ParsedModule::empty(path.to_owned())
         }
     }
 
-    #[test]
-    fn dynamic_import_reach_is_recorded_once_and_kept_dynamic() {
-        let root = ProjectRoot {
-            path: std::env::temp_dir(),
-            marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
-        };
-        let paths = [
-            "src/acme/main.py",
-            "src/acme/a.py",
-            "src/acme/b.py",
-            "src/acme/c.py",
-        ];
-        let sources = DiscoveredSources {
+    fn layout() -> LayoutInfo {
+        LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        }
+    }
+
+    fn sources(root: &ProjectRoot) -> DiscoveredSources {
+        DiscoveredSources {
             root: root.clone(),
-            layout: LayoutInfo {
-                layout: ProjectLayout::Src,
-                packages: vec!["acme".to_owned()],
-                inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
-            },
+            layout: layout(),
             effective_globs: Vec::new(),
-            files: paths
+            files: PATHS
                 .iter()
                 .map(|path| DiscoveredFile {
                     path: (*path).to_owned(),
@@ -300,39 +312,11 @@ mod tests {
                 })
                 .collect(),
             warnings: Vec::new(),
-        };
-
-        let mut graph = ProjectGraph::new(root);
-        for path in paths {
-            graph
-                .intern_file(FileNode {
-                    path: path.to_owned(),
-                    context: FileContext::Runtime,
-                    kind: FileKind::Python,
-                })
-                .expect("file");
         }
-        for module in ["acme.a", "acme.b", "acme.c"] {
-            graph.intern_module(module.to_owned(), ModuleOrigin::FirstParty);
-        }
+    }
 
-        let main_id = graph.file_id("src/acme/main.py").expect("main");
-        let b_id = graph.file_id("src/acme/b.py").expect("b");
-        let c_id = graph.file_id("src/acme/c.py").expect("c");
-        add_parsed_imports(
-            &mut graph,
-            main_id,
-            &parsed("src/acme/main.py", &[("acme.a", 1)], &[("acme.b", 2)]),
-        )
-        .expect("main edges");
-        add_parsed_imports(
-            &mut graph,
-            b_id,
-            &parsed("src/acme/b.py", &[], &[("acme.c", 3)]),
-        )
-        .expect("b edges");
-
-        let entry = EntryPlan {
+    fn entry_plan() -> EntryPlan {
+        EntryPlan {
             mode: ResolvedMode {
                 mode: ProjectMode::App,
                 confidence: ResolveConfidence::Certain,
@@ -346,15 +330,80 @@ mod tests {
                 origins: Vec::new(),
             }],
             warnings: Vec::new(),
-        };
-        let plugins = PluginHints {
+        }
+    }
+
+    fn no_plugins() -> PluginHints {
+        PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
             warnings: Vec::new(),
+        }
+    }
+
+    fn graph_with_imports(root: ProjectRoot, modules: &[ParsedModule]) -> ProjectGraph {
+        let mut graph = ProjectGraph::new(root);
+        for path in PATHS {
+            graph
+                .intern_file(FileNode {
+                    path: path.to_owned(),
+                    context: FileContext::Runtime,
+                    kind: FileKind::Python,
+                })
+                .expect("file");
+        }
+        for module in ["acme.a", "acme.b", "acme.c"] {
+            graph.intern_module(module.to_owned(), ModuleOrigin::FirstParty);
+        }
+        for parsed in modules {
+            let file_id = graph.file_id(&parsed.path).expect("parsed file");
+            add_parsed_imports(&mut graph, file_id, parsed).expect("import edges");
+        }
+        graph
+    }
+
+    fn reach_edges(graph: &ProjectGraph) -> Vec<(FileId, FileId, FileReachVia)> {
+        graph
+            .edges()
+            .iter()
+            .filter_map(|edge| match edge {
+                GraphEdge::FileReachesFile { from, to, via } => Some((*from, *to, *via)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dynamic_import_reach_is_recorded_once_and_kept_dynamic() {
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
         };
-        let module_index = ModuleIndex::build(&graph, &sources);
-        let outcome = run_reachability_bfs(&mut graph, &entry, &plugins, &module_index);
+        let modules = vec![
+            parsed("src/acme/main.py", &[("acme.a", 1)], &[("acme.b", 2)]),
+            parsed("src/acme/b.py", &[], &[("acme.c", 3)]),
+        ];
+        let mut graph = graph_with_imports(root.clone(), &modules);
+        let parse = ParseSummary {
+            modules,
+            parsed_count: 2,
+            error_count: 0,
+            skipped_count: 0,
+        };
+
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        let b_id = graph.file_id("src/acme/b.py").expect("b");
+        let c_id = graph.file_id("src/acme/c.py").expect("c");
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let outcome = run_reachability_bfs(
+            &mut graph,
+            &entry_plan(),
+            &no_plugins(),
+            &parse,
+            &module_index,
+        );
 
         assert_eq!(outcome.reachable.len(), 4);
         for (file_id, line) in [(b_id, 2), (c_id, 3)] {
@@ -369,16 +418,9 @@ mod tests {
             );
         }
 
-        let reach_edges: Vec<_> = graph
-            .edges()
-            .iter()
-            .filter_map(|edge| match edge {
-                GraphEdge::FileReachesFile { from, to, via } => Some((*from, *to, *via)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(reach_edges.len(), 3);
-        assert!(reach_edges.contains(&(main_id, b_id, FileReachVia::DynamicImport)));
-        assert!(reach_edges.contains(&(b_id, c_id, FileReachVia::DynamicImport)));
+        let edges = reach_edges(&graph);
+        assert_eq!(edges.len(), 3);
+        assert!(edges.contains(&(main_id, b_id, FileReachVia::DynamicImport)));
+        assert!(edges.contains(&(b_id, c_id, FileReachVia::DynamicImport)));
     }
 }

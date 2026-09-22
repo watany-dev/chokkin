@@ -174,10 +174,7 @@ fn collect_incoming_imports(
     let mut importers = Vec::new();
 
     for edge in graph.edges() {
-        let GraphEdge::FileImportsModule {
-            file, module, line, ..
-        } = edge
-        else {
+        let GraphEdge::FileImportsModule { file, module, line } = edge else {
             continue;
         };
         let Some(module_node) = graph.module(*module) else {

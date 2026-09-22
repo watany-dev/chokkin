@@ -56,7 +56,7 @@ pub fn analyze_reachability_with_cache(
             detail: format!("module index cache I/O failed: {source}"),
         }
     })?;
-    let bfs = run_reachability_bfs(graph, entry, plugins, &module_index);
+    let bfs = run_reachability_bfs(graph, entry, plugins, parse, &module_index);
 
     let framework_used = apply_framework_globs(graph, sources, plugins)?;
     let mut reachable: IndexSet<_> = bfs.reachable.into_iter().collect();
