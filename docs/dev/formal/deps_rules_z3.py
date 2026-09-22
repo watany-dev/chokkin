@@ -63,15 +63,18 @@ def build():
     )
 
     # ---- missing.rs::is_transitive_only -------------------------------------
-    # The queue is seeded with *every* declared dependency name, regardless of
-    # the bucket, and returns true as soon as `current == distribution`.
-    # Hence a directly declared D is "transitive" immediately.
-    is_transitive_only = Or(declared_any, in_closure_of_others)
+    # The queue is seeded with the declared dependency names *other than* D, so
+    # a directly declared D is only "transitive" when some other declared dep
+    # pulls it in.
+    is_transitive_only = in_closure_of_others
 
     # ---- missing.rs::detect_missing_dependencies (no workspace member) ----
     skip_declared = root_declared  # member_declared=false; (!strict && root) || (root && no member)
     skip_non_runtime = And(Not(strict), Or(usage_type, usage_dev_like))
-    proceeds = And(Not(skip_declared), Not(skip_non_runtime))
+    # D declared in any bucket, just not one matching the usage context: §10
+    # leaves that to CHK005 (misplaced).
+    skip_context_mismatch = declared_any
+    proceeds = And(Not(skip_declared), Not(skip_non_runtime), Not(skip_context_mismatch))
     emits_optional_chk003 = And(proceeds, optional_import)
     emits_chk004 = And(proceeds, Not(optional_import), has_lockfile, is_transitive_only)
     emits_chk003 = And(
