@@ -13,7 +13,8 @@ use crate::plugins::extract_plugin_hints_with_cache;
 use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
-    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
+    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary,
+    emit_issues_with_resolution,
 };
 
 use super::error::AnalyzeError;
@@ -245,7 +246,7 @@ fn run_analysis_core(
         &probe.manifest,
     );
 
-    let issues = emit_issues(
+    let issues = emit_issues_with_resolution(
         &reachability,
         &deps,
         &symbols,
@@ -253,6 +254,7 @@ fn run_analysis_core(
         &probe.effective_config,
         overrides,
         &entry.mode,
+        &resolution,
     );
 
     let entry_mode = entry.mode.clone();
