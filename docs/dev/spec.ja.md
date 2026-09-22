@@ -1095,7 +1095,16 @@ config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ 
 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 
-warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
+`benches/pipeline.rs` は約 2KiB の Python module（関数・ループ・条件式）を使い、
+`analyze_cold` / `analyze_warm`、`parse_cold_no_cache` /
+`parse_cold_with_disk_cache` / `parse_disk_warm`、`reachability_cache_on` /
+`reachability_cache_off`、`discover_populated_cache` を測る。
+通常は 1k modules、`CHOKKIN_BENCH_LARGE=1 cargo bench --bench pipeline` で
+5k / 10k も追加する。cold は解析 cache が空の状態であり、OS page cache は消さない。
+fixture 作成・cache 削除・graph clone は計測外。warm parse は in-memory store を渡さず
+CLI と同じ disk reuse を測る。全群は `make bench-save` / `make bench-cmp` の対象になる。
+
+warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `reachability` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
