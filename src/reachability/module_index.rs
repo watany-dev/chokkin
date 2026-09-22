@@ -217,14 +217,14 @@ mod tests {
                 .expect("file");
         }
         assert_ne!(
-            module_index_cache_key(&reordered, &sources).expect("key"),
+            module_index_cache_key(&reordered, &sources),
             module_index_cache_key(&graph, &sources)
         );
 
         let mut flat = sources.clone();
         flat.layout.layout = ProjectLayout::Flat;
         assert_ne!(
-            module_index_cache_key(&graph, &flat).expect("key"),
+            module_index_cache_key(&graph, &flat),
             module_index_cache_key(&graph, &sources)
         );
     }
