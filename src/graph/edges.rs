@@ -25,6 +25,7 @@ pub fn add_parsed_imports(
         graph,
         file_id,
         parsed.imports.iter().map(|i| (i.module.as_str(), i.line)),
+        false,
     );
     push_module_import_edges(
         graph,
@@ -33,6 +34,7 @@ pub fn add_parsed_imports(
             .dynamic_imports
             .iter()
             .map(|i| (i.module.as_str(), i.line)),
+        true,
     );
 
     Ok(())
@@ -42,6 +44,7 @@ fn push_module_import_edges<'a>(
     graph: &mut ProjectGraph,
     file_id: super::types::FileId,
     imports: impl IntoIterator<Item = (&'a str, u32)>,
+    dynamic: bool,
 ) {
     for (module, line) in imports {
         if module.is_empty() {
@@ -52,6 +55,7 @@ fn push_module_import_edges<'a>(
             file: file_id,
             module: module_id,
             line,
+            dynamic,
         });
     }
 }
