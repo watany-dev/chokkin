@@ -145,7 +145,7 @@ fn push_route_module(
     file: &str,
     line: u32,
 ) {
-    let Some(module) = file_module_name(file, &ctx.sources.layout) else {
+    let Some(module) = path_to_module(file, &ctx.sources.layout) else {
         return;
     };
     *found = true;
