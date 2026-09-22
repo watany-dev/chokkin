@@ -72,9 +72,9 @@ pub use manifest::{
     extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
-    DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
-    ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, extract_ignores,
-    parse_file, parse_project_sources, parse_project_sources_with_cache,
+    DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,
+    ParseDiagnostic, ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,
+    extract_ignores, parse_file, parse_project_sources, parse_project_sources_with_cache,
 };
 pub use pipeline::{
     AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,
@@ -83,8 +83,9 @@ pub use pipeline::{
 };
 pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
-    PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
-    extract_plugin_hints, extract_plugin_hints_with_cache,
+    PluginEntry, PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
+    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_cache,
+    extract_plugin_hints_with_parse,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,

@@ -16,7 +16,10 @@ mod util;
 mod warnings;
 
 pub use error::PluginsError;
-pub use extract::{extract_plugin_hints, extract_plugin_hints_with_cache};
+pub use extract::{
+    PluginExtractRequest, extract_plugin_hints, extract_plugin_hints_with_cache,
+    extract_plugin_hints_with_parse,
+};
 pub use types::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
     PluginEntry, PluginHints, ReferenceOrigin, SymbolReference,
