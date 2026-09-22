@@ -92,11 +92,15 @@ Step ==
           /\ edges' = s2[4]
           /\ pc' = "loop"
 
+(* apply_framework_globs records a PluginRef predecessor for every glob   *)
+(* match, so a file only the globs reach still has a trace step.  `@@`     *)
+(* keeps the BFS entry when the file was already reached by an import.    *)
 Done ==
     /\ pc = "loop"
     /\ queue = <<>>
+    /\ pred' = pred @@ [f \in Framework |-> [from |-> None, step |-> "PluginRef"]]
     /\ pc' = "done"
-    /\ UNCHANGED <<queue, reachable, pred, edges>>
+    /\ UNCHANGED <<queue, reachable, edges>>
 
 Next == Step \/ Done
 
