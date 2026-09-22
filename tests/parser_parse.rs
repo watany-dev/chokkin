@@ -463,3 +463,127 @@ fn collect_py_files(
         }
     }
 }
+
+#[test]
+fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("mkdir");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: temp.path().to_path_buf(),
+    };
+    let mut files = Vec::new();
+    for index in 0..8 {
+        let path = format!("src/mod_{index}.py");
+        std::fs::write(temp.path().join(&path), "import requests\n").expect("write source");
+        files.push(chokkin::DiscoveredFile {
+            path,
+            kind: chokkin::FileKind::Python,
+            context: FileContext::Runtime,
+        });
+    }
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        },
+        effective_globs: Vec::new(),
+        files,
+        warnings: Vec::new(),
+    };
+    let target = TargetVersion::default_py311();
+    let cache_options = chokkin::CacheOptions::default();
+
+    let cold =
+        parse_project_sources_with_cache(&root, &sources, &target, None, Some(&cache_options))
+            .expect("cold parse");
+
+    let parse_dir = temp.path().join(".chokkin/cache/parse");
+    let entries: Vec<_> = std::fs::read_dir(&parse_dir)
+        .expect("read parse cache dir")
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "8 sources must share one bundle, found {entries:?}"
+    );
+
+    let mut store = ParseCacheStore::new();
+    let warm = parse_project_sources_with_cache(
+        &root,
+        &sources,
+        &target,
+        Some(&mut store),
+        Some(&cache_options),
+    )
+    .expect("warm parse");
+
+    assert_eq!(cold, warm);
+    assert_eq!(store.stats().stores, 8, "every module came off the bundle");
+}
+
+#[test]
+fn disk_parse_cache_drops_entries_for_vanished_sources() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("mkdir");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: temp.path().to_path_buf(),
+    };
+    let layout = LayoutInfo {
+        layout: ProjectLayout::Src,
+        packages: Vec::new(),
+        inferred_globs: Vec::new(),
+        flat_candidates: Vec::new(),
+        ambiguous_flat_resolution: false,
+    };
+    let discovered = |path: &str| chokkin::DiscoveredFile {
+        path: path.to_owned(),
+        kind: chokkin::FileKind::Python,
+        context: FileContext::Runtime,
+    };
+    for path in ["src/kept.py", "src/gone.py"] {
+        std::fs::write(temp.path().join(path), "import requests\n").expect("write source");
+    }
+    let target = TargetVersion::default_py311();
+    let cache_options = chokkin::CacheOptions::default();
+
+    let both = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout,
+        effective_globs: Vec::new(),
+        files: vec![discovered("src/kept.py"), discovered("src/gone.py")],
+        warnings: Vec::new(),
+    };
+    parse_project_sources_with_cache(&root, &both, &target, None, Some(&cache_options))
+        .expect("first parse");
+
+    let one = chokkin::DiscoveredSources {
+        files: vec![discovered("src/kept.py")],
+        ..both
+    };
+    std::fs::remove_file(temp.path().join("src/gone.py")).expect("remove source");
+    parse_project_sources_with_cache(&root, &one, &target, None, Some(&cache_options))
+        .expect("second parse");
+
+    let parse_dir = temp.path().join(".chokkin/cache/parse");
+    let bundle_path = std::fs::read_dir(&parse_dir)
+        .expect("read parse cache dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .next()
+        .expect("bundle file");
+    let bundle = std::fs::read_to_string(&bundle_path).expect("read bundle");
+    assert!(bundle.contains("src/kept.py"));
+    assert!(
+        !bundle.contains("src/gone.py"),
+        "the removed source must be pruned from the bundle"
+    );
+}

@@ -42,8 +42,8 @@ pub use baseline::{
     apply_baseline_with_overrides, write_baseline,
 };
 pub use cache::{
-    CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheKey, ParseCacheStats,
-    ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
+    CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheBundle, ParseCacheKey,
+    ParseCacheStats, ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
     ScanInputFingerprints, SourceFingerprint,
 };
 pub use cli::{CliArgs, parse_cli_args};

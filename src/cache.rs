@@ -1,6 +1,6 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -54,6 +54,61 @@ impl CacheOptions {
     #[must_use]
     pub fn parse_entry_path(&self, project_root: &Path, key: &ParseCacheKey) -> PathBuf {
         self.directory_path(project_root).join(key.relative_path())
+    }
+
+    /// Absolute path for the persisted parse cache bundle of `context`.
+    #[must_use]
+    pub fn parse_bundle_path(&self, project_root: &Path, context: &CacheKeyContext) -> PathBuf {
+        self.directory_path(project_root)
+            .join(parse_bundle_relative_path(context))
+    }
+
+    /// Read the persisted parse cache bundle for `context`.
+    ///
+    /// A missing or corrupt bundle reads as empty; callers then reparse source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the bundle exists but cannot be read.
+    pub fn read_parse_bundle(
+        &self,
+        project_root: &Path,
+        context: &CacheKeyContext,
+    ) -> io::Result<ParseCacheBundle> {
+        if !self.enabled {
+            return Ok(ParseCacheBundle::default());
+        }
+        let path = self.parse_bundle_path(project_root, context);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(ParseCacheBundle::default());
+            },
+            Err(error) => return Err(error),
+        };
+        Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+    }
+
+    /// Write `bundle` as the parse cache bundle for `context`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the cache directory or bundle cannot be written.
+    pub fn write_parse_bundle(
+        &self,
+        project_root: &Path,
+        context: &CacheKeyContext,
+        bundle: &ParseCacheBundle,
+    ) -> io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let path = self.parse_bundle_path(project_root, context);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let bytes = serde_json::to_vec(bundle).map_err(io::Error::other)?;
+        write_cache_bytes(&path, &bytes)
     }
 
     /// Absolute path for a persisted scan cache entry.
@@ -587,11 +642,72 @@ impl ParseCacheKey {
         format!("{}.json", hasher.finish())
     }
 
+    /// Stable identifier for this key inside a [`ParseCacheBundle`].
+    ///
+    /// Only the source fingerprint varies within one bundle, so the context is
+    /// already covered by the bundle's own file name.
+    #[must_use]
+    pub fn entry_id(&self) -> String {
+        let input = format!(
+            "{}\n{}\n{}\n{}",
+            self.source.path,
+            self.source.size,
+            self.source
+                .modified_ns
+                .map_or_else(String::new, |value| value.to_string()),
+            self.source.content_hash
+        );
+        stable_hex_hash(input.as_bytes())
+    }
+
     /// Project-root-relative path for a persisted parse cache entry.
     #[must_use]
     pub fn relative_path(&self) -> PathBuf {
         PathBuf::from("parse").join(self.file_name())
     }
+}
+
+/// All persisted parse results that share one [`CacheKeyContext`].
+///
+/// Parse output used to be one JSON file per module, which made a cold run
+/// create, write and rename a file per parsed source: on a 1k-file project that
+/// cost more than parsing from scratch. One bundle per context keeps the write
+/// path to a single atomic rename per run and the cache to a single inode.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseCacheBundle {
+    /// Parse results keyed by [`ParseCacheKey::entry_id`].
+    pub entries: BTreeMap<String, ParsedModule>,
+}
+
+impl ParseCacheBundle {
+    /// Return the cached parse result for `key`.
+    #[must_use]
+    pub fn get(&self, key: &ParseCacheKey) -> Option<&ParsedModule> {
+        self.entries.get(&key.entry_id())
+    }
+
+    /// Store `parsed` under `key`.
+    pub fn insert(&mut self, key: &ParseCacheKey, parsed: ParsedModule) {
+        self.entries.insert(key.entry_id(), parsed);
+    }
+
+    /// Whether the bundle holds no entries.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+fn parse_bundle_relative_path(context: &CacheKeyContext) -> PathBuf {
+    let input = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        context.chokkin_version,
+        context.config_hash,
+        context.manifest_hash,
+        context.target_version,
+        context.unit_version
+    );
+    PathBuf::from("parse").join(format!("bundle-{}.json", stable_hex_hash(input.as_bytes())))
 }
 
 /// Parse cache hit/miss counters for observability and tests.

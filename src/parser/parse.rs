@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use crate::VERSION;
 use crate::cache::{
-    CacheKeyContext, CacheOptions, ParseCacheKey, ParseCacheStore, SourceFingerprint,
-    stable_list_hash,
+    CacheKeyContext, CacheOptions, ParseCacheBundle, ParseCacheKey, ParseCacheStore,
+    SourceFingerprint, stable_list_hash,
 };
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
@@ -191,32 +191,20 @@ pub fn parse_project_sources_with_cache(
         cache_store.reserve(sources.files.len());
     }
 
-    let mut summary = ParseSummary::empty();
-    let mut pending: Vec<PendingFile<'_>> = Vec::with_capacity(sources.files.len());
-    for file in &sources.files {
-        if file.kind == FileKind::Stub {
-            summary.skipped_count = summary.skipped_count.saturating_add(1);
-            continue;
-        }
-        let key = if use_cache {
-            Some(parse_cache_key(root, &file.path, &context)?)
-        } else {
-            None
-        };
-        pending.push(PendingFile { file, key });
-    }
+    // The bundle is read once up front and written once at the end. Keeping
+    // only the entries this run touched prunes results for sources that have
+    // since changed or disappeared, so the file tracks the project instead of
+    // growing with every edit.
+    let stored = read_disk_parse_bundle(disk_cache, &root.path, &context)?;
+    let mut retained = ParseCacheBundle::default();
+    let mut bundle_changed = false;
 
-    // `ParseCacheStore` needs `&mut`, so it is drained here rather than from the
-    // workers. Probing exactly once per file also keeps its hit/miss counters
-    // identical to the sequential implementation.
+    let mut summary = ParseSummary::empty();
+    let (pending, skipped) = collect_pending(root, sources, &context, use_cache)?;
+    summary.skipped_count = skipped;
+
     let mut slots: Vec<Option<ParsedModule>> = vec![None; pending.len()];
-    if let Some(store) = cache.as_deref_mut() {
-        for (slot, entry) in slots.iter_mut().zip(&pending) {
-            if let Some(key) = &entry.key {
-                *slot = store.get(key);
-            }
-        }
-    }
+    drain_caches(&pending, &stored, cache.as_deref_mut(), &mut slots);
 
     let outstanding: Vec<usize> = slots
         .iter()
@@ -227,17 +215,27 @@ pub fn parse_project_sources_with_cache(
         root,
         layout,
         target,
-        disk_cache,
         pending: &pending,
         outstanding: &outstanding,
     };
     for (index, parsed) in run_parse_job(&job)? {
+        bundle_changed = true;
         if let Some(store) = cache.as_deref_mut()
             && let Some(key) = &pending[index].key
         {
             store.insert(key.clone(), parsed.clone());
         }
         slots[index] = Some(parsed);
+    }
+
+    if disk_cache.is_some() {
+        for (slot, entry) in slots.iter().zip(&pending) {
+            if let Some(key) = &entry.key
+                && let Some(parsed) = slot
+            {
+                retained.insert(key, parsed.clone());
+            }
+        }
     }
 
     for parsed in slots.into_iter().flatten() {
@@ -252,7 +250,67 @@ pub fn parse_project_sources_with_cache(
         summary.modules.push(parsed);
     }
 
+    if bundle_changed || retained.entries.len() != stored.entries.len() {
+        write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
+    }
+
     Ok(summary)
+}
+
+/// Collect the sources this run has to parse, each with its cache key.
+///
+/// Returns the pending files in discovery order and the number of stubs that
+/// were skipped.
+fn collect_pending<'a>(
+    root: &ProjectRoot,
+    sources: &'a DiscoveredSources,
+    context: &CacheKeyContext,
+    use_cache: bool,
+) -> Result<(Vec<PendingFile<'a>>, u32), ParseError> {
+    let mut pending = Vec::with_capacity(sources.files.len());
+    let mut skipped: u32 = 0;
+    for file in &sources.files {
+        if file.kind == FileKind::Stub {
+            skipped = skipped.saturating_add(1);
+            continue;
+        }
+        let key = if use_cache {
+            Some(parse_cache_key(root, &file.path, context)?)
+        } else {
+            None
+        };
+        pending.push(PendingFile { file, key });
+    }
+    Ok((pending, skipped))
+}
+
+/// Fill `slots` from the in-memory store and the on-disk bundle.
+///
+/// Both caches need `&mut` on the store, so they are drained here rather than
+/// from the workers. Probing exactly once per file also keeps the hit/miss
+/// counters identical to the sequential implementation.
+fn drain_caches(
+    pending: &[PendingFile<'_>],
+    stored: &ParseCacheBundle,
+    mut cache: Option<&mut ParseCacheStore>,
+    slots: &mut [Option<ParsedModule>],
+) {
+    for (slot, entry) in slots.iter_mut().zip(pending) {
+        let Some(key) = &entry.key else {
+            continue;
+        };
+        if let Some(store) = cache.as_deref_mut() {
+            *slot = store.get(key);
+        }
+        if slot.is_none()
+            && let Some(parsed) = stored.get(key).cloned()
+        {
+            if let Some(store) = cache.as_deref_mut() {
+                store.insert(key.clone(), parsed.clone());
+            }
+            *slot = Some(parsed);
+        }
+    }
 }
 
 struct PendingFile<'a> {
@@ -264,7 +322,6 @@ struct ParseJob<'a> {
     root: &'a ProjectRoot,
     layout: &'a LayoutInfo,
     target: &'a TargetVersion,
-    disk_cache: Option<&'a CacheOptions>,
     pending: &'a [PendingFile<'a>],
     outstanding: &'a [usize],
 }
@@ -272,20 +329,13 @@ struct ParseJob<'a> {
 impl ParseJob<'_> {
     fn run_one(&self, index: usize) -> Result<ParsedModule, ParseError> {
         let entry = &self.pending[index];
-        if let Some(key) = &entry.key
-            && let Some(parsed) = read_disk_parse_cache(self.disk_cache, &self.root.path, key)?
-        {
-            return Ok(parsed);
-        }
-        let parsed = parse_discovered_file(self.root, entry.file, self.layout, self.target)?;
-        if let Some(key) = &entry.key {
-            write_disk_parse_cache(self.disk_cache, &self.root.path, key, &parsed)?;
-        }
-        Ok(parsed)
+        parse_discovered_file(self.root, entry.file, self.layout, self.target)
     }
 }
 
-/// Parse (or load from disk cache) every outstanding file, spread over threads.
+/// Parse every outstanding file, spread over threads.
+///
+/// Both caches are drained by the caller, so a worker only ever parses.
 ///
 /// Results carry their slot index because workers finish out of order; the
 /// caller reassembles them in discovery order.
@@ -358,35 +408,35 @@ fn parse_discovered_file(
     }
 }
 
-fn read_disk_parse_cache(
+fn read_disk_parse_bundle(
     cache: Option<&CacheOptions>,
     project_root: &std::path::Path,
-    key: &ParseCacheKey,
-) -> Result<Option<ParsedModule>, ParseError> {
+    context: &CacheKeyContext,
+) -> Result<ParseCacheBundle, ParseError> {
     let Some(cache) = cache else {
-        return Ok(None);
+        return Ok(ParseCacheBundle::default());
     };
     cache
-        .read_parse_entry(project_root, key)
+        .read_parse_bundle(project_root, context)
         .map_err(|source| ParseError::Io {
-            path: cache.parse_entry_path(project_root, key),
+            path: cache.parse_bundle_path(project_root, context),
             source,
         })
 }
 
-fn write_disk_parse_cache(
+fn write_disk_parse_bundle(
     cache: Option<&CacheOptions>,
     project_root: &std::path::Path,
-    key: &ParseCacheKey,
-    parsed: &ParsedModule,
+    context: &CacheKeyContext,
+    bundle: &ParseCacheBundle,
 ) -> Result<(), ParseError> {
     let Some(cache) = cache else {
         return Ok(());
     };
     cache
-        .write_parse_entry(project_root, key, parsed)
+        .write_parse_bundle(project_root, context, bundle)
         .map_err(|source| ParseError::Io {
-            path: cache.parse_entry_path(project_root, key),
+            path: cache.parse_bundle_path(project_root, context),
             source,
         })
 }

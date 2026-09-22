@@ -30,8 +30,10 @@ pub struct ImportRef {
     /// Imported module name (normalized dotted name; empty = unresolved relative).
     pub module: String,
     /// `from … import` symbol name when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Local alias (`as` name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
     /// 1-based source line.
     pub line: u32,
@@ -40,11 +42,21 @@ pub struct ImportRef {
     /// Import context for dependency rules.
     pub context: ImportContext,
     /// `true` when the import appears inside a `try` block body.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
     /// `true` when the import appears under an `if sys.platform …` guard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub platform_guarded: bool,
     /// Relative import dot count (`0` = absolute).
+    #[serde(default, skip_serializing_if = "is_zero_level")]
     pub relative_level: u8,
+}
+
+/// Serialization helper: `relative_level` is `0` for the common absolute import.
+// serde's `skip_serializing_if` hands the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero_level(level: &u8) -> bool {
+    *level == 0
 }
 
 /// A literal dynamic import (`importlib.import_module("…")` or `__import__("…")`).
@@ -102,8 +114,10 @@ pub struct SymbolDef {
     /// Whether the symbol is considered public.
     pub is_public: bool,
     /// Normalized decorator names (`app.get`, `pytest.fixture`, …).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decorators: Vec<String>,
     /// Defined inside a `TYPE_CHECKING` block.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub in_type_checking: bool,
 }
 
@@ -144,22 +158,30 @@ pub struct ParsedModule {
     /// Root-relative path using `/` separators.
     pub path: String,
     /// Extracted import references.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<ImportRef>,
     /// Literal dynamic imports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dynamic_imports: Vec<DynamicImport>,
     /// Attribute accesses for `import module; module.name` symbol tracking.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_accesses: Vec<AttributeAccess>,
     /// Top-level symbol definitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<SymbolDef>,
     /// Normalized decorators seen anywhere in the module.
     pub decorator_sites: Vec<DecoratorSite>,
     /// Names listed in `__all__`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exports: Vec<String>,
     /// Extracted ignore directives.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<IgnoreDirective>,
     /// Non-literal dynamic import was seen.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub has_opaque_dynamic_import: bool,
     /// Non-fatal parse issues.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,
 }
 
