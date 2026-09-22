@@ -200,40 +200,11 @@ pub fn parse_project_sources_with_cache(
     let mut bundle_changed = false;
 
     let mut summary = ParseSummary::empty();
-    let mut pending: Vec<PendingFile<'_>> = Vec::with_capacity(sources.files.len());
-    for file in &sources.files {
-        if file.kind == FileKind::Stub {
-            summary.skipped_count = summary.skipped_count.saturating_add(1);
-            continue;
-        }
-        let key = if use_cache {
-            Some(parse_cache_key(root, &file.path, &context)?)
-        } else {
-            None
-        };
-        pending.push(PendingFile { file, key });
-    }
+    let (pending, skipped) = collect_pending(root, sources, &context, use_cache)?;
+    summary.skipped_count = skipped;
 
-    // Both caches need `&mut` on the store, so they are drained here rather
-    // than from the workers. Probing exactly once per file also keeps the
-    // hit/miss counters identical to the sequential implementation.
     let mut slots: Vec<Option<ParsedModule>> = vec![None; pending.len()];
-    for (slot, entry) in slots.iter_mut().zip(&pending) {
-        let Some(key) = &entry.key else {
-            continue;
-        };
-        if let Some(store) = cache.as_deref_mut() {
-            *slot = store.get(key);
-        }
-        if slot.is_none()
-            && let Some(parsed) = stored.get(key).cloned()
-        {
-            if let Some(store) = cache.as_deref_mut() {
-                store.insert(key.clone(), parsed.clone());
-            }
-            *slot = Some(parsed);
-        }
-    }
+    drain_caches(&pending, &stored, cache.as_deref_mut(), &mut slots);
 
     let outstanding: Vec<usize> = slots
         .iter()
@@ -284,6 +255,62 @@ pub fn parse_project_sources_with_cache(
     }
 
     Ok(summary)
+}
+
+/// Collect the sources this run has to parse, each with its cache key.
+///
+/// Returns the pending files in discovery order and the number of stubs that
+/// were skipped.
+fn collect_pending<'a>(
+    root: &ProjectRoot,
+    sources: &'a DiscoveredSources,
+    context: &CacheKeyContext,
+    use_cache: bool,
+) -> Result<(Vec<PendingFile<'a>>, usize), ParseError> {
+    let mut pending = Vec::with_capacity(sources.files.len());
+    let mut skipped = 0;
+    for file in &sources.files {
+        if file.kind == FileKind::Stub {
+            skipped = skipped.saturating_add(1);
+            continue;
+        }
+        let key = if use_cache {
+            Some(parse_cache_key(root, &file.path, context)?)
+        } else {
+            None
+        };
+        pending.push(PendingFile { file, key });
+    }
+    Ok((pending, skipped))
+}
+
+/// Fill `slots` from the in-memory store and the on-disk bundle.
+///
+/// Both caches need `&mut` on the store, so they are drained here rather than
+/// from the workers. Probing exactly once per file also keeps the hit/miss
+/// counters identical to the sequential implementation.
+fn drain_caches(
+    pending: &[PendingFile<'_>],
+    stored: &ParseCacheBundle,
+    mut cache: Option<&mut ParseCacheStore>,
+    slots: &mut [Option<ParsedModule>],
+) {
+    for (slot, entry) in slots.iter_mut().zip(pending) {
+        let Some(key) = &entry.key else {
+            continue;
+        };
+        if let Some(store) = cache.as_deref_mut() {
+            *slot = store.get(key);
+        }
+        if slot.is_none()
+            && let Some(parsed) = stored.get(key).cloned()
+        {
+            if let Some(store) = cache.as_deref_mut() {
+                store.insert(key.clone(), parsed.clone());
+            }
+            *slot = Some(parsed);
+        }
+    }
 }
 
 struct PendingFile<'a> {
