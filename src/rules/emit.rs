@@ -65,7 +65,7 @@ pub fn emit_issues_with_resolution(
     resolution: &ResolutionIndex,
 ) -> IssueReport {
     let strict = overrides.strict.unwrap_or(false);
-    let matcher = IgnoreMatcher::build_with_resolution(config, parse, resolution);
+    let matcher = IgnoreMatcher::build(config, parse, resolution);
     let confidence_floor = effective_confidence_floor(config, overrides, strict);
 
     let mut candidates = chk001_candidates(&unreachable.unreachable, mode);

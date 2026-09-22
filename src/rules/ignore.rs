@@ -48,15 +48,13 @@ impl IgnoreMatch {
 }
 
 impl IgnoreMatcher {
-    /// Build matchers from config and parsed modules.
+    /// Build matchers from config, parsed modules, and resolved imports.
     ///
     /// Invalid glob patterns are skipped (config validation should catch most).
-    pub fn build(config: &ChokkinConfig, parse: &ParseSummary) -> Self {
-        Self::build_with_resolution(config, parse, &ResolutionIndex::empty())
-    }
-
-    /// Build matchers, resolving distribution names for dependency-rule ignores.
-    pub(crate) fn build_with_resolution(
+    /// `resolution` supplies the distribution names that dependency-rule
+    /// ignores match against (§18); pass [`ResolutionIndex::empty`] when it is
+    /// not available.
+    pub fn build(
         config: &ChokkinConfig,
         parse: &ParseSummary,
         resolution: &ResolutionIndex,
@@ -284,7 +282,8 @@ mod tests {
         config
             .ignore
             .insert("CHK002".to_owned(), vec!["boto3".to_owned()]);
-        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk002,
             subject: IssueSubject::Distribution {
@@ -348,7 +347,7 @@ mod tests {
             rule.as_code().to_owned(),
             patterns.iter().map(|p| (*p).to_owned()).collect(),
         );
-        let matcher = IgnoreMatcher::build_with_resolution(
+        let matcher = IgnoreMatcher::build(
             &config,
             &ParseSummary::empty(),
             &resolution_for(module, distribution),
@@ -390,7 +389,8 @@ mod tests {
         config
             .ignore
             .insert("CHK003".to_owned(), vec!["pyyaml".to_owned()]);
-        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         assert_eq!(
             matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml")),
             IgnoreMatch::None
@@ -416,7 +416,7 @@ mod tests {
             has_opaque_dynamic_import: false,
             diagnostics: Vec::new(),
         });
-        let matcher = IgnoreMatcher::build(&config, &parse);
+        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk003,
             subject: IssueSubject::Import {
@@ -457,7 +457,7 @@ mod tests {
             has_opaque_dynamic_import: false,
             diagnostics: Vec::new(),
         });
-        let matcher = IgnoreMatcher::build(&config, &parse);
+        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -485,7 +485,8 @@ mod tests {
             "CHK006".to_owned(),
             vec!["src/acme/api.py:dead_*".to_owned()],
         );
-        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -513,7 +514,8 @@ mod tests {
         config
             .ignore
             .insert("CHK006".to_owned(), vec!["acme/api:dead_*".to_owned()]);
-        let matcher = IgnoreMatcher::build(&config, &ParseSummary::empty());
+        let matcher =
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
