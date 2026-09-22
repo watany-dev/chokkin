@@ -3,21 +3,23 @@
 use std::collections::HashSet;
 
 use rustpython_parser::ast::Ranged;
-use rustpython_parser::ast::{Alias, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom};
+use rustpython_parser::ast::{
+    Alias, Comprehension, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom,
+};
 use rustpython_parser::source_code::RandomLocator;
 
 use crate::sources::{FileContext, LayoutInfo};
 
-use super::attributes::collect_attribute_accesses;
+use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
-use super::dynamic::collect_dynamic_imports;
+use super::dynamic::{extract_literal_module_call, is_import_module_call};
 use super::exports::extract_exports;
 use super::platform_guard::is_platform_guard_if;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_if;
 use super::types::{
-    ImportContext, ImportKind, ImportRef, ParsedModule, SymbolDef, SymbolKind,
-    import_context_for_file,
+    AttributeAccess, DynamicImport, ImportContext, ImportKind, ImportRef, ParsedModule, SymbolDef,
+    SymbolKind, import_context_for_file,
 };
 
 /// Mutable parse state accumulated while visiting one module.
@@ -66,15 +68,11 @@ impl<'a> ModuleVisitor<'a> {
     }
 
     /// Visit module-level statements.
+    ///
+    /// `__all__` is read first because [`Self::record_symbol`] consults the export
+    /// list to decide whether an underscore-prefixed symbol is public.
     pub fn visit_module(&mut self, stmts: &[Stmt]) {
         self.parsed.exports = extract_exports(stmts, self.locator, &mut self.parsed.diagnostics);
-        collect_dynamic_imports(
-            stmts,
-            self.locator,
-            &mut self.parsed.dynamic_imports,
-            &mut self.parsed.has_opaque_dynamic_import,
-        );
-        collect_attribute_accesses(stmts, self.locator, &mut self.parsed.attribute_accesses);
         for stmt in stmts {
             self.visit_stmt(stmt);
         }
@@ -150,13 +148,30 @@ impl<'a> ModuleVisitor<'a> {
                         }
                     }
                 }
+                for target in &assign.targets {
+                    self.visit_expr(target);
+                }
+                self.visit_expr(&assign.value);
             },
-            Stmt::AnnAssign(ann_assign) if self.module_level => {
-                if let Expr::Name(name) = &*ann_assign.target {
+            Stmt::AnnAssign(ann_assign) => {
+                if self.module_level
+                    && let Expr::Name(name) = &*ann_assign.target
+                {
                     let line = self.line_number(ann_assign);
                     self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
                 }
+                self.visit_expr(&ann_assign.target);
+                if let Some(value) = &ann_assign.value {
+                    self.visit_expr(value);
+                }
             },
+            Stmt::AugAssign(aug_assign) => self.visit_expr(&aug_assign.value),
+            Stmt::Return(return_stmt) => {
+                if let Some(value) = &return_stmt.value {
+                    self.visit_expr(value);
+                }
+            },
+            Stmt::Expr(expr_stmt) => self.visit_expr(&expr_stmt.value),
             Stmt::If(if_stmt) => {
                 let was_type_checking = self.in_type_checking;
                 let was_platform_guard = self.platform_guard_depth;
@@ -236,6 +251,147 @@ impl<'a> ModuleVisitor<'a> {
                 }
             },
             _ => {},
+        }
+    }
+
+    /// Walk one expression for dynamic imports and module attribute accesses.
+    ///
+    /// Both used to be separate full-tree passes; folding them into the statement
+    /// walk keeps cold parse to a single traversal per file.
+    #[allow(clippy::too_many_lines)]
+    fn visit_expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Attribute(attribute) => {
+                if let Some(receiver) = attribute_receiver(&attribute.value) {
+                    let line = self.line_number(attribute);
+                    self.parsed.attribute_accesses.push(AttributeAccess {
+                        receiver,
+                        name: attribute.attr.to_string(),
+                        line,
+                    });
+                }
+                self.visit_expr(&attribute.value);
+            },
+            Expr::Call(call) => {
+                if let Some(module) = extract_literal_module_call(&call.func, &call.args) {
+                    let line = self.line_number(call);
+                    self.parsed
+                        .dynamic_imports
+                        .push(DynamicImport { module, line });
+                } else if is_import_module_call(&call.func) && !call.args.is_empty() {
+                    self.parsed.has_opaque_dynamic_import = true;
+                }
+                self.visit_expr(&call.func);
+                for arg in &call.args {
+                    self.visit_expr(arg);
+                }
+                for keyword in &call.keywords {
+                    self.visit_expr(&keyword.value);
+                }
+            },
+            Expr::BoolOp(bool_op) => {
+                for value in &bool_op.values {
+                    self.visit_expr(value);
+                }
+            },
+            Expr::NamedExpr(named) => self.visit_expr(&named.value),
+            Expr::BinOp(bin_op) => {
+                self.visit_expr(&bin_op.left);
+                self.visit_expr(&bin_op.right);
+            },
+            Expr::UnaryOp(unary) => self.visit_expr(&unary.operand),
+            Expr::Lambda(lambda) => self.visit_expr(&lambda.body),
+            Expr::IfExp(if_exp) => {
+                self.visit_expr(&if_exp.test);
+                self.visit_expr(&if_exp.body);
+                self.visit_expr(&if_exp.orelse);
+            },
+            Expr::Dict(dict) => {
+                for (key, value) in dict.keys.iter().zip(&dict.values) {
+                    if let Some(key) = key {
+                        self.visit_expr(key);
+                    }
+                    self.visit_expr(value);
+                }
+            },
+            Expr::Set(set) => {
+                for value in &set.elts {
+                    self.visit_expr(value);
+                }
+            },
+            Expr::ListComp(list_comp) => {
+                self.visit_expr(&list_comp.elt);
+                self.visit_comprehensions(&list_comp.generators);
+            },
+            Expr::SetComp(set_comp) => {
+                self.visit_expr(&set_comp.elt);
+                self.visit_comprehensions(&set_comp.generators);
+            },
+            Expr::DictComp(dict_comp) => {
+                self.visit_expr(&dict_comp.key);
+                self.visit_expr(&dict_comp.value);
+                self.visit_comprehensions(&dict_comp.generators);
+            },
+            Expr::GeneratorExp(generator) => {
+                self.visit_expr(&generator.elt);
+                self.visit_comprehensions(&generator.generators);
+            },
+            Expr::Await(await_expr) => self.visit_expr(&await_expr.value),
+            Expr::Yield(yield_expr) => {
+                if let Some(value) = &yield_expr.value {
+                    self.visit_expr(value);
+                }
+            },
+            Expr::YieldFrom(yield_from) => self.visit_expr(&yield_from.value),
+            Expr::Compare(compare) => {
+                self.visit_expr(&compare.left);
+                for comparator in &compare.comparators {
+                    self.visit_expr(comparator);
+                }
+            },
+            Expr::Subscript(subscript) => {
+                self.visit_expr(&subscript.value);
+                self.visit_expr(&subscript.slice);
+            },
+            Expr::Starred(starred) => self.visit_expr(&starred.value),
+            Expr::List(list) => {
+                for value in &list.elts {
+                    self.visit_expr(value);
+                }
+            },
+            Expr::Tuple(tuple) => {
+                for value in &tuple.elts {
+                    self.visit_expr(value);
+                }
+            },
+            Expr::FormattedValue(formatted) => self.visit_expr(&formatted.value),
+            Expr::JoinedStr(joined) => {
+                for value in &joined.values {
+                    self.visit_expr(value);
+                }
+            },
+            Expr::Slice(slice) => {
+                if let Some(lower) = &slice.lower {
+                    self.visit_expr(lower);
+                }
+                if let Some(upper) = &slice.upper {
+                    self.visit_expr(upper);
+                }
+                if let Some(step) = &slice.step {
+                    self.visit_expr(step);
+                }
+            },
+            Expr::Constant(_) | Expr::Name(_) => {},
+        }
+    }
+
+    fn visit_comprehensions(&mut self, comprehensions: &[Comprehension]) {
+        for comprehension in comprehensions {
+            self.visit_expr(&comprehension.target);
+            self.visit_expr(&comprehension.iter);
+            for if_clause in &comprehension.ifs {
+                self.visit_expr(if_clause);
+            }
         }
     }
 
@@ -375,4 +531,99 @@ impl<'a> ModuleVisitor<'a> {
 
 fn alias_as_name(alias: &Alias) -> Option<String> {
     alias.asname.as_ref().map(ToString::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use rustpython_parser::Parse;
+    use rustpython_parser::ast::Suite;
+
+    use super::*;
+    use crate::sources::ProjectLayout;
+
+    fn visit_source(source: &str) -> ParsedModule {
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            flat_candidates: Vec::new(),
+            ambiguous_flat_resolution: false,
+        };
+        let mut locator = RandomLocator::new(source);
+        let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &mut locator);
+        visitor.visit_module(&stmts);
+        visitor.into_parsed()
+    }
+
+    #[test]
+    fn collects_module_attribute_accesses() {
+        let parsed =
+            visit_source("import acme.utils\nacme.utils.helper()\nvalue = acme.utils.CONFIG\n");
+        assert!(parsed.attribute_accesses.iter().any(|access| {
+            access.receiver == "acme.utils" && access.name == "helper" && access.line == 2
+        }));
+        assert!(parsed.attribute_accesses.iter().any(|access| {
+            access.receiver == "acme.utils" && access.name == "CONFIG" && access.line == 3
+        }));
+    }
+
+    #[test]
+    fn extracts_importlib_literal() {
+        let parsed = visit_source("import importlib\nimportlib.import_module(\"acme.plugins\")\n");
+        assert_eq!(parsed.dynamic_imports.len(), 1);
+        assert_eq!(parsed.dynamic_imports[0].module, "acme.plugins");
+        assert_eq!(parsed.dynamic_imports[0].line, 2);
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn extracts_importlib_from_assignment() {
+        let parsed =
+            visit_source("import importlib\nmod = importlib.import_module(\"acme.plugins\")\n");
+        assert_eq!(parsed.dynamic_imports.len(), 1);
+        assert_eq!(parsed.dynamic_imports[0].line, 2);
+    }
+
+    #[test]
+    fn extracts_importlib_from_return() {
+        let parsed = visit_source(
+            "import importlib\ndef load():\n    return importlib.import_module(\"acme.plugins\")\n",
+        );
+        assert_eq!(parsed.dynamic_imports.len(), 1);
+        assert_eq!(parsed.dynamic_imports[0].line, 3);
+    }
+
+    #[test]
+    fn extracts_importlib_from_call_argument() {
+        let parsed = visit_source(
+            "import importlib\ndef run(fn):\n    pass\nrun(importlib.import_module(\"acme.plugins\"))\n",
+        );
+        assert_eq!(parsed.dynamic_imports.len(), 1);
+        assert_eq!(parsed.dynamic_imports[0].line, 4);
+    }
+
+    #[test]
+    fn marks_opaque_assignment_with_non_literal() {
+        let parsed = visit_source("import importlib\nmod = importlib.import_module(name)\n");
+        assert!(parsed.dynamic_imports.is_empty());
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn single_walk_reaches_nested_expression_positions() {
+        // These positions were unreachable while attribute collection had its own
+        // statement/expression arm set; the merged walk uses the wider one.
+        let parsed = visit_source(
+            "import acme.utils\n\n\nasync def run(total):\n    total += acme.utils.STEP\n    await acme.utils.flush()\n    return [acme.utils.name(x) for x in acme.utils.items]\n",
+        );
+        for (name, line) in [("STEP", 5), ("flush", 6), ("name", 7), ("items", 7)] {
+            assert!(
+                parsed.attribute_accesses.iter().any(|access| {
+                    access.receiver == "acme.utils" && access.name == name && access.line == line
+                }),
+                "missing acme.utils.{name} at line {line}"
+            );
+        }
+    }
 }
