@@ -266,9 +266,9 @@ fn collect_pending<'a>(
     sources: &'a DiscoveredSources,
     context: &CacheKeyContext,
     use_cache: bool,
-) -> Result<(Vec<PendingFile<'a>>, usize), ParseError> {
+) -> Result<(Vec<PendingFile<'a>>, u32), ParseError> {
     let mut pending = Vec::with_capacity(sources.files.len());
-    let mut skipped = 0;
+    let mut skipped: u32 = 0;
     for file in &sources.files {
         if file.kind == FileKind::Stub {
             skipped = skipped.saturating_add(1);
