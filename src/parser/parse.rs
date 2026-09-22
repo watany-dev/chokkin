@@ -284,7 +284,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_hex_hash(format!("{:?}", sources.effective_globs).as_bytes()),
         manifest_hash: stable_hex_hash(format!("{:?}", sources.layout).as_bytes()),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v2".to_owned(),
+        unit_version: "parse-v3".to_owned(),
     }
 }
 
@@ -293,12 +293,16 @@ fn parse_cache_key(
     path: &str,
     context: &CacheKeyContext,
 ) -> Result<ParseCacheKey, ParseError> {
-    let source = SourceFingerprint::from_root_relative(&root.path, path).map_err(|source| {
-        ParseError::Io {
-            path: root.path.join(path),
-            source,
-        }
-    })?;
+    // `from_root_relative_stat` identifies an unchanged source by `(size,
+    // mtime)` and only reads bytes when that is ambiguous. On a warm run the
+    // whole project used to be read and hashed just to build lookup keys.
+    let source =
+        SourceFingerprint::from_root_relative_stat(&root.path, path).map_err(|source| {
+            ParseError::Io {
+                path: root.path.join(path),
+                source,
+            }
+        })?;
     Ok(ParseCacheKey {
         context: context.clone(),
         source,

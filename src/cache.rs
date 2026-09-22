@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -261,9 +261,18 @@ pub struct SourceFingerprint {
     pub size: u64,
     /// Modified time in nanoseconds since the Unix epoch, when available.
     pub modified_ns: Option<u128>,
-    /// Stable hash of file bytes.
+    /// Stable hash of file bytes, empty when `(size, modified_ns)` alone
+    /// identified the file (see [`SourceFingerprint::from_absolute_stat`]).
     pub content_hash: String,
 }
+
+/// Modification times newer than this are re-hashed instead of trusted.
+///
+/// A filesystem with coarse (1 s) mtime granularity can report an unchanged
+/// stamp for an edit that happened to keep the byte count, so a file touched
+/// within the window is not safe to identify by `(size, mtime)`. Mirrors the
+/// "racily clean" guard git applies to its index.
+const RACY_MTIME_WINDOW: Duration = Duration::from_secs(2);
 
 impl SourceFingerprint {
     /// Build a conservative file fingerprint.
@@ -305,6 +314,55 @@ impl SourceFingerprint {
             content_hash: stable_hex_hash(&bytes),
         })
     }
+
+    /// Build a file fingerprint from `stat` alone where that is unambiguous.
+    ///
+    /// Leaves [`Self::content_hash`] empty when `(size, modified_ns)` already
+    /// identify the file, so a warm cache lookup costs one `stat` per source
+    /// instead of reading and hashing every byte of the project. Falls back to
+    /// [`Self::from_absolute`] when the modified time is missing or falls
+    /// inside [`RACY_MTIME_WINDOW`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_absolute_stat(root: &Path, path: &Path) -> io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        let Some(modified_ns) = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos())
+        else {
+            return Self::from_absolute(root, path);
+        };
+        if is_racy_mtime(modified_ns) {
+            return Self::from_absolute(root, path);
+        }
+        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+        Ok(Self {
+            path: normalize_cache_path(&key_path),
+            size: metadata.len(),
+            modified_ns: Some(modified_ns),
+            content_hash: String::new(),
+        })
+    }
+
+    /// Root-relative variant of [`Self::from_absolute_stat`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_root_relative_stat(root: &Path, path: &str) -> io::Result<Self> {
+        let absolute = root.join(path);
+        Self::from_absolute_stat(root, &absolute)
+    }
+}
+
+fn is_racy_mtime(modified_ns: u128) -> bool {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .is_ok_and(|now| now.as_nanos().saturating_sub(modified_ns) < RACY_MTIME_WINDOW.as_nanos())
 }
 
 fn config_input_fingerprints(
@@ -708,6 +766,51 @@ mod tests {
         assert_eq!(first.path, "src/app.py");
         assert_eq!(second.path, "src/app.py");
         assert_ne!(first.content_hash, second.content_hash);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stat_fingerprint_skips_hashing_a_settled_file() {
+        let root = temp_cache_test_dir("stat-settled");
+        let path = root.join("src/app.py");
+        std::fs::write(&path, "import requests\n").expect("write source");
+        // Backdate past the racy window so the file counts as settled without
+        // making the test sleep.
+        let settled = SystemTime::now() - RACY_MTIME_WINDOW - Duration::from_secs(60);
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open source for retiming");
+        handle
+            .set_times(std::fs::FileTimes::new().set_modified(settled))
+            .expect("backdate mtime");
+        drop(handle);
+
+        let stat = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
+            .expect("stat fingerprint");
+        let full =
+            SourceFingerprint::from_root_relative(&root, "src/app.py").expect("full fingerprint");
+
+        assert_eq!(stat.path, "src/app.py");
+        assert!(stat.content_hash.is_empty());
+        assert_eq!(stat.size, full.size);
+        assert_eq!(stat.modified_ns, full.modified_ns);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stat_fingerprint_hashes_a_just_written_file() {
+        let root = temp_cache_test_dir("stat-racy");
+        let path = root.join("src/app.py");
+        std::fs::write(&path, "import requests\n").expect("write source");
+
+        let fingerprint = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
+            .expect("stat fingerprint");
+
+        assert!(
+            !fingerprint.content_hash.is_empty(),
+            "a file written just now is inside the racy window and must be hashed"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
