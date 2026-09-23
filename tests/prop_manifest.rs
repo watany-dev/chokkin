@@ -35,7 +35,6 @@ fn default_loaded_config(root: &ProjectRoot) -> LoadedConfig {
         root: root.clone(),
         effective: default_config(),
         sources: ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,

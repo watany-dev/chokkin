@@ -270,6 +270,7 @@ mod tests {
 
     fn parsed(path: &str, imports: &[(&str, u32)], dynamic: &[(&str, u32)]) -> ParsedModule {
         ParsedModule {
+            path: path.to_owned(),
             imports: imports
                 .iter()
                 .map(|(module, line)| ImportRef {
@@ -291,7 +292,7 @@ mod tests {
                     line: *line,
                 })
                 .collect(),
-            ..ParsedModule::empty(path.to_owned())
+            ..ParsedModule::default()
         }
     }
 
@@ -391,12 +392,7 @@ mod tests {
             parsed("src/acme/b.py", &[], &[("acme.c", 3)]),
         ];
         let mut graph = graph_with_imports(root.clone(), &modules);
-        let parse = ParseSummary {
-            modules,
-            parsed_count: 2,
-            error_count: 0,
-            skipped_count: 0,
-        };
+        let parse = ParseSummary { modules };
 
         let main_id = graph.file_id("src/acme/main.py").expect("main");
         let b_id = graph.file_id("src/acme/b.py").expect("b");
