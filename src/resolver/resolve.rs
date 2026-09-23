@@ -118,11 +118,15 @@ pub fn resolve_imports(
     Ok(ResolutionIndex {
         imports,
         warnings,
-        transitive: TransitiveIndex {
-            edges: manifest.lockfile.edges.clone(),
-        },
+        transitive: transitive_index(manifest),
         binary_resolutions,
     })
+}
+
+fn transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
+    TransitiveIndex {
+        edges: manifest.lockfile.edges.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
