@@ -31,31 +31,19 @@
   "unreachable": [
     {
       "path": "src/acme/old_api.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "maybe"
     },
     {
       "path": "src/acme/orphan.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "maybe"
     },
     {
       "path": "src/acme/plugin.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "maybe"
     },
     {
       "path": "src/acme/reached_via_main.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "maybe"
     }
   ]
 }

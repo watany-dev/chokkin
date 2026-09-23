@@ -59,21 +59,7 @@ impl PartialConfig {
     /// Returns true when this layer sets at least one field.
     #[must_use]
     pub fn has_any_field(&self) -> bool {
-        self.entry.is_some()
-            || self.project.is_some()
-            || self.mode.is_some()
-            || self.production.is_some()
-            || self.target_version.is_some()
-            || self.respect_gitignore.is_some()
-            || self.confidence.is_some()
-            || self.exclude.is_some()
-            || self.dependencies.is_some()
-            || self.package_module_map.is_some()
-            || self.binary_map.is_some()
-            || self.plugins.is_some()
-            || self.ignore.is_some()
-            || self.severity.is_some()
-            || self.workspaces.is_some()
+        *self != Self::default()
     }
 }
 
@@ -164,9 +150,7 @@ pub fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
             config.binary_map.clone_from(binary_map);
         }
         if let Some(plugins) = &layer.plugins {
-            for (plugin, enabled) in plugins {
-                config.plugins.insert(*plugin, *enabled);
-            }
+            config.plugins.extend(plugins);
         }
         if let Some(ignore) = &layer.ignore {
             config.ignore.clone_from(ignore);
