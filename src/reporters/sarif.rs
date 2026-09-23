@@ -1,8 +1,11 @@
 //! Minimal SARIF v2.1.0 reporter for GitHub code scanning (Phase 3 / v0.3).
 
+use std::path::Path;
+
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::path_util::normalize_rel_path;
 use crate::rules::metadata::default_rule_severity;
 use crate::rules::{
     Issue, IssueReport, RuleId, Severity, issue_fingerprint, rule_help_text, rule_help_uri,
@@ -10,14 +13,9 @@ use crate::rules::{
 };
 
 use super::format::severity_label;
-use super::traits::Reporter;
 use super::types::RenderContext;
 
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
-
-/// SARIF reporter.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SarifReporter;
 
 // Multi-key objects are structs, not `json!`: serde_json's `Value` sorts
 // object keys, which would reorder the SARIF fields.
@@ -69,24 +67,23 @@ struct SarifResult {
     locations: Vec<Value>,
 }
 
-impl Reporter for SarifReporter {
-    fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
-        let log = SarifLog {
-            schema: SARIF_SCHEMA,
-            version: "2.1.0",
-            runs: [SarifRun {
-                tool: SarifTool {
-                    driver: SarifDriver {
-                        name: "chokkin",
-                        semantic_version: context.version,
-                        rules: RuleId::ALL.into_iter().map(sarif_rule).collect(),
-                    },
+/// SARIF reporter.
+pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
+    let log = SarifLog {
+        schema: SARIF_SCHEMA,
+        version: "2.1.0",
+        runs: [SarifRun {
+            tool: SarifTool {
+                driver: SarifDriver {
+                    name: "chokkin",
+                    semantic_version: context.version,
+                    rules: RuleId::ALL.into_iter().map(sarif_rule).collect(),
                 },
-                results: report.issues.iter().map(sarif_result).collect(),
-            }],
-        };
-        serde_json::to_string_pretty(&log).unwrap_or_default()
-    }
+            },
+            results: report.issues.iter().map(sarif_result).collect(),
+        }],
+    };
+    serde_json::to_string_pretty(&log).unwrap_or_default()
 }
 
 fn sarif_rule(rule: RuleId) -> SarifRule {
@@ -124,7 +121,7 @@ fn sarif_locations(issue: &Issue) -> Vec<Value> {
     file.map(|file| {
         json!({
             "physicalLocation": {
-                "artifactLocation": { "uri": sarif_uri(file) },
+                "artifactLocation": { "uri": normalize_rel_path(Path::new(file)) },
                 "region": { "startLine": line.unwrap_or(1) }
             }
         })
@@ -139,8 +136,4 @@ fn sarif_level(severity: Severity) -> &'static str {
         "info" => "note",
         _ => "warning",
     }
-}
-
-fn sarif_uri(path: &str) -> String {
-    path.replace('\\', "/")
 }

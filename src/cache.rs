@@ -1,17 +1,18 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::config::ConfigSources;
+use crate::fix::atomic_write;
 use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
+use crate::path_util::normalize_rel_path;
 
 /// Default cache directory name below the project root.
 pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -65,14 +66,9 @@ impl CacheOptions {
             return Ok(ParseCacheBundle::default());
         }
         let path = self.parse_bundle_path(project_root, context);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(ParseCacheBundle::default());
-            },
-            Err(error) => return Err(error),
-        };
-        Ok(serde_json::from_slice(&bytes).unwrap_or_default())
+        Ok(read_cache_bytes(&path)?
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default())
     }
 
     /// Write `bundle` as the parse cache bundle for `context`.
@@ -103,62 +99,10 @@ impl CacheOptions {
         self.directory_path(project_root).join(key.relative_path())
     }
 
-    /// Read a persisted scan cache record.
-    ///
-    /// Corrupt JSON or key-mismatched entries are treated as misses.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache file exists but cannot be read.
-    pub fn read_scan_record(
-        &self,
-        project_root: &Path,
-        key: &ScanCacheKey,
-    ) -> io::Result<Option<ScanCacheRecord>> {
-        if !self.enabled {
-            return Ok(None);
-        }
-        let path = self.scan_entry_path(project_root, key);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let Ok(record) = serde_json::from_slice::<ScanCacheRecord>(&bytes) else {
-            return Ok(None);
-        };
-        if record.key == *key && record.schema_version == SCAN_CACHE_SCHEMA_VERSION {
-            Ok(Some(record))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Write a persisted scan cache record.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache directory or file cannot be written.
-    pub fn write_scan_record(
-        &self,
-        project_root: &Path,
-        record: &ScanCacheRecord,
-    ) -> io::Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-        let path = self.scan_entry_path(project_root, &record.key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec(record).map_err(io::Error::other)?;
-        write_cache_bytes(&path, &bytes)
-    }
-
     /// Read and deserialize the payload from a persisted scan cache record.
     ///
-    /// Corrupt JSON, key mismatch, missing payload, or incompatible payload shape
-    /// are treated as cache misses.
+    /// Corrupt JSON, key mismatch, schema mismatch, or incompatible payload
+    /// shape are treated as cache misses.
     ///
     /// # Errors
     ///
@@ -171,13 +115,18 @@ impl CacheOptions {
     where
         T: DeserializeOwned,
     {
-        let Some(record) = self.read_scan_record(project_root, key)? else {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let Some(bytes) = read_cache_bytes(&self.scan_entry_path(project_root, key))? else {
             return Ok(None);
         };
-        let Some(payload) = record.payload else {
-            return Ok(None);
-        };
-        Ok(serde_json::from_value(payload).ok())
+        Ok(serde_json::from_slice::<ScanCacheRecord<T>>(&bytes)
+            .ok()
+            .filter(|record| {
+                record.key == *key && record.schema_version == SCAN_CACHE_SCHEMA_VERSION
+            })
+            .map(|record| record.payload))
     }
 
     /// Serialize and write a scan cache payload.
@@ -194,32 +143,39 @@ impl CacheOptions {
     where
         T: Serialize,
     {
-        let payload = serde_json::to_value(payload).map_err(io::Error::other)?;
+        if !self.enabled {
+            return Ok(());
+        }
+        let path = self.scan_entry_path(project_root, &key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let record = ScanCacheRecord {
             key,
             schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: Some(payload),
+            payload,
         };
-        self.write_scan_record(project_root, &record)
+        let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
+        write_cache_bytes(&path, &bytes)
+    }
+}
+
+fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent"))?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-cache-")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    // The atomic rename below keeps readers from ever seeing a torn entry. We
-    // deliberately skip `sync_all()` here: the parse/scan cache is fully
-    // regenerable, the read path treats any corrupt entry as a miss, and a
-    // per-entry fsync dominates cold-cache runs (one fsync per parsed module
-    // makes the first analysis of a large project an order of magnitude slower
-    // than `--no-cache`). Durability across power loss is not worth that cost.
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    // The atomic rename keeps readers from ever seeing a torn entry. We
+    // deliberately skip the fsync: the parse/scan cache is fully regenerable,
+    // the read path treats any corrupt entry as a miss, and a per-entry fsync
+    // dominates cold-cache runs (one fsync per parsed module makes the first
+    // analysis of a large project an order of magnitude slower than
+    // `--no-cache`). Durability across power loss is not worth that cost.
+    atomic_write(path, bytes, false)
 }
 
 /// Stable inputs shared by cache units.
@@ -298,12 +254,8 @@ impl SourceFingerprint {
         let capacity = usize::try_from(metadata.len()).unwrap_or(0);
         let mut bytes = Vec::with_capacity(capacity);
         std::io::Read::read_to_end(&mut file, &mut bytes)?;
-        // `normalize_cache_path` already converts separators and trims a leading
-        // `./`, so feed it the borrowed path directly instead of pre-replacing
-        // (which allocated a second throwaway string per file on the warm path).
-        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
-            path: normalize_cache_path(&key_path),
+            path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: metadata
                 .modified()
@@ -346,9 +298,8 @@ impl SourceFingerprint {
         if is_racy_mtime(modified_ns) {
             return Self::from_absolute(root, path);
         }
-        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
-            path: normalize_cache_path(&key_path),
+            path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: Some(modified_ns),
             content_hash: String::new(),
@@ -492,16 +443,15 @@ fn hash_fingerprints(hasher: &mut CacheKeyHasher, label: &str, fingerprints: &[S
 /// Schema version for scan cache records.
 pub const SCAN_CACHE_SCHEMA_VERSION: &str = "scan-record-v1";
 
-/// JSON-safe envelope for config/manifest scan cache records.
+/// JSON envelope for config/manifest scan cache records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScanCacheRecord {
+pub struct ScanCacheRecord<T> {
     /// Key used to validate this record.
     pub key: ScanCacheKey,
     /// Schema version for the scan cache payload.
     pub schema_version: String,
-    /// Serialized scan result payload.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
+    /// Scan result payload.
+    pub payload: T,
 }
 
 impl ScanInputFingerprints {
@@ -541,25 +491,6 @@ pub struct ParseCacheKey {
     pub context: CacheKeyContext,
     /// Source file fingerprint.
     pub source: SourceFingerprint,
-}
-
-// Ordering compares `source` before `context`. Every key produced by one run
-// shares an identical `context`, so comparing the context first would scan five
-// equal strings before reaching the discriminating `source.path`. Leading with
-// `source` lets each comparison short-circuit on the path. The in-memory store
-// is a `HashMap`, so this only affects callers that sort keys themselves.
-impl Ord for ParseCacheKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.source
-            .cmp(&other.source)
-            .then_with(|| self.context.cmp(&other.context))
-    }
-}
-
-impl PartialOrd for ParseCacheKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl ParseCacheKey {
@@ -604,12 +535,6 @@ impl ParseCacheBundle {
     /// Store `parsed` under `key`.
     pub fn insert(&mut self, key: &ParseCacheKey, parsed: ParsedModule) {
         self.entries.insert(key.entry_id(), parsed);
-    }
-
-    /// Whether the bundle holds no entries.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -679,31 +604,14 @@ impl ParseCacheStore {
     pub const fn stats(&self) -> ParseCacheStats {
         self.stats
     }
-
-    /// Number of entries currently held.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Whether the cache is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
 }
 
-/// Normalize a path for cache keys.
-#[must_use]
-pub fn normalize_cache_path(path: &str) -> String {
-    // Backslashes are rare (Windows-only); skip the replacement allocation on
-    // the common forward-slash path and trim the leading `./` in one owned copy.
-    if path.contains('\\') {
-        let slashed = path.replace('\\', "/");
-        slashed.trim_start_matches("./").to_owned()
-    } else {
-        path.trim_start_matches("./").to_owned()
-    }
+fn cache_key_path(root: &Path, path: &Path) -> String {
+    let mut key = normalize_rel_path(path.strip_prefix(root).unwrap_or(path));
+    // Trim in place: this runs once per source file on the warm-cache path.
+    let prefix_len = key.len() - key.trim_start_matches("./").len();
+    key.replace_range(..prefix_len, "");
+    key
 }
 
 /// Stable 64-bit FNV-1a hash rendered as lowercase hex.
@@ -843,7 +751,7 @@ mod tests {
     #[test]
     fn normalizes_cache_paths() {
         assert_eq!(
-            normalize_cache_path(".\\src\\acme\\main.py"),
+            cache_key_path(Path::new("/repo"), Path::new(".\\src\\acme\\main.py")),
             "src/acme/main.py"
         );
     }
@@ -926,7 +834,6 @@ mod tests {
         )
         .expect("write pyproject");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -946,7 +853,6 @@ mod tests {
         let root = temp_cache_test_dir("scan-manifest");
         std::fs::write(root.join("requirements.txt"), "requests\n").expect("write requirements");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -982,7 +888,10 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let mut cache = ParseCacheStore::new();
 
         assert!(cache.get(&key).is_none());
@@ -993,7 +902,6 @@ mod tests {
         assert_eq!(stats.misses, 1);
         assert_eq!(stats.stores, 1);
         assert_eq!(stats.hits, 1);
-        assert_eq!(cache.len(), 1);
     }
 
     #[test]
@@ -1015,7 +923,7 @@ mod tests {
             .read_parse_bundle(&root, &context)
             .expect("read corrupt cache");
 
-        assert!(bundle.is_empty());
+        assert!(bundle.entries.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1050,86 +958,6 @@ mod tests {
     }
 
     #[test]
-    fn scan_cache_record_is_json_safe() {
-        let record = ScanCacheRecord {
-            key: ScanCacheKey {
-                context: CacheKeyContext {
-                    chokkin_version: "test".to_owned(),
-                    config_hash: "config".to_owned(),
-                    manifest_hash: "manifest".to_owned(),
-                    target_version: "py311".to_owned(),
-                    unit_version: "scan-v1".to_owned(),
-                },
-                inputs: ScanInputFingerprints::default(),
-            },
-            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: None,
-        };
-
-        let bytes = serde_json::to_vec(&record).expect("serialize scan record");
-        let restored: ScanCacheRecord =
-            serde_json::from_slice(&bytes).expect("deserialize scan record");
-
-        assert_eq!(restored, record);
-    }
-
-    #[test]
-    fn scan_cache_record_without_payload_deserializes() {
-        let json = r#"{
-            "key": {
-                "context": {
-                    "chokkin_version": "test",
-                    "config_hash": "config",
-                    "manifest_hash": "manifest",
-                    "target_version": "py311",
-                    "unit_version": "scan-v1"
-                },
-                "inputs": {
-                    "config": [],
-                    "manifest": []
-                }
-            },
-            "schema_version": "scan-record-v1"
-        }"#;
-
-        let restored: ScanCacheRecord =
-            serde_json::from_str(json).expect("deserialize legacy scan record");
-
-        assert_eq!(restored.payload, None);
-    }
-
-    #[test]
-    fn scan_record_round_trips_to_disk() {
-        let root = temp_cache_test_dir("scan-disk");
-        let record = ScanCacheRecord {
-            key: ScanCacheKey {
-                context: CacheKeyContext {
-                    chokkin_version: "test".to_owned(),
-                    config_hash: "config".to_owned(),
-                    manifest_hash: "manifest".to_owned(),
-                    target_version: "py311".to_owned(),
-                    unit_version: "scan-v1".to_owned(),
-                },
-                inputs: ScanInputFingerprints::default(),
-            },
-            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: None,
-        };
-        let options = CacheOptions::default();
-
-        options
-            .write_scan_record(&root, &record)
-            .expect("write scan cache");
-        let restored = options
-            .read_scan_record(&root, &record.key)
-            .expect("read scan cache")
-            .expect("cache hit");
-
-        assert_eq!(restored, record);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn corrupt_scan_record_is_cache_miss() {
         let root = temp_cache_test_dir("scan-corrupt");
         let key = ScanCacheKey {
@@ -1149,7 +977,7 @@ mod tests {
 
         assert_eq!(
             options
-                .read_scan_record(&root, &key)
+                .read_scan_payload::<serde_json::Value>(&root, &key)
                 .expect("read corrupt cache"),
             None
         );
@@ -1176,7 +1004,7 @@ mod tests {
         let record = ScanCacheRecord {
             key: stored,
             schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: None,
+            payload: (),
         };
         std::fs::write(
             &path,
@@ -1186,7 +1014,7 @@ mod tests {
 
         assert_eq!(
             CacheOptions::default()
-                .read_scan_record(&root, &expected)
+                .read_scan_payload::<()>(&root, &expected)
                 .expect("read mismatched cache"),
             None
         );
@@ -1211,7 +1039,7 @@ mod tests {
         let record = ScanCacheRecord {
             key: key.clone(),
             schema_version: "scan-record-v0".to_owned(),
-            payload: None,
+            payload: (),
         };
         std::fs::write(
             &path,
@@ -1221,7 +1049,7 @@ mod tests {
 
         assert_eq!(
             CacheOptions::default()
-                .read_scan_record(&root, &key)
+                .read_scan_payload::<()>(&root, &key)
                 .expect("read schema-mismatched cache"),
             None
         );
@@ -1283,14 +1111,9 @@ mod tests {
             },
             inputs: ScanInputFingerprints::default(),
         };
-        let record = ScanCacheRecord {
-            key: key.clone(),
-            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: Some(serde_json::json!({"other": "shape"})),
-        };
         CacheOptions::default()
-            .write_scan_record(&root, &record)
-            .expect("write scan record");
+            .write_scan_payload(&root, key.clone(), &serde_json::json!({"other": "shape"}))
+            .expect("write scan payload");
 
         let restored: Option<Payload> = CacheOptions::default()
             .read_scan_payload(&root, &key)

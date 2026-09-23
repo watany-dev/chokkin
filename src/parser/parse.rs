@@ -68,7 +68,10 @@ fn parse_python_source(
             parsed
         },
         Err(error) => {
-            let mut parsed = ParsedModule::empty(path.to_owned());
+            let mut parsed = ParsedModule {
+                path: path.to_owned(),
+                ..ParsedModule::default()
+            };
             parsed
                 .diagnostics
                 .push(syntax_diagnostic(path, &mut locator, &error, target));
@@ -95,7 +98,10 @@ fn parse_notebook_file(
     let extracted = match notebook_python_source(&source) {
         Ok(source) => source,
         Err(message) => {
-            let mut parsed = ParsedModule::empty(path.to_owned());
+            let mut parsed = ParsedModule {
+                path: path.to_owned(),
+                ..ParsedModule::default()
+            };
             parsed.diagnostics.push(ParseDiagnostic {
                 line: 0,
                 message,
@@ -198,9 +204,7 @@ pub fn parse_project_sources_with_cache(
     let mut retained = ParseCacheBundle::default();
     let mut bundle_changed = false;
 
-    let mut summary = ParseSummary::empty();
-    let (pending, skipped) = collect_pending(root, sources, &context, use_cache)?;
-    summary.skipped_count = skipped;
+    let pending = collect_pending(root, sources, &context, use_cache)?;
 
     let mut slots: Vec<Option<ParsedModule>> = vec![None; pending.len()];
     drain_caches(&pending, &stored, cache.as_deref_mut(), &mut slots);
@@ -237,17 +241,9 @@ pub fn parse_project_sources_with_cache(
         }
     }
 
-    for parsed in slots.into_iter().flatten() {
-        let has_syntax_error = parsed
-            .diagnostics
-            .iter()
-            .any(|diag| diag.severity == ParseSeverity::Error);
-        if has_syntax_error {
-            summary.error_count = summary.error_count.saturating_add(1);
-        }
-        summary.parsed_count = summary.parsed_count.saturating_add(1);
-        summary.modules.push(parsed);
-    }
+    let summary = ParseSummary {
+        modules: slots.into_iter().flatten().collect(),
+    };
 
     if bundle_changed || retained.entries.len() != stored.entries.len() {
         write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
@@ -258,19 +254,16 @@ pub fn parse_project_sources_with_cache(
 
 /// Collect the sources this run has to parse, each with its cache key.
 ///
-/// Returns the pending files in discovery order and the number of stubs that
-/// were skipped.
+/// Returns the pending files in discovery order; stubs are skipped.
 fn collect_pending<'a>(
     root: &ProjectRoot,
     sources: &'a DiscoveredSources,
     context: &CacheKeyContext,
     use_cache: bool,
-) -> Result<(Vec<PendingFile<'a>>, u32), ParseError> {
+) -> Result<Vec<PendingFile<'a>>, ParseError> {
     let mut pending = Vec::with_capacity(sources.files.len());
-    let mut skipped: u32 = 0;
     for file in &sources.files {
         if file.kind == FileKind::Stub {
-            skipped = skipped.saturating_add(1);
             continue;
         }
         let key = if use_cache {
@@ -280,7 +273,7 @@ fn collect_pending<'a>(
         };
         pending.push(PendingFile { file, key });
     }
-    Ok((pending, skipped))
+    Ok(pending)
 }
 
 /// Fill `slots` from the in-memory store and the on-disk bundle.
@@ -403,7 +396,10 @@ fn parse_discovered_file(
     match file.kind {
         FileKind::Python => parse_file(root, &file.path, layout, file.context, target),
         FileKind::Notebook => parse_notebook_file(root, &file.path, layout, file.context, target),
-        FileKind::Stub => Ok(ParsedModule::empty(file.path.clone())),
+        FileKind::Stub => Ok(ParsedModule {
+            path: file.path.clone(),
+            ..ParsedModule::default()
+        }),
     }
 }
 
@@ -630,7 +626,7 @@ mod tests {
         let summary =
             parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
 
-        assert_eq!(summary.parsed_count, u32::try_from(count).expect("count"));
+        assert_eq!(summary.modules.len(), count);
         let actual: Vec<String> = summary
             .modules
             .iter()

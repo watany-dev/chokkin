@@ -1,29 +1,24 @@
 //! GitHub Actions annotation reporter (Phase 2 / v0.2).
 
 use std::fmt::Write as _;
+use std::path::Path;
 
+use crate::path_util::normalize_rel_path;
 use crate::rules::{Issue, IssueReport};
 
 use super::format::{baseline_suppressed_count, format_issue_subject};
-use super::traits::Reporter;
-use super::types::RenderContext;
 
 /// GitHub Actions workflow-command reporter.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GithubReporter;
-
-impl Reporter for GithubReporter {
-    fn render(&self, report: &IssueReport, _context: &RenderContext) -> String {
-        let mut out = String::new();
-        for issue in &report.issues {
-            render_annotation(&mut out, issue);
-        }
-        let suppressed = baseline_suppressed_count(report);
-        if suppressed > 0 {
-            let _ = writeln!(out, "chokkin: baseline suppressed {suppressed} issues");
-        }
-        out
+pub(super) fn render(report: &IssueReport) -> String {
+    let mut out = String::new();
+    for issue in &report.issues {
+        render_annotation(&mut out, issue);
     }
+    let suppressed = baseline_suppressed_count(report);
+    if suppressed > 0 {
+        let _ = writeln!(out, "chokkin: baseline suppressed {suppressed} issues");
+    }
+    out
 }
 
 fn render_annotation(out: &mut String, issue: &Issue) {
@@ -48,7 +43,10 @@ fn render_annotation(out: &mut String, issue: &Issue) {
             .and_then(|origin| origin.line)
     });
     if let Some(file) = file {
-        properties.push(format!("file={}", escape_property(&github_path(file))));
+        properties.push(format!(
+            "file={}",
+            escape_property(&normalize_rel_path(Path::new(file)))
+        ));
     }
     if let Some(line) = line {
         properties.push(format!("line={line}"));
@@ -73,8 +71,4 @@ fn escape_message(value: &str) -> String {
         .replace('%', "%25")
         .replace('\r', "%0D")
         .replace('\n', "%0A")
-}
-
-fn github_path(path: &str) -> String {
-    path.replace('\\', "/")
 }

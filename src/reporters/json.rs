@@ -1,19 +1,18 @@
 //! JSON reporter (v0.3 stable schema).
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::Serialize;
 
+use crate::path_util::normalize_rel_path;
 use crate::rules::{Issue, IssueReport, IssueSubject, issue_fingerprint, issue_stable_target};
-use crate::schema::JSON_REPORT_SCHEMA_VERSION;
 
 use super::format::{baseline_suppressed_count, severity_label};
-use super::traits::Reporter;
 use super::types::RenderContext;
 
-/// JSON reporter for machine-readable output.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct JsonReporter;
+/// JSON reporter `schema_version` for the v0.3 stable contract.
+const JSON_REPORT_SCHEMA_VERSION: &str = "1";
 
 #[derive(Serialize)]
 struct JsonReport<'a> {
@@ -62,42 +61,43 @@ struct JsonManifest {
     line: Option<u32>,
 }
 
-impl Reporter for JsonReporter {
-    fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
-        let json = JsonReport {
-            schema_version: JSON_REPORT_SCHEMA_VERSION,
-            version: context.version,
-            project: context.project_name.as_deref().unwrap_or("(unknown)"),
-            mode: context.mode.mode.as_str(),
-            production: context.production,
-            issues: report.issues.iter().map(json_issue).collect(),
-            summary: JsonSummary {
-                total: report.summary.total,
-                by_code: report
-                    .summary
-                    .by_rule
-                    .iter()
-                    .map(|(rule, count)| (rule.as_code(), *count))
-                    .collect(),
-            },
-            suppressed: JsonSuppressed {
-                baseline: baseline_suppressed_count(report),
-            },
-        };
-        serde_json::to_string_pretty(&json).unwrap_or_default()
-    }
+/// JSON reporter for machine-readable output.
+pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
+    let json = JsonReport {
+        schema_version: JSON_REPORT_SCHEMA_VERSION,
+        version: context.version,
+        project: context.project_name.as_deref().unwrap_or("(unknown)"),
+        mode: context.mode.mode.as_str(),
+        production: context.production,
+        issues: report.issues.iter().map(json_issue).collect(),
+        summary: JsonSummary {
+            total: report.summary.total,
+            by_code: report
+                .summary
+                .by_rule
+                .iter()
+                .map(|(rule, count)| (rule.as_code(), *count))
+                .collect(),
+        },
+        suppressed: JsonSuppressed {
+            baseline: baseline_suppressed_count(report),
+        },
+    };
+    serde_json::to_string_pretty(&json).unwrap_or_default()
 }
 
 fn json_issue(issue: &Issue) -> JsonIssue<'_> {
     let (path, distribution, symbol, binary) = match &issue.subject {
-        IssueSubject::File { path } => (Some(normalize_path(path)), None, None, None),
+        IssueSubject::File { path } => {
+            (Some(normalize_rel_path(Path::new(path))), None, None, None)
+        },
         IssueSubject::Distribution { name } => (None, Some(name.as_str()), None, None),
         IssueSubject::Symbol { module, name } => {
             (None, None, Some(format!("{module}:{name}")), None)
         },
         IssueSubject::Binary { name } => (None, None, None, Some(name.as_str())),
         IssueSubject::Import { module, file, line } => {
-            let path = normalize_path(file);
+            let path = normalize_rel_path(Path::new(file));
             let symbol = format!("{path}:{line} {module}");
             (Some(path), None, Some(symbol), None)
         },
@@ -110,19 +110,19 @@ fn json_issue(issue: &Issue) -> JsonIssue<'_> {
         fingerprint: issue_fingerprint(issue),
         target: issue_stable_target(issue),
         workspace_member: issue.workspace_member.as_deref(),
-        file: issue.location.file.as_deref().map(normalize_path),
+        file: issue
+            .location
+            .file
+            .as_deref()
+            .map(|file| normalize_rel_path(Path::new(file))),
         line: issue.location.line,
         path,
         distribution,
         symbol,
         binary,
         manifest: issue.location.manifest.as_ref().map(|origin| JsonManifest {
-            file: normalize_path(&origin.file),
+            file: normalize_rel_path(Path::new(&origin.file)),
             line: origin.line,
         }),
     }
-}
-
-fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/")
 }

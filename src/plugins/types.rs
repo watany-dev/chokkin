@@ -66,17 +66,6 @@ pub struct FrameworkUsedGlob {
     pub origin: ReferenceOrigin,
 }
 
-/// Override file context assigned in Step 4 (§10).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileContextOverride {
-    /// Root-relative file or glob path.
-    pub path: String,
-    /// Context to apply.
-    pub context: FileContext,
-    /// Discovery origin.
-    pub origin: ReferenceOrigin,
-}
-
 /// Output from one enabled plugin extractor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginContribution {
@@ -92,8 +81,6 @@ pub struct PluginContribution {
     pub binary_usages: Vec<BinaryUsage>,
     /// Framework-used file globs.
     pub framework_used_globs: Vec<FrameworkUsedGlob>,
-    /// File context overrides.
-    pub file_context_overrides: Vec<FileContextOverride>,
 }
 
 impl PluginContribution {
@@ -107,7 +94,6 @@ impl PluginContribution {
             symbol_refs: Vec::new(),
             binary_usages: Vec::new(),
             framework_used_globs: Vec::new(),
-            file_context_overrides: Vec::new(),
         }
     }
 }
