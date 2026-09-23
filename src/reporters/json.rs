@@ -1,11 +1,13 @@
 //! JSON reporter (v0.3 stable schema).
 
-use std::fmt::Write as _;
+use std::collections::BTreeMap;
+
+use serde::Serialize;
 
 use crate::rules::{Issue, IssueReport, IssueSubject, issue_fingerprint, issue_stable_target};
 use crate::schema::JSON_REPORT_SCHEMA_VERSION;
 
-use super::format::{baseline_suppressed_count, json_string};
+use super::format::{baseline_suppressed_count, severity_label};
 use super::traits::Reporter;
 use super::types::RenderContext;
 
@@ -13,193 +15,114 @@ use super::types::RenderContext;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JsonReporter;
 
+#[derive(Serialize)]
+struct JsonReport<'a> {
+    schema_version: &'static str,
+    version: &'static str,
+    project: &'a str,
+    mode: &'static str,
+    production: bool,
+    issues: Vec<JsonIssue<'a>>,
+    summary: JsonSummary,
+    suppressed: JsonSuppressed,
+}
+
+#[derive(Serialize)]
+struct JsonSummary {
+    total: u32,
+    by_code: BTreeMap<&'static str, u32>,
+}
+
+#[derive(Serialize)]
+struct JsonSuppressed {
+    baseline: usize,
+}
+
+#[derive(Serialize)]
+struct JsonIssue<'a> {
+    code: &'static str,
+    severity: &'static str,
+    confidence: &'static str,
+    message: &'a str,
+    fingerprint: String,
+    target: String,
+    workspace_member: Option<&'a str>,
+    file: Option<String>,
+    line: Option<u32>,
+    path: Option<String>,
+    distribution: Option<&'a str>,
+    symbol: Option<String>,
+    binary: Option<&'a str>,
+    manifest: Option<JsonManifest>,
+}
+
+#[derive(Serialize)]
+struct JsonManifest {
+    file: String,
+    line: Option<u32>,
+}
+
 impl Reporter for JsonReporter {
     fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
-        let mut out = String::new();
-        let _ = writeln!(out, "{{");
-        let _ = writeln!(
-            out,
-            "  \"schema_version\": {},",
-            json_string(JSON_REPORT_SCHEMA_VERSION)
-        );
-        let _ = writeln!(out, "  \"version\": {},", json_string(context.version));
-        let _ = writeln!(
-            out,
-            "  \"project\": {},",
-            json_string(context.project_name.as_deref().unwrap_or("(unknown)"))
-        );
-        let _ = writeln!(
-            out,
-            "  \"mode\": {},",
-            json_string(context.mode.mode.as_str())
-        );
-        let _ = writeln!(
-            out,
-            "  \"production\": {},",
-            if context.production { "true" } else { "false" }
-        );
-        let _ = writeln!(out, "  \"issues\": [");
-        for (index, issue) in report.issues.iter().enumerate() {
-            if index > 0 {
-                let _ = writeln!(out, ",");
-            }
-            render_issue(&mut out, issue);
-        }
-        let _ = writeln!(out, "\n  ],");
-        let _ = writeln!(out, "  \"summary\": {{");
-        let _ = writeln!(out, "    \"total\": {},", report.summary.total);
-        let _ = write!(out, "    \"by_code\": {{");
-        let mut first = true;
-        for (rule, count) in &report.summary.by_rule {
-            if !first {
-                let _ = write!(out, ",");
-            }
-            first = false;
-            let _ = write!(out, "\n      {}: {count}", json_string(rule.as_code()));
-        }
-        if !report.summary.by_rule.is_empty() {
-            let _ = writeln!(out);
-        }
-        let _ = writeln!(out, "    }}");
-        let _ = writeln!(out, "  }},");
-        let _ = writeln!(out, "  \"suppressed\": {{");
-        let _ = writeln!(
-            out,
-            "    \"baseline\": {}",
-            baseline_suppressed_count(report)
-        );
-        let _ = writeln!(out, "  }}");
-        let _ = write!(out, "}}");
-        out
+        let json = JsonReport {
+            schema_version: JSON_REPORT_SCHEMA_VERSION,
+            version: context.version,
+            project: context.project_name.as_deref().unwrap_or("(unknown)"),
+            mode: context.mode.mode.as_str(),
+            production: context.production,
+            issues: report.issues.iter().map(json_issue).collect(),
+            summary: JsonSummary {
+                total: report.summary.total,
+                by_code: report
+                    .summary
+                    .by_rule
+                    .iter()
+                    .map(|(rule, count)| (rule.as_code(), *count))
+                    .collect(),
+            },
+            suppressed: JsonSuppressed {
+                baseline: baseline_suppressed_count(report),
+            },
+        };
+        serde_json::to_string_pretty(&json).unwrap_or_default()
     }
 }
 
-fn render_issue(out: &mut String, issue: &Issue) {
-    let _ = writeln!(out, "    {{");
-    let _ = writeln!(
-        out,
-        "      \"code\": {},",
-        json_string(issue.rule.as_code())
-    );
-    let _ = writeln!(
-        out,
-        "      \"severity\": {},",
-        json_string(super::format::severity_label(issue.severity))
-    );
-    let _ = writeln!(
-        out,
-        "      \"confidence\": {},",
-        json_string(issue.confidence.as_str())
-    );
-    let _ = writeln!(out, "      \"message\": {},", json_string(&issue.message));
-    let target = issue_stable_target(issue);
-    let _ = writeln!(
-        out,
-        "      \"fingerprint\": {},",
-        json_string(&issue_fingerprint(issue))
-    );
-    let _ = writeln!(out, "      \"target\": {},", json_string(&target));
-    let _ = writeln!(
-        out,
-        "      \"workspace_member\": {},",
-        optional_json_string(issue.workspace_member.as_deref())
-    );
-    let _ = writeln!(
-        out,
-        "      \"file\": {},",
-        optional_json_path(issue.location.file.as_deref())
-    );
-    let _ = writeln!(
-        out,
-        "      \"line\": {},",
-        issue
-            .location
-            .line
-            .map_or_else(|| "null".to_owned(), |line| line.to_string())
-    );
-    append_subject_fields(out, &issue.subject);
-    let _ = write!(out, "      \"manifest\": ");
-    if let Some(origin) = &issue.location.manifest {
-        let _ = writeln!(out, "{{");
-        let _ = writeln!(
-            out,
-            "        \"file\": {},",
-            json_string(&normalize_path(&origin.file))
-        );
-        let _ = writeln!(
-            out,
-            "        \"line\": {}",
-            origin
-                .line
-                .map_or_else(|| "null".to_owned(), |line| line.to_string())
-        );
-        let _ = write!(out, "      }}");
-    } else {
-        let _ = write!(out, "null");
+fn json_issue(issue: &Issue) -> JsonIssue<'_> {
+    let (path, distribution, symbol, binary) = match &issue.subject {
+        IssueSubject::File { path } => (Some(normalize_path(path)), None, None, None),
+        IssueSubject::Distribution { name } => (None, Some(name.as_str()), None, None),
+        IssueSubject::Symbol { module, name } => {
+            (None, None, Some(format!("{module}:{name}")), None)
+        },
+        IssueSubject::Binary { name } => (None, None, None, Some(name.as_str())),
+        IssueSubject::Import { module, file, line } => {
+            let path = normalize_path(file);
+            let symbol = format!("{path}:{line} {module}");
+            (Some(path), None, Some(symbol), None)
+        },
+    };
+    JsonIssue {
+        code: issue.rule.as_code(),
+        severity: severity_label(issue.severity),
+        confidence: issue.confidence.as_str(),
+        message: &issue.message,
+        fingerprint: issue_fingerprint(issue),
+        target: issue_stable_target(issue),
+        workspace_member: issue.workspace_member.as_deref(),
+        file: issue.location.file.as_deref().map(normalize_path),
+        line: issue.location.line,
+        path,
+        distribution,
+        symbol,
+        binary,
+        manifest: issue.location.manifest.as_ref().map(|origin| JsonManifest {
+            file: normalize_path(&origin.file),
+            line: origin.line,
+        }),
     }
-    let _ = writeln!(out);
-    let _ = write!(out, "    }}");
-}
-
-fn optional_json_string(value: Option<&str>) -> String {
-    value.map_or_else(|| "null".to_owned(), json_string)
-}
-
-fn optional_json_path(value: Option<&str>) -> String {
-    value.map_or_else(
-        || "null".to_owned(),
-        |path| json_string(&normalize_path(path)),
-    )
 }
 
 fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
-}
-
-fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
-    match subject {
-        IssueSubject::File { path } => {
-            let _ = writeln!(
-                out,
-                "      \"path\": {},",
-                json_string(&normalize_path(path))
-            );
-            let _ = writeln!(out, "      \"distribution\": null,");
-            let _ = writeln!(out, "      \"symbol\": null,");
-            let _ = writeln!(out, "      \"binary\": null,");
-        },
-        IssueSubject::Distribution { name } => {
-            let _ = writeln!(out, "      \"path\": null,");
-            let _ = writeln!(out, "      \"distribution\": {},", json_string(name));
-            let _ = writeln!(out, "      \"symbol\": null,");
-            let _ = writeln!(out, "      \"binary\": null,");
-        },
-        IssueSubject::Symbol { module, name } => {
-            let _ = writeln!(out, "      \"path\": null,");
-            let _ = writeln!(out, "      \"distribution\": null,");
-            let _ = writeln!(
-                out,
-                "      \"symbol\": {},",
-                json_string(&format!("{module}:{name}"))
-            );
-            let _ = writeln!(out, "      \"binary\": null,");
-        },
-        IssueSubject::Binary { name } => {
-            let _ = writeln!(out, "      \"path\": null,");
-            let _ = writeln!(out, "      \"distribution\": null,");
-            let _ = writeln!(out, "      \"symbol\": null,");
-            let _ = writeln!(out, "      \"binary\": {},", json_string(name));
-        },
-        IssueSubject::Import { module, file, line } => {
-            let path = normalize_path(file);
-            let _ = writeln!(out, "      \"path\": {},", json_string(&path));
-            let _ = writeln!(out, "      \"distribution\": null,");
-            let _ = writeln!(
-                out,
-                "      \"symbol\": {},",
-                json_string(&format!("{path}:{line} {module}"))
-            );
-            let _ = writeln!(out, "      \"binary\": null,");
-        },
-    }
 }
