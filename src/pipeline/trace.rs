@@ -4,9 +4,7 @@ use std::fmt::Write;
 
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::graph::{FileId, GraphEdge, ProjectGraph};
-use crate::reachability::{
-    ModuleIndex, ReachabilityReport, TracePath, TraceStep, UnreachableReason, trace_to_file,
-};
+use crate::reachability::{ModuleIndex, ReachabilityReport, TracePath, TraceStep, trace_to_file};
 use crate::sources::DiscoveredSources;
 
 /// Normalize a user-supplied path for graph lookup.
@@ -77,11 +75,7 @@ fn format_negative_trace(
     file_id: FileId,
 ) -> String {
     let mut out = format!("Negative trace for {target}:\n\n");
-    let _ = write!(
-        out,
-        "  reason: {}\n\n",
-        unreachable_reason_label(report, target)
-    );
+    out.push_str("  reason: not reachable from any entry root\n\n");
 
     out.push_str("  entry roots analyzed:\n");
     if entry.roots.is_empty() {
@@ -125,34 +119,6 @@ fn format_negative_trace(
     out.push('\n');
     out.push_str("  suggestion: add to [tool.chokkin].entry or verify import chain\n");
     out
-}
-
-fn unreachable_reason_label(report: &ReachabilityReport, target: &str) -> String {
-    let Some(file) = report
-        .unreachable
-        .iter()
-        .find(|candidate| candidate.path == target)
-    else {
-        return "not reachable from any entry root".to_owned();
-    };
-
-    file.reasons
-        .iter()
-        .copied()
-        .map(format_unreachable_reason)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn format_unreachable_reason(reason: UnreachableReason) -> String {
-    match reason {
-        UnreachableReason::NotReachable => "not reachable from any entry root".to_owned(),
-        UnreachableReason::ExcludedInit => "excluded __init__.py".to_owned(),
-        UnreachableReason::ExcludedStub => "excluded stub".to_owned(),
-        UnreachableReason::ExcludedTestContext => "excluded test context".to_owned(),
-        UnreachableReason::ExcludedProductionContext => "excluded in production".to_owned(),
-        UnreachableReason::FrameworkUsed => "framework-used".to_owned(),
-    }
 }
 
 fn format_entry_origin(origin: &EntryOrigin) -> String {
@@ -304,13 +270,11 @@ mod tests {
             UnreachableFile {
                 file: legacy_id,
                 path: "src/acme/legacy.py".to_owned(),
-                reasons: vec![UnreachableReason::NotReachable],
                 max_confidence: Confidence::Certain,
             },
             UnreachableFile {
                 file: old_api_id,
                 path: "src/acme/old_api.py".to_owned(),
-                reasons: vec![UnreachableReason::NotReachable],
                 max_confidence: Confidence::Certain,
             },
         ];
