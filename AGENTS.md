@@ -76,7 +76,6 @@ src/
                   `severity.rs` / `metadata.rs` for Phase 3 overrides)
   reporters/      Built-in reporters: default, compact, json, markdown,
                   github, sarif
-  schema/         JSON/baseline `schema_version` constants (Phase 3)
   fix/            Optional manifest fixes (step 13: `apply_fixes`; atomic writes, root containment)
 pyproject.toml    maturin bin bindings — chokkin ships as a Python wheel
 docs/dev/

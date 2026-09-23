@@ -72,11 +72,7 @@ pub fn config_label(sources: &ConfigSources, pyproject_label: &str) -> String {
         parts.push(pyproject_label.to_owned());
     }
     if parts.is_empty() {
-        if sources.used_defaults {
-            "defaults".to_owned()
-        } else {
-            "(none)".to_owned()
-        }
+        "defaults".to_owned()
     } else {
         parts.join(", ")
     }

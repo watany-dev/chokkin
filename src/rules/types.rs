@@ -190,13 +190,6 @@ pub struct IssueCandidate {
     pub explain: ExplainData,
 }
 
-/// Non-fatal diagnostic from dependency reconciliation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReconcileDiagnostic {
-    /// Diagnostic message.
-    pub message: String,
-}
-
 /// Output of pipeline step 10.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DependencyReport {
@@ -204,8 +197,6 @@ pub struct DependencyReport {
     pub candidates: Vec<IssueCandidate>,
     /// Distributions considered used during reconciliation.
     pub used_distributions: IndexSet<String>,
-    /// Non-fatal reconciliation notes.
-    pub diagnostics: Vec<ReconcileDiagnostic>,
 }
 
 /// Manifest boundary for a single workspace member during dependency reconciliation.

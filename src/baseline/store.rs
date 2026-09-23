@@ -13,9 +13,10 @@ use crate::rules::{
     IssueReport, SuppressReason, SuppressedIssue, issue_fingerprint, issue_stable_target,
 };
 
-use super::types::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, current_baseline_schema_version,
-};
+use super::types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
+
+/// Baseline file `schema_version` written by chokkin v0.3+.
+const BASELINE_SCHEMA_VERSION: &str = "1";
 
 /// Apply a baseline file by suppressing matching issues.
 ///
@@ -110,7 +111,7 @@ pub fn write_baseline(
         .collect::<Vec<_>>();
     let written = u32::try_from(issues.len()).unwrap_or(u32::MAX);
     let file = BaselineFile {
-        schema_version: current_baseline_schema_version().to_owned(),
+        schema_version: BASELINE_SCHEMA_VERSION.to_owned(),
         chokkin_version: VERSION.to_owned(),
         generated_at: generated_at(),
         issues,
