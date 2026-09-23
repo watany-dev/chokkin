@@ -659,6 +659,11 @@
       "target": "tests/fixtures/symbols/unused_export/src/acme/utils.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/helpers.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/unused_reexport/src/acme/helpers.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/symbols/unused_reexport/src/acme/main.py"
