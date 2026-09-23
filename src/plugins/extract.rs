@@ -312,12 +312,19 @@ mod tests {
 
     fn cached_binaries(root_path: &Path, cache: &CacheOptions) -> BTreeSet<String> {
         let (loaded, sources, manifest) = scan_cache_fixture(root_path);
-        extract_plugin_hints_with_cache(&loaded.root, &loaded, &sources, &manifest, Some(cache))
-            .expect("extract hints")
-            .config_binary_usages
-            .into_iter()
-            .map(|usage| usage.binary)
-            .collect()
+        extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: None,
+            cache: Some(cache),
+        })
+        .expect("extract hints")
+        .config_binary_usages
+        .into_iter()
+        .map(|usage| usage.binary)
+        .collect()
     }
 
     #[test]
