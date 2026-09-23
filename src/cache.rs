@@ -12,6 +12,7 @@ use crate::config::ConfigSources;
 use crate::fix::atomic_write;
 use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
+use crate::path_util::normalize_rel_path;
 
 /// Default cache directory name below the project root.
 pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -253,12 +254,8 @@ impl SourceFingerprint {
         let capacity = usize::try_from(metadata.len()).unwrap_or(0);
         let mut bytes = Vec::with_capacity(capacity);
         std::io::Read::read_to_end(&mut file, &mut bytes)?;
-        // `normalize_cache_path` already converts separators and trims a leading
-        // `./`, so feed it the borrowed path directly instead of pre-replacing
-        // (which allocated a second throwaway string per file on the warm path).
-        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
-            path: normalize_cache_path(&key_path),
+            path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: metadata
                 .modified()
@@ -301,9 +298,8 @@ impl SourceFingerprint {
         if is_racy_mtime(modified_ns) {
             return Self::from_absolute(root, path);
         }
-        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
-            path: normalize_cache_path(&key_path),
+            path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: Some(modified_ns),
             content_hash: String::new(),
@@ -610,17 +606,12 @@ impl ParseCacheStore {
     }
 }
 
-/// Normalize a path for cache keys.
-#[must_use]
-pub fn normalize_cache_path(path: &str) -> String {
-    // Backslashes are rare (Windows-only); skip the replacement allocation on
-    // the common forward-slash path and trim the leading `./` in one owned copy.
-    if path.contains('\\') {
-        let slashed = path.replace('\\', "/");
-        slashed.trim_start_matches("./").to_owned()
-    } else {
-        path.trim_start_matches("./").to_owned()
-    }
+fn cache_key_path(root: &Path, path: &Path) -> String {
+    let mut key = normalize_rel_path(path.strip_prefix(root).unwrap_or(path));
+    // Trim in place: this runs once per source file on the warm-cache path.
+    let prefix_len = key.len() - key.trim_start_matches("./").len();
+    key.replace_range(..prefix_len, "");
+    key
 }
 
 /// Stable 64-bit FNV-1a hash rendered as lowercase hex.
@@ -760,7 +751,7 @@ mod tests {
     #[test]
     fn normalizes_cache_paths() {
         assert_eq!(
-            normalize_cache_path(".\\src\\acme\\main.py"),
+            cache_key_path(Path::new("/repo"), Path::new(".\\src\\acme\\main.py")),
             "src/acme/main.py"
         );
     }

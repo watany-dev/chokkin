@@ -271,7 +271,7 @@ entry = ["src/worker/__main__.py"]
 project = ["src/**/*.py", "tests/**/*.py"]
 ```
 
-uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
+uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。CHK003 / CHK004 / CHK005 の振り分けは「import元 member に宣言があればそれを、なければ root の宣言を」見る共通 lookup で行い、1 importにつきどれか1つだけを出す（member が宣言していなくても root で dev-only なら CHK005）。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
 
 `chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
 
@@ -575,6 +575,8 @@ entry roots
 
 project files - reachable files = unused file candidates
 ```
+
+`from pkg import name` は `pkg` に加えて、`pkg.name` が first-party module に解決できればその file への import edge としても辿る（Python は `name` が submodule ならそれを読み込むため）。相対 import の `from . import name` と同じ規則になる。
 
 ただし、以下はデフォルトで除外または低confidenceにする。
 
@@ -1108,7 +1110,7 @@ warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使�
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
-Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果がある場合はその decorator site を、無い単体 API 呼び出しでは行単位のテキスト走査を使うが、どちらも同じ正規化名と判定関数で判定する。
+Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果がある場合はその decorator site を、無い単体 API 呼び出しや構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査を使うが、どちらも同じ正規化名と判定関数で判定する。
 
 Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 

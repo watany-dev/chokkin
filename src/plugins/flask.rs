@@ -115,7 +115,7 @@ fn extract_route_modules(
 ) {
     if let Some(parse) = ctx.parse {
         for module in &parse.modules {
-            let Some(line) = decorator_line(module, is_route_decorator) else {
+            let Some(line) = decorator_line(&ctx.root.path, module, is_route_decorator) else {
                 continue;
             };
             push_route_module(ctx, contrib, found, &module.path, line);
