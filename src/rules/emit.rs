@@ -258,7 +258,6 @@ mod tests {
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
-            reasons: vec![crate::reachability::UnreachableReason::NotReachable],
             max_confidence: Confidence::Certain,
         });
 
@@ -287,7 +286,6 @@ mod tests {
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
-            reasons: vec![crate::reachability::UnreachableReason::NotReachable],
             max_confidence: Confidence::Certain,
         });
 
