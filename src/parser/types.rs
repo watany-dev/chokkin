@@ -96,10 +96,13 @@ pub enum SymbolKind {
 /// records the definition line and only for module-level symbols.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecoratorSite {
-    /// Normalized dotted decorator name (`app.route`, `shared_task`, …).
+    /// Normalized dotted decorator name (`app.route`, `shared_task`, …); a
+    /// subscript receiver keeps only its base (`apps[].route`).
     pub name: String,
     /// 1-based line of the decorator itself.
     pub line: u32,
+    /// Written as a call (`@app.route("/")`) rather than bare (`@app.route`).
+    pub is_call: bool,
 }
 
 /// A top-level symbol definition for Step 11.
