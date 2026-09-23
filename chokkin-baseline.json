@@ -119,9 +119,19 @@
       "target": "tests/fixtures/deps/unused_boto3/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_misplaced/services/api/src/api/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/workspace_member_misplaced/services/api/src/api/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_root_dev/services/api/src/api/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/workspace_member_root_dev/services/api/src/api/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_strict/services/api/src/api/main.py",
