@@ -1,4 +1,4 @@
-//! Issue reporter types and traits (pipeline step 12).
+//! Issue reporters (pipeline step 12).
 
 mod compact;
 mod default;
@@ -7,18 +7,11 @@ mod github;
 mod json;
 mod markdown;
 mod sarif;
-mod traits;
 mod types;
 
-pub use compact::CompactReporter;
 pub(crate) use default::config_label;
-pub use default::{DefaultReporter, config_label_from_sources};
+pub use default::config_label_from_sources;
 pub use format::format_subject;
-pub use github::GithubReporter;
-pub use json::JsonReporter;
-pub use markdown::MarkdownReporter;
-pub use sarif::SarifReporter;
-pub use traits::Reporter;
 pub use types::{RenderContext, ReporterId};
 
 use crate::rules::IssueReport;
@@ -27,11 +20,11 @@ use crate::rules::IssueReport;
 #[must_use]
 pub fn render_issues(id: ReporterId, report: &IssueReport, context: &RenderContext) -> String {
     match id {
-        ReporterId::Default => DefaultReporter.render(report, context),
-        ReporterId::Compact => CompactReporter.render(report, context),
-        ReporterId::Json => JsonReporter.render(report, context),
-        ReporterId::Markdown => MarkdownReporter.render(report, context),
-        ReporterId::Github => GithubReporter.render(report, context),
-        ReporterId::Sarif => SarifReporter.render(report, context),
+        ReporterId::Default => default::render(report, context),
+        ReporterId::Compact => compact::render(report, context),
+        ReporterId::Json => json::render(report, context),
+        ReporterId::Markdown => markdown::render(report, context),
+        ReporterId::Github => github::render(report),
+        ReporterId::Sarif => sarif::render(report, context),
     }
 }

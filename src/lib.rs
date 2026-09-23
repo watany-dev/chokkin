@@ -34,7 +34,6 @@ pub mod reachability;
 pub mod reporters;
 pub mod resolver;
 pub mod rules;
-pub mod schema;
 pub mod sources;
 
 pub use baseline::{
@@ -50,8 +49,7 @@ pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
     LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, SeverityLevel, TargetVersion,
-    UvWorkspaceHint, WorkspaceMemberSource, WorkspaceOverride, apply_overrides, default_config,
-    load_config,
+    UvWorkspaceHint, WorkspaceOverride, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
@@ -82,18 +80,16 @@ pub use pipeline::{
     write_probe_warnings,
 };
 pub use plugins::{
-    BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
-    PluginEntry, PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
+    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry,
+    PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
     SymbolReference, extract_plugin_hints, extract_plugin_hints_with_parse,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
-    analyze_reachability, analyze_reachability_with_cache, path_to_module, trace_to_file,
+    analyze_reachability, path_to_module, trace_to_file,
 };
 pub use reporters::{
-    CompactReporter, DefaultReporter, GithubReporter, JsonReporter, MarkdownReporter,
-    RenderContext, Reporter, ReporterId, SarifReporter, config_label_from_sources, format_subject,
-    render_issues,
+    RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
 };
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
@@ -101,8 +97,8 @@ pub use resolver::{
 };
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
-    SymbolId, SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
+    IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue, SymbolId,
+    SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
     emit_issues_with_resolution, explain_issue, issue_fingerprint, issue_stable_target,
     reconcile_dependencies,
 };

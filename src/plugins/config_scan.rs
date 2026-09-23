@@ -602,7 +602,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let manifest = empty_manifest(root.clone());
-        let parse = ParseSummary::empty();
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
@@ -649,7 +649,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let manifest = empty_manifest(root.clone());
-        let parse = ParseSummary::empty();
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
@@ -725,7 +725,7 @@ mod tests {
             files: Vec::new(),
             warnings: Vec::new(),
         };
-        let parse = ParseSummary::empty();
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
@@ -792,7 +792,7 @@ mod tests {
             files: Vec::new(),
             warnings: Vec::new(),
         };
-        let parse = ParseSummary::empty();
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,

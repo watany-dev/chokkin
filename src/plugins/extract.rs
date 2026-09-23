@@ -198,7 +198,6 @@ mod tests {
             root: root.clone(),
             effective: config,
             sources: crate::config::ConfigSources {
-                used_defaults: true,
                 dot_chokkin_toml: None,
                 chokkin_toml: None,
                 pyproject_tool_chokkin: false,
@@ -233,7 +232,7 @@ mod tests {
             &loaded,
             &sources,
             &manifest,
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
         )
         .expect("extract hints");
         assert!(hints.contributions.is_empty());
@@ -260,7 +259,6 @@ mod tests {
             root: root.clone(),
             effective: crate::default_config(),
             sources: crate::config::ConfigSources {
-                used_defaults: true,
                 dot_chokkin_toml: None,
                 chokkin_toml: None,
                 pyproject_tool_chokkin: false,
@@ -294,7 +292,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let cache = CacheOptions::default();
-        let parse = ParseSummary::empty();
+        let parse = ParseSummary::default();
         let request = PluginExtractRequest {
             root: &loaded.root,
             config: &loaded,
