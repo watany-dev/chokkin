@@ -576,6 +576,8 @@ entry roots
 project files - reachable files = unused file candidates
 ```
 
+`from pkg import name` は `pkg` に加えて、`pkg.name` が first-party module に解決できればその file への import edge としても辿る（Python は `name` が submodule ならそれを読み込むため）。相対 import の `from . import name` と同じ規則になる。
+
 ただし、以下はデフォルトで除外または低confidenceにする。
 
 ```text
