@@ -7,8 +7,10 @@ use crate::config::PluginId;
 use crate::resolver::{VenvIndex, build_binary_map};
 
 use super::context::PluginContext;
-use super::types::{BinaryUsage, PluginContribution, ReferenceOrigin};
-use super::util::{read_pyproject_table, relative_path};
+use super::types::{PluginContribution, ReferenceOrigin};
+use super::util::{
+    leading_spaces, origin_for_file, push_binary, read_pyproject_table, relative_path,
+};
 use super::warnings::PluginsWarning;
 
 /// Extract static dev-tool config hints.
@@ -64,15 +66,7 @@ fn extract_file_or_tool_table(
         if !path.is_file() {
             continue;
         }
-        push_binary(
-            contrib,
-            binary,
-            ReferenceOrigin {
-                file: relative_path(root, &path),
-                line: None,
-                label: (*label).to_owned(),
-            },
-        );
+        push_binary(contrib, binary, origin_for_file(root, &path, *label));
         return;
     }
 
@@ -91,22 +85,11 @@ fn extract_file_or_tool_table(
             push_binary(
                 contrib,
                 binary,
-                ReferenceOrigin {
-                    file: relative_path(root, &pyproject),
-                    line: None,
-                    label: format!("tool.{key}"),
-                },
+                origin_for_file(root, &pyproject, format!("tool.{key}")),
             );
             return;
         }
     }
-}
-
-fn push_binary(contrib: &mut PluginContribution, binary: &str, origin: ReferenceOrigin) {
-    contrib.binary_usages.push(BinaryUsage {
-        binary: binary.to_owned(),
-        origin,
-    });
 }
 
 fn extract_github_actions(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) {
@@ -219,10 +202,6 @@ fn workflow_run_value(line: &str) -> Option<WorkflowRunValue<'_>> {
         .or_else(|| trimmed.strip_prefix("- run:"))
         .map(str::trim)?;
     Some(WorkflowRunValue { indent, command })
-}
-
-fn leading_spaces(line: &str) -> usize {
-    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 fn is_workflow_block_scalar(command: &str) -> bool {

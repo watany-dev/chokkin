@@ -13,9 +13,13 @@ use crate::manifest::util::{
     path_is_within_root, read_to_string, relative_path as manifest_relative_path,
 };
 use crate::parser::ParsedModule;
+use crate::sources::{FileKind, path_to_module};
 
+use super::context::PluginContext;
 use super::error::PluginsError;
-use super::types::ReferenceOrigin;
+use super::types::{
+    BinaryUsage, ModuleReference, PluginContribution, ReferenceOrigin, SymbolReference,
+};
 
 /// INI section key-value pairs.
 pub type IniSection = BTreeMap<String, String>;
@@ -25,13 +29,98 @@ pub type IniSection = BTreeMap<String, String>;
 /// Decorator sites come from the step 6 AST walk in visit order, so nested
 /// definitions can precede later top-level ones; take the minimum line to keep
 /// reporting the first occurrence in the file.
-pub fn decorator_line(module: &ParsedModule, matches: fn(&str) -> bool) -> Option<u32> {
+fn decorator_line(module: &ParsedModule, matches: fn(&str) -> bool) -> Option<u32> {
     module
         .decorator_sites
         .iter()
         .filter(|site| matches(&site.name))
         .map(|site| site.line)
         .min()
+}
+
+/// Push a module reference for each Python source with a matching decorator.
+///
+/// Uses the step 6 decorator sites when available; `text_scan` is the
+/// line-based fallback for standalone callers. Returns whether any reference
+/// was pushed.
+pub fn push_decorated_modules(
+    ctx: &PluginContext<'_>,
+    contrib: &mut PluginContribution,
+    is_decorator: fn(&str) -> bool,
+    text_scan: fn(&str) -> Option<u32>,
+    label: &str,
+) -> bool {
+    let mut found = false;
+    if let Some(parse) = ctx.parse {
+        for module in &parse.modules {
+            let Some(line) = decorator_line(module, is_decorator) else {
+                continue;
+            };
+            found |= push_decorated_module(ctx, contrib, &module.path, line, label);
+        }
+        return found;
+    }
+
+    // Standalone callers run before step 6, so there is nothing to reuse.
+    for file in &ctx.sources.files {
+        if file.kind != FileKind::Python {
+            continue;
+        }
+        let path = ctx.root.path.join(&file.path);
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Some(line) = text_scan(&contents) else {
+            continue;
+        };
+        found |= push_decorated_module(ctx, contrib, &file.path, line, label);
+    }
+    found
+}
+
+fn push_decorated_module(
+    ctx: &PluginContext<'_>,
+    contrib: &mut PluginContribution,
+    file: &str,
+    line: u32,
+    label: &str,
+) -> bool {
+    let Some(module) = path_to_module(file, &ctx.sources.layout) else {
+        return false;
+    };
+    contrib.module_refs.push(ModuleReference {
+        module,
+        origin: ReferenceOrigin {
+            file: file.to_owned(),
+            line: Some(line),
+            label: label.to_owned(),
+        },
+    });
+    true
+}
+
+/// Push a symbol reference when `value` parses as `module:symbol`.
+pub fn push_symbol_ref(contrib: &mut PluginContribution, value: &str, origin: ReferenceOrigin) {
+    if let Some((module, symbol)) = parse_module_symbol(value) {
+        contrib.symbol_refs.push(SymbolReference {
+            module,
+            symbol,
+            origin,
+        });
+    }
+}
+
+/// Record a CLI binary usage.
+pub fn push_binary(contrib: &mut PluginContribution, binary: &str, origin: ReferenceOrigin) {
+    contrib.binary_usages.push(BinaryUsage {
+        binary: binary.to_owned(),
+        origin,
+    });
+}
+
+/// Count leading ASCII spaces (YAML indentation).
+pub fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 /// Split a normalized decorator name into its receiver and final attribute.
