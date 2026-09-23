@@ -25,10 +25,15 @@ pub struct BfsOutcome {
 /// One import site on a file: the module it names and the line it sits on.
 type ImportSite = (ModuleId, u32);
 
+/// A `from pkg import name` site where `pkg.name` is itself a first-party
+/// module: the resolved file, the dotted submodule name, and the line.
+type SubmoduleSite = (FileId, String, u32);
+
 struct BfsState<'a> {
     graph: &'a mut ProjectGraph,
     module_index: &'a ModuleIndex,
     file_imports: HashMap<FileId, Vec<ImportSite>>,
+    submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
     queue: VecDeque<FileId>,
     reachable: HashSet<FileId>,
     predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
@@ -45,12 +50,14 @@ impl<'a> BfsState<'a> {
         graph: &'a mut ProjectGraph,
         module_index: &'a ModuleIndex,
         file_imports: HashMap<FileId, Vec<ImportSite>>,
+        submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
         dynamic_sites: HashSet<ImportSiteRef>,
     ) -> Self {
         Self {
             graph,
             module_index,
             file_imports,
+            submodule_imports,
             queue: VecDeque::new(),
             reachable: HashSet::new(),
             predecessors: indexmap::IndexMap::new(),
@@ -88,8 +95,15 @@ pub fn run_reachability_bfs(
     module_index: &ModuleIndex,
 ) -> BfsOutcome {
     let file_imports = build_file_import_adjacency(graph);
+    let submodule_imports = build_submodule_imports(graph, parse, module_index);
     let dynamic_sites = build_dynamic_sites(graph, parse);
-    let mut state = BfsState::new(graph, module_index, file_imports, dynamic_sites);
+    let mut state = BfsState::new(
+        graph,
+        module_index,
+        file_imports,
+        submodule_imports,
+        dynamic_sites,
+    );
 
     for root in &entry.roots {
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
@@ -178,6 +192,17 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
             ModuleOrigin::Unknown => {},
         }
     }
+
+    let submodules = state.submodule_imports.remove(&file_id).unwrap_or_default();
+    for (target, module, line) in submodules {
+        enqueue_resolved_module(
+            state,
+            target,
+            file_id,
+            TraceStep::Import { module, line },
+            FileReachVia::Import,
+        );
+    }
 }
 
 fn enqueue_resolved_module(
@@ -228,6 +253,37 @@ fn build_file_import_adjacency(graph: &ProjectGraph) -> HashMap<FileId, Vec<Impo
         }
     }
     adjacency
+}
+
+/// `from pkg import name` loads `pkg.name` when that is a submodule, so each
+/// such site reaches the submodule's file as well as `pkg` itself.
+fn build_submodule_imports(
+    graph: &ProjectGraph,
+    parse: &ParseSummary,
+    module_index: &ModuleIndex,
+) -> HashMap<FileId, Vec<SubmoduleSite>> {
+    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
+    for module in &parse.modules {
+        let Some(file_id) = graph.file_id(&module.path) else {
+            continue;
+        };
+        for import in &module.imports {
+            let Some(name) = import.name.as_deref() else {
+                continue;
+            };
+            if import.module.is_empty() {
+                continue;
+            }
+            let submodule = format!("{}.{name}", import.module);
+            if let Some(target) = module_index.resolve(&submodule) {
+                sites
+                    .entry(file_id)
+                    .or_default()
+                    .push((target, submodule, import.line));
+            }
+        }
+    }
+    sites
 }
 
 /// Import sites that came from `importlib.import_module("m")` rather than an
@@ -469,5 +525,56 @@ mod tests {
             reach_edges(&graph),
             vec![(main_id, a_id, FileReachVia::Import)]
         );
+    }
+
+    #[test]
+    fn from_package_import_submodule_reaches_the_submodule() {
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        };
+        let from_import = |name: &str, line: u32| ImportRef {
+            module: "acme".to_owned(),
+            name: Some(name.to_owned()),
+            alias: None,
+            line,
+            kind: ImportKind::ImportFrom,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            relative_level: 0,
+        };
+        let modules = vec![ParsedModule {
+            path: "src/acme/main.py".to_owned(),
+            imports: vec![from_import("a", 1), from_import("not_a_module", 2)],
+            ..ParsedModule::default()
+        }];
+        let mut graph = graph_with_imports(root.clone(), &modules);
+        let parse = ParseSummary { modules };
+
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        let a_id = graph.file_id("src/acme/a.py").expect("a");
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let outcome = run_reachability_bfs(
+            &mut graph,
+            &entry_plan(),
+            &no_plugins(),
+            &parse,
+            &module_index,
+        );
+
+        assert_eq!(outcome.reachable.len(), 2);
+        assert!(outcome.reachable.contains(&a_id));
+        let step = &outcome.predecessors.get(&a_id).expect("predecessor").step;
+        assert!(
+            matches!(step, TraceStep::Import { module, line: 1 } if module == "acme.a"),
+            "expected an import step via acme.a, got {step:?}"
+        );
+        assert_eq!(
+            reach_edges(&graph),
+            vec![(main_id, a_id, FileReachVia::Import)]
+        );
+        assert!(outcome.used_modules.is_empty());
     }
 }

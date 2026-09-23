@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::VERSION;
 use crate::config::RuntimeOverrides;
 use crate::fix::atomic_write;
+use crate::path_util::normalize_rel_path;
 use crate::rules::emit::{build_summary, compute_exit_status};
 use crate::rules::{
     IssueReport, SuppressReason, SuppressedIssue, issue_fingerprint, issue_stable_target,
@@ -216,10 +217,7 @@ fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineE
 }
 
 fn display_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+    normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
 fn generated_at() -> String {

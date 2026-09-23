@@ -159,7 +159,11 @@ pub fn extract_manifest_with_cache(
     {
         let current_inputs = manifest_inputs_for_payload(root, config, &payload.manifest)?;
         if current_inputs == payload.inputs {
-            return Ok(payload.manifest);
+            // Inputs are fingerprinted root-relative, so a moved or copied
+            // project hits an entry that still carries the old absolute root.
+            let mut manifest = payload.manifest;
+            manifest.root = root.clone();
+            return Ok(manifest);
         }
     }
 
