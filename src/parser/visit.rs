@@ -12,7 +12,7 @@ use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
-use super::dynamic::{extract_literal_module_call, is_import_module_call};
+use super::dynamic::{LoaderNames, literal_module};
 use super::exports::extract_exports;
 use super::platform_guard::is_platform_guard_if;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
@@ -34,6 +34,7 @@ pub struct ModuleVisitor<'a> {
     module_level: bool,
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
+    loader_names: LoaderNames,
     parsed: ParsedModule,
 }
 
@@ -57,6 +58,7 @@ impl<'a> ModuleVisitor<'a> {
             module_level: true,
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
+            loader_names: LoaderNames::default(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -242,12 +244,23 @@ impl<'a> ModuleVisitor<'a> {
                 self.visit_expr(&attribute.value);
             },
             Expr::Call(call) => {
-                if let Some(module) = extract_literal_module_call(&call.func, &call.args) {
-                    let line = self.line_number(call);
-                    self.parsed
-                        .dynamic_imports
-                        .push(DynamicImport { module, line });
-                } else if is_import_module_call(&call.func) && !call.args.is_empty() {
+                if self.loader_names.is_loader(&call.func) {
+                    if let Some(module) = literal_module(call) {
+                        let line = self.line_number(call);
+                        self.parsed
+                            .dynamic_imports
+                            .push(DynamicImport { module, line });
+                    } else if !call.args.is_empty() || !call.keywords.is_empty() {
+                        self.parsed.has_opaque_dynamic_import = true;
+                    }
+                }
+                // `map(importlib.import_module, names)` loads modules this walk never sees.
+                if call
+                    .args
+                    .iter()
+                    .chain(call.keywords.iter().map(|keyword| &keyword.value))
+                    .any(|arg| self.loader_names.is_loader(arg))
+                {
                     self.parsed.has_opaque_dynamic_import = true;
                 }
                 self.visit_expr(&call.func);
@@ -370,6 +383,7 @@ impl<'a> ModuleVisitor<'a> {
         let optional = self.try_depth > 0;
         let platform_guarded = self.platform_guard_depth > 0;
         for alias in &import.names {
+            self.loader_names.record_import(alias);
             if alias.name.as_str() == "typing" {
                 self.typing_aliases.insert(
                     alias
@@ -409,6 +423,10 @@ impl<'a> ModuleVisitor<'a> {
                 continue;
             }
 
+            if level == 0 {
+                self.loader_names
+                    .record_import_from(module_suffix.as_deref(), alias);
+            }
             if level == 0
                 && module_suffix.as_deref() == Some("typing")
                 && alias.name.as_str() == "TYPE_CHECKING"
@@ -592,6 +610,64 @@ mod tests {
         let parsed = visit_source("import importlib\nmod = importlib.import_module(name)\n");
         assert!(parsed.dynamic_imports.is_empty());
         assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn extracts_aliased_import_module_literal() {
+        let parsed = visit_source(
+            "from importlib import import_module as im\nim(\"acme.a\")\nimport importlib as il\nil.import_module(\"acme.b\")\n",
+        );
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| (dynamic.module.as_str(), dynamic.line))
+            .collect();
+        assert_eq!(modules, vec![("acme.a", 2), ("acme.b", 4)]);
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn marks_opaque_aliased_import_module() {
+        let parsed = visit_source("from importlib import import_module\nimport_module(name)\n");
+        assert!(parsed.dynamic_imports.is_empty());
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn extracts_import_module_name_keyword() {
+        let parsed = visit_source(
+            "import importlib\nimportlib.import_module(name=\"acme.a\")\n__import__(name=\"acme.b\")\n",
+        );
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| dynamic.module.as_str())
+            .collect();
+        assert_eq!(modules, vec!["acme.a", "acme.b"]);
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn marks_opaque_non_literal_keyword() {
+        let parsed = visit_source("import importlib\nimportlib.import_module(name=target)\n");
+        assert!(parsed.dynamic_imports.is_empty());
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn marks_opaque_loader_passed_as_argument() {
+        let parsed =
+            visit_source("import importlib\nmods = list(map(importlib.import_module, names))\n");
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn ignores_unrelated_import_module_function() {
+        let parsed = visit_source(
+            "from acme.loader import import_module\nimport_module(name)\nimport_module(\"acme.a\")\n",
+        );
+        assert!(parsed.dynamic_imports.is_empty());
+        assert!(!parsed.has_opaque_dynamic_import);
     }
 
     #[test]

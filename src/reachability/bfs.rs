@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::entry::EntryPlan;
 use crate::graph::{FileId, FileReachVia, GraphEdge, ModuleId, ModuleOrigin, ProjectGraph};
-use crate::parser::ParseSummary;
 use crate::plugins::{PluginHints, ReferenceOrigin};
 use crate::resolver::import_root;
 
@@ -22,8 +21,9 @@ pub struct BfsOutcome {
     pub used_modules: Vec<UsedModule>,
 }
 
-/// One import site on a file: the module it names and the line it sits on.
-type ImportSite = (ModuleId, u32);
+/// One import site on a file: the module it names, the line it sits on, and
+/// whether it is a literal dynamic import rather than an `import` statement.
+type ImportSite = (ModuleId, u32, bool);
 
 struct BfsState<'a> {
     graph: &'a mut ProjectGraph,
@@ -33,19 +33,14 @@ struct BfsState<'a> {
     reachable: HashSet<FileId>,
     predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
     used_modules: Vec<UsedModule>,
-    dynamic_sites: HashSet<ImportSiteRef>,
     reach_edges: HashSet<(FileId, FileId)>,
 }
-
-/// An import site tagged with the file it appears in.
-type ImportSiteRef = (FileId, ModuleId, u32);
 
 impl<'a> BfsState<'a> {
     fn new(
         graph: &'a mut ProjectGraph,
         module_index: &'a ModuleIndex,
         file_imports: HashMap<FileId, Vec<ImportSite>>,
-        dynamic_sites: HashSet<ImportSiteRef>,
     ) -> Self {
         Self {
             graph,
@@ -55,7 +50,6 @@ impl<'a> BfsState<'a> {
             reachable: HashSet::new(),
             predecessors: indexmap::IndexMap::new(),
             used_modules: Vec::new(),
-            dynamic_sites,
             reach_edges: HashSet::new(),
         }
     }
@@ -84,12 +78,10 @@ pub fn run_reachability_bfs(
     graph: &mut ProjectGraph,
     entry: &EntryPlan,
     plugins: &PluginHints,
-    parse: &ParseSummary,
     module_index: &ModuleIndex,
 ) -> BfsOutcome {
     let file_imports = build_file_import_adjacency(graph);
-    let dynamic_sites = build_dynamic_sites(graph, parse);
-    let mut state = BfsState::new(graph, module_index, file_imports, dynamic_sites);
+    let mut state = BfsState::new(graph, module_index, file_imports);
 
     for root in &entry.roots {
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
@@ -124,8 +116,7 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
     // whose imports are mostly first-party never build this string.
     let mut source_path: Option<String> = None;
 
-    for (module_id, line) in imports {
-        let dynamic = state.dynamic_sites.contains(&(file_id, module_id, line));
+    for (module_id, line, dynamic) in imports {
         let Some(module_node) = state.graph.module(module_id) else {
             continue;
         };
@@ -223,29 +214,20 @@ fn enqueue_module_reference(state: &mut BfsState<'_>, module: &str, origin: &Ref
 fn build_file_import_adjacency(graph: &ProjectGraph) -> HashMap<FileId, Vec<ImportSite>> {
     let mut adjacency: HashMap<FileId, Vec<ImportSite>> = HashMap::new();
     for edge in graph.edges() {
-        if let GraphEdge::FileImportsModule { file, module, line } = edge {
-            adjacency.entry(*file).or_default().push((*module, *line));
+        if let GraphEdge::FileImportsModule {
+            file,
+            module,
+            line,
+            dynamic,
+        } = edge
+        {
+            adjacency
+                .entry(*file)
+                .or_default()
+                .push((*module, *line, *dynamic));
         }
     }
     adjacency
-}
-
-/// Import sites that came from `importlib.import_module("m")` rather than an
-/// `import` statement. Both kinds share one `FileImportsModule` edge, so the
-/// parse summary is what distinguishes them.
-fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<ImportSiteRef> {
-    let mut sites = HashSet::new();
-    for module in &parse.modules {
-        let Some(file_id) = graph.file_id(&module.path) else {
-            continue;
-        };
-        for dynamic in &module.dynamic_imports {
-            if let Some(module_id) = graph.module_id(&dynamic.module) {
-                sites.insert((file_id, module_id, dynamic.line));
-            }
-        }
-    }
-    sites
 }
 
 #[cfg(test)]
@@ -392,19 +374,12 @@ mod tests {
             parsed("src/acme/b.py", &[], &[("acme.c", 3)]),
         ];
         let mut graph = graph_with_imports(root.clone(), &modules);
-        let parse = ParseSummary { modules };
 
         let main_id = graph.file_id("src/acme/main.py").expect("main");
         let b_id = graph.file_id("src/acme/b.py").expect("b");
         let c_id = graph.file_id("src/acme/c.py").expect("c");
         let module_index = ModuleIndex::build(&graph, &sources(&root));
-        let outcome = run_reachability_bfs(
-            &mut graph,
-            &entry_plan(),
-            &no_plugins(),
-            &parse,
-            &module_index,
-        );
+        let outcome = run_reachability_bfs(&mut graph, &entry_plan(), &no_plugins(), &module_index);
 
         assert_eq!(outcome.reachable.len(), 4);
         for (file_id, line) in [(b_id, 2), (c_id, 3)] {
@@ -423,5 +398,36 @@ mod tests {
         assert_eq!(edges.len(), 3);
         assert!(edges.contains(&(main_id, b_id, FileReachVia::DynamicImport)));
         assert!(edges.contains(&(b_id, c_id, FileReachVia::DynamicImport)));
+    }
+
+    #[test]
+    fn static_import_on_dynamic_import_line_stays_static() {
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        };
+        // `import acme.a; importlib.import_module("acme.a")` on one line.
+        let modules = vec![parsed(
+            "src/acme/main.py",
+            &[("acme.a", 1)],
+            &[("acme.a", 1)],
+        )];
+        let mut graph = graph_with_imports(root.clone(), &modules);
+
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        let a_id = graph.file_id("src/acme/a.py").expect("a");
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let outcome = run_reachability_bfs(&mut graph, &entry_plan(), &no_plugins(), &module_index);
+
+        let step = &outcome.predecessors.get(&a_id).expect("predecessor").step;
+        assert!(
+            matches!(step, TraceStep::Import { line: 1, .. }),
+            "expected a static import step, got {step:?}"
+        );
+        assert_eq!(
+            reach_edges(&graph),
+            vec![(main_id, a_id, FileReachVia::Import)]
+        );
     }
 }

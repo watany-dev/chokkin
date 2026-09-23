@@ -30,7 +30,7 @@ pub fn analyze_reachability(
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
     let module_index = ModuleIndex::build(graph, sources);
-    let bfs = run_reachability_bfs(graph, entry, plugins, parse, &module_index);
+    let bfs = run_reachability_bfs(graph, entry, plugins, &module_index);
 
     let framework = apply_framework_globs(graph, sources, plugins)?;
     let mut reachable: IndexSet<_> = bfs.reachable.into_iter().collect();
