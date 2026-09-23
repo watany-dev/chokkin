@@ -2,7 +2,6 @@
 
 use indexmap::IndexSet;
 
-use crate::cache::CacheOptions;
 use crate::config::{Confidence, ProjectMode};
 use crate::entry::{EntryPlan, ResolvedMode};
 use crate::graph::ProjectGraph;
@@ -30,32 +29,7 @@ pub fn analyze_reachability(
     mode: &ResolvedMode,
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
-    analyze_reachability_with_cache(
-        graph, sources, entry, plugins, parse, mode, production, None,
-    )
-}
-
-/// Analyze file reachability with optional cached module index support.
-///
-/// # Errors
-///
-/// Returns [`ReachabilityError`] when framework globs cannot be compiled or cache I/O fails.
-#[allow(clippy::too_many_arguments)]
-pub fn analyze_reachability_with_cache(
-    graph: &mut ProjectGraph,
-    sources: &DiscoveredSources,
-    entry: &EntryPlan,
-    plugins: &PluginHints,
-    parse: &ParseSummary,
-    mode: &ResolvedMode,
-    production: bool,
-    cache: Option<&CacheOptions>,
-) -> Result<ReachabilityReport, ReachabilityError> {
-    let module_index = ModuleIndex::build_with_cache(graph, sources, cache).map_err(|source| {
-        ReachabilityError::Invariant {
-            detail: format!("module index cache I/O failed: {source}"),
-        }
-    })?;
+    let module_index = ModuleIndex::build(graph, sources);
     let bfs = run_reachability_bfs(graph, entry, plugins, parse, &module_index);
 
     let framework = apply_framework_globs(graph, sources, plugins)?;

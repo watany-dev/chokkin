@@ -89,7 +89,7 @@ pub use plugins::{
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
-    analyze_reachability, analyze_reachability_with_cache, path_to_module, trace_to_file,
+    analyze_reachability, path_to_module, trace_to_file,
 };
 pub use reporters::{
     RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
