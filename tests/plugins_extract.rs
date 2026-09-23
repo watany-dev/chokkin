@@ -485,3 +485,103 @@ fn no_django_no_panic() {
         )
     }));
 }
+
+/// Flask and Celery module-ref lines for `pkg.mod` in a one-module project.
+fn decorator_lines(source: &str) -> [Option<u32>; 2] {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"decorators\"\nversion = \"0.1.0\"\ndependencies = [\"flask\", \"celery\"]\n\n[tool.chokkin.plugins]\nflask = true\ncelery = true\n",
+    )
+    .expect("write pyproject");
+    std::fs::create_dir_all(root.join("src/pkg")).expect("create package");
+    std::fs::write(root.join("src/pkg/__init__.py"), "").expect("write init");
+    std::fs::write(root.join("src/pkg/mod.py"), source).expect("write module");
+
+    let hints = extract_at(root);
+    [PluginId::Flask, PluginId::Celery].map(|plugin| {
+        plugin_contrib(&hints, plugin)
+            .module_refs
+            .iter()
+            .find(|reference| reference.module == "pkg.mod")
+            .and_then(|reference| reference.origin.line)
+    })
+}
+
+#[test]
+fn flask_and_celery_decorator_lines() {
+    // (source, Flask route line, Celery task line)
+    let cases: &[(&str, Option<u32>, Option<u32>)] = &[
+        ("@app.route(\"/\")\ndef f():\n    pass\n", Some(1), None),
+        ("@app.route (\"/\")\ndef f():\n    pass\n", Some(1), None),
+        (
+            "@app.route(\n    \"/\",\n)\ndef f():\n    pass\n",
+            Some(1),
+            None,
+        ),
+        ("@apps[0].route(\"/\")\ndef f():\n    pass\n", Some(1), None),
+        ("@app.route\ndef f():\n    pass\n", None, None),
+        ("@cache.get\ndef f():\n    pass\n", None, None),
+        (
+            "@cache.get\ndef a():\n    pass\n\n@bp.post(\"/x\")\ndef b():\n    pass\n",
+            Some(5),
+            None,
+        ),
+        (
+            "def create_app():\n    @app.route(\"/\")\n    def index():\n        pass\n",
+            Some(2),
+            None,
+        ),
+        (
+            "@functools.lru_cache(maxsize=cfg.get(\"n\"))\ndef f():\n    pass\n",
+            None,
+            None,
+        ),
+        (
+            "@api.post(\"/\") if flag else f\ndef f():\n    pass\n",
+            None,
+            None,
+        ),
+        ("@shared_task\ndef f():\n    pass\n", None, Some(1)),
+        ("@celery.task\ndef f():\n    pass\n", None, Some(1)),
+        ("@my_app.task\ndef f():\n    pass\n", None, Some(1)),
+        (
+            "@celery.shared_task(bind=True)\ndef f():\n    pass\n",
+            None,
+            Some(1),
+        ),
+        ("@shared_task_wrapper\ndef f():\n    pass\n", None, None),
+        ("@app.tasks\ndef f():\n    pass\n", None, None),
+        ("@app.task_cls\ndef f():\n    pass\n", None, None),
+        ("@register(app.task(x))\ndef f():\n    pass\n", None, None),
+    ];
+    for &(source, flask, celery) in cases {
+        let [flask_line, celery_line] = decorator_lines(source);
+        assert_eq!(flask_line, flask, "flask: {source}");
+        assert_eq!(celery_line, celery, "celery: {source}");
+    }
+}
+
+#[test]
+fn flask_route_modules_survive_syntax_error_in_parse_path() {
+    let hints = extract_fixture("flask_syntax_error");
+    assert!(
+        plugin_contrib(&hints, PluginId::Flask)
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "web.routes" && reference.origin.line == Some(1))
+    );
+}
+
+#[test]
+fn celery_task_modules_survive_syntax_error_in_parse_path() {
+    let hints = extract_fixture("celery_syntax_error");
+    assert!(
+        plugin_contrib(&hints, PluginId::Celery)
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.line == Some(1))
+    );
+}

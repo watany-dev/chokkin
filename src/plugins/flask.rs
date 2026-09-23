@@ -113,7 +113,7 @@ fn extract_route_modules(
     found: &mut bool,
 ) {
     for module in &ctx.parse.modules {
-        let Some(line) = decorator_line(module, is_route_decorator) else {
+        let Some(line) = decorator_line(&ctx.root.path, module, is_route_decorator) else {
             continue;
         };
         push_route_module(ctx, contrib, found, &module.path, line);
@@ -141,11 +141,13 @@ fn push_route_module(
     });
 }
 
-/// Only method calls on a receiver (`@app.route`, `@bp.post`) count, never a
-/// bare `@get`.
-fn is_route_decorator(name: &str) -> bool {
+/// Route decorator test shared by the parse path and its syntax-error text
+/// fallback: a method call on a receiver (`@app.route("/")`, `@bp.post(...)`).
+/// Bare `@app.route` and receiverless `@get(...)` are not Flask routes.
+fn is_route_decorator(name: &str, is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
-    receiver.is_some()
+    is_call
+        && receiver.is_some()
         && matches!(
             suffix,
             "route" | "get" | "post" | "put" | "patch" | "delete"

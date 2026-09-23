@@ -1,7 +1,7 @@
 //! Static config scanning for CLI / dev-tool usage (Phase 1.5 §4.A).
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use toml::Value;
@@ -20,6 +20,27 @@ pub struct ConfigScanResult {
     pub binary_usages: Vec<BinaryUsage>,
     /// Distributions used without a distinct CLI name (themes, tox extras, etc.).
     pub used_distributions: Vec<String>,
+}
+
+const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
+const PRE_COMMIT_CONFIG: &str = ".pre-commit-config.yaml";
+const TOX_CONFIG: &str = "tox.ini";
+const SCRIPT_DIRS: [&str; 2] = ["scripts", "bin"];
+
+/// Files [`scan_config`] may read beyond the config and manifest inputs.
+///
+/// Every existing candidate is listed, not only the ones a scan read, so a
+/// cache entry is invalidated when a candidate appears after it was written.
+#[must_use]
+pub fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = MKDOCS_CONFIG_NAMES
+        .into_iter()
+        .chain([PRE_COMMIT_CONFIG, TOX_CONFIG])
+        .map(|name| root.join(name))
+        .filter(|path| path.is_file())
+        .collect();
+    paths.extend(shell_script_paths(root));
+    paths
 }
 
 /// Scan project configuration for dev-tool / CLI usage.
@@ -102,7 +123,7 @@ fn scan_mkdocs_config(
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    for name in ["mkdocs.yml", "mkdocs.yaml"] {
+    for name in MKDOCS_CONFIG_NAMES {
         let path = root.join(name);
         if !path.is_file() {
             continue;
@@ -241,7 +262,7 @@ fn scan_pre_commit_config(
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    let path = root.join(".pre-commit-config.yaml");
+    let path = root.join(PRE_COMMIT_CONFIG);
     if !path.is_file() {
         return;
     }
@@ -249,7 +270,7 @@ fn scan_pre_commit_config(
     let origin = ReferenceOrigin {
         file: rel,
         line: None,
-        label: ".pre-commit-config.yaml".to_owned(),
+        label: PRE_COMMIT_CONFIG.to_owned(),
     };
     push_binary(result, seen, "pre-commit", origin.clone());
 
@@ -277,7 +298,7 @@ fn scan_tox_config(
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    let path = root.join("tox.ini");
+    let path = root.join(TOX_CONFIG);
     if !path.is_file() {
         return;
     }
@@ -285,7 +306,7 @@ fn scan_tox_config(
     let origin = ReferenceOrigin {
         file: rel,
         line: None,
-        label: "tox.ini".to_owned(),
+        label: TOX_CONFIG.to_owned(),
     };
     push_binary(result, seen, "tox", origin.clone());
 
@@ -410,39 +431,44 @@ fn mark_optional_extra_dependencies(
     }
 }
 
+/// Sorted so the first-seen origin of a binary does not depend on `read_dir` order.
+fn shell_script_paths(root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for dir_name in SCRIPT_DIRS {
+        let Ok(entries) = std::fs::read_dir(root.join(dir_name)) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect();
+        files.sort();
+        paths.extend(files);
+    }
+    paths
+}
+
 fn scan_shell_scripts(
     root: &Path,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    for dir_name in ["scripts", "bin"] {
-        let dir = root.join(dir_name);
-        if !dir.is_dir() {
-            continue;
-        }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    for path in shell_script_paths(root) {
+        let rel = relative_path(root, &path);
+        let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let rel = relative_path(root, &path);
-            let Ok(contents) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let origin = ReferenceOrigin {
-                file: rel,
-                line: None,
-                label: path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("script")
-                    .to_owned(),
-            };
-            scan_lines_for_binaries(&contents, result, seen, &origin);
-        }
+        let origin = ReferenceOrigin {
+            file: rel,
+            line: None,
+            label: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("script")
+                .to_owned(),
+        };
+        scan_lines_for_binaries(&contents, result, seen, &origin);
     }
 }
 
@@ -571,6 +597,29 @@ mod tests {
             sources: ManifestSources::default(),
             warnings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn scan_input_paths_lists_existing_candidates_with_sorted_scripts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(root.join("tox.ini"), "[tox]\n").expect("write tox.ini");
+        std::fs::create_dir(root.join("scripts")).expect("create scripts");
+        std::fs::create_dir(root.join("scripts/nested")).expect("create nested");
+        std::fs::create_dir(root.join("bin")).expect("create bin");
+        for name in ["scripts/b.sh", "scripts/a.sh", "bin/run"] {
+            std::fs::write(root.join(name), "").expect("write script");
+        }
+
+        let paths: Vec<_> = scan_input_paths(root)
+            .iter()
+            .map(|path| relative_path(root, path))
+            .collect();
+
+        assert_eq!(
+            paths,
+            ["tox.ini", "scripts/a.sh", "scripts/b.sh", "bin/run"]
+        );
     }
 
     #[test]

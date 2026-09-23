@@ -271,7 +271,7 @@ entry = ["src/worker/__main__.py"]
 project = ["src/**/*.py", "tests/**/*.py"]
 ```
 
-uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
+uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。CHK003 / CHK004 / CHK005 の振り分けは「import元 member に宣言があればそれを、なければ root の宣言を」見る共通 lookup で行い、1 importにつきどれか1つだけを出す（member が宣言していなくても root で dev-only なら CHK005）。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
 
 `chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
 
@@ -576,6 +576,8 @@ entry roots
 project files - reachable files = unused file candidates
 ```
 
+`from pkg import name` は `pkg` に加えて、`pkg.name` が first-party module に解決できればその file への import edge としても辿る（Python は `name` が submodule ならそれを読み込むため）。相対 import の `from . import name` と同じ規則になる。
+
 ただし、以下はデフォルトで除外または低confidenceにする。
 
 ```text
@@ -713,7 +715,7 @@ lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.l
 |libraryのpublic APIは外部利用される    |内部参照がなくても公開APIかもしれない                                           |app/library modeを分け、libraryではunused exports/filesを低confidenceにする                           |
 |dev/test/docs/lint/type依存が混在する|`pytest` がmain dependenciesにある                                 |dependency contextを導入し、misplaced dependencyを出す                                             |
 |namespace packageがある          |`google.*`, `zope.*`                                           |namespace package modeと `Import-Namespace` を使う                                             |
-|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。非literalはopaque dynamic importとしてconfidenceを下げる                                 |
+|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる                                 |
 |monorepo/workspaceで依存境界が曖昧    |root depsをmemberが使う                                            |workspace graphを作り、`--strict` でmemberごとの直接依存を要求する                                          |
 |auto-fixが危険                   |dead code削除で実行時破壊                                              |default fixはmanifest中心。file/code削除は明示フラグ必須                                                 |
 
@@ -1074,24 +1076,25 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。corrupt JSON はmiss扱いにしてsourceを再parseする。
+cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。disk bundleからのヒットは `ParseCacheStats::hits` に数える。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
 
-cache keyは以下を使う。
+parse cache keyは以下を使う（`CacheKeyContext` + `SourceFingerprint`）。
 
 ```text
 chokkin version
-config hash
-manifest hash
-lockfile hash
+config hash         # effective globs の hash
+manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
+unit version        # parse-v5。ParsedModule の形や key 規則を変えたら上げる
 file path
-file mtime
 file size
-file content hash
-plugin version
+file mtime
+file content hash   # mtime 不明か racy window 内のときだけ。それ以外は空
 ```
 
-config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_payload` / `write_scan_payload` が typed payload を record に直接埋め込んで読み書きする disk backend は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。module index は cache しない。graph のパス列に対する文字列ループで毎回構築する方が、全パスを hash する cache key の計算より安いため。
+lockfile や plugin の version は parse の出力に影響しないため key に含めない。
+
+config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_payload` / `write_scan_payload` が typed payload を record に直接埋め込んで読み書きする disk backend は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。`-r` / `-c` の解決で探したが存在しなかった候補パスは `ManifestSources.requirements_missing` に残し、不在 fingerprint として同じ inputs に含める。これにより、後から作られた制約ファイルや include 元ディレクトリ側のシャドーイングファイルも hit 時に検出する。module index は cache しない。graph のパス列に対する文字列ループで毎回構築する方が、全パスを hash する cache key の計算より安いため。
 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 
@@ -1108,7 +1111,7 @@ warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使�
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
-Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route`, `@bp.get` など)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。
+Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果の decorator site を使い、構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査にフォールバックするが、どちらも同じ正規化名と判定関数で判定する。
 
 Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 

@@ -10,7 +10,7 @@ use crate::rules::{DependencyRuleContext, RuleContext};
 use super::context::{
     DeclarationBucket, UsageContext, declaration_bucket, usage_context_for_import,
 };
-use super::missing::WorkspaceDeclaredIndex;
+use super::missing::{WorkspaceDeclaredIndex, governing_declarations};
 use super::used::DeclaredIndex;
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
@@ -51,21 +51,13 @@ pub(super) fn detect_misplaced_dependencies(
         }
 
         let workspace_member = import.workspace_member.as_deref();
-        let declarations = workspace_member
-            .filter(|_| strict)
-            .and_then(|member_id| {
-                workspace_declared
-                    .iter()
-                    .find(|boundary| boundary.member_id == member_id)
-                    .and_then(|boundary| boundary.declared.get(distribution))
-            })
-            .or_else(|| {
-                if strict && workspace_member.is_some() {
-                    None
-                } else {
-                    declared.get(distribution)
-                }
-            });
+        let declarations = governing_declarations(
+            declared,
+            workspace_declared,
+            workspace_member,
+            distribution,
+            strict,
+        );
         let Some(declarations) = declarations else {
             continue;
         };

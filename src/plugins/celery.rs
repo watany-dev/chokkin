@@ -111,7 +111,7 @@ fn extract_task_modules(
     found: &mut bool,
 ) {
     for module in &ctx.parse.modules {
-        let Some(line) = decorator_line(module, is_task_decorator) else {
+        let Some(line) = decorator_line(&ctx.root.path, module, is_task_decorator) else {
             continue;
         };
         push_task_module(ctx, contrib, found, &module.path, line);
@@ -139,8 +139,10 @@ fn push_task_module(
     });
 }
 
-/// Bare `@shared_task` or any `@<receiver>.task` / `@<receiver>.shared_task`.
-fn is_task_decorator(name: &str) -> bool {
+/// Task decorator test shared by the parse path and its syntax-error text
+/// fallback: bare `@shared_task` or any `@<receiver>.task` /
+/// `@<receiver>.shared_task`, called or not.
+fn is_task_decorator(name: &str, _is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     match suffix {
         "shared_task" => true,

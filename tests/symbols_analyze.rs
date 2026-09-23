@@ -163,6 +163,33 @@ fn pytest_fixture_is_not_reported() {
 fn unused_reexport_emits_chk007() {
     let report = analyze_fixture("unused_reexport");
     assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));
+    assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "helpers"));
+}
+
+#[test]
+fn reexport_source_module_is_resolved_once() {
+    let report = analyze_fixture("unused_reexport");
+    let source_module = |name: &str| {
+        let candidate = report
+            .candidates
+            .iter()
+            .find(|candidate| {
+                candidate.rule == RuleId::Chk007
+                    && matches!(
+                        &candidate.subject,
+                        chokkin::IssueSubject::Symbol { name: n, .. } if n == name
+                    )
+            })
+            .expect("CHK007 candidate");
+        match candidate.origins.first() {
+            Some(chokkin::Origin::Import { module, .. }) => module.clone(),
+            other => panic!("unexpected origin: {other:?}"),
+        }
+    };
+    // `from .sub import foo`
+    assert_eq!(source_module("foo"), "acme.sub");
+    // `from . import helpers`
+    assert_eq!(source_module("helpers"), "acme.helpers");
 }
 
 #[test]
