@@ -114,6 +114,7 @@ pub fn extract_manifest(
         if !extracted.files_read.is_empty() {
             sources.requirements_files.extend(extracted.files_read);
         }
+        sources.requirements_missing.extend(extracted.files_missing);
         dependencies.extend(extracted.dependencies);
         constraints.extend(extracted.constraints);
         warnings.extend(extracted.warnings);
@@ -202,7 +203,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v1".to_owned(),
+            unit_version: "manifest-extract-v2".to_owned(),
         },
         inputs,
     })
