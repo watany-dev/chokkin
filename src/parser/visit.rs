@@ -627,9 +627,12 @@ impl<'a> ModuleVisitor<'a> {
                 continue;
             };
             let line = self.line_number(decorator);
-            self.parsed
-                .decorator_sites
-                .push(DecoratorSite { name, line });
+            let is_call = matches!(decorator, Expr::Call(_));
+            self.parsed.decorator_sites.push(DecoratorSite {
+                name,
+                line,
+                is_call,
+            });
         }
     }
 

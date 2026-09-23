@@ -11,7 +11,7 @@ use super::types::{
 };
 use super::util::{
     decorator_line, decorator_suffix, manifest_has_dependency, parse_module_symbol,
-    read_pyproject_table, relative_path,
+    read_pyproject_table, relative_path, text_decorator_line,
 };
 use super::warnings::PluginsWarning;
 
@@ -112,12 +112,7 @@ fn extract_task_modules(
 ) {
     if let Some(parse) = ctx.parse {
         for module in &parse.modules {
-            let Some(line) = decorator_line(
-                &ctx.root.path,
-                module,
-                is_task_decorator,
-                celery_task_decorator_line,
-            ) else {
+            let Some(line) = decorator_line(&ctx.root.path, module, is_task_decorator) else {
                 continue;
             };
             push_task_module(ctx, contrib, found, &module.path, line);
@@ -134,7 +129,7 @@ fn extract_task_modules(
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Some(line) = celery_task_decorator_line(&contents) else {
+        let Some(line) = text_decorator_line(&contents, is_task_decorator) else {
             continue;
         };
         push_task_module(ctx, contrib, found, &file.path, line);
@@ -162,33 +157,16 @@ fn push_task_module(
     });
 }
 
-/// Mirrors [`celery_task_decorator_line`]: bare `@shared_task` or any
-/// `@<receiver>.task` / `@<receiver>.shared_task`.
-fn is_task_decorator(name: &str) -> bool {
+/// Task decorator test shared by the parse and text paths: bare
+/// `@shared_task` or any `@<receiver>.task` / `@<receiver>.shared_task`,
+/// called or not.
+fn is_task_decorator(name: &str, _is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     match suffix {
         "shared_task" => true,
         "task" => receiver.is_some(),
         _ => false,
     }
-}
-
-fn celery_task_decorator_line(contents: &str) -> Option<u32> {
-    for (index, line) in contents.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('@') {
-            continue;
-        }
-        let decorator = trimmed.trim_start_matches('@');
-        if decorator.starts_with("shared_task")
-            || decorator.starts_with("celery_app.task")
-            || decorator.starts_with("app.task")
-            || decorator.contains(".task(")
-        {
-            return u32::try_from(index + 1).ok();
-        }
-    }
-    None
 }
 
 fn celery_app_arg(line: &str) -> Option<&str> {

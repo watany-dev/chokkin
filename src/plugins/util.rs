@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::str::CharIndices;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
@@ -20,20 +21,20 @@ use super::types::ReferenceOrigin;
 /// INI section key-value pairs.
 pub type IniSection = BTreeMap<String, String>;
 
-/// Line of the earliest decorator in `module` whose normalized name matches.
+/// Line of the earliest decorator in `module` whose normalized name and call
+/// form match.
 ///
 /// Decorator sites come from the step 6 AST walk in visit order, so nested
 /// definitions can precede later top-level ones; take the minimum line to keep
 /// reporting the first occurrence in the file.
 ///
 /// A module with a syntax error has no decorator sites, so one unparsable
-/// line would hide every decorator in the file; fall back to `scan` over the
-/// source text for those modules instead.
+/// line would hide every decorator in the file; fall back to
+/// [`text_decorator_line`] over the source text with the same predicate.
 pub fn decorator_line(
     root: &Path,
     module: &ParsedModule,
-    matches: fn(&str) -> bool,
-    scan: fn(&str) -> Option<u32>,
+    matches: fn(&str, bool) -> bool,
 ) -> Option<u32> {
     if module
         .diagnostics
@@ -41,14 +42,117 @@ pub fn decorator_line(
         .any(|diagnostic| diagnostic.severity == ParseSeverity::Error)
     {
         let contents = std::fs::read_to_string(root.join(&module.path)).ok()?;
-        return scan(&contents);
+        return text_decorator_line(&contents, matches);
     }
     module
         .decorator_sites
         .iter()
-        .filter(|site| matches(&site.name))
+        .filter(|site| matches(&site.name, site.is_call))
         .map(|site| site.line)
         .min()
+}
+
+/// Text fallback for [`decorator_line`] when no parse output is available.
+///
+/// Each line is normalized the way the parse path normalizes a decorator
+/// expression, so the same predicate decides both paths.
+pub fn text_decorator_line(contents: &str, matches: fn(&str, bool) -> bool) -> Option<u32> {
+    contents.lines().enumerate().find_map(|(index, line)| {
+        let (name, is_call) = text_decorator(line)?;
+        if matches(&name, is_call) {
+            u32::try_from(index + 1).ok()
+        } else {
+            None
+        }
+    })
+}
+
+/// Dotted name and call form of a one-line decorator: `@apps[0].route("/")`
+/// gives `("apps[].route", true)`. `None` for anything the parse path would not
+/// normalize either, such as `@a if b else c`.
+fn text_decorator(line: &str) -> Option<(String, bool)> {
+    let mut rest = line.trim_start().strip_prefix('@')?;
+    let mut name = String::new();
+    loop {
+        let (ident, tail) = split_identifier(rest.trim_start())?;
+        name.push_str(ident);
+        let (tail, is_call) = skip_trailers(tail, &mut name)?;
+        match tail.strip_prefix('.') {
+            Some(next) => {
+                name.push('.');
+                rest = next;
+            },
+            None => return (tail.is_empty() || tail.starts_with('#')).then_some((name, is_call)),
+        }
+    }
+}
+
+fn split_identifier(text: &str) -> Option<(&str, &str)> {
+    let end = text
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(text.len());
+    if end == 0 {
+        None
+    } else {
+        Some(text.split_at(end))
+    }
+}
+
+/// Consume the subscripts and calls after one name segment. A call still open
+/// at the end of the line has its arguments on the following lines.
+fn skip_trailers<'a>(mut text: &'a str, name: &mut String) -> Option<(&'a str, bool)> {
+    let mut is_call = false;
+    loop {
+        text = text.trim_start();
+        let opener = text.chars().next();
+        match opener {
+            Some('[') => {
+                name.push_str("[]");
+                is_call = false;
+            },
+            Some('(') => is_call = true,
+            _ => return Some((text, is_call)),
+        }
+        match skip_group(text) {
+            Some(tail) => text = tail,
+            None if is_call => return Some(("", true)),
+            None => return None,
+        }
+    }
+}
+
+/// Text after the bracket group that `text` opens, or `None` when the group
+/// does not close on this line.
+fn skip_group(text: &str) -> Option<&str> {
+    let mut depth = 0_u32;
+    let mut chars = text.char_indices();
+    while let Some((index, c)) = chars.next() {
+        match c {
+            '"' | '\'' => skip_string(&mut chars, c)?,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return text.get(index + 1..);
+                }
+            },
+            '#' => return None,
+            _ => {},
+        }
+    }
+    None
+}
+
+fn skip_string(chars: &mut CharIndices<'_>, quote: char) -> Option<()> {
+    while let Some((_, c)) = chars.next() {
+        if c == quote {
+            return Some(());
+        }
+        if c == '\\' {
+            chars.next();
+        }
+    }
+    None
 }
 
 /// Split a normalized decorator name into its receiver and final attribute.
@@ -349,6 +453,41 @@ pub fn root_join(root: &Path, rel: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_decorator_normalizes_like_parse_path() {
+        let cases = [
+            ("@app.route(\"/\")", Some(("app.route", true))),
+            (
+                "    @ app . route (\"/\")  # comment",
+                Some(("app.route", true)),
+            ),
+            ("@app.route", Some(("app.route", false))),
+            ("@apps[0].route(\"/\")", Some(("apps[].route", true))),
+            ("@get_app().route(\"/\")", Some(("get_app.route", true))),
+            ("@app.route(\"/:)\")", Some(("app.route", true))),
+            ("@app.route(", Some(("app.route", true))),
+            ("@app.task(bind=True)", Some(("app.task", true))),
+            (
+                "@functools.lru_cache(maxsize=cfg.get(\"n\"))",
+                Some(("functools.lru_cache", true)),
+            ),
+            ("@register(app.task(x))", Some(("register", true))),
+            ("@api.post(\"/\") if flag else f", None),
+            ("@", None),
+            ("x = \"@app.route('/')\"", None),
+        ];
+        for (line, expected) in cases {
+            let actual = text_decorator(line);
+            assert_eq!(
+                actual
+                    .as_ref()
+                    .map(|(name, is_call)| (name.as_str(), *is_call)),
+                expected,
+                "{line}"
+            );
+        }
+    }
 
     #[test]
     fn parse_ini_section_reads_pytest() {
