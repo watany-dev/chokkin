@@ -6,6 +6,8 @@ use std::path::Path;
 
 use toml::Value;
 
+use crate::rules::RuleId;
+
 use super::defaults::{PartialConfig, PartialDependencyGroups};
 use super::error::ConfigError;
 use super::types::{
@@ -393,7 +395,7 @@ fn parse_optional_ignore(
     let table = value_as_table(path, value, "ignore")?;
     let mut map = BTreeMap::new();
     for (key, item) in table {
-        if !is_valid_ignore_rule(key) {
+        if !RuleId::parse_code(key).is_some_and(|rule| rule.as_code() == key.as_str()) {
             return Err(ConfigError::Validation {
                 path: path.to_path_buf(),
                 field: format!("ignore.{key}"),
@@ -415,7 +417,7 @@ fn parse_optional_severity(
     let table = value_as_table(path, value, "severity")?;
     let mut map = BTreeMap::new();
     for (key, item) in table {
-        if !is_valid_ignore_rule(key) {
+        if !RuleId::parse_code(key).is_some_and(|rule| rule.as_code() == key.as_str()) {
             return Err(ConfigError::Validation {
                 path: path.to_path_buf(),
                 field: format!("severity.{key}"),
@@ -487,22 +489,6 @@ fn parse_optional_workspaces(
     Ok(Some(map))
 }
 
-fn is_valid_ignore_rule(code: &str) -> bool {
-    matches!(
-        code,
-        "CHK001"
-            | "CHK002"
-            | "CHK003"
-            | "CHK004"
-            | "CHK005"
-            | "CHK006"
-            | "CHK007"
-            | "CHK008"
-            | "CHK009"
-            | "CHK010"
-    )
-}
-
 fn value_as_table<'a>(
     path: &Path,
     value: &'a Value,
@@ -547,13 +533,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn valid_ignore_rules_accept_chk001_through_chk010() {
-        for code in 1..=10 {
-            let rule = format!("CHK{code:03}");
-            assert!(is_valid_ignore_rule(&rule), "expected {rule} to be valid");
-        }
-        assert!(!is_valid_ignore_rule("CHK000"));
-        assert!(!is_valid_ignore_rule("CHK011"));
-        assert!(!is_valid_ignore_rule("CHK099"));
+    fn rule_code_keys_are_case_sensitive() {
+        let path = Path::new(".chokkin.toml");
+        let value = Value::Table(parse_table(path, "chk001 = []").expect("valid toml"));
+        assert!(parse_optional_ignore(path, Some(&value)).is_err());
+        let value = Value::Table(parse_table(path, "chk001 = \"off\"").expect("valid toml"));
+        assert!(parse_optional_severity(path, Some(&value)).is_err());
     }
 }
