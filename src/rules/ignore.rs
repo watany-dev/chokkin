@@ -27,7 +27,7 @@ impl IgnoreMatcher {
     ///
     /// Invalid glob patterns are skipped (config validation should catch most).
     /// `resolution` supplies the distribution names that dependency-rule
-    /// ignores match against (§18); pass [`ResolutionIndex::empty`] when it is
+    /// ignores match against (§18); pass `ResolutionIndex::default()` when it is
     /// not available.
     pub fn build(
         config: &ChokkinConfig,
