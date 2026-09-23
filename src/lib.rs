@@ -88,9 +88,8 @@ pub use plugins::{
     extract_plugin_hints_with_parse,
 };
 pub use reachability::{
-    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
-    UnreachableReason, UsedModule, analyze_reachability, analyze_reachability_with_cache,
-    path_to_module, trace_to_file,
+    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
+    analyze_reachability, analyze_reachability_with_cache, path_to_module, trace_to_file,
 };
 pub use reporters::{
     CompactReporter, DefaultReporter, GithubReporter, JsonReporter, MarkdownReporter,
