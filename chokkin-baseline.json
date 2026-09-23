@@ -314,6 +314,11 @@
       "target": "tests/fixtures/plugins/celery_scripts/src/worker/tasks.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/plugins/celery_syntax_error/src/worker/tasks.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/plugins/celery_syntax_error/src/worker/tasks.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/plugins/django_manage/manage.py",
       "code": "CHK001",
       "target": "tests/fixtures/plugins/django_manage/manage.py"
@@ -372,6 +377,11 @@
       "fingerprint": "CHK001:tests/fixtures/plugins/flask_env/src/web/routes.py",
       "code": "CHK001",
       "target": "tests/fixtures/plugins/flask_env/src/web/routes.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/plugins/flask_syntax_error/src/web/routes.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/plugins/flask_syntax_error/src/web/routes.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/plugins/nox_config/noxfile.py",
