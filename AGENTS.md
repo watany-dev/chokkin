@@ -10,7 +10,7 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.4.0 released on top of v0.1.0–v0.3.0. Default CLI runs
+**Status:** v0.4.1 released on top of v0.1.0–v0.4.0. Default CLI runs
 `analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
 `markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
 and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
@@ -45,7 +45,7 @@ over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
 is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
-budget. PyPI **v0.1.0** through **v0.4.0** have been released.
+budget. PyPI **v0.1.0** through **v0.4.1** have been released.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
