@@ -164,7 +164,7 @@ impl SeverityLevel {
 impl TryFrom<String> for SeverityLevel {
     type Error = String;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
+    fn try_from(value: String) -> Result<Self, String> {
         Self::parse(&value)
             .ok_or_else(|| format!("expected one of off, info, warning, error; got {value}"))
     }
