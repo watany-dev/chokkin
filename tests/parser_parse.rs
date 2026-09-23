@@ -231,8 +231,7 @@ fn parse_project_sources_fixture_suite() {
 
     let summary =
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
-    assert!(summary.parsed_count >= 3);
-    assert_eq!(summary.skipped_count, 0);
+    assert!(summary.modules.len() >= 3);
 }
 
 #[test]
@@ -365,8 +364,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
 
     let summary =
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
-    assert_eq!(summary.parsed_count, 1);
-    assert_eq!(summary.skipped_count, 0);
+    assert_eq!(summary.modules.len(), 1);
     let module = summary.modules.first().expect("module");
     assert_eq!(module.path, "analysis.ipynb");
     assert!(
@@ -411,9 +409,14 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
 
     let summary =
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
-    assert_eq!(summary.parsed_count, 1);
-    assert_eq!(summary.error_count, 0);
+    assert_eq!(summary.modules.len(), 1);
     let module = summary.modules.first().expect("module");
+    assert!(
+        module
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity != ParseSeverity::Error)
+    );
     assert!(module.imports.is_empty());
     assert!(module.diagnostics.iter().any(|diagnostic| {
         diagnostic.severity == ParseSeverity::Warning

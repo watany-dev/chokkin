@@ -153,7 +153,7 @@ pub struct ParseDiagnostic {
 }
 
 /// Result of parsing one `.py` file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedModule {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -186,48 +186,10 @@ pub struct ParsedModule {
 }
 
 /// Aggregate result of parsing all project `.py` sources.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseSummary {
     /// One parsed module per `.py` file.
     pub modules: Vec<ParsedModule>,
-    /// Successfully parsed files (including those with syntax diagnostics).
-    pub parsed_count: u32,
-    /// Files with at least one syntax error diagnostic.
-    pub error_count: u32,
-    /// Skipped files (`.pyi` stubs, etc.).
-    pub skipped_count: u32,
-}
-
-impl ParsedModule {
-    /// Empty parsed module for a path (used when syntax parse fails early).
-    #[must_use]
-    pub fn empty(path: String) -> Self {
-        Self {
-            path,
-            imports: Vec::new(),
-            dynamic_imports: Vec::new(),
-            attribute_accesses: Vec::new(),
-            symbols: Vec::new(),
-            decorator_sites: Vec::new(),
-            exports: Vec::new(),
-            ignores: Vec::new(),
-            has_opaque_dynamic_import: false,
-            diagnostics: Vec::new(),
-        }
-    }
-}
-
-impl ParseSummary {
-    /// Creates an empty summary.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            modules: Vec::new(),
-            parsed_count: 0,
-            error_count: 0,
-            skipped_count: 0,
-        }
-    }
 }
 
 /// Map file context to the default import context.

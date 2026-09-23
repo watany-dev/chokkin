@@ -936,7 +936,10 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let mut cache = ParseCacheStore::new();
 
         assert!(cache.get(&key).is_none());
