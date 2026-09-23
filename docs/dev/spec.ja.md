@@ -1085,7 +1085,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v4。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v5。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime
