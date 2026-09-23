@@ -395,7 +395,7 @@ fn parse_optional_ignore(
     let table = value_as_table(path, value, "ignore")?;
     let mut map = BTreeMap::new();
     for (key, item) in table {
-        if !RuleId::parse_code(key).is_some_and(|rule| rule.as_code() == key.as_str()) {
+        if RuleId::parse_code(key).is_none_or(|rule| rule.as_code() != key.as_str()) {
             return Err(ConfigError::Validation {
                 path: path.to_path_buf(),
                 field: format!("ignore.{key}"),
@@ -417,7 +417,7 @@ fn parse_optional_severity(
     let table = value_as_table(path, value, "severity")?;
     let mut map = BTreeMap::new();
     for (key, item) in table {
-        if !RuleId::parse_code(key).is_some_and(|rule| rule.as_code() == key.as_str()) {
+        if RuleId::parse_code(key).is_none_or(|rule| rule.as_code() != key.as_str()) {
             return Err(ConfigError::Validation {
                 path: path.to_path_buf(),
                 field: format!("severity.{key}"),
@@ -536,8 +536,14 @@ mod tests {
     fn rule_code_keys_are_case_sensitive() {
         let path = Path::new(".chokkin.toml");
         let value = Value::Table(parse_table(path, "chk001 = []").expect("valid toml"));
-        assert!(parse_optional_ignore(path, Some(&value)).is_err());
+        let err = parse_optional_ignore(path, Some(&value)).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Validation { ref field, .. } if field == "ignore.chk001")
+        );
         let value = Value::Table(parse_table(path, "chk001 = \"off\"").expect("valid toml"));
-        assert!(parse_optional_severity(path, Some(&value)).is_err());
+        let err = parse_optional_severity(path, Some(&value)).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Validation { ref field, .. } if field == "severity.chk001")
+        );
     }
 }
