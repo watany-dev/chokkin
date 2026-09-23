@@ -374,7 +374,7 @@ mod tests {
         let _ = graph.ensure_distribution("boto3");
         let _ = graph.intern_module("botocore".to_owned(), ModuleOrigin::ThirdParty);
 
-        let mut reachability = ReachabilityReport::empty();
+        let mut reachability = ReachabilityReport::default();
         reachability.reachable.insert(reachable_file);
         reachability
             .unreachable
@@ -385,7 +385,7 @@ mod tests {
                 max_confidence: Confidence::Certain,
             });
 
-        let mut resolution = ResolutionIndex::empty();
+        let mut resolution = ResolutionIndex::default();
         resolution.imports.push(ResolvedImport {
             import_root: "boto3".to_owned(),
             full_module: "boto3".to_owned(),

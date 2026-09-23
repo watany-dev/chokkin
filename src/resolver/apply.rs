@@ -81,7 +81,7 @@ mod tests {
                 confidence: ResolveConfidence::Certain,
             }],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
+            transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
         };
 
@@ -141,7 +141,7 @@ mod tests {
                 },
             ],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
+            transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
         };
 

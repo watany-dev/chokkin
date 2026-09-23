@@ -110,7 +110,7 @@ pub(super) struct ReachPredecessor {
 
 /// Outcome of reachability analysis.
 #[allow(clippy::partial_pub_fields)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReachabilityReport {
     /// Files reachable from entry roots or framework globs.
     pub reachable: IndexSet<FileId>,
@@ -122,18 +122,4 @@ pub struct ReachabilityReport {
     pub framework_used: IndexSet<FileId>,
     /// Shortest-path predecessors for [`super::trace::trace_to_file`].
     pub(super) predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
-}
-
-impl ReachabilityReport {
-    /// Empty report for unit tests and early pipeline stages.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            reachable: IndexSet::new(),
-            unreachable: Vec::new(),
-            used_modules: Vec::new(),
-            framework_used: IndexSet::new(),
-            predecessors: indexmap::IndexMap::new(),
-        }
-    }
 }

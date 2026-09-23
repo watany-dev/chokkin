@@ -283,7 +283,7 @@ mod tests {
             .ignore
             .insert("CHK002".to_owned(), vec!["boto3".to_owned()]);
         let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
         let candidate = IssueCandidate {
             rule: RuleId::Chk002,
             subject: IssueSubject::Distribution {
@@ -337,7 +337,7 @@ mod tests {
                 distribution: Some(distribution.to_owned()),
                 confidence: crate::resolver::ResolveConfidence::Certain,
             }],
-            ..ResolutionIndex::empty()
+            ..ResolutionIndex::default()
         }
     }
 
@@ -390,7 +390,7 @@ mod tests {
             .ignore
             .insert("CHK003".to_owned(), vec!["pyyaml".to_owned()]);
         let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
         assert_eq!(
             matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml")),
             IgnoreMatch::None
@@ -417,7 +417,7 @@ mod tests {
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });
-        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());
+        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
             rule: RuleId::Chk003,
             subject: IssueSubject::Import {
@@ -459,7 +459,7 @@ mod tests {
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });
-        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::empty());
+        let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -488,7 +488,7 @@ mod tests {
             vec!["src/acme/api.py:dead_*".to_owned()],
         );
         let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -517,7 +517,7 @@ mod tests {
             .ignore
             .insert("CHK006".to_owned(), vec!["acme/api:dead_*".to_owned()]);
         let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
+            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
