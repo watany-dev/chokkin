@@ -72,8 +72,6 @@ mod tests {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         }
     }
 
@@ -117,8 +115,6 @@ mod tests {
             layout: ProjectLayout::Flat,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let paths = known(&["acme/foo.py"]);
         assert_eq!(
@@ -133,8 +129,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let paths = known(&["services/api/src/api/main.py"]);
         assert_eq!(

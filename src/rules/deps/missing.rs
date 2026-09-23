@@ -376,8 +376,6 @@ mod tests {
                 layout: crate::sources::ProjectLayout::Src,
                 packages: vec!["acme".to_owned()],
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
