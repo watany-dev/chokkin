@@ -1090,7 +1090,10 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let mut cache = ParseCacheStore::new();
 
         assert!(cache.get(&key).is_none());
@@ -1150,7 +1153,10 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let options = CacheOptions::default();
 
         options
@@ -1183,8 +1189,14 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let first = ParsedModule::empty("src/first.py".to_owned());
-        let second = ParsedModule::empty("src/second.py".to_owned());
+        let first = ParsedModule {
+            path: "src/first.py".to_owned(),
+            ..ParsedModule::default()
+        };
+        let second = ParsedModule {
+            path: "src/second.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let options = CacheOptions::default();
 
         options

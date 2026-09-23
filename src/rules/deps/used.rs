@@ -183,7 +183,7 @@ mod tests {
                 reachability: &reachable,
                 graph: &graph,
                 sources: &sources,
-                parse: &crate::parser::ParseSummary::empty(),
+                parse: &crate::parser::ParseSummary::default(),
             },
             &PluginHints {
                 contributions: Vec::new(),

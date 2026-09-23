@@ -206,7 +206,7 @@ mod tests {
                 files: Vec::new(),
                 warnings: Vec::new(),
             },
-            ParseSummary::empty(),
+            ParseSummary::default(),
             ProjectGraph::new(manifest.root.clone()),
         )
     }

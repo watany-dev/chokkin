@@ -310,12 +310,7 @@ mod tests {
             roots: Vec::new(),
             warnings: Vec::new(),
         };
-        let parse = ParseSummary {
-            modules: Vec::new(),
-            parsed_count: 0,
-            error_count: 0,
-            skipped_count: 0,
-        };
+        let parse = ParseSummary::default();
 
         let report = analyze_reachability(
             &mut graph,

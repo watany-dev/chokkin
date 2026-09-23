@@ -408,7 +408,7 @@ mod tests {
                     sources: &sources,
                     graph: &graph,
                     reachability: &crate::reachability::ReachabilityReport::empty(),
-                    parse: &ParseSummary::empty(),
+                    parse: &ParseSummary::default(),
                 },
                 config: &config,
                 strict: false,
