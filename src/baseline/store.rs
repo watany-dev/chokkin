@@ -2,20 +2,22 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
 use crate::config::RuntimeOverrides;
+use crate::fix::atomic_write;
+use crate::path_util::normalize_rel_path;
 use crate::rules::emit::{build_summary, compute_exit_status};
 use crate::rules::{
     IssueReport, SuppressReason, SuppressedIssue, issue_fingerprint, issue_stable_target,
 };
 
-use super::types::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, current_baseline_schema_version,
-};
+use super::types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
+
+/// Baseline file `schema_version` written by chokkin v0.3+.
+const BASELINE_SCHEMA_VERSION: &str = "1";
 
 /// Apply a baseline file by suppressing matching issues.
 ///
@@ -110,7 +112,7 @@ pub fn write_baseline(
         .collect::<Vec<_>>();
     let written = u32::try_from(issues.len()).unwrap_or(u32::MAX);
     let file = BaselineFile {
-        schema_version: current_baseline_schema_version().to_owned(),
+        schema_version: BASELINE_SCHEMA_VERSION.to_owned(),
         chokkin_version: VERSION.to_owned(),
         generated_at: generated_at(),
         issues,
@@ -119,7 +121,12 @@ pub fn write_baseline(
         path: display_path(root, &path),
         detail: source.to_string(),
     })?;
-    atomic_write(&path, &format!("{contents}\n"))?;
+    atomic_write(&path, format!("{contents}\n").as_bytes(), true).map_err(|source| {
+        BaselineError::Io {
+            path: path.display().to_string(),
+            source,
+        }
+    })?;
     Ok(BaselineReport {
         path: Some(display_path(root, &path)),
         suppressed: 0,
@@ -209,50 +216,8 @@ fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineE
     }
 }
 
-fn atomic_write(path: &Path, contents: &str) -> Result<(), BaselineError> {
-    let parent = path.parent().ok_or_else(|| BaselineError::Io {
-        path: path.display().to_string(),
-        source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing parent directory"),
-    })?;
-    let original_metadata = fs::metadata(path).ok();
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-baseline-")
-        .tempfile_in(parent)
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    temp.write_all(contents.as_bytes())
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    if let Some(metadata) = original_metadata {
-        temp.as_file()
-            .set_permissions(metadata.permissions())
-            .map_err(|source| BaselineError::Io {
-                path: path.display().to_string(),
-                source,
-            })?;
-    }
-    temp.persist(path).map_err(|error| BaselineError::Io {
-        path: path.display().to_string(),
-        source: error.error,
-    })?;
-    Ok(())
-}
-
 fn display_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+    normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
 fn generated_at() -> String {

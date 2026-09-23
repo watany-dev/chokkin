@@ -1,6 +1,7 @@
 //! Merge entry candidates from all sources with path deduplication.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 use crate::config::EntrySpec;
 use crate::sources::FileContext;
@@ -13,24 +14,21 @@ pub fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<EntryRoot>
     let mut merged: BTreeMap<String, EntryRoot> = BTreeMap::new();
 
     for candidate in candidates {
-        let path = candidate.spec.path.clone();
-        match merged.get_mut(&path) {
-            Some(root) => {
+        match merged.entry(candidate.spec.path.clone()) {
+            Entry::Occupied(mut slot) => {
+                let root = slot.get_mut();
                 merge_symbol(&mut root.spec, &candidate.spec);
                 if !root.origins.contains(&candidate.origin) {
                     root.origins.push(candidate.origin);
                 }
                 root.context = prefer_context(root.context, candidate.context);
             },
-            None => {
-                merged.insert(
-                    path,
-                    EntryRoot {
-                        spec: candidate.spec,
-                        context: candidate.context,
-                        origins: vec![candidate.origin],
-                    },
-                );
+            Entry::Vacant(slot) => {
+                slot.insert(EntryRoot {
+                    spec: candidate.spec,
+                    context: candidate.context,
+                    origins: vec![candidate.origin],
+                });
             },
         }
     }
@@ -39,12 +37,8 @@ pub fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<EntryRoot>
 }
 
 fn merge_symbol(target: &mut EntrySpec, incoming: &EntrySpec) {
-    match (&target.symbol, &incoming.symbol) {
-        (None, Some(symbol)) => target.symbol = Some(symbol.clone()),
-        (Some(existing), Some(new_symbol)) if existing != new_symbol => {
-            target.symbol = Some(new_symbol.clone());
-        },
-        _ => {},
+    if incoming.symbol.is_some() {
+        target.symbol.clone_from(&incoming.symbol);
     }
 }
 

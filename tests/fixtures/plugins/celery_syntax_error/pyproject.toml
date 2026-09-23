@@ -1,0 +1,7 @@
+[project]
+name = "celery-syntax-error"
+version = "0.1.0"
+dependencies = ["celery"]
+
+[tool.chokkin.plugins]
+celery = true

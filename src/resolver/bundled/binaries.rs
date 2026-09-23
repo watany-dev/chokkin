@@ -48,5 +48,3 @@ pub static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
     ("wheel", "wheel"),
     ("yamllint", "yamllint"),
 ];
-
-pub const BINARY_MAP_ENTRY_COUNT: usize = 44;
