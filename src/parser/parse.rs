@@ -2,6 +2,7 @@
 
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::SystemTime;
 
 use rustpython_parser::ast;
 use rustpython_parser::source_code::RandomLocator;
@@ -191,10 +192,11 @@ pub fn parse_project_sources_with_cache(
 ) -> Result<ParseSummary, ParseError> {
     let layout = &sources.layout;
     let context = provisional_parse_cache_context(sources, target);
-    let use_cache = cache.is_some() || disk_cache.is_some();
+    let disk_cache = disk_cache.filter(|options| options.enabled);
     if let Some(cache_store) = cache.as_deref_mut() {
         cache_store.reserve(sources.files.len());
     }
+    let clock = parse_cache_clock(cache.is_some(), disk_cache, &root.path);
 
     // The bundle is read once up front and written once at the end. Keeping
     // only the entries this run touched prunes results for sources that have
@@ -202,9 +204,9 @@ pub fn parse_project_sources_with_cache(
     // growing with every edit.
     let stored = read_disk_parse_bundle(disk_cache, &root.path, &context)?;
     let mut retained = ParseCacheBundle::default();
-    let mut bundle_changed = false;
+    let mut parsed_any = false;
 
-    let pending = collect_pending(root, sources, &context, use_cache)?;
+    let pending = collect_pending(root, sources, &context, clock)?;
 
     let mut slots: Vec<Option<ParsedModule>> = vec![None; pending.len()];
     drain_caches(&pending, &stored, cache.as_deref_mut(), &mut slots);
@@ -222,7 +224,7 @@ pub fn parse_project_sources_with_cache(
         outstanding: &outstanding,
     };
     for (index, parsed) in run_parse_job(&job)? {
-        bundle_changed = true;
+        parsed_any = true;
         if let Some(store) = cache.as_deref_mut()
             && let Some(key) = &pending[index].key
         {
@@ -245,32 +247,54 @@ pub fn parse_project_sources_with_cache(
         modules: slots.into_iter().flatten().collect(),
     };
 
-    if bundle_changed || retained.entries.len() != stored.entries.len() {
+    // Compare entry ids rather than counts: a store carried over from an
+    // earlier run can serve a different set of the same size.
+    if parsed_any || retained.entries.keys().ne(stored.entries.keys()) {
         write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
     }
 
     Ok(summary)
 }
 
+/// The clock racy mtimes are judged against, or `None` when no cache is in use.
+///
+/// Prefers the filesystem's own clock so a lagging network mount cannot make a
+/// just-written source look settled. The local clock is the fallback when there
+/// is no cache directory to probe, or it is read-only: a warm bundle is still
+/// usable there, and failing the run over the probe would be a regression.
+fn parse_cache_clock(
+    memory_cache: bool,
+    disk_cache: Option<&CacheOptions>,
+    project_root: &std::path::Path,
+) -> Option<SystemTime> {
+    if !memory_cache && disk_cache.is_none() {
+        return None;
+    }
+    Some(
+        disk_cache
+            .and_then(|cache| cache.filesystem_now(project_root).ok())
+            .unwrap_or_else(SystemTime::now),
+    )
+}
+
 /// Collect the sources this run has to parse, each with its cache key.
 ///
-/// Returns the pending files in discovery order; stubs are skipped.
+/// Keys are only built when `clock` is set. Returns the pending files in
+/// discovery order; stubs are skipped.
 fn collect_pending<'a>(
     root: &ProjectRoot,
     sources: &'a DiscoveredSources,
     context: &CacheKeyContext,
-    use_cache: bool,
+    clock: Option<SystemTime>,
 ) -> Result<Vec<PendingFile<'a>>, ParseError> {
     let mut pending = Vec::with_capacity(sources.files.len());
     for file in &sources.files {
         if file.kind == FileKind::Stub {
             continue;
         }
-        let key = if use_cache {
-            Some(parse_cache_key(root, &file.path, context)?)
-        } else {
-            None
-        };
+        let key = clock
+            .map(|now| parse_cache_key(root, &file.path, context, now))
+            .transpose()?;
         pending.push(PendingFile { file, key });
     }
     Ok(pending)
@@ -291,17 +315,10 @@ fn drain_caches(
         let Some(key) = &entry.key else {
             continue;
         };
-        if let Some(store) = cache.as_deref_mut() {
-            *slot = store.get(key);
-        }
-        if slot.is_none()
-            && let Some(parsed) = stored.get(key).cloned()
-        {
-            if let Some(store) = cache.as_deref_mut() {
-                store.insert(key.clone(), parsed.clone());
-            }
-            *slot = Some(parsed);
-        }
+        *slot = match cache.as_deref_mut() {
+            Some(store) => store.get_or_promote(key, stored),
+            None => stored.get(key).cloned(),
+        };
     }
 }
 
@@ -346,18 +363,7 @@ fn run_parse_job(job: &ParseJob<'_>) -> Result<Vec<(usize, ParsedModule)>, Parse
     let cursor = AtomicUsize::new(0);
     let batches = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let next = cursor.fetch_add(1, Ordering::Relaxed);
-                        let Some(&index) = job.outstanding.get(next) else {
-                            return Ok(done);
-                        };
-                        done.push((index, job.run_one(index)?));
-                    }
-                })
-            })
+            .map(|_| scope.spawn(|| run_worker(job, &cursor)))
             .collect();
         handles
             .into_iter()
@@ -366,15 +372,52 @@ fn run_parse_job(job: &ParseJob<'_>) -> Result<Vec<(usize, ParsedModule)>, Parse
     });
 
     let mut parsed = Vec::with_capacity(job.outstanding.len());
+    let mut first_error: Option<(usize, ParseError)> = None;
     for batch in batches {
         // Keep the sequential behaviour of letting a parser panic unwind the
         // caller instead of turning it into a silent error.
         match batch {
-            Ok(done) => parsed.extend(done?),
+            Ok(Ok(done)) => parsed.extend(done),
+            Ok(Err(failure)) => first_error = Some(earlier_failure(first_error, failure)),
             Err(payload) => std::panic::resume_unwind(payload),
         }
     }
-    Ok(parsed)
+    match first_error {
+        Some((_, error)) => Err(error),
+        None => Ok(parsed),
+    }
+}
+
+/// What one worker parsed, or the slot index and error it stopped at.
+type WorkerOutcome = Result<Vec<(usize, ParsedModule)>, (usize, ParseError)>;
+
+fn run_worker(job: &ParseJob<'_>, cursor: &AtomicUsize) -> WorkerOutcome {
+    let mut done = Vec::new();
+    loop {
+        let next = cursor.fetch_add(1, Ordering::Relaxed);
+        let Some(&index) = job.outstanding.get(next) else {
+            return Ok(done);
+        };
+        match job.run_one(index) {
+            Ok(parsed) => done.push((index, parsed)),
+            Err(error) => return Err((index, error)),
+        }
+    }
+}
+
+/// Keep whichever failure comes first in discovery order.
+///
+/// Workers claim files in discovery order and only stop at their own failure,
+/// so the earliest failing file has always been attempted: reporting it
+/// matches the sequential path whatever the scheduling.
+fn earlier_failure(
+    current: Option<(usize, ParseError)>,
+    candidate: (usize, ParseError),
+) -> (usize, ParseError) {
+    match current {
+        Some(current) if current.0 < candidate.0 => current,
+        _ => candidate,
+    }
 }
 
 fn parse_worker_count(files: usize) -> usize {
@@ -453,22 +496,29 @@ fn parse_cache_key(
     root: &ProjectRoot,
     path: &str,
     context: &CacheKeyContext,
+    now: SystemTime,
 ) -> Result<ParseCacheKey, ParseError> {
     // Parallel workers each need an owned key, so the shared context is cloned
     // per file here rather than mutated in place across a sequential loop.
     Ok(ParseCacheKey {
         context: context.clone(),
-        source: source_fingerprint(root, path)?,
+        source: source_fingerprint(root, path, now)?,
     })
 }
 
-fn source_fingerprint(root: &ProjectRoot, path: &str) -> Result<SourceFingerprint, ParseError> {
+fn source_fingerprint(
+    root: &ProjectRoot,
+    path: &str,
+    now: SystemTime,
+) -> Result<SourceFingerprint, ParseError> {
     // `from_root_relative_stat` identifies an unchanged source by `(size,
     // mtime)` and only reads bytes when that is ambiguous. On a warm run the
     // whole project used to be read and hashed just to build lookup keys.
-    SourceFingerprint::from_root_relative_stat(&root.path, path).map_err(|source| ParseError::Io {
-        path: root.path.join(path),
-        source,
+    SourceFingerprint::from_root_relative_stat_at(&root.path, path, now).map_err(|source| {
+        ParseError::Io {
+            path: root.path.join(path),
+            source,
+        }
     })
 }
 
@@ -636,6 +686,117 @@ mod tests {
             .map(|module| module.path.clone())
             .collect();
         assert_eq!(actual, expected);
+    }
+
+    fn python_sources(dir: &Path, names: &[&str]) -> (ProjectRoot, DiscoveredSources) {
+        let root = ProjectRoot {
+            path: dir.to_path_buf(),
+            marker: RootMarker::PyProjectToml,
+            start: dir.to_path_buf(),
+        };
+        let files = names
+            .iter()
+            .map(|name| DiscoveredFile {
+                path: (*name).to_owned(),
+                kind: FileKind::Python,
+                context: FileContext::Runtime,
+            })
+            .collect();
+        let sources = DiscoveredSources {
+            root: root.clone(),
+            layout: empty_layout(),
+            effective_globs: Vec::new(),
+            files,
+            warnings: Vec::new(),
+        };
+        (root, sources)
+    }
+
+    #[test]
+    fn parallel_parse_reports_the_first_unreadable_file_in_discovery_order() {
+        let temp = TempDir::new().expect("tempdir");
+        let names: Vec<String> = (0..200).map(|index| format!("mod_{index:04}.py")).collect();
+        for (index, name) in names.iter().enumerate() {
+            let contents: &[u8] = if index == 60 || index == 150 {
+                b"\xff\xfe not utf-8\n"
+            } else {
+                b"import os\n"
+            };
+            fs::write(temp.path().join(name), contents).expect("write");
+        }
+        let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (root, sources) = python_sources(temp.path(), &borrowed);
+
+        for _ in 0..10 {
+            let error = parse_project_sources(&root, &sources, &TargetVersion::default_py311())
+                .expect_err("unreadable sources must fail the parse");
+            let ParseError::Io { path, .. } = error;
+            assert!(path.ends_with("mod_0060.py"), "reported {}", path.display());
+        }
+    }
+
+    #[test]
+    fn disabled_disk_cache_touches_no_cache_directory() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(temp.path().join("app.py"), "import os\n").expect("write");
+        let (root, sources) = python_sources(temp.path(), &["app.py"]);
+
+        parse_project_sources_with_cache(
+            &root,
+            &sources,
+            &TargetVersion::default_py311(),
+            None,
+            Some(&CacheOptions::disabled()),
+        )
+        .expect("parse");
+
+        assert!(!temp.path().join(".chokkin").exists());
+    }
+
+    #[test]
+    fn bundle_is_rewritten_when_a_carried_store_serves_a_different_set() {
+        let temp = TempDir::new().expect("tempdir");
+        // Settled mtimes keep the keys stat-only, so they stay equal across
+        // runs however slowly the test executes.
+        let settled = SystemTime::now() - std::time::Duration::from_secs(60);
+        for name in ["aaa.py", "bbb.py"] {
+            let path = temp.path().join(name);
+            fs::write(&path, "import os\n").expect("write");
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open")
+                .set_times(fs::FileTimes::new().set_modified(settled))
+                .expect("backdate mtime");
+        }
+        let target = TargetVersion::default_py311();
+        let disk = CacheOptions::default();
+        let mut store = ParseCacheStore::new();
+        let mut run = |names: &[&str]| {
+            let (root, sources) = python_sources(temp.path(), names);
+            parse_project_sources_with_cache(
+                &root,
+                &sources,
+                &target,
+                Some(&mut store),
+                Some(&disk),
+            )
+            .expect("parse");
+            let context = provisional_parse_cache_context(&sources, &target);
+            fs::read_to_string(disk.parse_bundle_path(temp.path(), &context)).expect("bundle")
+        };
+
+        run(&["aaa.py", "bbb.py"]);
+        run(&["aaa.py"]);
+        // Same entry count as the bundle on disk, but served from memory
+        // without parsing: only a content check notices the swap.
+        let bundle = run(&["bbb.py"]);
+
+        assert!(
+            bundle.contains("bbb.py"),
+            "bundle kept the stale set: {bundle}"
+        );
+        assert!(!bundle.contains("aaa.py"));
     }
 
     #[test]
