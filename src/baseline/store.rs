@@ -2,12 +2,12 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
 use crate::config::RuntimeOverrides;
+use crate::fix::atomic_write;
 use crate::rules::{
     Issue, IssueReport, IssueSummary, SuppressReason, SuppressedIssue, counts_toward_exit,
     issue_fingerprint, issue_stable_target,
@@ -116,7 +116,12 @@ pub fn write_baseline(
         path: display_path(root, &path),
         detail: source.to_string(),
     })?;
-    atomic_write(&path, &format!("{contents}\n"))?;
+    atomic_write(&path, format!("{contents}\n").as_bytes(), true).map_err(|source| {
+        BaselineError::Io {
+            path: path.display().to_string(),
+            source,
+        }
+    })?;
     Ok(BaselineReport {
         path: Some(display_path(root, &path)),
         suppressed: 0,
@@ -204,45 +209,6 @@ fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineE
             path: parent.display().to_string(),
         })
     }
-}
-
-fn atomic_write(path: &Path, contents: &str) -> Result<(), BaselineError> {
-    let parent = path.parent().ok_or_else(|| BaselineError::Io {
-        path: path.display().to_string(),
-        source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing parent directory"),
-    })?;
-    let original_metadata = fs::metadata(path).ok();
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-baseline-")
-        .tempfile_in(parent)
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    temp.write_all(contents.as_bytes())
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    if let Some(metadata) = original_metadata {
-        temp.as_file()
-            .set_permissions(metadata.permissions())
-            .map_err(|source| BaselineError::Io {
-                path: path.display().to_string(),
-                source,
-            })?;
-    }
-    temp.persist(path).map_err(|error| BaselineError::Io {
-        path: path.display().to_string(),
-        source: error.error,
-    })?;
-    Ok(())
 }
 
 fn build_summary(issues: &[Issue]) -> IssueSummary {

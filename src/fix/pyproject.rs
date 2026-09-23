@@ -31,7 +31,10 @@ pub fn remove_by_label(path: &std::path::Path, label: &str) -> Result<String, Fi
         });
     }
 
-    atomic_write(path, &doc.to_string())?;
+    atomic_write(path, doc.to_string().as_bytes(), true).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
     Ok(format!("removed `{label}` from {rel}"))
 }
 
@@ -65,7 +68,10 @@ pub fn move_group_to_runtime(
 
     let _ = push_runtime_dependency(&mut doc, raw)?;
 
-    atomic_write(path, &doc.to_string())?;
+    atomic_write(path, doc.to_string().as_bytes(), true).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
     Ok(format!("moved dependency to project.dependencies in {rel}"))
 }
 
@@ -92,7 +98,10 @@ pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<Strin
         ));
     }
 
-    atomic_write(path, &doc.to_string())?;
+    atomic_write(path, doc.to_string().as_bytes(), true).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
     Ok(format!("added `{raw}` to project.dependencies in {rel}"))
 }
 
