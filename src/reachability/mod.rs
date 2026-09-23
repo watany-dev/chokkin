@@ -12,6 +12,4 @@ pub use build::{analyze_reachability, analyze_reachability_with_cache};
 pub use error::ReachabilityError;
 pub use module_index::ModuleIndex;
 pub use trace::trace_to_file;
-pub use types::{
-    ReachabilityReport, TracePath, TraceStep, UnreachableFile, UnreachableReason, UsedModule,
-};
+pub use types::{ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule};

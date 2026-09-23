@@ -8,24 +8,20 @@ use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_targ
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
 use super::auto::detect_auto_entries;
-use super::error::EntryError;
 use super::merge::merge_entry_candidates;
 use super::mode::resolve_project_mode;
 use super::module::resolve_module_to_path;
 use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryWarning};
 
 /// Build the entry root plan for reachability analysis (pipeline step 8).
-///
-/// # Errors
-///
-/// Returns [`EntryError`] only when an internal invariant is violated.
+#[must_use]
 pub fn build_entry_roots(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     plugins: &PluginHints,
     production: bool,
-) -> Result<EntryPlan, EntryError> {
+) -> EntryPlan {
     let known_paths = known_file_paths(sources);
     let file_contexts = file_context_index(sources);
     let mut warnings = Vec::new();
@@ -59,11 +55,11 @@ pub fn build_entry_roots(
     roots.sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
 
-    Ok(EntryPlan {
+    EntryPlan {
         mode,
         roots,
         warnings,
-    })
+    }
 }
 
 fn known_file_paths(sources: &DiscoveredSources) -> BTreeSet<String> {
@@ -231,8 +227,6 @@ mod tests {
                 layout: ProjectLayout::Src,
                 packages: vec!["acme".to_owned()],
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files,
@@ -283,8 +277,7 @@ mod tests {
                 warnings: Vec::new(),
             },
             true,
-        )
-        .expect("plan");
+        );
         assert!(
             plan.roots
                 .iter()

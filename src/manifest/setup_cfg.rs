@@ -78,12 +78,7 @@ fn parse_ini_sections(
     use std::collections::BTreeMap;
 
     let mut sections: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    // Lines accumulate into a local section map so the hot loop never
-    // re-resolves the current section name; the map is merged into
-    // `sections` when a new header starts or input ends.
     let mut current = String::from("default");
-    let mut declared = false;
-    let mut section: BTreeMap<String, String> = BTreeMap::new();
     let mut last_key: Option<String> = None;
 
     for line in contents.lines() {
@@ -93,31 +88,35 @@ fn parse_ini_sections(
         }
 
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            if declared || !section.is_empty() {
-                flush_section(&mut sections, &current, std::mem::take(&mut section));
-            }
             trimmed[1..trimmed.len() - 1]
                 .trim()
                 .clone_into(&mut current);
-            declared = true;
+            sections.entry(current.clone()).or_default();
             last_key = None;
             continue;
         }
 
         if line.starts_with([' ', '\t']) {
             if let Some(ref key) = last_key {
-                append_value(&mut section, key, trimmed, true);
+                append_value(
+                    sections.entry(current.clone()).or_default(),
+                    key,
+                    trimmed,
+                    true,
+                );
             }
         } else if let Some((key, value)) = trimmed.split_once('=') {
             let key = key.trim().to_ascii_lowercase();
-            append_value(&mut section, &key, value.trim(), false);
+            append_value(
+                sections.entry(current.clone()).or_default(),
+                &key,
+                value.trim(),
+                false,
+            );
             last_key = Some(key);
         }
     }
 
-    if declared || !section.is_empty() {
-        flush_section(&mut sections, &current, section);
-    }
     sections
 }
 
@@ -142,31 +141,10 @@ fn append_value(
     }
 }
 
-fn flush_section(
-    sections: &mut std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
-    name: &str,
-    section: std::collections::BTreeMap<String, String>,
-) {
-    let Some(existing) = sections.get_mut(name) else {
-        sections.insert(name.to_owned(), section);
-        return;
-    };
-    for (key, value) in section {
-        if let Some(slot) = existing.get_mut(&key) {
-            if !value.is_empty() {
-                if !slot.is_empty() {
-                    slot.push('\n');
-                }
-                slot.push_str(&value);
-            }
-        } else {
-            existing.insert(key, value);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -181,6 +159,22 @@ install_requires =
         let requires = options.get("install_requires").expect("install_requires");
         assert!(requires.contains("requests"), "requires={requires:?}");
         assert!(requires.contains("flask>=1.0"), "requires={requires:?}");
+    }
+
+    #[test]
+    fn merges_repeated_sections_and_keeps_empty_ones() {
+        let contents =
+            "[options]\ninstall_requires = a\n[empty]\n[options]\ninstall_requires =\n    b\n";
+        let sections = parse_ini_sections(contents);
+        assert_eq!(
+            sections
+                .get("options")
+                .and_then(|o| o.get("install_requires"))
+                .map(String::as_str),
+            Some("a\nb")
+        );
+        assert!(sections.get("empty").is_some_and(BTreeMap::is_empty));
+        assert!(!sections.contains_key("default"));
     }
 
     mod props {

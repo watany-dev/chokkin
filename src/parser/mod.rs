@@ -9,7 +9,6 @@ mod ignores;
 mod parse;
 mod platform_guard;
 mod relative;
-mod syntax;
 mod type_checking;
 mod types;
 mod visit;
