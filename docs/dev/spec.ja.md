@@ -119,7 +119,7 @@ exit codeはCI向けに固定する。
 --explain      : `CHK002:<distribution>` など selector に対し、宣言箇所と到達性
                  evidence（top-level modules、reachable/unreachable import）を出す。
 --trace        : 到達可能な file には entry からの positive trace、未到達 file には
-                 negative trace（UnreachableReason、entry roots、incoming import 連鎖）を出す。
+                 negative trace（未到達理由、entry roots、incoming import 連鎖）を出す。
 ```
 
 `--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、v0.2でSARIF/GitHub reporterを追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
