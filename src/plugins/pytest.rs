@@ -38,25 +38,8 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
                         &pyproject_path,
                         "tool.pytest.ini_options",
                     ));
-                    if let Some(value) = options.get("testpaths").and_then(|v| v.as_str()) {
-                        testpaths = parse_path_list(value);
-                    } else if let Some(array) = options.get("testpaths").and_then(|v| v.as_array())
-                    {
-                        testpaths = array
-                            .iter()
-                            .filter_map(|v| v.as_str().map(str::to_owned))
-                            .collect();
-                    }
-                    if let Some(value) = options.get("python_files").and_then(|v| v.as_str()) {
-                        python_files = parse_path_list(value);
-                    } else if let Some(array) =
-                        options.get("python_files").and_then(|v| v.as_array())
-                    {
-                        python_files = array
-                            .iter()
-                            .filter_map(|v| v.as_str().map(str::to_owned))
-                            .collect();
-                    }
+                    testpaths = str_list(options, "testpaths");
+                    python_files = str_list(options, "python_files");
                 }
                 pyproject_table = Some(table);
             },
@@ -70,61 +53,43 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         }
     }
 
-    if config_origin.is_none() {
-        let pytest_ini = root.join("pytest.ini");
-        if pytest_ini.is_file() {
-            match read_ini_section(&pytest_ini, "pytest") {
-                Ok(section) => {
-                    if section.is_empty() {
-                        warnings.push(PluginsWarning::PytestConfigUnreadable {
-                            path: relative_path(root, &pytest_ini),
-                        });
-                    } else {
-                        has_explicit_config = true;
-                        config_origin =
-                            Some(origin_for_file(root, &pytest_ini, "pytest.ini [pytest]"));
-                        if let Some(value) = section.get("testpaths") {
-                            testpaths = parse_path_list(value);
-                        }
-                        if let Some(value) = section.get("python_files") {
-                            python_files = parse_path_list(value);
-                        }
-                    }
-                },
-                Err(error) => {
-                    warnings.push(PluginsWarning::PluginExtractFailed {
-                        plugin: PluginId::Pytest,
-                        detail: error.to_string(),
-                    });
-                },
-            }
+    // Order is precedence. Only `pytest.ini` warns when empty, because pytest
+    // selects it as the config file even without a `[pytest]` section.
+    for (file, section_name, label, warn_if_empty) in [
+        ("pytest.ini", "pytest", "pytest.ini [pytest]", true),
+        ("setup.cfg", "tool:pytest", "setup.cfg [tool:pytest]", false),
+    ] {
+        if config_origin.is_some() {
+            break;
         }
-    }
-
-    if config_origin.is_none() {
-        let setup_cfg = root.join("setup.cfg");
-        if setup_cfg.is_file() {
-            match read_ini_section(&setup_cfg, "tool:pytest") {
-                Ok(section) => {
-                    if !section.is_empty() {
-                        has_explicit_config = true;
-                        config_origin =
-                            Some(origin_for_file(root, &setup_cfg, "setup.cfg [tool:pytest]"));
-                        if let Some(value) = section.get("testpaths") {
-                            testpaths = parse_path_list(value);
-                        }
-                        if let Some(value) = section.get("python_files") {
-                            python_files = parse_path_list(value);
-                        }
-                    }
-                },
-                Err(error) => {
-                    warnings.push(PluginsWarning::PluginExtractFailed {
-                        plugin: PluginId::Pytest,
-                        detail: error.to_string(),
+        let path = root.join(file);
+        if !path.is_file() {
+            continue;
+        }
+        match read_ini_section(&path, section_name) {
+            Ok(section) if section.is_empty() => {
+                if warn_if_empty {
+                    warnings.push(PluginsWarning::PytestConfigUnreadable {
+                        path: relative_path(root, &path),
                     });
-                },
-            }
+                }
+            },
+            Ok(section) => {
+                has_explicit_config = true;
+                config_origin = Some(origin_for_file(root, &path, label));
+                if let Some(value) = section.get("testpaths") {
+                    testpaths = parse_path_list(value);
+                }
+                if let Some(value) = section.get("python_files") {
+                    python_files = parse_path_list(value);
+                }
+            },
+            Err(error) => {
+                warnings.push(PluginsWarning::PluginExtractFailed {
+                    plugin: PluginId::Pytest,
+                    detail: error.to_string(),
+                });
+            },
         }
     }
 
@@ -198,6 +163,19 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     }
 
     (contrib, warnings)
+}
+
+/// Read a pytest option given either as a comma/newline-separated string or as
+/// an array of strings.
+fn str_list(options: &toml::Table, key: &str) -> Vec<String> {
+    match options.get(key) {
+        Some(toml::Value::String(value)) => parse_path_list(value),
+        Some(toml::Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn collect_pytest_plugins(value: &toml::Value) -> Vec<String> {
