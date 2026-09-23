@@ -192,6 +192,35 @@ fn manifest_cache_notices_shadowing_include() {
 }
 
 #[test]
+fn manifest_cache_hit_uses_current_root_after_move() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let before = temp.path().join("a");
+    std::fs::create_dir(&before).expect("create project dir");
+    std::fs::write(
+        before.join("pyproject.toml"),
+        "[project]\nname = \"moved\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+    )
+    .expect("write pyproject");
+
+    let cache = CacheOptions::default();
+    let root_before = project_root_at(&before);
+    let config_before = load_config(&root_before).expect("load config");
+    extract_manifest_with_cache(&root_before, &config_before, Some(&cache))
+        .expect("first extraction");
+
+    // A rename keeps mtimes, so the root-relative cache key still matches.
+    let after = temp.path().join("b");
+    std::fs::rename(&before, &after).expect("move project");
+    let root_after = project_root_at(&after);
+    let config_after = load_config(&root_after).expect("load config");
+    let moved = extract_manifest_with_cache(&root_after, &config_after, Some(&cache))
+        .expect("second extraction");
+
+    assert_eq!(moved.root, root_after);
+    assert!(dependency_names(&moved).contains(&"requests"));
+}
+
+#[test]
 fn requirements_constraints_not_declared() {
     let manifest = extract_fixture("requirements_constraints");
     let names = dependency_names(&manifest);

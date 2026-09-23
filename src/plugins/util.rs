@@ -12,7 +12,7 @@ use crate::manifest::literals::LiteralScan;
 use crate::manifest::util::{
     path_is_within_root, read_to_string, relative_path as manifest_relative_path,
 };
-use crate::parser::ParsedModule;
+use crate::parser::{ParseSeverity, ParsedModule};
 
 use super::error::PluginsError;
 use super::types::ReferenceOrigin;
@@ -25,7 +25,24 @@ pub type IniSection = BTreeMap<String, String>;
 /// Decorator sites come from the step 6 AST walk in visit order, so nested
 /// definitions can precede later top-level ones; take the minimum line to keep
 /// reporting the first occurrence in the file.
-pub fn decorator_line(module: &ParsedModule, matches: fn(&str) -> bool) -> Option<u32> {
+///
+/// A module with a syntax error has no decorator sites, so one unparsable
+/// line would hide every decorator in the file; fall back to `scan` over the
+/// source text for those modules instead.
+pub fn decorator_line(
+    root: &Path,
+    module: &ParsedModule,
+    matches: fn(&str) -> bool,
+    scan: fn(&str) -> Option<u32>,
+) -> Option<u32> {
+    if module
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == ParseSeverity::Error)
+    {
+        let contents = std::fs::read_to_string(root.join(&module.path)).ok()?;
+        return scan(&contents);
+    }
     module
         .decorator_sites
         .iter()
