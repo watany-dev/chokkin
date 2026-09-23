@@ -6,16 +6,32 @@ use std::path::Path;
 
 use super::error::FixError;
 
+fn manifest_name(path: &Path, fallback: &'static str) -> &str {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(fallback)
+}
+
+/// Read a manifest, returning its display name alongside the contents.
+pub(super) fn read_manifest(
+    path: &Path,
+    fallback: &'static str,
+) -> Result<(&str, String), FixError> {
+    let rel = manifest_name(path, fallback);
+    let contents = fs::read_to_string(path).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
+    Ok((rel, contents))
+}
+
 /// Write `contents` to `path` atomically via a same-directory temp file and rename.
 ///
 /// # Errors
 ///
 /// Returns [`FixError::Io`] when the temp file or final rename fails.
 pub fn atomic_write(path: &Path, contents: &str) -> Result<(), FixError> {
-    let rel = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("manifest");
+    let rel = manifest_name(path, "manifest");
 
     let parent = path.parent().ok_or_else(|| FixError::Io {
         path: rel.to_owned(),
