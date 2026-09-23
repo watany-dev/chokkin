@@ -12,9 +12,7 @@ use crate::sources::{DiscoveredSources, FileContext, FileKind, build_glob_set};
 use super::bfs::run_reachability_bfs;
 use super::error::ReachabilityError;
 use super::module_index::ModuleIndex;
-use super::types::{
-    ReachPredecessor, ReachabilityReport, TraceStep, UnreachableFile, UnreachableReason,
-};
+use super::types::{ReachPredecessor, ReachabilityReport, TraceStep, UnreachableFile};
 
 /// Analyze file reachability from entry roots (pipeline step 9).
 ///
@@ -60,6 +58,9 @@ pub fn analyze_reachability(
         if production && !file.context.is_included_in_production() {
             continue;
         }
+        if is_excluded(file, mode) {
+            continue;
+        }
         let Some(file_id) = graph.file_id(&file.path) else {
             continue;
         };
@@ -67,16 +68,10 @@ pub fn analyze_reachability(
             continue;
         }
 
-        let reasons = exclusion_reasons(file, mode, production);
-        if is_hard_excluded(&reasons) {
-            continue;
-        }
-
         let parsed = parse_by_path.get(file.path.as_str()).copied();
         unreachable.push(UnreachableFile {
             file: file_id,
             path: file.path.clone(),
-            reasons,
             max_confidence: confidence_for_unreachable(mode.mode, parsed),
         });
     }
@@ -168,36 +163,9 @@ fn apply_framework_globs(
     })
 }
 
-fn exclusion_reasons(
-    file: &crate::sources::DiscoveredFile,
-    mode: &ResolvedMode,
-    production: bool,
-) -> Vec<UnreachableReason> {
-    let mut reasons = vec![UnreachableReason::NotReachable];
-
-    if file.path.ends_with("__init__.py") {
-        reasons.push(UnreachableReason::ExcludedInit);
-    }
-    if file.context == FileContext::Test && mode.mode == ProjectMode::Library {
-        reasons.push(UnreachableReason::ExcludedTestContext);
-    }
-    if production && !file.context.is_included_in_production() {
-        reasons.push(UnreachableReason::ExcludedProductionContext);
-    }
-
-    reasons
-}
-
-fn is_hard_excluded(reasons: &[UnreachableReason]) -> bool {
-    reasons.iter().any(|reason| {
-        matches!(
-            reason,
-            UnreachableReason::ExcludedInit
-                | UnreachableReason::ExcludedStub
-                | UnreachableReason::ExcludedTestContext
-                | UnreachableReason::ExcludedProductionContext
-        )
-    })
+fn is_excluded(file: &crate::sources::DiscoveredFile, mode: &ResolvedMode) -> bool {
+    file.path.ends_with("__init__.py")
+        || (file.context == FileContext::Test && mode.mode == ProjectMode::Library)
 }
 
 fn confidence_for_unreachable(

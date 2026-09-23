@@ -31,17 +31,11 @@
   "unreachable": [
     {
       "path": "src/acme/old_api.py",
-      "confidence": "certain",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "certain"
     },
     {
       "path": "src/acme/orphan.py",
-      "confidence": "certain",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "certain"
     }
   ]
 }
