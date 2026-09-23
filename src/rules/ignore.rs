@@ -184,7 +184,7 @@ fn config_pattern_matches(
         // §18 matches dependency rules on the distribution name even when the
         // candidate points at an import site, so a path glob must not match.
         IssueSubject::Import { .. } if is_distribution_rule(rule) => {
-            distribution.is_some_and(|dist| glob_match(pattern, dist))
+            distribution.is_some_and(|name| glob_match(pattern, name))
         },
         IssueSubject::Import { module, file, .. } => {
             glob_match(pattern, file) || glob_match(pattern, module)
