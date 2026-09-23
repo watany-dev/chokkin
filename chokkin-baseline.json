@@ -119,9 +119,19 @@
       "target": "tests/fixtures/deps/unused_boto3/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_misplaced/services/api/src/api/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/workspace_member_misplaced/services/api/src/api/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_root_dev/services/api/src/api/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/workspace_member_root_dev/services/api/src/api/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_strict/services/api/src/api/main.py",
@@ -314,6 +324,11 @@
       "target": "tests/fixtures/plugins/celery_scripts/src/worker/tasks.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/plugins/celery_syntax_error/src/worker/tasks.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/plugins/celery_syntax_error/src/worker/tasks.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/plugins/django_manage/manage.py",
       "code": "CHK001",
       "target": "tests/fixtures/plugins/django_manage/manage.py"
@@ -372,6 +387,11 @@
       "fingerprint": "CHK001:tests/fixtures/plugins/flask_env/src/web/routes.py",
       "code": "CHK001",
       "target": "tests/fixtures/plugins/flask_env/src/web/routes.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/plugins/flask_syntax_error/src/web/routes.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/plugins/flask_syntax_error/src/web/routes.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/plugins/nox_config/noxfile.py",
@@ -657,6 +677,11 @@
       "fingerprint": "CHK001:tests/fixtures/symbols/unused_export/src/acme/utils.py",
       "code": "CHK001",
       "target": "tests/fixtures/symbols/unused_export/src/acme/utils.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/helpers.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/unused_reexport/src/acme/helpers.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/main.py",
