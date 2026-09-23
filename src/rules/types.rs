@@ -1,9 +1,12 @@
 //! Shared rule and issue types for pipeline steps 10–12.
 
+use std::path::Path;
+
 use indexmap::IndexSet;
 
 use crate::config::Confidence;
 use crate::manifest::{DependencyOrigin, LoadedManifest};
+use crate::path_util::normalize_rel_path;
 use crate::plugins::ReferenceOrigin;
 
 /// CHK001–CHK010 rule identifiers (§3).
@@ -301,14 +304,14 @@ impl IssueReport {
 #[must_use]
 pub fn issue_stable_target(issue: &Issue) -> String {
     let target = match &issue.subject {
-        IssueSubject::File { path } => normalize_issue_path(path),
+        IssueSubject::File { path } => normalize_rel_path(Path::new(path)),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::Symbol { module, name } => issue.location.file.as_deref().map_or_else(
             || format!("{module}:{name}"),
-            |path| format!("{}:{name}", normalize_issue_path(path)),
+            |path| format!("{}:{name}", normalize_rel_path(Path::new(path))),
         ),
         IssueSubject::Import { module, file, .. } => {
-            format!("{}:{module}", normalize_issue_path(file))
+            format!("{}:{module}", normalize_rel_path(Path::new(file)))
         },
     };
     issue
@@ -321,10 +324,6 @@ pub fn issue_stable_target(issue: &Issue) -> String {
 #[must_use]
 pub fn issue_fingerprint(issue: &Issue) -> String {
     format!("{}:{}", issue.rule.as_code(), issue_stable_target(issue))
-}
-
-fn normalize_issue_path(path: &str) -> String {
-    path.replace('\\', "/")
 }
 
 /// Stable sort key for issue candidates within a rule.
