@@ -371,7 +371,7 @@ mod tests {
             })
             .expect("legacy file");
         let _ = graph.intern_module("boto3".to_owned(), ModuleOrigin::ThirdParty);
-        let _ = graph.ensure_distribution("boto3");
+        let _ = graph.intern_distribution("boto3");
         let _ = graph.intern_module("botocore".to_owned(), ModuleOrigin::ThirdParty);
 
         let mut reachability = ReachabilityReport::empty();
