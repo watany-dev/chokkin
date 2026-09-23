@@ -262,7 +262,7 @@ mod tests {
         )
         .expect("imports");
 
-        let mut report = ReachabilityReport::empty();
+        let mut report = ReachabilityReport::default();
         report.reachable.insert(cli_id);
         report.unreachable = vec![
             UnreachableFile {

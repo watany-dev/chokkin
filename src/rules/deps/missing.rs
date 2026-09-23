@@ -405,7 +405,7 @@ mod tests {
                     resolution: &resolution,
                     sources: &sources,
                     graph: &graph,
-                    reachability: &crate::reachability::ReachabilityReport::empty(),
+                    reachability: &crate::reachability::ReachabilityReport::default(),
                     parse: &ParseSummary::empty(),
                 },
                 config: &config,
@@ -437,7 +437,7 @@ mod tests {
         assert!(!is_transitive_only(
             "requests",
             &index,
-            &TransitiveIndex::empty()
+            &TransitiveIndex::default()
         ));
     }
 
@@ -446,7 +446,7 @@ mod tests {
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
-        assert!(detect(&index, "requests", TransitiveIndex::empty()).is_empty());
+        assert!(detect(&index, "requests", TransitiveIndex::default()).is_empty());
     }
 
     /// §10: a dev-group-only dependency used at runtime is CHK005 territory,
@@ -457,7 +457,7 @@ mod tests {
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("pytest".to_owned(), vec![&pytest]);
 
-        assert!(detect(&index, "pytest", TransitiveIndex::empty()).is_empty());
+        assert!(detect(&index, "pytest", TransitiveIndex::default()).is_empty());
 
         let transitive = TransitiveIndex {
             edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),

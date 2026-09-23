@@ -46,7 +46,7 @@ pub fn emit_issues(
         config,
         overrides,
         mode,
-        &ResolutionIndex::empty(),
+        &ResolutionIndex::default(),
     )
 }
 
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn emits_chk001_for_unreachable_file() {
-        let mut report = ReachabilityReport::empty();
+        let mut report = ReachabilityReport::default();
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn no_exit_code_returns_success() {
-        let mut report = ReachabilityReport::empty();
+        let mut report = ReachabilityReport::default();
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
@@ -335,7 +335,7 @@ mod tests {
             .severity
             .insert("CHK002".to_owned(), crate::config::SeverityLevel::Off);
         let report = emit_issues(
-            &ReachabilityReport::empty(),
+            &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
             &ParseSummary::empty(),
@@ -372,7 +372,7 @@ mod tests {
             ..DependencyReport::default()
         };
         let report = emit_issues(
-            &ReachabilityReport::empty(),
+            &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
             &ParseSummary::empty(),
