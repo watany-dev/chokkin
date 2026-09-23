@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
 use crate::config::RuntimeOverrides;
+use crate::path_util::normalize_rel_path;
 use crate::rules::{
     Issue, IssueReport, IssueSummary, SuppressReason, SuppressedIssue, counts_toward_exit,
     issue_fingerprint, issue_stable_target,
@@ -274,10 +275,7 @@ fn compute_exit_status(issues: &[Issue], overrides: &RuntimeOverrides) -> crate:
 }
 
 fn display_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+    normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
 fn generated_at() -> String {

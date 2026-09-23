@@ -1,7 +1,9 @@
 //! Minimal SARIF v2.1.0 reporter for GitHub code scanning (Phase 3 / v0.3).
 
 use std::fmt::Write as _;
+use std::path::Path;
 
+use crate::path_util::normalize_rel_path;
 use crate::rules::metadata::default_rule_severity;
 use crate::rules::{
     Issue, IssueReport, RuleId, Severity, issue_fingerprint, rule_help_text, rule_help_uri,
@@ -163,7 +165,7 @@ fn render_locations(out: &mut String, issue: &Issue) {
     let _ = writeln!(
         out,
         "                  \"uri\": {}",
-        json_string(&sarif_uri(file))
+        json_string(&normalize_rel_path(Path::new(file)))
     );
     let _ = writeln!(out, "                }},");
     let _ = writeln!(out, "                \"region\": {{");
@@ -199,8 +201,4 @@ fn sarif_level(severity: Severity) -> &'static str {
         "info" => "note",
         _ => "warning",
     }
-}
-
-fn sarif_uri(path: &str) -> String {
-    path.replace('\\', "/")
 }

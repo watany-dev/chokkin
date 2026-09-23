@@ -1,7 +1,9 @@
 //! JSON reporter (v0.3 stable schema).
 
 use std::fmt::Write as _;
+use std::path::Path;
 
+use crate::path_util::normalize_rel_path;
 use crate::rules::{Issue, IssueReport, IssueSubject, issue_fingerprint, issue_stable_target};
 use crate::schema::JSON_REPORT_SCHEMA_VERSION;
 
@@ -124,7 +126,7 @@ fn render_issue(out: &mut String, issue: &Issue) {
         let _ = writeln!(
             out,
             "        \"file\": {},",
-            json_string(&normalize_path(&origin.file))
+            json_string(&normalize_rel_path(Path::new(&origin.file)))
         );
         let _ = writeln!(
             out,
@@ -148,12 +150,8 @@ fn optional_json_string(value: Option<&str>) -> String {
 fn optional_json_path(value: Option<&str>) -> String {
     value.map_or_else(
         || "null".to_owned(),
-        |path| json_string(&normalize_path(path)),
+        |path| json_string(&normalize_rel_path(Path::new(path))),
     )
-}
-
-fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/")
 }
 
 fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
@@ -162,7 +160,7 @@ fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
             let _ = writeln!(
                 out,
                 "      \"path\": {},",
-                json_string(&normalize_path(path))
+                json_string(&normalize_rel_path(Path::new(path)))
             );
             let _ = writeln!(out, "      \"distribution\": null,");
             let _ = writeln!(out, "      \"symbol\": null,");
@@ -191,7 +189,7 @@ fn append_subject_fields(out: &mut String, subject: &IssueSubject) {
             let _ = writeln!(out, "      \"binary\": {},", json_string(name));
         },
         IssueSubject::Import { module, file, line } => {
-            let path = normalize_path(file);
+            let path = normalize_rel_path(Path::new(file));
             let _ = writeln!(out, "      \"path\": {},", json_string(&path));
             let _ = writeln!(out, "      \"distribution\": null,");
             let _ = writeln!(
