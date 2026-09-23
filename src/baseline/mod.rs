@@ -3,5 +3,5 @@
 mod store;
 mod types;
 
-pub use store::{apply_baseline, apply_baseline_with_overrides, write_baseline};
+pub use store::{apply_baseline, write_baseline};
 pub use types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};

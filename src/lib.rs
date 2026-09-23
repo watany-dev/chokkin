@@ -38,8 +38,7 @@ pub mod schema;
 pub mod sources;
 
 pub use baseline::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline,
-    apply_baseline_with_overrides, write_baseline,
+    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
 };
 pub use cache::{
     CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheBundle, ParseCacheKey,
@@ -58,9 +57,7 @@ pub use entry::{
     EntryError, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
     build_entry_roots,
 };
-pub use fix::{
-    AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason, apply_fixes,
-};
+pub use fix::{AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason};
 pub use graph::{
     DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
     ModuleId, ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
@@ -84,8 +81,7 @@ pub use pipeline::{
 pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
     PluginEntry, PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
-    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_cache,
-    extract_plugin_hints_with_parse,
+    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_parse,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
@@ -105,8 +101,7 @@ pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
     IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
     SymbolId, SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
-    emit_issues_with_resolution, explain_issue, issue_fingerprint, issue_stable_target,
-    reconcile_dependencies,
+    explain_issue, issue_fingerprint, issue_stable_target, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

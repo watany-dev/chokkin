@@ -5,16 +5,6 @@ use crate::sources::{LayoutInfo, path_to_module};
 use super::types::ParseDiagnostic;
 use super::types::ParseSeverity;
 
-/// Resolve a file path to its dotted module name.
-///
-/// Kept as the historical name for [`crate::sources::path_to_module`], which is
-/// now the single source of truth: this function used to derive module names of
-/// its own and could disagree with the `ModuleIndex` key for the same file.
-#[must_use]
-pub fn file_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
-    path_to_module(path, layout)
-}
-
 /// Resolve a relative import to an absolute dotted module name.
 ///
 /// Returns `None` when the import cannot be resolved (caller records a diagnostic).

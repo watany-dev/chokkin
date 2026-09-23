@@ -29,24 +29,13 @@ pub fn extract_plugin_hints(
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
 ) -> Result<PluginHints, PluginsError> {
-    extract_plugin_hints_with_cache(root, config, sources, manifest, None)
-}
-
-/// Extract framework hints, optionally caching generic config scan results.
-pub fn extract_plugin_hints_with_cache(
-    root: &ProjectRoot,
-    config: &LoadedConfig,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    cache: Option<&CacheOptions>,
-) -> Result<PluginHints, PluginsError> {
     extract_plugin_hints_with_parse(&PluginExtractRequest {
         root,
         config,
         sources,
         manifest,
         parse: None,
-        cache,
+        cache: None,
     })
 }
 
@@ -306,26 +295,28 @@ mod tests {
         };
         let cache = CacheOptions::default();
 
-        let first = extract_plugin_hints_with_cache(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            Some(&cache),
-        )
+        let first = extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: None,
+            cache: Some(&cache),
+        })
         .expect("first extract");
         let key = config_scan_cache_key(&loaded, &manifest).expect("cache key");
         let cached: config_scan::ConfigScanResult = cache
             .read_scan_payload(&root_path, &key)
             .expect("read payload")
             .expect("payload hit");
-        let second = extract_plugin_hints_with_cache(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            Some(&cache),
-        )
+        let second = extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: None,
+            cache: Some(&cache),
+        })
         .expect("second extract");
 
         assert!(
