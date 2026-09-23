@@ -46,7 +46,7 @@ pub fn emit_issues(
         config,
         overrides,
         mode,
-        &ResolutionIndex::empty(),
+        &ResolutionIndex::default(),
     )
 }
 
@@ -84,7 +84,7 @@ pub fn emit_issues_with_resolution(
         let ignore = matcher.matches_candidate(&candidate);
         let issue = candidate_to_issue(candidate);
 
-        if let Some(reason) = ignore.reason() {
+        if let Some(reason) = ignore {
             suppressed.push(SuppressedIssue { issue, reason });
             continue;
         }
@@ -209,7 +209,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
     }
 }
 
-fn build_summary(issues: &[Issue]) -> IssueSummary {
+pub(crate) fn build_summary(issues: &[Issue]) -> IssueSummary {
     let mut by_rule = BTreeMap::new();
     for issue in issues {
         *by_rule.entry(issue.rule).or_insert(0) += 1;
@@ -220,7 +220,11 @@ fn build_summary(issues: &[Issue]) -> IssueSummary {
     }
 }
 
-fn compute_exit_status(issues: &[Issue], overrides: &RuntimeOverrides, strict: bool) -> ExitStatus {
+pub(crate) fn compute_exit_status(
+    issues: &[Issue],
+    overrides: &RuntimeOverrides,
+    strict: bool,
+) -> ExitStatus {
     if overrides.no_exit_code == Some(true) {
         return ExitStatus::Success;
     }
@@ -254,7 +258,7 @@ mod tests {
 
     #[test]
     fn emits_chk001_for_unreachable_file() {
-        let mut report = ReachabilityReport::empty();
+        let mut report = ReachabilityReport::default();
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
@@ -282,7 +286,7 @@ mod tests {
 
     #[test]
     fn no_exit_code_returns_success() {
-        let mut report = ReachabilityReport::empty();
+        let mut report = ReachabilityReport::default();
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
@@ -331,7 +335,7 @@ mod tests {
             .severity
             .insert("CHK002".to_owned(), crate::config::SeverityLevel::Off);
         let report = emit_issues(
-            &ReachabilityReport::empty(),
+            &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
             &ParseSummary::empty(),
@@ -368,7 +372,7 @@ mod tests {
             ..DependencyReport::default()
         };
         let report = emit_issues(
-            &ReachabilityReport::empty(),
+            &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
             &ParseSummary::empty(),
