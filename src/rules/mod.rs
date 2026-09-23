@@ -6,7 +6,6 @@ pub(crate) use context::{DependencyRuleContext, RuleContext};
 pub mod deps;
 pub mod emit;
 mod filter;
-pub(crate) use filter::counts_toward_exit;
 mod ignore;
 pub mod metadata;
 mod severity;
