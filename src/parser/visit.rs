@@ -567,8 +567,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let mut locator = RandomLocator::new(source);
         let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &mut locator);

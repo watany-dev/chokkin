@@ -136,8 +136,6 @@ mod tests {
                 layout: ProjectLayout::Src,
                 packages: vec!["acme".to_owned()],
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -206,8 +204,6 @@ mod tests {
                 layout: ProjectLayout::Src,
                 packages: vec!["acme".to_owned()],
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: vec!["src/**/*.py".to_owned()],
             files: vec![crate::sources::DiscoveredFile {
