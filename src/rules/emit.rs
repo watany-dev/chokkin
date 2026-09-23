@@ -84,7 +84,7 @@ pub fn emit_issues_with_resolution(
         let ignore = matcher.matches_candidate(&candidate);
         let issue = candidate_to_issue(candidate);
 
-        if let Some(reason) = ignore.reason() {
+        if let Some(reason) = ignore {
             suppressed.push(SuppressedIssue { issue, reason });
             continue;
         }
