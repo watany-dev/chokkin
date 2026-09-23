@@ -6,57 +6,51 @@ use crate::config::ConfigSources;
 use crate::rules::{IssueReport, RuleId};
 
 use super::format::{baseline_suppressed_count, format_issue_line, group_title};
-use super::traits::Reporter;
 use super::types::RenderContext;
 
 /// Default human-readable reporter grouped by issue kind.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DefaultReporter;
+pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "chokkin {}\n", context.version);
 
-impl Reporter for DefaultReporter {
-    fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
-        let mut out = String::new();
-        let _ = writeln!(out, "chokkin {}\n", context.version);
+    let project = context.project_name.as_deref().unwrap_or("(unknown)");
+    let _ = writeln!(out, "Project: {project}");
+    if let Some(config) = &context.config_label {
+        let _ = writeln!(out, "Config : {config}");
+    }
+    let _ = writeln!(
+        out,
+        "Mode   : {}, production={}\n",
+        context.mode.mode, context.production
+    );
 
-        let project = context.project_name.as_deref().unwrap_or("(unknown)");
-        let _ = writeln!(out, "Project: {project}");
-        if let Some(config) = &context.config_label {
-            let _ = writeln!(out, "Config : {config}");
+    for rule in RuleId::ALL {
+        let issues: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|issue| issue.rule == rule)
+            .collect();
+        if issues.is_empty() {
+            continue;
         }
+        let _ = writeln!(out, "{}", group_title(rule, issues.len()));
+        for issue in issues {
+            let _ = writeln!(out, "{}", format_issue_line(issue));
+        }
+        let _ = writeln!(out);
+    }
+
+    let suppressed = baseline_suppressed_count(report);
+    if suppressed > 0 {
         let _ = writeln!(
             out,
-            "Mode   : {}, production={}\n",
-            context.mode.mode, context.production
+            "Summary: {} issues ({} baseline-suppressed)",
+            report.summary.total, suppressed
         );
-
-        for rule in RuleId::ALL {
-            let issues: Vec<_> = report
-                .issues
-                .iter()
-                .filter(|issue| issue.rule == rule)
-                .collect();
-            if issues.is_empty() {
-                continue;
-            }
-            let _ = writeln!(out, "{}", group_title(rule, issues.len()));
-            for issue in issues {
-                let _ = writeln!(out, "{}", format_issue_line(issue));
-            }
-            let _ = writeln!(out);
-        }
-
-        let suppressed = baseline_suppressed_count(report);
-        if suppressed > 0 {
-            let _ = writeln!(
-                out,
-                "Summary: {} issues ({} baseline-suppressed)",
-                report.summary.total, suppressed
-            );
-        } else {
-            let _ = writeln!(out, "Summary: {} issues", report.summary.total);
-        }
-        out
+    } else {
+        let _ = writeln!(out, "Summary: {} issues", report.summary.total);
     }
+    out
 }
 
 /// Build a config source label from discovery output.
