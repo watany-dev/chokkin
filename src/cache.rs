@@ -975,7 +975,7 @@ mod tests {
             .read_parse_bundle(&root, &context)
             .expect("read corrupt cache");
 
-        assert!(bundle.is_empty());
+        assert!(bundle.entries.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
