@@ -55,7 +55,7 @@ pub use config::{
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
-    EntryError, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
+    EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
     build_entry_roots,
 };
 pub use fix::{
@@ -97,8 +97,8 @@ pub use reporters::{
     render_issues,
 };
 pub use resolver::{
-    ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
-    TransitiveIndex, apply_resolution_to_graph, import_root, resolve_imports,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
+    apply_resolution_to_graph, import_root, resolve_imports,
 };
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,

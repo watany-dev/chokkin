@@ -5,14 +5,7 @@ use crate::graph::{GraphEdge, ProjectGraph};
 use super::types::EntryPlan;
 
 /// Add entry nodes and `Entry reaches File` edges from `plan`.
-///
-/// # Errors
-///
-/// Returns [`crate::graph::GraphError`] when graph invariants are violated.
-pub fn apply_entry_plan(
-    graph: &mut ProjectGraph,
-    plan: &EntryPlan,
-) -> Result<(), crate::graph::GraphError> {
+pub fn apply_entry_plan(graph: &mut ProjectGraph, plan: &EntryPlan) {
     for root in &plan.roots {
         let entry_id = graph.intern_entry();
         if let Some(file_id) = graph.file_id(&root.spec.path) {
@@ -22,7 +15,6 @@ pub fn apply_entry_plan(
             });
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -70,7 +62,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        apply_entry_plan(&mut graph, &plan).expect("apply");
+        apply_entry_plan(&mut graph, &plan);
         assert_eq!(graph.entry_count(), 1);
         assert!(
             graph

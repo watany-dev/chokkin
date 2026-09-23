@@ -18,38 +18,32 @@ use super::types::{
 
 /// Apply safe automatic fixes for fixable issues in `report`.
 ///
-/// # Errors
-///
-/// Returns [`FixError`] when a manifest file cannot be read or written.
+/// Per-action failures are recorded in [`FixReport::skipped`].
+#[must_use]
 pub fn apply_fixes(
     report: &IssueReport,
     root: &ProjectRoot,
     manifest: &LoadedManifest,
     options: FixOptions,
-) -> Result<FixReport, FixError> {
+) -> FixReport {
     apply_fixes_with_workspace(report, root, manifest, &[], options)
 }
 
 /// Apply safe automatic fixes with workspace member manifest context.
-///
-/// # Errors
-///
-/// Returns [`FixError`] when a manifest file cannot be read or written.
-#[allow(clippy::unnecessary_wraps)]
 pub fn apply_fixes_with_workspace(
     report: &IssueReport,
     root: &ProjectRoot,
     manifest: &LoadedManifest,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
-) -> Result<FixReport, FixError> {
+) -> FixReport {
     let mut report_out = FixReport::default();
 
     let actions = match plan_fixes(report, manifest, workspace_manifests, options) {
         Ok(actions) => actions,
         Err(skipped) => {
             report_out.skipped = skipped;
-            return Ok(report_out);
+            return report_out;
         },
     };
 
@@ -79,7 +73,7 @@ pub fn apply_fixes_with_workspace(
             .push("Run `poetry lock` to refresh poetry.lock".to_owned());
     }
 
-    Ok(report_out)
+    report_out
 }
 
 fn apply_action(
@@ -355,8 +349,7 @@ mod tests {
                 dry_run: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert_eq!(fix_report.applied.len(), 1);
         let contents = std::fs::read_to_string(&path).expect("read");
@@ -373,8 +366,7 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report =
-            apply_fixes(&report, &root, &manifest, FixOptions::default()).expect("apply");
+        let fix_report = apply_fixes(&report, &root, &manifest, FixOptions::default());
 
         assert!(dir.path().join("src/legacy.py").exists());
         assert!(fix_report.applied.is_empty());
@@ -404,8 +396,7 @@ mod tests {
                 allow_remove_files: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert!(dir.path().join("src/legacy.py").exists());
         assert_eq!(fix_report.applied.len(), 1);
@@ -430,8 +421,7 @@ mod tests {
                 allow_remove_files: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert!(!dir.path().join("src/legacy.py").exists());
         assert_eq!(fix_report.applied.len(), 1);
@@ -475,8 +465,7 @@ mod tests {
                 dry_run: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert!(
             fix_report
@@ -505,8 +494,7 @@ mod tests {
                 add_missing: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert_eq!(fix_report.applied.len(), 1);
         let updated = std::fs::read_to_string(&path).expect("read");
@@ -549,8 +537,7 @@ mod tests {
                 add_missing: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert_eq!(fix_report.applied.len(), 1);
         assert_eq!(fix_report.applied[0].file, "services/api/pyproject.toml");
