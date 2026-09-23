@@ -24,20 +24,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         context.mode.mode, context.production
     );
 
-    let rules = [
-        RuleId::Chk001,
-        RuleId::Chk002,
-        RuleId::Chk003,
-        RuleId::Chk004,
-        RuleId::Chk005,
-        RuleId::Chk006,
-        RuleId::Chk007,
-        RuleId::Chk008,
-        RuleId::Chk009,
-        RuleId::Chk010,
-    ];
-
-    for rule in rules {
+    for rule in RuleId::ALL {
         let issues: Vec<_> = report
             .issues
             .iter()
@@ -69,6 +56,11 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
 /// Build a config source label from discovery output.
 #[must_use]
 pub fn config_label_from_sources(sources: &ConfigSources) -> String {
+    config_label(sources, "pyproject.toml")
+}
+
+/// Shared by the analysis reporter and probe output, which label pyproject differently.
+pub fn config_label(sources: &ConfigSources, pyproject_label: &str) -> String {
     let mut parts = Vec::new();
     if sources.dot_chokkin_toml.is_some() {
         parts.push(".chokkin.toml".to_owned());
@@ -77,7 +69,7 @@ pub fn config_label_from_sources(sources: &ConfigSources) -> String {
         parts.push("chokkin.toml".to_owned());
     }
     if sources.pyproject_tool_chokkin {
-        parts.push("pyproject.toml".to_owned());
+        parts.push(pyproject_label.to_owned());
     }
     if parts.is_empty() {
         if sources.used_defaults {

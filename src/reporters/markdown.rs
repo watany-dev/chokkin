@@ -32,20 +32,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         return out;
     }
 
-    let rules = [
-        RuleId::Chk001,
-        RuleId::Chk002,
-        RuleId::Chk003,
-        RuleId::Chk004,
-        RuleId::Chk005,
-        RuleId::Chk006,
-        RuleId::Chk007,
-        RuleId::Chk008,
-        RuleId::Chk009,
-        RuleId::Chk010,
-    ];
-
-    for rule in rules {
+    for rule in RuleId::ALL {
         let issues: Vec<_> = report
             .issues
             .iter()

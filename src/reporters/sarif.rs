@@ -41,11 +41,11 @@ fn render_tool(out: &mut String, context: &RenderContext) {
         json_string(context.version)
     );
     let _ = writeln!(out, "          \"rules\": [");
-    for (index, rule) in all_rules().iter().enumerate() {
+    for (index, rule) in RuleId::ALL.into_iter().enumerate() {
         if index > 0 {
             let _ = writeln!(out, ",");
         }
-        render_rule(out, *rule);
+        render_rule(out, rule);
     }
     let _ = writeln!(out, "\n          ]");
     let _ = writeln!(out, "        }}");
@@ -170,21 +170,6 @@ fn render_locations(out: &mut String, issue: &Issue) {
     let _ = writeln!(out, "              }}");
     let _ = writeln!(out, "            }}");
     let _ = writeln!(out, "          ]");
-}
-
-fn all_rules() -> [RuleId; 10] {
-    [
-        RuleId::Chk001,
-        RuleId::Chk002,
-        RuleId::Chk003,
-        RuleId::Chk004,
-        RuleId::Chk005,
-        RuleId::Chk006,
-        RuleId::Chk007,
-        RuleId::Chk008,
-        RuleId::Chk009,
-        RuleId::Chk010,
-    ]
 }
 
 fn sarif_level(severity: Severity) -> &'static str {
