@@ -84,8 +84,7 @@ pub use pipeline::{
 pub use plugins::{
     BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
     PluginEntry, PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
-    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_cache,
-    extract_plugin_hints_with_parse,
+    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_parse,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,

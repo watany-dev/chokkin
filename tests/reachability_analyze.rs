@@ -41,9 +41,10 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
-    let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugin hints");
     let target = resolve_target_version(&loaded.effective, &manifest);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
+    let plugins =
+        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
     let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production)
         .expect("entry plan");
 

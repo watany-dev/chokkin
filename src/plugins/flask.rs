@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::sources::{FileKind, path_to_module};
+use crate::sources::path_to_module;
 
 use super::context::PluginContext;
 use super::types::{
@@ -112,29 +112,11 @@ fn extract_route_modules(
     contrib: &mut PluginContribution,
     found: &mut bool,
 ) {
-    if let Some(parse) = ctx.parse {
-        for module in &parse.modules {
-            let Some(line) = decorator_line(module, is_route_decorator) else {
-                continue;
-            };
-            push_route_module(ctx, contrib, found, &module.path, line);
-        }
-        return;
-    }
-
-    // Standalone callers run before step 6, so there is nothing to reuse.
-    for file in &ctx.sources.files {
-        if file.kind != FileKind::Python {
-            continue;
-        }
-        let path = ctx.root.path.join(&file.path);
-        let Ok(contents) = std::fs::read_to_string(&path) else {
+    for module in &ctx.parse.modules {
+        let Some(line) = decorator_line(module, is_route_decorator) else {
             continue;
         };
-        let Some(line) = flask_route_decorator_line(&contents) else {
-            continue;
-        };
-        push_route_module(ctx, contrib, found, &file.path, line);
+        push_route_module(ctx, contrib, found, &module.path, line);
     }
 }
 
@@ -159,8 +141,8 @@ fn push_route_module(
     });
 }
 
-/// Mirrors [`flask_route_decorator_line`]: only method calls on a receiver
-/// (`@app.route`, `@bp.post`) count, never a bare `@get`.
+/// Only method calls on a receiver (`@app.route`, `@bp.post`) count, never a
+/// bare `@get`.
 fn is_route_decorator(name: &str) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     receiver.is_some()
@@ -168,26 +150,6 @@ fn is_route_decorator(name: &str) -> bool {
             suffix,
             "route" | "get" | "post" | "put" | "patch" | "delete"
         )
-}
-
-fn flask_route_decorator_line(contents: &str) -> Option<u32> {
-    for (index, line) in contents.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('@') {
-            continue;
-        }
-        let decorator = trimmed.trim_start_matches('@');
-        if decorator.contains(".route(")
-            || decorator.contains(".get(")
-            || decorator.contains(".post(")
-            || decorator.contains(".put(")
-            || decorator.contains(".patch(")
-            || decorator.contains(".delete(")
-        {
-            return u32::try_from(index + 1).ok();
-        }
-    }
-    None
 }
 
 fn env_assignment<'a>(line: &'a str, key: &str) -> Option<&'a str> {

@@ -10,9 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    FileContext, PluginExtractRequest, PluginId, PluginsWarning, ProjectRoot, RootMarker,
-    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints,
-    extract_plugin_hints_with_parse, load_config, parse_project_sources,
+    FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
+    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
+    resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -31,36 +31,17 @@ fn project_root_at(path: &Path) -> ProjectRoot {
 }
 
 fn extract_fixture(name: &str) -> chokkin::PluginHints {
-    let path = fixture(name);
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
-    let config = load_config(&root).expect("load config");
-    let manifest = extract_manifest(&root, &config).expect("extract manifest");
-    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+    extract_at(&fixture(name))
 }
 
-/// Same as [`extract_fixture`] but feeding step 6 parse output into step 5.
-fn extract_fixture_with_parse(name: &str) -> chokkin::PluginHints {
-    let path = fixture(name);
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
+fn extract_at(path: &Path) -> chokkin::PluginHints {
+    let root = discover_project_root(path).unwrap_or_else(|_| project_root_at(path));
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    let target = config
-        .effective
-        .target_version
-        .clone()
-        .unwrap_or_else(chokkin::TargetVersion::default_py311);
+    let target = resolve_target_version(&config.effective, &manifest);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse sources");
-    extract_plugin_hints_with_parse(&PluginExtractRequest {
-        root: &root,
-        config: &config,
-        sources: &sources,
-        manifest: &manifest,
-        parse: Some(&parse),
-        cache: None,
-    })
-    .expect("extract plugin hints")
+    extract_plugin_hints(&root, &config, &sources, &manifest, &parse).expect("extract plugin hints")
 }
 
 fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
@@ -466,14 +447,11 @@ fn partial_settings_warns() {
 }
 
 fn extract_fixture_from_deps(name: &str) -> chokkin::PluginHints {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/deps")
-        .join(name);
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
-    let config = load_config(&root).expect("load config");
-    let manifest = extract_manifest(&root, &config).expect("extract manifest");
-    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+    extract_at(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/deps")
+            .join(name),
+    )
 }
 
 #[test]
@@ -506,37 +484,4 @@ fn no_django_no_panic() {
             }
         )
     }));
-}
-
-#[test]
-fn flask_route_modules_match_between_scan_and_parse() {
-    let scanned = extract_fixture("flask_env");
-    let parsed = extract_fixture_with_parse("flask_env");
-    let expected = &plugin_contrib(&scanned, PluginId::Flask).module_refs;
-    assert!(
-        expected
-            .iter()
-            .any(|reference| reference.module == "web.routes" && reference.origin.line == Some(4))
-    );
-    assert_eq!(
-        &plugin_contrib(&parsed, PluginId::Flask).module_refs,
-        expected
-    );
-}
-
-#[test]
-fn celery_task_modules_match_between_scan_and_parse() {
-    let scanned = extract_fixture("celery_scripts");
-    let parsed = extract_fixture_with_parse("celery_scripts");
-    let expected = &plugin_contrib(&scanned, PluginId::Celery).module_refs;
-    assert!(
-        expected
-            .iter()
-            .any(|reference| reference.module == "worker.tasks"
-                && reference.origin.line == Some(4))
-    );
-    assert_eq!(
-        &plugin_contrib(&parsed, PluginId::Celery).module_refs,
-        expected
-    );
 }

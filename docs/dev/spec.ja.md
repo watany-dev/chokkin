@@ -965,7 +965,7 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` に対応し、
     `python -m pytest` のような module invocation も既知binary利用として扱う。
     notebook parsing は `.ipynb` discovery と Python code-cell extraction を初期実装済み。
-    Flask/Celery decorator由来 module refs は literal scan として初期実装済み)
+    Flask/Celery decorator由来 module refs は step 6 の decorator sites から抽出する形で初期実装済み)
   - JSON reporter / baseline draft schema と migration 方針 (`docs/dev/schema-migration-notes.md`)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```

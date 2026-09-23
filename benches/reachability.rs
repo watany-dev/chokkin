@@ -51,8 +51,8 @@ fn bench_reachability(c: &mut Criterion) {
             Some(&cache),
         )
         .expect("parse");
-        let plugins =
-            extract_plugin_hints(&report.probe.root, &config, sources, manifest).expect("plugins");
+        let plugins = extract_plugin_hints(&report.probe.root, &config, sources, manifest, &parse)
+            .expect("plugins");
         for (name, options) in [("off", &disabled), ("on", &cache)] {
             group.bench_function(BenchmarkId::new(name, n), |b| {
                 b.iter_batched_ref(
