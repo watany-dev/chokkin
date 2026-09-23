@@ -19,7 +19,6 @@ use crate::sources::{DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo};
 
 use super::error::ParseError;
 use super::ignores::extract_ignores;
-use super::syntax::{SyntaxFeature, feature_requirement, supports_syntax};
 use super::types::{ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule};
 use super::visit::ModuleVisitor;
 
@@ -498,11 +497,11 @@ fn syntax_diagnostic(
 
 fn syntax_target_hint(error: &RpParseError, target: &TargetVersion) -> Option<&'static str> {
     let text = error.to_string();
-    if text.contains("match") && !supports_syntax(target, SyntaxFeature::MatchStatement) {
-        return Some(feature_requirement(SyntaxFeature::MatchStatement));
+    if text.contains("match") && target.minor() < 10 {
+        return Some("py310");
     }
-    if text.contains("type") && !supports_syntax(target, SyntaxFeature::TypeAliasStatement) {
-        return Some(feature_requirement(SyntaxFeature::TypeAliasStatement));
+    if text.contains("type") && target.minor() < 12 {
+        return Some("py312");
     }
     None
 }
@@ -512,15 +511,10 @@ fn note_unsupported_syntax(
     stmts: &[ast::Stmt],
     diagnostics: &mut Vec<ParseDiagnostic>,
 ) {
-    if !supports_syntax(target, SyntaxFeature::TypeAliasStatement)
-        && stmts.iter().any(ast::Stmt::is_type_alias_stmt)
-    {
+    if target.minor() < 12 && stmts.iter().any(ast::Stmt::is_type_alias_stmt) {
         diagnostics.push(ParseDiagnostic {
             line: 0,
-            message: format!(
-                "file uses `type` aliases; set target_version to {}",
-                feature_requirement(SyntaxFeature::TypeAliasStatement)
-            ),
+            message: "file uses `type` aliases; set target_version to py312".to_owned(),
             severity: ParseSeverity::Warning,
         });
     }
@@ -551,8 +545,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         }
     }
 

@@ -99,8 +99,6 @@ mod tests {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         }
     }
 
@@ -128,8 +126,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         assert_eq!(
             resolve_relative_import("tests/unit/test_core.py", &layout, 1, None, Some("helpers")),
@@ -162,8 +158,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         assert_eq!(
             resolve_relative_import("src/acme/api/__init__.py", &layout, 1, Some("models"), None),
@@ -177,8 +171,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         assert!(resolve_relative_import("routes.py", &layout, 1, None, Some("sibling")).is_none());
     }

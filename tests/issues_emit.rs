@@ -39,8 +39,7 @@ fn load_emit(path: &Path) -> EmitInputs {
     let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugin hints");
     let target = resolve_target_version(&loaded.effective, &manifest);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false)
-        .expect("entry plan");
+    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -52,17 +51,15 @@ fn load_emit(path: &Path) -> EmitInputs {
         let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
-        &root,
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
-    )
-    .expect("resolve imports");
+    );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph,
         &sources,
@@ -118,7 +115,7 @@ fn emit_reports_unused_dependency() {
         &inputs.config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
-        &ResolutionIndex::empty(),
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -144,7 +141,7 @@ fn config_ignore_suppresses_matching_issue() {
         &config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
-        &ResolutionIndex::empty(),
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -168,7 +165,7 @@ fn likely_unused_dependency_hidden_when_confidence_is_certain() {
         &config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
-        &ResolutionIndex::empty(),
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -187,7 +184,7 @@ fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> cho
         config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
-        &ResolutionIndex::empty(),
+        &ResolutionIndex::default(),
     )
 }
 
@@ -204,7 +201,7 @@ fn emit_with_config_and_overrides(
         config,
         overrides,
         &inputs.entry.mode,
-        &ResolutionIndex::empty(),
+        &ResolutionIndex::default(),
     )
 }
 

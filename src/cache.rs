@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
@@ -21,39 +21,25 @@ pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
 pub struct CacheOptions {
     /// Whether cache reads/writes are allowed for this run.
     pub enabled: bool,
-    /// Project-root-relative cache directory.
-    pub directory: PathBuf,
 }
 
 impl Default for CacheOptions {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            directory: PathBuf::from(DEFAULT_CACHE_DIR),
-        }
+        Self { enabled: true }
     }
 }
 
 impl CacheOptions {
     /// Disable cache reads and writes for this run.
     #[must_use]
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
+    pub const fn disabled() -> Self {
+        Self { enabled: false }
     }
 
     /// Resolve the cache directory below `project_root`.
     #[must_use]
     pub fn directory_path(&self, project_root: &Path) -> PathBuf {
-        project_root.join(root_relative_directory(&self.directory))
-    }
-
-    /// Absolute path for a persisted parse cache entry.
-    #[must_use]
-    pub fn parse_entry_path(&self, project_root: &Path, key: &ParseCacheKey) -> PathBuf {
-        self.directory_path(project_root).join(key.relative_path())
+        project_root.join(DEFAULT_CACHE_DIR)
     }
 
     /// Absolute path for the persisted parse cache bundle of `context`.
@@ -115,52 +101,6 @@ impl CacheOptions {
     #[must_use]
     pub fn scan_entry_path(&self, project_root: &Path, key: &ScanCacheKey) -> PathBuf {
         self.directory_path(project_root).join(key.relative_path())
-    }
-
-    /// Read a persisted parse cache entry.
-    ///
-    /// Corrupt JSON entries are treated as misses; callers then reparse source.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache file exists but cannot be read.
-    pub fn read_parse_entry(
-        &self,
-        project_root: &Path,
-        key: &ParseCacheKey,
-    ) -> io::Result<Option<ParsedModule>> {
-        if !self.enabled {
-            return Ok(None);
-        }
-        let path = self.parse_entry_path(project_root, key);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        Ok(serde_json::from_slice(&bytes).ok())
-    }
-
-    /// Write a persisted parse cache entry.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache directory or file cannot be written.
-    pub fn write_parse_entry(
-        &self,
-        project_root: &Path,
-        key: &ParseCacheKey,
-        parsed: &ParsedModule,
-    ) -> io::Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-        let path = self.parse_entry_path(project_root, key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec(parsed).map_err(io::Error::other)?;
-        write_cache_bytes(&path, &bytes)
     }
 
     /// Read a persisted scan cache record.
@@ -262,16 +202,6 @@ impl CacheOptions {
         };
         self.write_scan_record(project_root, &record)
     }
-}
-
-fn root_relative_directory(directory: &Path) -> PathBuf {
-    let mut relative = PathBuf::new();
-    for component in directory.components() {
-        if let Component::Normal(part) = component {
-            relative.push(part);
-        }
-    }
-    relative
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -633,15 +563,6 @@ impl PartialOrd for ParseCacheKey {
 }
 
 impl ParseCacheKey {
-    /// Stable filename for the cached parse result.
-    #[must_use]
-    pub fn file_name(&self) -> String {
-        let mut hasher = CacheKeyHasher::new();
-        self.context.hash_into(&mut hasher);
-        self.source.hash_into(&mut hasher);
-        format!("{}.json", hasher.finish())
-    }
-
     /// Stable identifier for this key inside a [`ParseCacheBundle`].
     ///
     /// Only the source fingerprint varies within one bundle, so the context is
@@ -658,12 +579,6 @@ impl ParseCacheKey {
             self.source.content_hash
         );
         stable_hex_hash(input.as_bytes())
-    }
-
-    /// Project-root-relative path for a persisted parse cache entry.
-    #[must_use]
-    pub fn relative_path(&self) -> PathBuf {
-        PathBuf::from("parse").join(self.file_name())
     }
 }
 
@@ -914,38 +829,15 @@ mod tests {
     fn default_cache_is_enabled_under_project_root() {
         let options = CacheOptions::default();
         assert!(options.enabled);
-        assert_eq!(options.directory, PathBuf::from(DEFAULT_CACHE_DIR));
+        assert_eq!(
+            options.directory_path(Path::new("/repo/project")),
+            Path::new("/repo/project").join(DEFAULT_CACHE_DIR)
+        );
     }
 
     #[test]
-    fn disabled_cache_keeps_directory_policy() {
-        let options = CacheOptions::disabled();
-        assert!(!options.enabled);
-        assert_eq!(options.directory, PathBuf::from(DEFAULT_CACHE_DIR));
-    }
-
-    #[test]
-    fn cache_directory_path_stays_under_project_root() {
-        let options = CacheOptions {
-            enabled: true,
-            directory: PathBuf::from("../outside/cache"),
-        };
-
-        let path = options.directory_path(Path::new("/repo/project"));
-
-        assert_eq!(path, PathBuf::from("/repo/project/outside/cache"));
-    }
-
-    #[test]
-    fn absolute_cache_directory_is_made_project_relative() {
-        let options = CacheOptions {
-            enabled: true,
-            directory: PathBuf::from("/tmp/chokkin-cache"),
-        };
-
-        let path = options.directory_path(Path::new("/repo/project"));
-
-        assert_eq!(path, PathBuf::from("/repo/project/tmp/chokkin-cache"));
+    fn disabled_cache_is_not_enabled() {
+        assert!(!CacheOptions::disabled().enabled);
     }
 
     #[test]
@@ -1105,7 +997,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_entry_path_uses_stable_hashed_filename() {
+    fn corrupt_parse_bundle_reads_as_empty() {
+        let root = temp_cache_test_dir("corrupt-bundle");
         let context = CacheKeyContext {
             chokkin_version: "test".to_owned(),
             config_hash: "config".to_owned(),
@@ -1113,124 +1006,16 @@ mod tests {
             target_version: "py311".to_owned(),
             unit_version: "parse-v1".to_owned(),
         };
-        let key = ParseCacheKey {
-            context,
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-
-        let path = CacheOptions::default().parse_entry_path(Path::new("/repo"), &key);
-
-        assert!(path.starts_with("/repo/.chokkin/cache/parse"));
-        assert_eq!(
-            path.extension().and_then(std::ffi::OsStr::to_str),
-            Some("json")
-        );
-    }
-
-    #[test]
-    fn parse_entry_round_trips_to_disk() {
-        let root = temp_cache_test_dir("disk");
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
         let options = CacheOptions::default();
-
-        options
-            .write_parse_entry(&root, &key, &parsed)
-            .expect("write parse cache");
-        let restored = options
-            .read_parse_entry(&root, &key)
-            .expect("read parse cache")
-            .expect("cache hit");
-
-        assert_eq!(restored, parsed);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn parse_entry_replaces_existing_disk_value() {
-        let root = temp_cache_test_dir("disk-replace");
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-        let first = ParsedModule::empty("src/first.py".to_owned());
-        let second = ParsedModule::empty("src/second.py".to_owned());
-        let options = CacheOptions::default();
-
-        options
-            .write_parse_entry(&root, &key, &first)
-            .expect("write first parse cache");
-        options
-            .write_parse_entry(&root, &key, &second)
-            .expect("replace parse cache");
-        let restored = options
-            .read_parse_entry(&root, &key)
-            .expect("read parse cache")
-            .expect("cache hit");
-
-        assert_eq!(restored, second);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn corrupt_parse_entry_is_cache_miss() {
-        let root = temp_cache_test_dir("corrupt");
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-        let options = CacheOptions::default();
-        let path = options.parse_entry_path(&root, &key);
+        let path = options.parse_bundle_path(&root, &context);
         std::fs::create_dir_all(path.parent().expect("cache parent")).expect("create cache parent");
         std::fs::write(&path, b"not json").expect("write corrupt cache");
 
-        assert_eq!(
-            options
-                .read_parse_entry(&root, &key)
-                .expect("read corrupt cache"),
-            None
-        );
+        let bundle = options
+            .read_parse_bundle(&root, &context)
+            .expect("read corrupt cache");
+
+        assert!(bundle.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 

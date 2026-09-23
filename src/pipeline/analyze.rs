@@ -95,7 +95,7 @@ pub fn analyze_project(
             &probe.manifest,
             &workspace_manifests,
             options.fix,
-        )?)
+        ))
     } else {
         None
     };
@@ -187,22 +187,21 @@ fn run_analysis_core(
         &probe.sources,
         &plugins,
         production,
-    )?;
+    );
 
     let mut graph = build_analysis_graph(probe, &parse, &plugins)?;
 
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     let resolution = resolve_imports(
-        &probe.root,
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
         &parse,
         &plugin_refs,
         &probe.workspace_members,
-    )?;
+    );
     apply_resolution_to_graph(&mut graph, &resolution)?;
-    apply_entry_plan(&mut graph, &entry)?;
+    apply_entry_plan(&mut graph, &entry);
 
     let reachability = analyze_reachability_with_cache(
         &mut graph,
