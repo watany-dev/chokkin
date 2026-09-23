@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 27bd6a05e2d3d9a60cda2cd9859d42405091d1f5d149a8ed6d594df29a2e287c # shrinks to runtime_deps = [], dev_deps = ["a.A"], name = "A"
+cc 4fa0dbbfe39643160f87a705947f6e8187be52f2290f0153694b51b5a3545e33 # shrinks to runtime_deps = [], dev_deps = ["A.tlz"], name = "0"

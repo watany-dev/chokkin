@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::path_util::normalize_rel_path;
 
 use super::error::ManifestError;
-use super::pep508_util::parse_requirement;
+use super::pep508_util::parse_pep508_requirement;
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::warnings::ManifestWarning;
 
@@ -57,7 +57,7 @@ pub fn push_dependency(push: DependencyPush<'_>) {
         line: push.line,
         label: push.label,
     };
-    match parse_requirement(push.raw, push.context, origin) {
+    match parse_pep508_requirement(push.raw, push.context, origin) {
         Ok(dep) => push.dependencies.push(dep),
         Err(warning) => push.warnings.push(warning),
     }
