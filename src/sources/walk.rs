@@ -309,8 +309,6 @@ mod tests {
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[]);
@@ -347,8 +345,6 @@ mod tests {
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[]);
@@ -380,8 +376,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: vec!["**/*.{py,pyi}".to_owned()],
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[".venv/**".to_owned()]);

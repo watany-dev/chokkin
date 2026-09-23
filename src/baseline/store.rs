@@ -8,9 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
 use crate::config::RuntimeOverrides;
+use crate::rules::emit::{build_summary, compute_exit_status};
 use crate::rules::{
-    Issue, IssueReport, IssueSummary, SuppressReason, SuppressedIssue, counts_toward_exit,
-    issue_fingerprint, issue_stable_target,
+    IssueReport, SuppressReason, SuppressedIssue, issue_fingerprint, issue_stable_target,
 };
 
 use super::types::{
@@ -73,7 +73,10 @@ pub fn apply_baseline_with_overrides(
 
     report.issues = kept;
     report.summary = build_summary(&report.issues);
-    report.exit_status = compute_exit_status(&report.issues, overrides);
+    // Same thresholds as step 12, so a baseline that silences every error
+    // leaves a warning-only run at exit 0 (spec §16, §24).
+    report.exit_status =
+        compute_exit_status(&report.issues, overrides, overrides.strict.unwrap_or(false));
 
     Ok(BaselineReport {
         path: Some(display_path(root, &path)),
@@ -245,34 +248,6 @@ fn atomic_write(path: &Path, contents: &str) -> Result<(), BaselineError> {
     Ok(())
 }
 
-fn build_summary(issues: &[Issue]) -> IssueSummary {
-    let mut by_rule = std::collections::BTreeMap::new();
-    for issue in issues {
-        *by_rule.entry(issue.rule).or_insert(0) += 1;
-    }
-    IssueSummary {
-        total: u32::try_from(issues.len()).unwrap_or(u32::MAX),
-        by_rule,
-    }
-}
-
-/// Recompute the exit status over the issues the baseline left in place.
-///
-/// Mirrors `rules::emit::compute_exit_status`: an issue only fails the run when
-/// it passes the severity/confidence thresholds, so a baseline that silences
-/// every error leaves a warning-only run at exit 0 (spec §16, §24).
-fn compute_exit_status(issues: &[Issue], overrides: &RuntimeOverrides) -> crate::ExitStatus {
-    if overrides.no_exit_code == Some(true) {
-        return crate::ExitStatus::Success;
-    }
-    let strict = overrides.strict.unwrap_or(false);
-    if issues.iter().any(|issue| counts_toward_exit(issue, strict)) {
-        crate::ExitStatus::IssuesFound
-    } else {
-        crate::ExitStatus::Success
-    }
-}
-
 fn display_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -291,7 +266,7 @@ fn generated_at() -> String {
 mod tests {
     use super::*;
     use crate::config::Confidence;
-    use crate::rules::{Issue, IssueLocation, IssueSubject, RuleId, Severity};
+    use crate::rules::{Issue, IssueLocation, IssueSubject, IssueSummary, RuleId, Severity};
     use tempfile::TempDir;
 
     fn issue(path: &str) -> Issue {

@@ -75,8 +75,7 @@ fn django_manage_is_entry_with_plugin_origins() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     assert_eq!(plan.mode.mode, ProjectMode::App);
     let manage = plan
@@ -101,8 +100,7 @@ fn fastapi_asgi_is_auto_detected() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     let paths = entry_paths(&plan);
     assert!(paths.iter().any(|path| path.contains("asgi.py")));
@@ -118,8 +116,7 @@ fn library_only_resolves_library_mode() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     assert_eq!(plan.mode.mode, ProjectMode::Library);
 }
@@ -133,8 +130,7 @@ fn explicit_config_entry_merges_with_auto() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     let manage = plan
         .roots
@@ -159,8 +155,7 @@ fn missing_config_entry_emits_warning() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     assert!(
         plan.warnings
@@ -179,8 +174,7 @@ fn production_excludes_test_context_entries() {
         &inputs.sources,
         &inputs.plugins,
         true,
-    )
-    .expect("entry plan");
+    );
 
     assert!(
         plan.roots
@@ -198,11 +192,10 @@ fn apply_entry_plan_adds_graph_edges() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
     let mut graph =
         build_graph_skeleton(&inputs.manifest, &inputs.sources).expect("graph skeleton");
-    apply_entry_plan(&mut graph, &plan).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &plan);
 
     assert!(graph.entry_count() > 0);
     assert!(
@@ -222,8 +215,7 @@ fn manifest_script_resolves_to_module_file() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     let script_entry = plan.roots.iter().find(|root| {
         root.origins.iter().any(|origin| {

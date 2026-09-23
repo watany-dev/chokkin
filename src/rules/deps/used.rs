@@ -123,7 +123,7 @@ mod tests {
             },
             warnings: Vec::new(),
         };
-        let resolution = ResolutionIndex::empty();
+        let resolution = ResolutionIndex::default();
         assert!(has_lockfile(&manifest, &resolution));
     }
 
@@ -142,7 +142,7 @@ mod tests {
             })
             .expect("file id");
         let reachable = {
-            let mut report = ReachabilityReport::empty();
+            let mut report = ReachabilityReport::default();
             report.reachable.insert(file_id);
             report
         };
@@ -161,7 +161,7 @@ mod tests {
                 confidence: ResolveConfidence::Certain,
             }],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
+            transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
         };
         let sources = crate::sources::DiscoveredSources {
@@ -170,8 +170,6 @@ mod tests {
                 layout: crate::sources::ProjectLayout::Src,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
