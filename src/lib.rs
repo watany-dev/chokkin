@@ -93,9 +93,7 @@ pub use reachability::{
     path_to_module, trace_to_file,
 };
 pub use reporters::{
-    CompactReporter, DefaultReporter, GithubReporter, JsonReporter, MarkdownReporter,
-    RenderContext, Reporter, ReporterId, SarifReporter, config_label_from_sources, format_subject,
-    render_issues,
+    RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
 };
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
