@@ -445,7 +445,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v3".to_owned(),
+        unit_version: "parse-v4".to_owned(),
     }
 }
 
@@ -563,9 +563,12 @@ mod tests {
         let sites: Vec<_> = parsed
             .decorator_sites
             .iter()
-            .map(|site| (site.name.as_str(), site.line))
+            .map(|site| (site.name.as_str(), site.line, site.is_call))
             .collect();
-        assert_eq!(sites, vec![("shared_task", 4), ("app.route", 12)]);
+        assert_eq!(
+            sites,
+            vec![("shared_task", 4, false), ("app.route", 12, true)]
+        );
     }
 
     #[test]

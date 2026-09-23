@@ -45,6 +45,8 @@ fn expr_to_dotted(expr: &Expr) -> Option<String> {
             Some(format!("{}.{}", parent, attribute.attr))
         },
         Expr::Call(call) => expr_to_dotted(&call.func),
+        // `@apps[0].route("/")`: the index is not static, but the suffix is.
+        Expr::Subscript(subscript) => Some(format!("{}[]", expr_to_dotted(&subscript.value)?)),
         _ => None,
     }
 }
@@ -65,5 +67,16 @@ mod tests {
         };
         let normalized = normalize_decorator(&function.decorator_list[0]).expect("decorator");
         assert_eq!(normalized, "pytest.fixture");
+    }
+
+    #[test]
+    fn normalizes_subscript_receiver() {
+        let source = "@apps[0].route(\"/\")\ndef index():\n    pass\n";
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let Stmt::FunctionDef(function) = &stmts[0] else {
+            panic!("expected function");
+        };
+        let normalized = normalize_decorator(&function.decorator_list[0]).expect("decorator");
+        assert_eq!(normalized, "apps[].route");
     }
 }
