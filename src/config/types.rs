@@ -425,8 +425,6 @@ pub struct ChokkinConfig {
 /// Which config files contributed to the effective configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigSources {
-    /// Hardcoded defaults always contribute.
-    pub used_defaults: bool,
     /// `.chokkin.toml` at the project root, if present.
     pub dot_chokkin_toml: Option<PathBuf>,
     /// `chokkin.toml` at the project root, if present.
@@ -457,15 +455,6 @@ pub struct UvWorkspaceHint {
     pub members: Vec<String>,
 }
 
-/// Source that declared a workspace member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspaceMemberSource {
-    /// `[tool.uv.workspace].members`.
-    Uv,
-    /// `[tool.chokkin.workspaces.<id>]`.
-    Chokkin,
-}
-
 /// Workspace member resolved relative to the project root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedWorkspaceMember {
@@ -476,8 +465,6 @@ pub struct ResolvedWorkspaceMember {
     pub path: String,
     /// Root-relative member `pyproject.toml` path when present.
     pub pyproject_toml: Option<String>,
-    /// Declaration source.
-    pub source: WorkspaceMemberSource,
 }
 
 /// CLI flags that override file config (§2). Unset fields do not override.

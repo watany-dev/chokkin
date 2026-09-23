@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     Confidence, ConfigError, PluginId, ProjectMode, ProjectRoot, RootMarker, RuntimeOverrides,
-    WorkspaceMemberSource, apply_overrides, default_config, discover_project_root, load_config,
+    apply_overrides, default_config, discover_project_root, load_config,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -42,7 +42,6 @@ fn defaults_when_no_config_files() {
     let loaded = load_config(&root).expect("load config");
 
     assert_eq!(loaded.effective, default_config());
-    assert!(loaded.sources.used_defaults);
     assert!(!loaded.sources.pyproject_tool_chokkin);
     assert!(loaded.uv_workspace.is_none());
 }
@@ -150,10 +149,6 @@ fn parses_workspace_overrides() {
         loaded.workspace_members[0].pyproject_toml.as_deref(),
         Some("services/worker/pyproject.toml")
     );
-    assert_eq!(
-        loaded.workspace_members[0].source,
-        WorkspaceMemberSource::Chokkin
-    );
 }
 
 #[test]
@@ -166,7 +161,6 @@ fn reads_uv_workspace_hint() {
         member.id == "api"
             && member.path == "services/api"
             && member.pyproject_toml.as_deref() == Some("services/api/pyproject.toml")
-            && member.source == WorkspaceMemberSource::Uv
     }));
 }
 

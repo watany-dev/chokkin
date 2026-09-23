@@ -1,7 +1,7 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -9,8 +9,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigSources;
+use crate::fix::atomic_write;
 use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
+use crate::path_util::normalize_rel_path;
 
 /// Default cache directory name below the project root.
 pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -46,6 +48,32 @@ impl CacheOptions {
     pub fn parse_bundle_path(&self, project_root: &Path, context: &CacheKeyContext) -> PathBuf {
         self.directory_path(project_root)
             .join(parse_bundle_relative_path(context))
+    }
+
+    /// Current time as seen by the filesystem holding the cache.
+    ///
+    /// Writes a probe file below the cache directory and returns its modified
+    /// time. Source mtimes are stamped by the filesystem, so the racy-mtime
+    /// check must compare against this clock rather than the local one: on a
+    /// network mount whose clock lags, the local clock would call a
+    /// just-written source settled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the probe cannot be written or its metadata
+    /// cannot be read.
+    pub fn filesystem_now(&self, project_root: &Path) -> io::Result<SystemTime> {
+        let path = self.clock_probe_path(project_root);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Non-empty so the write always reaches the file and bumps its mtime.
+        std::fs::write(&path, b"chokkin clock probe\n")?;
+        std::fs::metadata(&path)?.modified()
+    }
+
+    fn clock_probe_path(&self, project_root: &Path) -> PathBuf {
+        self.directory_path(project_root).join("clock")
     }
 
     /// Read the persisted parse cache bundle for `context`.
@@ -167,21 +195,13 @@ fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent"))?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-cache-")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    // The atomic rename below keeps readers from ever seeing a torn entry. We
-    // deliberately skip `sync_all()` here: the parse/scan cache is fully
-    // regenerable, the read path treats any corrupt entry as a miss, and a
-    // per-entry fsync dominates cold-cache runs (one fsync per parsed module
-    // makes the first analysis of a large project an order of magnitude slower
-    // than `--no-cache`). Durability across power loss is not worth that cost.
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    // The atomic rename keeps readers from ever seeing a torn entry. We
+    // deliberately skip the fsync: the parse/scan cache is fully regenerable,
+    // the read path treats any corrupt entry as a miss, and a per-entry fsync
+    // dominates cold-cache runs (one fsync per parsed module makes the first
+    // analysis of a large project an order of magnitude slower than
+    // `--no-cache`). Durability across power loss is not worth that cost.
+    atomic_write(path, bytes, false)
 }
 
 /// Stable inputs shared by cache units.
@@ -260,12 +280,8 @@ impl SourceFingerprint {
         let capacity = usize::try_from(metadata.len()).unwrap_or(0);
         let mut bytes = Vec::with_capacity(capacity);
         std::io::Read::read_to_end(&mut file, &mut bytes)?;
-        // `normalize_cache_path` already converts separators and trims a leading
-        // `./`, so feed it the borrowed path directly instead of pre-replacing
-        // (which allocated a second throwaway string per file on the warm path).
-        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
-            path: normalize_cache_path(&key_path),
+            path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: metadata
                 .modified()
@@ -290,12 +306,24 @@ impl SourceFingerprint {
     /// identify the file, so a warm cache lookup costs one `stat` per source
     /// instead of reading and hashing every byte of the project. Falls back to
     /// [`Self::from_absolute`] when the modified time is missing or falls
-    /// inside the racy-mtime window.
+    /// inside the racy-mtime window before the system clock. Use
+    /// [`Self::from_absolute_stat_at`] to judge against the filesystem's clock
+    /// instead (see [`CacheOptions::filesystem_now`]).
     ///
     /// # Errors
     ///
     /// Returns an IO error when metadata or file contents cannot be read.
     pub fn from_absolute_stat(root: &Path, path: &Path) -> io::Result<Self> {
+        Self::from_absolute_stat_at(root, path, SystemTime::now())
+    }
+
+    /// [`Self::from_absolute_stat`] with an explicit `now` for the racy-mtime
+    /// check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_absolute_stat_at(root: &Path, path: &Path, now: SystemTime) -> io::Result<Self> {
         let metadata = std::fs::metadata(path)?;
         let Some(modified_ns) = metadata
             .modified()
@@ -305,16 +333,27 @@ impl SourceFingerprint {
         else {
             return Self::from_absolute(root, path);
         };
-        if is_racy_mtime(modified_ns) {
+        if is_racy_mtime(modified_ns, now) {
             return Self::from_absolute(root, path);
         }
-        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
-            path: normalize_cache_path(&key_path),
+            path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: Some(modified_ns),
             content_hash: String::new(),
         })
+    }
+
+    /// Fingerprint recording that `path` was probed and did not exist.
+    ///
+    /// The content hash is not hex, so it never equals a real file's.
+    fn absent(root: &Path, path: &Path) -> Self {
+        Self {
+            path: cache_key_path(root, path),
+            size: 0,
+            modified_ns: None,
+            content_hash: "absent".to_owned(),
+        }
     }
 
     /// Root-relative variant of [`Self::from_absolute_stat`].
@@ -323,15 +362,28 @@ impl SourceFingerprint {
     ///
     /// Returns an IO error when metadata or file contents cannot be read.
     pub fn from_root_relative_stat(root: &Path, path: &str) -> io::Result<Self> {
+        Self::from_root_relative_stat_at(root, path, SystemTime::now())
+    }
+
+    /// Root-relative variant of [`Self::from_absolute_stat_at`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_root_relative_stat_at(
+        root: &Path,
+        path: &str,
+        now: SystemTime,
+    ) -> io::Result<Self> {
         let absolute = root.join(path);
-        Self::from_absolute_stat(root, &absolute)
+        Self::from_absolute_stat_at(root, &absolute, now)
     }
 }
 
-fn is_racy_mtime(modified_ns: u128) -> bool {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .is_ok_and(|now| now.as_nanos().saturating_sub(modified_ns) < RACY_MTIME_WINDOW.as_nanos())
+fn is_racy_mtime(modified_ns: u128, now: SystemTime) -> bool {
+    now.duration_since(UNIX_EPOCH).is_ok_and(|since_epoch| {
+        since_epoch.as_nanos().saturating_sub(modified_ns) < RACY_MTIME_WINDOW.as_nanos()
+    })
 }
 
 fn config_input_fingerprints(
@@ -372,7 +424,18 @@ fn manifest_input_fingerprints(
     for path in &sources.requirements_files {
         paths.push(root.join(path));
     }
-    fingerprint_paths(root, paths)
+    let mut fingerprints = fingerprint_paths(root, paths)?;
+    for path in &sources.requirements_missing {
+        let absolute = root.join(path);
+        fingerprints.push(if absolute.is_file() {
+            SourceFingerprint::from_absolute(root, &absolute)?
+        } else {
+            SourceFingerprint::absent(root, &absolute)
+        });
+    }
+    fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+    fingerprints.dedup_by(|left, right| left.path == right.path);
+    Ok(fingerprints)
 }
 
 fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerprint>> {
@@ -504,25 +567,6 @@ pub struct ParseCacheKey {
     pub source: SourceFingerprint,
 }
 
-// Ordering compares `source` before `context`. Every key produced by one run
-// shares an identical `context`, so comparing the context first would scan five
-// equal strings before reaching the discriminating `source.path`. Leading with
-// `source` lets each comparison short-circuit on the path. The in-memory store
-// is a `HashMap`, so this only affects callers that sort keys themselves.
-impl Ord for ParseCacheKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.source
-            .cmp(&other.source)
-            .then_with(|| self.context.cmp(&other.context))
-    }
-}
-
-impl PartialOrd for ParseCacheKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 impl ParseCacheKey {
     /// Stable identifier for this key inside a [`ParseCacheBundle`].
     ///
@@ -557,20 +601,19 @@ pub struct ParseCacheBundle {
 
 impl ParseCacheBundle {
     /// Return the cached parse result for `key`.
+    ///
+    /// Entries are keyed by a 64-bit hash only, so an entry whose module path
+    /// differs from the key's source path is a collision and reads as a miss.
     #[must_use]
     pub fn get(&self, key: &ParseCacheKey) -> Option<&ParsedModule> {
-        self.entries.get(&key.entry_id())
+        self.entries
+            .get(&key.entry_id())
+            .filter(|parsed| parsed.path == key.source.path)
     }
 
     /// Store `parsed` under `key`.
     pub fn insert(&mut self, key: &ParseCacheKey, parsed: ParsedModule) {
         self.entries.insert(key.entry_id(), parsed);
-    }
-
-    /// Whether the bundle holds no entries.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -621,12 +664,29 @@ impl ParseCacheStore {
 
     /// Return cached parse output for `key` when available.
     pub fn get(&mut self, key: &ParseCacheKey) -> Option<ParsedModule> {
+        self.get_or_promote(key, &ParseCacheBundle::default())
+    }
+
+    /// Return cached parse output for `key` from memory, then from `disk`.
+    ///
+    /// A disk hit is copied into memory and counted as a hit, not as a miss
+    /// plus a store.
+    pub fn get_or_promote(
+        &mut self,
+        key: &ParseCacheKey,
+        disk: &ParseCacheBundle,
+    ) -> Option<ParsedModule> {
         if let Some(parsed) = self.entries.get(key) {
             self.stats.hits = self.stats.hits.saturating_add(1);
             return Some(parsed.clone());
         }
-        self.stats.misses = self.stats.misses.saturating_add(1);
-        None
+        let Some(parsed) = disk.get(key) else {
+            self.stats.misses = self.stats.misses.saturating_add(1);
+            return None;
+        };
+        self.entries.insert(key.clone(), parsed.clone());
+        self.stats.hits = self.stats.hits.saturating_add(1);
+        Some(parsed.clone())
     }
 
     /// Store parse output for `key`.
@@ -640,31 +700,14 @@ impl ParseCacheStore {
     pub const fn stats(&self) -> ParseCacheStats {
         self.stats
     }
-
-    /// Number of entries currently held.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Whether the cache is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
 }
 
-/// Normalize a path for cache keys.
-#[must_use]
-pub fn normalize_cache_path(path: &str) -> String {
-    // Backslashes are rare (Windows-only); skip the replacement allocation on
-    // the common forward-slash path and trim the leading `./` in one owned copy.
-    if path.contains('\\') {
-        let slashed = path.replace('\\', "/");
-        slashed.trim_start_matches("./").to_owned()
-    } else {
-        path.trim_start_matches("./").to_owned()
-    }
+fn cache_key_path(root: &Path, path: &Path) -> String {
+    let mut key = normalize_rel_path(path.strip_prefix(root).unwrap_or(path));
+    // Trim in place: this runs once per source file on the warm-cache path.
+    let prefix_len = key.len() - key.trim_start_matches("./").len();
+    key.replace_range(..prefix_len, "");
+    key
 }
 
 /// Stable 64-bit FNV-1a hash rendered as lowercase hex.
@@ -804,7 +847,7 @@ mod tests {
     #[test]
     fn normalizes_cache_paths() {
         assert_eq!(
-            normalize_cache_path(".\\src\\acme\\main.py"),
+            cache_key_path(Path::new("/repo"), Path::new(".\\src\\acme\\main.py")),
             "src/acme/main.py"
         );
     }
@@ -879,6 +922,113 @@ mod tests {
     }
 
     #[test]
+    fn stat_fingerprint_judges_racy_against_the_given_clock() {
+        let root = temp_cache_test_dir("stat-lagging-clock");
+        let path = root.join("src/app.py");
+        std::fs::write(&path, "import requests\n").expect("write source");
+        // A filesystem clock lagging the local one by a minute stamps a fresh
+        // edit a minute in the past; the local clock would call it settled.
+        let lagging = SystemTime::now() - Duration::from_secs(60);
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open source for retiming");
+        handle
+            .set_times(std::fs::FileTimes::new().set_modified(lagging))
+            .expect("retime mtime");
+        drop(handle);
+
+        let fingerprint =
+            SourceFingerprint::from_root_relative_stat_at(&root, "src/app.py", lagging)
+                .expect("stat fingerprint");
+
+        assert!(
+            !fingerprint.content_hash.is_empty(),
+            "a file stamped at the filesystem's `now` must be hashed"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn filesystem_now_reads_the_probe_mtime() {
+        let root = temp_cache_test_dir("fs-now");
+        let options = CacheOptions::default();
+
+        let now = options.filesystem_now(&root).expect("filesystem now");
+
+        let probe = std::fs::metadata(options.clock_probe_path(&root)).expect("probe metadata");
+        assert_eq!(probe.modified().expect("probe mtime"), now);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parse_bundle_rejects_an_entry_for_another_path() {
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: String::new(),
+            },
+        };
+        let mut bundle = ParseCacheBundle::default();
+        // Stands in for a 64-bit entry-id collision with another source.
+        bundle.insert(
+            &key,
+            ParsedModule {
+                path: "src/other.py".to_owned(),
+                ..ParsedModule::default()
+            },
+        );
+
+        assert!(bundle.get(&key).is_none());
+    }
+
+    #[test]
+    fn disk_promotion_counts_as_a_hit() {
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: String::new(),
+            },
+        };
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
+        let mut disk = ParseCacheBundle::default();
+        disk.insert(&key, parsed.clone());
+        let mut cache = ParseCacheStore::new();
+
+        assert_eq!(cache.get_or_promote(&key, &disk), Some(parsed.clone()));
+        assert_eq!(cache.get(&key), Some(parsed));
+        assert_eq!(
+            cache.stats(),
+            ParseCacheStats {
+                hits: 2,
+                misses: 0,
+                stores: 0,
+            }
+        );
+    }
+
+    #[test]
     fn scan_fingerprints_include_uv_only_pyproject_config_input() {
         let root = temp_cache_test_dir("scan-config");
         std::fs::write(
@@ -887,7 +1037,6 @@ mod tests {
         )
         .expect("write pyproject");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -907,7 +1056,6 @@ mod tests {
         let root = temp_cache_test_dir("scan-manifest");
         std::fs::write(root.join("requirements.txt"), "requests\n").expect("write requirements");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -943,7 +1091,10 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let mut cache = ParseCacheStore::new();
 
         assert!(cache.get(&key).is_none());
@@ -954,7 +1105,6 @@ mod tests {
         assert_eq!(stats.misses, 1);
         assert_eq!(stats.stores, 1);
         assert_eq!(stats.hits, 1);
-        assert_eq!(cache.len(), 1);
     }
 
     #[test]
@@ -976,7 +1126,7 @@ mod tests {
             .read_parse_bundle(&root, &context)
             .expect("read corrupt cache");
 
-        assert!(bundle.is_empty());
+        assert!(bundle.entries.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 

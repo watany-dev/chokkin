@@ -114,6 +114,7 @@ pub fn extract_manifest(
         if !extracted.files_read.is_empty() {
             sources.requirements_files.extend(extracted.files_read);
         }
+        sources.requirements_missing.extend(extracted.files_missing);
         dependencies.extend(extracted.dependencies);
         constraints.extend(extracted.constraints);
         warnings.extend(extracted.warnings);
@@ -159,7 +160,11 @@ pub fn extract_manifest_with_cache(
     {
         let current_inputs = manifest_inputs_for_payload(root, config, &payload.manifest)?;
         if current_inputs == payload.inputs {
-            return Ok(payload.manifest);
+            // Inputs are fingerprinted root-relative, so a moved or copied
+            // project hits an entry that still carries the old absolute root.
+            let mut manifest = payload.manifest;
+            manifest.root = root.clone();
+            return Ok(manifest);
         }
     }
 
@@ -198,7 +203,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v1".to_owned(),
+            unit_version: "manifest-extract-v2".to_owned(),
         },
         inputs,
     })

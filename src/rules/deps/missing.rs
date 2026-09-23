@@ -2,8 +2,9 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use crate::config::{ChokkinConfig, Confidence};
+use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
+use crate::manifest::DeclaredDependency;
 use crate::parser::ParseSummary;
 use crate::resolver::{ResolvedImport, TransitiveIndex};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
@@ -57,13 +58,14 @@ pub(super) fn detect_missing_dependencies(
         }
 
         let usage = usage_context_for_import(&import.file, import.context, sources);
-        let root_declared = declared
-            .get(distribution)
-            .is_some_and(|deps| is_directly_declared(deps, usage, config));
         let workspace_member = import.workspace_member.as_deref();
-        let member_declared = workspace_member.is_some_and(|member_id| {
-            workspace_member_declares(workspace_declared, member_id, distribution, usage, config)
-        });
+        let member_entry = workspace_member
+            .and_then(|member_id| member_declarations(workspace_declared, member_id, distribution));
+        let root_entry = declared.get(distribution).map(Vec::as_slice);
+        let member_declared =
+            member_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
+        let root_declared =
+            root_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
 
         if member_declared
             || (!strict && root_declared)
@@ -72,20 +74,13 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        if !strict
-            && matches!(
-                usage,
-                super::context::UsageContext::Type
-                    | super::context::UsageContext::Test
-                    | super::context::UsageContext::Docs
-                    | super::context::UsageContext::Dev
-            )
-        {
+        if !strict && usage != super::context::UsageContext::Runtime {
             continue;
         }
 
         if strict
             && root_declared
+            && member_entry.is_none()
             && let Some(member_id) = workspace_member
         {
             candidates.push(workspace_missing_candidate(import, distribution, member_id));
@@ -95,7 +90,15 @@ pub(super) fn detect_missing_dependencies(
         // Declared, only in a bucket that does not match this usage context.
         // §10 hands that case to CHK005 alone: it is neither missing (CHK003)
         // nor transitive-only (CHK004).
-        if declared.contains_key(distribution) {
+        if governing_declarations(
+            declared,
+            workspace_declared,
+            workspace_member,
+            distribution,
+            strict,
+        )
+        .is_some()
+        {
             continue;
         }
 
@@ -115,18 +118,33 @@ pub(super) fn detect_missing_dependencies(
     candidates
 }
 
-fn workspace_member_declares(
-    workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+/// Declarations that decide between CHK003/CHK004/CHK005 for one import.
+/// Under `--strict` a workspace member's own entry wins and the root is the
+/// fallback; otherwise only the root counts. Missing and misplaced detection
+/// share this lookup so that at most one of them fires per import.
+pub(super) fn governing_declarations<'i, 'a>(
+    declared: &'i DeclaredIndex<'a>,
+    workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
+    workspace_member: Option<&str>,
+    distribution: &str,
+    strict: bool,
+) -> Option<&'i [&'a DeclaredDependency]> {
+    workspace_member
+        .filter(|_| strict)
+        .and_then(|member_id| member_declarations(workspace_declared, member_id, distribution))
+        .or_else(|| declared.get(distribution).map(Vec::as_slice))
+}
+
+fn member_declarations<'i, 'a>(
+    workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
     member_id: &str,
     distribution: &str,
-    usage: super::context::UsageContext,
-    config: &ChokkinConfig,
-) -> bool {
+) -> Option<&'i [&'a DeclaredDependency]> {
     workspace_declared
         .iter()
         .find(|boundary| boundary.member_id == member_id)
         .and_then(|boundary| boundary.declared.get(distribution))
-        .is_some_and(|deps| is_directly_declared(deps, usage, config))
+        .map(Vec::as_slice)
 }
 
 fn workspace_missing_candidate(
@@ -406,7 +424,7 @@ mod tests {
                     sources: &sources,
                     graph: &graph,
                     reachability: &crate::reachability::ReachabilityReport::default(),
-                    parse: &ParseSummary::empty(),
+                    parse: &ParseSummary::default(),
                 },
                 config: &config,
                 strict: false,

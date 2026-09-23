@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{BASELINE_DRAFT_SCHEMA_VERSION, BASELINE_SCHEMA_VERSION};
-
 /// Baseline file schema written by `--update-baseline`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaselineFile {
@@ -18,14 +16,9 @@ pub struct BaselineFile {
     pub issues: Vec<BaselineEntry>,
 }
 
+/// Baseline files without `schema_version` are treated as v0.2 draft (`"0"`).
 fn default_baseline_schema_version() -> String {
-    BASELINE_DRAFT_SCHEMA_VERSION.to_owned()
-}
-
-/// Current baseline schema version written by chokkin v0.3+.
-#[must_use]
-pub fn current_baseline_schema_version() -> &'static str {
-    BASELINE_SCHEMA_VERSION
+    "0".to_owned()
 }
 
 /// One frozen issue fingerprint.

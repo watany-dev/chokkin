@@ -83,8 +83,6 @@ pub struct ProjectMetadata {
 pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
-    /// Lockfile `requires-python` when present.
-    pub requires_python: Option<String>,
 }
 
 /// Which manifest files contributed to extraction.
@@ -95,6 +93,9 @@ pub struct ManifestSources {
     pub pyproject_toml: bool,
     /// Root-relative requirements file paths that contributed.
     pub requirements_files: Vec<String>,
+    /// Root-relative requirements include/constraint paths that were probed
+    /// but did not exist; the manifest cache rechecks them on a hit.
+    pub requirements_missing: Vec<String>,
     /// `setup.cfg` contributed.
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).

@@ -134,6 +134,93 @@ fn manifest_cache_revalidates_included_requirements() {
 }
 
 #[test]
+fn manifest_cache_notices_created_constraint_file() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        temp.path().join("requirements.txt"),
+        "-c constraints.txt\nrequests\n",
+    )
+    .expect("write requirements");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert!(first.constraints.is_empty());
+    assert!(
+        first
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ManifestWarning::RequirementsConstraintMissing { .. }))
+    );
+
+    std::fs::write(temp.path().join("constraints.txt"), "requests<3\n").expect("write constraints");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    assert!(second.constraints.iter().any(|dep| dep.name == "requests"));
+    assert!(
+        !second
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ManifestWarning::RequirementsConstraintMissing { .. }))
+    );
+}
+
+#[test]
+fn manifest_cache_notices_shadowing_include() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(temp.path().join("reqs")).expect("create reqs dir");
+    std::fs::write(temp.path().join("requirements.txt"), "-r reqs/main.txt\n")
+        .expect("write requirements");
+    std::fs::write(temp.path().join("reqs/main.txt"), "-r extra.txt\n").expect("write main");
+    std::fs::write(temp.path().join("extra.txt"), "urllib3\n").expect("write root extra");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert!(dependency_names(&first).contains(&"urllib3"));
+
+    std::fs::write(temp.path().join("reqs/extra.txt"), "idna\n").expect("write nested extra");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    let names = dependency_names(&second);
+    assert!(names.contains(&"idna"));
+    assert!(!names.contains(&"urllib3"));
+}
+
+#[test]
+fn manifest_cache_hit_uses_current_root_after_move() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let before = temp.path().join("a");
+    std::fs::create_dir(&before).expect("create project dir");
+    std::fs::write(
+        before.join("pyproject.toml"),
+        "[project]\nname = \"moved\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+    )
+    .expect("write pyproject");
+
+    let cache = CacheOptions::default();
+    let root_before = project_root_at(&before);
+    let config_before = load_config(&root_before).expect("load config");
+    extract_manifest_with_cache(&root_before, &config_before, Some(&cache))
+        .expect("first extraction");
+
+    // A rename keeps mtimes, so the root-relative cache key still matches.
+    let after = temp.path().join("b");
+    std::fs::rename(&before, &after).expect("move project");
+    let root_after = project_root_at(&after);
+    let config_after = load_config(&root_after).expect("load config");
+    let moved = extract_manifest_with_cache(&root_after, &config_after, Some(&cache))
+        .expect("second extraction");
+
+    assert_eq!(moved.root, root_after);
+    assert!(dependency_names(&moved).contains(&"requests"));
+}
+
+#[test]
 fn requirements_constraints_not_declared() {
     let manifest = extract_fixture("requirements_constraints");
     let names = dependency_names(&manifest);
@@ -265,7 +352,6 @@ fn broken_pyproject_is_error() {
         root: root.clone(),
         effective: default_config(),
         sources: ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
