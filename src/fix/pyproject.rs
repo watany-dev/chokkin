@@ -5,24 +5,22 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::manifest::normalize_distribution_name;
 
 use super::error::FixError;
-use super::write::atomic_write;
+use super::write::{atomic_write, read_manifest};
 
-/// Remove a dependency entry identified by a manifest label.
-pub fn remove_by_label(path: &std::path::Path, label: &str) -> Result<String, FixError> {
-    let rel = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("pyproject.toml");
-    let contents = std::fs::read_to_string(path).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
-    let mut doc = contents
+fn load_doc(path: &std::path::Path) -> Result<(&str, DocumentMut), FixError> {
+    let (rel, contents) = read_manifest(path, "pyproject.toml")?;
+    let doc = contents
         .parse::<DocumentMut>()
         .map_err(|error| FixError::InvalidToml {
             path: rel.to_owned(),
             detail: error.to_string(),
         })?;
+    Ok((rel, doc))
+}
+
+/// Remove a dependency entry identified by a manifest label.
+pub fn remove_by_label(path: &std::path::Path, label: &str) -> Result<String, FixError> {
+    let (rel, mut doc) = load_doc(path)?;
 
     let removed = remove_label_in_document(&mut doc, label)?;
     if !removed {
@@ -41,20 +39,7 @@ pub fn move_group_to_runtime(
     from_label: &str,
     raw: &str,
 ) -> Result<String, FixError> {
-    let rel = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("pyproject.toml");
-    let contents = std::fs::read_to_string(path).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
-    let mut doc = contents
-        .parse::<DocumentMut>()
-        .map_err(|error| FixError::InvalidToml {
-            path: rel.to_owned(),
-            detail: error.to_string(),
-        })?;
+    let (rel, mut doc) = load_doc(path)?;
 
     let removed = remove_label_in_document(&mut doc, from_label)?;
     if !removed {
@@ -71,20 +56,7 @@ pub fn move_group_to_runtime(
 
 /// Add a runtime dependency to `[project].dependencies`.
 pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<String, FixError> {
-    let rel = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("pyproject.toml");
-    let contents = std::fs::read_to_string(path).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
-    let mut doc = contents
-        .parse::<DocumentMut>()
-        .map_err(|error| FixError::InvalidToml {
-            path: rel.to_owned(),
-            detail: error.to_string(),
-        })?;
+    let (rel, mut doc) = load_doc(path)?;
 
     if !push_runtime_dependency(&mut doc, raw)? {
         return Ok(format!(
@@ -226,7 +198,7 @@ fn parse_hatch_env_dependency_label(label: &str) -> Option<(String, usize)> {
     Some((env.to_owned(), index))
 }
 
-fn remove_table_key(doc: &mut DocumentMut, path: &[&str], key: &str) -> Result<bool, FixError> {
+fn item_at_mut<'a>(doc: &'a mut DocumentMut, path: &[&str]) -> Result<&'a mut Item, FixError> {
     let mut current = doc.as_item_mut();
     for segment in path {
         current = current
@@ -235,7 +207,11 @@ fn remove_table_key(doc: &mut DocumentMut, path: &[&str], key: &str) -> Result<b
                 detail: format!("missing TOML path `{}`", path.join(".")),
             })?;
     }
-    let table = current
+    Ok(current)
+}
+
+fn remove_table_key(doc: &mut DocumentMut, path: &[&str], key: &str) -> Result<bool, FixError> {
+    let table = item_at_mut(doc, path)?
         .as_table_mut()
         .ok_or_else(|| FixError::Unsupported {
             detail: format!("`{}` is not a table", path.join(".")),
@@ -248,15 +224,7 @@ fn remove_array_index(
     path: &[&str],
     index: usize,
 ) -> Result<bool, FixError> {
-    let mut current = doc.as_item_mut();
-    for segment in path {
-        current = current
-            .get_mut(*segment)
-            .ok_or_else(|| FixError::Unsupported {
-                detail: format!("missing TOML path `{}`", path.join(".")),
-            })?;
-    }
-    let array = current
+    let array = item_at_mut(doc, path)?
         .as_array_mut()
         .ok_or_else(|| FixError::Unsupported {
             detail: format!("`{}` is not an array", path.join(".")),

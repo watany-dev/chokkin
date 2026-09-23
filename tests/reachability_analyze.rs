@@ -45,8 +45,7 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
     let plugins =
         extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production)
-        .expect("entry plan");
+    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -58,17 +57,15 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
-        &root,
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
-    )
-    .expect("resolve imports");
+    );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &entry);
 
     ReachabilityInputs {
         sources,
@@ -276,7 +273,7 @@ mod golden {
     use std::fs;
     use std::path::Path;
 
-    use chokkin::{EntryOrigin, UnreachableReason};
+    use chokkin::EntryOrigin;
     use serde::{Deserialize, Serialize};
 
     use super::*;
@@ -300,7 +297,6 @@ mod golden {
     struct UnreachableSnapshot {
         path: String,
         confidence: String,
-        reasons: Vec<String>,
     }
 
     fn format_origin(origin: &EntryOrigin) -> String {
@@ -311,18 +307,6 @@ mod golden {
             EntryOrigin::Auto { rule } => format!("auto:{rule}"),
             EntryOrigin::SymbolRef { label, .. } => format!("symbol:{label}"),
         }
-    }
-
-    fn format_reason(reason: UnreachableReason) -> String {
-        match reason {
-            UnreachableReason::NotReachable => "not_reachable",
-            UnreachableReason::ExcludedInit => "excluded_init",
-            UnreachableReason::ExcludedStub => "excluded_stub",
-            UnreachableReason::ExcludedTestContext => "excluded_test_context",
-            UnreachableReason::ExcludedProductionContext => "excluded_production_context",
-            UnreachableReason::FrameworkUsed => "framework_used",
-        }
-        .to_owned()
     }
 
     fn snapshot_from_inputs(
@@ -342,11 +326,6 @@ mod golden {
             .map(|file| UnreachableSnapshot {
                 path: file.path.clone(),
                 confidence: file.max_confidence.as_str().to_owned(),
-                reasons: file
-                    .reasons
-                    .iter()
-                    .map(|reason| format_reason(*reason))
-                    .collect(),
             })
             .collect();
 

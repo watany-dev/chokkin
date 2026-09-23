@@ -40,8 +40,7 @@ fn load_emit(path: &Path) -> EmitInputs {
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
     let plugins =
         extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false)
-        .expect("entry plan");
+    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -53,17 +52,15 @@ fn load_emit(path: &Path) -> EmitInputs {
         let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
-        &root,
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
-    )
-    .expect("resolve imports");
+    );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph,
         &sources,

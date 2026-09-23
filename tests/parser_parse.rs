@@ -27,8 +27,6 @@ fn parse_fixture(name: &str) -> chokkin::ParsedModule {
         layout: ProjectLayout::Unknown,
         packages: Vec::new(),
         inferred_globs: Vec::new(),
-        flat_candidates: Vec::new(),
-        ambiguous_flat_resolution: false,
     };
     parse_file(
         &root,
@@ -54,15 +52,11 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         _ => LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
     };
     parse_file(
@@ -229,8 +223,6 @@ fn parse_project_sources_fixture_suite() {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files,
@@ -257,8 +249,6 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -299,8 +289,6 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
             layout: ProjectLayout::Src,
             packages: vec!["app".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -365,8 +353,6 @@ fn parse_project_sources_extracts_notebook_code_cells() {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -413,8 +399,6 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -489,8 +473,6 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
             layout: ProjectLayout::Src,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files,
@@ -541,8 +523,6 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
         layout: ProjectLayout::Src,
         packages: Vec::new(),
         inferred_globs: Vec::new(),
-        flat_candidates: Vec::new(),
-        ambiguous_flat_resolution: false,
     };
     let discovered = |path: &str| chokkin::DiscoveredFile {
         path: path.to_owned(),

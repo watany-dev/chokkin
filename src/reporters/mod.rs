@@ -11,6 +11,7 @@ mod traits;
 mod types;
 
 pub use compact::CompactReporter;
+pub(crate) use default::config_label;
 pub use default::{DefaultReporter, config_label_from_sources};
 pub use format::format_subject;
 pub use github::GithubReporter;

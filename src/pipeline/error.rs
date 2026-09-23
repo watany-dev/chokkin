@@ -5,14 +5,11 @@ use std::io;
 use crate::baseline::BaselineError;
 use crate::config::ConfigError;
 use crate::discovery::DiscoveryError;
-use crate::entry::EntryError;
-use crate::fix::FixError;
 use crate::graph::GraphError;
 use crate::manifest::ManifestError;
 use crate::parser::ParseError;
 use crate::plugins::PluginsError;
 use crate::reachability::ReachabilityError;
-use crate::resolver::ResolveError;
 use crate::sources::SourcesError;
 
 /// Fatal error while running pipeline steps 1–4 for probe output.
@@ -65,21 +62,12 @@ pub enum AnalyzeError {
     /// Python parsing failed.
     #[error(transparent)]
     Parse(#[from] ParseError),
-    /// Entry root construction failed.
-    #[error(transparent)]
-    Entry(#[from] EntryError),
     /// Graph construction failed.
     #[error(transparent)]
     Graph(#[from] GraphError),
-    /// Import resolution failed.
-    #[error(transparent)]
-    Resolve(#[from] ResolveError),
     /// Reachability analysis failed.
     #[error(transparent)]
     Reachability(#[from] ReachabilityError),
-    /// Fix application failed.
-    #[error(transparent)]
-    Fix(#[from] FixError),
     /// Baseline read/write failed.
     #[error(transparent)]
     Baseline(#[from] BaselineError),
@@ -94,12 +82,8 @@ impl AnalyzeError {
     pub const fn is_usage_error(&self) -> bool {
         match self {
             Self::Probe(error) => error.is_usage_error(),
-            Self::Plugins(_) | Self::Parse(_) | Self::Entry(_) | Self::Usage(_) => true,
-            Self::Graph(_)
-            | Self::Resolve(_)
-            | Self::Reachability(_)
-            | Self::Fix(_)
-            | Self::Baseline(_) => false,
+            Self::Plugins(_) | Self::Parse(_) | Self::Usage(_) => true,
+            Self::Graph(_) | Self::Reachability(_) | Self::Baseline(_) => false,
         }
     }
 }
