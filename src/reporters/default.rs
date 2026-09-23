@@ -75,6 +75,11 @@ impl Reporter for DefaultReporter {
 /// Build a config source label from discovery output.
 #[must_use]
 pub fn config_label_from_sources(sources: &ConfigSources) -> String {
+    config_label(sources, "pyproject.toml")
+}
+
+/// Shared by the analysis reporter and probe output, which label pyproject differently.
+pub fn config_label(sources: &ConfigSources, pyproject_label: &str) -> String {
     let mut parts = Vec::new();
     if sources.dot_chokkin_toml.is_some() {
         parts.push(".chokkin.toml".to_owned());
@@ -83,7 +88,7 @@ pub fn config_label_from_sources(sources: &ConfigSources) -> String {
         parts.push("chokkin.toml".to_owned());
     }
     if sources.pyproject_tool_chokkin {
-        parts.push("pyproject.toml".to_owned());
+        parts.push(pyproject_label.to_owned());
     }
     if parts.is_empty() {
         if sources.used_defaults {
