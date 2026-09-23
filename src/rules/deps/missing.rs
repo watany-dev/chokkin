@@ -74,15 +74,7 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        if !strict
-            && matches!(
-                usage,
-                super::context::UsageContext::Type
-                    | super::context::UsageContext::Test
-                    | super::context::UsageContext::Docs
-                    | super::context::UsageContext::Dev
-            )
-        {
+        if !strict && usage != super::context::UsageContext::Runtime {
             continue;
         }
 
