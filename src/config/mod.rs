@@ -4,7 +4,6 @@ mod defaults;
 mod error;
 mod load;
 mod parse;
-mod source;
 mod types;
 mod workspace;
 

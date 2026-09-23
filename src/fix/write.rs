@@ -4,6 +4,27 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+use super::error::FixError;
+
+fn manifest_name<'a>(path: &'a Path, fallback: &'static str) -> &'a str {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(fallback)
+}
+
+/// Read a manifest, returning its display name alongside the contents.
+pub(super) fn read_manifest<'a>(
+    path: &'a Path,
+    fallback: &'static str,
+) -> Result<(&'a str, String), FixError> {
+    let rel = manifest_name(path, fallback);
+    let contents = fs::read_to_string(path).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
+    Ok((rel, contents))
+}
+
 /// Write `bytes` to `path` atomically via a same-directory temp file and rename,
 /// keeping the existing file's permissions. `sync` fsyncs before the rename.
 ///
