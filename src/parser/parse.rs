@@ -514,7 +514,7 @@ fn source_fingerprint(
     // `from_root_relative_stat` identifies an unchanged source by `(size,
     // mtime)` and only reads bytes when that is ambiguous. On a warm run the
     // whole project used to be read and hashed just to build lookup keys.
-    SourceFingerprint::from_root_relative_stat(&root.path, path, now).map_err(|source| {
+    SourceFingerprint::from_root_relative_stat_at(&root.path, path, now).map_err(|source| {
         ParseError::Io {
             path: root.path.join(path),
             source,

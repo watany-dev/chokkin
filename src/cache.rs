@@ -309,13 +309,24 @@ impl SourceFingerprint {
     /// identify the file, so a warm cache lookup costs one `stat` per source
     /// instead of reading and hashing every byte of the project. Falls back to
     /// [`Self::from_absolute`] when the modified time is missing or falls
-    /// inside the racy-mtime window before `now`, which should come from the
-    /// filesystem's clock (see [`CacheOptions::filesystem_now`]).
+    /// inside the racy-mtime window before the system clock. Use
+    /// [`Self::from_absolute_stat_at`] to judge against the filesystem's clock
+    /// instead (see [`CacheOptions::filesystem_now`]).
     ///
     /// # Errors
     ///
     /// Returns an IO error when metadata or file contents cannot be read.
-    pub fn from_absolute_stat(root: &Path, path: &Path, now: SystemTime) -> io::Result<Self> {
+    pub fn from_absolute_stat(root: &Path, path: &Path) -> io::Result<Self> {
+        Self::from_absolute_stat_at(root, path, SystemTime::now())
+    }
+
+    /// [`Self::from_absolute_stat`] with an explicit `now` for the racy-mtime
+    /// check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_absolute_stat_at(root: &Path, path: &Path, now: SystemTime) -> io::Result<Self> {
         let metadata = std::fs::metadata(path)?;
         let Some(modified_ns) = metadata
             .modified()
@@ -342,9 +353,22 @@ impl SourceFingerprint {
     /// # Errors
     ///
     /// Returns an IO error when metadata or file contents cannot be read.
-    pub fn from_root_relative_stat(root: &Path, path: &str, now: SystemTime) -> io::Result<Self> {
+    pub fn from_root_relative_stat(root: &Path, path: &str) -> io::Result<Self> {
+        Self::from_root_relative_stat_at(root, path, SystemTime::now())
+    }
+
+    /// Root-relative variant of [`Self::from_absolute_stat_at`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_root_relative_stat_at(
+        root: &Path,
+        path: &str,
+        now: SystemTime,
+    ) -> io::Result<Self> {
         let absolute = root.join(path);
-        Self::from_absolute_stat(root, &absolute, now)
+        Self::from_absolute_stat_at(root, &absolute, now)
     }
 }
 
@@ -855,9 +879,8 @@ mod tests {
             .expect("backdate mtime");
         drop(handle);
 
-        let stat =
-            SourceFingerprint::from_root_relative_stat(&root, "src/app.py", SystemTime::now())
-                .expect("stat fingerprint");
+        let stat = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
+            .expect("stat fingerprint");
         let full =
             SourceFingerprint::from_root_relative(&root, "src/app.py").expect("full fingerprint");
 
@@ -874,9 +897,8 @@ mod tests {
         let path = root.join("src/app.py");
         std::fs::write(&path, "import requests\n").expect("write source");
 
-        let fingerprint =
-            SourceFingerprint::from_root_relative_stat(&root, "src/app.py", SystemTime::now())
-                .expect("stat fingerprint");
+        let fingerprint = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
+            .expect("stat fingerprint");
 
         assert!(
             !fingerprint.content_hash.is_empty(),
@@ -902,8 +924,9 @@ mod tests {
             .expect("retime mtime");
         drop(handle);
 
-        let fingerprint = SourceFingerprint::from_root_relative_stat(&root, "src/app.py", lagging)
-            .expect("stat fingerprint");
+        let fingerprint =
+            SourceFingerprint::from_root_relative_stat_at(&root, "src/app.py", lagging)
+                .expect("stat fingerprint");
 
         assert!(
             !fingerprint.content_hash.is_empty(),
