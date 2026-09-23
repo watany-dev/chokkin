@@ -7,6 +7,8 @@ use std::path::Path;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use crate::rules::RuleId;
+
 use super::defaults::PartialConfig;
 use super::error::ConfigError;
 use super::types::{UvWorkspaceHint, is_absolute_path_str};
@@ -172,7 +174,7 @@ fn ensure_known_rules<'a>(
     codes: impl Iterator<Item = &'a String>,
 ) -> Result<(), ConfigError> {
     for code in codes {
-        if !is_valid_ignore_rule(code) {
+        if RuleId::parse_code(code).is_none_or(|rule| rule.as_code() != code.as_str()) {
             return Err(validation_error(
                 path,
                 format!("{field}.{code}"),
@@ -191,34 +193,23 @@ fn validation_error(path: &Path, field: String, message: &str) -> ConfigError {
     }
 }
 
-fn is_valid_ignore_rule(code: &str) -> bool {
-    matches!(
-        code,
-        "CHK001"
-            | "CHK002"
-            | "CHK003"
-            | "CHK004"
-            | "CHK005"
-            | "CHK006"
-            | "CHK007"
-            | "CHK008"
-            | "CHK009"
-            | "CHK010"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn valid_ignore_rules_accept_chk001_through_chk010() {
-        for code in 1..=10 {
-            let rule = format!("CHK{code:03}");
-            assert!(is_valid_ignore_rule(&rule), "expected {rule} to be valid");
-        }
-        assert!(!is_valid_ignore_rule("CHK000"));
-        assert!(!is_valid_ignore_rule("CHK011"));
-        assert!(!is_valid_ignore_rule("CHK099"));
+    fn rule_code_keys_are_case_sensitive() {
+        let path = Path::new(".chokkin.toml");
+        let config: PartialConfig = toml::from_str("[ignore]\nchk001 = []").expect("valid config");
+        let err = validate(path, &config).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Validation { ref field, .. } if field == "ignore.chk001")
+        );
+        let config: PartialConfig =
+            toml::from_str("[severity]\nchk001 = \"off\"").expect("valid config");
+        let err = validate(path, &config).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Validation { ref field, .. } if field == "severity.chk001")
+        );
     }
 }
