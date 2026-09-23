@@ -4,7 +4,8 @@ use std::collections::HashSet;
 
 use rustpython_parser::ast::Ranged;
 use rustpython_parser::ast::{
-    Alias, Comprehension, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom,
+    Alias, Comprehension, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom, StmtTry,
+    StmtTryStar,
 };
 use rustpython_parser::source_code::RandomLocator;
 
@@ -145,22 +146,35 @@ impl<'a> ModuleVisitor<'a> {
                     self.visit_stmt(inner);
                 }
             },
-            Stmt::Try(try_stmt) => {
+            Stmt::Try(StmtTry {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+                ..
+            })
+            | Stmt::TryStar(StmtTryStar {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+                ..
+            }) => {
                 self.try_depth = self.try_depth.saturating_add(1);
-                for inner in &try_stmt.body {
+                for inner in body {
                     self.visit_stmt(inner);
                 }
                 self.try_depth = self.try_depth.saturating_sub(1);
-                for handler in &try_stmt.handlers {
+                for handler in handlers {
                     let ExceptHandler::ExceptHandler(handler) = handler;
                     for inner in &handler.body {
                         self.visit_stmt(inner);
                     }
                 }
-                for inner in &try_stmt.orelse {
+                for inner in orelse {
                     self.visit_stmt(inner);
                 }
-                for inner in &try_stmt.finalbody {
+                for inner in finalbody {
                     self.visit_stmt(inner);
                 }
             },
@@ -609,5 +623,31 @@ mod tests {
                 "missing acme.utils.{name} at line {line}"
             );
         }
+    }
+
+    #[test]
+    fn walks_try_star_body_handlers_else_and_finally() {
+        let parsed = visit_source(
+            "try:\n    import requests\n\n    @app.route(\"/\")\n    def f():\n        pass\nexcept* Exception:\n    import fallback_lib\nelse:\n    import else_lib\nfinally:\n    import finally_lib\n",
+        );
+        let requests = parsed
+            .imports
+            .iter()
+            .find(|import| import.module == "requests")
+            .expect("requests import inside try body");
+        assert!(requests.optional);
+        for module in ["fallback_lib", "else_lib", "finally_lib"] {
+            assert!(
+                parsed.imports.iter().any(|import| import.module == module),
+                "missing import {module}"
+            );
+        }
+        assert!(parsed.symbols.iter().any(|symbol| symbol.name == "f"));
+        assert!(
+            parsed
+                .decorator_sites
+                .iter()
+                .any(|site| site.name == "app.route" && site.line == 4)
+        );
     }
 }
