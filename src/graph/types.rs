@@ -78,9 +78,6 @@ pub enum GraphEdge {
         module: ModuleId,
         /// 1-based line number.
         line: u32,
-        /// The site is a literal `importlib.import_module` / `__import__` call,
-        /// not an `import` statement.
-        dynamic: bool,
     },
     /// Manifest metadata declares a distribution.
     ManifestDeclaresDistribution {
