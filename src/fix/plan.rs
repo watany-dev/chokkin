@@ -47,6 +47,28 @@ pub(super) enum FixAction {
     },
 }
 
+impl FixAction {
+    /// Rule and issue subject this action resolves.
+    pub(super) fn rule_subject(&self) -> (RuleId, IssueSubject) {
+        match self {
+            Self::RemoveDependency { rule, name, .. } => {
+                (*rule, IssueSubject::Distribution { name: name.clone() })
+            },
+            Self::MoveToRuntime { name, .. } => (
+                RuleId::Chk005,
+                IssueSubject::Distribution { name: name.clone() },
+            ),
+            Self::AddMissingDependency { name, .. } => (
+                RuleId::Chk003,
+                IssueSubject::Distribution { name: name.clone() },
+            ),
+            Self::RemoveFile { path } => {
+                (RuleId::Chk001, IssueSubject::File { path: path.clone() })
+            },
+        }
+    }
+}
+
 /// Build fix actions from an issue report.
 pub(super) fn plan_fixes(
     report: &IssueReport,

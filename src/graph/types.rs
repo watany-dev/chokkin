@@ -2,10 +2,8 @@
 
 use std::collections::HashMap;
 
-use indexmap::IndexMap;
-
 use crate::discovery::ProjectRoot;
-use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
+use crate::manifest::DependencyOrigin;
 use crate::plugins::ReferenceOrigin;
 use crate::sources::{FileContext, FileKind};
 
@@ -56,24 +54,6 @@ pub struct ModuleNode {
     pub name: String,
     /// Classification origin.
     pub origin: ModuleOrigin,
-}
-
-/// A declared package distribution from manifest sources.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DistributionNode {
-    /// PEP 508 normalized distribution name.
-    pub name: String,
-    /// Declaration contexts merged from duplicate records.
-    pub contexts: Vec<DependencyContext>,
-}
-
-/// An entry root for reachability analysis (pipeline step 8).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EntryNode {
-    /// Human-readable label, e.g. `script:acme-cli` or `auto:manage.py`.
-    pub label: String,
-    /// Assigned file context.
-    pub context: FileContext,
 }
 
 /// How one project file reaches another during reachability analysis (step 9).
@@ -144,18 +124,18 @@ pub enum GraphEdge {
 pub struct ProjectGraph {
     /// Project root from discovery.
     pub root: ProjectRoot,
-    files: IndexMap<FileId, FileNode>,
-    modules: IndexMap<ModuleId, ModuleNode>,
-    distributions: IndexMap<DistributionId, DistributionNode>,
-    entries: IndexMap<EntryId, EntryNode>,
+    files: Vec<FileNode>,
+    modules: Vec<ModuleNode>,
     edges: Vec<GraphEdge>,
     path_to_file: HashMap<String, FileId>,
     name_to_module: HashMap<String, ModuleId>,
     name_to_distribution: HashMap<String, DistributionId>,
-    next_file_id: u32,
-    next_module_id: u32,
-    next_distribution_id: u32,
-    next_entry_id: u32,
+    entry_count: usize,
+}
+
+/// Next sequential id for a table holding `len` nodes.
+fn next_id(len: usize) -> u32 {
+    u32::try_from(len).unwrap_or(u32::MAX)
 }
 
 impl ProjectGraph {
@@ -164,18 +144,13 @@ impl ProjectGraph {
     pub fn new(root: ProjectRoot) -> Self {
         Self {
             root,
-            files: IndexMap::new(),
-            modules: IndexMap::new(),
-            distributions: IndexMap::new(),
-            entries: IndexMap::new(),
+            files: Vec::new(),
+            modules: Vec::new(),
             edges: Vec::new(),
             path_to_file: HashMap::new(),
             name_to_module: HashMap::new(),
             name_to_distribution: HashMap::new(),
-            next_file_id: 0,
-            next_module_id: 0,
-            next_distribution_id: 0,
-            next_entry_id: 0,
+            entry_count: 0,
         }
     }
 
@@ -188,23 +163,21 @@ impl ProjectGraph {
     /// Returns a registered file node.
     #[must_use]
     pub fn file(&self, id: FileId) -> Option<&FileNode> {
-        self.files.get(&id)
+        usize::try_from(id.0).ok().and_then(|i| self.files.get(i))
     }
 
     /// Returns a registered module node.
     #[must_use]
     pub fn module(&self, id: ModuleId) -> Option<&ModuleNode> {
-        self.modules.get(&id)
+        usize::try_from(id.0).ok().and_then(|i| self.modules.get(i))
     }
 
     /// Iterates registered files in insertion order.
     pub fn files(&self) -> impl Iterator<Item = (FileId, &FileNode)> {
-        self.files.iter().map(|(id, node)| (*id, node))
-    }
-
-    /// Iterates registered entry roots in insertion order.
-    pub fn entries(&self) -> impl Iterator<Item = (EntryId, &EntryNode)> {
-        self.entries.iter().map(|(id, node)| (*id, node))
+        self.files
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (FileId(next_id(index)), node))
     }
 
     /// Returns the number of registered files.
@@ -222,13 +195,13 @@ impl ProjectGraph {
     /// Returns the number of registered distributions.
     #[must_use]
     pub fn distribution_count(&self) -> usize {
-        self.distributions.len()
+        self.name_to_distribution.len()
     }
 
     /// Returns the number of registered entry roots.
     #[must_use]
     pub fn entry_count(&self) -> usize {
-        self.entries.len()
+        self.entry_count
     }
 
     /// Looks up a file id by root-relative path.
@@ -248,7 +221,10 @@ impl ProjectGraph {
     /// Origins are merged monotonically so repeated writes for the same module
     /// name never downgrade a resolved classification to [`ModuleOrigin::Unknown`].
     pub fn set_module_origin(&mut self, module: ModuleId, origin: ModuleOrigin) {
-        if let Some(node) = self.modules.get_mut(&module) {
+        if let Some(node) = usize::try_from(module.0)
+            .ok()
+            .and_then(|i| self.modules.get_mut(i))
+        {
             node.origin = merge_module_origin(node.origin, origin);
         }
     }
@@ -257,24 +233,6 @@ impl ProjectGraph {
     #[must_use]
     pub fn distribution_id(&self, name: &str) -> Option<DistributionId> {
         self.name_to_distribution.get(name).copied()
-    }
-
-    /// Registers a distribution by normalized name when not already present.
-    pub fn ensure_distribution(&mut self, name: &str) -> DistributionId {
-        if let Some(id) = self.name_to_distribution.get(name) {
-            return *id;
-        }
-        let id = DistributionId(self.next_distribution_id);
-        self.next_distribution_id = self.next_distribution_id.saturating_add(1);
-        self.name_to_distribution.insert(name.to_owned(), id);
-        self.distributions.insert(
-            id,
-            DistributionNode {
-                name: name.to_owned(),
-                contexts: Vec::new(),
-            },
-        );
-        id
     }
 
     /// Registers a file node, returning its stable id.
@@ -286,10 +244,9 @@ impl ProjectGraph {
         if self.path_to_file.contains_key(&node.path) {
             return Err(super::GraphError::DuplicateFile { path: node.path });
         }
-        let id = FileId(self.next_file_id);
-        self.next_file_id = self.next_file_id.saturating_add(1);
+        let id = FileId(next_id(self.files.len()));
         self.path_to_file.insert(node.path.clone(), id);
-        self.files.insert(id, node);
+        self.files.push(node);
         Ok(id)
     }
 
@@ -298,34 +255,19 @@ impl ProjectGraph {
         if let Some(id) = self.name_to_module.get(&name) {
             return *id;
         }
-        let id = ModuleId(self.next_module_id);
-        self.next_module_id = self.next_module_id.saturating_add(1);
+        let id = ModuleId(next_id(self.modules.len()));
         self.name_to_module.insert(name.clone(), id);
-        self.modules.insert(id, ModuleNode { name, origin });
+        self.modules.push(ModuleNode { name, origin });
         id
     }
 
-    /// Registers a distribution from manifest metadata.
-    pub fn intern_distribution(&mut self, dependency: &DeclaredDependency) -> DistributionId {
-        if let Some(id) = self.name_to_distribution.get(&dependency.name) {
-            if let Some(node) = self.distributions.get_mut(id)
-                && !node.contexts.contains(&dependency.context)
-            {
-                node.contexts.push(dependency.context.clone());
-            }
+    /// Registers a distribution by normalized name, reusing an existing id.
+    pub fn intern_distribution(&mut self, name: &str) -> DistributionId {
+        if let Some(id) = self.name_to_distribution.get(name) {
             return *id;
         }
-        let id = DistributionId(self.next_distribution_id);
-        self.next_distribution_id = self.next_distribution_id.saturating_add(1);
-        self.name_to_distribution
-            .insert(dependency.name.clone(), id);
-        self.distributions.insert(
-            id,
-            DistributionNode {
-                name: dependency.name.clone(),
-                contexts: vec![dependency.context.clone()],
-            },
-        );
+        let id = DistributionId(next_id(self.name_to_distribution.len()));
+        self.name_to_distribution.insert(name.to_owned(), id);
         id
     }
 
@@ -334,18 +276,16 @@ impl ProjectGraph {
         self.edges.push(edge);
     }
 
-    /// Registers an entry root node, returning its stable id.
-    pub fn intern_entry(&mut self, node: EntryNode) -> EntryId {
-        let id = EntryId(self.next_entry_id);
-        self.next_entry_id = self.next_entry_id.saturating_add(1);
-        self.entries.insert(id, node);
+    /// Registers an entry root, returning its stable id.
+    pub fn intern_entry(&mut self) -> EntryId {
+        let id = EntryId(next_id(self.entry_count));
+        self.entry_count = self.entry_count.saturating_add(1);
         id
     }
 }
 
 /// Merge two module origins, keeping the more specific classification.
-#[must_use]
-pub fn merge_module_origin(current: ModuleOrigin, candidate: ModuleOrigin) -> ModuleOrigin {
+fn merge_module_origin(current: ModuleOrigin, candidate: ModuleOrigin) -> ModuleOrigin {
     fn rank(origin: ModuleOrigin) -> u8 {
         match origin {
             ModuleOrigin::Stdlib | ModuleOrigin::FirstParty => 3,
