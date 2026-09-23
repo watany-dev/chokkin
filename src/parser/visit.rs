@@ -4,7 +4,8 @@ use std::collections::HashSet;
 
 use rustpython_parser::ast::Ranged;
 use rustpython_parser::ast::{
-    Alias, Comprehension, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom,
+    Alias, Arguments, Comprehension, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom,
+    StmtTry, StmtTryStar,
 };
 use rustpython_parser::source_code::RandomLocator;
 
@@ -12,7 +13,7 @@ use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
-use super::dynamic::{extract_literal_module_call, is_import_module_call};
+use super::dynamic::{LoaderNames, literal_module};
 use super::exports::extract_exports;
 use super::platform_guard::is_platform_guard_if;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
@@ -34,6 +35,7 @@ pub struct ModuleVisitor<'a> {
     module_level: bool,
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
+    loader_names: LoaderNames,
     parsed: ParsedModule,
 }
 
@@ -57,6 +59,7 @@ impl<'a> ModuleVisitor<'a> {
             module_level: true,
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
+            loader_names: LoaderNames::default(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -116,6 +119,7 @@ impl<'a> ModuleVisitor<'a> {
                     self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
                 }
                 self.visit_expr(&ann_assign.target);
+                self.visit_expr(&ann_assign.annotation);
                 if let Some(value) = &ann_assign.value {
                     self.visit_expr(value);
                 }
@@ -128,6 +132,7 @@ impl<'a> ModuleVisitor<'a> {
             },
             Stmt::Expr(expr_stmt) => self.visit_expr(&expr_stmt.value),
             Stmt::If(if_stmt) => {
+                self.visit_expr(&if_stmt.test);
                 let was_type_checking = self.in_type_checking;
                 let was_platform_guard = self.platform_guard_depth;
                 if is_type_checking_if(stmt, &self.typing_aliases, &self.type_checking_names) {
@@ -145,45 +150,97 @@ impl<'a> ModuleVisitor<'a> {
                     self.visit_stmt(inner);
                 }
             },
-            Stmt::Try(try_stmt) => {
+            Stmt::Try(StmtTry {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+                ..
+            })
+            | Stmt::TryStar(StmtTryStar {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+                ..
+            }) => {
                 self.try_depth = self.try_depth.saturating_add(1);
-                for inner in &try_stmt.body {
+                for inner in body {
                     self.visit_stmt(inner);
                 }
                 self.try_depth = self.try_depth.saturating_sub(1);
-                for handler in &try_stmt.handlers {
+                for handler in handlers {
                     let ExceptHandler::ExceptHandler(handler) = handler;
+                    if let Some(exc_type) = &handler.type_ {
+                        self.visit_expr(exc_type);
+                    }
                     for inner in &handler.body {
                         self.visit_stmt(inner);
                     }
                 }
-                for inner in &try_stmt.orelse {
+                for inner in orelse {
                     self.visit_stmt(inner);
                 }
-                for inner in &try_stmt.finalbody {
+                for inner in finalbody {
                     self.visit_stmt(inner);
                 }
             },
-            Stmt::With(with_stmt) => self.visit_body(&with_stmt.body),
-            Stmt::AsyncWith(with_stmt) => self.visit_body(&with_stmt.body),
+            Stmt::With(with_stmt) => {
+                for item in &with_stmt.items {
+                    self.visit_expr(&item.context_expr);
+                }
+                self.visit_body(&with_stmt.body);
+            },
+            Stmt::AsyncWith(with_stmt) => {
+                for item in &with_stmt.items {
+                    self.visit_expr(&item.context_expr);
+                }
+                self.visit_body(&with_stmt.body);
+            },
             Stmt::Match(match_stmt) => {
+                self.visit_expr(&match_stmt.subject);
                 for case in &match_stmt.cases {
+                    if let Some(guard) = &case.guard {
+                        self.visit_expr(guard);
+                    }
                     for inner in &case.body {
                         self.visit_stmt(inner);
                     }
                 }
             },
             Stmt::For(for_stmt) => {
+                self.visit_expr(&for_stmt.iter);
                 self.visit_body(&for_stmt.body);
                 self.visit_body(&for_stmt.orelse);
             },
             Stmt::AsyncFor(for_stmt) => {
+                self.visit_expr(&for_stmt.iter);
                 self.visit_body(&for_stmt.body);
                 self.visit_body(&for_stmt.orelse);
             },
             Stmt::While(while_stmt) => {
+                self.visit_expr(&while_stmt.test);
                 self.visit_body(&while_stmt.body);
                 self.visit_body(&while_stmt.orelse);
+            },
+            Stmt::Raise(raise) => {
+                if let Some(exc) = &raise.exc {
+                    self.visit_expr(exc);
+                }
+                if let Some(cause) = &raise.cause {
+                    self.visit_expr(cause);
+                }
+            },
+            Stmt::Assert(assert) => {
+                self.visit_expr(&assert.test);
+                if let Some(msg) = &assert.msg {
+                    self.visit_expr(msg);
+                }
+            },
+            Stmt::Delete(delete) => {
+                for target in &delete.targets {
+                    self.visit_expr(target);
+                }
             },
             _ => {},
         }
@@ -207,6 +264,32 @@ impl<'a> ModuleVisitor<'a> {
             _ => return,
         };
         self.record_decorators(decorators);
+        for decorator in decorators {
+            self.visit_expr(decorator);
+        }
+        match stmt {
+            Stmt::FunctionDef(def) => {
+                self.visit_arguments(&def.args);
+                if let Some(returns) = &def.returns {
+                    self.visit_expr(returns);
+                }
+            },
+            Stmt::AsyncFunctionDef(def) => {
+                self.visit_arguments(&def.args);
+                if let Some(returns) = &def.returns {
+                    self.visit_expr(returns);
+                }
+            },
+            Stmt::ClassDef(def) => {
+                for base in &def.bases {
+                    self.visit_expr(base);
+                }
+                for keyword in &def.keywords {
+                    self.visit_expr(&keyword.value);
+                }
+            },
+            _ => {},
+        }
         if self.module_level {
             let line = self.line_number(stmt);
             self.record_symbol(name.to_string(), kind, line, decorators);
@@ -215,6 +298,27 @@ impl<'a> ModuleVisitor<'a> {
         self.module_level = false;
         self.visit_body(body);
         self.module_level = saved;
+    }
+
+    fn visit_arguments(&mut self, arguments: &Arguments) {
+        for arg in arguments
+            .posonlyargs
+            .iter()
+            .chain(&arguments.args)
+            .chain(&arguments.kwonlyargs)
+        {
+            if let Some(annotation) = &arg.def.annotation {
+                self.visit_expr(annotation);
+            }
+            if let Some(default) = &arg.default {
+                self.visit_expr(default);
+            }
+        }
+        for arg in arguments.vararg.iter().chain(&arguments.kwarg) {
+            if let Some(annotation) = &arg.annotation {
+                self.visit_expr(annotation);
+            }
+        }
     }
 
     fn visit_body(&mut self, body: &[Stmt]) {
@@ -242,12 +346,23 @@ impl<'a> ModuleVisitor<'a> {
                 self.visit_expr(&attribute.value);
             },
             Expr::Call(call) => {
-                if let Some(module) = extract_literal_module_call(&call.func, &call.args) {
-                    let line = self.line_number(call);
-                    self.parsed
-                        .dynamic_imports
-                        .push(DynamicImport { module, line });
-                } else if is_import_module_call(&call.func) && !call.args.is_empty() {
+                if self.loader_names.is_loader(&call.func) {
+                    if let Some(module) = literal_module(call) {
+                        let line = self.line_number(call);
+                        self.parsed
+                            .dynamic_imports
+                            .push(DynamicImport { module, line });
+                    } else if !call.args.is_empty() || !call.keywords.is_empty() {
+                        self.parsed.has_opaque_dynamic_import = true;
+                    }
+                }
+                // `map(importlib.import_module, names)` loads modules this walk never sees.
+                if call
+                    .args
+                    .iter()
+                    .chain(call.keywords.iter().map(|keyword| &keyword.value))
+                    .any(|arg| self.loader_names.is_loader(arg))
+                {
                     self.parsed.has_opaque_dynamic_import = true;
                 }
                 self.visit_expr(&call.func);
@@ -269,7 +384,10 @@ impl<'a> ModuleVisitor<'a> {
                 self.visit_expr(&bin_op.right);
             },
             Expr::UnaryOp(unary) => self.visit_expr(&unary.operand),
-            Expr::Lambda(lambda) => self.visit_expr(&lambda.body),
+            Expr::Lambda(lambda) => {
+                self.visit_arguments(&lambda.args);
+                self.visit_expr(&lambda.body);
+            },
             Expr::IfExp(if_exp) => {
                 self.visit_expr(&if_exp.test);
                 self.visit_expr(&if_exp.body);
@@ -370,6 +488,7 @@ impl<'a> ModuleVisitor<'a> {
         let optional = self.try_depth > 0;
         let platform_guarded = self.platform_guard_depth > 0;
         for alias in &import.names {
+            self.loader_names.record_import(alias);
             if alias.name.as_str() == "typing" {
                 self.typing_aliases.insert(
                     alias
@@ -409,6 +528,10 @@ impl<'a> ModuleVisitor<'a> {
                 continue;
             }
 
+            if level == 0 {
+                self.loader_names
+                    .record_import_from(module_suffix.as_deref(), alias);
+            }
             if level == 0
                 && module_suffix.as_deref() == Some("typing")
                 && alias.name.as_str() == "TYPE_CHECKING"
@@ -504,9 +627,12 @@ impl<'a> ModuleVisitor<'a> {
                 continue;
             };
             let line = self.line_number(decorator);
-            self.parsed
-                .decorator_sites
-                .push(DecoratorSite { name, line });
+            let is_call = matches!(decorator, Expr::Call(_));
+            self.parsed.decorator_sites.push(DecoratorSite {
+                name,
+                line,
+                is_call,
+            });
         }
     }
 
@@ -595,6 +721,64 @@ mod tests {
     }
 
     #[test]
+    fn extracts_aliased_import_module_literal() {
+        let parsed = visit_source(
+            "from importlib import import_module as im\nim(\"acme.a\")\nimport importlib as il\nil.import_module(\"acme.b\")\n",
+        );
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| (dynamic.module.as_str(), dynamic.line))
+            .collect();
+        assert_eq!(modules, vec![("acme.a", 2), ("acme.b", 4)]);
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn marks_opaque_aliased_import_module() {
+        let parsed = visit_source("from importlib import import_module\nimport_module(name)\n");
+        assert!(parsed.dynamic_imports.is_empty());
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn extracts_import_module_name_keyword() {
+        let parsed = visit_source(
+            "import importlib\nimportlib.import_module(name=\"acme.a\")\n__import__(name=\"acme.b\")\n",
+        );
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| dynamic.module.as_str())
+            .collect();
+        assert_eq!(modules, vec!["acme.a", "acme.b"]);
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn marks_opaque_non_literal_keyword() {
+        let parsed = visit_source("import importlib\nimportlib.import_module(name=target)\n");
+        assert!(parsed.dynamic_imports.is_empty());
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn marks_opaque_loader_passed_as_argument() {
+        let parsed =
+            visit_source("import importlib\nmods = list(map(importlib.import_module, names))\n");
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn ignores_unrelated_import_module_function() {
+        let parsed = visit_source(
+            "from acme.loader import import_module\nimport_module(name)\nimport_module(\"acme.a\")\n",
+        );
+        assert!(parsed.dynamic_imports.is_empty());
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
     fn single_walk_reaches_nested_expression_positions() {
         // These positions were unreachable while attribute collection had its own
         // statement/expression arm set; the merged walk uses the wider one.
@@ -609,5 +793,135 @@ mod tests {
                 "missing acme.utils.{name} at line {line}"
             );
         }
+    }
+
+    fn attribute_lines(parsed: &ParsedModule, name: &str) -> Vec<u32> {
+        parsed
+            .attribute_accesses
+            .iter()
+            .filter(|access| access.receiver == "utils" && access.name == name)
+            .map(|access| access.line)
+            .collect()
+    }
+
+    #[test]
+    fn marks_opaque_import_inside_for_iter() {
+        let parsed = visit_source(
+            "import importlib\nfor p in importlib.import_module(name).plugins():\n    pass\n",
+        );
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn collects_attributes_from_statement_expression_slots() {
+        let source = "\
+from acme import utils
+if utils.A:
+    pass
+while utils.B:
+    pass
+for x in utils.C:
+    pass
+with utils.D() as d:
+    pass
+match utils.E:
+    case 1 if utils.F:
+        pass
+try:
+    pass
+except utils.G:
+    pass
+raise utils.H from utils.I
+assert utils.J, utils.K
+del utils.L
+value: utils.M = 1
+";
+        let parsed = visit_source(source);
+        for (name, line) in [
+            ("A", 2),
+            ("B", 4),
+            ("C", 6),
+            ("D", 8),
+            ("E", 10),
+            ("F", 11),
+            ("G", 15),
+            ("H", 17),
+            ("I", 17),
+            ("J", 18),
+            ("K", 18),
+            ("L", 19),
+            ("M", 20),
+        ] {
+            assert_eq!(
+                attribute_lines(&parsed, name),
+                vec![line],
+                "utils.{name} should be recorded exactly once"
+            );
+        }
+    }
+
+    #[test]
+    fn collects_attributes_from_definition_slots() {
+        let source = "\
+from acme import utils
+@utils.deco
+def f(a: utils.A = utils.B, *args: utils.C, k=utils.D, **kw: utils.E) -> utils.F:
+    pass
+class C(utils.Base, metaclass=utils.Meta):
+    pass
+g = lambda x=utils.G: x
+";
+        let parsed = visit_source(source);
+        for (name, line) in [
+            ("deco", 2),
+            ("A", 3),
+            ("B", 3),
+            ("C", 3),
+            ("D", 3),
+            ("E", 3),
+            ("F", 3),
+            ("Base", 5),
+            ("Meta", 5),
+            ("G", 7),
+        ] {
+            assert_eq!(
+                attribute_lines(&parsed, name),
+                vec![line],
+                "utils.{name} should be recorded exactly once"
+            );
+        }
+    }
+
+    #[test]
+    fn walks_try_star_body_handlers_else_and_finally() {
+        let parsed = visit_source(
+            "try:\n    import requests\n\n    @app.route(\"/\")\n    def f():\n        pass\nexcept* Exception:\n    import fallback_lib\nelse:\n    import else_lib\nfinally:\n    import finally_lib\n",
+        );
+        let requests = parsed
+            .imports
+            .iter()
+            .find(|import| import.module == "requests")
+            .expect("requests import inside try body");
+        assert!(requests.optional);
+        for module in ["fallback_lib", "else_lib", "finally_lib"] {
+            assert!(
+                parsed.imports.iter().any(|import| import.module == module),
+                "missing import {module}"
+            );
+        }
+        assert!(parsed.symbols.iter().any(|symbol| symbol.name == "f"));
+        assert!(
+            parsed
+                .decorator_sites
+                .iter()
+                .any(|site| site.name == "app.route" && site.line == 4)
+        );
+    }
+
+    #[test]
+    fn collects_attributes_from_try_star_handler_type() {
+        let parsed =
+            visit_source("from acme import utils\ntry:\n    pass\nexcept* utils.G:\n    pass\n");
+        assert_eq!(attribute_lines(&parsed, "G"), vec![4]);
     }
 }

@@ -24,7 +24,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         ctx,
         &mut contrib,
         is_route_decorator,
-        flask_route_decorator_line,
         "flask route decorator",
     );
 
@@ -111,35 +110,17 @@ fn extract_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bo
     }
 }
 
-/// Mirrors [`flask_route_decorator_line`]: only method calls on a receiver
-/// (`@app.route`, `@bp.post`) count, never a bare `@get`.
-fn is_route_decorator(name: &str) -> bool {
+/// Route decorator test shared by the parse and text paths: a method call on
+/// a receiver (`@app.route("/")`, `@bp.post(...)`). Bare `@app.route` and
+/// receiverless `@get(...)` are not Flask routes.
+fn is_route_decorator(name: &str, is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
-    receiver.is_some()
+    is_call
+        && receiver.is_some()
         && matches!(
             suffix,
             "route" | "get" | "post" | "put" | "patch" | "delete"
         )
-}
-
-fn flask_route_decorator_line(contents: &str) -> Option<u32> {
-    for (index, line) in contents.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('@') {
-            continue;
-        }
-        let decorator = trimmed.trim_start_matches('@');
-        if decorator.contains(".route(")
-            || decorator.contains(".get(")
-            || decorator.contains(".post(")
-            || decorator.contains(".put(")
-            || decorator.contains(".patch(")
-            || decorator.contains(".delete(")
-        {
-            return u32::try_from(index + 1).ok();
-        }
-    }
-    None
 }
 
 fn env_assignment<'a>(line: &'a str, key: &str) -> Option<&'a str> {

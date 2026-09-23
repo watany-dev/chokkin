@@ -24,7 +24,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         ctx,
         &mut contrib,
         is_task_decorator,
-        celery_task_decorator_line,
         "celery task decorator",
     );
 
@@ -108,33 +107,16 @@ fn extract_shell_scripts(root: &Path, contrib: &mut PluginContribution, found: &
     }
 }
 
-/// Mirrors [`celery_task_decorator_line`]: bare `@shared_task` or any
-/// `@<receiver>.task` / `@<receiver>.shared_task`.
-fn is_task_decorator(name: &str) -> bool {
+/// Task decorator test shared by the parse and text paths: bare
+/// `@shared_task` or any `@<receiver>.task` / `@<receiver>.shared_task`,
+/// called or not.
+fn is_task_decorator(name: &str, _is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     match suffix {
         "shared_task" => true,
         "task" => receiver.is_some(),
         _ => false,
     }
-}
-
-fn celery_task_decorator_line(contents: &str) -> Option<u32> {
-    for (index, line) in contents.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('@') {
-            continue;
-        }
-        let decorator = trimmed.trim_start_matches('@');
-        if decorator.starts_with("shared_task")
-            || decorator.starts_with("celery_app.task")
-            || decorator.starts_with("app.task")
-            || decorator.contains(".task(")
-        {
-            return u32::try_from(index + 1).ok();
-        }
-    }
-    None
 }
 
 fn celery_app_arg(line: &str) -> Option<&str> {
