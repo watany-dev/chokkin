@@ -288,7 +288,8 @@ fn build_submodule_imports(
 
 /// Import sites that came from `importlib.import_module("m")` rather than an
 /// `import` statement. Both kinds share one `FileImportsModule` edge, so the
-/// parse summary is what distinguishes them.
+/// parse summary is what distinguishes them. A site that is also a static
+/// import on the same line stays static.
 fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<ImportSiteRef> {
     let mut sites = HashSet::new();
     for module in &parse.modules {
@@ -296,6 +297,13 @@ fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<Im
             continue;
         };
         for dynamic in &module.dynamic_imports {
+            let also_static = module
+                .imports
+                .iter()
+                .any(|import| import.module == dynamic.module && import.line == dynamic.line);
+            if also_static {
+                continue;
+            }
             if let Some(module_id) = graph.module_id(&dynamic.module) {
                 sites.insert((file_id, module_id, dynamic.line));
             }
@@ -479,6 +487,44 @@ mod tests {
         assert_eq!(edges.len(), 3);
         assert!(edges.contains(&(main_id, b_id, FileReachVia::DynamicImport)));
         assert!(edges.contains(&(b_id, c_id, FileReachVia::DynamicImport)));
+    }
+
+    #[test]
+    fn static_import_on_dynamic_import_line_stays_static() {
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        };
+        // `import acme.a; importlib.import_module("acme.a")` on one line.
+        let modules = vec![parsed(
+            "src/acme/main.py",
+            &[("acme.a", 1)],
+            &[("acme.a", 1)],
+        )];
+        let mut graph = graph_with_imports(root.clone(), &modules);
+        let parse = ParseSummary { modules };
+
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        let a_id = graph.file_id("src/acme/a.py").expect("a");
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let outcome = run_reachability_bfs(
+            &mut graph,
+            &entry_plan(),
+            &no_plugins(),
+            &parse,
+            &module_index,
+        );
+
+        let step = &outcome.predecessors.get(&a_id).expect("predecessor").step;
+        assert!(
+            matches!(step, TraceStep::Import { line: 1, .. }),
+            "expected a static import step, got {step:?}"
+        );
+        assert_eq!(
+            reach_edges(&graph),
+            vec![(main_id, a_id, FileReachVia::Import)]
+        );
     }
 
     #[test]

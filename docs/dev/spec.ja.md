@@ -715,7 +715,7 @@ lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.l
 |libraryのpublic APIは外部利用される    |内部参照がなくても公開APIかもしれない                                           |app/library modeを分け、libraryではunused exports/filesを低confidenceにする                           |
 |dev/test/docs/lint/type依存が混在する|`pytest` がmain dependenciesにある                                 |dependency contextを導入し、misplaced dependencyを出す                                             |
 |namespace packageがある          |`google.*`, `zope.*`                                           |namespace package modeと `Import-Namespace` を使う                                             |
-|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。非literalはopaque dynamic importとしてconfidenceを下げる                                 |
+|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる                                 |
 |monorepo/workspaceで依存境界が曖昧    |root depsをmemberが使う                                            |workspace graphを作り、`--strict` でmemberごとの直接依存を要求する                                          |
 |auto-fixが危険                   |dead code削除で実行時破壊                                              |default fixはmanifest中心。file/code削除は明示フラグ必須                                                 |
 
