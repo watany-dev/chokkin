@@ -510,7 +510,9 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
     .expect("warm parse");
 
     assert_eq!(cold, warm);
-    assert_eq!(store.stats().stores, 8, "every module came off the bundle");
+    assert_eq!(store.stats().hits, 8, "every module came off the bundle");
+    assert_eq!(store.stats().misses, 0);
+    assert_eq!(store.stats().stores, 0);
 }
 
 #[test]

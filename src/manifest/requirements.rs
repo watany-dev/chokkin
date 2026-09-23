@@ -21,6 +21,8 @@ pub struct RequirementsExtraction {
     pub warnings: Vec<ManifestWarning>,
     /// Root-relative paths that were read.
     pub files_read: Vec<String>,
+    /// Root-relative `-r`/`-c` candidate paths that were probed but absent.
+    pub files_missing: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -109,7 +111,12 @@ fn parse_requirements_line(
 
     if let Some(include_path) = flag_value(trimmed, "-r", "--requirement", ShortAttachPolicy::Allow)
     {
-        let resolved = resolve_requirements_include(ctx.root, ctx.path, include_path);
+        let resolved = resolve_requirements_include(
+            ctx.root,
+            ctx.path,
+            include_path,
+            &mut ctx.result.files_missing,
+        );
         let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
             path: include_path.to_owned(),
         })?;
@@ -127,7 +134,12 @@ fn parse_requirements_line(
     if let Some(constraint_path) =
         flag_value(trimmed, "-c", "--constraint", ShortAttachPolicy::Allow)
     {
-        if let Some(resolved) = resolve_requirements_include(ctx.root, ctx.path, constraint_path) {
+        if let Some(resolved) = resolve_requirements_include(
+            ctx.root,
+            ctx.path,
+            constraint_path,
+            &mut ctx.result.files_missing,
+        ) {
             parse_requirements_file_path(RequirementsParseContext {
                 root: ctx.root,
                 path: &resolved,
@@ -302,16 +314,30 @@ fn is_local_path(spec: &str) -> bool {
     spec.starts_with("./") || spec.starts_with("../") || spec.starts_with('.')
 }
 
-fn resolve_requirements_include(root: &Path, base: &Path, include: &str) -> Option<PathBuf> {
+/// Absent candidates are appended to `missing` so the manifest cache can
+/// notice when one appears later (a new `-c` file, or a nearer include that
+/// shadows the root one).
+fn resolve_requirements_include(
+    root: &Path,
+    base: &Path,
+    include: &str,
+    missing: &mut Vec<String>,
+) -> Option<PathBuf> {
     let candidates = [
         base.parent().map(|parent| parent.join(include)),
         Some(root.join(include)),
     ];
 
-    candidates
-        .into_iter()
-        .flatten()
-        .find(|candidate| candidate.is_file() && path_is_within_root(root, candidate))
+    for candidate in candidates.into_iter().flatten() {
+        if !candidate.is_file() {
+            missing.push(relative_path(root, &candidate));
+            continue;
+        }
+        if path_is_within_root(root, &candidate) {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Infer dependency context from an included requirements filename (Phase 1.5 §4.B).
