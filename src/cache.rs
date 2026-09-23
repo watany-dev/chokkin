@@ -310,6 +310,18 @@ impl SourceFingerprint {
         })
     }
 
+    /// Fingerprint recording that `path` was probed and did not exist.
+    ///
+    /// The content hash is not hex, so it never equals a real file's.
+    fn absent(path: &str) -> Self {
+        Self {
+            path: normalize_cache_path(path),
+            size: 0,
+            modified_ns: None,
+            content_hash: "absent".to_owned(),
+        }
+    }
+
     /// Root-relative variant of [`Self::from_absolute_stat`].
     ///
     /// # Errors
@@ -365,7 +377,18 @@ fn manifest_input_fingerprints(
     for path in &sources.requirements_files {
         paths.push(root.join(path));
     }
-    fingerprint_paths(root, paths)
+    let mut fingerprints = fingerprint_paths(root, paths)?;
+    for path in &sources.requirements_missing {
+        let absolute = root.join(path);
+        fingerprints.push(if absolute.is_file() {
+            SourceFingerprint::from_absolute(root, &absolute)?
+        } else {
+            SourceFingerprint::absent(path)
+        });
+    }
+    fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+    fingerprints.dedup_by(|left, right| left.path == right.path);
+    Ok(fingerprints)
 }
 
 fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerprint>> {

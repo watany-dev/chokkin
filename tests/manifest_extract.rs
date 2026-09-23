@@ -134,6 +134,64 @@ fn manifest_cache_revalidates_included_requirements() {
 }
 
 #[test]
+fn manifest_cache_notices_created_constraint_file() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        temp.path().join("requirements.txt"),
+        "-c constraints.txt\nrequests\n",
+    )
+    .expect("write requirements");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert!(first.constraints.is_empty());
+    assert!(
+        first
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ManifestWarning::RequirementsConstraintMissing { .. }))
+    );
+
+    std::fs::write(temp.path().join("constraints.txt"), "requests<3\n").expect("write constraints");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    assert!(second.constraints.iter().any(|dep| dep.name == "requests"));
+    assert!(
+        !second
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ManifestWarning::RequirementsConstraintMissing { .. }))
+    );
+}
+
+#[test]
+fn manifest_cache_notices_shadowing_include() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(temp.path().join("reqs")).expect("create reqs dir");
+    std::fs::write(temp.path().join("requirements.txt"), "-r reqs/main.txt\n")
+        .expect("write requirements");
+    std::fs::write(temp.path().join("reqs/main.txt"), "-r extra.txt\n").expect("write main");
+    std::fs::write(temp.path().join("extra.txt"), "urllib3\n").expect("write root extra");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert!(dependency_names(&first).contains(&"urllib3"));
+
+    std::fs::write(temp.path().join("reqs/extra.txt"), "idna\n").expect("write nested extra");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    let names = dependency_names(&second);
+    assert!(names.contains(&"idna"));
+    assert!(!names.contains(&"urllib3"));
+}
+
+#[test]
 fn requirements_constraints_not_declared() {
     let manifest = extract_fixture("requirements_constraints");
     let names = dependency_names(&manifest);
