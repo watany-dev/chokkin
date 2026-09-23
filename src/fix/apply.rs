@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
-use crate::rules::{IssueReport, RuleId};
+use crate::rules::IssueReport;
 
 use super::containment::resolve_contained_path;
 use super::error::FixError;
@@ -56,7 +56,15 @@ pub fn apply_fixes_with_workspace(
     for action in actions {
         match apply_action(root.path.as_path(), &action, options) {
             Ok(applied) => report_out.applied.push(applied),
-            Err(error) => report_out.skipped.push(skipped_from_error(&action, &error)),
+            Err(error) => {
+                let (rule, subject) = action.rule_subject();
+                report_out.skipped.push(SkippedFix {
+                    rule,
+                    subject,
+                    reason: SkippedReason::UnsupportedTarget,
+                    detail: error.to_string(),
+                });
+            },
         }
     }
 
@@ -79,63 +87,56 @@ fn apply_action(
     action: &FixAction,
     options: FixOptions,
 ) -> Result<AppliedFix, FixError> {
-    if options.dry_run {
-        return Ok(applied_preview(action));
-    }
+    let (file, description) = if options.dry_run {
+        preview(action)
+    } else {
+        perform(root, action)?
+    };
+    let (rule, subject) = action.rule_subject();
+    Ok(AppliedFix {
+        rule,
+        subject,
+        file: file.to_owned(),
+        description,
+    })
+}
 
+/// Returns the edited file and a description of the change.
+fn perform<'a>(root: &Path, action: &'a FixAction) -> Result<(&'a str, String), FixError> {
     match action {
         FixAction::RemoveDependency {
-            rule,
             name,
             file,
             label,
             line,
+            ..
         } => {
             let path = resolve_contained_path(root, file)?;
-            let description = if std::path::Path::new(file)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
-            {
+            let extension = Path::new(file).extension();
+            let description = if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("toml")) {
                 remove_by_label(&path, label)?
-            } else if std::path::Path::new(file)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("cfg"))
-            {
+            } else if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("cfg")) {
                 remove_setup_cfg_dependency(&path, name)?
             } else {
                 remove_dependency_line(&path, name, *line)?
             };
-            Ok(AppliedFix {
-                rule: *rule,
-                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-                file: file.clone(),
-                description,
-            })
+            Ok((file.as_str(), description))
         },
         FixAction::MoveToRuntime {
-            name,
             file,
             from_label,
             raw,
+            ..
         } => {
             let path = resolve_contained_path(root, file)?;
-            let description = move_group_to_runtime(&path, from_label, raw)?;
-            Ok(AppliedFix {
-                rule: RuleId::Chk005,
-                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-                file: file.clone(),
-                description,
-            })
+            Ok((
+                file.as_str(),
+                move_group_to_runtime(&path, from_label, raw)?,
+            ))
         },
         FixAction::AddMissingDependency { name, file } => {
             let path = resolve_contained_path(root, file)?;
-            let description = add_runtime_dependency(&path, name)?;
-            Ok(AppliedFix {
-                rule: RuleId::Chk003,
-                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-                file: file.clone(),
-                description,
-            })
+            Ok((file.as_str(), add_runtime_dependency(&path, name)?))
         },
         FixAction::RemoveFile { path: file } => {
             let path = resolve_contained_path(root, file)?;
@@ -143,71 +144,28 @@ fn apply_action(
                 path: file.clone(),
                 source,
             })?;
-            Ok(AppliedFix {
-                rule: RuleId::Chk001,
-                subject: crate::rules::IssueSubject::File { path: file.clone() },
-                file: file.clone(),
-                description: format!("removed unreachable file `{file}`"),
-            })
+            Ok((file.as_str(), format!("removed unreachable file `{file}`")))
         },
     }
 }
 
-fn applied_preview(action: &FixAction) -> AppliedFix {
+/// Dry-run counterpart of `perform`.
+fn preview(action: &FixAction) -> (&str, String) {
     match action {
-        FixAction::RemoveDependency {
-            rule, name, file, ..
-        } => AppliedFix {
-            rule: *rule,
-            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-            file: file.clone(),
-            description: format!("would remove `{name}` from {file}"),
+        FixAction::RemoveDependency { name, file, .. } => {
+            (file.as_str(), format!("would remove `{name}` from {file}"))
         },
-        FixAction::MoveToRuntime { name, file, .. } => AppliedFix {
-            rule: RuleId::Chk005,
-            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-            file: file.clone(),
-            description: format!("would move `{name}` to runtime in {file}"),
-        },
-        FixAction::AddMissingDependency { name, file } => AppliedFix {
-            rule: RuleId::Chk003,
-            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-            file: file.clone(),
-            description: format!("would add `{name}` to {file}"),
-        },
-        FixAction::RemoveFile { path } => AppliedFix {
-            rule: RuleId::Chk001,
-            subject: crate::rules::IssueSubject::File { path: path.clone() },
-            file: path.clone(),
-            description: format!("would remove unreachable file `{path}`"),
-        },
-    }
-}
-
-fn skipped_from_error(action: &FixAction, error: &FixError) -> SkippedFix {
-    let (rule, subject) = match action {
-        FixAction::RemoveDependency { rule, name, .. } => (
-            *rule,
-            crate::rules::IssueSubject::Distribution { name: name.clone() },
+        FixAction::MoveToRuntime { name, file, .. } => (
+            file.as_str(),
+            format!("would move `{name}` to runtime in {file}"),
         ),
-        FixAction::MoveToRuntime { name, .. } => (
-            RuleId::Chk005,
-            crate::rules::IssueSubject::Distribution { name: name.clone() },
-        ),
-        FixAction::AddMissingDependency { name, .. } => (
-            RuleId::Chk003,
-            crate::rules::IssueSubject::Distribution { name: name.clone() },
-        ),
+        FixAction::AddMissingDependency { name, file } => {
+            (file.as_str(), format!("would add `{name}` to {file}"))
+        },
         FixAction::RemoveFile { path } => (
-            RuleId::Chk001,
-            crate::rules::IssueSubject::File { path: path.clone() },
+            path.as_str(),
+            format!("would remove unreachable file `{path}`"),
         ),
-    };
-    SkippedFix {
-        rule,
-        subject,
-        reason: SkippedReason::UnsupportedTarget,
-        detail: error.to_string(),
     }
 }
 
@@ -220,7 +178,9 @@ mod tests {
         DeclaredDependency, DependencyContext, DependencyOrigin, LockfileGraph, ManifestSources,
         ProjectMetadata,
     };
-    use crate::rules::{ExplainData, Issue, IssueLocation, IssueReport, IssueSummary, Severity};
+    use crate::rules::{
+        ExplainData, Issue, IssueLocation, IssueReport, IssueSummary, RuleId, Severity,
+    };
 
     fn empty_manifest(root: &ProjectRoot) -> LoadedManifest {
         LoadedManifest {
