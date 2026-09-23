@@ -19,7 +19,6 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
     let files = discover_config_files(&root.path);
     let mut layers = Vec::new();
     let mut sources = ConfigSources {
-        used_defaults: true,
         dot_chokkin_toml: files.dot_chokkin_toml.clone(),
         chokkin_toml: files.chokkin_toml.clone(),
         pyproject_tool_chokkin: false,

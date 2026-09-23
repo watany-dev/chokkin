@@ -3,11 +3,13 @@
 use std::fmt::Write as _;
 
 use crate::rules::{Issue, IssueReport, IssueSubject, issue_fingerprint, issue_stable_target};
-use crate::schema::JSON_REPORT_SCHEMA_VERSION;
 
 use super::format::{baseline_suppressed_count, json_string};
 use super::traits::Reporter;
 use super::types::RenderContext;
+
+/// JSON reporter `schema_version` for the v0.3 stable contract.
+const JSON_REPORT_SCHEMA_VERSION: &str = "1";
 
 /// JSON reporter for machine-readable output.
 #[derive(Debug, Clone, Copy, Default)]

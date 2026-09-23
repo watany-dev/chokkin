@@ -65,7 +65,7 @@ fn member_basename(pattern: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ResolvedWorkspaceMember, WorkspaceMemberSource, default_config};
+    use crate::config::{ResolvedWorkspaceMember, default_config};
     use crate::manifest::ProjectMetadata;
     use crate::sources::{LayoutInfo, ProjectLayout};
 
@@ -120,7 +120,6 @@ mod tests {
             id: "api".to_owned(),
             path: "services/api".to_owned(),
             pyproject_toml: Some("services/api/pyproject.toml".to_owned()),
-            source: WorkspaceMemberSource::Uv,
         };
         assert!(is_workspace_import(
             "api",

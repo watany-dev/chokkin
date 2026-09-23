@@ -86,11 +86,7 @@ pub fn config_label_from_sources(sources: &ConfigSources) -> String {
         parts.push("pyproject.toml".to_owned());
     }
     if parts.is_empty() {
-        if sources.used_defaults {
-            "defaults".to_owned()
-        } else {
-            "(none)".to_owned()
-        }
+        "defaults".to_owned()
     } else {
         parts.join(", ")
     }

@@ -34,7 +34,6 @@ mod tests {
             entry_points: Vec::new(),
             lockfile: LockfileGraph {
                 edges: BTreeMap::from([("app".to_owned(), vec!["requests".to_owned()])]),
-                requires_python: None,
             },
             sources: ManifestSources::default(),
             warnings: Vec::new(),

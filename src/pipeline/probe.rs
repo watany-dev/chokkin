@@ -249,11 +249,7 @@ fn format_config_sources(sources: &ConfigSources) -> String {
         parts.push("pyproject.toml [tool.chokkin]".to_owned());
     }
     if parts.is_empty() {
-        if sources.used_defaults {
-            "defaults".to_owned()
-        } else {
-            "(none)".to_owned()
-        }
+        "defaults".to_owned()
     } else {
         parts.join(", ")
     }

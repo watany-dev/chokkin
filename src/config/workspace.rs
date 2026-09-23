@@ -9,9 +9,7 @@ use globset::{Glob, GlobSetBuilder};
 use crate::discovery::ProjectRoot;
 
 use super::error::ConfigError;
-use super::types::{
-    ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint, WorkspaceMemberSource,
-};
+use super::types::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
 
 /// Resolve workspace member directories below a project root.
 pub fn resolve_workspace_members(
@@ -38,7 +36,6 @@ pub fn resolve_workspace_members(
                 pyproject_toml: pyproject.is_file().then(|| {
                     normalize_relative_path(&format!("{}/pyproject.toml", override_cfg.path))
                 }),
-                source: WorkspaceMemberSource::Chokkin,
             },
         );
     }
@@ -91,7 +88,6 @@ fn resolve_uv_members(
             id,
             path: rel.clone(),
             pyproject_toml: Some(format!("{rel}/pyproject.toml")),
-            source: WorkspaceMemberSource::Uv,
         });
     }
     Ok(members)
@@ -191,6 +187,5 @@ mod tests {
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].id, "api");
         assert_eq!(members[0].path, "services/api");
-        assert_eq!(members[0].source, WorkspaceMemberSource::Uv);
     }
 }

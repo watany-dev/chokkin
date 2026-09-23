@@ -22,11 +22,6 @@ pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
             message: error.to_string(),
         })?;
 
-    let requires_python = table
-        .get("requires-python")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-
     let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     if let Some(packages) = table.get("package").and_then(Value::as_array) {
@@ -55,10 +50,7 @@ pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
         }
     }
 
-    Ok(LockfileGraph {
-        edges,
-        requires_python,
-    })
+    Ok(LockfileGraph { edges })
 }
 
 #[cfg(test)]
@@ -73,7 +65,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_package_edges_and_requires_python() {
+    fn extracts_package_edges() {
         let graph = parse(
             "requires-python = \">=3.11\"\n\n\
              [[package]]\nname = \"Acme_Lib\"\n\
@@ -81,7 +73,6 @@ mod tests {
         )
         .expect("valid uv.lock");
 
-        assert_eq!(graph.requires_python.as_deref(), Some(">=3.11"));
         assert_eq!(
             graph.edges.get("acme-lib"),
             Some(&vec!["requests".to_owned(), "pyyaml".to_owned()])
@@ -117,12 +108,8 @@ mod tests {
                     prop::collection::vec(package_name(), 0..4),
                     0..5,
                 ),
-                requires_python in proptest::option::of(">=3\\.[0-9]{1,2}"),
             ) {
                 let mut contents = String::new();
-                if let Some(spec) = &requires_python {
-                    writeln!(contents, "requires-python = \"{spec}\"").expect("write");
-                }
                 for (name, deps) in &packages {
                     writeln!(contents, "\n[[package]]\nname = \"{name}\"").expect("write");
                     let rendered = deps
@@ -134,7 +121,6 @@ mod tests {
                 }
 
                 let graph = parse(&contents).expect("generated uv.lock is valid TOML");
-                prop_assert_eq!(graph.requires_python, requires_python);
 
                 // Distinct raw names may normalize to the same key, so compare
                 // against a reference map built with the same normalization.
