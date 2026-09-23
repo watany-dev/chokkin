@@ -15,20 +15,14 @@ pub fn resolve_module_to_path(
     let suffix = normalized.replace('.', "/");
     let mut candidates = Vec::new();
 
-    match layout.layout {
-        ProjectLayout::Src => {
-            candidates.push(format!("src/{suffix}.py"));
-            candidates.push(format!("src/{suffix}/__init__.py"));
-        },
-        ProjectLayout::Flat => {
-            for package in &layout.packages {
-                if normalized == *package || normalized.starts_with(&format!("{package}.")) {
-                    candidates.push(format!("{suffix}.py"));
-                    candidates.push(format!("{suffix}/__init__.py"));
-                }
-            }
-        },
-        ProjectLayout::Unknown => {},
+    if layout.layout == ProjectLayout::Flat
+        && layout
+            .packages
+            .iter()
+            .any(|package| normalized == package || normalized.starts_with(&format!("{package}.")))
+    {
+        candidates.push(format!("{suffix}.py"));
+        candidates.push(format!("{suffix}/__init__.py"));
     }
 
     candidates.push(format!("src/{suffix}.py"));

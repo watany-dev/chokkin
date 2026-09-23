@@ -31,13 +31,7 @@ pub fn build_entry_roots(
     let mut warnings = Vec::new();
     let mut candidates = Vec::new();
 
-    collect_config_entries(
-        config,
-        sources,
-        &known_paths,
-        &file_contexts,
-        &mut candidates,
-    );
+    collect_config_entries(config, &file_contexts, &mut candidates);
     collect_manifest_entries(
         manifest,
         sources,
@@ -86,13 +80,11 @@ fn file_context_index(sources: &DiscoveredSources) -> BTreeMap<&str, FileContext
 
 fn collect_config_entries(
     config: &ChokkinConfig,
-    _sources: &DiscoveredSources,
-    known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,
     candidates: &mut Vec<EntryCandidate>,
 ) {
     for entry in &config.entry {
-        let context = context_for_path(&entry.path, known_paths, file_contexts);
+        let context = context_for_path(&entry.path, file_contexts);
         candidates.push(EntryCandidate {
             spec: entry.clone(),
             context,
@@ -166,7 +158,7 @@ fn collect_symbol_ref_entries(
             });
             continue;
         };
-        let context = context_for_path(&path, known_paths, file_contexts);
+        let context = context_for_path(&path, file_contexts);
         candidates.push(EntryCandidate {
             spec: EntrySpec {
                 path,
@@ -196,19 +188,11 @@ fn parse_manifest_target(target: &str) -> Option<(String, Option<String>)> {
     Some((trimmed.to_owned(), None))
 }
 
-fn context_for_path(
-    path: &str,
-    known_paths: &BTreeSet<String>,
-    file_contexts: &BTreeMap<&str, FileContext>,
-) -> FileContext {
-    if known_paths.contains(path) {
-        file_contexts
-            .get(path)
-            .copied()
-            .unwrap_or_else(|| assign_file_context(path))
-    } else {
-        assign_file_context(path)
-    }
+fn context_for_path(path: &str, file_contexts: &BTreeMap<&str, FileContext>) -> FileContext {
+    file_contexts
+        .get(path)
+        .copied()
+        .unwrap_or_else(|| assign_file_context(path))
 }
 
 fn retain_existing_root(

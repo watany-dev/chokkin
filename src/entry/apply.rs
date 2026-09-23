@@ -29,12 +29,10 @@ pub fn apply_entry_plan(
 }
 
 fn entry_label(root: &EntryRoot) -> String {
-    for origin in &root.origins {
-        if let Some(label) = origin_label(origin) {
-            return label;
-        }
-    }
-    format!("entry:{}", root.spec.path)
+    root.origins
+        .iter()
+        .find_map(origin_label)
+        .unwrap_or_else(|| format!("entry:{}", root.spec.path))
 }
 
 fn origin_label(origin: &EntryOrigin) -> Option<String> {

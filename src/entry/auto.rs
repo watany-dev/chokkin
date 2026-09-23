@@ -16,10 +16,7 @@ const SHALLOW_ENTRY_NAMES: &[&str] = &[
 
 const ALL_DEPTH_ENTRY_NAMES: &[&str] = &["__main__.py", "conftest.py"];
 
-const EXACT_PATH_ENTRIES: &[(&str, &str)] = &[
-    ("docs/conf.py", "docs/conf.py"),
-    ("alembic/env.py", "alembic/env.py"),
-];
+const EXACT_PATH_ENTRIES: &[&str] = &["docs/conf.py", "alembic/env.py"];
 
 /// Collect auto-detected entry candidates from discovered files (§8).
 #[must_use]
@@ -36,15 +33,15 @@ pub fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandidate> {
             continue;
         }
 
-        if SHALLOW_ENTRY_NAMES.contains(&file_name) && is_shallow_entry_path(path, layout) {
+        if SHALLOW_ENTRY_NAMES.contains(&file_name)
+            && is_shallow_entry_path(path, file_name, layout)
+        {
             candidates.push(candidate(path, file.context, format!("auto:{file_name}")));
             continue;
         }
 
-        for (expected, rule) in EXACT_PATH_ENTRIES {
-            if path == *expected {
-                candidates.push(candidate(path, file.context, format!("auto:{rule}")));
-            }
+        if EXACT_PATH_ENTRIES.contains(&path) {
+            candidates.push(candidate(path, file.context, format!("auto:{path}")));
         }
 
         if path.starts_with("scripts/")
@@ -70,11 +67,7 @@ fn candidate(path: &str, context: FileContext, rule: String) -> EntryCandidate {
     }
 }
 
-fn is_shallow_entry_path(path: &str, layout: &crate::sources::LayoutInfo) -> bool {
-    let file_name = path.rsplit('/').next().unwrap_or(path);
-    if !SHALLOW_ENTRY_NAMES.contains(&file_name) {
-        return false;
-    }
+fn is_shallow_entry_path(path: &str, file_name: &str, layout: &crate::sources::LayoutInfo) -> bool {
     if !path.contains('/') {
         return true;
     }
