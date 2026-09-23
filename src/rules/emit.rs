@@ -209,7 +209,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
     }
 }
 
-fn build_summary(issues: &[Issue]) -> IssueSummary {
+pub(crate) fn build_summary(issues: &[Issue]) -> IssueSummary {
     let mut by_rule = BTreeMap::new();
     for issue in issues {
         *by_rule.entry(issue.rule).or_insert(0) += 1;
@@ -220,7 +220,11 @@ fn build_summary(issues: &[Issue]) -> IssueSummary {
     }
 }
 
-fn compute_exit_status(issues: &[Issue], overrides: &RuntimeOverrides, strict: bool) -> ExitStatus {
+pub(crate) fn compute_exit_status(
+    issues: &[Issue],
+    overrides: &RuntimeOverrides,
+    strict: bool,
+) -> ExitStatus {
     if overrides.no_exit_code == Some(true) {
         return ExitStatus::Success;
     }
