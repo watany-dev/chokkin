@@ -37,7 +37,6 @@ pub fn format_trace(path: &TracePath) -> String {
 
 fn format_step(step: &TraceStep) -> String {
     match step {
-        TraceStep::Entry { label, .. } => format!("entry {label}"),
         TraceStep::File { path, .. } => format!("file {path}"),
         TraceStep::Import { module, line } => format!("import {module} (line {line})"),
         TraceStep::PluginRef { module, label } => format!("plugin ref {module} ({label})"),

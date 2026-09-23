@@ -169,8 +169,6 @@ def render_packages(packages: dict[str, list[str]]) -> str:
         lines.append(f'    ("{dist}", &[{import_list}]),')
     lines.append("];")
     lines.append("")
-    lines.append(f"pub const PACKAGE_MAP_ENTRY_COUNT: usize = {len(packages)};")
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -185,8 +183,6 @@ def render_binaries(entries: list[dict[str, str]]) -> str:
     for entry in sorted(entries, key=lambda item: item["binary"]):
         lines.append(f'    ("{entry["binary"]}", "{normalize(entry["distribution"])}"),')
     lines.append("];")
-    lines.append("")
-    lines.append(f"pub const BINARY_MAP_ENTRY_COUNT: usize = {len(entries)};")
     lines.append("")
     return "\n".join(lines)
 

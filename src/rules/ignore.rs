@@ -252,8 +252,11 @@ mod tests {
         config
             .ignore
             .insert("CHK002".to_owned(), vec!["boto3".to_owned()]);
-        let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
+        let matcher = IgnoreMatcher::build(
+            &config,
+            &ParseSummary::default(),
+            &ResolutionIndex::default(),
+        );
         let candidate = IssueCandidate {
             rule: RuleId::Chk002,
             subject: IssueSubject::Distribution {
@@ -322,7 +325,7 @@ mod tests {
         );
         let matcher = IgnoreMatcher::build(
             &config,
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
             &resolution_for(module, distribution),
         );
         matcher.matches_candidate(&import_candidate(rule, module)) == Some(SuppressReason::Config)
@@ -362,8 +365,11 @@ mod tests {
         config
             .ignore
             .insert("CHK003".to_owned(), vec!["pyyaml".to_owned()]);
-        let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
+        let matcher = IgnoreMatcher::build(
+            &config,
+            &ParseSummary::default(),
+            &ResolutionIndex::default(),
+        );
         assert_eq!(
             matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml")),
             None
@@ -373,7 +379,7 @@ mod tests {
     #[test]
     fn inline_ignore_matches_same_line() {
         let config = default_config();
-        let mut parse = ParseSummary::empty();
+        let mut parse = ParseSummary::default();
         parse.modules.push(crate::parser::ParsedModule {
             path: "src/acme/main.py".to_owned(),
             imports: Vec::new(),
@@ -418,7 +424,7 @@ mod tests {
     #[test]
     fn inline_ignore_matches_symbol_issue() {
         let config = default_config();
-        let mut parse = ParseSummary::empty();
+        let mut parse = ParseSummary::default();
         parse.modules.push(crate::parser::ParsedModule {
             path: "src/acme/api.py".to_owned(),
             imports: Vec::new(),
@@ -466,8 +472,11 @@ mod tests {
             "CHK006".to_owned(),
             vec!["src/acme/api.py:dead_*".to_owned()],
         );
-        let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
+        let matcher = IgnoreMatcher::build(
+            &config,
+            &ParseSummary::default(),
+            &ResolutionIndex::default(),
+        );
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -498,8 +507,11 @@ mod tests {
         config
             .ignore
             .insert("CHK006".to_owned(), vec!["acme/api:dead_*".to_owned()]);
-        let matcher =
-            IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::default());
+        let matcher = IgnoreMatcher::build(
+            &config,
+            &ParseSummary::default(),
+            &ResolutionIndex::default(),
+        );
         let candidate = IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {

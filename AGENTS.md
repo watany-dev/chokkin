@@ -22,8 +22,8 @@ workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `-
 `SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse and disk
 `ParsedModule` JSON entries under `.chokkin/cache/parse/`. Config/manifest scan input
 fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
-`ScanCacheRecord`; typed scan payload storage is wired for config scan, manifest
-extraction, and module index cache. v0.2 release validation measurements were
+`ScanCacheRecord`; typed scan payload storage is wired for config scan and
+manifest extraction. v0.2 release validation measurements were
 recorded on 2026-06-15 with Rust 1.93: `make check`, OSS fixtures, full
 20-project OSS gate, and Criterion cache benches passed; synthetic 10k warm
 cache measured under 205 ms. Baseline CI adoption is dogfooded by this repo's
@@ -76,7 +76,6 @@ src/
                   `severity.rs` / `metadata.rs` for Phase 3 overrides)
   reporters/      Built-in reporters: default, compact, json, markdown,
                   github, sarif
-  schema/         JSON/baseline `schema_version` constants (Phase 3)
   fix/            Optional manifest fixes (step 13: `apply_fixes_with_workspace`; atomic writes, root containment)
 pyproject.toml    maturin bin bindings — chokkin ships as a Python wheel
 docs/dev/
@@ -127,9 +126,9 @@ Install tools once with `make tools`.
 
 Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy
 extraction, `sources` for the file-discovery walk, `cache` for warm parse-cache
-reuse, `reachability` for module-index rebuilds, `resolver` for bundled map
+reuse, `reachability` for reachability analysis, `resolver` for bundled map
 construction, `pipeline` for full analysis plus cold/disk-warm parse,
-reachability cache on/off, and discovery after cache population) with synthetic
+reachability, and discovery after cache population) with synthetic
 fixtures generated in `benches/support/mod.rs`. They are not part of `make check`;
 run them when touching hot paths. `pipeline` defaults to 1k ~2 KiB modules;
 set `CHOKKIN_BENCH_LARGE=1` for 5k/10k as well:

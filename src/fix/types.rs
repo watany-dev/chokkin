@@ -47,8 +47,6 @@ pub enum SkippedReason {
     NotFixable,
     /// File type or location is not supported.
     UnsupportedTarget,
-    /// Requirements line is hash-pinned.
-    PinnedRequirements,
     /// `--allow-remove-files` was required but not set.
     FileRemovalDenied,
     /// Missing manifest metadata needed to apply the fix.

@@ -83,8 +83,6 @@ pub struct ProjectMetadata {
 pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
-    /// Lockfile `requires-python` when present.
-    pub requires_python: Option<String>,
 }
 
 /// Which manifest files contributed to extraction.

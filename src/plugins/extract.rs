@@ -200,7 +200,6 @@ mod tests {
             root: root.clone(),
             effective: config,
             sources: crate::config::ConfigSources {
-                used_defaults: true,
                 dot_chokkin_toml: None,
                 chokkin_toml: None,
                 pyproject_tool_chokkin: false,
@@ -256,7 +255,6 @@ mod tests {
             root: root.clone(),
             effective: crate::default_config(),
             sources: crate::config::ConfigSources {
-                used_defaults: true,
                 dot_chokkin_toml: None,
                 chokkin_toml: None,
                 pyproject_tool_chokkin: false,
