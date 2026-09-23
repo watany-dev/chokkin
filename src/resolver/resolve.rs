@@ -3,14 +3,12 @@
 use std::collections::BTreeMap;
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
-use crate::discovery::ProjectRoot;
 use crate::graph::ModuleOrigin;
 use crate::manifest::LoadedManifest;
 use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::ModuleReference;
 use crate::sources::DiscoveredSources;
 
-use super::error::ResolveError;
 use super::first_party::{is_first_party_import, is_workspace_import};
 use super::maps::{ImportMap, build_binary_map};
 use super::stdlib::is_stdlib_import;
@@ -24,21 +22,16 @@ use super::venv::load_venv_index;
 ///
 /// `workspace_members` marks cross-member imports as first-party so workspace
 /// packages do not become false missing-dependency findings.
-///
-/// # Errors
-///
-/// Returns [`ResolveError`] only for internal invariant failures (v0.1).
+#[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_imports(
-    root: &ProjectRoot,
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
     workspace_members: &[ResolvedWorkspaceMember],
-) -> Result<ResolutionIndex, ResolveError> {
-    let _ = root;
+) -> ResolutionIndex {
     let target = config
         .target_version
         .as_ref()
@@ -115,12 +108,12 @@ pub fn resolve_imports(
         ));
     }
 
-    Ok(ResolutionIndex {
+    ResolutionIndex {
         imports,
         warnings,
         transitive: build_transitive_index(manifest),
         binary_resolutions,
-    })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
