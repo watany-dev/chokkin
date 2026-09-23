@@ -6,17 +6,17 @@ use std::path::Path;
 
 use super::error::FixError;
 
-fn manifest_name(path: &Path, fallback: &'static str) -> &str {
+fn manifest_name<'a>(path: &'a Path, fallback: &'static str) -> &'a str {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(fallback)
 }
 
 /// Read a manifest, returning its display name alongside the contents.
-pub(super) fn read_manifest(
-    path: &Path,
+pub(super) fn read_manifest<'a>(
+    path: &'a Path,
     fallback: &'static str,
-) -> Result<(&str, String), FixError> {
+) -> Result<(&'a str, String), FixError> {
     let rel = manifest_name(path, fallback);
     let contents = fs::read_to_string(path).map_err(|source| FixError::Io {
         path: rel.to_owned(),
