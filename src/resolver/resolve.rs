@@ -14,9 +14,9 @@ use super::error::ResolveError;
 use super::first_party::{is_first_party_import, is_workspace_import};
 use super::maps::{ImportMap, build_binary_map};
 use super::stdlib::is_stdlib_import;
-use super::transitive::build_transitive_index;
 use super::types::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, import_root,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
+    import_root,
 };
 use super::venv::load_venv_index;
 
@@ -118,7 +118,9 @@ pub fn resolve_imports(
     Ok(ResolutionIndex {
         imports,
         warnings,
-        transitive: build_transitive_index(manifest),
+        transitive: TransitiveIndex {
+            edges: manifest.lockfile.edges.clone(),
+        },
         binary_resolutions,
     })
 }

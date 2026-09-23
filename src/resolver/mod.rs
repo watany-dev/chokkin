@@ -8,7 +8,6 @@ mod maps;
 mod metadata;
 mod resolve;
 mod stdlib;
-mod transitive;
 mod types;
 mod venv;
 
