@@ -11,32 +11,26 @@ use crate::rules::{
 };
 
 use super::format::{json_string, severity_label};
-use super::traits::Reporter;
 use super::types::RenderContext;
 
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 
 /// SARIF reporter.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SarifReporter;
-
-impl Reporter for SarifReporter {
-    fn render(&self, report: &IssueReport, context: &RenderContext) -> String {
-        let mut out = String::new();
-        let _ = writeln!(out, "{{");
-        let _ = writeln!(out, "  \"$schema\": {},", json_string(SARIF_SCHEMA));
-        let _ = writeln!(out, "  \"version\": \"2.1.0\",");
-        let _ = writeln!(out, "  \"runs\": [");
-        let _ = writeln!(out, "    {{");
-        render_tool(&mut out, context);
-        let _ = writeln!(out, ",");
-        render_results(&mut out, &report.issues);
-        let _ = writeln!(out);
-        let _ = writeln!(out, "    }}");
-        let _ = writeln!(out, "  ]");
-        let _ = write!(out, "}}");
-        out
-    }
+pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "{{");
+    let _ = writeln!(out, "  \"$schema\": {},", json_string(SARIF_SCHEMA));
+    let _ = writeln!(out, "  \"version\": \"2.1.0\",");
+    let _ = writeln!(out, "  \"runs\": [");
+    let _ = writeln!(out, "    {{");
+    render_tool(&mut out, context);
+    let _ = writeln!(out, ",");
+    render_results(&mut out, &report.issues);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "    }}");
+    let _ = writeln!(out, "  ]");
+    let _ = write!(out, "}}");
+    out
 }
 
 fn render_tool(out: &mut String, context: &RenderContext) {

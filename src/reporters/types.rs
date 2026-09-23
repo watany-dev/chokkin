@@ -1,6 +1,5 @@
 //! Reporter identifiers and render context (pipeline step 12 / Phase 1 CLI).
 
-use crate::config::ProjectMode;
 use crate::entry::ResolvedMode;
 
 /// Built-in reporter identifiers (§2).
@@ -62,12 +61,4 @@ pub struct RenderContext {
     pub version: &'static str,
     /// Primary config file label for the header.
     pub config_label: Option<String>,
-}
-
-impl RenderContext {
-    /// Borrow the effective project mode.
-    #[must_use]
-    pub fn project_mode(&self) -> ProjectMode {
-        self.mode.mode
-    }
 }

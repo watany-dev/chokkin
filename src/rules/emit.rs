@@ -267,7 +267,7 @@ mod tests {
 
         let deps = DependencyReport::default();
         let symbols = SymbolReport::default();
-        let parse = ParseSummary::empty();
+        let parse = ParseSummary::default();
         let config = default_config();
 
         let issues = emit_issues(
@@ -297,7 +297,7 @@ mod tests {
             &report,
             &DependencyReport::default(),
             &SymbolReport::default(),
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides {
                 no_exit_code: Some(true),
@@ -338,7 +338,7 @@ mod tests {
             &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
             &config,
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
@@ -375,7 +375,7 @@ mod tests {
             &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides::default(),
             &resolved_app_mode(),

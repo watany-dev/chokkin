@@ -107,7 +107,7 @@ uvx chokkin --init
 - `--no-exit-code` — issueがあってもexit codeを0にします(config/CLI errorの2、internal errorの3は維持)。導入初期やGitHub Actions summary用に。
 - `--fix` — 確実なdependency findingに対して保守的な修正を適用します。`--allow-remove-files` を追加すると、確実に未到達なファイルも削除対象にします。`--add-missing` は distribution が一意な Certain CHK003 を non-Poetry の `[project].dependencies` に追加します。workspace finding は member manifest が inventory 済みなら member 側の `pyproject.toml` に追加し、未対応ケースは詳細付きの skipped fix として stderr に報告します。
 - `--baseline PATH` / `--update-baseline` — 現在のissueをbaseline fileに凍結し、以後の実行では一致するissueを抑制して新規issueだけCIで落とします。
-- `--no-cache` — Phase 2 cache の read/write を無効化します。parse、manifest/config scan、module index cache はデフォルトで project root 配下に作られ、壊れた cache や stale cache は miss 扱いにします。
+- `--no-cache` — Phase 2 cache の read/write を無効化します。parse、manifest/config scan cache はデフォルトで project root 配下に作られ、壊れた cache や stale cache は miss 扱いにします。
 - `--reporter github` / `--reporter sarif` — GitHub Actions annotation、または code scanning 用の SARIF 2.1.0 subset を出力します。
 - `--probe` — uv / chokkin workspace が検出された場合、解決済み・inventory済み workspace member 数も表示します。
 - `--explain` / `--trace` — issue が報告された理由と到達性の根拠を表示します。`CHK002` explain には top-level modules と reachable/unreachable import evidence を含み、`--trace` は到達可能な file には positive trace、未到達 file には negative trace（理由・entry roots・incoming import 連鎖）を出します。誤検知の調査・報告のための導線です。

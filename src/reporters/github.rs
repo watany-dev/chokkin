@@ -7,25 +7,18 @@ use crate::path_util::normalize_rel_path;
 use crate::rules::{Issue, IssueReport};
 
 use super::format::{baseline_suppressed_count, format_issue_subject};
-use super::traits::Reporter;
-use super::types::RenderContext;
 
 /// GitHub Actions workflow-command reporter.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GithubReporter;
-
-impl Reporter for GithubReporter {
-    fn render(&self, report: &IssueReport, _context: &RenderContext) -> String {
-        let mut out = String::new();
-        for issue in &report.issues {
-            render_annotation(&mut out, issue);
-        }
-        let suppressed = baseline_suppressed_count(report);
-        if suppressed > 0 {
-            let _ = writeln!(out, "chokkin: baseline suppressed {suppressed} issues");
-        }
-        out
+pub(super) fn render(report: &IssueReport) -> String {
+    let mut out = String::new();
+    for issue in &report.issues {
+        render_annotation(&mut out, issue);
     }
+    let suppressed = baseline_suppressed_count(report);
+    if suppressed > 0 {
+        let _ = writeln!(out, "chokkin: baseline suppressed {suppressed} issues");
+    }
+    out
 }
 
 fn render_annotation(out: &mut String, issue: &Issue) {

@@ -1074,7 +1074,7 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scan / module index の各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。corrupt JSON はmiss扱いにしてsourceを再parseする。
+cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。corrupt JSON はmiss扱いにしてsourceを再parseする。
 
 cache keyは以下を使う。
 
@@ -1091,14 +1091,14 @@ file content hash
 plugin version
 ```
 
-config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_record` / `write_scan_record` による disk backend と、`read_scan_payload` / `write_scan_payload` による typed JSON payload slot は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。module index は path-based payload として保存し、current graph の `FileId` に再解決する。`module-index-v2` の key は layout と graph のパス列（順序保持）を hash し、ソース本文・mtime は読まない。パス追加・削除・順序変更と layout 変更で無効化する。v1 の cache は unit version により miss になる。
+config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_payload` / `write_scan_payload` が typed payload を record に直接埋め込んで読み書きする disk backend は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。module index は cache しない。graph のパス列に対する文字列ループで毎回構築する方が、全パスを hash する cache key の計算より安いため。
 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 
 `benches/pipeline.rs` は約 2KiB の Python module（関数・ループ・条件式）を使い、
 `analyze_cold` / `analyze_warm`、`parse_cold_no_cache` /
-`parse_cold_with_disk_cache` / `parse_disk_warm`、`reachability_cache_on` /
-`reachability_cache_off`、`discover_populated_cache` を測る。
+`parse_cold_with_disk_cache` / `parse_disk_warm`、`reachability`、
+`discover_populated_cache` を測る。
 通常は 1k modules、`CHOKKIN_BENCH_LARGE=1 cargo bench --bench pipeline` で
 5k / 10k も追加する。cold は解析 cache が空の状態であり、OS page cache は消さない。
 fixture 作成・cache 削除・graph clone は計測外。warm parse は in-memory store を渡さず
