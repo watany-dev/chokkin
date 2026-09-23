@@ -540,3 +540,36 @@ fn celery_task_modules_match_between_scan_and_parse() {
         expected
     );
 }
+
+#[test]
+fn flask_route_modules_survive_syntax_error_in_parse_path() {
+    let scanned = extract_fixture("flask_syntax_error");
+    let parsed = extract_fixture_with_parse("flask_syntax_error");
+    let expected = &plugin_contrib(&scanned, PluginId::Flask).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "web.routes" && reference.origin.line == Some(1))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Flask).module_refs,
+        expected
+    );
+}
+
+#[test]
+fn celery_task_modules_survive_syntax_error_in_parse_path() {
+    let scanned = extract_fixture("celery_syntax_error");
+    let parsed = extract_fixture_with_parse("celery_syntax_error");
+    let expected = &plugin_contrib(&scanned, PluginId::Celery).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.line == Some(1))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Celery).module_refs,
+        expected
+    );
+}

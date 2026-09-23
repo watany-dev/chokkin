@@ -128,6 +128,21 @@ fn has_rule(report: &chokkin::DependencyReport, rule: RuleId, name: &str) -> boo
     })
 }
 
+/// CHK003/CHK004/CHK005 rules reported for `name`, which §10 keeps exclusive.
+fn rules_mentioning(report: &chokkin::DependencyReport, name: &str) -> Vec<RuleId> {
+    report
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            matches!(
+                candidate.rule,
+                RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk005
+            ) && candidate.message.contains(name)
+        })
+        .map(|candidate| candidate.rule)
+        .collect()
+}
+
 fn candidate_for_distribution<'a>(
     report: &'a chokkin::DependencyReport,
     rule: RuleId,
@@ -251,6 +266,26 @@ fn strict_workspace_member_reports_member_local_misplaced_dependency() {
         })
         .expect("member-local pytest context mismatch");
     assert_eq!(candidate.severity, Severity::Warning);
+    assert_eq!(rules_mentioning(&report, "pytest"), vec![RuleId::Chk005]);
+}
+
+/// Issue #263: with no member entry the root declaration is the fallback, so a
+/// root dev-only dependency used at runtime by a member is still CHK005.
+#[test]
+fn strict_workspace_member_falls_back_to_root_dev_only_declaration() {
+    let report = reconcile_fixture_with_strict("workspace_member_root_dev", true);
+    assert_eq!(rules_mentioning(&report, "requests"), vec![RuleId::Chk005]);
+    let candidate = candidate_for_distribution(&report, RuleId::Chk005, "requests")
+        .expect("root dev-only requests used at runtime by member");
+    assert_eq!(candidate.workspace_member.as_deref(), Some("api"));
+}
+
+/// Issue #263: the member entry takes precedence over the root's runtime
+/// declaration, so only CHK005 fires (no workspace CHK003 alongside it).
+#[test]
+fn strict_workspace_member_entry_shadows_root_declaration() {
+    let report = reconcile_fixture_with_strict("workspace_member_dev_over_root", true);
+    assert_eq!(rules_mentioning(&report, "pytest"), vec![RuleId::Chk005]);
 }
 
 #[test]

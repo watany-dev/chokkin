@@ -112,7 +112,12 @@ fn extract_task_modules(
 ) {
     if let Some(parse) = ctx.parse {
         for module in &parse.modules {
-            let Some(line) = decorator_line(module, is_task_decorator) else {
+            let Some(line) = decorator_line(
+                &ctx.root.path,
+                module,
+                is_task_decorator,
+                celery_task_decorator_line,
+            ) else {
                 continue;
             };
             push_task_module(ctx, contrib, found, &module.path, line);
