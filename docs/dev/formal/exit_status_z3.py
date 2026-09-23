@@ -4,8 +4,7 @@
 Ported from:
 
 - ``src/rules/filter.rs::counts_toward_exit``
-- ``src/rules/emit.rs::compute_exit_status``      (used by step 12)
-- ``src/baseline/store.rs::compute_exit_status``  (used by ``apply_baseline``)
+- ``src/rules/emit.rs::compute_exit_status``      (used by step 12 and ``apply_baseline``)
 
 Spec (docs/dev/spec.ja.md line 608): exit code 1 is triggered by
 ``severity >= error && confidence >= likely`` (default) or

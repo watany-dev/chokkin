@@ -75,8 +75,6 @@ mod tests {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         assert!(is_first_party_import(
             "acme",
@@ -91,8 +89,6 @@ mod tests {
             layout: ProjectLayout::Flat,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let metadata = ProjectMetadata {
             name: Some("my-package".to_owned()),

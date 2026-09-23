@@ -12,8 +12,6 @@ use crate::sources::{SourcesError, discover_sources};
 /// Result of writing a starter `[tool.chokkin]` table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InitReport {
-    /// Discovered project root.
-    pub root: PathBuf,
     /// File that was updated.
     pub path: PathBuf,
     /// Project globs written to the starter config.
@@ -64,15 +62,7 @@ impl InitError {
     /// Whether this error should map to [`crate::ExitStatus::UsageError`].
     #[must_use]
     pub const fn is_usage_error(&self) -> bool {
-        matches!(
-            self,
-            Self::Discovery(_)
-                | Self::Config(_)
-                | Self::Manifest(_)
-                | Self::Sources(_)
-                | Self::ExistingConfig { .. }
-                | Self::MissingPyproject { .. }
-        )
+        !matches!(self, Self::Io { .. })
     }
 }
 
@@ -105,7 +95,6 @@ pub fn init_project(
     append_config(&pyproject, &block)?;
 
     Ok(InitReport {
-        root: root.path,
         path: pyproject,
         project_globs,
         entry,
@@ -141,51 +130,39 @@ fn render_starter_config(
     dependencies: &DependencyGroupsConfig,
     target_version: &str,
 ) -> String {
-    let mut block = String::from("\n[tool.chokkin]\n");
-    block.push_str("mode = \"auto\"\n");
-    block.push_str("production = false\n");
-    block.push_str("target_version = \"");
-    block.push_str(&escape_toml_string(target_version));
-    block.push_str("\"\n");
-    block.push_str("respect_gitignore = true\n");
-    block.push_str("confidence = \"likely\"\n");
-    block.push_str("project = ");
-    block.push_str(&render_string_array(project_globs));
-    block.push('\n');
-    if !entry.is_empty() {
-        block.push_str("entry = ");
-        block.push_str(&render_string_array(entry));
-        block.push('\n');
-    }
-    block.push('\n');
-    block.push_str("[tool.chokkin.dependencies]\n");
-    block.push_str("dev_groups = ");
-    block.push_str(&render_string_array(&dependencies.dev_groups));
-    block.push('\n');
-    block.push_str("runtime_groups = ");
-    block.push_str(&render_string_array(&dependencies.runtime_groups));
-    block.push('\n');
-    block.push_str("type_groups = ");
-    block.push_str(&render_string_array(&dependencies.type_groups));
-    block.push('\n');
-    block
+    let entry_line = if entry.is_empty() {
+        String::new()
+    } else {
+        format!("entry = {}\n", render_string_array(entry))
+    };
+    format!(
+        "\n[tool.chokkin]\n\
+         mode = \"auto\"\n\
+         production = false\n\
+         target_version = \"{target_version}\"\n\
+         respect_gitignore = true\n\
+         confidence = \"likely\"\n\
+         project = {project}\n\
+         {entry_line}\n\
+         [tool.chokkin.dependencies]\n\
+         dev_groups = {dev_groups}\n\
+         runtime_groups = {runtime_groups}\n\
+         type_groups = {type_groups}\n",
+        target_version = escape_toml_string(target_version),
+        project = render_string_array(project_globs),
+        dev_groups = render_string_array(&dependencies.dev_groups),
+        runtime_groups = render_string_array(&dependencies.runtime_groups),
+        type_groups = render_string_array(&dependencies.type_groups),
+    )
 }
 
 fn render_string_array(values: &[String]) -> String {
-    let mut rendered = String::from("[");
-    let mut first = true;
-    for value in values {
-        if first {
-            first = false;
-        } else {
-            rendered.push_str(", ");
-        }
-        rendered.push('"');
-        rendered.push_str(&escape_toml_string(value));
-        rendered.push('"');
-    }
-    rendered.push(']');
-    rendered
+    let items = values
+        .iter()
+        .map(|value| format!("\"{}\"", escape_toml_string(value)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{items}]")
 }
 
 fn escape_toml_string(value: &str) -> String {
@@ -193,28 +170,18 @@ fn escape_toml_string(value: &str) -> String {
 }
 
 fn append_config(path: &Path, block: &str) -> Result<(), InitError> {
-    let existing = fs::read_to_string(path).map_err(|source| InitError::Io {
+    let io_error = |source: std::io::Error| InitError::Io {
         path: path.to_path_buf(),
         source,
-    })?;
+    };
+    let existing = fs::read_to_string(path).map_err(io_error)?;
     let separator = if existing.ends_with('\n') { "" } else { "\n" };
     let mut file = OpenOptions::new()
         .append(true)
         .open(path)
-        .map_err(|source| InitError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    file.write_all(separator.as_bytes())
-        .map_err(|source| InitError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    file.write_all(block.as_bytes())
-        .map_err(|source| InitError::Io {
-            path: path.to_path_buf(),
-            source,
-        })
+        .map_err(io_error)?;
+    file.write_all(separator.as_bytes()).map_err(io_error)?;
+    file.write_all(block.as_bytes()).map_err(io_error)
 }
 
 #[cfg(test)]
@@ -282,5 +249,26 @@ mod tests {
             "py311",
         );
         assert!(block.contains("src/**/weird\\\"name.py"));
+    }
+
+    #[test]
+    fn render_omits_empty_entry() {
+        let block = render_starter_config(
+            &["src/**/*.py".to_owned()],
+            &[],
+            &DependencyGroupsConfig {
+                dev_groups: vec!["dev".to_owned(), "test".to_owned()],
+                runtime_groups: Vec::new(),
+                type_groups: Vec::new(),
+            },
+            "py311",
+        );
+        assert_eq!(
+            block,
+            "\n[tool.chokkin]\nmode = \"auto\"\nproduction = false\ntarget_version = \"py311\"\n\
+             respect_gitignore = true\nconfidence = \"likely\"\nproject = [\"src/**/*.py\"]\n\n\
+             [tool.chokkin.dependencies]\ndev_groups = [\"dev\", \"test\"]\nruntime_groups = []\n\
+             type_groups = []\n"
+        );
     }
 }

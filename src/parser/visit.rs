@@ -83,59 +83,8 @@ impl<'a> ModuleVisitor<'a> {
         match stmt {
             Stmt::Import(import) => self.visit_import(import),
             Stmt::ImportFrom(import_from) => self.visit_import_from(import_from),
-            Stmt::FunctionDef(function) => {
-                self.record_decorators(&function.decorator_list);
-                if self.module_level {
-                    let line = self.line_number(function);
-                    self.record_symbol(
-                        function.name.to_string(),
-                        SymbolKind::Function,
-                        line,
-                        &function.decorator_list,
-                    );
-                }
-                let saved = self.module_level;
-                self.module_level = false;
-                for inner in &function.body {
-                    self.visit_stmt(inner);
-                }
-                self.module_level = saved;
-            },
-            Stmt::AsyncFunctionDef(function) => {
-                self.record_decorators(&function.decorator_list);
-                if self.module_level {
-                    let line = self.line_number(function);
-                    self.record_symbol(
-                        function.name.to_string(),
-                        SymbolKind::Function,
-                        line,
-                        &function.decorator_list,
-                    );
-                }
-                let saved = self.module_level;
-                self.module_level = false;
-                for inner in &function.body {
-                    self.visit_stmt(inner);
-                }
-                self.module_level = saved;
-            },
-            Stmt::ClassDef(class) => {
-                self.record_decorators(&class.decorator_list);
-                if self.module_level {
-                    let line = self.line_number(class);
-                    self.record_symbol(
-                        class.name.to_string(),
-                        SymbolKind::Class,
-                        line,
-                        &class.decorator_list,
-                    );
-                }
-                let saved = self.module_level;
-                self.module_level = false;
-                for inner in &class.body {
-                    self.visit_stmt(inner);
-                }
-                self.module_level = saved;
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {
+                self.visit_def(stmt);
             },
             Stmt::Assign(assign) => {
                 if self.module_level {
@@ -212,16 +161,8 @@ impl<'a> ModuleVisitor<'a> {
                     self.visit_stmt(inner);
                 }
             },
-            Stmt::With(with_stmt) => {
-                for inner in &with_stmt.body {
-                    self.visit_stmt(inner);
-                }
-            },
-            Stmt::AsyncWith(with_stmt) => {
-                for inner in &with_stmt.body {
-                    self.visit_stmt(inner);
-                }
-            },
+            Stmt::With(with_stmt) => self.visit_body(&with_stmt.body),
+            Stmt::AsyncWith(with_stmt) => self.visit_body(&with_stmt.body),
             Stmt::Match(match_stmt) => {
                 for case in &match_stmt.cases {
                     for inner in &case.body {
@@ -230,30 +171,52 @@ impl<'a> ModuleVisitor<'a> {
                 }
             },
             Stmt::For(for_stmt) => {
-                for inner in &for_stmt.body {
-                    self.visit_stmt(inner);
-                }
-                for inner in &for_stmt.orelse {
-                    self.visit_stmt(inner);
-                }
+                self.visit_body(&for_stmt.body);
+                self.visit_body(&for_stmt.orelse);
             },
             Stmt::AsyncFor(for_stmt) => {
-                for inner in &for_stmt.body {
-                    self.visit_stmt(inner);
-                }
-                for inner in &for_stmt.orelse {
-                    self.visit_stmt(inner);
-                }
+                self.visit_body(&for_stmt.body);
+                self.visit_body(&for_stmt.orelse);
             },
             Stmt::While(while_stmt) => {
-                for inner in &while_stmt.body {
-                    self.visit_stmt(inner);
-                }
-                for inner in &while_stmt.orelse {
-                    self.visit_stmt(inner);
-                }
+                self.visit_body(&while_stmt.body);
+                self.visit_body(&while_stmt.orelse);
             },
             _ => {},
+        }
+    }
+
+    fn visit_def(&mut self, stmt: &Stmt) {
+        let (name, decorators, body, kind) = match stmt {
+            Stmt::FunctionDef(def) => (
+                &def.name,
+                &def.decorator_list,
+                &def.body,
+                SymbolKind::Function,
+            ),
+            Stmt::AsyncFunctionDef(def) => (
+                &def.name,
+                &def.decorator_list,
+                &def.body,
+                SymbolKind::Function,
+            ),
+            Stmt::ClassDef(def) => (&def.name, &def.decorator_list, &def.body, SymbolKind::Class),
+            _ => return,
+        };
+        self.record_decorators(decorators);
+        if self.module_level {
+            let line = self.line_number(stmt);
+            self.record_symbol(name.to_string(), kind, line, decorators);
+        }
+        let saved = self.module_level;
+        self.module_level = false;
+        self.visit_body(body);
+        self.module_level = saved;
+    }
+
+    fn visit_body(&mut self, body: &[Stmt]) {
+        for inner in body {
+            self.visit_stmt(inner);
         }
     }
 
@@ -567,8 +530,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let mut locator = RandomLocator::new(source);
         let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &mut locator);

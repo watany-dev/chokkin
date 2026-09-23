@@ -79,7 +79,7 @@ impl Reporter for SarifReporter {
                     driver: SarifDriver {
                         name: "chokkin",
                         semantic_version: context.version,
-                        rules: all_rules().into_iter().map(sarif_rule).collect(),
+                        rules: RuleId::ALL.into_iter().map(sarif_rule).collect(),
                     },
                 },
                 results: report.issues.iter().map(sarif_result).collect(),
@@ -131,21 +131,6 @@ fn sarif_locations(issue: &Issue) -> Vec<Value> {
     })
     .into_iter()
     .collect()
-}
-
-fn all_rules() -> [RuleId; 10] {
-    [
-        RuleId::Chk001,
-        RuleId::Chk002,
-        RuleId::Chk003,
-        RuleId::Chk004,
-        RuleId::Chk005,
-        RuleId::Chk006,
-        RuleId::Chk007,
-        RuleId::Chk008,
-        RuleId::Chk009,
-        RuleId::Chk010,
-    ]
 }
 
 fn sarif_level(severity: Severity) -> &'static str {
