@@ -22,31 +22,6 @@ pub struct IgnoreMatcher {
     distributions: BTreeMap<ImportSite, String>,
 }
 
-/// Outcome of ignore evaluation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IgnoreMatch {
-    /// Issue is not ignored.
-    None,
-    /// Matched config ignore pattern.
-    Config,
-    /// Matched inline directive on the same line.
-    Inline,
-    /// Matched file-level directive.
-    FileLevel,
-}
-
-impl IgnoreMatch {
-    /// Maps to [`SuppressReason`] when ignored.
-    pub const fn reason(self) -> Option<SuppressReason> {
-        match self {
-            Self::None => None,
-            Self::Config => Some(SuppressReason::Config),
-            Self::Inline => Some(SuppressReason::Inline),
-            Self::FileLevel => Some(SuppressReason::FileLevel),
-        }
-    }
-}
-
 impl IgnoreMatcher {
     /// Build matchers from config, parsed modules, and resolved imports.
     ///
@@ -95,11 +70,11 @@ impl IgnoreMatcher {
         }
     }
 
-    /// Whether a pre-issue candidate should be suppressed.
-    pub fn matches_candidate(&self, candidate: &IssueCandidate) -> IgnoreMatch {
+    /// Why a pre-issue candidate is suppressed, or `None` when it is not.
+    pub fn matches_candidate(&self, candidate: &IssueCandidate) -> Option<SuppressReason> {
         let file = file_path_for(&candidate.subject, &candidate.origins);
         if self.matches_config(candidate.rule, &candidate.subject, file.as_deref()) {
-            return IgnoreMatch::Config;
+            return Some(SuppressReason::Config);
         }
         self.matches_directives(candidate.rule, file.as_deref(), candidate_line(candidate))
     }
@@ -131,13 +106,8 @@ impl IgnoreMatcher {
         rule: RuleId,
         file: Option<&str>,
         line: Option<u32>,
-    ) -> IgnoreMatch {
-        let Some(path) = file else {
-            return IgnoreMatch::None;
-        };
-        let Some(directives) = self.directives.get(path) else {
-            return IgnoreMatch::None;
-        };
+    ) -> Option<SuppressReason> {
+        let directives = self.directives.get(file?)?;
 
         let code = rule.as_code();
         for directive in directives {
@@ -145,13 +115,13 @@ impl IgnoreMatcher {
                 continue;
             }
             if directive.file_level {
-                return IgnoreMatch::FileLevel;
+                return Some(SuppressReason::FileLevel);
             }
             if line == Some(directive.line) {
-                return IgnoreMatch::Inline;
+                return Some(SuppressReason::Inline);
             }
         }
-        IgnoreMatch::None
+        None
     }
 }
 
@@ -296,7 +266,10 @@ mod tests {
             origins: Vec::new(),
             explain: ExplainData::default(),
         };
-        assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Config);
+        assert_eq!(
+            matcher.matches_candidate(&candidate),
+            Some(SuppressReason::Config)
+        );
     }
 
     const APP: &str = "src/acme/app.py";
@@ -352,7 +325,7 @@ mod tests {
             &ParseSummary::empty(),
             &resolution_for(module, distribution),
         );
-        matcher.matches_candidate(&import_candidate(rule, module)) == IgnoreMatch::Config
+        matcher.matches_candidate(&import_candidate(rule, module)) == Some(SuppressReason::Config)
     }
 
     /// §18: dependency-rule ignores are distribution-name globs, even though
@@ -393,7 +366,7 @@ mod tests {
             IgnoreMatcher::build(&config, &ParseSummary::empty(), &ResolutionIndex::empty());
         assert_eq!(
             matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml")),
-            IgnoreMatch::None
+            None
         );
     }
 
@@ -436,7 +409,10 @@ mod tests {
             }],
             explain: ExplainData::default(),
         };
-        assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Inline);
+        assert_eq!(
+            matcher.matches_candidate(&candidate),
+            Some(SuppressReason::Inline)
+        );
     }
 
     #[test]
@@ -477,7 +453,10 @@ mod tests {
             }],
             explain: ExplainData::default(),
         };
-        assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Inline);
+        assert_eq!(
+            matcher.matches_candidate(&candidate),
+            Some(SuppressReason::Inline)
+        );
     }
 
     #[test]
@@ -507,7 +486,10 @@ mod tests {
             explain: ExplainData::default(),
         };
 
-        assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Config);
+        assert_eq!(
+            matcher.matches_candidate(&candidate),
+            Some(SuppressReason::Config)
+        );
     }
 
     #[test]
@@ -532,6 +514,9 @@ mod tests {
             explain: ExplainData::default(),
         };
 
-        assert_eq!(matcher.matches_candidate(&candidate), IgnoreMatch::Config);
+        assert_eq!(
+            matcher.matches_candidate(&candidate),
+            Some(SuppressReason::Config)
+        );
     }
 }
