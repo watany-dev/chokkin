@@ -6,7 +6,7 @@ use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::{GraphEdge, ProjectGraph};
 use crate::manifest::DeclaredDependency;
 use crate::manifest::normalize_distribution_name;
-use crate::reachability::{ReachabilityReport, UnreachableReason};
+use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolutionIndex, import_root};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 
@@ -176,36 +176,15 @@ fn top_level_modules_for_distribution(
 }
 
 fn unreachable_file_suffix(path: &str, reachability: &ReachabilityReport) -> String {
-    let Some(file) = reachability
+    if reachability
         .unreachable
         .iter()
-        .find(|candidate| candidate.path == path)
-    else {
-        return String::new();
-    };
-
-    if file
-        .reasons
-        .iter()
-        .any(|reason| matches!(reason, UnreachableReason::NotReachable))
+        .any(|candidate| candidate.path == path)
     {
-        return ", CHK001".to_owned();
+        ", CHK001".to_owned()
+    } else {
+        String::new()
     }
-
-    let label = file
-        .reasons
-        .iter()
-        .find_map(|reason| match reason {
-            UnreachableReason::ExcludedProductionContext => Some("excluded in production"),
-            UnreachableReason::ExcludedTestContext => Some("excluded test context"),
-            UnreachableReason::ExcludedInit => Some("excluded __init__.py"),
-            UnreachableReason::ExcludedStub => Some("excluded stub"),
-            UnreachableReason::FrameworkUsed => Some("framework-used"),
-            UnreachableReason::NotReachable => None,
-        })
-        .unwrap_or("unreachable");
-
-    format!(", {label}")
 }
 
 /// Dev, optional-extra, and setup-extra declarations are not reported unless `--strict`.
@@ -371,21 +350,20 @@ mod tests {
             })
             .expect("legacy file");
         let _ = graph.intern_module("boto3".to_owned(), ModuleOrigin::ThirdParty);
-        let _ = graph.ensure_distribution("boto3");
+        let _ = graph.intern_distribution("boto3");
         let _ = graph.intern_module("botocore".to_owned(), ModuleOrigin::ThirdParty);
 
-        let mut reachability = ReachabilityReport::empty();
+        let mut reachability = ReachabilityReport::default();
         reachability.reachable.insert(reachable_file);
         reachability
             .unreachable
             .push(crate::reachability::UnreachableFile {
                 file: legacy_file,
                 path: "src/legacy/aws.py".to_owned(),
-                reasons: vec![UnreachableReason::NotReachable],
                 max_confidence: Confidence::Certain,
             });
 
-        let mut resolution = ResolutionIndex::empty();
+        let mut resolution = ResolutionIndex::default();
         resolution.imports.push(ResolvedImport {
             import_root: "boto3".to_owned(),
             full_module: "boto3".to_owned(),

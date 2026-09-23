@@ -53,15 +53,15 @@ pub use config::{
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
-    EntryError, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
+    EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
     build_entry_roots,
 };
 pub use fix::{
     AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason, apply_fixes,
 };
 pub use graph::{
-    DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
-    ModuleId, ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+    DistributionId, EntryId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode,
+    ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
@@ -86,9 +86,8 @@ pub use plugins::{
     extract_plugin_hints_with_parse,
 };
 pub use reachability::{
-    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
-    UnreachableReason, UsedModule, analyze_reachability, analyze_reachability_with_cache,
-    path_to_module, trace_to_file,
+    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
+    analyze_reachability, analyze_reachability_with_cache, path_to_module, trace_to_file,
 };
 pub use reporters::{
     CompactReporter, DefaultReporter, GithubReporter, JsonReporter, MarkdownReporter,
@@ -96,8 +95,8 @@ pub use reporters::{
     render_issues,
 };
 pub use resolver::{
-    ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
-    TransitiveIndex, apply_resolution_to_graph, import_root, resolve_imports,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
+    apply_resolution_to_graph, import_root, resolve_imports,
 };
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,

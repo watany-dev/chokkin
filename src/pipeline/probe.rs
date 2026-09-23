@@ -169,7 +169,7 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     writeln!(
         out,
         "Config  : {}",
-        format_config_sources(&report.config_sources)
+        crate::reporters::config_label(&report.config_sources, "pyproject.toml [tool.chokkin]")
     )?;
     writeln!(
         out,
@@ -235,24 +235,6 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     writeln!(out)?;
     writeln!(out, "Summary: probe complete — analyzer not run yet")?;
     Ok(())
-}
-
-fn format_config_sources(sources: &ConfigSources) -> String {
-    let mut parts = Vec::new();
-    if sources.dot_chokkin_toml.is_some() {
-        parts.push(".chokkin.toml".to_owned());
-    }
-    if sources.chokkin_toml.is_some() {
-        parts.push("chokkin.toml".to_owned());
-    }
-    if sources.pyproject_tool_chokkin {
-        parts.push("pyproject.toml [tool.chokkin]".to_owned());
-    }
-    if parts.is_empty() {
-        "defaults".to_owned()
-    } else {
-        parts.join(", ")
-    }
 }
 
 fn format_layout(sources: &DiscoveredSources) -> String {
@@ -384,8 +366,6 @@ mod tests {
                 layout: crate::sources::ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),

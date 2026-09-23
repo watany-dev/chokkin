@@ -32,6 +32,20 @@ pub enum RuleId {
 }
 
 impl RuleId {
+    /// Every rule in `CHK00x` order.
+    pub const ALL: [Self; 10] = [
+        Self::Chk001,
+        Self::Chk002,
+        Self::Chk003,
+        Self::Chk004,
+        Self::Chk005,
+        Self::Chk006,
+        Self::Chk007,
+        Self::Chk008,
+        Self::Chk009,
+        Self::Chk010,
+    ];
+
     /// Stable `CHK00x` code for reporters and `--explain`.
     #[must_use]
     pub const fn as_code(self) -> &'static str {

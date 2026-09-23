@@ -71,15 +71,6 @@ pub struct DiscoveredFile {
     pub context: FileContext,
 }
 
-/// Flat-layout package resolution outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlatResolution {
-    /// Selected package directory names.
-    pub packages: Vec<String>,
-    /// `true` when metadata could not disambiguate multiple candidates.
-    pub ambiguous: bool,
-}
-
 /// Layout inference result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutInfo {
@@ -89,10 +80,6 @@ pub struct LayoutInfo {
     pub packages: Vec<String>,
     /// Globs used when `config.project` was empty.
     pub inferred_globs: Vec<String>,
-    /// Flat-layout package directory candidates (empty unless `layout == Flat`).
-    pub flat_candidates: Vec<String>,
-    /// `true` when flat resolution fell back to the first candidate.
-    pub ambiguous_flat_resolution: bool,
 }
 
 impl LayoutInfo {
@@ -109,8 +96,6 @@ impl LayoutInfo {
         hasher.field_str(self.layout.as_str());
         hash_str_list(&mut hasher, &self.packages);
         hash_str_list(&mut hasher, &self.inferred_globs);
-        hash_str_list(&mut hasher, &self.flat_candidates);
-        hasher.field_bool(self.ambiguous_flat_resolution);
         hasher.finish()
     }
 }

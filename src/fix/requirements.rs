@@ -3,7 +3,7 @@
 use crate::manifest::normalize_distribution_name;
 
 use super::error::FixError;
-use super::write::atomic_write;
+use super::write::{atomic_write, read_manifest};
 
 /// Remove a dependency line from a requirements file by line number or name match.
 pub fn remove_dependency_line(
@@ -11,14 +11,7 @@ pub fn remove_dependency_line(
     distribution: &str,
     line: Option<u32>,
 ) -> Result<String, FixError> {
-    let rel = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("requirements.txt");
-    let contents = std::fs::read_to_string(path).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    let (rel, contents) = read_manifest(path, "requirements.txt")?;
 
     if contents.lines().any(|line| line.contains("--hash=")) {
         return Err(FixError::Unsupported {

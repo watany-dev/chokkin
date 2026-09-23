@@ -198,8 +198,6 @@ mod tests {
                     layout: crate::sources::ProjectLayout::Src,
                     packages: Vec::new(),
                     inferred_globs: Vec::new(),
-                    flat_candidates: Vec::new(),
-                    ambiguous_flat_resolution: false,
                 },
                 effective_globs: Vec::new(),
                 files: Vec::new(),
@@ -218,8 +216,8 @@ mod tests {
     #[test]
     fn empty_project_produces_no_candidates() {
         let manifest = minimal_manifest(Vec::new());
-        let resolution = ResolutionIndex::empty();
-        let reachability = ReachabilityReport::empty();
+        let resolution = ResolutionIndex::default();
+        let reachability = ReachabilityReport::default();
         let plugins = PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
@@ -259,8 +257,8 @@ mod tests {
             opaque: false,
         };
         let manifest = minimal_manifest(vec![dep]);
-        let resolution = ResolutionIndex::empty();
-        let reachability = ReachabilityReport::empty();
+        let resolution = ResolutionIndex::default();
+        let reachability = ReachabilityReport::default();
         let plugins = PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
@@ -312,9 +310,9 @@ mod tests {
                 kind: crate::sources::FileKind::Python,
             })
             .expect("file id");
-        let mut reachability = ReachabilityReport::empty();
+        let mut reachability = ReachabilityReport::default();
         reachability.reachable.insert(file_id);
-        let mut resolution = ResolutionIndex::empty();
+        let mut resolution = ResolutionIndex::default();
         resolution.imports.push(crate::resolver::ResolvedImport {
             import_root: "yaml".to_owned(),
             full_module: "yaml".to_owned(),
