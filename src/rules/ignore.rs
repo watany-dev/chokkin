@@ -20,6 +20,9 @@ pub struct IgnoreMatcher {
     // CHK003/CHK004 carry an `Import` subject, but §18 matches dependency rules
     // on the distribution name, which only the resolver knows.
     distributions: BTreeMap<ImportSite, String>,
+    // CHK008 carries the binary name, but §18 names the (already normalized)
+    // distribution it maps to.
+    binary_distributions: BTreeMap<String, String>,
 }
 
 impl IgnoreMatcher {
@@ -67,6 +70,7 @@ impl IgnoreMatcher {
             config: config_rules,
             directives,
             distributions,
+            binary_distributions: resolution.binary_resolutions.clone(),
         }
     }
 
@@ -91,14 +95,17 @@ impl IgnoreMatcher {
         })
     }
 
-    /// Distribution the candidate is really about, for `Import` subjects.
+    /// Distribution the candidate is really about, for `Import` and `Binary`
+    /// subjects.
     fn distribution_for(&self, subject: &IssueSubject) -> Option<String> {
-        let IssueSubject::Import { module, file, line } = subject else {
-            return None;
-        };
-        self.distributions
-            .get(&(file.clone(), *line, module.clone()))
-            .cloned()
+        match subject {
+            IssueSubject::Import { module, file, line } => self
+                .distributions
+                .get(&(file.clone(), *line, module.clone()))
+                .cloned(),
+            IssueSubject::Binary { name } => self.binary_distributions.get(name).cloned(),
+            _ => None,
+        }
     }
 
     fn matches_directives(
@@ -170,7 +177,10 @@ fn config_pattern_matches(
         IssueSubject::Distribution { name } if is_distribution_rule(rule) => {
             glob_match(pattern, name)
         },
-        IssueSubject::Binary { name } if rule == RuleId::Chk008 => glob_match(pattern, name),
+        // The binary name itself stays accepted for backward compatibility.
+        IssueSubject::Binary { name } if rule == RuleId::Chk008 => {
+            glob_match(pattern, name) || distribution.is_some_and(|dist| glob_match(pattern, dist))
+        },
         // §18 matches dependency rules on the distribution name even when the
         // candidate points at an import site, so a path glob must not match.
         IssueSubject::Import { .. } if is_distribution_rule(rule) => {
@@ -374,6 +384,48 @@ mod tests {
             matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml")),
             None
         );
+    }
+
+    fn ignores_binary(patterns: &[&str], binary: &str, distribution: Option<&str>) -> bool {
+        let mut config = default_config();
+        config.ignore.insert(
+            "CHK008".to_owned(),
+            patterns.iter().map(|p| (*p).to_owned()).collect(),
+        );
+        let mut resolution = ResolutionIndex::default();
+        if let Some(distribution) = distribution {
+            resolution
+                .binary_resolutions
+                .insert(binary.to_owned(), distribution.to_owned());
+        }
+        let matcher = IgnoreMatcher::build(&config, &ParseSummary::default(), &resolution);
+        let candidate = IssueCandidate {
+            rule: RuleId::Chk008,
+            subject: IssueSubject::Binary {
+                name: binary.to_owned(),
+            },
+            severity: Severity::Warning,
+            confidence: crate::config::Confidence::Certain,
+            message: "unlisted binary".to_owned(),
+            workspace_member: None,
+            origins: Vec::new(),
+            explain: ExplainData::default(),
+        };
+        matcher.matches_candidate(&candidate) == Some(SuppressReason::Config)
+    }
+
+    /// §18: CHK008 ignores name the distribution the binary maps to; the binary
+    /// name keeps working for backward compatibility.
+    #[test]
+    fn config_ignore_matches_binary_distribution_or_name() {
+        assert!(ignores_binary(&["sphinx"], "sphinx-build", Some("sphinx")));
+        assert!(ignores_binary(
+            &["sphinx-build"],
+            "sphinx-build",
+            Some("sphinx")
+        ));
+        assert!(!ignores_binary(&["pytest"], "sphinx-build", Some("sphinx")));
+        assert!(!ignores_binary(&["sphinx"], "sphinx-build", None));
     }
 
     #[test]
