@@ -20,7 +20,6 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
         path.is_file().then_some(path)
     };
     let mut sources = ConfigSources {
-        used_defaults: true,
         dot_chokkin_toml: file_at_root(".chokkin.toml"),
         chokkin_toml: file_at_root("chokkin.toml"),
         pyproject_tool_chokkin: false,

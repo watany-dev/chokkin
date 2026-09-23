@@ -27,10 +27,6 @@ pub fn remove_dependency_line(
         let line_no = u32::try_from(index + 1).unwrap_or(u32::MAX);
         if line.is_some_and(|expected| expected == line_no) || line_name_matches(raw_line, &target)
         {
-            if line.is_none() && !line_name_matches(raw_line, &target) {
-                output.push(raw_line);
-                continue;
-            }
             removed = true;
             continue;
         }
@@ -48,7 +44,10 @@ pub fn remove_dependency_line(
         updated.push('\n');
     }
 
-    atomic_write(path, &updated)?;
+    atomic_write(path, updated.as_bytes(), true).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
     Ok(format!("removed `{distribution}` from {rel}"))
 }
 

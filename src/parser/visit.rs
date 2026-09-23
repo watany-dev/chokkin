@@ -57,7 +57,10 @@ impl<'a> ModuleVisitor<'a> {
             module_level: true,
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
-            parsed: ParsedModule::empty(path.to_owned()),
+            parsed: ParsedModule {
+                path: path.to_owned(),
+                ..ParsedModule::default()
+            },
         }
     }
 
