@@ -68,11 +68,6 @@ fn main() -> ExitCode {
         return ExitCode::from(ExitStatus::Success.code());
     }
 
-    if let Err(message) = args.validate() {
-        eprintln!("{message}");
-        return ExitCode::from(ExitStatus::UsageError.code());
-    }
-
     let start = args.path.as_deref().unwrap_or_else(|| Path::new("."));
     let overrides = args.runtime_overrides();
 
