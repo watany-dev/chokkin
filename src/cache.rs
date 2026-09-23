@@ -1,7 +1,7 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigSources;
+use crate::fix::atomic_write;
 use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
 
@@ -167,21 +168,13 @@ fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent"))?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-cache-")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    // The atomic rename below keeps readers from ever seeing a torn entry. We
-    // deliberately skip `sync_all()` here: the parse/scan cache is fully
-    // regenerable, the read path treats any corrupt entry as a miss, and a
-    // per-entry fsync dominates cold-cache runs (one fsync per parsed module
-    // makes the first analysis of a large project an order of magnitude slower
-    // than `--no-cache`). Durability across power loss is not worth that cost.
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    // The atomic rename keeps readers from ever seeing a torn entry. We
+    // deliberately skip the fsync: the parse/scan cache is fully regenerable,
+    // the read path treats any corrupt entry as a miss, and a per-entry fsync
+    // dominates cold-cache runs (one fsync per parsed module makes the first
+    // analysis of a large project an order of magnitude slower than
+    // `--no-cache`). Durability across power loss is not worth that cost.
+    atomic_write(path, bytes, false)
 }
 
 /// Stable inputs shared by cache units.

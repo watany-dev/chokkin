@@ -48,7 +48,10 @@ pub fn remove_dependency_line(
         updated.push('\n');
     }
 
-    atomic_write(path, &updated)?;
+    atomic_write(path, updated.as_bytes(), true).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })?;
     Ok(format!("removed `{distribution}` from {rel}"))
 }
 
