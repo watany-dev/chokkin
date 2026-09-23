@@ -4,487 +4,191 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use toml::Value;
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
-use super::defaults::{PartialConfig, PartialDependencyGroups};
+use super::defaults::PartialConfig;
 use super::error::ConfigError;
-use super::types::{
-    Confidence, EntrySpec, PluginId, ProjectMode, SeverityLevel, TargetVersion, UvWorkspaceHint,
-    WorkspaceOverride, is_absolute_path_str,
-};
+use super::types::{UvWorkspaceHint, is_absolute_path_str};
 
-const WORKSPACE_KEYS: &[&str] = &["path", "entry", "project", "mode"];
+#[derive(Deserialize)]
+struct PyProject {
+    #[serde(default)]
+    tool: PyProjectTool,
+}
 
-const TOP_LEVEL_KEYS: &[&str] = &[
-    "entry",
-    "project",
-    "mode",
-    "production",
-    "target_version",
-    "respect_gitignore",
-    "confidence",
-    "exclude",
-    "dependencies",
-    "package_module_map",
-    "binary_map",
-    "plugins",
-    "ignore",
-    "severity",
-    "workspaces",
-];
+#[derive(Default, Deserialize)]
+struct PyProjectTool {
+    chokkin: Option<PartialConfig>,
+    uv: Option<UvTool>,
+}
+
+#[derive(Deserialize)]
+struct UvTool {
+    workspace: Option<UvWorkspace>,
+}
+
+#[derive(Deserialize)]
+struct UvWorkspace {
+    members: Option<UvMembers>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum UvMembers {
+    One(String),
+    Many(Vec<String>),
+}
 
 /// Read and parse a standalone `.chokkin.toml` or `chokkin.toml` file.
 pub fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError> {
-    let contents = read_to_string(path)?;
-    let table = parse_table(path, &contents)?;
-    partial_from_table(path, &table)
+    let partial = parse_toml::<PartialConfig>(path)?;
+    validate(path, &partial)?;
+    Ok(partial)
 }
 
 /// Read `[tool.chokkin]` from `pyproject.toml` and optional `[tool.uv.workspace]` hint.
 pub fn parse_pyproject_config(
     path: &Path,
 ) -> Result<(PartialConfig, Option<UvWorkspaceHint>), ConfigError> {
-    let contents = read_to_string(path)?;
-    let table = parse_table(path, &contents)?;
-    let uv_workspace = parse_uv_workspace(path, &table)?;
+    let PyProject {
+        tool: PyProjectTool { chokkin, uv },
+    } = parse_toml::<PyProject>(path)?;
 
-    let Some(tool_table) = table.get("tool").and_then(Value::as_table) else {
-        return Ok((PartialConfig::default(), uv_workspace));
-    };
+    let partial = chokkin.unwrap_or_default();
+    validate(path, &partial)?;
 
-    let Some(chokkin_value) = tool_table.get("chokkin") else {
-        return Ok((PartialConfig::default(), uv_workspace));
-    };
-
-    let chokkin_table = value_as_table(path, chokkin_value, "tool.chokkin")?;
-    let partial = partial_from_table(path, chokkin_table)?;
+    let uv_workspace = uv
+        .and_then(|uv| uv.workspace)
+        .and_then(|workspace| workspace.members)
+        .map(|members| match members {
+            UvMembers::One(member) => vec![member],
+            UvMembers::Many(members) => members,
+        })
+        .filter(|members| !members.is_empty())
+        .map(|members| UvWorkspaceHint { members });
     Ok((partial, uv_workspace))
 }
 
-fn read_to_string(path: &Path) -> Result<String, ConfigError> {
-    fs::read_to_string(path).map_err(|source| ConfigError::Io {
+fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
+    let contents = fs::read_to_string(path).map_err(|source| ConfigError::Io {
         path: path.to_path_buf(),
         source,
-    })
-}
-
-fn parse_table(path: &Path, contents: &str) -> Result<toml::Table, ConfigError> {
-    toml::from_str(contents).map_err(|error| ConfigError::InvalidToml {
+    })?;
+    toml::from_str(&contents).map_err(|error| ConfigError::InvalidToml {
         path: path.to_path_buf(),
         message: error.to_string(),
     })
 }
 
-fn parse_uv_workspace(
-    path: &Path,
-    table: &toml::Table,
-) -> Result<Option<UvWorkspaceHint>, ConfigError> {
-    let Some(tool_table) = table.get("tool").and_then(Value::as_table) else {
-        return Ok(None);
-    };
-    let Some(uv_table) = tool_table.get("uv").and_then(Value::as_table) else {
-        return Ok(None);
-    };
-    let Some(workspace_table) = uv_table.get("workspace").and_then(Value::as_table) else {
-        return Ok(None);
-    };
-    let Some(members_value) = workspace_table.get("members") else {
-        return Ok(None);
-    };
-
-    let members = match members_value {
-        Value::Array(items) => items
+/// Checks serde cannot express: root-relative paths and known rule codes.
+fn validate(path: &Path, config: &PartialConfig) -> Result<(), ConfigError> {
+    ensure_relative_all(
+        path,
+        "entry",
+        config
+            .entry
             .iter()
-            .map(|item| value_as_string(path, item, "tool.uv.workspace.members"))
-            .collect::<Result<Vec<_>, _>>()?,
-        Value::String(member) => vec![member.clone()],
-        _ => {
-            return Err(ConfigError::Validation {
-                path: path.to_path_buf(),
-                field: "tool.uv.workspace.members".to_owned(),
-                message: "expected string or array of strings".to_owned(),
-            });
-        },
-    };
-
-    if members.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(UvWorkspaceHint { members }))
+            .flatten()
+            .map(|entry| entry.path.as_str()),
+    )?;
+    ensure_relative_all(
+        path,
+        "project",
+        config.project.iter().flatten().map(String::as_str),
+    )?;
+    ensure_relative_all(
+        path,
+        "exclude",
+        config.exclude.iter().flatten().map(String::as_str),
+    )?;
+    ensure_known_rules(
+        path,
+        "ignore",
+        config.ignore.iter().flat_map(BTreeMap::keys),
+    )?;
+    ensure_known_rules(
+        path,
+        "severity",
+        config.severity.iter().flat_map(BTreeMap::keys),
+    )?;
+    validate_workspaces(path, config)
 }
 
-fn partial_from_table(path: &Path, table: &toml::Table) -> Result<PartialConfig, ConfigError> {
-    reject_unknown_keys(path, table, TOP_LEVEL_KEYS, "")?;
-
-    Ok(PartialConfig {
-        entry: parse_optional_entry_list(path, table.get("entry"), "entry")?,
-        project: parse_optional_path_list(path, table.get("project"), "project")?,
-        mode: parse_optional_mode(path, table.get("mode"))?,
-        production: parse_optional_bool(path, table.get("production"), "production")?,
-        target_version: parse_optional_target_version(path, table.get("target_version"))?,
-        respect_gitignore: parse_optional_bool(
-            path,
-            table.get("respect_gitignore"),
-            "respect_gitignore",
-        )?,
-        confidence: parse_optional_confidence(path, table.get("confidence"))?,
-        exclude: parse_optional_path_list(path, table.get("exclude"), "exclude")?,
-        dependencies: parse_optional_dependencies(path, table.get("dependencies"))?,
-        package_module_map: parse_optional_string_list_map(
-            path,
-            table.get("package_module_map"),
-            "package_module_map",
-        )?,
-        binary_map: parse_optional_string_map(path, table.get("binary_map"), "binary_map")?,
-        plugins: parse_optional_plugins(path, table.get("plugins"))?,
-        ignore: parse_optional_ignore(path, table.get("ignore"))?,
-        severity: parse_optional_severity(path, table.get("severity"))?,
-        workspaces: parse_optional_workspaces(path, table.get("workspaces"))?,
-    })
-}
-
-/// Reject table keys outside `allowed`, reporting them as `prefix.key` (or bare
-/// `key` when `prefix` is empty).
-fn reject_unknown_keys(
-    path: &Path,
-    table: &toml::Table,
-    allowed: &[&str],
-    prefix: &str,
-) -> Result<(), ConfigError> {
-    for key in table.keys() {
-        if !allowed.contains(&key.as_str()) {
-            return Err(ConfigError::UnknownKey {
-                path: path.to_path_buf(),
-                key: if prefix.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{prefix}.{key}")
-                },
-            });
+fn validate_workspaces(path: &Path, config: &PartialConfig) -> Result<(), ConfigError> {
+    for (id, workspace) in config.workspaces.iter().flatten() {
+        let field = format!("workspaces.{id}");
+        if workspace.path.is_empty() {
+            return Err(validation_error(
+                path,
+                format!("{field}.path"),
+                "workspace path must not be empty",
+            ));
         }
-    }
-    Ok(())
-}
-
-fn parse_optional_entry_list(
-    path: &Path,
-    value: Option<&Value>,
-    field: &'static str,
-) -> Result<Option<Vec<EntrySpec>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let items = value_as_string_array(path, value, field)?;
-    let mut entries = Vec::with_capacity(items.len());
-    for (index, item) in items.into_iter().enumerate() {
-        let field_name = format!("{field}[{index}]");
-        let parsed = EntrySpec::parse(&item).map_err(|message| ConfigError::Validation {
-            path: path.to_path_buf(),
-            field: field_name.clone(),
-            message: message.to_owned(),
-        })?;
-        ensure_relative_path(path, &field_name, &parsed.path)?;
-        entries.push(parsed);
-    }
-    Ok(Some(entries))
-}
-
-/// Parse an optional array of root-relative path or glob strings.
-fn parse_optional_path_list(
-    path: &Path,
-    value: Option<&Value>,
-    field: &'static str,
-) -> Result<Option<Vec<String>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let items = value_as_string_array(path, value, field)?;
-    for (index, item) in items.iter().enumerate() {
-        ensure_relative_path(path, &format!("{field}[{index}]"), item)?;
-    }
-    Ok(Some(items))
-}
-
-fn ensure_relative_path(path: &Path, field: &str, value: &str) -> Result<(), ConfigError> {
-    if is_absolute_path_str(value) {
-        return Err(ConfigError::Validation {
-            path: path.to_path_buf(),
-            field: field.to_owned(),
-            message: "path must be relative to the project root".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn parse_optional_string_list(
-    path: &Path,
-    value: Option<&Value>,
-    field: &'static str,
-) -> Result<Option<Vec<String>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    Ok(Some(value_as_string_array(path, value, field)?))
-}
-
-fn parse_optional_mode(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<ProjectMode>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let raw = value_as_string(path, value, "mode")?;
-    let mode = ProjectMode::parse(&raw).ok_or_else(|| ConfigError::Validation {
-        path: path.to_path_buf(),
-        field: "mode".to_owned(),
-        message: format!("expected auto, app, or library; got {raw}"),
-    })?;
-    Ok(Some(mode))
-}
-
-fn parse_optional_confidence(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<Confidence>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let raw = value_as_string(path, value, "confidence")?;
-    let confidence = Confidence::parse(&raw).ok_or_else(|| ConfigError::Validation {
-        path: path.to_path_buf(),
-        field: "confidence".to_owned(),
-        message: format!("expected certain, likely, or maybe; got {raw}"),
-    })?;
-    Ok(Some(confidence))
-}
-
-fn parse_optional_target_version(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<TargetVersion>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let raw = value_as_string(path, value, "target_version")?;
-    let target = TargetVersion::parse(&raw).ok_or_else(|| ConfigError::Validation {
-        path: path.to_path_buf(),
-        field: "target_version".to_owned(),
-        message: format!("expected py3XX form; got {raw}"),
-    })?;
-    Ok(Some(target))
-}
-
-fn parse_optional_bool(
-    path: &Path,
-    value: Option<&Value>,
-    field: &'static str,
-) -> Result<Option<bool>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    value
-        .as_bool()
-        .map(Some)
-        .ok_or_else(|| ConfigError::Validation {
-            path: path.to_path_buf(),
-            field: field.to_owned(),
-            message: "expected boolean".to_owned(),
-        })
-}
-
-const DEPENDENCY_GROUP_KEYS: &[&str] = &["dev_groups", "runtime_groups", "type_groups"];
-
-fn parse_optional_dependencies(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<PartialDependencyGroups>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let table = value_as_table(path, value, "dependencies")?;
-    reject_unknown_keys(path, table, DEPENDENCY_GROUP_KEYS, "dependencies")?;
-    Ok(Some(PartialDependencyGroups {
-        dev_groups: parse_optional_string_list(
+        ensure_relative(path, format!("{field}.path"), &workspace.path)?;
+        ensure_relative_all(
             path,
-            table.get("dev_groups"),
-            "dependencies.dev_groups",
-        )?,
-        runtime_groups: parse_optional_string_list(
-            path,
-            table.get("runtime_groups"),
-            "dependencies.runtime_groups",
-        )?,
-        type_groups: parse_optional_string_list(
-            path,
-            table.get("type_groups"),
-            "dependencies.type_groups",
-        )?,
-    }))
-}
-
-fn parse_optional_string_list_map(
-    path: &Path,
-    value: Option<&Value>,
-    field: &'static str,
-) -> Result<Option<BTreeMap<String, Vec<String>>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let table = value_as_table(path, value, field)?;
-    let mut map = BTreeMap::new();
-    for (key, item) in table {
-        let values = value_as_string_array(path, item, field)?;
-        map.insert(key.clone(), values);
-    }
-    Ok(Some(map))
-}
-
-fn parse_optional_string_map(
-    path: &Path,
-    value: Option<&Value>,
-    field: &'static str,
-) -> Result<Option<BTreeMap<String, String>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let table = value_as_table(path, value, field)?;
-    let mut map = BTreeMap::new();
-    for (key, item) in table {
-        map.insert(key.clone(), value_as_string(path, item, field)?);
-    }
-    Ok(Some(map))
-}
-
-fn parse_optional_plugins(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<BTreeMap<PluginId, bool>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let table = value_as_table(path, value, "plugins")?;
-    let mut map = BTreeMap::new();
-    for (key, item) in table {
-        let Some(plugin) = PluginId::from_key(key) else {
-            return Err(ConfigError::UnknownKey {
-                path: path.to_path_buf(),
-                key: format!("plugins.{key}"),
-            });
-        };
-        let enabled = item.as_bool().ok_or_else(|| ConfigError::Validation {
-            path: path.to_path_buf(),
-            field: format!("plugins.{key}"),
-            message: "expected boolean".to_owned(),
-        })?;
-        map.insert(plugin, enabled);
-    }
-    Ok(Some(map))
-}
-
-fn parse_optional_ignore(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<BTreeMap<String, Vec<String>>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let table = value_as_table(path, value, "ignore")?;
-    let mut map = BTreeMap::new();
-    for (key, item) in table {
-        if !is_valid_ignore_rule(key) {
-            return Err(ConfigError::Validation {
-                path: path.to_path_buf(),
-                field: format!("ignore.{key}"),
-                message: "unknown rule code".to_owned(),
-            });
-        }
-        map.insert(key.clone(), value_as_string_array(path, item, "ignore")?);
-    }
-    Ok(Some(map))
-}
-
-fn parse_optional_severity(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<BTreeMap<String, SeverityLevel>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let table = value_as_table(path, value, "severity")?;
-    let mut map = BTreeMap::new();
-    for (key, item) in table {
-        if !is_valid_ignore_rule(key) {
-            return Err(ConfigError::Validation {
-                path: path.to_path_buf(),
-                field: format!("severity.{key}"),
-                message: "unknown rule code".to_owned(),
-            });
-        }
-        let level = value_as_string(path, item, "severity")?;
-        let parsed = SeverityLevel::parse(&level).ok_or_else(|| ConfigError::Validation {
-            path: path.to_path_buf(),
-            field: format!("severity.{key}"),
-            message: "expected one of off, info, warning, error".to_owned(),
-        })?;
-        map.insert(key.clone(), parsed);
-    }
-    Ok(Some(map))
-}
-
-fn parse_optional_workspaces(
-    path: &Path,
-    value: Option<&Value>,
-) -> Result<Option<BTreeMap<String, WorkspaceOverride>>, ConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let table = value_as_table(path, value, "workspaces")?;
-    let mut map = BTreeMap::new();
-    for (id, item) in table {
-        let workspace_table = value_as_table(path, item, "workspaces")?;
-        reject_unknown_keys(
-            path,
-            workspace_table,
-            WORKSPACE_KEYS,
-            &format!("workspaces.{id}"),
+            &format!("{field}.entry"),
+            workspace
+                .entry
+                .iter()
+                .flatten()
+                .map(|entry| entry.path.as_str()),
         )?;
-
-        let path_value = workspace_table
-            .get("path")
-            .ok_or_else(|| ConfigError::Validation {
-                path: path.to_path_buf(),
-                field: format!("workspaces.{id}.path"),
-                message: "required key path is missing".to_owned(),
-            })?;
-        let member_path = value_as_string(path, path_value, "workspaces.path")?;
-        if member_path.is_empty() {
-            return Err(ConfigError::Validation {
-                path: path.to_path_buf(),
-                field: format!("workspaces.{id}.path"),
-                message: "workspace path must not be empty".to_owned(),
-            });
-        }
-        ensure_relative_path(path, &format!("workspaces.{id}.path"), &member_path)?;
-
-        let entry =
-            parse_optional_entry_list(path, workspace_table.get("entry"), "workspaces.entry")?;
-        let project =
-            parse_optional_path_list(path, workspace_table.get("project"), "workspaces.project")?;
-        let mode = parse_optional_mode(path, workspace_table.get("mode"))?;
-
-        map.insert(
-            id.clone(),
-            WorkspaceOverride {
-                path: member_path,
-                entry,
-                project,
-                mode,
-            },
-        );
+        ensure_relative_all(
+            path,
+            &format!("{field}.project"),
+            workspace.project.iter().flatten().map(String::as_str),
+        )?;
     }
-    Ok(Some(map))
+    Ok(())
+}
+
+fn ensure_relative_all<'a>(
+    path: &Path,
+    field: &str,
+    values: impl Iterator<Item = &'a str>,
+) -> Result<(), ConfigError> {
+    for (index, value) in values.enumerate() {
+        ensure_relative(path, format!("{field}[{index}]"), value)?;
+    }
+    Ok(())
+}
+
+fn ensure_relative(path: &Path, field: String, value: &str) -> Result<(), ConfigError> {
+    if is_absolute_path_str(value) {
+        return Err(validation_error(
+            path,
+            field,
+            "path must be relative to the project root",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_known_rules<'a>(
+    path: &Path,
+    field: &str,
+    codes: impl Iterator<Item = &'a String>,
+) -> Result<(), ConfigError> {
+    for code in codes {
+        if !is_valid_ignore_rule(code) {
+            return Err(validation_error(
+                path,
+                format!("{field}.{code}"),
+                "unknown rule code",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validation_error(path: &Path, field: String, message: &str) -> ConfigError {
+    ConfigError::Validation {
+        path: path.to_path_buf(),
+        field,
+        message: message.to_owned(),
+    }
 }
 
 fn is_valid_ignore_rule(code: &str) -> bool {
@@ -501,45 +205,6 @@ fn is_valid_ignore_rule(code: &str) -> bool {
             | "CHK009"
             | "CHK010"
     )
-}
-
-fn value_as_table<'a>(
-    path: &Path,
-    value: &'a Value,
-    field: &'static str,
-) -> Result<&'a toml::Table, ConfigError> {
-    value.as_table().ok_or_else(|| ConfigError::Validation {
-        path: path.to_path_buf(),
-        field: field.to_owned(),
-        message: "expected table".to_owned(),
-    })
-}
-
-fn value_as_string(path: &Path, value: &Value, field: &str) -> Result<String, ConfigError> {
-    value
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| ConfigError::Validation {
-            path: path.to_path_buf(),
-            field: field.to_owned(),
-            message: "expected string".to_owned(),
-        })
-}
-
-fn value_as_string_array(
-    path: &Path,
-    value: &Value,
-    field: &str,
-) -> Result<Vec<String>, ConfigError> {
-    let array = value.as_array().ok_or_else(|| ConfigError::Validation {
-        path: path.to_path_buf(),
-        field: field.to_owned(),
-        message: "expected array".to_owned(),
-    })?;
-    array
-        .iter()
-        .map(|item| value_as_string(path, item, field))
-        .collect()
 }
 
 #[cfg(test)]

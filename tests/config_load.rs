@@ -175,7 +175,7 @@ fn rejects_invalid_mode() {
     let path = fixture("invalid_mode");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("invalid mode");
-    assert!(matches!(error, ConfigError::Validation { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -183,7 +183,7 @@ fn rejects_unknown_plugin_key() {
     let path = fixture("unknown_plugin");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("unknown plugin");
-    assert!(matches!(error, ConfigError::UnknownKey { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn rejects_non_boolean_plugin_value() {
     let path = fixture("invalid_plugin_type");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("non-boolean plugin");
-    assert!(matches!(error, ConfigError::Validation { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn rejects_unknown_top_level_key() {
     let path = fixture("unknown_top_level_key");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("unknown top-level key");
-    assert!(matches!(error, ConfigError::UnknownKey { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn rejects_invalid_target_version() {
     let path = fixture("invalid_target_version");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("invalid target_version");
-    assert!(matches!(error, ConfigError::Validation { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -265,7 +265,7 @@ fn rejects_invalid_confidence() {
     let path = fixture("invalid_confidence");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("invalid confidence");
-    assert!(matches!(error, ConfigError::Validation { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -299,7 +299,7 @@ fn rejects_unknown_dependencies_key() {
     let path = fixture("unknown_dependencies_key");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("unknown dependencies key");
-    assert!(matches!(error, ConfigError::UnknownKey { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -307,7 +307,7 @@ fn rejects_unknown_workspace_key() {
     let path = fixture("unknown_workspace_key");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("unknown workspace key");
-    assert!(matches!(error, ConfigError::UnknownKey { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn rejects_invalid_uv_workspace_members_type() {
     let path = fixture("invalid_uv_workspace_members");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("invalid uv workspace members");
-    assert!(matches!(error, ConfigError::Validation { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn rejects_entry_with_empty_symbol() {
     let path = fixture("entry_empty_symbol");
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("empty entry symbol");
-    assert!(matches!(error, ConfigError::Validation { .. }));
+    assert!(matches!(error, ConfigError::InvalidToml { .. }));
 }
 
 #[test]
