@@ -234,17 +234,7 @@ fn resolve_import_root(
         return root_resolution_from_candidates(root_name, distributions, None, warnings);
     }
 
-    let map_candidates = import_map.candidates(root_name);
-    if !map_candidates.is_empty() {
-        let distributions: Vec<String> = map_candidates
-            .iter()
-            .map(|candidate| candidate.distribution.clone())
-            .collect();
-        let confidence = map_candidates
-            .iter()
-            .map(|candidate| candidate.confidence)
-            .max_by_key(|confidence| confidence_rank(*confidence))
-            .unwrap_or(ResolveConfidence::Maybe);
+    if let Some((distributions, confidence)) = import_map.candidates(root_name) {
         return root_resolution_from_candidates(
             root_name,
             &distributions,
@@ -272,14 +262,6 @@ fn workspace_member_for_file(
         })
         .max_by_key(|member| member.path.len())
         .map(|member| member.id.clone())
-}
-
-fn confidence_rank(confidence: ResolveConfidence) -> u8 {
-    match confidence {
-        ResolveConfidence::Certain => 2,
-        ResolveConfidence::Likely => 1,
-        ResolveConfidence::Maybe => 0,
-    }
 }
 
 fn root_resolution_from_candidates(
