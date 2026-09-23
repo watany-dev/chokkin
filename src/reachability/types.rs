@@ -3,7 +3,7 @@
 use indexmap::IndexSet;
 
 use crate::config::Confidence;
-use crate::graph::{EntryId, FileId, ModuleOrigin};
+use crate::graph::{FileId, ModuleOrigin};
 
 /// A module import recorded for dependency reconciliation (Step 10).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,13 +34,6 @@ pub struct UnreachableFile {
 /// One step in a reachability trace path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceStep {
-    /// Entry root that started the path.
-    Entry {
-        /// Entry node id.
-        entry: EntryId,
-        /// Human-readable label.
-        label: String,
-    },
     /// Traversal through a project file.
     File {
         /// Graph file id.

@@ -1,7 +1,7 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigSources;
+use crate::fix::atomic_write;
 use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
 
@@ -167,21 +168,13 @@ fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent"))?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-cache-")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    // The atomic rename below keeps readers from ever seeing a torn entry. We
-    // deliberately skip `sync_all()` here: the parse/scan cache is fully
-    // regenerable, the read path treats any corrupt entry as a miss, and a
-    // per-entry fsync dominates cold-cache runs (one fsync per parsed module
-    // makes the first analysis of a large project an order of magnitude slower
-    // than `--no-cache`). Durability across power loss is not worth that cost.
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    // The atomic rename keeps readers from ever seeing a torn entry. We
+    // deliberately skip the fsync: the parse/scan cache is fully regenerable,
+    // the read path treats any corrupt entry as a miss, and a per-entry fsync
+    // dominates cold-cache runs (one fsync per parsed module makes the first
+    // analysis of a large project an order of magnitude slower than
+    // `--no-cache`). Durability across power loss is not worth that cost.
+    atomic_write(path, bytes, false)
 }
 
 /// Stable inputs shared by cache units.
@@ -504,25 +497,6 @@ pub struct ParseCacheKey {
     pub source: SourceFingerprint,
 }
 
-// Ordering compares `source` before `context`. Every key produced by one run
-// shares an identical `context`, so comparing the context first would scan five
-// equal strings before reaching the discriminating `source.path`. Leading with
-// `source` lets each comparison short-circuit on the path. The in-memory store
-// is a `HashMap`, so this only affects callers that sort keys themselves.
-impl Ord for ParseCacheKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.source
-            .cmp(&other.source)
-            .then_with(|| self.context.cmp(&other.context))
-    }
-}
-
-impl PartialOrd for ParseCacheKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 impl ParseCacheKey {
     /// Stable identifier for this key inside a [`ParseCacheBundle`].
     ///
@@ -565,12 +539,6 @@ impl ParseCacheBundle {
     /// Store `parsed` under `key`.
     pub fn insert(&mut self, key: &ParseCacheKey, parsed: ParsedModule) {
         self.entries.insert(key.entry_id(), parsed);
-    }
-
-    /// Whether the bundle holds no entries.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -639,18 +607,6 @@ impl ParseCacheStore {
     #[must_use]
     pub const fn stats(&self) -> ParseCacheStats {
         self.stats
-    }
-
-    /// Number of entries currently held.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Whether the cache is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -887,7 +843,6 @@ mod tests {
         )
         .expect("write pyproject");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -907,7 +862,6 @@ mod tests {
         let root = temp_cache_test_dir("scan-manifest");
         std::fs::write(root.join("requirements.txt"), "requests\n").expect("write requirements");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -943,7 +897,10 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let mut cache = ParseCacheStore::new();
 
         assert!(cache.get(&key).is_none());
@@ -954,7 +911,6 @@ mod tests {
         assert_eq!(stats.misses, 1);
         assert_eq!(stats.stores, 1);
         assert_eq!(stats.hits, 1);
-        assert_eq!(cache.len(), 1);
     }
 
     #[test]
@@ -976,7 +932,7 @@ mod tests {
             .read_parse_bundle(&root, &context)
             .expect("read corrupt cache");
 
-        assert!(bundle.is_empty());
+        assert!(bundle.entries.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
