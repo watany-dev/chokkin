@@ -62,8 +62,8 @@ pub use fix::{
     AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason, apply_fixes,
 };
 pub use graph::{
-    DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
-    ModuleId, ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+    DistributionId, EntryId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode,
+    ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{

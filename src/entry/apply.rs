@@ -1,8 +1,8 @@
 //! Apply an [`EntryPlan`] to the project graph.
 
-use crate::graph::{EntryNode, GraphEdge, ProjectGraph};
+use crate::graph::{GraphEdge, ProjectGraph};
 
-use super::types::{EntryOrigin, EntryPlan, EntryRoot};
+use super::types::EntryPlan;
 
 /// Add entry nodes and `Entry reaches File` edges from `plan`.
 ///
@@ -14,10 +14,7 @@ pub fn apply_entry_plan(
     plan: &EntryPlan,
 ) -> Result<(), crate::graph::GraphError> {
     for root in &plan.roots {
-        let entry_id = graph.intern_entry(EntryNode {
-            label: entry_label(root),
-            context: root.context,
-        });
+        let entry_id = graph.intern_entry();
         if let Some(file_id) = graph.file_id(&root.spec.path) {
             graph.push_edge(GraphEdge::EntryReachesFile {
                 entry: entry_id,
@@ -28,25 +25,6 @@ pub fn apply_entry_plan(
     Ok(())
 }
 
-fn entry_label(root: &EntryRoot) -> String {
-    for origin in &root.origins {
-        if let Some(label) = origin_label(origin) {
-            return label;
-        }
-    }
-    format!("entry:{}", root.spec.path)
-}
-
-fn origin_label(origin: &EntryOrigin) -> Option<String> {
-    match origin {
-        EntryOrigin::Config => None,
-        EntryOrigin::Manifest { name, group } => Some(format!("{group}:{name}")),
-        EntryOrigin::Plugin { plugin, label } => Some(format!("{}:{label}", plugin.as_key())),
-        EntryOrigin::Auto { rule } => Some(format!("auto:{rule}")),
-        EntryOrigin::SymbolRef { label, .. } => Some(format!("symbol:{label}")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,7 +33,7 @@ mod tests {
     use crate::graph::{FileNode, GraphEdge, ProjectGraph};
     use crate::sources::{FileContext, FileKind};
 
-    use super::super::types::{EntryPlan, EntryRoot, ResolvedMode};
+    use super::super::types::{EntryOrigin, EntryPlan, EntryRoot, ResolvedMode};
     use crate::config::ProjectMode;
     use crate::resolver::ResolveConfidence;
 
