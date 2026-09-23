@@ -1,49 +1,19 @@
 //! Apply an [`EntryPlan`] to the project graph.
 
-use crate::graph::{EntryNode, GraphEdge, ProjectGraph};
+use crate::graph::{GraphEdge, ProjectGraph};
 
-use super::types::{EntryOrigin, EntryPlan, EntryRoot};
+use super::types::EntryPlan;
 
 /// Add entry nodes and `Entry reaches File` edges from `plan`.
-///
-/// # Errors
-///
-/// Returns [`crate::graph::GraphError`] when graph invariants are violated.
-pub fn apply_entry_plan(
-    graph: &mut ProjectGraph,
-    plan: &EntryPlan,
-) -> Result<(), crate::graph::GraphError> {
+pub fn apply_entry_plan(graph: &mut ProjectGraph, plan: &EntryPlan) {
     for root in &plan.roots {
-        let entry_id = graph.intern_entry(EntryNode {
-            label: entry_label(root),
-            context: root.context,
-        });
+        let entry_id = graph.intern_entry();
         if let Some(file_id) = graph.file_id(&root.spec.path) {
             graph.push_edge(GraphEdge::EntryReachesFile {
                 entry: entry_id,
                 file: file_id,
             });
         }
-    }
-    Ok(())
-}
-
-fn entry_label(root: &EntryRoot) -> String {
-    for origin in &root.origins {
-        if let Some(label) = origin_label(origin) {
-            return label;
-        }
-    }
-    format!("entry:{}", root.spec.path)
-}
-
-fn origin_label(origin: &EntryOrigin) -> Option<String> {
-    match origin {
-        EntryOrigin::Config => None,
-        EntryOrigin::Manifest { name, group } => Some(format!("{group}:{name}")),
-        EntryOrigin::Plugin { plugin, label } => Some(format!("{}:{label}", plugin.as_key())),
-        EntryOrigin::Auto { rule } => Some(format!("auto:{rule}")),
-        EntryOrigin::SymbolRef { label, .. } => Some(format!("symbol:{label}")),
     }
 }
 
@@ -55,7 +25,7 @@ mod tests {
     use crate::graph::{FileNode, GraphEdge, ProjectGraph};
     use crate::sources::{FileContext, FileKind};
 
-    use super::super::types::{EntryPlan, EntryRoot, ResolvedMode};
+    use super::super::types::{EntryOrigin, EntryPlan, EntryRoot, ResolvedMode};
     use crate::config::ProjectMode;
     use crate::resolver::ResolveConfidence;
 
@@ -92,7 +62,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        apply_entry_plan(&mut graph, &plan).expect("apply");
+        apply_entry_plan(&mut graph, &plan);
         assert_eq!(graph.entry_count(), 1);
         assert!(
             graph

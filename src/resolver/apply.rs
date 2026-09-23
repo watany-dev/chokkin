@@ -26,7 +26,7 @@ pub fn apply_resolution_to_graph(
             let Some(distribution_name) = &resolved.distribution else {
                 continue;
             };
-            let distribution_id = graph.ensure_distribution(distribution_name);
+            let distribution_id = graph.intern_distribution(distribution_name);
             graph.push_edge(GraphEdge::DistributionProvidesModule {
                 distribution: distribution_id,
                 module: module_id,
@@ -81,7 +81,7 @@ mod tests {
                 confidence: ResolveConfidence::Certain,
             }],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
+            transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
         };
 
@@ -141,7 +141,7 @@ mod tests {
                 },
             ],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
+            transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
         };
 

@@ -31,7 +31,6 @@ fn resolve_fixture(name: &str) -> chokkin::ResolutionIndex {
     let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugins");
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     resolve_imports(
-        &root,
         &loaded.effective,
         &manifest,
         &sources,
@@ -39,7 +38,6 @@ fn resolve_fixture(name: &str) -> chokkin::ResolutionIndex {
         &plugin_refs,
         &loaded.workspace_members,
     )
-    .expect("resolve")
 }
 
 #[test]

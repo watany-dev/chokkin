@@ -6,7 +6,7 @@ use crate::manifest::LoadedManifest;
 
 use super::error::SourcesError;
 use super::glob::{build_glob_set, effective_exclude};
-use super::layout::{infer_layout, layout_warnings};
+use super::layout::infer_layout;
 use super::types::DiscoveredSources;
 use super::walk::{
     CollectOptions, collect_files, large_project_warning, load_gitignore, validate_entries,
@@ -18,7 +18,7 @@ pub fn discover_sources(
     config: &LoadedConfig,
     manifest: &LoadedManifest,
 ) -> Result<DiscoveredSources, SourcesError> {
-    let layout = infer_layout(&root.path, &manifest.metadata);
+    let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata);
     let effective_globs = if config.effective.project.is_empty() {
         layout.inferred_globs.clone()
     } else {
@@ -47,7 +47,7 @@ pub fn discover_sources(
     let (files, walk_warnings) = collect_files(&collect_options)?;
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
-    warnings.extend(layout_warnings(&layout));
+    warnings.extend(layout_warning);
     warnings.extend(walk_warnings);
     if let Some(warning) = gitignore_warning {
         warnings.push(warning);

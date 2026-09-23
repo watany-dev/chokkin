@@ -19,7 +19,7 @@ pub fn effective_confidence_floor(
 /// Returns true when an issue should be shown after confidence filtering.
 #[must_use]
 pub fn passes_confidence_filter(issue: &Issue, floor: Confidence) -> bool {
-    issue.confidence.meets_floor(floor)
+    issue.confidence >= floor
 }
 
 /// Returns true when an issue passes include/exclude rule filters.
@@ -50,7 +50,7 @@ pub fn counts_toward_exit(issue: &Issue, strict: bool) -> bool {
     } else {
         (crate::rules::types::Severity::Error, Confidence::Likely)
     };
-    issue.severity.rank() >= min_severity.rank() && issue.confidence.meets_floor(min_confidence)
+    issue.severity.rank() >= min_severity.rank() && issue.confidence >= min_confidence
 }
 
 #[cfg(test)]
