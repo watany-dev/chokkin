@@ -1,6 +1,8 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -108,6 +110,25 @@ impl CacheOptions {
         context: &CacheKeyContext,
         bundle: &ParseCacheBundle,
     ) -> io::Result<()> {
+        self.write_parse_json(project_root, context, bundle)
+    }
+
+    /// [`Self::write_parse_bundle`] for a bundle that borrows its modules.
+    pub(crate) fn write_parse_bundle_ref(
+        &self,
+        project_root: &Path,
+        context: &CacheKeyContext,
+        bundle: &ParseCacheBundleRef<'_>,
+    ) -> io::Result<()> {
+        self.write_parse_json(project_root, context, bundle)
+    }
+
+    fn write_parse_json<T: Serialize>(
+        &self,
+        project_root: &Path,
+        context: &CacheKeyContext,
+        bundle: &T,
+    ) -> io::Result<()> {
         if !self.enabled {
             return Ok(());
         }
@@ -116,7 +137,11 @@ impl CacheOptions {
             std::fs::create_dir_all(parent)?;
         }
         let bytes = serde_json::to_vec(bundle).map_err(io::Error::other)?;
-        write_cache_bytes(&path, &bytes)
+        write_cache_bytes(&path, &bytes)?;
+        // Bundles of an earlier context (another chokkin version, config or
+        // target) are never read again, so they would otherwise pile up.
+        sweep_siblings(&path);
+        Ok(())
     }
 
     /// Absolute path for a persisted scan cache entry.
@@ -182,7 +207,16 @@ impl CacheOptions {
             payload,
         };
         let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
-        write_cache_bytes(&path, &bytes)
+        write_cache_bytes(&path, &bytes)?;
+        // Each scan unit keeps only its latest record: a record is keyed by
+        // its input fingerprints, so every edit to those inputs strands the
+        // previous one. The flat layout used before per-unit directories is
+        // swept too.
+        sweep_siblings(&path);
+        if let Some(scan_dir) = path.parent().and_then(Path::parent) {
+            sweep_stale_json(scan_dir, OsStr::new(""));
+        }
+        Ok(())
     }
 }
 
@@ -191,6 +225,34 @@ fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+/// Remove the other `*.json` entries next to the just-written `path`.
+fn sweep_siblings(path: &Path) {
+    if let (Some(dir), Some(keep)) = (path.parent(), path.file_name()) {
+        sweep_stale_json(dir, keep);
+    }
+}
+
+/// Best-effort removal of every `*.json` file in `dir` except `keep`.
+///
+/// Errors are ignored: a leftover entry only costs disk space, and failing an
+/// analysis over cache housekeeping would be a regression. A concurrent
+/// run's in-flight temp file has no `.json` extension, so it is left alone.
+fn sweep_stale_json(dir: &Path, keep: &OsStr) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_name().as_os_str() != keep
+            && path
+                .extension()
+                .is_some_and(|extension| extension == "json")
+        {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 
@@ -502,9 +564,14 @@ impl ScanCacheKey {
     }
 
     /// Project-root-relative path for a persisted scan cache entry.
+    ///
+    /// Entries are grouped by unit version so a write can drop the unit's
+    /// superseded records without touching other units.
     #[must_use]
     pub fn relative_path(&self) -> PathBuf {
-        PathBuf::from("scan").join(self.file_name())
+        PathBuf::from("scan")
+            .join(&self.context.unit_version)
+            .join(self.file_name())
     }
 }
 
@@ -617,6 +684,36 @@ impl ParseCacheBundle {
     pub fn insert(&mut self, key: &ParseCacheKey, parsed: ParsedModule) {
         self.entries.insert(key.entry_id(), parsed);
     }
+
+    /// Move the cached parse result for `key` out of the bundle.
+    ///
+    /// Same collision guard as [`Self::get`]; a mismatched entry stays put.
+    pub(crate) fn take(&mut self, key: &ParseCacheKey) -> Option<ParsedModule> {
+        match self.entries.entry(key.entry_id()) {
+            Entry::Occupied(entry) if entry.get().path == key.source.path => Some(entry.remove()),
+            _ => None,
+        }
+    }
+}
+
+/// [`ParseCacheBundle`] borrowing its modules; serializes to the same JSON.
+///
+/// Lets a run write back the modules it already holds without copying them.
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct ParseCacheBundleRef<'a> {
+    entries: BTreeMap<String, &'a ParsedModule>,
+}
+
+impl<'a> ParseCacheBundleRef<'a> {
+    /// Store `parsed` under `key`.
+    pub(crate) fn insert(&mut self, key: &ParseCacheKey, parsed: &'a ParsedModule) {
+        self.entries.insert(key.entry_id(), parsed);
+    }
+
+    /// Entry ids in the same order as [`ParseCacheBundle::entries`].
+    pub(crate) fn entry_ids(&self) -> impl Iterator<Item = &String> {
+        self.entries.keys()
+    }
 }
 
 fn parse_bundle_relative_path(context: &CacheKeyContext) -> PathBuf {
@@ -689,6 +786,28 @@ impl ParseCacheStore {
         self.entries.insert(key.clone(), parsed.clone());
         self.stats.hits = self.stats.hits.saturating_add(1);
         Some(parsed.clone())
+    }
+
+    /// [`Self::get_or_promote`] that moves a disk hit out of `disk`.
+    ///
+    /// The module is copied once, into memory, instead of once into memory
+    /// and once more for the caller.
+    pub(crate) fn get_or_take(
+        &mut self,
+        key: &ParseCacheKey,
+        disk: &mut ParseCacheBundle,
+    ) -> Option<ParsedModule> {
+        if let Some(parsed) = self.entries.get(key) {
+            self.stats.hits = self.stats.hits.saturating_add(1);
+            return Some(parsed.clone());
+        }
+        let Some(parsed) = disk.take(key) else {
+            self.stats.misses = self.stats.misses.saturating_add(1);
+            return None;
+        };
+        self.entries.insert(key.clone(), parsed.clone());
+        self.stats.hits = self.stats.hits.saturating_add(1);
+        Some(parsed)
     }
 
     /// Store parse output for `key`.
@@ -1028,6 +1147,179 @@ mod tests {
                 stores: 0,
             }
         );
+    }
+
+    fn test_context(unit_version: &str) -> CacheKeyContext {
+        CacheKeyContext {
+            chokkin_version: "test".to_owned(),
+            config_hash: "config".to_owned(),
+            manifest_hash: "manifest".to_owned(),
+            target_version: "py311".to_owned(),
+            unit_version: unit_version.to_owned(),
+        }
+    }
+
+    fn test_parse_key(path: &str) -> ParseCacheKey {
+        ParseCacheKey {
+            context: test_context("parse-v1"),
+            source: SourceFingerprint {
+                path: path.to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: String::new(),
+            },
+        }
+    }
+
+    fn module(path: &str) -> ParsedModule {
+        ParsedModule {
+            path: path.to_owned(),
+            ..ParsedModule::default()
+        }
+    }
+
+    fn json_files(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read cache dir")
+            .map(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.ends_with(".json"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn bundle_take_moves_the_entry_out_and_guards_collisions() {
+        let key = test_parse_key("src/app.py");
+        let mut bundle = ParseCacheBundle::default();
+        bundle.insert(&key, module("src/other.py"));
+
+        assert!(bundle.take(&key).is_none());
+        assert_eq!(bundle.entries.len(), 1, "a collision must stay in place");
+
+        bundle.insert(&key, module("src/app.py"));
+        assert_eq!(bundle.take(&key), Some(module("src/app.py")));
+        assert!(bundle.entries.is_empty());
+    }
+
+    #[test]
+    fn get_or_take_promotes_a_disk_hit_once() {
+        let key = test_parse_key("src/app.py");
+        let mut disk = ParseCacheBundle::default();
+        disk.insert(&key, module("src/app.py"));
+        let mut cache = ParseCacheStore::new();
+
+        assert_eq!(
+            cache.get_or_take(&key, &mut disk),
+            Some(module("src/app.py"))
+        );
+        assert!(disk.entries.is_empty());
+        assert_eq!(
+            cache.get_or_take(&key, &mut disk),
+            Some(module("src/app.py"))
+        );
+        assert_eq!(
+            cache.stats(),
+            ParseCacheStats {
+                hits: 2,
+                misses: 0,
+                stores: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn borrowed_bundle_serializes_like_the_owned_one() {
+        let first = test_parse_key("src/a.py");
+        let second = test_parse_key("src/b.py");
+        let modules = [module("src/a.py"), module("src/b.py")];
+        let mut owned = ParseCacheBundle::default();
+        owned.insert(&second, modules[1].clone());
+        owned.insert(&first, modules[0].clone());
+        let mut borrowed = ParseCacheBundleRef::default();
+        borrowed.insert(&first, &modules[0]);
+        borrowed.insert(&second, &modules[1]);
+
+        assert_eq!(
+            serde_json::to_string(&borrowed).expect("serialize borrowed"),
+            serde_json::to_string(&owned).expect("serialize owned")
+        );
+        assert!(borrowed.entry_ids().eq(owned.entries.keys()));
+    }
+
+    #[test]
+    fn writing_a_parse_bundle_sweeps_other_contexts() {
+        let root = temp_cache_test_dir("parse-sweep");
+        let options = CacheOptions::default();
+        let old = test_context("parse-v0");
+        let current = test_context("parse-v1");
+        options
+            .write_parse_bundle(&root, &old, &ParseCacheBundle::default())
+            .expect("write old bundle");
+        let parse_dir = options.directory_path(&root).join("parse");
+        // Stands in for another run's in-flight atomic write.
+        std::fs::write(parse_dir.join(".chokkin-inflight"), b"").expect("write temp file");
+
+        options
+            .write_parse_bundle(&root, &current, &ParseCacheBundle::default())
+            .expect("write current bundle");
+
+        let current_path = options.parse_bundle_path(&root, &current);
+        let current_name = current_path
+            .file_name()
+            .expect("bundle file name")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(json_files(&parse_dir), vec![current_name]);
+        assert!(parse_dir.join(".chokkin-inflight").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn writing_a_scan_record_keeps_one_per_unit() {
+        let root = temp_cache_test_dir("scan-sweep");
+        let options = CacheOptions::default();
+        let scan_dir = options.directory_path(&root).join("scan");
+        std::fs::create_dir_all(&scan_dir).expect("create scan dir");
+        std::fs::write(scan_dir.join("0123456789abcdef.json"), b"{}").expect("write legacy");
+        let key = |unit: &str, size: u64| ScanCacheKey {
+            context: test_context(unit),
+            inputs: ScanInputFingerprints {
+                config: vec![SourceFingerprint {
+                    path: "pyproject.toml".to_owned(),
+                    size,
+                    modified_ns: Some(1),
+                    content_hash: String::new(),
+                }],
+                manifest: Vec::new(),
+            },
+        };
+
+        for (unit, size) in [("scan-v1", 1), ("other-v1", 1), ("scan-v1", 2)] {
+            options
+                .write_scan_payload(&root, key(unit, size), &())
+                .expect("write scan payload");
+        }
+
+        let read = |unit: &str, size: u64| {
+            options
+                .read_scan_payload::<()>(&root, &key(unit, size))
+                .expect("read scan payload")
+        };
+        assert_eq!(read("scan-v1", 1), None, "superseded record must be swept");
+        assert_eq!(read("scan-v1", 2), Some(()));
+        assert_eq!(read("other-v1", 1), Some(()), "other units are untouched");
+        assert!(
+            json_files(&scan_dir).is_empty(),
+            "legacy flat records are swept"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

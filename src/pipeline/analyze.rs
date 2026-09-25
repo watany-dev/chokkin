@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
-use crate::cache::{CacheOptions, ParseCacheStore};
+use crate::cache::CacheOptions;
 use crate::config::RuntimeOverrides;
 use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
@@ -161,12 +161,13 @@ fn run_analysis_core(
         .clone()
         .unwrap_or_else(crate::config::TargetVersion::default_py311);
 
-    let mut parse_cache = options.cache.enabled.then(ParseCacheStore::new);
+    // No in-memory store: a single run parses each source once, so it would
+    // only add a copy of every module next to the disk bundle.
     let parse = parse_project_sources_with_cache(
         &probe.root,
         &probe.sources,
         &target,
-        parse_cache.as_mut(),
+        None,
         Some(&options.cache),
     )?;
 
