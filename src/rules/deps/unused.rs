@@ -10,7 +10,7 @@ use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolutionIndex, import_root};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 
-use super::context::{DeclarationBucket, declaration_bucket};
+use super::context::{DeclarationBucket, declaration_buckets, include_path_details};
 
 /// Context for building CHK002 reachability evidence in `--explain` output.
 pub(super) struct UnusedEvidenceContext<'a> {
@@ -41,7 +41,7 @@ pub(super) fn detect_unused_dependencies(
         if used.contains(&dep.name) {
             continue;
         }
-        if should_suppress_unused_report(&dep.context, config, strict) {
+        if should_suppress_unused_report(dep, config, strict) {
             continue;
         }
         if !strict && dep.marker.is_some() {
@@ -54,6 +54,7 @@ pub(super) fn detect_unused_dependencies(
             "no import, plugin module ref, or binary usage resolved to this distribution"
                 .to_owned(),
         ];
+        details.extend(include_path_details(dep));
         if let Some(context) = evidence {
             details.extend(build_reachability_evidence(&dep.name, context));
         }
@@ -188,19 +189,23 @@ fn unreachable_file_suffix(path: &str, reachability: &ReachabilityReport) -> Str
 }
 
 /// Dev, optional-extra, and setup-extra declarations are not reported unless `--strict`.
+/// A group pulled into a non-dev group via `include-group` counts as that group too.
 fn should_suppress_unused_report(
-    context: &crate::manifest::DependencyContext,
+    dep: &DeclaredDependency,
     config: &ChokkinConfig,
     strict: bool,
 ) -> bool {
     if strict {
         return false;
     }
-    if declaration_bucket(context, &config.dependencies) == DeclarationBucket::Dev {
+    if declaration_buckets(dep, &config.dependencies)
+        .iter()
+        .all(|bucket| *bucket == DeclarationBucket::Dev)
+    {
         return true;
     }
     matches!(
-        context,
+        &dep.context,
         crate::manifest::DependencyContext::OptionalExtra(_)
             | crate::manifest::DependencyContext::SetupExtra(_)
     )
@@ -250,6 +255,7 @@ mod tests {
                 label: "dependency-groups.dev[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         }
     }
 
@@ -266,6 +272,7 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         }
     }
 
@@ -310,6 +317,43 @@ mod tests {
             None,
         );
         assert_eq!(candidates.len(), 1);
+    }
+
+    #[test]
+    fn reports_group_included_by_runtime_group_with_include_path() {
+        let config = default_config();
+        let mut shared = dep(DependencyContext::Group("shared".to_owned()));
+        shared.included_via = vec![vec!["server".to_owned(), "shared".to_owned()]];
+        let candidates = detect_unused_dependencies(
+            &[&shared],
+            &indexmap::IndexSet::new(),
+            &config,
+            false,
+            None,
+        );
+        assert_eq!(candidates.len(), 1);
+        assert!(
+            candidates[0]
+                .explain
+                .details
+                .iter()
+                .any(|line| line == "included via dependency-groups: server -> shared")
+        );
+    }
+
+    #[test]
+    fn suppresses_group_included_only_by_dev_groups() {
+        let config = default_config();
+        let mut test_dep = dep(DependencyContext::Group("test".to_owned()));
+        test_dep.included_via = vec![vec!["dev".to_owned(), "test".to_owned()]];
+        let candidates = detect_unused_dependencies(
+            &[&test_dep],
+            &indexmap::IndexSet::new(),
+            &config,
+            false,
+            None,
+        );
+        assert!(candidates.is_empty());
     }
 
     #[test]

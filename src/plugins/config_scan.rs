@@ -759,6 +759,7 @@ mod tests {
                     label: "project.optional-dependencies.docs[0]".to_owned(),
                 },
                 opaque: false,
+                included_via: Vec::new(),
             });
         let config = crate::default_config();
         let sources = DiscoveredSources {
@@ -825,6 +826,7 @@ mod tests {
                     label: "project.optional-dependencies.docs[0]".to_owned(),
                 },
                 opaque: false,
+                included_via: Vec::new(),
             });
         let config = crate::default_config();
         let sources = DiscoveredSources {

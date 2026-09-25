@@ -304,6 +304,7 @@ mod tests {
                     label: "project.dependencies[0]".to_owned(),
                 },
                 opaque: false,
+                included_via: Vec::new(),
             }],
             constraints: Vec::new(),
             uv: crate::manifest::UvToolSettings::default(),
@@ -454,6 +455,7 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         });
         manifest.sources.pyproject_toml = true;
         manifest.sources.poetry = true;
