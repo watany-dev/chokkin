@@ -100,7 +100,7 @@ impl<'a> ModuleVisitor<'a> {
         self.platform_guard_depth = was_platform_guard;
     }
 
-    fn visit_decorators<'ast>(&mut self, decorators: &'ast [Decorator]) {
+    fn visit_decorators(&mut self, decorators: &[Decorator]) {
         self.record_decorators(decorators);
         for decorator in decorators {
             self.visit_expr(&decorator.expression);
