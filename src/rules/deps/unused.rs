@@ -18,6 +18,9 @@ pub(super) struct UnusedEvidenceContext<'a> {
     pub reachability: &'a ReachabilityReport,
     pub graph: &'a ProjectGraph,
     pub reachable: &'a HashSet<String>,
+    /// `[build-system].requires`, so a build plugin that is also declared as
+    /// a dependency is explained as build tooling.
+    pub build_requires: &'a [DeclaredDependency],
 }
 
 /// Detect declared dependencies with no matching usage.
@@ -56,6 +59,7 @@ pub(super) fn detect_unused_dependencies(
         ];
         details.extend(include_path_details(dep));
         if let Some(context) = evidence {
+            details.extend(build_requires_note(&dep.name, context));
             details.extend(build_reachability_evidence(&dep.name, context));
         }
 
@@ -80,6 +84,14 @@ pub(super) fn detect_unused_dependencies(
     }
 
     candidates
+}
+
+fn build_requires_note(distribution: &str, context: &UnusedEvidenceContext<'_>) -> Option<String> {
+    context
+        .build_requires
+        .iter()
+        .any(|build| build.name == distribution)
+        .then(|| "also in build-system.requires (build context; not needed at runtime)".to_owned())
 }
 
 fn build_reachability_evidence(
@@ -428,6 +440,7 @@ mod tests {
             reachability: &reachability,
             graph: &graph,
             reachable: &reachable,
+            build_requires: &[],
         };
 
         let candidates = detect_unused_dependencies(

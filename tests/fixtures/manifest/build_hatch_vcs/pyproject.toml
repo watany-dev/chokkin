@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.24", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "build-hatch-vcs"
+dynamic = ["version"]
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["hatch-vcs"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acme"]

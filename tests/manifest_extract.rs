@@ -481,6 +481,68 @@ fn setup_cfg_install_requires() {
     assert!(names.contains(&"flask"), "dependencies: {names:?}");
 }
 
+fn build_requires_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
+    manifest
+        .metadata
+        .build_requires
+        .iter()
+        .map(|dep| dep.name.as_str())
+        .collect()
+}
+
+#[test]
+fn hatch_vcs_build_requires_stay_in_build_context() {
+    let manifest = extract_fixture("build_hatch_vcs");
+    assert_eq!(
+        manifest.metadata.build_backend.as_deref(),
+        Some("hatchling.build")
+    );
+    assert_eq!(build_requires_names(&manifest), ["hatchling", "hatch-vcs"]);
+    assert!(
+        manifest
+            .metadata
+            .build_requires
+            .iter()
+            .all(|dep| dep.context == DependencyContext::Build)
+    );
+    assert!(
+        !manifest
+            .dependencies
+            .iter()
+            .any(|dep| dep.name == "hatchling" || dep.context == DependencyContext::Build)
+    );
+    let targets = manifest.metadata.wheel_targets.expect("wheel targets");
+    assert_eq!(targets.source, "tool.hatch.build.targets.wheel");
+    assert_eq!(targets.paths, ["src/acme"]);
+}
+
+#[test]
+fn setuptools_scm_build_requires_and_package_find() {
+    let manifest = extract_fixture("build_setuptools_scm");
+    assert_eq!(
+        build_requires_names(&manifest),
+        ["setuptools", "setuptools-scm"]
+    );
+    let names = dependency_names(&manifest);
+    assert!(!names.contains(&"setuptools"), "dependencies: {names:?}");
+    let targets = manifest.metadata.wheel_targets.expect("wheel targets");
+    assert_eq!(targets.source, "tool.setuptools");
+    let find = &targets.find[0];
+    assert_eq!(find.where_dirs, ["src"]);
+    assert_eq!(find.include, ["acme*"]);
+    assert_eq!(find.exclude, ["acme.tests*"]);
+}
+
+#[test]
+fn maturin_build_requires_and_python_source() {
+    let manifest = extract_fixture("build_maturin");
+    assert_eq!(manifest.metadata.build_backend.as_deref(), Some("maturin"));
+    assert_eq!(build_requires_names(&manifest), ["maturin"]);
+    assert_eq!(dependency_names(&manifest), ["numpy"]);
+    let targets = manifest.metadata.wheel_targets.expect("wheel targets");
+    assert_eq!(targets.paths, ["python/acme", "python/acme.py"]);
+}
+
 fn dev_group_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
     let dev = DependencyContext::Group("dev".to_owned());
     manifest

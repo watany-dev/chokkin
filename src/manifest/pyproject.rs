@@ -13,6 +13,7 @@ use super::types::{
 use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
 use super::uv_tool::extract_uv_tool;
 use super::warnings::ManifestWarning;
+use super::wheel::parse_wheel_targets;
 
 /// Partial extraction result from `pyproject.toml`.
 #[derive(Debug, Default)]
@@ -123,6 +124,8 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
         }
     }
 
+    extract_build_system(&table, &rel, &mut result);
+
     if let Some(groups) = table.get("dependency-groups").and_then(Value::as_table) {
         extract_dependency_groups(groups, &rel, &mut result.dependencies, &mut result.warnings);
     }
@@ -231,7 +234,33 @@ fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
         version,
         requires_python,
         dynamic,
+        ..ProjectMetadata::default()
     }
+}
+
+/// `[build-system]` plus the wheel target tables it selects (R-05).
+fn extract_build_system(table: &toml::Table, rel: &str, result: &mut PyprojectExtraction) {
+    if let Some(build_system) = table.get("build-system").and_then(Value::as_table) {
+        result.metadata.build_backend = build_system
+            .get("build-backend")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(requires) = build_system.get("requires").and_then(Value::as_array) {
+            push_dependency_array(
+                requires,
+                rel,
+                &DependencyContext::Build,
+                "build-system.requires",
+                &mut result.metadata.build_requires,
+                &mut result.warnings,
+            );
+        }
+    }
+    result.metadata.wheel_targets = parse_wheel_targets(
+        table,
+        result.metadata.build_backend.as_deref(),
+        result.metadata.name.as_deref(),
+    );
 }
 
 fn detect_tool_sections(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) -> bool {
@@ -455,6 +484,42 @@ mod tests {
         .expect("valid pyproject");
 
         assert!(result.dependencies.is_empty());
+    }
+
+    #[test]
+    fn build_system_requires_stay_out_of_dependencies() {
+        let result = extract(
+            "[build-system]\nrequires = [\"hatchling\", \"hatch-vcs>=0.4\"]\nbuild-backend = \"hatchling.build\"\n[project]\nname = \"x\"\n[tool.hatch.build.targets.wheel]\npackages = [\"src/x\"]\n",
+        )
+        .expect("valid pyproject");
+
+        assert!(result.dependencies.is_empty());
+        assert_eq!(
+            result.metadata.build_backend.as_deref(),
+            Some("hatchling.build")
+        );
+        let names: Vec<_> = result
+            .metadata
+            .build_requires
+            .iter()
+            .map(|dep| (dep.name.as_str(), dep.origin.label.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("hatchling", "build-system.requires[0]"),
+                ("hatch-vcs", "build-system.requires[1]"),
+            ]
+        );
+        assert!(
+            result
+                .metadata
+                .build_requires
+                .iter()
+                .all(|dep| dep.context == DependencyContext::Build)
+        );
+        let targets = result.metadata.wheel_targets.expect("wheel targets");
+        assert_eq!(targets.paths, vec!["src/x"]);
     }
 
     #[test]

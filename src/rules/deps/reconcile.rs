@@ -149,6 +149,7 @@ fn reconcile_project(
         reachability,
         graph,
         reachable: &reachable,
+        build_requires: &manifest.metadata.build_requires,
     };
 
     for deps in declared.values() {

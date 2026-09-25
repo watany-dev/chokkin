@@ -402,6 +402,8 @@ root直下の <package>/__init__.py (flat layout) があり、明確なentryが�
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 
+library mode の public surface は wheel target 設定から静的に求める (v0.5 R-05): `[tool.hatch.build.targets.wheel]` (なければ `[tool.hatch.build]`) の `packages` / `only-include`、`[tool.setuptools]` の `packages` / `packages.find` / `package-dir` / `py-modules`、`[tool.pdm.build]` の `includes`、`[tool.flit.module]`、`[tool.maturin]` の `python-source` / `module-name`。`build-backend` が既知ならその backend の table だけを読む。hatch の `sources` による path 書き換えは読まない。surface 外の未到達 file は CHK001 を app mode 相当の confidence に戻し、surface 外 module の symbol は CHK006 を app mode 相当 (warning) にする。設定がない、または一致する file がない場合は従来どおり全 file を public 扱いにする。
+
 ## 9. plugin仕様
 
 Knip相当の体験にするにはpluginが中核。Pythonはframeworkの暗黙参照が多いため、pluginなしではfalse positiveが多くなる。
@@ -575,6 +577,8 @@ except ImportError:
 
 この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
 
+`[build-system].requires` / `build-backend` は build context (v0.5 R-05) として `ProjectMetadata.build_requires` / `build_backend` に inventory し、CHK002/CHK003 の宣言集合には入れない (build requires は runtime import を満たさず、未使用扱いにもならない)。hatch-vcs / setuptools-scm のような build plugin が project / dev 依存にも宣言されて未使用なら、CHK002 を出すかどうかは既存の context 方針のままにし、evidence に `also in build-system.requires` を添える。`--probe` の Manifest 欄に backend と requires を表示する。
+
 PEP 723 inline script metadata (v0.5, R-02) は script 単位の dependency scope として扱う。
 
 ```text
@@ -684,7 +688,7 @@ dataclass referenced by annotation
 entry point target
 ```
 
-`__all__` があるmoduleでは、`__all__` をpublic API宣言として扱う。`__all__` にあるが内部から使われないものは、library modeではinfo、app modeではwarningにする。
+`__all__` があるmoduleでは、`__all__` をpublic API宣言として扱う。`__all__` にあるが内部から使われないものは、library modeではinfo、app modeではwarningにする。wheel target から public surface が求まる場合、surface 外 module の symbol は library mode でも warning にする (§8)。
 
 `unused_export` の自動削除はv1までは避ける。安全なfixは `__all__` からの削除程度に限定し、関数・class本体の削除は `--fix --unsafe` がある場合だけにする。
 

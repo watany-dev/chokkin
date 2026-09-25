@@ -20,6 +20,8 @@ pub enum DependencyContext {
     OptionalExtra(String),
     /// `setup.cfg` `extras_require`.
     SetupExtra(String),
+    /// `[build-system].requires`; stored in [`ProjectMetadata::build_requires`].
+    Build,
 }
 
 /// Declaration location for reports, `--explain`, and fix.
@@ -80,6 +82,43 @@ pub struct ProjectMetadata {
     pub requires_python: Option<String>,
     /// `[project].dynamic` entries, e.g. `dependencies`.
     pub dynamic: Vec<String>,
+    /// `[build-system].build-backend`.
+    #[serde(default)]
+    pub build_backend: Option<String>,
+    /// `[build-system].requires`: the build context. Kept apart from
+    /// [`LoadedManifest::dependencies`] so CHK002 / CHK003 never see it.
+    #[serde(default)]
+    pub build_requires: Vec<DeclaredDependency>,
+    /// Packages the wheel target configuration ships, when it is declared.
+    #[serde(default)]
+    pub wheel_targets: Option<WheelTargets>,
+}
+
+/// Distributed packages declared by build backend configuration (R-05).
+///
+/// Paths are root-relative and still unresolved against the file tree;
+/// [`crate::sources::PublicSurface`] matches them against discovered files.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WheelTargets {
+    /// TOML table the targets came from, e.g. `tool.hatch.build.targets.wheel`.
+    pub source: String,
+    /// Package directories, module files, or globs.
+    pub paths: Vec<String>,
+    /// setuptools `packages.find` specifications.
+    pub find: Vec<PackageFind>,
+}
+
+/// `[tool.setuptools.packages.find]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageFind {
+    /// Search directories (`where`), root-relative.
+    pub where_dirs: Vec<String>,
+    /// Dotted package name patterns (`fnmatch`).
+    pub include: Vec<String>,
+    /// Dotted package name patterns (`fnmatch`).
+    pub exclude: Vec<String>,
+    /// Whether packages without `__init__.py` are found.
+    pub namespaces: bool,
 }
 
 /// Where a `[tool.uv.sources]` entry points.

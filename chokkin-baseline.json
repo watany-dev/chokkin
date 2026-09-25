@@ -69,6 +69,11 @@
       "target": "tests/fixtures/deps/binary_tool_pyproject/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/build_plugin_declared/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/build_plugin_declared/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/dev_group_only/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/dev_group_only/src/acme/main.py"
@@ -524,6 +529,16 @@
       "target": "tests/fixtures/reachability/library_orphan/src/acme/orphan.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/reachability/library_wheel_targets/src/acme/orphan.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/library_wheel_targets/src/acme/orphan.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/reachability/library_wheel_targets/src/internal_tools/orphan.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/reachability/library_wheel_targets/src/internal_tools/orphan.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/reachability/plugin_module_ref/manage.py",
       "code": "CHK001",
       "target": "tests/fixtures/reachability/plugin_module_ref/manage.py"
@@ -742,6 +757,16 @@
       "fingerprint": "CHK001:tests/fixtures/symbols/library_mode/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/symbols/library_mode/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/symbols/library_wheel_targets/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/library_wheel_targets/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/symbols/library_wheel_targets/src/internal_tools/run.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/library_wheel_targets/src/internal_tools/run.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/symbols/pytest_fixture/src/acme/main.py",

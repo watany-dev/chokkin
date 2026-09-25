@@ -543,6 +543,25 @@ fn uv_workspace_source_dependency_is_used() {
 }
 
 #[test]
+fn build_plugin_declared_as_runtime_dep_notes_build_requires() {
+    let report = reconcile_fixture("build_plugin_declared");
+    let unused =
+        candidate_for_distribution(&report, RuleId::Chk002, "hatch-vcs").expect("hatch-vcs CHK002");
+    assert!(
+        unused
+            .explain
+            .details
+            .iter()
+            .any(|detail| detail.contains("also in build-system.requires")),
+        "details: {:?}",
+        unused.explain.details
+    );
+    assert!(!has_rule(&report, RuleId::Chk002, "hatchling"));
+    assert!(!has_rule(&report, RuleId::Chk003, "hatchling"));
+    assert!(!has_rule(&report, RuleId::Chk002, "requests"));
+}
+
+#[test]
 fn include_group_is_checked_once_under_its_declaring_group() {
     let manifest = load_deps(&fixture("include_group"), false).manifest;
     assert!(manifest.warnings.is_empty(), "{:?}", manifest.warnings);

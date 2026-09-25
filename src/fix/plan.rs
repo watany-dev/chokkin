@@ -371,6 +371,7 @@ fn removal_priority(context: &crate::manifest::DependencyContext) -> u8 {
         crate::manifest::DependencyContext::OptionalExtra(_) => 1,
         crate::manifest::DependencyContext::Group(_) => 2,
         crate::manifest::DependencyContext::SetupExtra(_) => 3,
+        crate::manifest::DependencyContext::Build => 4,
     }
 }
 

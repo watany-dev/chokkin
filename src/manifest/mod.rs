@@ -19,6 +19,7 @@ pub(crate) mod util;
 mod uv_lock;
 mod uv_tool;
 mod warnings;
+mod wheel;
 
 pub use error::ManifestError;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
@@ -29,7 +30,7 @@ pub use script::{
 };
 pub use types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, LockfileKind, LockfileSource, ManifestSources, ProjectMetadata, UvDefaultGroups,
-    UvSource, UvSourceKind, UvToolSettings,
+    LockfileGraph, LockfileKind, LockfileSource, ManifestSources, PackageFind, ProjectMetadata,
+    UvDefaultGroups, UvSource, UvSourceKind, UvToolSettings, WheelTargets,
 };
 pub use warnings::ManifestWarning;

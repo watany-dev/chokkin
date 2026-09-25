@@ -251,6 +251,11 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         "  lockfile         : {}",
         format_lockfile(&report.manifest)
     )?;
+    writeln!(
+        out,
+        "  build backend    : {}",
+        format_build_system(&report.manifest)
+    )?;
     writeln!(out)?;
 
     let (python_count, stub_count, notebook_count) = count_files(&report.sources);
@@ -319,6 +324,20 @@ fn format_lockfile(manifest: &LoadedManifest) -> String {
             format!("{} ({}, {nodes} nodes)", source.path, source.kind.as_str())
         },
     )
+}
+
+fn format_build_system(manifest: &LoadedManifest) -> String {
+    let metadata = &manifest.metadata;
+    let backend = metadata.build_backend.as_deref().unwrap_or("none");
+    if metadata.build_requires.is_empty() {
+        return backend.to_owned();
+    }
+    let requires: Vec<&str> = metadata
+        .build_requires
+        .iter()
+        .map(|dep| dep.name.as_str())
+        .collect();
+    format!("{backend} (requires: {})", requires.join(", "))
 }
 
 struct ContextCounts {
@@ -405,6 +424,28 @@ mod tests {
         assert!(text.contains("(probe)"));
         assert!(text.contains("Project : demo"));
         assert!(text.contains("Summary: probe complete"));
+        assert!(text.contains("build backend    : none"));
+    }
+
+    #[test]
+    fn write_probe_report_shows_build_system() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[build-system]\nrequires = [\"hatchling\", \"hatch-vcs\"]\n\
+             build-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"demo\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        let mut output = Vec::new();
+        write_probe_report(&report, &mut output).expect("write");
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(
+            text.contains("build backend    : hatchling.build (requires: hatchling, hatch-vcs)"),
+            "{text}"
+        );
     }
 
     #[test]

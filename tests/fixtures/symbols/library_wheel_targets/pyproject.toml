@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "library-wheel-targets"
+version = "0.1.0"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acme"]
+
+[tool.chokkin]
+mode = "library"
+entry = ["src/acme/main.py", "src/internal_tools/run.py"]

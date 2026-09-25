@@ -222,6 +222,26 @@ fn library_mode_downgrades_chk006_to_info() {
 }
 
 #[test]
+fn library_mode_unshipped_package_keeps_chk006_warning() {
+    let report = analyze_fixture("library_wheel_targets");
+    let severity_of = |symbol: &str| {
+        report
+            .candidates
+            .iter()
+            .find(|candidate| {
+                candidate.rule == RuleId::Chk006
+                    && matches!(
+                        &candidate.subject,
+                        chokkin::IssueSubject::Symbol { name, .. } if name == symbol
+                    )
+            })
+            .map(|candidate| candidate.severity)
+    };
+    assert_eq!(severity_of("unused_public"), Some(Severity::Info));
+    assert_eq!(severity_of("unused_internal"), Some(Severity::Warning));
+}
+
+#[test]
 fn import_module_attribute_access_counts_as_external_reference() {
     let report = analyze_fixture("import_attr_access");
     assert!(!has_symbol_rule(
