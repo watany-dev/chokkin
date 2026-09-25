@@ -60,13 +60,6 @@ pub enum ManifestWarning {
         /// Missing constraints file path as written.
         path: String,
     },
-    /// A PEP 723 script block was ignored; the file stays a plain source.
-    InlineScriptInvalid {
-        /// Root-relative script path.
-        file: String,
-        /// Why the block was rejected.
-        reason: String,
-    },
     /// A PEP 735 `{include-group = "..."}` names a group that is not defined.
     DependencyGroupIncludeUndefined {
         /// Root-relative path to `pyproject.toml`.
@@ -82,5 +75,12 @@ pub enum ManifestWarning {
         file: String,
         /// Groups along the cycle, starting and ending with the same group.
         groups: Vec<String>,
+    },
+    /// A PEP 723 script block was ignored; the file stays a plain source.
+    InlineScriptInvalid {
+        /// Root-relative script path.
+        file: String,
+        /// Why the block was rejected.
+        reason: String,
     },
 }
