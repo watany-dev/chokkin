@@ -197,7 +197,7 @@ frameworkは文字列やdecoratorでmoduleを参照するため、純粋なimpor
 - **v0.1**: pytest, django, fastapi/uvicorn
 - **v0.2以降**: tox/nox/pre-commit/GitHub Actions の binary usage 検出、Flask/Celery の route/task reference 検出、Sphinx/MkDocs/Alembic の慣例config/entry検出、`.ipynb` code cell parse。
 
-例えばDjango pluginは `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` の文字列をmodule referenceとして扱い、`migrations/**` をframework-used扱いにします。FastAPI pluginは `@router.get` 等で修飾されたhandlerをexternally used扱いにします。
+例えばDjango pluginは `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` の文字列をmodule referenceとして扱い、`migrations/**` をframework-used扱いにします。`@router.get` / `@router.websocket` 等で修飾されたroute handlerはexternally used扱いになります。
 
 ## issueの抑制
 

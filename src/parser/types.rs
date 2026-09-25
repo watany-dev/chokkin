@@ -116,7 +116,8 @@ pub struct SymbolDef {
     pub line: u32,
     /// Whether the symbol is considered public.
     pub is_public: bool,
-    /// Normalized decorator names (`app.get`, `pytest.fixture`, …).
+    /// Normalized names of every statically named decorator (`app.get`,
+    /// `functools.lru_cache`, …); consumers pick the ones they recognize.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decorators: Vec<String>,
     /// Defined inside a `TYPE_CHECKING` block.
@@ -172,7 +173,7 @@ pub struct ParsedModule {
     /// Top-level symbol definitions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<SymbolDef>,
-    /// Normalized decorators seen anywhere in the module.
+    /// Statically named decorators seen anywhere in the module.
     pub decorator_sites: Vec<DecoratorSite>,
     /// Names listed in `__all__`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

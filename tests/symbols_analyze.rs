@@ -160,6 +160,23 @@ fn pytest_fixture_is_not_reported() {
 }
 
 #[test]
+fn fastapi_route_and_websocket_handlers_are_external() {
+    let report = analyze_fixture("fastapi_websocket");
+    for name in ["list_items", "stream"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "acme.routes", name),
+            "{name}"
+        );
+    }
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.routes",
+        "dead_api"
+    ));
+}
+
+#[test]
 fn unused_reexport_emits_chk007() {
     let report = analyze_fixture("unused_reexport");
     assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));

@@ -197,7 +197,7 @@ Frameworks reference modules through strings and decorators, which pure import a
 - **v0.1**: pytest, django, fastapi/uvicorn
 - **v0.2+**: tox/nox/pre-commit/GitHub Actions binary usage detection, static Flask/Celery route/task references, conventional Sphinx/MkDocs/Alembic config entries, and `.ipynb` code-cell parsing.
 
-For example, the Django plugin treats `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` strings as module references and `migrations/**` as framework-used; the FastAPI plugin treats `@router.get`-decorated handlers as externally used.
+For example, the Django plugin treats `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` strings as module references and `migrations/**` as framework-used. Route handlers decorated with `@router.get` / `@router.websocket` etc. are treated as externally used.
 
 ## Suppressing issues
 

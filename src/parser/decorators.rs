@@ -1,52 +1,24 @@
-//! Decorator name normalization for externally-used symbol hints.
+//! Decorator name normalization.
+//!
+//! Every statically named decorator is normalized here; which names matter is
+//! decided by each consumer (`rules::symbols::external` for CHK006, the Flask
+//! and Celery plugins for module references), so the parser holds no list.
 
 use rustpython_parser::ast::Expr;
 
-/// Known decorator prefixes (v0.1 exact-match list).
-const KNOWN_DECORATOR_SUFFIXES: &[&str] = &[
-    "get",
-    "post",
-    "put",
-    "delete",
-    "patch",
-    "route",
-    "fixture",
-    "shared_task",
-    "task",
-    "command",
-];
-
-/// Normalize a decorator expression to a dotted name when recognized.
+/// Normalize a decorator expression to a dotted name (`app.route`,
+/// `functools.lru_cache`), or `None` when it has no static name.
 #[must_use]
 pub fn normalize_decorator(expr: &Expr) -> Option<String> {
-    let name = expr_to_dotted(expr)?;
-    if is_known_decorator(&name) {
-        Some(name)
-    } else {
-        None
-    }
-}
-
-fn is_known_decorator(name: &str) -> bool {
-    if name.starts_with("pytest.mark.") {
-        return true;
-    }
-    if let Some((_, suffix)) = name.rsplit_once('.') {
-        return KNOWN_DECORATOR_SUFFIXES.contains(&suffix);
-    }
-    KNOWN_DECORATOR_SUFFIXES.contains(&name)
-}
-
-fn expr_to_dotted(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Name(name) => Some(name.id.to_string()),
         Expr::Attribute(attribute) => {
-            let parent = expr_to_dotted(&attribute.value)?;
+            let parent = normalize_decorator(&attribute.value)?;
             Some(format!("{}.{}", parent, attribute.attr))
         },
-        Expr::Call(call) => expr_to_dotted(&call.func),
+        Expr::Call(call) => normalize_decorator(&call.func),
         // `@apps[0].route("/")`: the index is not static, but the suffix is.
-        Expr::Subscript(subscript) => Some(format!("{}[]", expr_to_dotted(&subscript.value)?)),
+        Expr::Subscript(subscript) => Some(format!("{}[]", normalize_decorator(&subscript.value)?)),
         _ => None,
     }
 }
@@ -58,25 +30,30 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn normalizes_pytest_fixture() {
-        let source = "@pytest.fixture\ndef sample():\n    pass\n";
+    fn first_decorator(source: &str) -> Option<String> {
         let stmts = Suite::parse(source, "<test>").expect("parse");
         let Stmt::FunctionDef(function) = &stmts[0] else {
             panic!("expected function");
         };
-        let normalized = normalize_decorator(&function.decorator_list[0]).expect("decorator");
-        assert_eq!(normalized, "pytest.fixture");
+        normalize_decorator(&function.decorator_list[0])
+    }
+
+    #[test]
+    fn normalizes_pytest_fixture() {
+        let normalized = first_decorator("@pytest.fixture\ndef sample():\n    pass\n");
+        assert_eq!(normalized.as_deref(), Some("pytest.fixture"));
     }
 
     #[test]
     fn normalizes_subscript_receiver() {
-        let source = "@apps[0].route(\"/\")\ndef index():\n    pass\n";
-        let stmts = Suite::parse(source, "<test>").expect("parse");
-        let Stmt::FunctionDef(function) = &stmts[0] else {
-            panic!("expected function");
-        };
-        let normalized = normalize_decorator(&function.decorator_list[0]).expect("decorator");
-        assert_eq!(normalized, "apps[].route");
+        let normalized = first_decorator("@apps[0].route(\"/\")\ndef index():\n    pass\n");
+        assert_eq!(normalized.as_deref(), Some("apps[].route"));
+    }
+
+    #[test]
+    fn normalizes_decorators_outside_any_list() {
+        let normalized =
+            first_decorator("@functools.lru_cache(maxsize=1)\ndef cached():\n    pass\n");
+        assert_eq!(normalized.as_deref(), Some("functools.lru_cache"));
     }
 }

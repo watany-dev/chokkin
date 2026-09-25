@@ -152,7 +152,11 @@ fn django_installed_apps() {
         .collect();
     assert!(modules.contains(&"django.contrib.admin"));
     assert!(modules.contains(&"myapp"));
+    assert!(modules.contains(&"django.middleware.security.SecurityMiddleware"));
     assert!(modules.contains(&"mysite.urls"));
+    assert!(contrib.symbol_refs.iter().any(|reference| {
+        reference.module == "mysite.wsgi" && reference.symbol == "application"
+    }));
 }
 
 #[test]
@@ -199,6 +203,12 @@ fn fastapi_scripts_symbol() {
             .iter()
             .any(|reference| { reference.module == "pkg.main" && reference.symbol == "app" })
     );
+}
+
+#[test]
+fn fastapi_src_main_is_plugin_entry() {
+    let hints = extract_fixture("fastapi_src_main");
+    assert_eq!(entry_paths(fastapi_contrib(&hints)), vec!["src/main.py"]);
 }
 
 #[test]

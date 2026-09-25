@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ManifestSources.lockfile: Option<LockfileSource>`.
 - Manifest cache unit bumped to `manifest-extract-v3`; every lockfile candidate
   is part of the cache key.
+- CHK006 treats FastAPI `@router.websocket` / `@app.websocket` handlers as
+  externally used, like route handlers (#119). The parser now records every
+  statically named decorator, and the list of framework-registration decorators
+  lives only in the CHK006 rule. Parse cache unit bumped to `parse-v7`.
+- The FastAPI plugin no longer adds root `main.py` / `asgi.py` as entries,
+  since the §8 auto-detection already does; it keeps `src/main.py` /
+  `src/asgi.py`.
 
 ## [0.4.1] - Unreleased
 

@@ -4,5 +4,9 @@ INSTALLED_APPS = [
     "myapp",
 ]
 
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+]
+
 ROOT_URLCONF = "mysite.urls"
 WSGI_APPLICATION = "mysite.wsgi:application"

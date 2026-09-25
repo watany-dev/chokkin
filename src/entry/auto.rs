@@ -129,6 +129,19 @@ mod tests {
     }
 
     #[test]
+    fn detects_root_app_modules() {
+        let names = ["main.py", "app.py", "asgi.py", "wsgi.py"];
+        let sources = sources_with(&names, &src_layout());
+        let entries = detect_auto_entries(&sources);
+        for name in names {
+            assert!(
+                entries.iter().any(|entry| entry.spec.path == name),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn detects_src_package_asgi_py() {
         let sources = sources_with(&["src/acme/asgi.py"], &src_layout());
         let entries = detect_auto_entries(&sources);
