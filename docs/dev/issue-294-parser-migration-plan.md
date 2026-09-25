@@ -5,12 +5,14 @@
 手順と判定基準をまとめる。#140 の
 [`issue-140-parser-reevaluation.md`](issue-140-parser-reevaluation.md) の続き。
 
-## 現状: 実測は未取得
+## 現状: #321 は実測済み、#320 の bench は未取得
 
-作業環境の agent proxy が `static.crates.io` を拒否するため、`ruff_python_parser` を
-download できず、PoC の build も bench もまだ取れていない (#140 と同じ制約)。
-下の手順は crate を取得できる環境 (手元、または GitHub Actions) でそのまま実行できる。
-結果は各 issue の comment に書き、ADR 0001 の pin を確定する。
+作業環境の agent proxy が `static.crates.io` を拒否するため、手元では
+`ruff_python_parser` を build できない (#140 と同じ制約)。そこで PoC は feature gate を
+使わず、backend を `=0.0.15` へ直接差し替えた draft PR #349 として GitHub Actions で
+検証した。build / test / lint / deny / audit と cross wheel build (下の
+[#321 の結果](#結果-2026-09-25)) は取れた。CI には bench job が無いため、#320 の
+cold parse 10k の比はまだ取れていない。手元で crate を取得できる環境で下の手順 4 を回す。
 
 ## 影響範囲 (2026-09-25 の main で確認)
 
@@ -22,10 +24,10 @@ download できず、PoC の build も bench もまだ取れていない (#140 �
 | `src/parser/dynamic.rs` | `Alias` / `Constant` / `Expr` / `ExprCall` | `importlib.import_module` の文字列引数 |
 | `src/parser/decorators.rs` / `attributes.rs` / `type_checking.rs` / `platform_guard.rs` | `Expr` / `Stmt` / `CmpOp` | 小さな helper。型名の置き換えが中心 |
 | `src/parser/ignores.rs` / `relative.rs` / `types.rs` / `error.rs` | なし | 変更不要 |
-| `src/parser/` 外 | なし (`ParsedModule` などの backend 非依存な型だけを使う) | 変更不要 |
-| `src/manifest/literals.rs` | なし (文字列走査) | 変更不要。AST 化は別件 |
-| parse cache の `unit_version` (`src/parser/parse.rs` の `parse-v5`) | — | 移行 PR で上げる |
-| `deny.toml` | `unic-*` 由来の unmaintained advisory 6 件を ignore | 移行 PR で ignore を消す |
+| `src/manifest/literals.rs` / `setup_py.rs` | `Suite::parse`、`Expr` / `Stmt` / `Keyword` / `Constant` | `setup.py` / manifest の literal 評価。`Constant` を `StringLiteral` などへ置き換える |
+| 上記以外の `src/` | なし (`ParsedModule` などの backend 非依存な型だけを使う) | 変更不要 |
+| parse cache の `unit_version` (`src/parser/parse.rs` の `parse-v7`) | — | 移行 PR で上げる |
+| `deny.toml` / `.cargo/audit.toml` | `unic-*` 由来の unmaintained advisory 6 件を ignore | 移行 PR で ignore を消す |
 | `.github/dependabot.yml` | — | `ruff_*` を 1 PR にまとめる group を足す |
 
 ## #320: PoC と差分・性能計測
@@ -115,3 +117,34 @@ main の直近 run に同じ操作をして baseline にする。
 | build 時間 | target ごとの増減を記録。60 分の job timeout に余裕がある | timeout に近ければ ADR に記録 |
 | `cargo deny` | CI の `Security (cargo-deny)` が通る。git 依存なら `deny.toml` に `allow-git` を足した上で通る | 出た advisory / license を記録 |
 | `cargo audit` | `Security Audit` workflow (手動実行可) が通る | 同上 |
+
+### 結果 (2026-09-25)
+
+PoC は draft PR #349 (`ruff_* =0.0.15`、MSRV 1.96)。baseline は main の Release
+run 36154818251 (PR #348)、PoC は run 36158480383。wheel サイズは artifact zip の
+byte 数、build 時間は maturin step の所要時間。
+
+| target | wheel (main) | wheel (PoC) | 増減 | build (main) | build (PoC) |
+|---|---:|---:|---:|---:|---:|
+| x86_64-unknown-linux-gnu | 2,286,542 | 2,258,303 | −1.2% | 1:44 | 1:57 |
+| x86_64-unknown-linux-musl | 2,351,948 | 2,319,455 | −1.4% | 1:55 | 1:55 |
+| aarch64-unknown-linux-gnu | 2,197,278 | 2,179,486 | −0.8% | 2:11 | 2:22 |
+| aarch64-unknown-linux-musl | 2,215,162 | 2,192,929 | −1.0% | 1:57 | 1:55 |
+| x86_64-apple-darwin | 2,192,740 | 2,176,820 | −0.7% | 1:23 | 1:18 |
+| aarch64-apple-darwin | 2,075,229 | 2,066,425 | −0.4% | 1:55 | 1:37 |
+| x86_64-pc-windows-msvc | 2,097,119 | 2,079,489 | −0.8% | 2:56 | 3:31 |
+| sdist | 625,115 | 625,710 | +595 B | 0:22 | 0:07 |
+
+判定:
+
+- **7 target の wheel**: 全 target で成功。`stacker` → `psm` の asm build script も
+  musl / aarch64 の cross build で問題なし。
+- **sdist**: 成功。crates.io の依存だけで git 依存は無いので、build 時に GitHub へ
+  到達する必要は無い。
+- **wheel サイズ**: 全 target で 0.4〜1.4% 小さくなった。
+- **build 時間**: target ごとに −18 s〜+35 s。run 全体は 3:23 → 3:51 で、60 分の
+  job timeout には十分な余裕がある。
+- **`cargo deny`**: 通る。ただし `ar_archive_writer` (`psm` の build 依存) の
+  `Apache-2.0 WITH LLVM-exception` を crate 単位の license exception として
+  `deny.toml` に足す必要があった。unmaintained の ignore 6 件は不要になった。
+- **`cargo audit`**: `.cargo/audit.toml` の ignore を空にした状態で通る。
