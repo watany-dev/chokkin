@@ -100,19 +100,22 @@ impl<'a> ModuleVisitor<'a> {
         self.platform_guard_depth = was_platform_guard;
     }
 
-    fn visit_def<'ast>(
+    fn visit_decorators<'ast>(&mut self, decorators: &'ast [Decorator]) {
+        self.record_decorators(decorators);
+        for decorator in decorators {
+            self.visit_expr(&decorator.expression);
+        }
+    }
+
+    /// Record a def/class symbol and walk its body; the caller has already
+    /// walked the decorators and signature.
+    fn visit_def_body<'ast>(
         &mut self,
         name: &Identifier,
         decorators: &'ast [Decorator],
         body: &'ast [Stmt],
         kind: SymbolKind,
-        signature: impl FnOnce(&mut Self),
     ) {
-        self.record_decorators(decorators);
-        for decorator in decorators {
-            self.visit_expr(&decorator.expression);
-        }
-        signature(self);
         if self.module_level {
             // The def's own range starts at its first decorator; CPython reports
             // the `def`/`class` line, which is where the name sits.
@@ -295,29 +298,26 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
         match stmt {
             Stmt::Import(import) => self.visit_import(import),
             Stmt::ImportFrom(import_from) => self.visit_import_from(import_from),
-            Stmt::FunctionDef(def) => self.visit_def(
-                &def.name,
-                &def.decorator_list,
-                &def.body,
-                SymbolKind::Function,
-                |visitor| {
-                    visitor.visit_parameters(&def.parameters);
-                    if let Some(returns) = &def.returns {
-                        visitor.visit_expr(returns);
-                    }
-                },
-            ),
-            Stmt::ClassDef(def) => self.visit_def(
-                &def.name,
-                &def.decorator_list,
-                &def.body,
-                SymbolKind::Class,
-                |visitor| {
-                    if let Some(arguments) = &def.arguments {
-                        visitor.visit_arguments(arguments);
-                    }
-                },
-            ),
+            Stmt::FunctionDef(def) => {
+                self.visit_decorators(&def.decorator_list);
+                self.visit_parameters(&def.parameters);
+                if let Some(returns) = &def.returns {
+                    self.visit_expr(returns);
+                }
+                self.visit_def_body(
+                    &def.name,
+                    &def.decorator_list,
+                    &def.body,
+                    SymbolKind::Function,
+                );
+            },
+            Stmt::ClassDef(def) => {
+                self.visit_decorators(&def.decorator_list);
+                if let Some(arguments) = &def.arguments {
+                    self.visit_arguments(arguments);
+                }
+                self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
+            },
             Stmt::Assign(assign) => {
                 if self.module_level {
                     let line = self.line_number(assign);
