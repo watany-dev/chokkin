@@ -7,7 +7,7 @@ Pythonプロジェクトの余計なファイル・余計な依存・余計な�
 `chokkin` は、Pythonプロジェクト全体を対象とする reachability analyzer — Python 版の [Knip](https://knip.dev/) 体験を目指すツールです。manifest・ソースコード・各種ツール設定からプロジェクト全体のグラフを構築し、どこからも到達しないものを報告します。`uvx chokkin` で設定なしに実行でき、必要に応じて精密な設定と CI 運用に移行できます。
 
 > [!NOTE]
-> **Status: v0.4.0 released。** デフォルトで **フル分析パイプライン**（ステップ 1–13）が動き、未使用ファイル・依存・シンボルを built-in reporter（`default` / `compact` / `json` / `markdown` / `github` / `sarif`）で報告します。`--explain` / `--trace` / `--fix` / baseline filtering も利用可能です。ステップ 1–4 の概要だけ見る場合は `--probe` を使い、解決済み workspace member 数も確認できます。resolver は member 由来 import に印を付け、cross-member import を first-party として扱います。strict mode は member ごとの依存宣言を要求し、reporter は workspace finding に member id を出します。v0.4 は default CHK003 を runtime import 中心にし、conditional missing を info に保ち、alias 付き `TYPE_CHECKING` を認識します。さらに offline wheel metadata harvester と safe-autofix / semver 契約を追加しました。固定20プロジェクトで CHK003 は 964 件から 131 件へ減少し、unknown 0 のまま §17 gate は全合格です。**v0.1.0 から v0.4.0 までリリース済み**です。
+> **Status: v0.4.1 released。** デフォルトで **フル分析パイプライン**（ステップ 1–13）が動き、未使用ファイル・依存・シンボルを built-in reporter（`default` / `compact` / `json` / `markdown` / `github` / `sarif`）で報告します。`--explain` / `--trace` / `--fix` / baseline filtering も利用可能です。ステップ 1–4 の概要だけ見る場合は `--probe` を使い、解決済み workspace member 数も確認できます。resolver は member 由来 import に印を付け、cross-member import を first-party として扱います。strict mode は member ごとの依存宣言を要求し、reporter は workspace finding に member id を出します。v0.4 は default CHK003 を runtime import 中心にし、conditional missing を info に保ち、alias 付き `TYPE_CHECKING` を認識します。さらに offline wheel metadata harvester と safe-autofix / semver 契約を追加しました。固定20プロジェクトで CHK003 は 964 件から 131 件へ減少し、unknown 0 のまま §17 gate は全合格です。v0.4.1 は並列 parse、stat ベースの warm cache、cache 整合性修正を含むバグ修正・性能改善リリースです。**v0.1.0 から v0.4.1 までリリース済み**です。
 
 ## なぜ chokkin か
 
@@ -31,7 +31,7 @@ uvx chokkin
 設定は不要です。初回実行で manifest(`pyproject.toml` / `setup.cfg` / `setup.py` / `requirements*.txt` / `uv.lock`)を探索し、layout(src/flat、tests、scripts、docs)と entry point を推定し、import graph を構築して宣言済み依存と照合します。
 
 ```text
-chokkin 0.4.0
+chokkin 0.4.1
 
 Project: acme-api
 Config : pyproject.toml

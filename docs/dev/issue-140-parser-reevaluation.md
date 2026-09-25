@@ -2,6 +2,10 @@
 
 2026-09-22 時点の調査記録。ADR 0001 (`rustpython-parser` 0.4 採用) の再評価。
 
+> 2026-09-25 追記: 下の「判断」と「再評価条件」は ADR 0001 の Amendment 2026-09-25
+> (#294) で置き換えた。移行先は `ruff_python_parser`。検証手順は
+> [`issue-294-parser-migration-plan.md`](issue-294-parser-migration-plan.md)。
+
 ## 動機
 
 #140 の実測では、合成 10,703 files / 約 2KiB の **cold parse が 1,248 ms**
