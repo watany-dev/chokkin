@@ -3,15 +3,15 @@
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::parser::file_module_name;
-use crate::sources::FileKind;
+use crate::sources::{FileKind, path_to_module};
 
 use super::context::PluginContext;
 use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, ReferenceOrigin, SymbolReference,
 };
 use super::util::{
-    manifest_has_dependency, parse_module_symbol, read_pyproject_table, relative_path,
+    decorator_line, decorator_suffix, manifest_has_dependency, parse_module_symbol,
+    read_pyproject_table, relative_path, text_decorator_line,
 };
 use super::warnings::PluginsWarning;
 
@@ -110,6 +110,17 @@ fn extract_task_modules(
     contrib: &mut PluginContribution,
     found: &mut bool,
 ) {
+    if let Some(parse) = ctx.parse {
+        for module in &parse.modules {
+            let Some(line) = decorator_line(&ctx.root.path, module, is_task_decorator) else {
+                continue;
+            };
+            push_task_module(ctx, contrib, found, &module.path, line);
+        }
+        return;
+    }
+
+    // Standalone callers run before step 6, so there is nothing to reuse.
     for file in &ctx.sources.files {
         if file.kind != FileKind::Python {
             continue;
@@ -118,40 +129,44 @@ fn extract_task_modules(
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Some(line) = celery_task_decorator_line(&contents) else {
+        let Some(line) = text_decorator_line(&contents, is_task_decorator) else {
             continue;
         };
-        let Some(module) = file_module_name(&file.path, &ctx.sources.layout) else {
-            continue;
-        };
-        *found = true;
-        contrib.module_refs.push(ModuleReference {
-            module,
-            origin: ReferenceOrigin {
-                file: file.path.clone(),
-                line: Some(line),
-                label: "celery task decorator".to_owned(),
-            },
-        });
+        push_task_module(ctx, contrib, found, &file.path, line);
     }
 }
 
-fn celery_task_decorator_line(contents: &str) -> Option<u32> {
-    for (index, line) in contents.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('@') {
-            continue;
-        }
-        let decorator = trimmed.trim_start_matches('@');
-        if decorator.starts_with("shared_task")
-            || decorator.starts_with("celery_app.task")
-            || decorator.starts_with("app.task")
-            || decorator.contains(".task(")
-        {
-            return u32::try_from(index + 1).ok();
-        }
+fn push_task_module(
+    ctx: &PluginContext<'_>,
+    contrib: &mut PluginContribution,
+    found: &mut bool,
+    file: &str,
+    line: u32,
+) {
+    let Some(module) = path_to_module(file, &ctx.sources.layout) else {
+        return;
+    };
+    *found = true;
+    contrib.module_refs.push(ModuleReference {
+        module,
+        origin: ReferenceOrigin {
+            file: file.to_owned(),
+            line: Some(line),
+            label: "celery task decorator".to_owned(),
+        },
+    });
+}
+
+/// Task decorator test shared by the parse and text paths: bare
+/// `@shared_task` or any `@<receiver>.task` / `@<receiver>.shared_task`,
+/// called or not.
+fn is_task_decorator(name: &str, _is_call: bool) -> bool {
+    let (receiver, suffix) = decorator_suffix(name);
+    match suffix {
+        "shared_task" => true,
+        "task" => receiver.is_some(),
+        _ => false,
     }
-    None
 }
 
 fn celery_app_arg(line: &str) -> Option<&str> {

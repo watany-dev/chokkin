@@ -1,8 +1,28 @@
 {
   "schema_version": "1",
-  "chokkin_version": "0.3.0",
-  "generated_at": "unix:1782888518",
+  "chokkin_version": "0.4.0",
+  "generated_at": "unix:1789523849",
   "issues": [
+    {
+      "fingerprint": "CHK001:docs/dev/formal/deps_rules_z3.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/deps_rules_z3.py"
+    },
+    {
+      "fingerprint": "CHK001:docs/dev/formal/exit_status_z3.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/exit_status_z3.py"
+    },
+    {
+      "fingerprint": "CHK001:docs/dev/formal/ignore_model.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/ignore_model.py"
+    },
+    {
+      "fingerprint": "CHK001:docs/dev/formal/relative_import_model.py",
+      "code": "CHK001",
+      "target": "docs/dev/formal/relative_import_model.py"
+    },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",
       "code": "CHK001",
@@ -19,9 +39,19 @@
       "target": "tests/fixtures/deps/dev_group_only/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/dev_missing/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/dev_missing/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/duplicate_requests/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/duplicate_requests/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/include_group/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/include_group/src/acme/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/map_alias/src/acme/main.py",
@@ -44,6 +74,11 @@
       "target": "tests/fixtures/deps/missing_yaml/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/optional_missing/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/optional_missing/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/optional_try_import/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/optional_try_import/src/acme/main.py"
@@ -62,6 +97,11 @@
       "fingerprint": "CHK001:tests/fixtures/deps/platform_guard_import/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/platform_guard_import/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/platform_guard_missing/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/platform_guard_missing/src/acme/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/self_extra/src/self_extra/main.py",
@@ -84,9 +124,19 @@
       "target": "tests/fixtures/deps/unused_boto3/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_misplaced/services/api/src/api/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/workspace_member_misplaced/services/api/src/api/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_root_dev/services/api/src/api/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/workspace_member_root_dev/services/api/src/api/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_strict/services/api/src/api/main.py",
@@ -279,6 +329,11 @@
       "target": "tests/fixtures/plugins/celery_scripts/src/worker/tasks.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/plugins/celery_syntax_error/src/worker/tasks.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/plugins/celery_syntax_error/src/worker/tasks.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/plugins/django_manage/manage.py",
       "code": "CHK001",
       "target": "tests/fixtures/plugins/django_manage/manage.py"
@@ -337,6 +392,11 @@
       "fingerprint": "CHK001:tests/fixtures/plugins/flask_env/src/web/routes.py",
       "code": "CHK001",
       "target": "tests/fixtures/plugins/flask_env/src/web/routes.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/plugins/flask_syntax_error/src/web/routes.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/plugins/flask_syntax_error/src/web/routes.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/plugins/nox_config/noxfile.py",
@@ -624,6 +684,11 @@
       "target": "tests/fixtures/symbols/unused_export/src/acme/utils.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/helpers.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/unused_reexport/src/acme/helpers.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/symbols/unused_reexport/src/acme/main.py"
@@ -632,16 +697,6 @@
       "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/sub.py",
       "code": "CHK001",
       "target": "tests/fixtures/symbols/unused_reexport/src/acme/sub.py"
-    },
-    {
-      "fingerprint": "CHK003:tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest",
-      "code": "CHK003",
-      "target": "tests/fixtures/plugins/pytest_pyproject/tests/conftest.py:pytest"
-    },
-    {
-      "fingerprint": "CHK003:tests/fixtures/symbols/pytest_fixture/src/acme/conftest.py:pytest",
-      "code": "CHK003",
-      "target": "tests/fixtures/symbols/pytest_fixture/src/acme/conftest.py:pytest"
     },
     {
       "fingerprint": "CHK006:scripts/generate-package-map.py:AUTO_PACKAGES",
@@ -749,6 +804,41 @@
       "target": "scripts/generate-stdlib-modules.py:write_version"
     },
     {
+      "fingerprint": "CHK006:scripts/harvest-package-map.py:IMPORT_ROOT",
+      "code": "CHK006",
+      "target": "scripts/harvest-package-map.py:IMPORT_ROOT"
+    },
+    {
+      "fingerprint": "CHK006:scripts/harvest-package-map.py:harvest",
+      "code": "CHK006",
+      "target": "scripts/harvest-package-map.py:harvest"
+    },
+    {
+      "fingerprint": "CHK006:scripts/harvest-package-map.py:imports_from_record",
+      "code": "CHK006",
+      "target": "scripts/harvest-package-map.py:imports_from_record"
+    },
+    {
+      "fingerprint": "CHK006:scripts/harvest-package-map.py:main",
+      "code": "CHK006",
+      "target": "scripts/harvest-package-map.py:main"
+    },
+    {
+      "fingerprint": "CHK006:scripts/harvest-package-map.py:parse_args",
+      "code": "CHK006",
+      "target": "scripts/harvest-package-map.py:parse_args"
+    },
+    {
+      "fingerprint": "CHK006:scripts/harvest-package-map.py:wheel_candidate",
+      "code": "CHK006",
+      "target": "scripts/harvest-package-map.py:wheel_candidate"
+    },
+    {
+      "fingerprint": "CHK006:tests/fixtures/deps/dev_missing/tests/test_main.py:test_main",
+      "code": "CHK006",
+      "target": "tests/fixtures/deps/dev_missing/tests/test_main.py:test_main"
+    },
+    {
       "fingerprint": "CHK006:tests/fixtures/deps/unlisted_pytest/tests/test_sample.py:test_placeholder",
       "code": "CHK006",
       "target": "tests/fixtures/deps/unlisted_pytest/tests/test_sample.py:test_placeholder"
@@ -782,6 +872,21 @@
       "fingerprint": "CHK006:tests/fixtures/reachability/shipped_entries_library/tests/test_sample.py:test_sample",
       "code": "CHK006",
       "target": "tests/fixtures/reachability/shipped_entries_library/tests/test_sample.py:test_sample"
+    },
+    {
+      "fingerprint": "CHK006:tests/test_harvest_package_map.py:HarvestPackageMapTest",
+      "code": "CHK006",
+      "target": "tests/test_harvest_package_map.py:HarvestPackageMapTest"
+    },
+    {
+      "fingerprint": "CHK006:tests/test_harvest_package_map.py:ROOT",
+      "code": "CHK006",
+      "target": "tests/test_harvest_package_map.py:ROOT"
+    },
+    {
+      "fingerprint": "CHK006:tests/test_harvest_package_map.py:SCRIPT",
+      "code": "CHK006",
+      "target": "tests/test_harvest_package_map.py:SCRIPT"
     },
     {
       "fingerprint": "CHK008:black",

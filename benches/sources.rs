@@ -76,5 +76,31 @@ fn bench_layout_variants(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_src_scaling, bench_layout_variants);
+fn bench_populated_cache(c: &mut Criterion) {
+    let project = support::synth_src_project(1_000);
+    let (root, config, manifest) = pipeline_inputs(project.path());
+    let mut group = c.benchmark_group("discover_cache");
+    group.sample_size(30);
+    group.bench_function("empty", |b| {
+        b.iter(|| discover_sources(black_box(&root), &config, &manifest).expect("discover"));
+    });
+    for index in 0..5_000 {
+        support::write(
+            project.path(),
+            &format!(".chokkin/cache/parse/{index}.json"),
+            "{}",
+        );
+    }
+    group.bench_function("populated", |b| {
+        b.iter(|| discover_sources(black_box(&root), &config, &manifest).expect("discover"));
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_src_scaling,
+    bench_layout_variants,
+    bench_populated_cache
+);
 criterion_main!(benches);

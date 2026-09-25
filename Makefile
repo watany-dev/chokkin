@@ -1,9 +1,9 @@
 # Tool versions — keep in sync with .github/workflows/ci.yml
 CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
-CARGO_SEMVER_CHECKS_VERSION ?= 0.47.0
+CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
 
-.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics check-generated help
+.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics check-generated formal help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -65,9 +65,19 @@ machete:
 
 ## ─── Generated artifacts ───────────────────────────────────────────────────────
 check-generated:
+	python3 tests/test_harvest_package_map.py
 	python3 scripts/generate-package-map.py
 	python3 scripts/generate-stdlib-modules.py
 	git diff --exit-code src/resolver/bundled/ src/resolver/stdlib/
+
+## ─── Formal models (docs/dev/formal) ──────────────────────────────────────────
+# Requires python3 with z3-solver (`pip install z3-solver`). Runs every model and
+# fails if any property has a counterexample. TLA+ (TLC) is run separately; see
+# docs/dev/formal/README.md.
+formal:
+	@status=0; for m in relative_import_model deps_rules_z3 exit_status_z3 ignore_model; do \
+		python3 docs/dev/formal/$$m.py || status=1; \
+	done; exit $$status
 
 ## ─── Code coverage ────────────────────────────────────────────────────────────
 # NOTE: --fail-under is intentionally omitted until the analyzer is implemented.

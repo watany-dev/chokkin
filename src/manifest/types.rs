@@ -50,6 +50,10 @@ pub struct DeclaredDependency {
     pub origin: DependencyOrigin,
     /// URL / VCS without extractable distribution name.
     pub opaque: bool,
+    /// PEP 735 `include-group` chains that pull this group requirement into
+    /// other groups, each ordered from the including group to the declaring one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub included_via: Vec<Vec<String>>,
 }
 
 /// Console script or entry-point declaration from packaging metadata.
@@ -83,8 +87,6 @@ pub struct ProjectMetadata {
 pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
-    /// Lockfile `requires-python` when present.
-    pub requires_python: Option<String>,
 }
 
 /// Which manifest files contributed to extraction.
@@ -95,6 +97,9 @@ pub struct ManifestSources {
     pub pyproject_toml: bool,
     /// Root-relative requirements file paths that contributed.
     pub requirements_files: Vec<String>,
+    /// Root-relative requirements include/constraint paths that were probed
+    /// but did not exist; the manifest cache rechecks them on a hit.
+    pub requirements_missing: Vec<String>,
     /// `setup.cfg` contributed.
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).

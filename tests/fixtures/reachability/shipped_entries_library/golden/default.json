@@ -25,37 +25,22 @@
     "src/acme/__init__.py",
     "src/acme/__main__.py",
     "src/acme/cli.py",
+    "src/acme/reached_via_main.py",
     "src/acme/used_by_cli.py",
     "tests/test_sample.py"
   ],
   "unreachable": [
     {
       "path": "src/acme/old_api.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "maybe"
     },
     {
       "path": "src/acme/orphan.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "maybe"
     },
     {
       "path": "src/acme/plugin.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
-    },
-    {
-      "path": "src/acme/reached_via_main.py",
-      "confidence": "maybe",
-      "reasons": [
-        "not_reachable"
-      ]
+      "confidence": "maybe"
     }
   ]
 }

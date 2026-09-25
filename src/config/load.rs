@@ -8,7 +8,6 @@ use crate::discovery::ProjectRoot;
 use super::defaults::merge_layers;
 use super::error::ConfigError;
 use super::parse::{parse_pyproject_config, parse_standalone_config};
-use super::source::discover_config_files;
 use super::types::{ChokkinConfig, ConfigSources, LoadedConfig, RuntimeOverrides};
 use super::workspace::resolve_workspace_members;
 
@@ -16,32 +15,27 @@ use super::workspace::resolve_workspace_members;
 ///
 /// Returns defaults when no config files exist. Never executes Python.
 pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
-    let files = discover_config_files(&root.path);
-    let mut layers = Vec::new();
+    let file_at_root = |name: &str| {
+        let path = root.path.join(name);
+        path.is_file().then_some(path)
+    };
     let mut sources = ConfigSources {
-        used_defaults: true,
-        dot_chokkin_toml: files.dot_chokkin_toml.clone(),
-        chokkin_toml: files.chokkin_toml.clone(),
+        dot_chokkin_toml: file_at_root(".chokkin.toml"),
+        chokkin_toml: file_at_root("chokkin.toml"),
         pyproject_tool_chokkin: false,
     };
 
-    if let Some(path) = &files.dot_chokkin_toml {
-        let partial = parse_standalone_config(path)?;
-        if partial.has_any_field() {
-            layers.push(partial);
-        }
-    }
-
-    if let Some(path) = &files.chokkin_toml {
-        let partial = parse_standalone_config(path)?;
-        if partial.has_any_field() {
-            layers.push(partial);
-        }
+    let mut layers = Vec::new();
+    for path in [&sources.dot_chokkin_toml, &sources.chokkin_toml]
+        .into_iter()
+        .flatten()
+    {
+        layers.push(parse_standalone_config(path)?);
     }
 
     let mut uv_workspace = None;
-    if let Some(path) = &files.pyproject_toml {
-        let (partial, uv_hint) = parse_pyproject_config(path)?;
+    if let Some(path) = file_at_root("pyproject.toml") {
+        let (partial, uv_hint) = parse_pyproject_config(&path)?;
         uv_workspace = uv_hint;
         if partial.has_any_field() {
             sources.pyproject_tool_chokkin = true;
@@ -69,7 +63,6 @@ pub fn apply_overrides(config: &mut ChokkinConfig, overrides: &RuntimeOverrides)
     if let Some(confidence) = overrides.confidence_floor {
         config.confidence = confidence;
     }
-    let _ = overrides.strict;
 }
 
 #[cfg(test)]

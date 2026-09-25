@@ -49,15 +49,15 @@ impl fmt::Display for ProjectMode {
 }
 
 /// Minimum confidence for emitted issues (§5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Confidence {
-    /// Only `certain` issues.
-    Certain,
+    /// All issues including `maybe`.
+    Maybe,
     /// `certain` and `likely` issues.
     #[default]
     Likely,
-    /// All issues including `maybe`.
-    Maybe,
+    /// Only `certain` issues.
+    Certain,
 }
 
 impl Confidence {
@@ -79,22 +79,6 @@ impl Confidence {
             "maybe" => Some(Self::Maybe),
             _ => None,
         }
-    }
-
-    /// Numeric rank for floor comparisons (`Certain` is strongest).
-    #[must_use]
-    pub const fn rank(self) -> u8 {
-        match self {
-            Self::Certain => 2,
-            Self::Likely => 1,
-            Self::Maybe => 0,
-        }
-    }
-
-    /// Returns true when `self` meets or exceeds `floor`.
-    #[must_use]
-    pub const fn meets_floor(self, floor: Self) -> bool {
-        self.rank() >= floor.rank()
     }
 }
 
@@ -384,8 +368,6 @@ pub struct ChokkinConfig {
 /// Which config files contributed to the effective configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigSources {
-    /// Hardcoded defaults always contribute.
-    pub used_defaults: bool,
     /// `.chokkin.toml` at the project root, if present.
     pub dot_chokkin_toml: Option<PathBuf>,
     /// `chokkin.toml` at the project root, if present.
@@ -416,15 +398,6 @@ pub struct UvWorkspaceHint {
     pub members: Vec<String>,
 }
 
-/// Source that declared a workspace member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspaceMemberSource {
-    /// `[tool.uv.workspace].members`.
-    Uv,
-    /// `[tool.chokkin.workspaces.<id>]`.
-    Chokkin,
-}
-
 /// Workspace member resolved relative to the project root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedWorkspaceMember {
@@ -435,8 +408,6 @@ pub struct ResolvedWorkspaceMember {
     pub path: String,
     /// Root-relative member `pyproject.toml` path when present.
     pub pyproject_toml: Option<String>,
-    /// Declaration source.
-    pub source: WorkspaceMemberSource,
 }
 
 /// CLI flags that override file config (§2). Unset fields do not override.

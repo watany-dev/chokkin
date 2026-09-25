@@ -1,9 +1,12 @@
 //! Shared rule and issue types for pipeline steps 10–12.
 
+use std::path::Path;
+
 use indexmap::IndexSet;
 
 use crate::config::Confidence;
 use crate::manifest::{DependencyOrigin, LoadedManifest};
+use crate::path_util::normalize_rel_path;
 use crate::plugins::ReferenceOrigin;
 
 /// CHK001–CHK010 rule identifiers (§3).
@@ -32,6 +35,20 @@ pub enum RuleId {
 }
 
 impl RuleId {
+    /// Every rule in `CHK00x` order.
+    pub const ALL: [Self; 10] = [
+        Self::Chk001,
+        Self::Chk002,
+        Self::Chk003,
+        Self::Chk004,
+        Self::Chk005,
+        Self::Chk006,
+        Self::Chk007,
+        Self::Chk008,
+        Self::Chk009,
+        Self::Chk010,
+    ];
+
     /// Stable `CHK00x` code for reporters and `--explain`.
     #[must_use]
     pub const fn as_code(self) -> &'static str {
@@ -176,13 +193,6 @@ pub struct IssueCandidate {
     pub explain: ExplainData,
 }
 
-/// Non-fatal diagnostic from dependency reconciliation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReconcileDiagnostic {
-    /// Diagnostic message.
-    pub message: String,
-}
-
 /// Output of pipeline step 10.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DependencyReport {
@@ -190,8 +200,6 @@ pub struct DependencyReport {
     pub candidates: Vec<IssueCandidate>,
     /// Distributions considered used during reconciliation.
     pub used_distributions: IndexSet<String>,
-    /// Non-fatal reconciliation notes.
-    pub diagnostics: Vec<ReconcileDiagnostic>,
 }
 
 /// Manifest boundary for a single workspace member during dependency reconciliation.
@@ -296,14 +304,14 @@ impl IssueReport {
 #[must_use]
 pub fn issue_stable_target(issue: &Issue) -> String {
     let target = match &issue.subject {
-        IssueSubject::File { path } => normalize_issue_path(path),
+        IssueSubject::File { path } => normalize_rel_path(Path::new(path)),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::Symbol { module, name } => issue.location.file.as_deref().map_or_else(
             || format!("{module}:{name}"),
-            |path| format!("{}:{name}", normalize_issue_path(path)),
+            |path| format!("{}:{name}", normalize_rel_path(Path::new(path))),
         ),
         IssueSubject::Import { module, file, .. } => {
-            format!("{}:{module}", normalize_issue_path(file))
+            format!("{}:{module}", normalize_rel_path(Path::new(file)))
         },
     };
     issue
@@ -318,10 +326,6 @@ pub fn issue_fingerprint(issue: &Issue) -> String {
     format!("{}:{}", issue.rule.as_code(), issue_stable_target(issue))
 }
 
-fn normalize_issue_path(path: &str) -> String {
-    path.replace('\\', "/")
-}
-
 /// Stable sort key for issue candidates within a rule.
 pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
     match subject {
@@ -330,6 +334,16 @@ pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
         IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
     }
+}
+
+/// Keep equal-key candidates in their original order across every reporting path.
+pub(super) fn sort_candidates(candidates: &mut [IssueCandidate]) {
+    candidates.sort_by(|left, right| {
+        left.rule
+            .as_code()
+            .cmp(right.rule.as_code())
+            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
+    });
 }
 
 #[cfg(test)]
@@ -354,6 +368,36 @@ mod tests {
             },
             explain: None,
         }
+    }
+
+    #[test]
+    fn candidate_sort_preserves_equal_key_order() {
+        let candidate = |rule, path: &str, message: &str| IssueCandidate {
+            rule,
+            subject: IssueSubject::File {
+                path: path.to_owned(),
+            },
+            severity: Severity::Warning,
+            confidence: Confidence::Certain,
+            message: message.to_owned(),
+            workspace_member: None,
+            origins: Vec::new(),
+            explain: ExplainData::default(),
+        };
+        let mut candidates = vec![
+            candidate(RuleId::Chk002, "a.py", "last"),
+            candidate(RuleId::Chk001, "b.py", "third"),
+            candidate(RuleId::Chk001, "a.py", "first"),
+            candidate(RuleId::Chk001, "a.py", "second"),
+        ];
+        sort_candidates(&mut candidates);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|c| c.message.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second", "third", "last"]
+        );
     }
 
     #[test]

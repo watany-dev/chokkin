@@ -2,12 +2,13 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use crate::config::{ChokkinConfig, Confidence};
+use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
+use crate::manifest::DeclaredDependency;
 use crate::parser::ParseSummary;
-use crate::resolver::{ResolutionIndex, ResolvedImport, TransitiveIndex};
+use crate::resolver::{ResolvedImport, TransitiveIndex};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
-use crate::sources::DiscoveredSources;
+use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::context::{is_directly_declared, usage_context_for_import};
 use super::used::DeclaredIndex;
@@ -19,18 +20,24 @@ pub(super) struct WorkspaceDeclaredIndex<'a> {
 }
 
 /// Detect missing and transitive-only dependency imports.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn detect_missing_dependencies(
     declared: &DeclaredIndex<'_>,
-    resolution: &ResolutionIndex,
+    dependency: &DependencyRuleContext<'_>,
     reachable: &HashSet<String>,
-    optional_imports: &HashSet<(String, u32)>,
     has_lockfile: bool,
-    config: &ChokkinConfig,
-    sources: &DiscoveredSources,
     workspace_declared: &[WorkspaceDeclaredIndex<'_>],
-    strict: bool,
 ) -> Vec<IssueCandidate> {
+    let DependencyRuleContext {
+        rules: context,
+        config,
+        strict,
+    } = *dependency;
+    let RuleContext {
+        resolution,
+        sources,
+        ..
+    } = *context;
+    let optional_imports = collect_optional_imports(context.parse);
     let mut candidates = Vec::new();
     let mut reported = HashSet::new();
 
@@ -51,13 +58,14 @@ pub(super) fn detect_missing_dependencies(
         }
 
         let usage = usage_context_for_import(&import.file, import.context, sources);
-        let root_declared = declared
-            .get(distribution)
-            .is_some_and(|deps| is_directly_declared(deps, usage, config));
         let workspace_member = import.workspace_member.as_deref();
-        let member_declared = workspace_member.is_some_and(|member_id| {
-            workspace_member_declares(workspace_declared, member_id, distribution, usage, config)
-        });
+        let member_entry = workspace_member
+            .and_then(|member_id| member_declarations(workspace_declared, member_id, distribution));
+        let root_entry = declared.get(distribution).map(Vec::as_slice);
+        let member_declared =
+            member_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
+        let root_declared =
+            root_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
 
         if member_declared
             || (!strict && root_declared)
@@ -66,11 +74,31 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
+        if !strict && usage != super::context::UsageContext::Runtime {
+            continue;
+        }
+
         if strict
             && root_declared
+            && member_entry.is_none()
             && let Some(member_id) = workspace_member
         {
             candidates.push(workspace_missing_candidate(import, distribution, member_id));
+            continue;
+        }
+
+        // Declared, only in a bucket that does not match this usage context.
+        // §10 hands that case to CHK005 alone: it is neither missing (CHK003)
+        // nor transitive-only (CHK004).
+        if governing_declarations(
+            declared,
+            workspace_declared,
+            workspace_member,
+            distribution,
+            strict,
+        )
+        .is_some()
+        {
             continue;
         }
 
@@ -90,18 +118,33 @@ pub(super) fn detect_missing_dependencies(
     candidates
 }
 
-fn workspace_member_declares(
-    workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+/// Declarations that decide between CHK003/CHK004/CHK005 for one import.
+/// Under `--strict` a workspace member's own entry wins and the root is the
+/// fallback; otherwise only the root counts. Missing and misplaced detection
+/// share this lookup so that at most one of them fires per import.
+pub(super) fn governing_declarations<'i, 'a>(
+    declared: &'i DeclaredIndex<'a>,
+    workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
+    workspace_member: Option<&str>,
+    distribution: &str,
+    strict: bool,
+) -> Option<&'i [&'a DeclaredDependency]> {
+    workspace_member
+        .filter(|_| strict)
+        .and_then(|member_id| member_declarations(workspace_declared, member_id, distribution))
+        .or_else(|| declared.get(distribution).map(Vec::as_slice))
+}
+
+fn member_declarations<'i, 'a>(
+    workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
     member_id: &str,
     distribution: &str,
-    usage: super::context::UsageContext,
-    config: &ChokkinConfig,
-) -> bool {
+) -> Option<&'i [&'a DeclaredDependency]> {
     workspace_declared
         .iter()
         .find(|boundary| boundary.member_id == member_id)
         .and_then(|boundary| boundary.declared.get(distribution))
-        .is_some_and(|deps| is_directly_declared(deps, usage, config))
+        .map(Vec::as_slice)
 }
 
 fn workspace_missing_candidate(
@@ -147,6 +190,17 @@ fn optional_missing_candidate(
     } else {
         Severity::Info
     };
+    let (kind, detail) = if import.platform_guarded {
+        (
+            "platform-guarded import",
+            "platform-guarded import — not treated as a hard missing dependency",
+        )
+    } else {
+        (
+            "optional try-import",
+            "try/except ImportError import — not treated as a hard missing dependency",
+        )
+    };
     IssueCandidate {
         rule: RuleId::Chk003,
         subject: IssueSubject::Import {
@@ -156,9 +210,7 @@ fn optional_missing_candidate(
         },
         severity,
         confidence: Confidence::Likely,
-        message: format!(
-            "optional try-import of {distribution} is not declared in any dependency context"
-        ),
+        message: format!("{kind} of {distribution} is not declared in any dependency context"),
         workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
@@ -166,11 +218,8 @@ fn optional_missing_candidate(
             module: import.full_module.clone(),
         }],
         explain: ExplainData {
-            summary: format!("optional import of {distribution} has no declaration"),
-            details: vec![
-                "try/except ImportError import — not treated as a hard missing dependency"
-                    .to_owned(),
-            ],
+            summary: format!("conditional import of {distribution} has no declaration"),
+            details: vec![detail.to_owned()],
         },
     }
 }
@@ -237,7 +286,8 @@ fn missing_candidate(
     }
 }
 
-/// Whether `distribution` appears in the transitive closure of declared direct deps.
+/// Whether `distribution` is reachable only through the transitive closure of the
+/// *other* declared direct dependencies.
 #[must_use]
 pub(super) fn is_transitive_only(
     distribution: &str,
@@ -247,9 +297,11 @@ pub(super) fn is_transitive_only(
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
 
+    // Seeding with `distribution` itself would make any directly declared
+    // dependency look transitive before a single edge is walked.
     for deps in declared.values() {
         for dep in deps {
-            if visited.insert(dep.name.clone()) {
+            if dep.name != distribution && visited.insert(dep.name.clone()) {
                 queue.push_back(dep.name.clone());
             }
         }
@@ -271,12 +323,12 @@ pub(super) fn is_transitive_only(
     false
 }
 
-/// Build a set of optional try-import locations from parse output.
+/// Build a set of conditional import locations from parse output.
 pub(super) fn collect_optional_imports(parse: &ParseSummary) -> HashSet<(String, u32)> {
     let mut optional = HashSet::new();
     for module in &parse.modules {
         for import in &module.imports {
-            if import.optional {
+            if import.optional || import.platform_guarded {
                 optional.insert((module.path.clone(), import.line));
             }
         }
@@ -291,22 +343,97 @@ mod tests {
     use super::*;
     use crate::config::default_config;
     use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
-    use crate::resolver::TransitiveIndex;
+    use crate::resolver::{ResolutionIndex, TransitiveIndex};
+
+    const FILE: &str = "src/app.py";
 
     fn declared_dep(name: &str) -> DeclaredDependency {
+        declared_dep_in(name, DependencyContext::Runtime)
+    }
+
+    fn declared_dep_in(name: &str, context: DependencyContext) -> DeclaredDependency {
         DeclaredDependency {
             name: name.to_owned(),
             extras: Vec::new(),
             marker: None,
             specifier: None,
-            context: DependencyContext::Runtime,
+            context,
             origin: DependencyOrigin {
                 file: "pyproject.toml".to_owned(),
                 line: Some(1),
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         }
+    }
+
+    fn runtime_import(distribution: &str) -> ResolvedImport {
+        ResolvedImport {
+            import_root: distribution.to_owned(),
+            full_module: distribution.to_owned(),
+            file: FILE.to_owned(),
+            workspace_member: None,
+            line: 1,
+            context: crate::parser::ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some(distribution.to_owned()),
+            confidence: crate::resolver::ResolveConfidence::Certain,
+        }
+    }
+
+    fn sources() -> crate::sources::DiscoveredSources {
+        crate::sources::DiscoveredSources {
+            root: crate::discovery::ProjectRoot {
+                path: std::env::temp_dir(),
+                marker: crate::discovery::RootMarker::PyProjectToml,
+                start: std::env::temp_dir(),
+            },
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Src,
+                packages: vec!["acme".to_owned()],
+                inferred_globs: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Run the rule on a single runtime import of `distribution` from `src/app.py`.
+    fn detect(
+        declared: &DeclaredIndex<'_>,
+        distribution: &str,
+        transitive: TransitiveIndex,
+    ) -> Vec<IssueCandidate> {
+        let config = default_config();
+        let sources = sources();
+        let resolution = ResolutionIndex {
+            imports: vec![runtime_import(distribution)],
+            warnings: Vec::new(),
+            transitive,
+            binary_resolutions: BTreeMap::new(),
+        };
+        let graph = crate::graph::ProjectGraph::new(sources.root.clone());
+        detect_missing_dependencies(
+            declared,
+            &DependencyRuleContext {
+                rules: &RuleContext {
+                    resolution: &resolution,
+                    sources: &sources,
+                    graph: &graph,
+                    reachability: &crate::reachability::ReachabilityReport::default(),
+                    parse: &ParseSummary::default(),
+                },
+                config: &config,
+                strict: false,
+            },
+            &HashSet::from([FILE.to_owned()]),
+            true,
+            &[],
+        )
     }
 
     #[test]
@@ -322,57 +449,38 @@ mod tests {
     }
 
     #[test]
-    fn direct_declaration_skips_missing() {
-        let config = default_config();
+    fn declared_distribution_is_never_transitive_only() {
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
-        let import = ResolvedImport {
-            import_root: "requests".to_owned(),
-            full_module: "requests".to_owned(),
-            file: "src/app.py".to_owned(),
-            workspace_member: None,
-            line: 1,
-            context: crate::parser::ImportContext::Runtime,
-            optional: false,
-            platform_guarded: false,
-            origin: ModuleOrigin::ThirdParty,
-            distribution: Some("requests".to_owned()),
-            confidence: crate::resolver::ResolveConfidence::Certain,
-        };
-        let reachable = HashSet::from(["src/app.py".to_owned()]);
-        let candidates = detect_missing_dependencies(
+        assert!(!is_transitive_only(
+            "requests",
             &index,
-            &ResolutionIndex {
-                imports: vec![import],
-                warnings: Vec::new(),
-                transitive: TransitiveIndex::empty(),
-                binary_resolutions: BTreeMap::new(),
-            },
-            &reachable,
-            &HashSet::new(),
-            true,
-            &config,
-            &crate::sources::DiscoveredSources {
-                root: crate::discovery::ProjectRoot {
-                    path: std::env::temp_dir(),
-                    marker: crate::discovery::RootMarker::PyProjectToml,
-                    start: std::env::temp_dir(),
-                },
-                layout: crate::sources::LayoutInfo {
-                    layout: crate::sources::ProjectLayout::Src,
-                    packages: vec!["acme".to_owned()],
-                    inferred_globs: Vec::new(),
-                    flat_candidates: Vec::new(),
-                    ambiguous_flat_resolution: false,
-                },
-                effective_globs: Vec::new(),
-                files: Vec::new(),
-                warnings: Vec::new(),
-            },
-            &[],
-            false,
-        );
-        assert!(candidates.is_empty());
+            &TransitiveIndex::default()
+        ));
+    }
+
+    #[test]
+    fn direct_declaration_skips_missing() {
+        let requests = declared_dep("requests");
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("requests".to_owned(), vec![&requests]);
+        assert!(detect(&index, "requests", TransitiveIndex::default()).is_empty());
+    }
+
+    /// §10: a dev-group-only dependency used at runtime is CHK005 territory,
+    /// so this rule must stay silent instead of adding CHK003/CHK004.
+    #[test]
+    fn dev_group_only_declaration_is_left_to_misplaced() {
+        let pytest = declared_dep_in("pytest", DependencyContext::Group("dev".to_owned()));
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("pytest".to_owned(), vec![&pytest]);
+
+        assert!(detect(&index, "pytest", TransitiveIndex::default()).is_empty());
+
+        let transitive = TransitiveIndex {
+            edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),
+        };
+        assert!(detect(&index, "pytest", transitive).is_empty());
     }
 }

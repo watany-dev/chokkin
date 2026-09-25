@@ -2,30 +2,36 @@
 
 use std::collections::HashSet;
 
-use crate::config::{ChokkinConfig, Confidence};
+use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
-use crate::resolver::ResolutionIndex;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
-use crate::sources::DiscoveredSources;
+use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::context::{
-    DeclarationBucket, UsageContext, declaration_bucket, usage_context_for_import,
+    DeclarationBucket, UsageContext, declaration_bucket, declaration_buckets, include_path_details,
+    usage_context_for_import,
 };
-use super::missing::WorkspaceDeclaredIndex;
+use super::missing::{WorkspaceDeclaredIndex, governing_declarations};
 use super::used::DeclaredIndex;
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 pub(super) fn detect_misplaced_dependencies(
     declared: &DeclaredIndex<'_>,
-    resolution: &ResolutionIndex,
+    dependency: &DependencyRuleContext<'_>,
     reachable: &HashSet<String>,
-    config: &ChokkinConfig,
-    sources: &DiscoveredSources,
     workspace_declared: &[WorkspaceDeclaredIndex<'_>],
-    strict: bool,
 ) -> Vec<IssueCandidate> {
+    let DependencyRuleContext {
+        rules: context,
+        config,
+        strict,
+    } = *dependency;
+    let RuleContext {
+        resolution,
+        sources,
+        ..
+    } = *context;
     let mut candidates = Vec::new();
     let mut reported = HashSet::new();
 
@@ -46,28 +52,24 @@ pub(super) fn detect_misplaced_dependencies(
         }
 
         let workspace_member = import.workspace_member.as_deref();
-        let declarations = workspace_member
-            .filter(|_| strict)
-            .and_then(|member_id| {
-                workspace_declared
-                    .iter()
-                    .find(|boundary| boundary.member_id == member_id)
-                    .and_then(|boundary| boundary.declared.get(distribution))
-            })
-            .or_else(|| {
-                if strict && workspace_member.is_some() {
-                    None
-                } else {
-                    declared.get(distribution)
-                }
-            });
+        let declarations = governing_declarations(
+            declared,
+            workspace_declared,
+            workspace_member,
+            distribution,
+            strict,
+        );
         let Some(declarations) = declarations else {
             continue;
         };
 
-        let has_runtime = declarations.iter().any(|dep| {
+        let buckets: Vec<DeclarationBucket> = declarations
+            .iter()
+            .flat_map(|&dep| declaration_buckets(dep, &config.dependencies))
+            .collect();
+        let has_runtime = buckets.iter().any(|bucket| {
             matches!(
-                declaration_bucket(&dep.context, &config.dependencies),
+                bucket,
                 DeclarationBucket::Runtime | DeclarationBucket::Optional(_)
             )
         });
@@ -75,12 +77,9 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         }
 
-        let has_dev_only = declarations.iter().any(|dep| {
-            matches!(
-                declaration_bucket(&dep.context, &config.dependencies),
-                DeclarationBucket::Dev | DeclarationBucket::Type
-            )
-        });
+        let has_dev_only = buckets
+            .iter()
+            .any(|bucket| matches!(bucket, DeclarationBucket::Dev | DeclarationBucket::Type));
         if !has_dev_only {
             continue;
         }
@@ -114,7 +113,13 @@ pub(super) fn detect_misplaced_dependencies(
             }],
             explain: ExplainData {
                 summary: format!("{distribution} is misplaced for runtime usage"),
-                details: vec![format!("declared in: {}", contexts.join(", "))],
+                details: std::iter::once(format!("declared in: {}", contexts.join(", ")))
+                    .chain(
+                        declarations
+                            .iter()
+                            .flat_map(|&dep| include_path_details(dep)),
+                    )
+                    .collect(),
             },
         });
     }

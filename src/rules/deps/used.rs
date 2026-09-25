@@ -9,6 +9,7 @@ use crate::manifest::LoadedManifest;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
+use crate::rules::RuleContext;
 
 /// Index of declared dependencies keyed by normalized distribution name.
 pub(super) type DeclaredIndex<'a> = BTreeMap<String, Vec<&'a crate::manifest::DeclaredDependency>>;
@@ -41,14 +42,17 @@ pub(super) fn has_lockfile(manifest: &LoadedManifest, resolution: &ResolutionInd
 }
 
 /// Distributions used by reachable imports, plugin refs, and binaries.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn collect_used_distributions(
-    resolution: &ResolutionIndex,
-    reachability: &ReachabilityReport,
+    context: &RuleContext<'_>,
     plugins: &PluginHints,
-    graph: &ProjectGraph,
-    binary_resolutions: &BTreeMap<String, String>,
 ) -> IndexSet<String> {
+    let RuleContext {
+        resolution,
+        reachability,
+        graph,
+        ..
+    } = *context;
+    let binary_resolutions = &resolution.binary_resolutions;
     let reachable = reachable_paths(graph, reachability);
     let mut used = IndexSet::new();
 
@@ -119,7 +123,7 @@ mod tests {
             },
             warnings: Vec::new(),
         };
-        let resolution = ResolutionIndex::empty();
+        let resolution = ResolutionIndex::default();
         assert!(has_lockfile(&manifest, &resolution));
     }
 
@@ -138,7 +142,7 @@ mod tests {
             })
             .expect("file id");
         let reachable = {
-            let mut report = ReachabilityReport::empty();
+            let mut report = ReachabilityReport::default();
             report.reachable.insert(file_id);
             report
         };
@@ -157,20 +161,34 @@ mod tests {
                 confidence: ResolveConfidence::Certain,
             }],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
+            transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
         };
+        let sources = crate::sources::DiscoveredSources {
+            root: graph.root.clone(),
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Src,
+                packages: Vec::new(),
+                inferred_globs: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
         let used = collect_used_distributions(
-            &resolution,
-            &reachable,
+            &RuleContext {
+                resolution: &resolution,
+                reachability: &reachable,
+                graph: &graph,
+                sources: &sources,
+                parse: &crate::parser::ParseSummary::default(),
+            },
             &PluginHints {
                 contributions: Vec::new(),
                 config_binary_usages: Vec::new(),
                 config_used_distributions: Vec::new(),
                 warnings: Vec::new(),
             },
-            &graph,
-            &BTreeMap::new(),
         );
         assert!(used.contains("pyyaml"));
     }
@@ -189,6 +207,7 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         };
         let manifest = LoadedManifest {
             root: ProjectRoot {

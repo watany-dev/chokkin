@@ -8,14 +8,12 @@ Usage:
   scripts/generate-chk003-labels.py findings.tsv >> scripts/oss-fixtures.labels.tsv
 """
 
-from __future__ import annotations
-
 import csv
 import sys
 from pathlib import Path
 
 
-def _classify(slug: str, target: str, message: str) -> tuple[str, str, str] | None:
+def _classify(target: str, message: str) -> tuple[str, str, str] | None:
     if message.startswith("optional try-import"):
         return (
             "fp",
@@ -68,7 +66,7 @@ def _main() -> int:
             slug, _code, target, _verdict, _bucket, _conf, message = row[:7]
             if slug == "missing_yaml" and target == "src/acme/main.py:yaml":
                 continue
-            verdict = _classify(slug, target, message)
+            verdict = _classify(target, message)
             if verdict is None:
                 print(
                     f"unclassified CHK003: {slug}\t{target}\t{message}",

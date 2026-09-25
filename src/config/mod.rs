@@ -4,7 +4,6 @@ mod defaults;
 mod error;
 mod load;
 mod parse;
-mod source;
 mod types;
 mod workspace;
 
@@ -14,5 +13,5 @@ pub use load::{apply_overrides, load_config};
 pub use types::{
     ChokkinConfig, Confidence, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
     PluginId, ProjectMode, ResolvedWorkspaceMember, RuntimeOverrides, SeverityLevel, TargetVersion,
-    UvWorkspaceHint, WorkspaceMemberSource, WorkspaceOverride,
+    UvWorkspaceHint, WorkspaceOverride,
 };

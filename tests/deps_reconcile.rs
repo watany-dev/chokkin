@@ -42,8 +42,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugin hints");
     let target = resolve_target_version(&loaded.effective, &manifest);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production)
-        .expect("entry plan");
+    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -55,17 +54,15 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
-        &root,
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
-    )
-    .expect("resolve imports");
+    );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph,
         &sources,
@@ -131,6 +128,21 @@ fn has_rule(report: &chokkin::DependencyReport, rule: RuleId, name: &str) -> boo
     })
 }
 
+/// CHK003/CHK004/CHK005 rules reported for `name`, which §10 keeps exclusive.
+fn rules_mentioning(report: &chokkin::DependencyReport, name: &str) -> Vec<RuleId> {
+    report
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            matches!(
+                candidate.rule,
+                RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk005
+            ) && candidate.message.contains(name)
+        })
+        .map(|candidate| candidate.rule)
+        .collect()
+}
+
 fn candidate_for_distribution<'a>(
     report: &'a chokkin::DependencyReport,
     rule: RuleId,
@@ -163,6 +175,48 @@ fn missing_yaml_emits_chk003() {
         .find(|candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("pyyaml"))
         .expect("pyyaml missing");
     assert_eq!(yaml.severity, Severity::Error);
+}
+
+#[test]
+fn non_runtime_missing_is_suppressed_by_default_and_reported_in_strict_mode() {
+    let default = reconcile_fixture("dev_missing");
+    assert!(!default.candidates.iter().any(|candidate| {
+        candidate.rule == RuleId::Chk003
+            && (candidate.message.contains("pyyaml") || candidate.message.contains("boto3"))
+    }));
+
+    let strict = reconcile_fixture_with_strict("dev_missing", true);
+    assert!(strict.candidates.iter().any(|candidate| {
+        candidate.rule == RuleId::Chk003 && candidate.message.contains("pyyaml")
+    }));
+    assert!(strict.candidates.iter().any(|candidate| {
+        candidate.rule == RuleId::Chk003 && candidate.message.contains("boto3")
+    }));
+}
+
+#[test]
+fn optional_missing_remains_an_informational_candidate() {
+    let report = reconcile_fixture("optional_missing");
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("pyyaml"))
+        .expect("optional pyyaml missing");
+    assert_eq!(candidate.severity, Severity::Info);
+    assert_eq!(candidate.confidence, Confidence::Likely);
+}
+
+#[test]
+fn platform_guard_missing_is_not_a_hard_error() {
+    let report = reconcile_fixture("platform_guard_missing");
+    let candidate = report
+        .candidates
+        .iter()
+        .find(|candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("tzdata"))
+        .expect("platform-guarded tzdata missing");
+    assert_eq!(candidate.severity, Severity::Info);
+    assert_eq!(candidate.confidence, Confidence::Likely);
+    assert!(candidate.message.contains("platform-guarded"));
 }
 
 #[test]
@@ -212,6 +266,26 @@ fn strict_workspace_member_reports_member_local_misplaced_dependency() {
         })
         .expect("member-local pytest context mismatch");
     assert_eq!(candidate.severity, Severity::Warning);
+    assert_eq!(rules_mentioning(&report, "pytest"), vec![RuleId::Chk005]);
+}
+
+/// Issue #263: with no member entry the root declaration is the fallback, so a
+/// root dev-only dependency used at runtime by a member is still CHK005.
+#[test]
+fn strict_workspace_member_falls_back_to_root_dev_only_declaration() {
+    let report = reconcile_fixture_with_strict("workspace_member_root_dev", true);
+    assert_eq!(rules_mentioning(&report, "requests"), vec![RuleId::Chk005]);
+    let candidate = candidate_for_distribution(&report, RuleId::Chk005, "requests")
+        .expect("root dev-only requests used at runtime by member");
+    assert_eq!(candidate.workspace_member.as_deref(), Some("api"));
+}
+
+/// Issue #263: the member entry takes precedence over the root's runtime
+/// declaration, so only CHK005 fires (no workspace CHK003 alongside it).
+#[test]
+fn strict_workspace_member_entry_shadows_root_declaration() {
+    let report = reconcile_fixture_with_strict("workspace_member_dev_over_root", true);
+    assert_eq!(rules_mentioning(&report, "pytest"), vec![RuleId::Chk005]);
 }
 
 #[test]
@@ -334,4 +408,54 @@ fn platform_guard_import_marks_tzdata_used() {
     let report = reconcile_fixture("platform_guard_import");
     assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
     assert!(report.used_distributions.contains("tzdata"));
+}
+
+#[test]
+fn include_group_is_checked_once_under_its_declaring_group() {
+    let manifest = load_deps(&fixture("include_group"), false).manifest;
+    assert!(manifest.warnings.is_empty(), "{:?}", manifest.warnings);
+    let boto3 = manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.name == "boto3")
+        .collect::<Vec<_>>();
+    assert_eq!(boto3.len(), 1);
+    assert_eq!(
+        boto3[0].included_via,
+        vec![vec!["server".to_owned(), "Shared_Libs".to_owned()]]
+    );
+
+    let report = reconcile_fixture("include_group");
+    // httpx is only declared in a group, but `server` pulls it into runtime.
+    assert!(!has_rule(&report, RuleId::Chk005, "httpx"));
+    assert!(!has_rule(&report, RuleId::Chk002, "pytest"));
+    assert!(
+        report
+            .candidates
+            .iter()
+            .all(|candidate| candidate.rule != RuleId::Chk009)
+    );
+
+    let unused = report
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.rule == RuleId::Chk002)
+        .collect::<Vec<_>>();
+    assert_eq!(unused.len(), 1);
+    let boto3 = unused[0];
+    assert!(matches!(
+        &boto3.subject,
+        chokkin::IssueSubject::Distribution { name } if name == "boto3"
+    ));
+    assert!(matches!(
+        boto3.origins.as_slice(),
+        [chokkin::Origin::Manifest(origin)] if origin.label == "dependency-groups.Shared_Libs[1]"
+    ));
+    assert!(
+        boto3
+            .explain
+            .details
+            .iter()
+            .any(|line| line == "included via dependency-groups: server -> Shared_Libs")
+    );
 }

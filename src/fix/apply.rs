@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
-use crate::rules::{IssueReport, RuleId};
+use crate::rules::IssueReport;
 
 use super::containment::resolve_contained_path;
 use super::error::FixError;
@@ -16,47 +16,36 @@ use super::types::{
     AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason, WorkspaceFixManifest,
 };
 
-/// Apply safe automatic fixes for fixable issues in `report`.
-///
-/// # Errors
-///
-/// Returns [`FixError`] when a manifest file cannot be read or written.
-pub fn apply_fixes(
-    report: &IssueReport,
-    root: &ProjectRoot,
-    manifest: &LoadedManifest,
-    options: FixOptions,
-) -> Result<FixReport, FixError> {
-    apply_fixes_with_workspace(report, root, manifest, &[], options)
-}
-
 /// Apply safe automatic fixes with workspace member manifest context.
-///
-/// # Errors
-///
-/// Returns [`FixError`] when a manifest file cannot be read or written.
-#[allow(clippy::unnecessary_wraps)]
 pub fn apply_fixes_with_workspace(
     report: &IssueReport,
     root: &ProjectRoot,
     manifest: &LoadedManifest,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
-) -> Result<FixReport, FixError> {
+) -> FixReport {
     let mut report_out = FixReport::default();
 
     let actions = match plan_fixes(report, manifest, workspace_manifests, options) {
         Ok(actions) => actions,
         Err(skipped) => {
             report_out.skipped = skipped;
-            return Ok(report_out);
+            return report_out;
         },
     };
 
     for action in actions {
         match apply_action(root.path.as_path(), &action, options) {
             Ok(applied) => report_out.applied.push(applied),
-            Err(error) => report_out.skipped.push(skipped_from_error(&action, &error)),
+            Err(error) => {
+                let (rule, subject) = action.rule_subject();
+                report_out.skipped.push(SkippedFix {
+                    rule,
+                    subject,
+                    reason: SkippedReason::UnsupportedTarget,
+                    detail: error.to_string(),
+                });
+            },
         }
     }
 
@@ -71,7 +60,7 @@ pub fn apply_fixes_with_workspace(
             .push("Run `poetry lock` to refresh poetry.lock".to_owned());
     }
 
-    Ok(report_out)
+    report_out
 }
 
 fn apply_action(
@@ -79,63 +68,56 @@ fn apply_action(
     action: &FixAction,
     options: FixOptions,
 ) -> Result<AppliedFix, FixError> {
-    if options.dry_run {
-        return Ok(applied_preview(action));
-    }
+    let (file, description) = if options.dry_run {
+        preview(action)
+    } else {
+        perform(root, action)?
+    };
+    let (rule, subject) = action.rule_subject();
+    Ok(AppliedFix {
+        rule,
+        subject,
+        file: file.to_owned(),
+        description,
+    })
+}
 
+/// Returns the edited file and a description of the change.
+fn perform<'a>(root: &Path, action: &'a FixAction) -> Result<(&'a str, String), FixError> {
     match action {
         FixAction::RemoveDependency {
-            rule,
             name,
             file,
             label,
             line,
+            ..
         } => {
             let path = resolve_contained_path(root, file)?;
-            let description = if std::path::Path::new(file)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
-            {
+            let extension = Path::new(file).extension();
+            let description = if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("toml")) {
                 remove_by_label(&path, label)?
-            } else if std::path::Path::new(file)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("cfg"))
-            {
+            } else if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("cfg")) {
                 remove_setup_cfg_dependency(&path, name)?
             } else {
                 remove_dependency_line(&path, name, *line)?
             };
-            Ok(AppliedFix {
-                rule: *rule,
-                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-                file: file.clone(),
-                description,
-            })
+            Ok((file.as_str(), description))
         },
         FixAction::MoveToRuntime {
-            name,
             file,
             from_label,
             raw,
+            ..
         } => {
             let path = resolve_contained_path(root, file)?;
-            let description = move_group_to_runtime(&path, from_label, raw)?;
-            Ok(AppliedFix {
-                rule: RuleId::Chk005,
-                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-                file: file.clone(),
-                description,
-            })
+            Ok((
+                file.as_str(),
+                move_group_to_runtime(&path, from_label, raw)?,
+            ))
         },
         FixAction::AddMissingDependency { name, file } => {
             let path = resolve_contained_path(root, file)?;
-            let description = add_runtime_dependency(&path, name)?;
-            Ok(AppliedFix {
-                rule: RuleId::Chk003,
-                subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-                file: file.clone(),
-                description,
-            })
+            Ok((file.as_str(), add_runtime_dependency(&path, name)?))
         },
         FixAction::RemoveFile { path: file } => {
             let path = resolve_contained_path(root, file)?;
@@ -143,71 +125,28 @@ fn apply_action(
                 path: file.clone(),
                 source,
             })?;
-            Ok(AppliedFix {
-                rule: RuleId::Chk001,
-                subject: crate::rules::IssueSubject::File { path: file.clone() },
-                file: file.clone(),
-                description: format!("removed unreachable file `{file}`"),
-            })
+            Ok((file.as_str(), format!("removed unreachable file `{file}`")))
         },
     }
 }
 
-fn applied_preview(action: &FixAction) -> AppliedFix {
+/// Dry-run counterpart of `perform`.
+fn preview(action: &FixAction) -> (&str, String) {
     match action {
-        FixAction::RemoveDependency {
-            rule, name, file, ..
-        } => AppliedFix {
-            rule: *rule,
-            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-            file: file.clone(),
-            description: format!("would remove `{name}` from {file}"),
+        FixAction::RemoveDependency { name, file, .. } => {
+            (file.as_str(), format!("would remove `{name}` from {file}"))
         },
-        FixAction::MoveToRuntime { name, file, .. } => AppliedFix {
-            rule: RuleId::Chk005,
-            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-            file: file.clone(),
-            description: format!("would move `{name}` to runtime in {file}"),
-        },
-        FixAction::AddMissingDependency { name, file } => AppliedFix {
-            rule: RuleId::Chk003,
-            subject: crate::rules::IssueSubject::Distribution { name: name.clone() },
-            file: file.clone(),
-            description: format!("would add `{name}` to {file}"),
-        },
-        FixAction::RemoveFile { path } => AppliedFix {
-            rule: RuleId::Chk001,
-            subject: crate::rules::IssueSubject::File { path: path.clone() },
-            file: path.clone(),
-            description: format!("would remove unreachable file `{path}`"),
-        },
-    }
-}
-
-fn skipped_from_error(action: &FixAction, error: &FixError) -> SkippedFix {
-    let (rule, subject) = match action {
-        FixAction::RemoveDependency { rule, name, .. } => (
-            *rule,
-            crate::rules::IssueSubject::Distribution { name: name.clone() },
+        FixAction::MoveToRuntime { name, file, .. } => (
+            file.as_str(),
+            format!("would move `{name}` to runtime in {file}"),
         ),
-        FixAction::MoveToRuntime { name, .. } => (
-            RuleId::Chk005,
-            crate::rules::IssueSubject::Distribution { name: name.clone() },
-        ),
-        FixAction::AddMissingDependency { name, .. } => (
-            RuleId::Chk003,
-            crate::rules::IssueSubject::Distribution { name: name.clone() },
-        ),
+        FixAction::AddMissingDependency { name, file } => {
+            (file.as_str(), format!("would add `{name}` to {file}"))
+        },
         FixAction::RemoveFile { path } => (
-            RuleId::Chk001,
-            crate::rules::IssueSubject::File { path: path.clone() },
+            path.as_str(),
+            format!("would remove unreachable file `{path}`"),
         ),
-    };
-    SkippedFix {
-        rule,
-        subject,
-        reason: SkippedReason::UnsupportedTarget,
-        detail: error.to_string(),
     }
 }
 
@@ -220,7 +159,9 @@ mod tests {
         DeclaredDependency, DependencyContext, DependencyOrigin, LockfileGraph, ManifestSources,
         ProjectMetadata,
     };
-    use crate::rules::{ExplainData, Issue, IssueLocation, IssueReport, IssueSummary, Severity};
+    use crate::rules::{
+        ExplainData, Issue, IssueLocation, IssueReport, IssueSummary, RuleId, Severity,
+    };
 
     fn empty_manifest(root: &ProjectRoot) -> LoadedManifest {
         LoadedManifest {
@@ -349,6 +290,7 @@ mod tests {
                     label: "project.dependencies[0]".to_owned(),
                 },
                 opaque: false,
+                included_via: Vec::new(),
             }],
             constraints: Vec::new(),
             uv_workspace: None,
@@ -387,16 +329,16 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert_eq!(fix_report.applied.len(), 1);
         let contents = std::fs::read_to_string(&path).expect("read");
@@ -414,7 +356,7 @@ mod tests {
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
         let fix_report =
-            apply_fixes(&report, &root, &manifest, FixOptions::default()).expect("apply");
+            apply_fixes_with_workspace(&report, &root, &manifest, &[], FixOptions::default());
 
         assert!(dir.path().join("src/legacy.py").exists());
         assert!(fix_report.applied.is_empty());
@@ -435,17 +377,17 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 allow_remove_files: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert!(dir.path().join("src/legacy.py").exists());
         assert_eq!(fix_report.applied.len(), 1);
@@ -462,16 +404,16 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 allow_remove_files: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert!(!dir.path().join("src/legacy.py").exists());
         assert_eq!(fix_report.applied.len(), 1);
@@ -502,21 +444,22 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         });
         manifest.sources.pyproject_toml = true;
         manifest.sources.poetry = true;
         let report = issue_report(unused_dependency_issue("boto3"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert!(
             fix_report
@@ -537,16 +480,16 @@ mod tests {
         manifest.sources.pyproject_toml = true;
         let report = issue_report(missing_dependency_issue("pyyaml"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert_eq!(fix_report.applied.len(), 1);
         let updated = std::fs::read_to_string(&path).expect("read");
@@ -589,8 +532,7 @@ mod tests {
                 add_missing: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("apply");
+        );
 
         assert_eq!(fix_report.applied.len(), 1);
         assert_eq!(fix_report.applied[0].file, "services/api/pyproject.toml");

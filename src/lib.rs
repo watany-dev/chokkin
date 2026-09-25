@@ -34,35 +34,31 @@ pub mod reachability;
 pub mod reporters;
 pub mod resolver;
 pub mod rules;
-pub mod schema;
 pub mod sources;
 
 pub use baseline::{
     BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
 };
 pub use cache::{
-    CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheKey, ParseCacheStats,
-    ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
+    CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheBundle, ParseCacheKey,
+    ParseCacheStats, ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
     ScanInputFingerprints, SourceFingerprint,
 };
 pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
     ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
     LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, SeverityLevel, TargetVersion,
-    UvWorkspaceHint, WorkspaceMemberSource, WorkspaceOverride, apply_overrides, default_config,
-    load_config,
+    UvWorkspaceHint, WorkspaceOverride, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
-    EntryError, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
+    EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
     build_entry_roots,
 };
-pub use fix::{
-    AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason, apply_fixes,
-};
+pub use fix::{AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason};
 pub use graph::{
-    DistributionId, DistributionNode, EntryId, EntryNode, FileId, FileNode, GraphEdge, GraphError,
-    ModuleId, ModuleNode, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+    DistributionId, EntryId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode,
+    ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
@@ -71,9 +67,9 @@ pub use manifest::{
     extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
-    DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef, ParseDiagnostic,
-    ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind, extract_ignores,
-    parse_file, parse_project_sources, parse_project_sources_with_cache,
+    DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,
+    ParseDiagnostic, ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,
+    extract_ignores, parse_file, parse_project_sources, parse_project_sources_with_cache,
 };
 pub use pipeline::{
     AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,
@@ -81,29 +77,26 @@ pub use pipeline::{
     write_probe_warnings,
 };
 pub use plugins::{
-    BinaryUsage, FileContextOverride, FrameworkUsedGlob, ModuleReference, PluginContribution,
-    PluginEntry, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference,
-    extract_plugin_hints, extract_plugin_hints_with_cache,
+    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry,
+    PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
+    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_parse,
 };
 pub use reachability::{
-    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile,
-    UnreachableReason, UsedModule, analyze_reachability, analyze_reachability_with_cache,
-    path_to_module, trace_to_file,
+    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
+    analyze_reachability, path_to_module, trace_to_file,
 };
 pub use reporters::{
-    CompactReporter, DefaultReporter, GithubReporter, JsonReporter, MarkdownReporter,
-    RenderContext, Reporter, ReporterId, SarifReporter, config_label_from_sources, format_subject,
-    render_issues,
+    RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
 };
 pub use resolver::{
-    ResolutionIndex, ResolveConfidence, ResolveError, ResolveWarning, ResolvedImport,
-    TransitiveIndex, apply_resolution_to_graph, import_root, resolve_imports,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
+    apply_resolution_to_graph, import_root, resolve_imports,
 };
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, Origin, ReconcileDiagnostic, RuleId, Severity, SuppressReason, SuppressedIssue,
-    SymbolId, SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
-    explain_issue, issue_fingerprint, issue_stable_target, reconcile_dependencies,
+    IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue, SymbolId,
+    SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues, explain_issue,
+    issue_fingerprint, issue_stable_target, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

@@ -4,6 +4,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 #![allow(clippy::multiple_crate_versions)] // pep508_rs depends on thiserror 1.x
 
+use std::fmt::Display;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
@@ -68,11 +69,6 @@ fn main() -> ExitCode {
         return ExitCode::from(ExitStatus::Success.code());
     }
 
-    if let Err(message) = args.validate() {
-        eprintln!("{message}");
-        return ExitCode::from(ExitStatus::UsageError.code());
-    }
-
     let start = args.path.as_deref().unwrap_or_else(|| Path::new("."));
     let overrides = args.runtime_overrides();
 
@@ -91,14 +87,7 @@ fn main() -> ExitCode {
         args.analyze_options(),
     ) {
         Ok(report) => run_analysis(&args, report),
-        Err(error) if error.is_usage_error() => {
-            eprintln!("{error}");
-            ExitCode::from(ExitStatus::UsageError.code())
-        },
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::from(ExitStatus::InternalError.code())
-        },
+        Err(error) => fail(&error, error.is_usage_error()),
     }
 }
 
@@ -108,14 +97,7 @@ fn run_init(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverri
             println!("wrote starter [tool.chokkin] to {}", report.path.display());
             ExitCode::from(ExitStatus::Success.code())
         },
-        Err(error) if error.is_usage_error() => {
-            eprintln!("{error}");
-            ExitCode::from(ExitStatus::UsageError.code())
-        },
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::from(ExitStatus::InternalError.code())
-        },
+        Err(error) => fail(&error, error.is_usage_error()),
     }
 }
 
@@ -129,24 +111,14 @@ fn run_probe(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverr
             }
             ExitCode::from(ExitStatus::Success.code())
         },
-        Err(error) if error.is_usage_error() => {
-            eprintln!("{error}");
-            ExitCode::from(ExitStatus::UsageError.code())
-        },
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::from(ExitStatus::InternalError.code())
-        },
+        Err(error) => fail(&error, error.is_usage_error()),
     }
 }
 
 fn run_analysis(args: &CliArgs, report: AnalysisReport) -> ExitCode {
-    if let Err(error) = write_probe_warnings(&report.probe.warnings, &mut std::io::stderr()) {
-        let _ = error;
-        return ExitCode::from(ExitStatus::InternalError.code());
-    }
-    if let Err(error) = write_probe_warnings(&report.warnings, &mut std::io::stderr()) {
-        let _ = error;
+    if write_probe_warnings(&report.probe.warnings, &mut std::io::stderr()).is_err()
+        || write_probe_warnings(&report.warnings, &mut std::io::stderr()).is_err()
+    {
         return ExitCode::from(ExitStatus::InternalError.code());
     }
 
@@ -205,6 +177,16 @@ fn run_analysis(args: &CliArgs, report: AnalysisReport) -> ExitCode {
     }
 
     ExitCode::from(report.issues.exit_status.code())
+}
+
+fn fail(error: &dyn Display, usage: bool) -> ExitCode {
+    eprintln!("{error}");
+    let status = if usage {
+        ExitStatus::UsageError
+    } else {
+        ExitStatus::InternalError
+    };
+    ExitCode::from(status.code())
 }
 
 fn print_stdout(text: &str) -> std::io::Result<()> {

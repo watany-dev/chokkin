@@ -5,82 +5,76 @@ use std::path::Path;
 
 use crate::manifest::ProjectMetadata;
 
-use super::types::{FlatResolution, LayoutInfo, ProjectLayout};
+use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
 
 const NON_PACKAGE_DIRS: &[&str] = &["tests", "scripts", "docs", "build", "dist", ".venv"];
 
-/// Infer project layout and default `project` globs (§3.1).
+/// Infer project layout and default `project` globs (§3.1), plus a warning
+/// when several flat-layout packages exist and metadata cannot pick one.
 #[must_use]
-pub fn infer_layout(root: &Path, metadata: &ProjectMetadata) -> LayoutInfo {
+pub fn infer_layout(
+    root: &Path,
+    metadata: &ProjectMetadata,
+) -> (LayoutInfo, Option<SourcesWarning>) {
     let src_dir = root.join("src");
     if src_dir.is_dir() {
         let packages = packages_with_init(&src_dir, None);
         if !packages.is_empty() {
             let inferred_globs = default_globs(ProjectLayout::Src, &packages);
-            return LayoutInfo {
+            let layout = LayoutInfo {
                 layout: ProjectLayout::Src,
                 packages,
                 inferred_globs,
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             };
+            return (layout, None);
         }
     }
 
     let flat_candidates = packages_with_init(root, Some(NON_PACKAGE_DIRS));
     if !flat_candidates.is_empty() {
-        let resolution = resolve_flat_packages(&flat_candidates, metadata);
-        let inferred_globs = default_globs(ProjectLayout::Flat, &resolution.packages);
-        return LayoutInfo {
+        let (packages, warning) = resolve_flat_packages(flat_candidates, metadata);
+        let inferred_globs = default_globs(ProjectLayout::Flat, &packages);
+        let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
-            packages: resolution.packages,
+            packages,
             inferred_globs,
-            flat_candidates,
-            ambiguous_flat_resolution: resolution.ambiguous,
         };
+        return (layout, warning);
     }
 
-    LayoutInfo {
+    let layout = LayoutInfo {
         layout: ProjectLayout::Unknown,
         packages: Vec::new(),
         inferred_globs: default_globs(ProjectLayout::Unknown, &[]),
-        flat_candidates: Vec::new(),
-        ambiguous_flat_resolution: false,
-    }
+    };
+    (layout, None)
 }
 
-/// Choose a flat-layout package when multiple candidates exist.
-#[must_use]
-pub fn resolve_flat_packages(candidates: &[String], metadata: &ProjectMetadata) -> FlatResolution {
-    if candidates.len() <= 1 {
-        return FlatResolution {
-            packages: candidates.to_vec(),
-            ambiguous: false,
-        };
-    }
+/// Choose a flat-layout package when multiple candidates exist, warning when
+/// metadata cannot disambiguate and the first candidate is taken.
+fn resolve_flat_packages(
+    candidates: Vec<String>,
+    metadata: &ProjectMetadata,
+) -> (Vec<String>, Option<SourcesWarning>) {
+    let [first, _, ..] = candidates.as_slice() else {
+        return (candidates, None);
+    };
+    let first = first.clone();
 
     if let Some(name) = &metadata.name {
         for candidate in normalized_project_names(name) {
-            if candidates.iter().any(|pkg| pkg == &candidate) {
-                return FlatResolution {
-                    packages: vec![candidate],
-                    ambiguous: false,
-                };
+            if candidates.contains(&candidate) {
+                return (vec![candidate], None);
             }
         }
     }
 
-    let Some(chosen) = candidates.first() else {
-        return FlatResolution {
-            packages: Vec::new(),
-            ambiguous: false,
-        };
+    let warning = SourcesWarning::AmbiguousFlatLayout {
+        candidates,
+        chosen: first.clone(),
     };
-    FlatResolution {
-        packages: vec![chosen.clone()],
-        ambiguous: true,
-    }
+    (vec![first], Some(warning))
 }
 
 /// Directory check from the type `read_dir` already holds; symlinks
@@ -130,23 +124,6 @@ fn default_globs(layout: ProjectLayout, packages: &[String]) -> Vec<String> {
     globs
 }
 
-/// Build layout-related warnings such as ambiguous flat packages.
-#[must_use]
-pub fn layout_warnings(layout: &LayoutInfo) -> Vec<SourcesWarning> {
-    if layout.layout != ProjectLayout::Flat || !layout.ambiguous_flat_resolution {
-        return Vec::new();
-    }
-
-    let Some(chosen) = layout.packages.first() else {
-        return Vec::new();
-    };
-
-    vec![SourcesWarning::AmbiguousFlatLayout {
-        candidates: layout.flat_candidates.clone(),
-        chosen: chosen.clone(),
-    }]
-}
-
 fn normalized_project_names(name: &str) -> Vec<String> {
     let underscored = name.replace('-', "_");
     let mut names = vec![underscored.clone(), name.to_owned()];
@@ -156,6 +133,43 @@ fn normalized_project_names(name: &str) -> Vec<String> {
         names.push(base.to_owned());
     }
     names
+}
+
+/// Infer a dotted module name from a root-relative `.py` path.
+///
+/// This is the single source of truth for "which module is this file": the
+/// `ModuleIndex` is keyed by it and relative imports are resolved against it,
+/// so the two must never disagree. `None` means the file is not importable
+/// under the inferred layout (outside `src/` and outside every package), and
+/// callers treat imports from it as unresolved rather than inventing a name.
+#[must_use]
+pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
+    let stem = path.strip_suffix(".py")?;
+    let module_path = stem.strip_suffix("/__init__").unwrap_or(stem);
+
+    match layout.layout {
+        ProjectLayout::Src => src_module_name(module_path),
+        ProjectLayout::Flat => flat_module_name(module_path, layout),
+        ProjectLayout::Unknown => {
+            src_module_name(module_path).or_else(|| flat_module_name(module_path, layout))
+        },
+    }
+}
+
+fn src_module_name(path: &str) -> Option<String> {
+    path.strip_prefix("src/").map(|rest| rest.replace('/', "."))
+}
+
+fn flat_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
+    for package in &layout.packages {
+        if path == *package {
+            return Some(package.clone());
+        }
+        if let Some(suffix) = path.strip_prefix(&format!("{package}/")) {
+            return Some(format!("{package}.{}", suffix.replace('/', ".")));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -168,6 +182,52 @@ mod tests {
             name: Some(name.to_owned()),
             ..ProjectMetadata::default()
         }
+    }
+
+    #[test]
+    fn path_to_module_src_layout() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+        };
+        assert_eq!(
+            path_to_module("src/acme/api/routes.py", &layout),
+            Some("acme.api.routes".to_owned())
+        );
+        assert_eq!(
+            path_to_module("src/acme/__init__.py", &layout),
+            Some("acme".to_owned())
+        );
+        assert_eq!(path_to_module("tests/unit/test_core.py", &layout), None);
+    }
+
+    #[test]
+    fn path_to_module_unknown_layout_strips_src_prefix() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+        };
+        assert_eq!(
+            path_to_module("src/acme/api/__init__.py", &layout),
+            Some("acme.api".to_owned())
+        );
+        assert_eq!(path_to_module("tests/conftest.py", &layout), None);
+    }
+
+    #[test]
+    fn path_to_module_flat_layout_requires_known_package() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            packages: vec!["acme".to_owned()],
+            inferred_globs: Vec::new(),
+        };
+        assert_eq!(
+            path_to_module("acme/core.py", &layout),
+            Some("acme.core".to_owned())
+        );
+        assert_eq!(path_to_module("scripts/run.py", &layout), None);
     }
 
     #[test]
@@ -186,40 +246,24 @@ mod tests {
     #[test]
     fn resolve_flat_prefers_metadata_name() {
         let candidates = vec!["acme".to_owned(), "other".to_owned()];
-        let chosen = resolve_flat_packages(&candidates, &metadata("acme-api"));
-        assert_eq!(chosen.packages, vec!["acme".to_owned()]);
-        assert!(!chosen.ambiguous);
+        let (packages, warning) = resolve_flat_packages(candidates, &metadata("acme-api"));
+        assert_eq!(packages, vec!["acme".to_owned()]);
+        assert_eq!(warning, None);
     }
 
     #[test]
-    fn resolve_flat_falls_back_to_first_candidate() {
+    fn resolve_flat_falls_back_to_first_candidate_with_warning() {
         let candidates = vec!["alpha".to_owned(), "beta".to_owned()];
-        let chosen = resolve_flat_packages(&candidates, &ProjectMetadata::default());
-        assert_eq!(chosen.packages, vec!["alpha".to_owned()]);
-        assert!(chosen.ambiguous);
-    }
-
-    #[test]
-    fn layout_warnings_only_on_ambiguous_fallback() {
-        let resolved = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            packages: vec!["acme".to_owned()],
-            inferred_globs: Vec::new(),
-            flat_candidates: vec!["acme".to_owned(), "other".to_owned()],
-            ambiguous_flat_resolution: false,
-        };
-        assert!(layout_warnings(&resolved).is_empty());
-
-        let ambiguous = LayoutInfo {
-            ambiguous_flat_resolution: true,
-            ..resolved
-        };
-        let warnings = layout_warnings(&ambiguous);
-        assert_eq!(warnings.len(), 1);
-        assert!(matches!(
-            warnings[0],
-            SourcesWarning::AmbiguousFlatLayout { .. }
-        ));
+        let (packages, warning) =
+            resolve_flat_packages(candidates.clone(), &ProjectMetadata::default());
+        assert_eq!(packages, vec!["alpha".to_owned()]);
+        assert_eq!(
+            warning,
+            Some(SourcesWarning::AmbiguousFlatLayout {
+                candidates,
+                chosen: "alpha".to_owned(),
+            })
+        );
     }
 
     mod props {
@@ -240,14 +284,14 @@ mod tests {
                     name,
                     ..ProjectMetadata::default()
                 };
-                let resolved = resolve_flat_packages(&candidates, &metadata);
+                let (packages, warning) = resolve_flat_packages(candidates.clone(), &metadata);
 
-                prop_assert!(resolved.packages.iter().all(|pkg| candidates.contains(pkg)));
+                prop_assert!(packages.iter().all(|pkg| candidates.contains(pkg)));
                 if candidates.len() <= 1 {
-                    prop_assert_eq!(resolved.packages, candidates);
-                    prop_assert!(!resolved.ambiguous);
+                    prop_assert_eq!(packages, candidates);
+                    prop_assert!(warning.is_none());
                 } else {
-                    prop_assert_eq!(resolved.packages.len(), 1);
+                    prop_assert_eq!(packages.len(), 1);
                 }
             }
 
@@ -264,9 +308,9 @@ mod tests {
                     name: Some(target.replace('_', "-")),
                     ..ProjectMetadata::default()
                 };
-                let resolved = resolve_flat_packages(&candidates, &metadata);
-                prop_assert_eq!(resolved.packages, vec![target]);
-                prop_assert!(!resolved.ambiguous);
+                let (packages, warning) = resolve_flat_packages(candidates, &metadata);
+                prop_assert_eq!(packages, vec![target]);
+                prop_assert!(warning.is_none());
             }
 
             #[test]

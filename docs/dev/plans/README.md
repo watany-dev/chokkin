@@ -36,6 +36,7 @@
 | **v0.1 誤検知是正** | [phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md) | 確定 | ✅ |
 | **v0.2 導入支援** | [phase-2-v0.2-adoption.md](./phase-2-v0.2-adoption.md) | 完了 | ✅ |
 | **v0.3 契約安定化** | spec §17 Phase 3 | 完了 | ✅ |
+| **v0.4 信頼性＋契約形式化** | [phase-3x-v0.4-reliability-contract.md](./phase-3x-v0.4-reliability-contract.md) | 完了 | ✅ |
 
 ## 推奨実装順（クリティカルパス）
 
@@ -59,19 +60,17 @@ flowchart TB
     P15[Phase 1.5 FP remediation]
   end
 
-  subgraph released [v0.1.0 / v0.2.0 / v0.3.0 リリース済み]
+  subgraph released [v0.1.0〜v0.4.0 リリース済み]
     GATE[oss-metrics --gate ✅]
     TAG[PyPI v0.1.0 tag ✅]
     V02[v0.2 adoption ✅]
     V03[v0.3 contract stabilization ✅]
-  end
-
-  subgraph current [Phase 3.x: v0.4 信頼性 + 契約形式化]
     CHK003[Step 0: CHK003 計測/分類 ✅]
-    A1[CHK003 FP 是正]
-    A2[map 自動化]
-    B1[autofix ADR]
-    B2[semver ADR]
+    A1[CHK003 FP 是正 ✅]
+    A2[map 自動化 ✅]
+    B1[autofix ADR ✅]
+    B2[semver ADR ✅]
+    V04[v0.4 reliability + contracts ✅]
   end
 
   done --> GATE
@@ -83,13 +82,16 @@ flowchart TB
   CHK003 --> B1
   A1 --> A2
   CHK003 --> B2
+  A2 --> V04
+  B1 --> V04
+  B2 --> V04
 ```
 
 ## v0.4 計画
 
 | 項目 | 状態 |
 | --- | --- |
-| [v0.4 信頼性＋契約形式化](phase-3x-v0.4-reliability-contract.md) | 計画済み |
+| [v0.4 信頼性＋契約形式化](phase-3x-v0.4-reliability-contract.md) | ✅ 完了（2026-08-17） |
 | [Step 0: CHK003 計測 + label coverage 棚卸し](phase-3x-step0-chk003-measurement.md) | ✅ 完了（2026-08-11） |
 
 ## v0.1.0 リリース結果（§17 exit criteria）
@@ -131,3 +133,5 @@ ignore 構文の回帰テスト、plugin API RFC (`docs/adr/0002-plugin-api-rfc.
 | --- | --- |
 | [0001-parser-selection.md](../adr/0001-parser-selection.md) | `rustpython-parser` 採用 |
 | [0002-plugin-api-rfc.md](../adr/0002-plugin-api-rfc.md) | 外部 plugin API RFC (v0.3; loading 未実装) |
+| [0003-safe-autofix-contract.md](../adr/0003-safe-autofix-contract.md) | safe autofix の適用範囲と filesystem safety |
+| [0004-semver-contract.md](../adr/0004-semver-contract.md) | JSON / baseline / CLI / exit code の互換契約 |

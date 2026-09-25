@@ -285,5 +285,3 @@ pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("zipp", &["zipp"]),
     ("zstandard", &["zstandard"]),
 ];
-
-pub const PACKAGE_MAP_ENTRY_COUNT: usize = 281;

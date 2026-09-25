@@ -10,8 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config,
+    FileContext, PluginExtractRequest, PluginId, PluginsWarning, ProjectRoot, RootMarker,
+    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints,
+    extract_plugin_hints_with_parse, load_config, parse_project_sources,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -30,12 +31,42 @@ fn project_root_at(path: &Path) -> ProjectRoot {
 }
 
 fn extract_fixture(name: &str) -> chokkin::PluginHints {
-    let path = fixture(name);
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
+    extract_at(&fixture(name))
+}
+
+fn extract_at(path: &Path) -> chokkin::PluginHints {
+    let root = discover_project_root(path).unwrap_or_else(|_| project_root_at(path));
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
     extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+}
+
+/// Same as [`extract_fixture`] but feeding step 6 parse output into step 5.
+fn extract_fixture_with_parse(name: &str) -> chokkin::PluginHints {
+    extract_at_with_parse(&fixture(name))
+}
+
+fn extract_at_with_parse(path: &Path) -> chokkin::PluginHints {
+    let root = discover_project_root(path).unwrap_or_else(|_| project_root_at(path));
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
+    let target = config
+        .effective
+        .target_version
+        .clone()
+        .unwrap_or_else(chokkin::TargetVersion::default_py311);
+    let parse = parse_project_sources(&root, &sources, &target).expect("parse sources");
+    extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &config,
+        sources: &sources,
+        manifest: &manifest,
+        parse: Some(&parse),
+        cache: None,
+    })
+    .expect("extract plugin hints")
 }
 
 fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
@@ -481,4 +512,151 @@ fn no_django_no_panic() {
             }
         )
     }));
+}
+
+#[test]
+fn flask_route_modules_match_between_scan_and_parse() {
+    let scanned = extract_fixture("flask_env");
+    let parsed = extract_fixture_with_parse("flask_env");
+    let expected = &plugin_contrib(&scanned, PluginId::Flask).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "web.routes" && reference.origin.line == Some(4))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Flask).module_refs,
+        expected
+    );
+}
+
+#[test]
+fn celery_task_modules_match_between_scan_and_parse() {
+    let scanned = extract_fixture("celery_scripts");
+    let parsed = extract_fixture_with_parse("celery_scripts");
+    let expected = &plugin_contrib(&scanned, PluginId::Celery).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.line == Some(4))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Celery).module_refs,
+        expected
+    );
+}
+
+/// Module-ref line for `pkg.mod` per plugin, from both the text scan and the
+/// parse-backed scan of a one-module project.
+fn decorator_lines(source: &str) -> [(Option<u32>, Option<u32>); 2] {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"decorators\"\nversion = \"0.1.0\"\ndependencies = [\"flask\", \"celery\"]\n\n[tool.chokkin.plugins]\nflask = true\ncelery = true\n",
+    )
+    .expect("write pyproject");
+    std::fs::create_dir_all(root.join("src/pkg")).expect("create package");
+    std::fs::write(root.join("src/pkg/__init__.py"), "").expect("write init");
+    std::fs::write(root.join("src/pkg/mod.py"), source).expect("write module");
+
+    let scanned = extract_at(root);
+    let parsed = extract_at_with_parse(root);
+    let line = |hints: &chokkin::PluginHints, plugin: PluginId| {
+        plugin_contrib(hints, plugin)
+            .module_refs
+            .iter()
+            .find(|reference| reference.module == "pkg.mod")
+            .and_then(|reference| reference.origin.line)
+    };
+    [PluginId::Flask, PluginId::Celery]
+        .map(|plugin| (line(&scanned, plugin), line(&parsed, plugin)))
+}
+
+#[test]
+fn flask_and_celery_decorators_match_between_scan_and_parse() {
+    // (source, Flask route line, Celery task line)
+    let cases: &[(&str, Option<u32>, Option<u32>)] = &[
+        ("@app.route(\"/\")\ndef f():\n    pass\n", Some(1), None),
+        ("@app.route (\"/\")\ndef f():\n    pass\n", Some(1), None),
+        (
+            "@app.route(\n    \"/\",\n)\ndef f():\n    pass\n",
+            Some(1),
+            None,
+        ),
+        ("@apps[0].route(\"/\")\ndef f():\n    pass\n", Some(1), None),
+        ("@app.route\ndef f():\n    pass\n", None, None),
+        ("@cache.get\ndef f():\n    pass\n", None, None),
+        (
+            "@cache.get\ndef a():\n    pass\n\n@bp.post(\"/x\")\ndef b():\n    pass\n",
+            Some(5),
+            None,
+        ),
+        (
+            "def create_app():\n    @app.route(\"/\")\n    def index():\n        pass\n",
+            Some(2),
+            None,
+        ),
+        (
+            "@functools.lru_cache(maxsize=cfg.get(\"n\"))\ndef f():\n    pass\n",
+            None,
+            None,
+        ),
+        (
+            "@api.post(\"/\") if flag else f\ndef f():\n    pass\n",
+            None,
+            None,
+        ),
+        ("@shared_task\ndef f():\n    pass\n", None, Some(1)),
+        ("@celery.task\ndef f():\n    pass\n", None, Some(1)),
+        ("@my_app.task\ndef f():\n    pass\n", None, Some(1)),
+        (
+            "@celery.shared_task(bind=True)\ndef f():\n    pass\n",
+            None,
+            Some(1),
+        ),
+        ("@shared_task_wrapper\ndef f():\n    pass\n", None, None),
+        ("@app.tasks\ndef f():\n    pass\n", None, None),
+        ("@app.task_cls\ndef f():\n    pass\n", None, None),
+        ("@register(app.task(x))\ndef f():\n    pass\n", None, None),
+    ];
+    for &(source, flask, celery) in cases {
+        let [flask_lines, celery_lines] = decorator_lines(source);
+        assert_eq!(flask_lines, (flask, flask), "flask: {source}");
+        assert_eq!(celery_lines, (celery, celery), "celery: {source}");
+    }
+}
+
+#[test]
+fn flask_route_modules_survive_syntax_error_in_parse_path() {
+    let scanned = extract_fixture("flask_syntax_error");
+    let parsed = extract_fixture_with_parse("flask_syntax_error");
+    let expected = &plugin_contrib(&scanned, PluginId::Flask).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "web.routes" && reference.origin.line == Some(1))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Flask).module_refs,
+        expected
+    );
+}
+
+#[test]
+fn celery_task_modules_survive_syntax_error_in_parse_path() {
+    let scanned = extract_fixture("celery_syntax_error");
+    let parsed = extract_fixture_with_parse("celery_syntax_error");
+    let expected = &plugin_contrib(&scanned, PluginId::Celery).module_refs;
+    assert!(
+        expected
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.line == Some(1))
+    );
+    assert_eq!(
+        &plugin_contrib(&parsed, PluginId::Celery).module_refs,
+        expected
+    );
 }

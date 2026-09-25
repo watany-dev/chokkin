@@ -1,17 +1,18 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
-use std::collections::BTreeMap;
-use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::collections::{BTreeMap, HashMap};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::config::ConfigSources;
+use crate::fix::atomic_write;
 use crate::manifest::ManifestSources;
 use crate::parser::ParsedModule;
+use crate::path_util::normalize_rel_path;
 
 /// Default cache directory name below the project root.
 pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -21,39 +22,101 @@ pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
 pub struct CacheOptions {
     /// Whether cache reads/writes are allowed for this run.
     pub enabled: bool,
-    /// Project-root-relative cache directory.
-    pub directory: PathBuf,
 }
 
 impl Default for CacheOptions {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            directory: PathBuf::from(DEFAULT_CACHE_DIR),
-        }
+        Self { enabled: true }
     }
 }
 
 impl CacheOptions {
     /// Disable cache reads and writes for this run.
     #[must_use]
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
+    pub const fn disabled() -> Self {
+        Self { enabled: false }
     }
 
     /// Resolve the cache directory below `project_root`.
     #[must_use]
     pub fn directory_path(&self, project_root: &Path) -> PathBuf {
-        project_root.join(root_relative_directory(&self.directory))
+        project_root.join(DEFAULT_CACHE_DIR)
     }
 
-    /// Absolute path for a persisted parse cache entry.
+    /// Absolute path for the persisted parse cache bundle of `context`.
     #[must_use]
-    pub fn parse_entry_path(&self, project_root: &Path, key: &ParseCacheKey) -> PathBuf {
-        self.directory_path(project_root).join(key.relative_path())
+    pub fn parse_bundle_path(&self, project_root: &Path, context: &CacheKeyContext) -> PathBuf {
+        self.directory_path(project_root)
+            .join(parse_bundle_relative_path(context))
+    }
+
+    /// Current time as seen by the filesystem holding the cache.
+    ///
+    /// Writes a probe file below the cache directory and returns its modified
+    /// time. Source mtimes are stamped by the filesystem, so the racy-mtime
+    /// check must compare against this clock rather than the local one: on a
+    /// network mount whose clock lags, the local clock would call a
+    /// just-written source settled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the probe cannot be written or its metadata
+    /// cannot be read.
+    pub fn filesystem_now(&self, project_root: &Path) -> io::Result<SystemTime> {
+        let path = self.clock_probe_path(project_root);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // Non-empty so the write always reaches the file and bumps its mtime.
+        std::fs::write(&path, b"chokkin clock probe\n")?;
+        std::fs::metadata(&path)?.modified()
+    }
+
+    fn clock_probe_path(&self, project_root: &Path) -> PathBuf {
+        self.directory_path(project_root).join("clock")
+    }
+
+    /// Read the persisted parse cache bundle for `context`.
+    ///
+    /// A missing or corrupt bundle reads as empty; callers then reparse source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the bundle exists but cannot be read.
+    pub fn read_parse_bundle(
+        &self,
+        project_root: &Path,
+        context: &CacheKeyContext,
+    ) -> io::Result<ParseCacheBundle> {
+        if !self.enabled {
+            return Ok(ParseCacheBundle::default());
+        }
+        let path = self.parse_bundle_path(project_root, context);
+        Ok(read_cache_bytes(&path)?
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default())
+    }
+
+    /// Write `bundle` as the parse cache bundle for `context`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when the cache directory or bundle cannot be written.
+    pub fn write_parse_bundle(
+        &self,
+        project_root: &Path,
+        context: &CacheKeyContext,
+        bundle: &ParseCacheBundle,
+    ) -> io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let path = self.parse_bundle_path(project_root, context);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let bytes = serde_json::to_vec(bundle).map_err(io::Error::other)?;
+        write_cache_bytes(&path, &bytes)
     }
 
     /// Absolute path for a persisted scan cache entry.
@@ -62,108 +125,10 @@ impl CacheOptions {
         self.directory_path(project_root).join(key.relative_path())
     }
 
-    /// Read a persisted parse cache entry.
-    ///
-    /// Corrupt JSON entries are treated as misses; callers then reparse source.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache file exists but cannot be read.
-    pub fn read_parse_entry(
-        &self,
-        project_root: &Path,
-        key: &ParseCacheKey,
-    ) -> io::Result<Option<ParsedModule>> {
-        if !self.enabled {
-            return Ok(None);
-        }
-        let path = self.parse_entry_path(project_root, key);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        Ok(serde_json::from_slice(&bytes).ok())
-    }
-
-    /// Write a persisted parse cache entry.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache directory or file cannot be written.
-    pub fn write_parse_entry(
-        &self,
-        project_root: &Path,
-        key: &ParseCacheKey,
-        parsed: &ParsedModule,
-    ) -> io::Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-        let path = self.parse_entry_path(project_root, key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec(parsed).map_err(io::Error::other)?;
-        write_cache_bytes(&path, &bytes)
-    }
-
-    /// Read a persisted scan cache record.
-    ///
-    /// Corrupt JSON or key-mismatched entries are treated as misses.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache file exists but cannot be read.
-    pub fn read_scan_record(
-        &self,
-        project_root: &Path,
-        key: &ScanCacheKey,
-    ) -> io::Result<Option<ScanCacheRecord>> {
-        if !self.enabled {
-            return Ok(None);
-        }
-        let path = self.scan_entry_path(project_root, key);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let Ok(record) = serde_json::from_slice::<ScanCacheRecord>(&bytes) else {
-            return Ok(None);
-        };
-        if record.key == *key && record.schema_version == SCAN_CACHE_SCHEMA_VERSION {
-            Ok(Some(record))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Write a persisted scan cache record.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when the cache directory or file cannot be written.
-    pub fn write_scan_record(
-        &self,
-        project_root: &Path,
-        record: &ScanCacheRecord,
-    ) -> io::Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-        let path = self.scan_entry_path(project_root, &record.key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec(record).map_err(io::Error::other)?;
-        write_cache_bytes(&path, &bytes)
-    }
-
     /// Read and deserialize the payload from a persisted scan cache record.
     ///
-    /// Corrupt JSON, key mismatch, missing payload, or incompatible payload shape
-    /// are treated as cache misses.
+    /// Corrupt JSON, key mismatch, schema mismatch, or incompatible payload
+    /// shape are treated as cache misses.
     ///
     /// # Errors
     ///
@@ -176,13 +141,18 @@ impl CacheOptions {
     where
         T: DeserializeOwned,
     {
-        let Some(record) = self.read_scan_record(project_root, key)? else {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let Some(bytes) = read_cache_bytes(&self.scan_entry_path(project_root, key))? else {
             return Ok(None);
         };
-        let Some(payload) = record.payload else {
-            return Ok(None);
-        };
-        Ok(serde_json::from_value(payload).ok())
+        Ok(serde_json::from_slice::<ScanCacheRecord<T>>(&bytes)
+            .ok()
+            .filter(|record| {
+                record.key == *key && record.schema_version == SCAN_CACHE_SCHEMA_VERSION
+            })
+            .map(|record| record.payload))
     }
 
     /// Serialize and write a scan cache payload.
@@ -199,46 +169,43 @@ impl CacheOptions {
     where
         T: Serialize,
     {
-        let payload = serde_json::to_value(payload).map_err(io::Error::other)?;
+        if !self.enabled {
+            return Ok(());
+        }
+        let path = self.scan_entry_path(project_root, &key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let record = ScanCacheRecord {
             key,
             schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: Some(payload),
+            payload,
         };
-        self.write_scan_record(project_root, &record)
+        let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
+        write_cache_bytes(&path, &bytes)
     }
 }
 
-fn root_relative_directory(directory: &Path) -> PathBuf {
-    let mut relative = PathBuf::new();
-    for component in directory.components() {
-        if let Component::Normal(part) = component {
-            relative.push(part);
-        }
+fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
-    relative
 }
 
 fn write_cache_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing cache entry parent"))?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-cache-")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    // The atomic rename below keeps readers from ever seeing a torn entry. We
-    // deliberately skip `sync_all()` here: the parse/scan cache is fully
-    // regenerable, the read path treats any corrupt entry as a miss, and a
-    // per-entry fsync dominates cold-cache runs (one fsync per parsed module
-    // makes the first analysis of a large project an order of magnitude slower
-    // than `--no-cache`). Durability across power loss is not worth that cost.
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    // The atomic rename keeps readers from ever seeing a torn entry. We
+    // deliberately skip the fsync: the parse/scan cache is fully regenerable,
+    // the read path treats any corrupt entry as a miss, and a per-entry fsync
+    // dominates cold-cache runs (one fsync per parsed module makes the first
+    // analysis of a large project an order of magnitude slower than
+    // `--no-cache`). Durability across power loss is not worth that cost.
+    atomic_write(path, bytes, false)
 }
 
 /// Stable inputs shared by cache units.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CacheKeyContext {
     /// chokkin version string.
     pub chokkin_version: String,
@@ -252,8 +219,22 @@ pub struct CacheKeyContext {
     pub unit_version: String,
 }
 
+impl CacheKeyContext {
+    /// Feed the context fields into a cache key hash.
+    pub fn hash_into(&self, hasher: &mut CacheKeyHasher) {
+        hasher.field_str(&self.chokkin_version);
+        hasher.field_str(&self.config_hash);
+        hasher.field_str(&self.manifest_hash);
+        hasher.field_str(&self.target_version);
+        hasher.field_str(&self.unit_version);
+    }
+}
+
 /// Fingerprint for one root-relative source file.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+///
+/// The `Default` value is an empty placeholder: it names no file and matches
+/// no cache entry. Callers overwrite it before using a key.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceFingerprint {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -261,9 +242,18 @@ pub struct SourceFingerprint {
     pub size: u64,
     /// Modified time in nanoseconds since the Unix epoch, when available.
     pub modified_ns: Option<u128>,
-    /// Stable hash of file bytes.
+    /// Stable hash of file bytes, empty when `(size, modified_ns)` alone
+    /// identified the file (see [`SourceFingerprint::from_absolute_stat`]).
     pub content_hash: String,
 }
+
+/// Modification times newer than this are re-hashed instead of trusted.
+///
+/// A filesystem with coarse (1 s) mtime granularity can report an unchanged
+/// stamp for an edit that happened to keep the byte count, so a file touched
+/// within the window is not safe to identify by `(size, mtime)`. Mirrors the
+/// "racily clean" guard git applies to its index.
+const RACY_MTIME_WINDOW: Duration = Duration::from_secs(2);
 
 impl SourceFingerprint {
     /// Build a conservative file fingerprint.
@@ -290,12 +280,8 @@ impl SourceFingerprint {
         let capacity = usize::try_from(metadata.len()).unwrap_or(0);
         let mut bytes = Vec::with_capacity(capacity);
         std::io::Read::read_to_end(&mut file, &mut bytes)?;
-        // `normalize_cache_path` already converts separators and trims a leading
-        // `./`, so feed it the borrowed path directly instead of pre-replacing
-        // (which allocated a second throwaway string per file on the warm path).
-        let key_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
         Ok(Self {
-            path: normalize_cache_path(&key_path),
+            path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: metadata
                 .modified()
@@ -305,6 +291,99 @@ impl SourceFingerprint {
             content_hash: stable_hex_hash(&bytes),
         })
     }
+
+    /// Feed the fingerprint fields into a cache key hash.
+    pub fn hash_into(&self, hasher: &mut CacheKeyHasher) {
+        hasher.field_str(&self.path);
+        hasher.field_u64(self.size);
+        hasher.field_opt_u128(self.modified_ns);
+        hasher.field_str(&self.content_hash);
+    }
+
+    /// Build a file fingerprint from `stat` alone where that is unambiguous.
+    ///
+    /// Leaves [`Self::content_hash`] empty when `(size, modified_ns)` already
+    /// identify the file, so a warm cache lookup costs one `stat` per source
+    /// instead of reading and hashing every byte of the project. Falls back to
+    /// [`Self::from_absolute`] when the modified time is missing or falls
+    /// inside the racy-mtime window before the system clock. Use
+    /// [`Self::from_absolute_stat_at`] to judge against the filesystem's clock
+    /// instead (see [`CacheOptions::filesystem_now`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_absolute_stat(root: &Path, path: &Path) -> io::Result<Self> {
+        Self::from_absolute_stat_at(root, path, SystemTime::now())
+    }
+
+    /// [`Self::from_absolute_stat`] with an explicit `now` for the racy-mtime
+    /// check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_absolute_stat_at(root: &Path, path: &Path, now: SystemTime) -> io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        let Some(modified_ns) = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos())
+        else {
+            return Self::from_absolute(root, path);
+        };
+        if is_racy_mtime(modified_ns, now) {
+            return Self::from_absolute(root, path);
+        }
+        Ok(Self {
+            path: cache_key_path(root, path),
+            size: metadata.len(),
+            modified_ns: Some(modified_ns),
+            content_hash: String::new(),
+        })
+    }
+
+    /// Fingerprint recording that `path` was probed and did not exist.
+    ///
+    /// The content hash is not hex, so it never equals a real file's.
+    fn absent(root: &Path, path: &Path) -> Self {
+        Self {
+            path: cache_key_path(root, path),
+            size: 0,
+            modified_ns: None,
+            content_hash: "absent".to_owned(),
+        }
+    }
+
+    /// Root-relative variant of [`Self::from_absolute_stat`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_root_relative_stat(root: &Path, path: &str) -> io::Result<Self> {
+        Self::from_root_relative_stat_at(root, path, SystemTime::now())
+    }
+
+    /// Root-relative variant of [`Self::from_absolute_stat_at`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an IO error when metadata or file contents cannot be read.
+    pub fn from_root_relative_stat_at(
+        root: &Path,
+        path: &str,
+        now: SystemTime,
+    ) -> io::Result<Self> {
+        let absolute = root.join(path);
+        Self::from_absolute_stat_at(root, &absolute, now)
+    }
+}
+
+fn is_racy_mtime(modified_ns: u128, now: SystemTime) -> bool {
+    now.duration_since(UNIX_EPOCH).is_ok_and(|since_epoch| {
+        since_epoch.as_nanos().saturating_sub(modified_ns) < RACY_MTIME_WINDOW.as_nanos()
+    })
 }
 
 fn config_input_fingerprints(
@@ -345,7 +424,18 @@ fn manifest_input_fingerprints(
     for path in &sources.requirements_files {
         paths.push(root.join(path));
     }
-    fingerprint_paths(root, paths)
+    let mut fingerprints = fingerprint_paths(root, paths)?;
+    for path in &sources.requirements_missing {
+        let absolute = root.join(path);
+        fingerprints.push(if absolute.is_file() {
+            SourceFingerprint::from_absolute(root, &absolute)?
+        } else {
+            SourceFingerprint::absent(root, &absolute)
+        });
+    }
+    fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+    fingerprints.dedup_by(|left, right| left.path == right.path);
+    Ok(fingerprints)
 }
 
 fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerprint>> {
@@ -402,17 +492,11 @@ impl ScanCacheKey {
     /// Stable filename for the cached scan result.
     #[must_use]
     pub fn file_name(&self) -> String {
-        let mut input = format!(
-            "{}\n{}\n{}\n{}\n{}",
-            self.context.chokkin_version,
-            self.context.config_hash,
-            self.context.manifest_hash,
-            self.context.target_version,
-            self.context.unit_version
-        );
-        append_fingerprints(&mut input, "config", &self.inputs.config);
-        append_fingerprints(&mut input, "manifest", &self.inputs.manifest);
-        format!("{}.json", stable_hex_hash(input.as_bytes()))
+        let mut hasher = CacheKeyHasher::new();
+        self.context.hash_into(&mut hasher);
+        hash_fingerprints(&mut hasher, "config", &self.inputs.config);
+        hash_fingerprints(&mut hasher, "manifest", &self.inputs.manifest);
+        format!("{}.json", hasher.finish())
     }
 
     /// Project-root-relative path for a persisted scan cache entry.
@@ -422,37 +506,26 @@ impl ScanCacheKey {
     }
 }
 
-fn append_fingerprints(out: &mut String, label: &str, fingerprints: &[SourceFingerprint]) {
-    out.push('\n');
-    out.push_str(label);
+fn hash_fingerprints(hasher: &mut CacheKeyHasher, label: &str, fingerprints: &[SourceFingerprint]) {
+    hasher.field_str(label);
+    hasher.field_u64(u64::try_from(fingerprints.len()).unwrap_or(u64::MAX));
     for fingerprint in fingerprints {
-        use std::fmt::Write as _;
-        let _ = write!(
-            out,
-            "\n{}\t{}\t{}\t{}",
-            fingerprint.path,
-            fingerprint.size,
-            fingerprint
-                .modified_ns
-                .map_or_else(String::new, |value| value.to_string()),
-            fingerprint.content_hash
-        );
+        fingerprint.hash_into(hasher);
     }
 }
 
 /// Schema version for scan cache records.
 pub const SCAN_CACHE_SCHEMA_VERSION: &str = "scan-record-v1";
 
-/// JSON-safe envelope for config/manifest scan cache records.
+/// JSON envelope for config/manifest scan cache records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScanCacheRecord {
+pub struct ScanCacheRecord<T> {
     /// Key used to validate this record.
     pub key: ScanCacheKey,
     /// Schema version for the scan cache payload.
     pub schema_version: String,
-    /// Serialized scan result payload.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
+    /// Scan result payload.
+    pub payload: T,
 }
 
 impl ScanInputFingerprints {
@@ -486,7 +559,7 @@ impl ScanInputFingerprints {
 }
 
 /// Key for a cacheable parse result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParseCacheKey {
     /// Shared key context.
     pub context: CacheKeyContext,
@@ -494,37 +567,15 @@ pub struct ParseCacheKey {
     pub source: SourceFingerprint,
 }
 
-// Ordering compares `source` before `context`. The `BTreeMap` parse cache holds
-// many keys that share one identical `context` within a run, so comparing the
-// context first would scan five equal strings at every tree level before
-// reaching the discriminating `source.path`. Leading with `source` lets each
-// comparison short-circuit on the path, which keeps warm-cache lookups close to
-// linear instead of paying that fixed string-compare cost per tree level.
-impl Ord for ParseCacheKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.source
-            .cmp(&other.source)
-            .then_with(|| self.context.cmp(&other.context))
-    }
-}
-
-impl PartialOrd for ParseCacheKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 impl ParseCacheKey {
-    /// Stable filename for the cached parse result.
+    /// Stable identifier for this key inside a [`ParseCacheBundle`].
+    ///
+    /// Only the source fingerprint varies within one bundle, so the context is
+    /// already covered by the bundle's own file name.
     #[must_use]
-    pub fn file_name(&self) -> String {
+    pub fn entry_id(&self) -> String {
         let input = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-            self.context.chokkin_version,
-            self.context.config_hash,
-            self.context.manifest_hash,
-            self.context.target_version,
-            self.context.unit_version,
+            "{}\n{}\n{}\n{}",
             self.source.path,
             self.source.size,
             self.source
@@ -532,14 +583,50 @@ impl ParseCacheKey {
                 .map_or_else(String::new, |value| value.to_string()),
             self.source.content_hash
         );
-        format!("{}.json", stable_hex_hash(input.as_bytes()))
+        stable_hex_hash(input.as_bytes())
+    }
+}
+
+/// All persisted parse results that share one [`CacheKeyContext`].
+///
+/// Parse output used to be one JSON file per module, which made a cold run
+/// create, write and rename a file per parsed source: on a 1k-file project that
+/// cost more than parsing from scratch. One bundle per context keeps the write
+/// path to a single atomic rename per run and the cache to a single inode.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseCacheBundle {
+    /// Parse results keyed by [`ParseCacheKey::entry_id`].
+    pub entries: BTreeMap<String, ParsedModule>,
+}
+
+impl ParseCacheBundle {
+    /// Return the cached parse result for `key`.
+    ///
+    /// Entries are keyed by a 64-bit hash only, so an entry whose module path
+    /// differs from the key's source path is a collision and reads as a miss.
+    #[must_use]
+    pub fn get(&self, key: &ParseCacheKey) -> Option<&ParsedModule> {
+        self.entries
+            .get(&key.entry_id())
+            .filter(|parsed| parsed.path == key.source.path)
     }
 
-    /// Project-root-relative path for a persisted parse cache entry.
-    #[must_use]
-    pub fn relative_path(&self) -> PathBuf {
-        PathBuf::from("parse").join(self.file_name())
+    /// Store `parsed` under `key`.
+    pub fn insert(&mut self, key: &ParseCacheKey, parsed: ParsedModule) {
+        self.entries.insert(key.entry_id(), parsed);
     }
+}
+
+fn parse_bundle_relative_path(context: &CacheKeyContext) -> PathBuf {
+    let input = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        context.chokkin_version,
+        context.config_hash,
+        context.manifest_hash,
+        context.target_version,
+        context.unit_version
+    );
+    PathBuf::from("parse").join(format!("bundle-{}.json", stable_hex_hash(input.as_bytes())))
 }
 
 /// Parse cache hit/miss counters for observability and tests.
@@ -556,7 +643,7 @@ pub struct ParseCacheStats {
 /// In-memory parse cache used as the first conservative cache backend.
 #[derive(Debug, Default)]
 pub struct ParseCacheStore {
-    entries: BTreeMap<ParseCacheKey, ParsedModule>,
+    entries: HashMap<ParseCacheKey, ParsedModule>,
     stats: ParseCacheStats,
 }
 
@@ -567,14 +654,39 @@ impl ParseCacheStore {
         Self::default()
     }
 
+    /// Reserve capacity for at least `additional` more entries.
+    ///
+    /// The parse loop knows the file count up front, so pre-sizing avoids the
+    /// repeated rehash-and-move that growing from zero costs on large projects.
+    pub fn reserve(&mut self, additional: usize) {
+        self.entries.reserve(additional);
+    }
+
     /// Return cached parse output for `key` when available.
     pub fn get(&mut self, key: &ParseCacheKey) -> Option<ParsedModule> {
+        self.get_or_promote(key, &ParseCacheBundle::default())
+    }
+
+    /// Return cached parse output for `key` from memory, then from `disk`.
+    ///
+    /// A disk hit is copied into memory and counted as a hit, not as a miss
+    /// plus a store.
+    pub fn get_or_promote(
+        &mut self,
+        key: &ParseCacheKey,
+        disk: &ParseCacheBundle,
+    ) -> Option<ParsedModule> {
         if let Some(parsed) = self.entries.get(key) {
             self.stats.hits = self.stats.hits.saturating_add(1);
             return Some(parsed.clone());
         }
-        self.stats.misses = self.stats.misses.saturating_add(1);
-        None
+        let Some(parsed) = disk.get(key) else {
+            self.stats.misses = self.stats.misses.saturating_add(1);
+            return None;
+        };
+        self.entries.insert(key.clone(), parsed.clone());
+        self.stats.hits = self.stats.hits.saturating_add(1);
+        Some(parsed.clone())
     }
 
     /// Store parse output for `key`.
@@ -588,45 +700,121 @@ impl ParseCacheStore {
     pub const fn stats(&self) -> ParseCacheStats {
         self.stats
     }
-
-    /// Number of entries currently held.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Whether the cache is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
 }
 
-/// Normalize a path for cache keys.
-#[must_use]
-pub fn normalize_cache_path(path: &str) -> String {
-    // Backslashes are rare (Windows-only); skip the replacement allocation on
-    // the common forward-slash path and trim the leading `./` in one owned copy.
-    if path.contains('\\') {
-        let slashed = path.replace('\\', "/");
-        slashed.trim_start_matches("./").to_owned()
-    } else {
-        path.trim_start_matches("./").to_owned()
-    }
+fn cache_key_path(root: &Path, path: &Path) -> String {
+    let mut key = normalize_rel_path(path.strip_prefix(root).unwrap_or(path));
+    // Trim in place: this runs once per source file on the warm-cache path.
+    let prefix_len = key.len() - key.trim_start_matches("./").len();
+    key.replace_range(..prefix_len, "");
+    key
 }
 
 /// Stable 64-bit FNV-1a hash rendered as lowercase hex.
 #[must_use]
 pub fn stable_hex_hash(bytes: &[u8]) -> String {
+    let mut hasher = CacheKeyHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
+/// Stable hash of an ordered list of strings.
+///
+/// Order is part of the key: callers such as the module index depend on the
+/// first entry winning for duplicate modules, so two permutations of the same
+/// list must not share a cache entry.
+#[must_use]
+pub fn stable_list_hash<I, S>(values: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut hasher = CacheKeyHasher::new();
+    for value in values {
+        hasher.field(value.as_ref().as_bytes());
+    }
+    hasher.finish()
+}
+
+/// Streaming FNV-1a hasher for cache key inputs.
+///
+/// Cache keys are built from many small fields. Feeding them through one
+/// hasher keeps key construction allocation-free; the previous approach
+/// `format!`-ed every field into one throwaway `String` per file, which the
+/// warm path pays once per source.
+///
+/// [`CacheKeyHasher::field`] length-prefixes its input, so no concatenation of
+/// field values can be mistaken for a different split of the same bytes.
+#[derive(Debug, Clone)]
+pub struct CacheKeyHasher {
+    state: u64,
+}
+
+impl Default for CacheKeyHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CacheKeyHasher {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-    let mut hash = FNV_OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
+    /// Start an empty hash state.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: Self::FNV_OFFSET,
+        }
     }
-    format!("{hash:016x}")
+
+    /// Hash raw bytes without a field boundary.
+    pub fn write(&mut self, bytes: &[u8]) -> &mut Self {
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(Self::FNV_PRIME);
+        }
+        self
+    }
+
+    /// Hash one length-prefixed field.
+    pub fn field(&mut self, bytes: &[u8]) -> &mut Self {
+        let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        self.write(&len.to_le_bytes());
+        self.write(bytes)
+    }
+
+    /// Hash one length-prefixed string field.
+    pub fn field_str(&mut self, value: &str) -> &mut Self {
+        self.field(value.as_bytes())
+    }
+
+    /// Hash one `u64` field.
+    pub fn field_u64(&mut self, value: u64) -> &mut Self {
+        self.write(&value.to_le_bytes())
+    }
+
+    /// Hash one optional `u128` field.
+    pub fn field_opt_u128(&mut self, value: Option<u128>) -> &mut Self {
+        match value {
+            Some(value) => {
+                self.write(&[1]);
+                self.write(&value.to_le_bytes())
+            },
+            None => self.write(&[0]),
+        }
+    }
+
+    /// Hash one boolean field.
+    pub fn field_bool(&mut self, value: bool) -> &mut Self {
+        self.write(&[u8::from(value)])
+    }
+
+    /// Render the current state as lowercase hex.
+    #[must_use]
+    pub fn finish(&self) -> String {
+        format!("{:016x}", self.state)
+    }
 }
 
 #[cfg(test)]
@@ -645,44 +833,21 @@ mod tests {
     fn default_cache_is_enabled_under_project_root() {
         let options = CacheOptions::default();
         assert!(options.enabled);
-        assert_eq!(options.directory, PathBuf::from(DEFAULT_CACHE_DIR));
+        assert_eq!(
+            options.directory_path(Path::new("/repo/project")),
+            Path::new("/repo/project").join(DEFAULT_CACHE_DIR)
+        );
     }
 
     #[test]
-    fn disabled_cache_keeps_directory_policy() {
-        let options = CacheOptions::disabled();
-        assert!(!options.enabled);
-        assert_eq!(options.directory, PathBuf::from(DEFAULT_CACHE_DIR));
-    }
-
-    #[test]
-    fn cache_directory_path_stays_under_project_root() {
-        let options = CacheOptions {
-            enabled: true,
-            directory: PathBuf::from("../outside/cache"),
-        };
-
-        let path = options.directory_path(Path::new("/repo/project"));
-
-        assert_eq!(path, PathBuf::from("/repo/project/outside/cache"));
-    }
-
-    #[test]
-    fn absolute_cache_directory_is_made_project_relative() {
-        let options = CacheOptions {
-            enabled: true,
-            directory: PathBuf::from("/tmp/chokkin-cache"),
-        };
-
-        let path = options.directory_path(Path::new("/repo/project"));
-
-        assert_eq!(path, PathBuf::from("/repo/project/tmp/chokkin-cache"));
+    fn disabled_cache_is_not_enabled() {
+        assert!(!CacheOptions::disabled().enabled);
     }
 
     #[test]
     fn normalizes_cache_paths() {
         assert_eq!(
-            normalize_cache_path(".\\src\\acme\\main.py"),
+            cache_key_path(Path::new("/repo"), Path::new(".\\src\\acme\\main.py")),
             "src/acme/main.py"
         );
     }
@@ -712,6 +877,158 @@ mod tests {
     }
 
     #[test]
+    fn stat_fingerprint_skips_hashing_a_settled_file() {
+        let root = temp_cache_test_dir("stat-settled");
+        let path = root.join("src/app.py");
+        std::fs::write(&path, "import requests\n").expect("write source");
+        // Backdate past the racy window so the file counts as settled without
+        // making the test sleep.
+        let settled = SystemTime::now() - RACY_MTIME_WINDOW - Duration::from_secs(60);
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open source for retiming");
+        handle
+            .set_times(std::fs::FileTimes::new().set_modified(settled))
+            .expect("backdate mtime");
+        drop(handle);
+
+        let stat = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
+            .expect("stat fingerprint");
+        let full =
+            SourceFingerprint::from_root_relative(&root, "src/app.py").expect("full fingerprint");
+
+        assert_eq!(stat.path, "src/app.py");
+        assert!(stat.content_hash.is_empty());
+        assert_eq!(stat.size, full.size);
+        assert_eq!(stat.modified_ns, full.modified_ns);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stat_fingerprint_hashes_a_just_written_file() {
+        let root = temp_cache_test_dir("stat-racy");
+        let path = root.join("src/app.py");
+        std::fs::write(&path, "import requests\n").expect("write source");
+
+        let fingerprint = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
+            .expect("stat fingerprint");
+
+        assert!(
+            !fingerprint.content_hash.is_empty(),
+            "a file written just now is inside the racy window and must be hashed"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stat_fingerprint_judges_racy_against_the_given_clock() {
+        let root = temp_cache_test_dir("stat-lagging-clock");
+        let path = root.join("src/app.py");
+        std::fs::write(&path, "import requests\n").expect("write source");
+        // A filesystem clock lagging the local one by a minute stamps a fresh
+        // edit a minute in the past; the local clock would call it settled.
+        let lagging = SystemTime::now() - Duration::from_secs(60);
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open source for retiming");
+        handle
+            .set_times(std::fs::FileTimes::new().set_modified(lagging))
+            .expect("retime mtime");
+        drop(handle);
+
+        let fingerprint =
+            SourceFingerprint::from_root_relative_stat_at(&root, "src/app.py", lagging)
+                .expect("stat fingerprint");
+
+        assert!(
+            !fingerprint.content_hash.is_empty(),
+            "a file stamped at the filesystem's `now` must be hashed"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn filesystem_now_reads_the_probe_mtime() {
+        let root = temp_cache_test_dir("fs-now");
+        let options = CacheOptions::default();
+
+        let now = options.filesystem_now(&root).expect("filesystem now");
+
+        let probe = std::fs::metadata(options.clock_probe_path(&root)).expect("probe metadata");
+        assert_eq!(probe.modified().expect("probe mtime"), now);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parse_bundle_rejects_an_entry_for_another_path() {
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: String::new(),
+            },
+        };
+        let mut bundle = ParseCacheBundle::default();
+        // Stands in for a 64-bit entry-id collision with another source.
+        bundle.insert(
+            &key,
+            ParsedModule {
+                path: "src/other.py".to_owned(),
+                ..ParsedModule::default()
+            },
+        );
+
+        assert!(bundle.get(&key).is_none());
+    }
+
+    #[test]
+    fn disk_promotion_counts_as_a_hit() {
+        let key = ParseCacheKey {
+            context: CacheKeyContext {
+                chokkin_version: "test".to_owned(),
+                config_hash: "config".to_owned(),
+                manifest_hash: "manifest".to_owned(),
+                target_version: "py311".to_owned(),
+                unit_version: "parse-v1".to_owned(),
+            },
+            source: SourceFingerprint {
+                path: "src/app.py".to_owned(),
+                size: 1,
+                modified_ns: Some(1),
+                content_hash: String::new(),
+            },
+        };
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
+        let mut disk = ParseCacheBundle::default();
+        disk.insert(&key, parsed.clone());
+        let mut cache = ParseCacheStore::new();
+
+        assert_eq!(cache.get_or_promote(&key, &disk), Some(parsed.clone()));
+        assert_eq!(cache.get(&key), Some(parsed));
+        assert_eq!(
+            cache.stats(),
+            ParseCacheStats {
+                hits: 2,
+                misses: 0,
+                stores: 0,
+            }
+        );
+    }
+
+    #[test]
     fn scan_fingerprints_include_uv_only_pyproject_config_input() {
         let root = temp_cache_test_dir("scan-config");
         std::fs::write(
@@ -720,7 +1037,6 @@ mod tests {
         )
         .expect("write pyproject");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -740,7 +1056,6 @@ mod tests {
         let root = temp_cache_test_dir("scan-manifest");
         std::fs::write(root.join("requirements.txt"), "requests\n").expect("write requirements");
         let config = ConfigSources {
-            used_defaults: true,
             dot_chokkin_toml: None,
             chokkin_toml: None,
             pyproject_tool_chokkin: false,
@@ -776,7 +1091,10 @@ mod tests {
                 content_hash: "hash".to_owned(),
             },
         };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
+        let parsed = ParsedModule {
+            path: "src/app.py".to_owned(),
+            ..ParsedModule::default()
+        };
         let mut cache = ParseCacheStore::new();
 
         assert!(cache.get(&key).is_none());
@@ -787,11 +1105,11 @@ mod tests {
         assert_eq!(stats.misses, 1);
         assert_eq!(stats.stores, 1);
         assert_eq!(stats.hits, 1);
-        assert_eq!(cache.len(), 1);
     }
 
     #[test]
-    fn parse_entry_path_uses_stable_hashed_filename() {
+    fn corrupt_parse_bundle_reads_as_empty() {
+        let root = temp_cache_test_dir("corrupt-bundle");
         let context = CacheKeyContext {
             chokkin_version: "test".to_owned(),
             config_hash: "config".to_owned(),
@@ -799,124 +1117,16 @@ mod tests {
             target_version: "py311".to_owned(),
             unit_version: "parse-v1".to_owned(),
         };
-        let key = ParseCacheKey {
-            context,
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-
-        let path = CacheOptions::default().parse_entry_path(Path::new("/repo"), &key);
-
-        assert!(path.starts_with("/repo/.chokkin/cache/parse"));
-        assert_eq!(
-            path.extension().and_then(std::ffi::OsStr::to_str),
-            Some("json")
-        );
-    }
-
-    #[test]
-    fn parse_entry_round_trips_to_disk() {
-        let root = temp_cache_test_dir("disk");
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-        let parsed = ParsedModule::empty("src/app.py".to_owned());
         let options = CacheOptions::default();
-
-        options
-            .write_parse_entry(&root, &key, &parsed)
-            .expect("write parse cache");
-        let restored = options
-            .read_parse_entry(&root, &key)
-            .expect("read parse cache")
-            .expect("cache hit");
-
-        assert_eq!(restored, parsed);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn parse_entry_replaces_existing_disk_value() {
-        let root = temp_cache_test_dir("disk-replace");
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-        let first = ParsedModule::empty("src/first.py".to_owned());
-        let second = ParsedModule::empty("src/second.py".to_owned());
-        let options = CacheOptions::default();
-
-        options
-            .write_parse_entry(&root, &key, &first)
-            .expect("write first parse cache");
-        options
-            .write_parse_entry(&root, &key, &second)
-            .expect("replace parse cache");
-        let restored = options
-            .read_parse_entry(&root, &key)
-            .expect("read parse cache")
-            .expect("cache hit");
-
-        assert_eq!(restored, second);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn corrupt_parse_entry_is_cache_miss() {
-        let root = temp_cache_test_dir("corrupt");
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-        let options = CacheOptions::default();
-        let path = options.parse_entry_path(&root, &key);
+        let path = options.parse_bundle_path(&root, &context);
         std::fs::create_dir_all(path.parent().expect("cache parent")).expect("create cache parent");
         std::fs::write(&path, b"not json").expect("write corrupt cache");
 
-        assert_eq!(
-            options
-                .read_parse_entry(&root, &key)
-                .expect("read corrupt cache"),
-            None
-        );
+        let bundle = options
+            .read_parse_bundle(&root, &context)
+            .expect("read corrupt cache");
+
+        assert!(bundle.entries.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -951,86 +1161,6 @@ mod tests {
     }
 
     #[test]
-    fn scan_cache_record_is_json_safe() {
-        let record = ScanCacheRecord {
-            key: ScanCacheKey {
-                context: CacheKeyContext {
-                    chokkin_version: "test".to_owned(),
-                    config_hash: "config".to_owned(),
-                    manifest_hash: "manifest".to_owned(),
-                    target_version: "py311".to_owned(),
-                    unit_version: "scan-v1".to_owned(),
-                },
-                inputs: ScanInputFingerprints::default(),
-            },
-            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: None,
-        };
-
-        let bytes = serde_json::to_vec(&record).expect("serialize scan record");
-        let restored: ScanCacheRecord =
-            serde_json::from_slice(&bytes).expect("deserialize scan record");
-
-        assert_eq!(restored, record);
-    }
-
-    #[test]
-    fn scan_cache_record_without_payload_deserializes() {
-        let json = r#"{
-            "key": {
-                "context": {
-                    "chokkin_version": "test",
-                    "config_hash": "config",
-                    "manifest_hash": "manifest",
-                    "target_version": "py311",
-                    "unit_version": "scan-v1"
-                },
-                "inputs": {
-                    "config": [],
-                    "manifest": []
-                }
-            },
-            "schema_version": "scan-record-v1"
-        }"#;
-
-        let restored: ScanCacheRecord =
-            serde_json::from_str(json).expect("deserialize legacy scan record");
-
-        assert_eq!(restored.payload, None);
-    }
-
-    #[test]
-    fn scan_record_round_trips_to_disk() {
-        let root = temp_cache_test_dir("scan-disk");
-        let record = ScanCacheRecord {
-            key: ScanCacheKey {
-                context: CacheKeyContext {
-                    chokkin_version: "test".to_owned(),
-                    config_hash: "config".to_owned(),
-                    manifest_hash: "manifest".to_owned(),
-                    target_version: "py311".to_owned(),
-                    unit_version: "scan-v1".to_owned(),
-                },
-                inputs: ScanInputFingerprints::default(),
-            },
-            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: None,
-        };
-        let options = CacheOptions::default();
-
-        options
-            .write_scan_record(&root, &record)
-            .expect("write scan cache");
-        let restored = options
-            .read_scan_record(&root, &record.key)
-            .expect("read scan cache")
-            .expect("cache hit");
-
-        assert_eq!(restored, record);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn corrupt_scan_record_is_cache_miss() {
         let root = temp_cache_test_dir("scan-corrupt");
         let key = ScanCacheKey {
@@ -1050,7 +1180,7 @@ mod tests {
 
         assert_eq!(
             options
-                .read_scan_record(&root, &key)
+                .read_scan_payload::<serde_json::Value>(&root, &key)
                 .expect("read corrupt cache"),
             None
         );
@@ -1077,7 +1207,7 @@ mod tests {
         let record = ScanCacheRecord {
             key: stored,
             schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: None,
+            payload: (),
         };
         std::fs::write(
             &path,
@@ -1087,7 +1217,7 @@ mod tests {
 
         assert_eq!(
             CacheOptions::default()
-                .read_scan_record(&root, &expected)
+                .read_scan_payload::<()>(&root, &expected)
                 .expect("read mismatched cache"),
             None
         );
@@ -1112,7 +1242,7 @@ mod tests {
         let record = ScanCacheRecord {
             key: key.clone(),
             schema_version: "scan-record-v0".to_owned(),
-            payload: None,
+            payload: (),
         };
         std::fs::write(
             &path,
@@ -1122,7 +1252,7 @@ mod tests {
 
         assert_eq!(
             CacheOptions::default()
-                .read_scan_record(&root, &key)
+                .read_scan_payload::<()>(&root, &key)
                 .expect("read schema-mismatched cache"),
             None
         );
@@ -1184,14 +1314,9 @@ mod tests {
             },
             inputs: ScanInputFingerprints::default(),
         };
-        let record = ScanCacheRecord {
-            key: key.clone(),
-            schema_version: SCAN_CACHE_SCHEMA_VERSION.to_owned(),
-            payload: Some(serde_json::json!({"other": "shape"})),
-        };
         CacheOptions::default()
-            .write_scan_record(&root, &record)
-            .expect("write scan record");
+            .write_scan_payload(&root, key.clone(), &serde_json::json!({"other": "shape"}))
+            .expect("write scan payload");
 
         let restored: Option<Payload> = CacheOptions::default()
             .read_scan_payload(&root, &key)

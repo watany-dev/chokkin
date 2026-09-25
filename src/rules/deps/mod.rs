@@ -10,3 +10,5 @@ mod unused;
 mod used;
 
 pub use reconcile::reconcile_dependencies;
+
+pub(crate) use reconcile::reconcile_with_context;

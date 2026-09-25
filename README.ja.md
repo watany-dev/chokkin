@@ -7,7 +7,7 @@ Pythonプロジェクトの余計なファイル・余計な依存・余計な�
 `chokkin` は、Pythonプロジェクト全体を対象とする reachability analyzer — Python 版の [Knip](https://knip.dev/) 体験を目指すツールです。manifest・ソースコード・各種ツール設定からプロジェクト全体のグラフを構築し、どこからも到達しないものを報告します。`uvx chokkin` で設定なしに実行でき、必要に応じて精密な設定と CI 運用に移行できます。
 
 > [!NOTE]
-> **Status: v0.3.0 released。** デフォルトで **フル分析パイプライン**（ステップ 1–13）が動き、未使用ファイル・依存・シンボルを built-in reporter（`default` / `compact` / `json` / `markdown` / `github` / `sarif`）で報告します。`--explain` / `--trace` / `--fix` / baseline filtering も利用可能です。ステップ 1–4 の概要だけ見る場合は `--probe` を使い、解決済み workspace member 数も確認できます。resolver は member 由来 import に印を付け、cross-member import を first-party として扱います。strict mode は member ごとの依存宣言を要求し、reporter は workspace finding に member id を出します。v0.3 では JSON/baseline に `schema_version`、公開 JSON Schema（`docs/schema/`）、ルール別 `[tool.chokkin.severity]` override、SARIF rule metadata の安定化を追加しました。§17 の CHK002 誤検知ゲートは Phase 1.5 完了後に合格済み（`make oss-metrics ARGS=--gate`）、v0.2 validation 実測は記録済み（`docs/dev/v0.2-release-validation.md`）で、**v0.1.0 / v0.2.0 / v0.3.0 はリリース済み**です。
+> **Status: v0.4.1 released。** デフォルトで **フル分析パイプライン**（ステップ 1–13）が動き、未使用ファイル・依存・シンボルを built-in reporter（`default` / `compact` / `json` / `markdown` / `github` / `sarif`）で報告します。`--explain` / `--trace` / `--fix` / baseline filtering も利用可能です。ステップ 1–4 の概要だけ見る場合は `--probe` を使い、解決済み workspace member 数も確認できます。resolver は member 由来 import に印を付け、cross-member import を first-party として扱います。strict mode は member ごとの依存宣言を要求し、reporter は workspace finding に member id を出します。v0.4 は default CHK003 を runtime import 中心にし、conditional missing を info に保ち、alias 付き `TYPE_CHECKING` を認識します。さらに offline wheel metadata harvester と safe-autofix / semver 契約を追加しました。固定20プロジェクトで CHK003 は 964 件から 131 件へ減少し、unknown 0 のまま §17 gate は全合格です。v0.4.1 は並列 parse、stat ベースの warm cache、cache 整合性修正を含むバグ修正・性能改善リリースです。**v0.1.0 から v0.4.1 までリリース済み**です。
 
 ## なぜ chokkin か
 
@@ -31,7 +31,7 @@ uvx chokkin
 設定は不要です。初回実行で manifest(`pyproject.toml` / `setup.cfg` / `setup.py` / `requirements*.txt` / `uv.lock`)を探索し、layout(src/flat、tests、scripts、docs)と entry point を推定し、import graph を構築して宣言済み依存と照合します。
 
 ```text
-chokkin 0.3.0
+chokkin 0.4.1
 
 Project: acme-api
 Config : pyproject.toml
@@ -103,11 +103,11 @@ uvx chokkin --init
 主要なflag:
 
 - `--production` — dev/test/docs/lint/type contextを解析から外し、runtime contextの到達性だけで判定します。dev専用のファイル・依存は報告対象外になり、逆に「productionで未使用」が厳密に出ます。
-- `--strict` — transitive依存の直接importを常にerror、workspace memberごとに直接依存宣言を要求、environment marker付き依存のunusedもerror扱い、confidence `maybe` のissueも表示します。
+- `--strict` — transitive依存の直接importを常にerror、workspace memberごとに直接依存宣言を要求、type/test/docs/dev import も CHK003 対象にし、environment marker付き依存のunusedもerror扱い、confidence `maybe` のissueも表示します。
 - `--no-exit-code` — issueがあってもexit codeを0にします(config/CLI errorの2、internal errorの3は維持)。導入初期やGitHub Actions summary用に。
 - `--fix` — 確実なdependency findingに対して保守的な修正を適用します。`--allow-remove-files` を追加すると、確実に未到達なファイルも削除対象にします。`--add-missing` は distribution が一意な Certain CHK003 を non-Poetry の `[project].dependencies` に追加します。workspace finding は member manifest が inventory 済みなら member 側の `pyproject.toml` に追加し、未対応ケースは詳細付きの skipped fix として stderr に報告します。
 - `--baseline PATH` / `--update-baseline` — 現在のissueをbaseline fileに凍結し、以後の実行では一致するissueを抑制して新規issueだけCIで落とします。
-- `--no-cache` — Phase 2 cache の read/write を無効化します。parse、manifest/config scan、module index cache はデフォルトで project root 配下に作られ、壊れた cache や stale cache は miss 扱いにします。
+- `--no-cache` — Phase 2 cache の read/write を無効化します。parse、manifest/config scan cache はデフォルトで project root 配下に作られ、壊れた cache や stale cache は miss 扱いにします。
 - `--reporter github` / `--reporter sarif` — GitHub Actions annotation、または code scanning 用の SARIF 2.1.0 subset を出力します。
 - `--probe` — uv / chokkin workspace が検出された場合、解決済み・inventory済み workspace member 数も表示します。
 - `--explain` / `--trace` — issue が報告された理由と到達性の根拠を表示します。`CHK002` explain には top-level modules と reachable/unreachable import evidence を含み、`--trace` は到達可能な file には positive trace、未到達 file には negative trace（理由・entry roots・incoming import 連鎖）を出します。誤検知の調査・報告のための導線です。
@@ -144,6 +144,7 @@ respect_gitignore = true
 confidence = "likely"     # certain | likely | maybe
 exclude = [
   ".venv/**",
+  ".chokkin/**",
   "build/**",
   "dist/**",
   "**/__pycache__/**",
@@ -175,6 +176,8 @@ CHK006 = "info"
 CHK002 = "error"
 ```
 
+ルートの `.chokkin/` は解析データ専用で、exclude を上書きしても常に探索から除外します。分析対象のソースは置かないでください。
+
 ### モード
 
 `mode = "auto"` は次のいずれかを選択します。
@@ -185,7 +188,7 @@ CHK002 = "error"
 
 ### dependency context
 
-依存とファイルの両方にcontext(runtime / dev / test / docs / lint / type / optional extras)を割り当てます。これが `CHK005` の判定根拠です: `tests/` での `import pytest`(pytestがdev groupにある)はOK、`src/` での同じimportはmisplaced dependencyです。`TYPE_CHECKING` 配下のimportはtype context、`try: import orjson / except ImportError` はmissingではなくoptional扱いになります。
+依存とファイルの両方にcontext(runtime / dev / test / docs / lint / type / optional extras)を割り当てます。これが `CHK005` の判定根拠です: `tests/` での `import pytest`(pytestがdev groupにある)はOK、`src/` での同じimportはmisplaced dependencyです。default CHK003 は runtime import に集中し、`--strict` では未宣言の type/test/docs/dev import も報告します。alias 付き `typing.TYPE_CHECKING` 配下のimportはtype context、`try: import orjson / except ImportError` と platform guard 配下の未宣言 import は conditional candidate として info 扱いになります。
 
 ## Plugin
 
@@ -277,6 +280,8 @@ chokkinは解析対象projectのコードを実行しません — 解析は完�
 ## Contributing
 
 [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。設計仕様の全文(解析エンジン、import resolution戦略、ロードマップ)は [`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md) にあります。
+
+`pipeline` ベンチは約 2KiB のモジュールで全解析の cold/warm、parse の disk cache、到達性 cache、cache 作成後の探索を測ります。`cargo bench --bench pipeline` で通常の 1k、`CHOKKIN_BENCH_LARGE=1` で 5k/10k も実行できます。
 
 ## License
 
