@@ -1,0 +1,7 @@
+[project]
+name = "uv-dev-legacy"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[tool.uv]
+dev-dependencies = ["pytest>=8"]

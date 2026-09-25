@@ -10,8 +10,8 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    CacheOptions, ConfigSources, DependencyContext, LoadedConfig, ManifestError, ManifestWarning,
-    ProjectRoot, RootMarker, TargetVersion, default_config, discover_project_root,
+    CacheOptions, ConfigSources, DependencyContext, LoadedConfig, LockfileKind, ManifestError,
+    ManifestWarning, ProjectRoot, RootMarker, TargetVersion, default_config, discover_project_root,
     extract_manifest, extract_manifest_with_cache, load_config, resolve_target_version,
 };
 
@@ -256,7 +256,9 @@ fn dynamic_dependencies_use_requirements() {
 #[test]
 fn uv_lock_builds_graph() {
     let manifest = extract_fixture("uv_lock_graph");
-    assert!(manifest.sources.uv_lock);
+    let lockfile = manifest.sources.lockfile.as_ref().expect("uv.lock read");
+    assert_eq!(lockfile.kind, LockfileKind::Uv);
+    assert_eq!(lockfile.path, "uv.lock");
     let requests_deps = manifest
         .lockfile
         .edges
@@ -539,4 +541,37 @@ fn maturin_build_requires_and_python_source() {
     assert_eq!(dependency_names(&manifest), ["numpy"]);
     let targets = manifest.metadata.wheel_targets.expect("wheel targets");
     assert_eq!(targets.paths, ["python/acme", "python/acme.py"]);
+}
+
+fn dev_group_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
+    let dev = DependencyContext::Group("dev".to_owned());
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.context == dev)
+        .map(|dep| dep.name.as_str())
+        .collect()
+}
+
+#[test]
+fn uv_dev_dependencies_join_dev_group_in_every_format() {
+    assert_eq!(
+        dev_group_names(&extract_fixture("uv_dev_legacy")),
+        vec!["pytest"]
+    );
+    assert_eq!(
+        dev_group_names(&extract_fixture("uv_dev_groups")),
+        vec!["pytest"]
+    );
+    let both = extract_fixture("uv_dev_both");
+    let mut names = dev_group_names(&both);
+    names.sort_unstable();
+    assert_eq!(names, vec!["pytest", "ruff"]);
+    assert_eq!(
+        both.uv.default_groups,
+        Some(chokkin::UvDefaultGroups::Groups(vec![
+            "dev".to_owned(),
+            "lint".to_owned()
+        ]))
+    );
 }

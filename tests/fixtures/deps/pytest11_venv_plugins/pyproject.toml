@@ -1,0 +1,10 @@
+[project]
+name = "pytest11-venv-plugins"
+version = "0.1.0"
+dependencies = ["pytest", "pytest-sugar"]
+
+[project.scripts]
+demo-cli = "acme.main:main"
+
+[tool.pytest.ini_options]
+addopts = "-q"

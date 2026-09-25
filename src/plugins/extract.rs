@@ -33,25 +33,15 @@ pub fn extract_plugin_hints(
     config: &LoadedConfig,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
-) -> Result<PluginHints, PluginsError> {
-    extract_plugin_hints_with_cache(root, config, sources, manifest, None)
-}
-
-/// Extract framework hints, optionally caching generic config scan results.
-pub fn extract_plugin_hints_with_cache(
-    root: &ProjectRoot,
-    config: &LoadedConfig,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    cache: Option<&CacheOptions>,
+    parse: &ParseSummary,
 ) -> Result<PluginHints, PluginsError> {
     extract_plugin_hints_with_parse(&PluginExtractRequest {
         root,
         config,
         sources,
         manifest,
-        parse: None,
-        cache,
+        parse,
+        cache: None,
     })
 }
 
@@ -66,16 +56,13 @@ pub struct PluginExtractRequest<'a> {
     pub sources: &'a DiscoveredSources,
     /// Extracted manifest.
     pub manifest: &'a LoadedManifest,
-    /// Step 6 parse output when the caller already has it.
-    pub parse: Option<&'a ParseSummary>,
+    /// Step 6 parse output.
+    pub parse: &'a ParseSummary,
     /// Disk cache used for the generic config scan.
     pub cache: Option<&'a CacheOptions>,
 }
 
-/// Extract framework hints, reusing step 6 parse output when available.
-///
-/// Passing `parse` keeps Flask and Celery from re-reading every `.py` file the
-/// parser is about to read anyway.
+/// Extract framework hints, optionally caching generic config scan results.
 pub fn extract_plugin_hints_with_parse(
     request: &PluginExtractRequest<'_>,
 ) -> Result<PluginHints, PluginsError> {
@@ -130,6 +117,7 @@ pub fn extract_plugin_hints_with_parse(
         contributions,
         config_binary_usages: scan.binary_usages,
         config_used_distributions: scan.used_distributions,
+        config_module_refs: scan.module_refs,
         warnings,
     })
 }
@@ -212,7 +200,7 @@ fn config_scan_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", manifest.sources).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "config-scan-v2".to_owned(),
+            unit_version: "config-scan-v3".to_owned(),
         },
         inputs,
     })
@@ -265,14 +253,21 @@ mod tests {
             metadata: crate::manifest::ProjectMetadata::default(),
             dependencies: Vec::new(),
             constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
             uv_workspace: None,
             entry_points: Vec::new(),
             lockfile: crate::manifest::LockfileGraph::default(),
             sources: crate::manifest::ManifestSources::default(),
             warnings: Vec::new(),
         };
-        let hints = extract_plugin_hints(&loaded.root, &loaded, &sources, &manifest)
-            .expect("extract hints");
+        let hints = extract_plugin_hints(
+            &loaded.root,
+            &loaded,
+            &sources,
+            &manifest,
+            &ParseSummary::default(),
+        )
+        .expect("extract hints");
         assert!(hints.contributions.is_empty());
     }
 
@@ -309,6 +304,7 @@ mod tests {
             metadata: crate::manifest::ProjectMetadata::default(),
             dependencies: Vec::new(),
             constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
             uv_workspace: None,
             entry_points: Vec::new(),
             lockfile: crate::manifest::LockfileGraph::default(),
@@ -323,12 +319,19 @@ mod tests {
 
     fn cached_binaries(root_path: &Path, cache: &CacheOptions) -> BTreeSet<String> {
         let (loaded, sources, manifest) = scan_cache_fixture(root_path);
-        extract_plugin_hints_with_cache(&loaded.root, &loaded, &sources, &manifest, Some(cache))
-            .expect("extract hints")
-            .config_binary_usages
-            .into_iter()
-            .map(|usage| usage.binary)
-            .collect()
+        extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &ParseSummary::default(),
+            cache: Some(cache),
+        })
+        .expect("extract hints")
+        .config_binary_usages
+        .into_iter()
+        .map(|usage| usage.binary)
+        .collect()
     }
 
     #[test]
@@ -342,28 +345,23 @@ mod tests {
         .expect("write pyproject");
         let (loaded, sources, manifest) = scan_cache_fixture(root_path);
         let cache = CacheOptions::default();
+        let parse = ParseSummary::default();
+        let request = PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &parse,
+            cache: Some(&cache),
+        };
 
-        let first = extract_plugin_hints_with_cache(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            Some(&cache),
-        )
-        .expect("first extract");
+        let first = extract_plugin_hints_with_parse(&request).expect("first extract");
         let key = config_scan_cache_key(&loaded, &manifest).expect("cache key");
         let cached: ConfigScanCachePayload = cache
             .read_scan_payload(root_path, &key)
             .expect("read payload")
             .expect("payload hit");
-        let second = extract_plugin_hints_with_cache(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            Some(&cache),
-        )
-        .expect("second extract");
+        let second = extract_plugin_hints_with_parse(&request).expect("second extract");
 
         assert!(
             first

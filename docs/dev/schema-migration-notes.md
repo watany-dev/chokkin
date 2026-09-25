@@ -126,6 +126,26 @@ Recommended consumer keys:
 
 Message text is not a stable identifier.
 
+### PEP 723 script subjects (v0.5, additive)
+
+CHK002 / CHK003 findings scoped to a PEP 723 script (`# /// script` block) use
+a new subject shape. This is an additive change within ADR 0004 (no field is
+removed or renamed, `schema_version` stays `"1"`):
+
+- `target`: `script:<root-relative script path>:<distribution>`, `/`-normalized
+- `fingerprint` / baseline / SARIF `partialFingerprints["chokkin/v0"]`:
+  `<code>:script:<path>:<distribution>` (the usual `<code>:<target>` shape)
+- `path`: the script path, `distribution`: the distribution name. This is the
+  only subject where two subject fields are non-null at once.
+- `file` / `line`: the script and the import line (CHK003) or the declaration
+  line inside the block (CHK002); `manifest.file` is the script for CHK002.
+- `[tool.chokkin.ignore]` accepts either the bare distribution name or the
+  full `script:<path>:<distribution>` target.
+
+Project-scope findings do not change shape; a distribution imported only by a
+script no longer appears as a project CHK003, so existing baselines may carry
+entries that no longer match.
+
 ## SARIF Draft
 
 `chokkin --reporter sarif` emits SARIF 2.1.0 with the built-in CHK001-CHK010

@@ -231,6 +231,7 @@ mod tests {
             contributions: vec![contribution],
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         }
     }

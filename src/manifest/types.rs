@@ -121,11 +121,108 @@ pub struct PackageFind {
     pub namespaces: bool,
 }
 
+/// Where a `[tool.uv.sources]` entry points.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UvSourceKind {
+    /// `{ path = "..." }` as written, so cached manifests carry no absolute root.
+    Path {
+        /// Path string from the manifest.
+        path: String,
+        /// `editable = true`.
+        editable: bool,
+    },
+    /// `{ workspace = true }`.
+    Workspace,
+    /// `{ git = "..." }`.
+    Git(String),
+    /// `{ url = "..." }`.
+    Url(String),
+    /// `{ index = "..." }`.
+    Index(String),
+    /// Any other shape.
+    Other,
+}
+
+/// One `[tool.uv.sources]` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UvSource {
+    /// Normalized distribution name the source applies to.
+    pub name: String,
+    /// Source kind.
+    pub kind: UvSourceKind,
+    /// Source location.
+    pub origin: DependencyOrigin,
+}
+
+/// `[tool.uv] default-groups`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UvDefaultGroups {
+    /// `default-groups = "all"`.
+    All,
+    /// Explicit group list.
+    Groups(Vec<String>),
+}
+
+/// `[tool.uv]` settings that are not dependency declarations.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct UvToolSettings {
+    /// `[tool.uv.sources]` entries.
+    pub sources: Vec<UvSource>,
+    /// `default-groups`. Install-time default only; `--production` does not read it.
+    pub default_groups: Option<UvDefaultGroups>,
+}
+
+impl UvToolSettings {
+    /// Whether normalized `name` has a `workspace = true` source.
+    #[must_use]
+    pub fn is_workspace_source(&self, name: &str) -> bool {
+        self.sources
+            .iter()
+            .any(|source| source.name == name && source.kind == UvSourceKind::Workspace)
+    }
+}
+
 /// Resolved dependency graph from a lockfile.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
+}
+
+/// Lockfile formats read into [`LockfileGraph`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockfileKind {
+    /// `uv.lock`.
+    Uv,
+    /// PEP 751 `pylock.toml` / `pylock.<name>.toml`.
+    Pylock,
+    /// `poetry.lock`.
+    Poetry,
+    /// `pdm.lock`.
+    Pdm,
+}
+
+impl LockfileKind {
+    /// Short format name for probe output.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uv => "uv",
+            Self::Pylock => "pylock",
+            Self::Poetry => "poetry",
+            Self::Pdm => "pdm",
+        }
+    }
+}
+
+/// The lockfile that fed [`LoadedManifest::lockfile`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockfileSource {
+    /// Lockfile format.
+    pub kind: LockfileKind,
+    /// Root-relative path, e.g. `pylock.dev.toml`.
+    pub path: String,
 }
 
 /// Which manifest files contributed to extraction.
@@ -143,8 +240,11 @@ pub struct ManifestSources {
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).
     pub setup_py: bool,
-    /// `uv.lock` contributed.
+    /// `uv.lock` contributed. Kept for library API compatibility; mirrors
+    /// `lockfile` having [`LockfileKind::Uv`].
     pub uv_lock: bool,
+    /// Lockfile that contributed the transitive graph.
+    pub lockfile: Option<LockfileSource>,
     /// Poetry sections were detected.
     pub poetry: bool,
 }
@@ -159,8 +259,11 @@ pub struct LoadedManifest {
     pub metadata: ProjectMetadata,
     /// Declared dependencies from all manifest sources.
     pub dependencies: Vec<DeclaredDependency>,
-    /// Version constraints from `-c` requirements files.
+    /// Version constraints from `-c` requirements files and `[tool.uv]`
+    /// `constraint-dependencies` / `override-dependencies`; never declarations.
     pub constraints: Vec<DeclaredDependency>,
+    /// `[tool.uv]` sources and default groups.
+    pub uv: UvToolSettings,
     /// Raw `[tool.uv.workspace]` members copied from config load (hash input).
     pub uv_workspace: Option<UvWorkspaceHint>,
     /// Packaging entry points.

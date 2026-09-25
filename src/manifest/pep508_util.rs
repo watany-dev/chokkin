@@ -167,7 +167,7 @@ fn requirement_to_declared(
 
 /// Leading run of PEP 508 name characters (`[A-Za-z0-9._-]`).
 #[must_use]
-fn leading_name_token(spec: &str) -> &str {
+pub(super) fn leading_name_token(spec: &str) -> &str {
     let end = spec
         .find(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
         .unwrap_or(spec.len());
@@ -176,7 +176,7 @@ fn leading_name_token(spec: &str) -> &str {
 
 /// Strict PEP 508 name check: alphanumeric edges (separators inside only).
 #[must_use]
-fn is_strict_pep508_name(name: &str) -> bool {
+pub(super) fn is_strict_pep508_name(name: &str) -> bool {
     match name.as_bytes() {
         [] => false,
         [single] => single.is_ascii_alphanumeric(),

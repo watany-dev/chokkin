@@ -1,0 +1,14 @@
+lock-version = "1.0"
+requires-python = ">=3.11"
+created-by = "uv"
+
+[[packages]]
+name = "requests"
+version = "2.32.5"
+dependencies = [
+    { name = "urllib3" },
+]
+
+[[packages]]
+name = "urllib3"
+version = "2.2.0"

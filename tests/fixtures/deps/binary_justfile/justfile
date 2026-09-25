@@ -1,0 +1,16 @@
+set dotenv-load
+server := "gunicorn acme.main:app"
+
+migrate:
+    @uv run alembic upgrade head
+
+worker queue='default':
+    -celery -A acme.main worker -Q {{queue}}
+
+serve:
+    {{server}}
+
+script:
+    #!/usr/bin/env python3
+    import subprocess
+    subprocess.run(['gunicorn', 'acme.main:app'])

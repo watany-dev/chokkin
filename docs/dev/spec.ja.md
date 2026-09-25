@@ -40,7 +40,7 @@ uvx chokkin
 初回実行で、設定なしでも以下を行う。
 
 ```text
-1. pyproject.toml / setup.cfg / setup.py / requirements*.txt / uv.lock を探索
+1. pyproject.toml / setup.cfg / setup.py / requirements*.txt / lockfile を探索
 2. src layout / flat layout / tests / scripts / docs / config files を推定
 3. entry points と framework entry を推定
 4. Python import graph を構築
@@ -142,6 +142,8 @@ MVPでは以下のrule IDを固定する。
 |`CHK009`|`duplicate_dependency` |main/dev/optionalに重複宣言されている                       |warning                     |
 |`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |warning                     |
 
+PEP 723 script (`# /// script` block を持つ `.py`) の CHK002 / CHK003 は project manifest ではなく script block の `dependencies` に対して判定し、subject を `script:<root 相対 path>:<distribution>` とする (例: `CHK003:script:scripts/tool.py:pyyaml`)。JSON では `path` に script、`distribution` に distribution 名を入れ、`target` / baseline fingerprint / `[tool.chokkin.ignore]` / `--explain` は同じ `script:` 形式を受け付ける。詳細は §10。
+
 `unused_export` はPythonでは危険。JavaScript/TypeScriptの `export` と違い、Pythonではmodule top-levelの名前が原則import可能になる。最初は `unused_export` をpreview ruleまたはlibrary modeではinfo扱いにする。
 
 ## 4. project discovery仕様
@@ -177,12 +179,16 @@ dev-requirements.txt
 constraints.txt
 setup.cfg
 setup.py  # static parseのみ。実行しない。
-uv.lock
+uv.lock / pylock.toml / pylock.<name>.toml / poetry.lock / pdm.lock
 ```
+
+lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>.toml(名前順) > poetry.lock > pdm.lock とする。複数形式を合成しないのは、同一projectで形式が混在するのは移行途中であり、新しい側(uv/PEP 751)が実体に近いため。読んだlockfileの種類と相対pathは `ManifestSources.lockfile` に記録し、`--probe` に表示する。どの形式も package名と依存edgeだけを `LockfileGraph` に読み、同名packageのedgeは合流させる。pylock.tomlは `[[packages]].dependencies[].name`、poetry.lockは `[package.dependencies]` のkey(1.x / 2.x共通)、pdm.lockは `dependencies` のPEP 508文字列の先頭名を使う。pdm.lockの `groups` / `extras` は読まない。CHK004はimportが宣言依存から到達可能かだけを問い、group別の到達性はmanifest側のcontextで判定済みのため。候補lockfileはすべてcacheの入力fingerprintに入れる(優先順位が変わると読む対象が変わるため)。lockfileは読むだけで編集しない。
 
 requirements系filesのパース規則を定める。コメントはpip互換で「行頭または空白が先行する `#`」のみを除去し、URLフラグメント（`#sha256=` / `#egg=`）は保持する。`-r` / `--requirement`（`--requirement=other.txt` 含む）は再帰的に追跡する。`-c` / `--constraint` はversion制約の情報源としてのみ読み、`LoadedManifest.constraints` に積み、依存宣言とは合流させない（ファイル欠如はwarning）。`-e ./path` とlocal path指定はworkspace/first-party候補として扱い、distribution名は空のopaque依存として記録する。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
 
-`setup.py` は `setup()` 呼び出し本体のみを静的パースする。リスト走査が途中で破綻した場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
+`setup.py` はrustpython-parserでASTにし、`setup()` 呼び出しのキーワード引数のみを静的に読む(構文エラー時は静的解析不可として扱う)。リストに文字列リテラル以外の要素が混ざる場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
+
+`[tool.uv]` のその他のキーは次のように読む（R-04）。legacy `dev-dependencies` は `[dependency-groups] dev` と同じ `Group("dev")` 宣言として合流させ、`--fix` は `tool.uv.dev-dependencies[i]` ラベルで配列要素を削除できる。`constraint-dependencies` / `override-dependencies` は `-c` と同様に `LoadedManifest.constraints` へ積み、origin ラベル（`tool.uv.constraint-dependencies[i]` 等）を保持するが、CHK002/CHK003/CHK009 の入力にはしない。`default-groups` は `LoadedManifest.uv.default_groups` に保持するのみで、`--production` は参照しない（production は runtime 以外の context を常に除外するため、インストール既定値に依存させない）。`[tool.uv.sources]` は path / editable / workspace / git / url / index の種別と記述どおりの相対pathを `LoadedManifest.uv.sources` に保持する（絶対pathはキャッシュに入れない）。path / editable source はStep 7でroot基準に解決したローカルtreeからlayout推論でimport名を導出し、そのdistributionへのCertainな対応としてvenvなしで解決する（キャッシュ外で毎回読むためstaleにならない。package未検出時はdistribution名の `-`→`_` をimport名とする）。`workspace = true` source は既存のworkspace member判定でfirst-partyとして解決し、到達可能なimportがあればそのdependencyをusedとして扱う。
 
 `setup.py` が静的に解析できない場合(動的な `install_requires` 構築など)は、warningを出してそのsourceをskipし、他のsourceで解析を継続する。`[project]` の `dynamic = ["dependencies"]` が指定されている場合は、setuptoolsの慣習に従い `requirements*.txt` 側を依存宣言の実体として読む。
 
@@ -419,6 +425,8 @@ mkdocs
 alembic
 ```
 
+plugin の有効/無効は `[tool.chokkin.plugins]` の明示値 > enabler > 既定値 (pytest / django / fastapi のみ on) の順で決める (v0.5, R-07)。enabler は Knip の enablers 相当で、`src/plugins/enablers.rs` の表 1 か所にまとめ、root と各 workspace member の宣言済み依存 (例: `flask` / `celery` / `sphinx` / `mkdocs` / `alembic`) と設定ファイルの存在 (`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `docs/conf.py` / `mkdocs.yml` / `alembic.ini`) だけを見る。github-actions は workflow がほぼ全 repo にあり未宣言 tool の CHK008 を大量に出すため enabler を持たない。解決は probe (Step 1〜4) の末尾で行い、結果を `effective_config.plugins` に書き戻すので config-scan cache key にも自然に入る。`--probe` の `Plugins` 節は有効な plugin と既定以外の理由を持つ plugin を `default` / `config` / `disabled-by: config` / `enabled-by: dependency <name> [(member <id>)]` / `enabled-by: file <path>` で表示する。
+
 pluginの責務は3つだけにする。
 
 ```text
@@ -527,7 +535,7 @@ src/ で import urllib3
     -> CHK002 unused_dependency
 ```
 
-判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。
+判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。CHK004のevidenceは2種類に分ける。宣言依存からlockfileのedgeで到達できる場合は「transitive edge」(Certain)、lockfileにpackageとしては載っているが宣言依存から到達できない場合は「lockにあるが未宣言」(Likely)とし、messageとexplain detailで区別する。
 
 environment markerとextrasの扱いも定める。
 
@@ -570,6 +578,29 @@ except ImportError:
 この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
 
 `[build-system].requires` / `build-backend` は build context (v0.5 R-05) として `ProjectMetadata.build_requires` / `build_backend` に inventory し、CHK002/CHK003 の宣言集合には入れない (build requires は runtime import を満たさず、未使用扱いにもならない)。hatch-vcs / setuptools-scm のような build plugin が project / dev 依存にも宣言されて未使用なら、CHK002 を出すかどうかは既存の context 方針のままにし、evidence に `also in build-system.requires` を添える。`--probe` の Manifest 欄に backend と requires を表示する。
+
+PEP 723 inline script metadata (v0.5, R-02) は script 単位の dependency scope として扱う。
+
+```text
+検出   : probe (step 4) で source の .py を file text から走査する (AST は使わない)
+         `# /// script` 〜 最後の `# ///` を TOML として読む。CRLF 可
+         block が 2 つ以上 / TOML が壊れている / 型が違う -> warning、通常 source 扱い
+entry  : script file 自体を entry root (origin: script) にする。script から到達する
+         first-party file は CHK001 にならない。--production では production context の
+         script だけを entry にする
+照合   : script file 自身の third-party import は script block の `dependencies` と照合し、
+         project manifest の CHK002/CHK003/CHK005 判定からは除外する
+         script 経由の first-party import とその先の file は従来どおり project scope
+target : script の `requires-python` 下限を、その file の parse と stdlib 判定の
+         target version にする。未指定なら project の target version
+report : subject は `script:<path>:<distribution>`。CHK003 は Error/certain
+         (optional / platform-guarded import は対象外)。CHK002 は project CHK002 と
+         同じく marker 付きを default で除外し、--strict で報告する
+         到達しない script (--production で dev context 等) は判定しない
+fix    : script block は書き換えない。--fix は UnsupportedTarget で skip する
+cache  : block は file text の一部なので parse cache の file fingerprint で無効化される
+         (target version も file text から導出するため key 不整合は起きない)
+```
 
 ## 11. unused files判定
 
@@ -710,7 +741,7 @@ manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、comm
 
 書き込み安全性: manifest編集は同一ディレクトリへの一時ファイル作成→`rename` でアトミックに置換する(`fix/write.rs`)。既存ファイルのpermissionsは可能な範囲で引き継ぐ。fix対象パスはproject root内に収まることを検証し、ルート外への書き込みはskipする。requirementsの `-r`/`-c` インクルードとDjango `settings.py` 探索も同様にルート封じ込めする。
 
-lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`chokkin` はlockfileを直接編集しない。fix適用後に `uv lock` / `poetry lock` の実行を促すメッセージを出力する。
+lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`chokkin` はlockfileを直接編集しない。fix適用後に、読んだlockfileの種類に応じて `uv lock` / `poetry lock` / `pdm lock` の実行を促すメッセージを出力する(poetry管理のprojectはlockfileがなくても `poetry lock` を促す)。
 
 ## 14. 既存Pythonエコシステムの課題と解決
 
@@ -755,7 +786,7 @@ chokkin/
                  #           step 11 `rules/symbols/` (`analyze_symbols`, CHK006–CHK007, CHK010);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
     reporters/   # 実装済み: default / compact / json / markdown reporter
-    fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg; atomic write, root containment)
+    fix/         # 実装済み: step 13 (`apply_fixes_with_workspace` — pyproject/requirements/setup.cfg; atomic write, root containment)
 ```
 
 `pyproject.toml` は概ねこうする。
@@ -998,7 +1029,7 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` に対応し、
     `python -m pytest` のような module invocation も既知binary利用として扱う。
     notebook parsing は `.ipynb` discovery と Python code-cell extraction を初期実装済み。
-    Flask/Celery decorator由来 module refs は literal scan として初期実装済み)
+    Flask/Celery decorator由来 module refs は step 6 の decorator sites から抽出する形で初期実装済み)
   - JSON reporter / baseline draft schema と migration 方針 (`docs/dev/schema-migration-notes.md`)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
@@ -1190,7 +1221,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v5。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v6。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime
@@ -1216,7 +1247,14 @@ warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使�
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
-Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果がある場合はその decorator site を、無い単体 API 呼び出しや構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査を使うが、どちらも同じ正規化名と判定関数で判定する。
+R-06 で binary / plugin usage の情報源を拡充した。共通の command 解析 (`\` 継続の結合、`;` `|` `&` と改行での分割、`@` `-` / `exec` `env` などの wrapper、`uv run` / `poetry run` などの runner、`python -m` の剥がし、`$…` や `{{…}}` で始まる語は変数展開として追わない、pip / uv などの環境管理ツールは binary 扱いしない) は `src/plugins/commands.rs`、行番号付きで TOML / INI / YAML を読む補助は `src/plugins/config_text.rs` に置く。
+
+- `src/plugins/task_files.rs`: `[tool.pdm.scripts]` (文字列 / `cmd` 文字列・配列 / `shell` / `composite`、`call` は module reference、`_` は無視)、`GNUmakefile` / `makefile` / `Makefile` の tab 付き recipe 行、`justfile` / `Justfile` / `.justfile` の recipe 本体 (`sh` 以外の shebang recipe は除外)、`Dockerfile` / `Containerfile` / `*.Dockerfile` / `Dockerfile.*` の `RUN` / `CMD` / `ENTRYPOINT` (shell form と exec form)、`Procfile`、`.gitlab-ci.yml` の `script` / `before_script` / `after_script` (list・inline 配列・block scalar、`!reference` は無視)。Makefile / justfile の変数・include は追わない。
+- `src/plugins/tool_plugins.rs`: pytest `addopts` (`[tool.pytest.ini_options]` / `pytest.ini` / `tox.ini [pytest]` / `setup.cfg [tool:pytest]`) の `-p mod` を module reference (`-p no:x` は無視)、`--cov` / `-n` / `--benchmark-*` などの plugin option を `src/plugins/plugin_map.rs` の表で distribution に対応づける。mypy `plugins` (`[tool.mypy]` / `mypy.ini` / `.mypy.ini` / `setup.cfg [mypy]`) は module reference (`mypy_django_plugin` → `django-stubs` などは表で対応づけ)、`[tool.ty]` / `ty.toml` / `[tool.pyright]` / `pyrightconfig.json` / `[tool.basedpyright]` は該当 type checker を used にする。
+- `.venv` の `pytest11` entry point を持つ distribution は pytest 自体が used のとき used とする (`ResolutionIndex.pytest_plugin_distributions`)。
+- 読むファイルはすべて config-scan cache key (`scan_input_paths`) に入り、`--explain` の evidence は `file:line` で origin を示す。
+
+Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果の decorator site を使い、構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査にフォールバックするが、どちらも同じ正規化名と判定関数で判定する。
 
 Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 

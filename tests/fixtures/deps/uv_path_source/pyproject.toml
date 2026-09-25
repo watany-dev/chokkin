@@ -1,0 +1,10 @@
+[project]
+name = "uv-path-source"
+version = "0.1.0"
+dependencies = ["my-lib"]
+
+[project.scripts]
+uv-path-source = "acme.main:main"
+
+[tool.uv.sources]
+my-lib = { path = "libs/my-lib", editable = true }

@@ -1,0 +1,12 @@
+[project]
+name = "uv-dev-both"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+lint = ["mypy"]
+
+[tool.uv]
+dev-dependencies = ["ruff>=0.6"]
+default-groups = ["dev", "lint"]

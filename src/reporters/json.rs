@@ -101,6 +101,12 @@ fn json_issue(issue: &Issue) -> JsonIssue<'_> {
             let symbol = format!("{path}:{line} {module}");
             (Some(path), None, Some(symbol), None)
         },
+        IssueSubject::ScriptDistribution { script, name } => (
+            Some(normalize_rel_path(Path::new(script))),
+            Some(name.as_str()),
+            None,
+            None,
+        ),
     };
     JsonIssue {
         code: issue.rule.as_code(),

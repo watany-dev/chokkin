@@ -1,0 +1,13 @@
+[project]
+name = "mypy-plugins-typecheckers"
+version = "0.1.0"
+dependencies = ["basedpyright", "django-stubs", "mypy", "pydantic", "ty"]
+
+[project.scripts]
+demo-cli = "acme.main:main"
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+
+[tool.pyright]
+typeCheckingMode = "strict"

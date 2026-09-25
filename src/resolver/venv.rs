@@ -1,6 +1,6 @@
 //! `.venv` dist-info metadata reading.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +17,8 @@ pub struct VenvIndex {
     pub imports: BTreeMap<String, Vec<String>>,
     /// Console script name to normalized distribution names.
     pub binaries: BTreeMap<String, String>,
+    /// Distributions registering a `pytest11` entry point (auto-loaded pytest plugins).
+    pub pytest_plugins: BTreeSet<String>,
 }
 
 /// Load import mappings from a project virtualenv when present.
@@ -137,11 +139,18 @@ fn merge_dist_info(dist_info: &Path, index: &mut VenvIndex) {
         push_import(index, &import, &distribution);
     }
 
-    let entry_points_path = dist_info.join("entry_points.txt");
-    if let Ok(contents) = fs::read_to_string(&entry_points_path) {
-        for script in console_scripts_from_entry_points(&contents) {
-            index.binaries.insert(script, distribution.clone());
-        }
+    merge_entry_points(&dist_info.join("entry_points.txt"), &distribution, index);
+}
+
+fn merge_entry_points(path: &Path, distribution: &str, index: &mut VenvIndex) {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return;
+    };
+    for script in entry_point_names(&contents, "console_scripts") {
+        index.binaries.insert(script, distribution.to_owned());
+    }
+    if !entry_point_names(&contents, "pytest11").is_empty() {
+        index.pytest_plugins.insert(distribution.to_owned());
     }
 }
 
@@ -198,16 +207,19 @@ fn top_level_import_from_record_path(path: &str) -> Option<String> {
     }
 }
 
-fn console_scripts_from_entry_points(contents: &str) -> Vec<String> {
+fn entry_point_names(contents: &str, group: &str) -> Vec<String> {
     let mut scripts = Vec::new();
-    let mut in_console_scripts = false;
+    let mut in_group = false;
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            in_console_scripts = trimmed.eq_ignore_ascii_case("[console_scripts]");
+            in_group = trimmed
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+                .is_some_and(|name| name.trim().eq_ignore_ascii_case(group));
             continue;
         }
-        if !in_console_scripts || trimmed.is_empty() || trimmed.starts_with('#') {
+        if !in_group || trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
         if let Some((name, _)) = trimmed.split_once('=') {
@@ -248,8 +260,18 @@ mod tests {
     fn parses_console_scripts_section() {
         let contents = "[console_scripts]\nflake8 = flake8.main:main\n\n[other]\n";
         assert_eq!(
-            console_scripts_from_entry_points(contents),
+            entry_point_names(contents, "console_scripts"),
             vec!["flake8".to_owned()]
+        );
+    }
+
+    #[test]
+    fn parses_pytest11_section() {
+        let contents =
+            "[console_scripts]\nfoo = foo:main\n\n[pytest11]\ndjango = pytest_django.plugin\n";
+        assert_eq!(
+            entry_point_names(contents, "pytest11"),
+            vec!["django".to_owned()]
         );
     }
 }
