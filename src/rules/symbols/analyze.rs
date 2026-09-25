@@ -70,7 +70,7 @@ pub fn analyze_with_context(
     let reachable_modules: Vec<_> = parse
         .modules
         .iter()
-        .filter(|module| reachable.contains(&module.path))
+        .filter(|module| reachable.contains(module.path.as_str()))
         .collect();
 
     let registry = build_registry(&reachable_modules, &module_names);
@@ -107,25 +107,25 @@ pub fn analyze_with_context(
     }
 }
 
-fn reachable_file_paths(
-    graph: &ProjectGraph,
+fn reachable_file_paths<'g>(
+    graph: &'g ProjectGraph,
     reachability: &ReachabilityReport,
-) -> HashSet<String> {
+) -> HashSet<&'g str> {
     reachability
         .reachable
         .iter()
-        .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.clone()))
+        .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.as_str()))
         .collect()
 }
 
 fn build_module_names<'a>(
     parse: &'a ParseSummary,
     sources: &DiscoveredSources,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<&str>,
 ) -> HashMap<&'a str, String> {
     let mut names = HashMap::new();
     for module in &parse.modules {
-        if !reachable.contains(&module.path) {
+        if !reachable.contains(module.path.as_str()) {
             continue;
         }
         if let Some(name) = path_to_module(&module.path, &sources.layout) {
@@ -259,7 +259,7 @@ fn unused_reexport_severity(mode: ProjectMode) -> (Severity, Confidence) {
 
 fn detect_unresolved_imports(
     resolution: &ResolutionIndex,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<&str>,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> Vec<IssueCandidate> {
@@ -270,7 +270,7 @@ fn detect_unresolved_imports(
         let ResolveWarning::UnresolvedImport { import, file, line } = warning else {
             continue;
         };
-        if !reachable.contains(file) {
+        if !reachable.contains(file.as_str()) {
             continue;
         }
         if !reported.insert((file.clone(), *line, import.clone())) {
