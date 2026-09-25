@@ -1,5 +1,7 @@
 //! Integration tests for the full analysis CLI (Phase 1).
 
+#![allow(clippy::expect_used)]
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::{fs, io};
@@ -282,10 +284,10 @@ fn binary_pep723_script_reports_script_scoped_dependencies() {
         // CHK003; helpers.py is reachable from the script entry.
         assert!(
             keys.iter().all(|(code, target)| {
-                !target.contains("rich")
-                    && !target.contains("tomllib")
-                    && !(code == "CHK003" && !target.starts_with("script:"))
+                (code != "CHK003" || target.starts_with("script:"))
                     && code != "CHK001"
+                    && !target.contains("tomllib")
+                    && !target.contains("rich")
             }),
             "{keys:?}"
         );
