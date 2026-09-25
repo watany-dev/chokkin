@@ -3,14 +3,12 @@
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::sources::path_to_module;
 
 use super::context::PluginContext;
-use super::types::{
-    BinaryUsage, ModuleReference, PluginContribution, ReferenceOrigin, SymbolReference,
-};
+use super::types::{PluginContribution, ReferenceOrigin};
 use super::util::{
-    decorator_line, decorator_suffix, manifest_has_dependency, parse_module_symbol, relative_path,
+    decorator_suffix, manifest_has_dependency, push_binary, push_decorated_modules,
+    push_symbol_ref, relative_path,
 };
 use super::warnings::PluginsWarning;
 
@@ -22,7 +20,12 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
 
     extract_flaskenv(root, &mut contrib, &mut found);
     extract_scripts(root, &mut contrib, &mut found);
-    extract_route_modules(ctx, &mut contrib, &mut found);
+    found |= push_decorated_modules(
+        ctx,
+        &mut contrib,
+        is_route_decorator,
+        "flask route decorator",
+    );
 
     let warnings = if found || !contrib.symbol_refs.is_empty() || !contrib.binary_usages.is_empty()
     {
@@ -107,40 +110,6 @@ fn extract_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bo
     }
 }
 
-fn extract_route_modules(
-    ctx: &PluginContext<'_>,
-    contrib: &mut PluginContribution,
-    found: &mut bool,
-) {
-    for module in &ctx.parse.modules {
-        let Some(line) = decorator_line(&ctx.root.path, module, is_route_decorator) else {
-            continue;
-        };
-        push_route_module(ctx, contrib, found, &module.path, line);
-    }
-}
-
-fn push_route_module(
-    ctx: &PluginContext<'_>,
-    contrib: &mut PluginContribution,
-    found: &mut bool,
-    file: &str,
-    line: u32,
-) {
-    let Some(module) = path_to_module(file, &ctx.sources.layout) else {
-        return;
-    };
-    *found = true;
-    contrib.module_refs.push(ModuleReference {
-        module,
-        origin: ReferenceOrigin {
-            file: file.to_owned(),
-            line: Some(line),
-            label: "flask route decorator".to_owned(),
-        },
-    });
-}
-
 /// Route decorator test shared by the parse path and its syntax-error text
 /// fallback: a method call on a receiver (`@app.route("/")`, `@bp.post(...)`).
 /// Bare `@app.route` and receiverless `@get(...)` are not Flask routes.
@@ -177,21 +146,4 @@ fn flask_app_arg(line: &str) -> Option<&str> {
         }
     }
     None
-}
-
-fn push_symbol_ref(contrib: &mut PluginContribution, value: &str, origin: ReferenceOrigin) {
-    if let Some((module, symbol)) = parse_module_symbol(value) {
-        contrib.symbol_refs.push(SymbolReference {
-            module,
-            symbol,
-            origin,
-        });
-    }
-}
-
-fn push_binary(contrib: &mut PluginContribution, binary: &str, origin: ReferenceOrigin) {
-    contrib.binary_usages.push(BinaryUsage {
-        binary: binary.to_owned(),
-        origin,
-    });
 }

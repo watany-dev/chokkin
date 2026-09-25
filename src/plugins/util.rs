@@ -14,9 +14,13 @@ use crate::manifest::util::{
     path_is_within_root, read_to_string, relative_path as manifest_relative_path,
 };
 use crate::parser::{ParseSeverity, ParsedModule};
+use crate::sources::path_to_module;
 
+use super::context::PluginContext;
 use super::error::PluginsError;
-use super::types::ReferenceOrigin;
+use super::types::{
+    BinaryUsage, ModuleReference, PluginContribution, ReferenceOrigin, SymbolReference,
+};
 
 /// INI section key-value pairs.
 pub type IniSection = BTreeMap<String, String>;
@@ -31,7 +35,7 @@ pub type IniSection = BTreeMap<String, String>;
 /// A module with a syntax error has no decorator sites, so one unparsable
 /// line would hide every decorator in the file; fall back to
 /// [`text_decorator_line`] over the source text with the same predicate.
-pub fn decorator_line(
+fn decorator_line(
     root: &Path,
     module: &ParsedModule,
     matches: fn(&str, bool) -> bool,
@@ -50,6 +54,70 @@ pub fn decorator_line(
         .filter(|site| matches(&site.name, site.is_call))
         .map(|site| site.line)
         .min()
+}
+
+/// Push a module reference for each Python source with a matching decorator.
+///
+/// Returns whether any reference was pushed.
+pub fn push_decorated_modules(
+    ctx: &PluginContext<'_>,
+    contrib: &mut PluginContribution,
+    is_decorator: fn(&str, bool) -> bool,
+    label: &str,
+) -> bool {
+    let mut found = false;
+    for module in &ctx.parse.modules {
+        let Some(line) = decorator_line(&ctx.root.path, module, is_decorator) else {
+            continue;
+        };
+        found |= push_decorated_module(ctx, contrib, &module.path, line, label);
+    }
+    found
+}
+
+fn push_decorated_module(
+    ctx: &PluginContext<'_>,
+    contrib: &mut PluginContribution,
+    file: &str,
+    line: u32,
+    label: &str,
+) -> bool {
+    let Some(module) = path_to_module(file, &ctx.sources.layout) else {
+        return false;
+    };
+    contrib.module_refs.push(ModuleReference {
+        module,
+        origin: ReferenceOrigin {
+            file: file.to_owned(),
+            line: Some(line),
+            label: label.to_owned(),
+        },
+    });
+    true
+}
+
+/// Push a symbol reference when `value` parses as `module:symbol`.
+pub fn push_symbol_ref(contrib: &mut PluginContribution, value: &str, origin: ReferenceOrigin) {
+    if let Some((module, symbol)) = parse_module_symbol(value) {
+        contrib.symbol_refs.push(SymbolReference {
+            module,
+            symbol,
+            origin,
+        });
+    }
+}
+
+/// Record a CLI binary usage.
+pub fn push_binary(contrib: &mut PluginContribution, binary: &str, origin: ReferenceOrigin) {
+    contrib.binary_usages.push(BinaryUsage {
+        binary: binary.to_owned(),
+        origin,
+    });
+}
+
+/// Count leading ASCII spaces (YAML indentation).
+pub fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 /// Text fallback for [`decorator_line`] when a module failed to parse.

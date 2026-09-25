@@ -11,7 +11,7 @@ use crate::resolver::build_binary_map;
 
 use super::context::PluginContext;
 use super::types::{BinaryUsage, ReferenceOrigin};
-use super::util::{read_pyproject_table, relative_path};
+use super::util::{leading_spaces, read_pyproject_table, relative_path};
 
 /// Output from config scanning.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -251,10 +251,6 @@ fn strip_yaml_comment(line: &str) -> &str {
 
 fn unquote_yaml_scalar(value: &str) -> &str {
     value.trim().trim_matches('"').trim_matches('\'').trim()
-}
-
-fn leading_spaces(line: &str) -> usize {
-    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 fn scan_pre_commit_config(
