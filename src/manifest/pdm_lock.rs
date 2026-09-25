@@ -7,7 +7,9 @@ use toml::Value;
 
 use super::error::ManifestError;
 use super::lockfile::{array_tables, merge_package, read_lock_table};
-use super::pep508_util::normalize_distribution_name;
+use super::pep508_util::{
+    extract_egg_name, is_strict_pep508_name, leading_name_token, normalize_distribution_name,
+};
 use super::types::LockfileGraph;
 
 /// Parse `pdm.lock` (pdm 2.x) into a dependency name graph.
@@ -34,14 +36,15 @@ pub fn extract_pdm_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
 }
 
 /// Distribution name at the head of a PEP 508 string such as
-/// `urllib3<3,>=1.21.1` or `requests[socks]==2.31.0; python_version >= "3.8"`.
+/// `urllib3<3,>=1.21.1` or `requests[socks]==2.31.0; python_version >= "3.8"`,
+/// or the `#egg=` name of an editable `-e file:///...#egg=name` entry.
 fn requirement_name(spec: &str) -> Option<String> {
-    let name = spec
-        .trim_start()
-        .split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
-        .next()
-        .unwrap_or_default();
-    (!name.is_empty()).then(|| normalize_distribution_name(name))
+    let name = leading_name_token(spec.trim_start());
+    if is_strict_pep508_name(name) {
+        Some(normalize_distribution_name(name))
+    } else {
+        extract_egg_name(spec)
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +143,14 @@ dependencies = [
             Some("foo-bar".to_owned())
         );
         assert_eq!(requirement_name("idna"), Some("idna".to_owned()));
+        assert_eq!(
+            requirement_name("-e file:///${PROJECT_ROOT}/packages/foo#egg=foo"),
+            Some("foo".to_owned())
+        );
+        assert_eq!(
+            requirement_name("-e file:///${PROJECT_ROOT}/packages/foo"),
+            None
+        );
         assert_eq!(requirement_name(">=1"), None);
         assert_eq!(requirement_name(""), None);
     }
