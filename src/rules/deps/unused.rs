@@ -3,20 +3,19 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::config::{ChokkinConfig, Confidence};
-use crate::graph::{GraphEdge, ProjectGraph};
+use crate::graph::GraphEdge;
 use crate::manifest::DeclaredDependency;
 use crate::manifest::normalize_distribution_name;
 use crate::reachability::ReachabilityReport;
-use crate::resolver::{ResolutionIndex, import_root};
+use crate::resolver::import_root;
+use crate::rules::RuleContext;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 
 use super::context::{DeclarationBucket, declaration_buckets, include_path_details};
 
 /// Context for building CHK002 reachability evidence in `--explain` output.
 pub(super) struct UnusedEvidenceContext<'a> {
-    pub resolution: &'a ResolutionIndex,
-    pub reachability: &'a ReachabilityReport,
-    pub graph: &'a ProjectGraph,
+    pub rules: &'a RuleContext<'a>,
     pub reachable: &'a HashSet<String>,
     /// `[build-system].requires`, so a build plugin that is also declared as
     /// a dependency is explained as build tooling.
@@ -108,6 +107,7 @@ fn build_reachability_evidence(
     details.push(format!("top-level modules: {module_list}"));
 
     let distribution_imports = context
+        .rules
         .resolution
         .imports
         .iter()
@@ -132,7 +132,7 @@ fn build_reachability_evidence(
         details.push("evidence (unreachable):".to_owned());
         details.push(format!("  - no reachable file imports {module_list}"));
         for import in unreachable_imports {
-            let suffix = unreachable_file_suffix(&import.file, context.reachability);
+            let suffix = unreachable_file_suffix(&import.file, context.rules.reachability);
             details.push(format!(
                 "  - {}:{} imports {} (file is unreachable{suffix})",
                 import.file, import.line, import.full_module
@@ -157,21 +157,22 @@ fn top_level_modules_for_distribution(
 ) -> BTreeSet<String> {
     let mut modules = BTreeSet::new();
 
-    if let Some(distribution_id) = context.graph.distribution_id(distribution) {
-        for edge in context.graph.edges() {
+    let graph = context.rules.graph;
+    if let Some(distribution_id) = graph.distribution_id(distribution) {
+        for edge in graph.edges() {
             if let GraphEdge::DistributionProvidesModule {
                 distribution,
                 module,
             } = edge
                 && *distribution == distribution_id
-                && let Some(module_node) = context.graph.module(*module)
+                && let Some(module_node) = graph.module(*module)
             {
                 modules.insert(import_root(&module_node.name).to_owned());
             }
         }
     }
 
-    for import in &context.resolution.imports {
+    for import in &context.rules.resolution.imports {
         if import
             .distribution
             .as_deref()
@@ -382,15 +383,19 @@ mod tests {
         assert!(candidates.is_empty());
     }
 
+    fn graph_root() -> ProjectRoot {
+        ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        }
+    }
+
     #[test]
     fn explain_includes_unreachable_import_evidence() {
         let config = default_config();
         let dep = boto3_dep();
-        let mut graph = ProjectGraph::new(ProjectRoot {
-            path: std::env::temp_dir(),
-            marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
-        });
+        let mut graph = ProjectGraph::new(graph_root());
         let reachable_file = graph
             .intern_file(FileNode {
                 path: "src/acme/main.py".to_owned(),
@@ -435,10 +440,27 @@ mod tests {
         });
 
         let reachable = HashSet::from(["src/acme/main.py".to_owned()]);
-        let evidence = UnusedEvidenceContext {
+        let sources = crate::sources::DiscoveredSources {
+            root: graph_root(),
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Src,
+                packages: vec!["acme".to_owned()],
+                inferred_globs: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let parse = crate::parser::ParseSummary::default();
+        let rules = RuleContext {
             resolution: &resolution,
             reachability: &reachability,
             graph: &graph,
+            sources: &sources,
+            parse: &parse,
+        };
+        let evidence = UnusedEvidenceContext {
+            rules: &rules,
             reachable: &reachable,
             build_requires: &[],
         };
