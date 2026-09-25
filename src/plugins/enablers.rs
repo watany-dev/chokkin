@@ -105,11 +105,8 @@ pub enum PluginActivationReason {
 /// Resolved enablement of one plugin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginActivation {
-    /// Plugin this record describes.
     pub plugin: PluginId,
-    /// Whether the plugin runs.
     pub enabled: bool,
-    /// Why it is on or off.
     pub reason: PluginActivationReason,
 }
 

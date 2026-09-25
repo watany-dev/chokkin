@@ -110,7 +110,6 @@ pub fn probe_project_with_cache(
     })
 }
 
-/// Apply dependency / config-file plugin enablers per workspace member.
 fn activate_plugins(
     config: &mut ChokkinConfig,
     manifest: &LoadedManifest,
