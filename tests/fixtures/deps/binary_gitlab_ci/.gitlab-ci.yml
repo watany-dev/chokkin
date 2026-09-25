@@ -1,0 +1,17 @@
+stages:
+  - test
+
+.setup:
+  before_script:
+    - pip install .
+
+test:
+  stage: test
+  before_script:
+    - !reference [.setup, before_script]
+    - alembic upgrade head
+  script:
+    - |
+      celery -A acme.main inspect ping
+      gunicorn --check-config acme.main:app
+  after_script: ["uvicorn --version"]

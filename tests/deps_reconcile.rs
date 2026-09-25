@@ -231,6 +231,32 @@ fn transitive_urllib3_emits_chk004() {
     assert_eq!(candidate.severity, Severity::Error);
 }
 
+fn chk004_summary(name: &str) -> Vec<(String, Severity, Confidence)> {
+    reconcile_fixture(name)
+        .candidates
+        .into_iter()
+        .filter(|candidate| candidate.rule == RuleId::Chk004)
+        .map(|candidate| (candidate.message, candidate.severity, candidate.confidence))
+        .collect()
+}
+
+#[test]
+fn lockfile_formats_match_uv_lock_chk004() {
+    let expected = chk004_summary("transitive_urllib3");
+    assert_eq!(expected.len(), 1);
+    assert!(expected[0].0.contains("urllib3"));
+    for (name, kind) in [
+        ("transitive_urllib3_pylock", chokkin::LockfileKind::Pylock),
+        ("transitive_urllib3_poetry", chokkin::LockfileKind::Poetry),
+        ("transitive_urllib3_pdm", chokkin::LockfileKind::Pdm),
+    ] {
+        let inputs = load_deps(&fixture(name), false);
+        let source = inputs.manifest.sources.lockfile.expect(name);
+        assert_eq!(source.kind, kind, "{name}");
+        assert_eq!(chk004_summary(name), expected, "{name}");
+    }
+}
+
 #[test]
 fn workspace_member_root_declared_dependency_is_allowed_by_default() {
     let report = reconcile_fixture("workspace_member_strict");
@@ -409,6 +435,82 @@ fn platform_guard_import_marks_tzdata_used() {
     let report = reconcile_fixture("platform_guard_import");
     assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
     assert!(report.used_distributions.contains("tzdata"));
+}
+
+fn assert_used(report: &chokkin::DependencyReport, names: &[&str]) {
+    for name in names {
+        assert!(!has_rule(report, RuleId::Chk002, name), "{name} flagged");
+        assert!(report.used_distributions.contains(*name), "{name} unused");
+    }
+}
+
+#[test]
+fn pdm_scripts_mark_commands_and_call_modules_used() {
+    let report = reconcile_fixture("binary_pdm_scripts");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "httpx"]);
+}
+
+#[test]
+fn makefile_recipes_mark_binaries_used_without_following_variables() {
+    let report = reconcile_fixture("binary_makefile");
+    assert_used(&report, &["alembic", "celery"]);
+    assert!(has_rule(&report, RuleId::Chk002, "coverage"));
+    assert!(has_rule(&report, RuleId::Chk002, "gunicorn"));
+}
+
+#[test]
+fn justfile_recipes_mark_binaries_used_skipping_script_recipes() {
+    let report = reconcile_fixture("binary_justfile");
+    assert_used(&report, &["alembic", "celery"]);
+    assert!(has_rule(&report, RuleId::Chk002, "gunicorn"));
+}
+
+#[test]
+fn dockerfiles_mark_run_cmd_and_entrypoint_binaries_used() {
+    let report = reconcile_fixture("binary_dockerfile");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "uvicorn"]);
+}
+
+#[test]
+fn procfile_marks_process_binaries_used() {
+    let report = reconcile_fixture("binary_procfile");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "uvicorn"]);
+}
+
+#[test]
+fn gitlab_ci_scripts_mark_binaries_used() {
+    let report = reconcile_fixture("binary_gitlab_ci");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "uvicorn"]);
+}
+
+#[test]
+fn pytest_addopts_mark_plugins_used() {
+    let report = reconcile_fixture("pytest_addopts_plugins");
+    assert_used(
+        &report,
+        &[
+            "pytest-benchmark",
+            "pytest-cov",
+            "pytest-django",
+            "pytest-timeout",
+            "pytest-xdist",
+        ],
+    );
+}
+
+#[test]
+fn pytest11_entry_points_mark_venv_plugins_used() {
+    let report = reconcile_fixture("pytest11_venv_plugins");
+    assert_used(&report, &["pytest-sugar"]);
+}
+
+#[test]
+fn mypy_plugins_and_type_checker_configs_mark_tools_used() {
+    let report = reconcile_fixture("mypy_plugins_typecheckers");
+    assert_used(
+        &report,
+        &["basedpyright", "django-stubs", "mypy", "pydantic", "ty"],
+    );
 }
 
 #[test]

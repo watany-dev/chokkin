@@ -45,7 +45,10 @@ pub(super) fn detect_unlisted_binaries(
                     "{} requires declared dependency {distribution}",
                     usage.binary
                 ),
-                details: vec![format!("binary usage in {}", usage.origin.file)],
+                details: vec![match usage.origin.line {
+                    Some(line) => format!("binary usage in {}:{line}", usage.origin.file),
+                    None => format!("binary usage in {}", usage.origin.file),
+                }],
             },
         });
     }

@@ -312,12 +312,13 @@ fn format_layout(sources: &DiscoveredSources) -> String {
 }
 
 fn format_lockfile(manifest: &LoadedManifest) -> String {
-    if manifest.sources.uv_lock {
-        let nodes = manifest.lockfile.edges.len();
-        format!("uv.lock ({nodes} nodes)")
-    } else {
-        "none".to_owned()
-    }
+    manifest.sources.lockfile.as_ref().map_or_else(
+        || "none".to_owned(),
+        |source| {
+            let nodes = manifest.lockfile.edges.len();
+            format!("{} ({}, {nodes} nodes)", source.path, source.kind.as_str())
+        },
+    )
 }
 
 struct ContextCounts {

@@ -140,6 +140,7 @@ pub fn resolve_imports_with_script_targets(
         warnings,
         transitive: transitive_index(manifest),
         binary_resolutions,
+        pytest_plugin_distributions: venv_index.pytest_plugins,
     }
 }
 

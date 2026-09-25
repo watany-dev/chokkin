@@ -1,0 +1,4 @@
+web: gunicorn acme.main:app
+api: uvicorn acme.main:app --port $PORT
+worker: celery -A acme.main worker
+release: alembic upgrade head

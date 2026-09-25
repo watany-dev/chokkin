@@ -1,0 +1,15 @@
+[project]
+name = "binary-pdm-scripts"
+version = "0.1.0"
+dependencies = ["alembic", "celery", "gunicorn", "httpx"]
+
+[project.scripts]
+demo-cli = "acme.main:main"
+
+[tool.pdm.scripts]
+_.env_file = ".env"
+migrate = "alembic upgrade head"
+worker = { cmd = ["celery", "-A", "acme.main", "worker"] }
+serve = { shell = "gunicorn acme.main:app --workers 2" }
+all = { composite = ["migrate", "worker"] }
+ping = { call = "acme.tasks:run" }

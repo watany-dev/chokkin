@@ -28,7 +28,7 @@ chokkin    : project graph全体から未使用ファイル・依存・公開シ
 uvx chokkin
 ```
 
-設定は不要です。初回実行で manifest(`pyproject.toml` / `setup.cfg` / `setup.py` / `requirements*.txt` / `uv.lock`)を探索し、layout(src/flat、tests、scripts、docs)と entry point を推定し、import graph を構築して宣言済み依存と照合します。
+設定は不要です。初回実行で manifest(`pyproject.toml` / `setup.cfg` / `setup.py` / `requirements*.txt` / `uv.lock`・`pylock.toml`・`poetry.lock`・`pdm.lock` のいずれか1つ)を探索し、layout(src/flat、tests、scripts、docs)と entry point を推定し、import graph を構築して宣言済み依存と照合します。
 
 ```text
 chokkin 0.4.1

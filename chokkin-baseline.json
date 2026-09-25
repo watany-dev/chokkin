@@ -24,9 +24,44 @@
       "target": "docs/dev/formal/relative_import_model.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/binary_dockerfile/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/binary_dockerfile/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/binary_gitlab_ci/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/binary_gitlab_ci/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/binary_justfile/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/binary_justfile/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/binary_makefile/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/binary_makefile/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/binary_mkdocs_theme/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/binary_pdm_scripts/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/binary_pdm_scripts/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/binary_pdm_scripts/src/acme/tasks.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/binary_pdm_scripts/src/acme/tasks.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/binary_procfile/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/binary_procfile/src/acme/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/binary_tool_pyproject/src/acme/main.py",
@@ -74,6 +109,11 @@
       "target": "tests/fixtures/deps/missing_yaml/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/mypy_plugins_typecheckers/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/mypy_plugins_typecheckers/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/optional_missing/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/optional_missing/src/acme/main.py"
@@ -104,6 +144,16 @@
       "target": "tests/fixtures/deps/platform_guard_missing/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/pytest11_venv_plugins/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/pytest11_venv_plugins/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/pytest_addopts_plugins/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/pytest_addopts_plugins/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/self_extra/src/self_extra/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/self_extra/src/self_extra/main.py"
@@ -112,6 +162,21 @@
       "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/transitive_urllib3/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3_pdm/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/transitive_urllib3_pdm/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3_poetry/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/transitive_urllib3_poetry/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3_pylock/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/transitive_urllib3_pylock/src/acme/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/unlisted_pytest/src/acme/main.py",

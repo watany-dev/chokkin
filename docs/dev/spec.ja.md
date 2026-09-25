@@ -40,7 +40,7 @@ uvx chokkin
 初回実行で、設定なしでも以下を行う。
 
 ```text
-1. pyproject.toml / setup.cfg / setup.py / requirements*.txt / uv.lock を探索
+1. pyproject.toml / setup.cfg / setup.py / requirements*.txt / lockfile を探索
 2. src layout / flat layout / tests / scripts / docs / config files を推定
 3. entry points と framework entry を推定
 4. Python import graph を構築
@@ -179,8 +179,10 @@ dev-requirements.txt
 constraints.txt
 setup.cfg
 setup.py  # static parseのみ。実行しない。
-uv.lock
+uv.lock / pylock.toml / pylock.<name>.toml / poetry.lock / pdm.lock
 ```
+
+lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>.toml(名前順) > poetry.lock > pdm.lock とする。複数形式を合成しないのは、同一projectで形式が混在するのは移行途中であり、新しい側(uv/PEP 751)が実体に近いため。読んだlockfileの種類と相対pathは `ManifestSources.lockfile` に記録し、`--probe` に表示する。どの形式も package名と依存edgeだけを `LockfileGraph` に読み、同名packageのedgeは合流させる。pylock.tomlは `[[packages]].dependencies[].name`、poetry.lockは `[package.dependencies]` のkey(1.x / 2.x共通)、pdm.lockは `dependencies` のPEP 508文字列の先頭名を使う。pdm.lockの `groups` / `extras` は読まない。CHK004はimportが宣言依存から到達可能かだけを問い、group別の到達性はmanifest側のcontextで判定済みのため。候補lockfileはすべてcacheの入力fingerprintに入れる(優先順位が変わると読む対象が変わるため)。lockfileは読むだけで編集しない。
 
 requirements系filesのパース規則を定める。コメントはpip互換で「行頭または空白が先行する `#`」のみを除去し、URLフラグメント（`#sha256=` / `#egg=`）は保持する。`-r` / `--requirement`（`--requirement=other.txt` 含む）は再帰的に追跡する。`-c` / `--constraint` はversion制約の情報源としてのみ読み、`LoadedManifest.constraints` に積み、依存宣言とは合流させない（ファイル欠如はwarning）。`-e ./path` とlocal path指定はworkspace/first-party候補として扱い、distribution名は空のopaque依存として記録する。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
 
@@ -529,7 +531,7 @@ src/ で import urllib3
     -> CHK002 unused_dependency
 ```
 
-判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。
+判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。CHK004のevidenceは2種類に分ける。宣言依存からlockfileのedgeで到達できる場合は「transitive edge」(Certain)、lockfileにpackageとしては載っているが宣言依存から到達できない場合は「lockにあるが未宣言」(Likely)とし、messageとexplain detailで区別する。
 
 environment markerとextrasの扱いも定める。
 
@@ -733,7 +735,7 @@ manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、comm
 
 書き込み安全性: manifest編集は同一ディレクトリへの一時ファイル作成→`rename` でアトミックに置換する(`fix/write.rs`)。既存ファイルのpermissionsは可能な範囲で引き継ぐ。fix対象パスはproject root内に収まることを検証し、ルート外への書き込みはskipする。requirementsの `-r`/`-c` インクルードとDjango `settings.py` 探索も同様にルート封じ込めする。
 
-lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`chokkin` はlockfileを直接編集しない。fix適用後に `uv lock` / `poetry lock` の実行を促すメッセージを出力する。
+lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`chokkin` はlockfileを直接編集しない。fix適用後に、読んだlockfileの種類に応じて `uv lock` / `poetry lock` / `pdm lock` の実行を促すメッセージを出力する(poetry管理のprojectはlockfileがなくても `poetry lock` を促す)。
 
 ## 14. 既存Pythonエコシステムの課題と解決
 
@@ -1238,6 +1240,13 @@ CLI と同じ disk reuse を測る。全群は `make bench-save` / `make bench-c
 warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `reachability` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
+
+R-06 で binary / plugin usage の情報源を拡充した。共通の command 解析 (`\` 継続の結合、`;` `|` `&` と改行での分割、`@` `-` / `exec` `env` などの wrapper、`uv run` / `poetry run` などの runner、`python -m` の剥がし、`$…` や `{{…}}` で始まる語は変数展開として追わない、pip / uv などの環境管理ツールは binary 扱いしない) は `src/plugins/commands.rs`、行番号付きで TOML / INI / YAML を読む補助は `src/plugins/config_text.rs` に置く。
+
+- `src/plugins/task_files.rs`: `[tool.pdm.scripts]` (文字列 / `cmd` 文字列・配列 / `shell` / `composite`、`call` は module reference、`_` は無視)、`GNUmakefile` / `makefile` / `Makefile` の tab 付き recipe 行、`justfile` / `Justfile` / `.justfile` の recipe 本体 (`sh` 以外の shebang recipe は除外)、`Dockerfile` / `Containerfile` / `*.Dockerfile` / `Dockerfile.*` の `RUN` / `CMD` / `ENTRYPOINT` (shell form と exec form)、`Procfile`、`.gitlab-ci.yml` の `script` / `before_script` / `after_script` (list・inline 配列・block scalar、`!reference` は無視)。Makefile / justfile の変数・include は追わない。
+- `src/plugins/tool_plugins.rs`: pytest `addopts` (`[tool.pytest.ini_options]` / `pytest.ini` / `tox.ini [pytest]` / `setup.cfg [tool:pytest]`) の `-p mod` を module reference (`-p no:x` は無視)、`--cov` / `-n` / `--benchmark-*` などの plugin option を `src/plugins/plugin_map.rs` の表で distribution に対応づける。mypy `plugins` (`[tool.mypy]` / `mypy.ini` / `.mypy.ini` / `setup.cfg [mypy]`) は module reference (`mypy_django_plugin` → `django-stubs` などは表で対応づけ)、`[tool.ty]` / `ty.toml` / `[tool.pyright]` / `pyrightconfig.json` / `[tool.basedpyright]` は該当 type checker を used にする。
+- `.venv` の `pytest11` entry point を持つ distribution は pytest 自体が used のとき used とする (`ResolutionIndex.pytest_plugin_distributions`)。
+- 読むファイルはすべて config-scan cache key (`scan_input_paths`) に入り、`--explain` の evidence は `file:line` で origin を示す。
 
 Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果の decorator site を使い、構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査にフォールバックするが、どちらも同じ正規化名と判定関数で判定する。
 

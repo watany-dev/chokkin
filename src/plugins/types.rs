@@ -29,7 +29,7 @@ pub struct PluginEntry {
 }
 
 /// Module name referenced from config (§9.2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleReference {
     /// Dotted module name.
     pub module: String,
@@ -107,6 +107,8 @@ pub struct PluginHints {
     pub config_binary_usages: Vec<BinaryUsage>,
     /// Distributions used via config without a distinct CLI name.
     pub config_used_distributions: Vec<String>,
+    /// Module references from generic config scanning (pytest `-p`, mypy plugins, PDM `call`).
+    pub config_module_refs: Vec<ModuleReference>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,
 }
@@ -124,6 +126,7 @@ impl PluginHints {
         self.contributions
             .iter()
             .flat_map(|contrib| contrib.module_refs.iter())
+            .chain(self.config_module_refs.iter())
     }
 
     /// Iterate all binary usages.
