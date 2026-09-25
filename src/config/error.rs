@@ -15,7 +15,7 @@ pub enum ConfigError {
         source: std::io::Error,
     },
 
-    /// TOML syntax or type error in a config file.
+    /// TOML syntax error, or a value or key that does not match the config schema.
     #[error("invalid TOML in {path}: {message}")]
     InvalidToml {
         /// Config file path.
@@ -33,14 +33,5 @@ pub enum ConfigError {
         field: String,
         /// Human-readable validation error.
         message: String,
-    },
-
-    /// Unknown key in a chokkin config table such as `[tool.chokkin]` or `plugins`.
-    #[error("unknown config key {key} in {path}")]
-    UnknownKey {
-        /// Config file path.
-        path: PathBuf,
-        /// Unrecognized key name.
-        key: String,
     },
 }
