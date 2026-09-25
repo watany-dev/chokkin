@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- PEP 735 `{include-group = "..."}` in `[dependency-groups]` is expanded
+  transitively (group names normalized). A group pulled into a runtime group
+  counts as runtime for CHK002 / CHK005; requirements stay under their declaring
+  group, so CHK009 and `--fix` never act on the including group. `--explain`
+  shows the include path, and undefined or circular includes become manifest
+  warnings.
 - More sources for binary / plugin usage (R-06):
   - PDM scripts (`cmd` / `shell` / `composite`; `call` as module reference),
     Makefile and justfile recipes, Dockerfile / Containerfile `RUN` / `CMD` /
