@@ -29,7 +29,8 @@ fn resolve_fixture(name: &str) -> chokkin::ResolutionIndex {
     let sources = discover_sources(&root, &loaded, &manifest).expect("sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugins");
+    let plugins =
+        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugins");
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     resolve_imports(
         &loaded.effective,

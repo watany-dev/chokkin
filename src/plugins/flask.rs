@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::sources::{FileKind, path_to_module};
+use crate::sources::path_to_module;
 
 use super::context::PluginContext;
 use super::types::{
@@ -11,7 +11,6 @@ use super::types::{
 };
 use super::util::{
     decorator_line, decorator_suffix, manifest_has_dependency, parse_module_symbol, relative_path,
-    text_decorator_line,
 };
 use super::warnings::PluginsWarning;
 
@@ -113,29 +112,11 @@ fn extract_route_modules(
     contrib: &mut PluginContribution,
     found: &mut bool,
 ) {
-    if let Some(parse) = ctx.parse {
-        for module in &parse.modules {
-            let Some(line) = decorator_line(&ctx.root.path, module, is_route_decorator) else {
-                continue;
-            };
-            push_route_module(ctx, contrib, found, &module.path, line);
-        }
-        return;
-    }
-
-    // Standalone callers run before step 6, so there is nothing to reuse.
-    for file in &ctx.sources.files {
-        if file.kind != FileKind::Python {
-            continue;
-        }
-        let path = ctx.root.path.join(&file.path);
-        let Ok(contents) = std::fs::read_to_string(&path) else {
+    for module in &ctx.parse.modules {
+        let Some(line) = decorator_line(&ctx.root.path, module, is_route_decorator) else {
             continue;
         };
-        let Some(line) = text_decorator_line(&contents, is_route_decorator) else {
-            continue;
-        };
-        push_route_module(ctx, contrib, found, &file.path, line);
+        push_route_module(ctx, contrib, found, &module.path, line);
     }
 }
 
@@ -160,9 +141,9 @@ fn push_route_module(
     });
 }
 
-/// Route decorator test shared by the parse and text paths: a method call on
-/// a receiver (`@app.route("/")`, `@bp.post(...)`). Bare `@app.route` and
-/// receiverless `@get(...)` are not Flask routes.
+/// Route decorator test shared by the parse path and its syntax-error text
+/// fallback: a method call on a receiver (`@app.route("/")`, `@bp.post(...)`).
+/// Bare `@app.route` and receiverless `@get(...)` are not Flask routes.
 fn is_route_decorator(name: &str, is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     is_call

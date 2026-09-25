@@ -33,13 +33,14 @@ pub fn extract_plugin_hints(
     config: &LoadedConfig,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
+    parse: &ParseSummary,
 ) -> Result<PluginHints, PluginsError> {
     extract_plugin_hints_with_parse(&PluginExtractRequest {
         root,
         config,
         sources,
         manifest,
-        parse: None,
+        parse,
         cache: None,
     })
 }
@@ -55,16 +56,13 @@ pub struct PluginExtractRequest<'a> {
     pub sources: &'a DiscoveredSources,
     /// Extracted manifest.
     pub manifest: &'a LoadedManifest,
-    /// Step 6 parse output when the caller already has it.
-    pub parse: Option<&'a ParseSummary>,
+    /// Step 6 parse output.
+    pub parse: &'a ParseSummary,
     /// Disk cache used for the generic config scan.
     pub cache: Option<&'a CacheOptions>,
 }
 
-/// Extract framework hints, reusing step 6 parse output when available.
-///
-/// Passing `parse` keeps Flask and Celery from re-reading every `.py` file the
-/// parser is about to read anyway.
+/// Extract framework hints, optionally caching generic config scan results.
 pub fn extract_plugin_hints_with_parse(
     request: &PluginExtractRequest<'_>,
 ) -> Result<PluginHints, PluginsError> {
@@ -260,8 +258,14 @@ mod tests {
             sources: crate::manifest::ManifestSources::default(),
             warnings: Vec::new(),
         };
-        let hints = extract_plugin_hints(&loaded.root, &loaded, &sources, &manifest)
-            .expect("extract hints");
+        let hints = extract_plugin_hints(
+            &loaded.root,
+            &loaded,
+            &sources,
+            &manifest,
+            &ParseSummary::default(),
+        )
+        .expect("extract hints");
         assert!(hints.contributions.is_empty());
     }
 
@@ -317,7 +321,7 @@ mod tests {
             config: &loaded,
             sources: &sources,
             manifest: &manifest,
-            parse: None,
+            parse: &ParseSummary::default(),
             cache: Some(cache),
         })
         .expect("extract hints")
@@ -338,30 +342,23 @@ mod tests {
         .expect("write pyproject");
         let (loaded, sources, manifest) = scan_cache_fixture(root_path);
         let cache = CacheOptions::default();
-
-        let first = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        let parse = ParseSummary::default();
+        let request = PluginExtractRequest {
             root: &loaded.root,
             config: &loaded,
             sources: &sources,
             manifest: &manifest,
-            parse: None,
+            parse: &parse,
             cache: Some(&cache),
-        })
-        .expect("first extract");
+        };
+
+        let first = extract_plugin_hints_with_parse(&request).expect("first extract");
         let key = config_scan_cache_key(&loaded, &manifest).expect("cache key");
         let cached: ConfigScanCachePayload = cache
             .read_scan_payload(root_path, &key)
             .expect("read payload")
             .expect("payload hit");
-        let second = extract_plugin_hints_with_parse(&PluginExtractRequest {
-            root: &loaded.root,
-            config: &loaded,
-            sources: &sources,
-            manifest: &manifest,
-            parse: None,
-            cache: Some(&cache),
-        })
-        .expect("second extract");
+        let second = extract_plugin_hints_with_parse(&request).expect("second extract");
 
         assert!(
             first
