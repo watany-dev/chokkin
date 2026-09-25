@@ -77,6 +77,7 @@ pub fn parse_requirement(
             context,
             origin,
             opaque: false,
+            included_via: Vec::new(),
         });
     }
 
@@ -89,6 +90,7 @@ pub fn parse_requirement(
             context,
             origin,
             opaque: true,
+            included_via: Vec::new(),
         });
     }
 
@@ -121,6 +123,7 @@ pub fn parse_pep508_requirement(
             context,
             origin,
             opaque: false,
+            included_via: Vec::new(),
         });
     }
     parse_requirement(raw, context, origin)
@@ -158,6 +161,7 @@ fn requirement_to_declared(
         context,
         origin,
         opaque,
+        included_via: Vec::new(),
     }
 }
 
