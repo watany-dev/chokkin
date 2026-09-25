@@ -220,6 +220,7 @@ mod tests {
                         label: "project.dependencies".to_owned(),
                     },
                     opaque: false,
+                    included_via: Vec::new(),
                 })
                 .collect(),
             constraints: Vec::new(),
