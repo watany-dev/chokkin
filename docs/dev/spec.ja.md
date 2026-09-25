@@ -776,7 +776,7 @@ chokkin/
                  #           step 11 `rules/symbols/` (`analyze_symbols`, CHK006–CHK007, CHK010);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
     reporters/   # 実装済み: default / compact / json / markdown reporter
-    fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg; atomic write, root containment)
+    fix/         # 実装済み: step 13 (`apply_fixes_with_workspace` — pyproject/requirements/setup.cfg; atomic write, root containment)
 ```
 
 `pyproject.toml` は概ねこうする。

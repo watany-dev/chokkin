@@ -19,25 +19,13 @@ use super::types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
 /// Baseline file `schema_version` written by chokkin v0.3+.
 const BASELINE_SCHEMA_VERSION: &str = "1";
 
-/// Apply a baseline file by suppressing matching issues.
-///
-/// The recomputed exit status uses default (non-`--strict`) thresholds; call
-/// [`apply_baseline_with_overrides`] to honour the runtime flags.
-pub fn apply_baseline(
-    report: &mut IssueReport,
-    root: &Path,
-    baseline_path: &Path,
-) -> Result<BaselineReport, BaselineError> {
-    apply_baseline_with_overrides(report, root, baseline_path, &RuntimeOverrides::default())
-}
-
 /// Apply a baseline file, recomputing the exit status under `overrides`.
 ///
 /// # Errors
 ///
 /// Returns [`BaselineError`] when the baseline path escapes the project root or
 /// the file cannot be read or parsed.
-pub fn apply_baseline_with_overrides(
+pub fn apply_baseline(
     report: &mut IssueReport,
     root: &Path,
     baseline_path: &Path,
@@ -312,8 +300,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let result =
-            apply_baseline(&mut current_report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut current_report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
         assert_eq!(result.suppressed, 0);
         assert_eq!(current_report.issues.len(), 1);
         assert_eq!(current_report.exit_status, crate::ExitStatus::IssuesFound);
@@ -333,7 +326,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
         write_baseline(&report, dir.path(), &baseline).expect("write baseline");
-        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
         assert_eq!(result.suppressed, 1);
         assert!(report.issues.is_empty());
         assert_eq!(report.exit_status, crate::ExitStatus::Success);
@@ -364,7 +363,13 @@ mod tests {
             suppressed: Vec::new(),
             exit_status: crate::ExitStatus::IssuesFound,
         };
-        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
 
         assert_eq!(result.suppressed, 1);
         assert_eq!(report.issues.len(), 1);
@@ -389,8 +394,7 @@ mod tests {
             strict: Some(true),
             ..RuntimeOverrides::default()
         };
-        apply_baseline_with_overrides(&mut report, dir.path(), &baseline, &overrides)
-            .expect("apply baseline");
+        apply_baseline(&mut report, dir.path(), &baseline, &overrides).expect("apply baseline");
         assert_eq!(report.exit_status, crate::ExitStatus::IssuesFound);
 
         let overrides = RuntimeOverrides {
@@ -398,8 +402,7 @@ mod tests {
             no_exit_code: Some(true),
             ..RuntimeOverrides::default()
         };
-        apply_baseline_with_overrides(&mut report, dir.path(), &baseline, &overrides)
-            .expect("apply baseline");
+        apply_baseline(&mut report, dir.path(), &baseline, &overrides).expect("apply baseline");
         assert_eq!(report.exit_status, crate::ExitStatus::Success);
     }
 
@@ -414,7 +417,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
 
         assert_eq!(result.suppressed, 0);
         assert_eq!(report.issues.len(), 1);
@@ -451,7 +460,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
         assert_eq!(result.suppressed, 1);
         assert!(report.issues.is_empty());
     }
@@ -494,6 +509,7 @@ mod tests {
             &mut report,
             root.path(),
             &outside.path().join("baseline.json"),
+            &RuntimeOverrides::default(),
         )
         .expect_err("outside root");
         assert!(matches!(error, BaselineError::OutsideRoot { .. }));

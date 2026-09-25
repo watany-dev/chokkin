@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, ExitStatus, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, SeverityLevel,
-    add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
+    Confidence, ExitStatus, ProjectRoot, ResolutionIndex, RootMarker, RuleId, RuntimeOverrides,
+    SeverityLevel, add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
     discover_sources, emit_issues, extract_manifest, extract_plugin_hints, load_config,
     parse_project_sources, reconcile_dependencies, resolve_imports, resolve_target_version,
@@ -115,6 +115,7 @@ fn emit_reports_unused_dependency() {
         &inputs.config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -140,6 +141,7 @@ fn config_ignore_suppresses_matching_issue() {
         &config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -163,6 +165,7 @@ fn likely_unused_dependency_hidden_when_confidence_is_certain() {
         &config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -181,6 +184,7 @@ fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> cho
         config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     )
 }
 
@@ -197,6 +201,7 @@ fn emit_with_config_and_overrides(
         config,
         overrides,
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     )
 }
 
