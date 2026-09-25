@@ -224,6 +224,7 @@ mod tests {
                 })
                 .collect(),
             constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
             uv_workspace: None,
             entry_points: Vec::new(),
             lockfile: crate::manifest::LockfileGraph::default(),

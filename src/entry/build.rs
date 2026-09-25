@@ -244,6 +244,7 @@ mod tests {
             metadata: ProjectMetadata::default(),
             dependencies: Vec::new(),
             constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
             uv_workspace: None,
             entry_points: Vec::new(),
             lockfile: LockfileGraph::default(),

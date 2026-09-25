@@ -64,8 +64,8 @@ pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, InlineScript,
     LoadedManifest, LockfileGraph, LockfileKind, LockfileSource, ManifestError, ManifestSources,
-    ManifestWarning, ProjectMetadata, discover_inline_scripts, extract_manifest,
-    extract_manifest_with_cache, resolve_target_version,
+    ManifestWarning, ProjectMetadata, UvDefaultGroups, UvSource, UvSourceKind, UvToolSettings,
+    discover_inline_scripts, extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
     DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,

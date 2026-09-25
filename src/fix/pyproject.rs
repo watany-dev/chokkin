@@ -136,43 +136,66 @@ fn remove_label_in_document(doc: &mut DocumentMut, label: &str) -> Result<bool, 
     if let Some((group, index)) = parse_group_label(label, "dependency-groups.") {
         return remove_array_index(doc, &["dependency-groups", group.as_str()], index);
     }
-    if let Some(name) = label.strip_prefix("tool.poetry.dependencies.") {
-        return remove_table_key(doc, &["tool", "poetry", "dependencies"], name);
-    }
-    if let Some(name) = label.strip_prefix("tool.poetry.dev-dependencies.") {
-        return remove_table_key(doc, &["tool", "poetry", "dev-dependencies"], name);
-    }
-    if let Some((group, name)) = parse_poetry_group_dependency_label(label) {
-        return remove_table_key(
-            doc,
-            &["tool", "poetry", "group", group.as_str(), "dependencies"],
-            &name,
-        );
-    }
-    if let Some((group, index)) = parse_group_label(label, "tool.pdm.dev-dependencies.") {
-        return remove_array_index(
-            doc,
-            &["tool", "pdm", "dev-dependencies", group.as_str()],
-            index,
-        );
-    }
-    if let Some((extra, index)) = parse_group_label(label, "tool.pdm.optional-dependencies.") {
-        return remove_array_index(
-            doc,
-            &["tool", "pdm", "optional-dependencies", extra.as_str()],
-            index,
-        );
-    }
-    if let Some((env, index)) = parse_hatch_env_dependency_label(label) {
-        return remove_array_index(
-            doc,
-            &["tool", "hatch", "envs", env.as_str(), "dependencies"],
-            index,
-        );
+    if let Some(result) = remove_tool_label(doc, label) {
+        return result;
     }
     Err(FixError::Unsupported {
         detail: format!("unsupported pyproject label `{label}`"),
     })
+}
+
+/// Labels under `[tool.*]`; `None` when the label is not a tool label.
+fn remove_tool_label(doc: &mut DocumentMut, label: &str) -> Option<Result<bool, FixError>> {
+    if let Some(index) = parse_indexed_label(label, "tool.uv.dev-dependencies") {
+        return Some(remove_array_index(
+            doc,
+            &["tool", "uv", "dev-dependencies"],
+            index,
+        ));
+    }
+    if let Some(name) = label.strip_prefix("tool.poetry.dependencies.") {
+        return Some(remove_table_key(
+            doc,
+            &["tool", "poetry", "dependencies"],
+            name,
+        ));
+    }
+    if let Some(name) = label.strip_prefix("tool.poetry.dev-dependencies.") {
+        return Some(remove_table_key(
+            doc,
+            &["tool", "poetry", "dev-dependencies"],
+            name,
+        ));
+    }
+    if let Some((group, name)) = parse_poetry_group_dependency_label(label) {
+        return Some(remove_table_key(
+            doc,
+            &["tool", "poetry", "group", group.as_str(), "dependencies"],
+            &name,
+        ));
+    }
+    if let Some((group, index)) = parse_group_label(label, "tool.pdm.dev-dependencies.") {
+        return Some(remove_array_index(
+            doc,
+            &["tool", "pdm", "dev-dependencies", group.as_str()],
+            index,
+        ));
+    }
+    if let Some((extra, index)) = parse_group_label(label, "tool.pdm.optional-dependencies.") {
+        return Some(remove_array_index(
+            doc,
+            &["tool", "pdm", "optional-dependencies", extra.as_str()],
+            index,
+        ));
+    }
+    if let Some((env, index)) = parse_hatch_env_dependency_label(label) {
+        return Some(remove_array_index(
+            doc,
+            &["tool", "hatch", "envs", env.as_str(), "dependencies"],
+            index,
+        ));
+    }
+    None
 }
 
 fn parse_indexed_label(label: &str, prefix: &str) -> Option<usize> {
@@ -326,6 +349,25 @@ dev = ["pytest>=8", "ruff>=0.6"]
         .expect("write");
 
         remove_by_label(&path, "tool.pdm.dev-dependencies.dev[0]").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(!updated.contains("pytest"));
+        assert!(updated.contains("ruff"));
+    }
+
+    #[test]
+    fn removes_uv_legacy_dev_dependency() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            r#"
+[tool.uv]
+dev-dependencies = ["pytest>=8", "ruff>=0.6"]
+"#,
+        )
+        .expect("write");
+
+        remove_by_label(&path, "tool.uv.dev-dependencies[0]").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("ruff"));

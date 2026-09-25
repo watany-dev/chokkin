@@ -17,6 +17,7 @@ mod setup_py;
 mod types;
 pub(crate) mod util;
 mod uv_lock;
+mod uv_tool;
 mod warnings;
 
 pub use error::ManifestError;
@@ -28,6 +29,7 @@ pub use script::{
 };
 pub use types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, LockfileKind, LockfileSource, ManifestSources, ProjectMetadata,
+    LockfileGraph, LockfileKind, LockfileSource, ManifestSources, ProjectMetadata, UvDefaultGroups,
+    UvSource, UvSourceKind, UvToolSettings,
 };
 pub use warnings::ManifestWarning;

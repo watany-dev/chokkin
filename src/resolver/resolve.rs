@@ -9,7 +9,7 @@ use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::ModuleReference;
 use crate::sources::DiscoveredSources;
 
-use super::first_party::{is_first_party_import, is_workspace_import};
+use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
 use super::stdlib::is_stdlib_import;
 use super::types::{
@@ -23,7 +23,7 @@ use super::venv::load_venv_index;
 /// `workspace_members` marks cross-member imports as first-party so workspace
 /// packages do not become false missing-dependency findings.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn resolve_imports(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
@@ -63,7 +63,8 @@ pub fn resolve_imports_with_script_targets(
         .as_ref()
         .map_or_else(TargetVersion::default_py311, Clone::clone);
 
-    let import_map = ImportMap::build(config);
+    let import_map = ImportMap::build(config)
+        .with_local_sources(path_source_imports(&manifest.root.path, &manifest.uv));
     let mut warnings = Vec::new();
     let venv_index = load_venv_index(&manifest.root, &mut warnings);
     let binary_resolutions = build_binary_map(config, &venv_index);

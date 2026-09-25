@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group, so CHK009 and `--fix` never act on the including group. `--explain`
   shows the include path, and undefined or circular includes become manifest
   warnings.
+- `[tool.uv]` is read beyond workspace members:
+  - legacy `dev-dependencies` join the `dev` dependency group, and `--fix` can remove them
+  - `constraint-dependencies` / `override-dependencies` are kept as constraints, never declarations
+  - `default-groups` is stored, but `--production` does not use it
+  - `[tool.uv.sources]` path / editable entries resolve imports from the local tree without a venv
+  - `workspace = true` dependencies count as used when imported
 - PEP 723 inline script metadata (`# /// script`): each script is an entry root
   with its own dependency scope. Its third-party imports are checked against
   the script block instead of the project manifest, reported as
