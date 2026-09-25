@@ -64,7 +64,7 @@ def main() -> int:
 
     # step 12, before any baseline is applied
     emit_issues_found = exit_issues_found(lambda i: True)
-    # apply_baseline_with_overrides recomputes over the issues it kept, using
+    # apply_baseline recomputes over the issues it kept, using
     # the same thresholds and the same --no-exit-code override as emit.rs.
     baseline_issues_found = exit_issues_found(lambda i: Not(suppressed[i]))
     expected_issues_found = exit_issues_found(lambda i: Not(suppressed[i]))

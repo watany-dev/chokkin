@@ -25,36 +25,11 @@ use super::types::RuleId;
 
 /// Merge candidates, apply ignore/confidence filters, and compute exit status.
 ///
-/// Config ignores for dependency rules need resolved distribution names (§18);
-/// call [`emit_issues_with_resolution`] when the resolution index is available.
+/// Dependency-rule ignore patterns are matched against distribution names
+/// taken from `resolution` (§18).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn emit_issues(
-    unreachable: &ReachabilityReport,
-    deps: &DependencyReport,
-    symbols: &SymbolReport,
-    parse: &ParseSummary,
-    config: &ChokkinConfig,
-    overrides: &RuntimeOverrides,
-    mode: &ResolvedMode,
-) -> IssueReport {
-    emit_issues_with_resolution(
-        unreachable,
-        deps,
-        symbols,
-        parse,
-        config,
-        overrides,
-        mode,
-        &ResolutionIndex::default(),
-    )
-}
-
-/// [`emit_issues`], resolving dependency-rule ignore patterns against
-/// distribution names taken from `resolution`.
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn emit_issues_with_resolution(
     unreachable: &ReachabilityReport,
     deps: &DependencyReport,
     symbols: &SymbolReport,
@@ -278,6 +253,7 @@ mod tests {
             &config,
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         assert_eq!(issues.issues.len(), 1);
         assert_eq!(issues.issues[0].rule, RuleId::Chk001);
@@ -304,6 +280,7 @@ mod tests {
                 ..RuntimeOverrides::default()
             },
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         assert_eq!(issues.exit_status, ExitStatus::Success);
     }
@@ -342,6 +319,7 @@ mod tests {
             &config,
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         assert!(report.issues.is_empty());
     }
@@ -379,6 +357,7 @@ mod tests {
             &default_config(),
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         let text = explain_issue(&report, "CHK002:boto3").expect("explain");
         assert!(text.contains("boto3 is declared but not used"));

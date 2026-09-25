@@ -2,8 +2,12 @@
 
 #![allow(clippy::too_many_lines)]
 
+use std::collections::BTreeMap;
+
 use crate::config::PluginId;
-use crate::manifest::literals::{extract_python_list_literals, extract_python_string_assignment};
+use crate::manifest::literals::{
+    LiteralScan, assigned_value, parse_module, string_list, string_value,
+};
 use crate::manifest::util::read_to_string;
 use crate::sources::FileContext;
 
@@ -108,7 +112,14 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     });
 
     if let Ok(contents) = read_to_string(&settings_path_abs) {
-        let lists = extract_python_list_literals(&contents, LIST_FIELDS);
+        let stmts = parse_module(&contents).unwrap_or_default();
+        let lists: BTreeMap<String, LiteralScan> = LIST_FIELDS
+            .iter()
+            .filter_map(|field| {
+                let scan = assigned_value(&stmts, field).and_then(string_list)?;
+                Some(((*field).to_owned(), scan))
+            })
+            .collect();
         let mut partial = super::util::partial_fields(&lists);
         for field in LIST_FIELDS {
             if contents.contains(field) && !lists.contains_key(*field) {
@@ -137,7 +148,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
             }
         }
 
-        if let Some(urlconf) = extract_python_string_assignment(&contents, "ROOT_URLCONF") {
+        if let Some(urlconf) = assigned_value(&stmts, "ROOT_URLCONF").and_then(string_value) {
             contrib.module_refs.push(ModuleReference {
                 module: urlconf.clone(),
                 origin: ReferenceOrigin {
@@ -164,7 +175,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         }
 
         for field in ["WSGI_APPLICATION", "ASGI_APPLICATION"] {
-            if let Some(target) = extract_python_string_assignment(&contents, field)
+            if let Some(target) = assigned_value(&stmts, field).and_then(string_value)
                 && let Some((module, symbol)) = parse_module_symbol(&target)
             {
                 contrib.symbol_refs.push(SymbolReference {

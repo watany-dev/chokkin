@@ -582,6 +582,7 @@ mod tests {
     use crate::manifest::{
         DependencyOrigin, LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata,
     };
+    use crate::parser::ParseSummary;
     use crate::sources::{DiscoveredSources, LayoutInfo, ProjectLayout};
 
     fn empty_manifest(root: ProjectRoot) -> LoadedManifest {
@@ -650,12 +651,13 @@ mod tests {
             warnings: Vec::new(),
         };
         let manifest = empty_manifest(root.clone());
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
-            parse: None,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         let binaries: BTreeSet<_> = result
@@ -696,12 +698,13 @@ mod tests {
             warnings: Vec::new(),
         };
         let manifest = empty_manifest(root.clone());
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
-            parse: None,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         assert!(
@@ -772,12 +775,13 @@ mod tests {
             files: Vec::new(),
             warnings: Vec::new(),
         };
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
-            parse: None,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
@@ -839,12 +843,13 @@ mod tests {
             files: Vec::new(),
             warnings: Vec::new(),
         };
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
-            parse: None,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
