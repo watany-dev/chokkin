@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.4.0 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. **v0.1.0 through v0.4.0 have been released.**
+> **Status: v0.4.1 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. v0.4.1 is a bug-fix and performance release (parallel parsing, stat-keyed warm cache, cache-correctness fixes). **v0.1.0 through v0.4.1 have been released.**
 
 ## Why chokkin?
 
@@ -31,7 +31,7 @@ uvx chokkin
 No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, `uv.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
 
 ```text
-chokkin 0.4.0
+chokkin 0.4.1
 
 Project: acme-api
 Config : pyproject.toml

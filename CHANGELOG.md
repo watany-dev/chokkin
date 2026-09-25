@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PEP 735 `{include-group = "..."}` in `[dependency-groups]` is expanded
+  transitively (group names normalized). A group pulled into a runtime group
+  counts as runtime for CHK002 / CHK005; requirements stay under their declaring
+  group, so CHK009 and `--fix` never act on the including group. `--explain`
+  shows the include path, and undefined or circular includes become manifest
+  warnings.
+
+## [0.4.1] - Unreleased
+
+### Fixed
+- `try` / `except*` blocks and every expression slot in statements are now
+  walked, so imports, attribute accesses, and dynamic imports inside them are
+  collected.
+- Dynamic imports through aliases (e.g. `from importlib import import_module as im`)
+  and keyword arguments (`name=`) are recognized, and static imports on the same
+  line are no longer tagged as dynamic.
+- Submodules imported via absolute `from pkg import name` are reachable.
+- Re-export `source_module` no longer applies relative resolution twice, and
+  `from . import x` re-exports are collected.
+- CHK003/004/005 are no longer double-reported or missed in `--strict` mode with
+  workspace members.
+- CHK008 config ignores also match distribution names.
+- Flask route / Celery task decorators are detected in files with syntax errors
+  (regression of #167), and the text-scan and parse paths agree on the same set.
+- PEP 508 bare requirement names that look like archives (e.g. `A.tlz`) in
+  `pyproject.toml` / `setup.cfg` / `setup.py` are no longer dropped.
+- Cache correctness:
+  - config-scan cache hits are validated against every file the scan reads
+    (`tox.ini`, `.pre-commit-config.yaml`, `mkdocs.yml`, `scripts/`, `bin/`, ...);
+  - manifest cache inputs track absent `-r` / `-c` include candidates;
+  - manifest cache hits are rebased onto the current project root after a
+    project is moved or copied;
+  - parse cache racy-mtime checks use the filesystem clock, guard against key
+    collisions, and report the first failing file in discovery order.
+
+### Changed
+- Performance: files are parsed across worker threads, warm-run parse cache
+  keys come from file stat `(size, mtime)` instead of hashing contents, and
+  parse results are stored in one bundle per cache context.
+- The module-index scan cache was removed; it could never beat a rebuild.
+- JSON and SARIF reporters are rendered with `serde_json`. Field order and
+  values are unchanged, but whitespace of the pretty-printed output may differ.
+- Parse and manifest cache unit versions were bumped (`parse-v5`,
+  `manifest-extract-v2`), so existing `.chokkin/cache` entries are rebuilt on
+  the first run after upgrading.
+
 ## [0.4.0] - 2026-08-17
 
 ### Added
