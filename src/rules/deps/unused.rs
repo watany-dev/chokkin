@@ -391,6 +391,36 @@ mod tests {
         }
     }
 
+    fn legacy_boto3_import() -> ResolvedImport {
+        ResolvedImport {
+            import_root: "boto3".to_owned(),
+            full_module: "boto3".to_owned(),
+            file: "src/legacy/aws.py".to_owned(),
+            workspace_member: None,
+            line: 5,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some("boto3".to_owned()),
+            confidence: ResolveConfidence::Certain,
+        }
+    }
+
+    fn empty_sources() -> crate::sources::DiscoveredSources {
+        crate::sources::DiscoveredSources {
+            root: graph_root(),
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Src,
+                packages: vec!["acme".to_owned()],
+                inferred_globs: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
     #[test]
     fn explain_includes_unreachable_import_evidence() {
         let config = default_config();
@@ -425,32 +455,10 @@ mod tests {
             });
 
         let mut resolution = ResolutionIndex::default();
-        resolution.imports.push(ResolvedImport {
-            import_root: "boto3".to_owned(),
-            full_module: "boto3".to_owned(),
-            file: "src/legacy/aws.py".to_owned(),
-            workspace_member: None,
-            line: 5,
-            context: ImportContext::Runtime,
-            optional: false,
-            platform_guarded: false,
-            origin: ModuleOrigin::ThirdParty,
-            distribution: Some("boto3".to_owned()),
-            confidence: ResolveConfidence::Certain,
-        });
+        resolution.imports.push(legacy_boto3_import());
 
         let reachable = HashSet::from(["src/acme/main.py".to_owned()]);
-        let sources = crate::sources::DiscoveredSources {
-            root: graph_root(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                packages: vec!["acme".to_owned()],
-                inferred_globs: Vec::new(),
-            },
-            effective_globs: Vec::new(),
-            files: Vec::new(),
-            warnings: Vec::new(),
-        };
+        let sources = empty_sources();
         let parse = crate::parser::ParseSummary::default();
         let rules = RuleContext {
             resolution: &resolution,
