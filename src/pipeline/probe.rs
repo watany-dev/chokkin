@@ -14,6 +14,9 @@ use crate::manifest::{
     InlineScript, LoadedManifest, discover_inline_scripts, extract_manifest_with_cache,
     resolve_target_version,
 };
+use crate::plugins::{
+    EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
+};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, discover_sources};
 
 use super::error::ProbeError;
@@ -40,6 +43,8 @@ pub struct ProbeReport {
     pub workspace_inputs: Vec<WorkspaceMemberInputs>,
     /// PEP 723 scripts among the discovered Python files.
     pub scripts: Vec<InlineScript>,
+    /// Why each plugin is on or off; already applied to `effective_config.plugins`.
+    pub plugin_activations: Vec<PluginActivation>,
     /// Non-fatal warnings from manifest and source discovery.
     pub warnings: Vec<ProbeWarning>,
 }
@@ -99,6 +104,7 @@ pub fn probe_project_with_cache(
     );
     let mut warnings = collect_warnings(&manifest, &sources);
     warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
+    let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
 
     Ok(ProbeReport {
         version: VERSION,
@@ -110,8 +116,30 @@ pub fn probe_project_with_cache(
         workspace_members: loaded.workspace_members,
         workspace_inputs,
         scripts,
+        plugin_activations,
         warnings,
     })
+}
+
+fn activate_plugins(
+    config: &mut ChokkinConfig,
+    manifest: &LoadedManifest,
+    workspace_inputs: &[WorkspaceMemberInputs],
+) -> Vec<PluginActivation> {
+    let scopes: Vec<EnablerScope<'_>> = std::iter::once(EnablerScope {
+        member: None,
+        manifest,
+    })
+    .chain(workspace_inputs.iter().map(|input| EnablerScope {
+        member: Some(&input.member),
+        manifest: &input.manifest,
+    }))
+    .collect();
+    let activations = resolve_plugin_activations(config, &scopes);
+    for activation in &activations {
+        config.plugins.insert(activation.plugin, activation.enabled);
+    }
+    activations
 }
 
 fn collect_workspace_inputs(
@@ -237,6 +265,14 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         context_counts.runtime, context_counts.test, context_counts.dev, context_counts.docs
     )?;
     write_scripts(&report.scripts, out)?;
+    writeln!(out)?;
+
+    writeln!(out, "Plugins")?;
+    for activation in report.plugin_activations.iter().filter(|activation| {
+        activation.enabled || activation.reason != PluginActivationReason::Default
+    }) {
+        writeln!(out, "  {:<17}: {activation}", activation.plugin.as_key())?;
+    }
     writeln!(out)?;
 
     if report.warnings.is_empty() {

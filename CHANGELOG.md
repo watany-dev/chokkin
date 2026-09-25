@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file. `--probe` lists detected scripts; invalid or duplicate blocks produce a
   warning and the file stays an ordinary source. `--fix` does not rewrite
   script blocks.
+- Plugins are enabled automatically from declared dependencies (root or any
+  workspace member) and config files such as `mkdocs.yml`, `alembic.ini`,
+  `tox.ini`, `noxfile.py`, `.pre-commit-config.yaml`, and `docs/conf.py`. An
+  explicit `[tool.chokkin.plugins] x = false` still wins. `--probe` shows each
+  plugin's reason (`default`, `config`, `enabled-by: ...`, `disabled-by: config`).
 
 ## [0.4.1] - Unreleased
 

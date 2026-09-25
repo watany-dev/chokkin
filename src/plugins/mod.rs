@@ -6,6 +6,7 @@ mod context;
 mod devtools;
 mod django;
 mod doctools;
+mod enablers;
 mod error;
 mod extract;
 mod fastapi;
@@ -15,6 +16,8 @@ mod types;
 mod util;
 mod warnings;
 
+pub(crate) use enablers::{EnablerScope, resolve_plugin_activations};
+pub use enablers::{PluginActivation, PluginActivationReason};
 pub use error::PluginsError;
 pub use extract::{PluginExtractRequest, extract_plugin_hints, extract_plugin_hints_with_parse};
 pub use types::{
