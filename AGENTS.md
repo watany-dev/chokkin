@@ -19,8 +19,9 @@ resolver tags member-owned imports, treats cross-member imports as first-party, 
 requires member-local direct dependency declarations, and reporters expose member ids on
 workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `--no-cache`
 (`.chokkin/cache`), and parse cache key primitives exist (`CacheKeyContext`,
-`SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse and disk
-`ParsedModule` JSON entries under `.chokkin/cache/parse/`. Config/manifest scan input
+`SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse (not used by the CLI) and one disk
+`ParseCacheBundle` per context under `.chokkin/cache/parse/`; writing a bundle or
+scan record sweeps the superseded ones. Config/manifest scan input
 fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
 `ScanCacheRecord`; typed scan payload storage is wired for config scan and
 manifest extraction. v0.2 release validation measurements were
@@ -177,6 +178,10 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `docs/dev/oss-validation-report.md` — committed §17 CHK002 scorecard.
   **Current status: CHK002 FP gate met** (0/0 after Phase 1.5). Per-rule label
   coverage stocktake: `docs/dev/v0.3-stocktake-coverage.md`.
+- `scripts/oss-remove-and-test.py` (`make oss-oracle`) — opt-in CHK001
+  remove-and-test oracle (#85 WS2). **Executes untrusted project tests** in
+  disposable copies; isolated runners only, never release/default CI. Report:
+  `docs/dev/chk001-remove-and-test.md`.
 
 ## PR hygiene
 
