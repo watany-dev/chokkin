@@ -68,7 +68,7 @@ pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, InlineScript,
     LoadedManifest, LockfileGraph, ManifestError, ManifestSources, ManifestWarning,
     ProjectMetadata, discover_inline_scripts, extract_manifest, extract_manifest_with_cache,
-    inline_script_target, parse_inline_script, resolve_target_version,
+    resolve_target_version,
 };
 pub use parser::{
     DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,

@@ -73,15 +73,11 @@ pub fn parse_inline_script(
 }
 
 /// Target version from a valid `script` block's `requires-python`.
+///
+/// Uses the same validity rules as [`parse_inline_script`], so the parser and
+/// the resolver agree on which files are scripts.
 pub fn inline_script_target(text: &str) -> Option<TargetVersion> {
-    if !text.contains(SCRIPT_OPENING) {
-        return None;
-    }
-    let block = read_script_block(text).ok()??;
-    match block.table.get("requires-python") {
-        Some(Value::String(value)) => infer_target_version_from_requires_python(value),
-        _ => None,
-    }
+    parse_inline_script("", text, &mut Vec::new())?.target_version
 }
 
 /// Read every listed Python file below `root` and collect its script block.
@@ -328,5 +324,8 @@ mod tests {
             Some("py311")
         );
         assert!(inline_script_target("import os\n").is_none());
+        let invalid =
+            "# /// script\n# requires-python = \">=3.12\"\n# dependencies = \"rich\"\n# ///\n";
+        assert!(inline_script_target(invalid).is_none());
     }
 }
