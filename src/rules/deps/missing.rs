@@ -23,7 +23,7 @@ pub(super) struct WorkspaceDeclaredIndex<'a> {
 pub(super) fn detect_missing_dependencies(
     declared: &DeclaredIndex<'_>,
     dependency: &DependencyRuleContext<'_>,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<&str>,
     has_lockfile: bool,
     workspace_declared: &[WorkspaceDeclaredIndex<'_>],
 ) -> Vec<IssueCandidate> {
@@ -48,7 +48,7 @@ pub(super) fn detect_missing_dependencies(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        if !reachable.contains(&import.file) {
+        if !reachable.contains(import.file.as_str()) {
             continue;
         }
 
@@ -481,7 +481,7 @@ mod tests {
                 config: &config,
                 strict: false,
             },
-            &HashSet::from([FILE.to_owned()]),
+            &HashSet::from([FILE]),
             true,
             &[],
         )

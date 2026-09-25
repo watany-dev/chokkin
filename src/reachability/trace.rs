@@ -45,6 +45,7 @@ mod tests {
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),
             predecessors: indexmap::IndexMap::new(),
+            reached_opaque_dynamic_import: false,
         };
         assert!(trace_to_file(&report, file_id).is_none());
     }
@@ -102,6 +103,7 @@ mod tests {
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),
             predecessors,
+            reached_opaque_dynamic_import: false,
         };
 
         let trace = trace_to_file(&report, child).expect("trace");

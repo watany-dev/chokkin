@@ -2,10 +2,12 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use indexmap::{IndexMap, IndexSet};
+
 use crate::entry::EntryPlan;
 use crate::graph::{FileId, FileReachVia, GraphEdge, ModuleId, ModuleOrigin, ProjectGraph};
 use crate::parser::ParseSummary;
-use crate::plugins::{PluginHints, ReferenceOrigin};
+use crate::plugins::PluginHints;
 use crate::resolver::import_root;
 
 use super::module_index::ModuleIndex;
@@ -14,10 +16,10 @@ use super::types::{ReachPredecessor, TraceStep, UsedModule};
 /// Result of a BFS traversal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BfsOutcome {
-    /// Files reached from entry roots, plugin refs, and imports.
-    pub reachable: HashSet<FileId>,
+    /// Files reached from entry roots, plugin refs, framework globs, and imports.
+    pub reachable: IndexSet<FileId>,
     /// Shortest-path predecessors for trace reconstruction.
-    pub predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
+    pub predecessors: IndexMap<FileId, ReachPredecessor>,
     /// Stdlib and third-party modules encountered.
     pub used_modules: Vec<UsedModule>,
 }
@@ -29,163 +31,158 @@ type ImportSite = (ModuleId, u32);
 /// module: the resolved file, the dotted submodule name, and the line.
 type SubmoduleSite = (FileId, String, u32);
 
+/// An import site tagged with the file it appears in.
+type ImportSiteRef = (FileId, ModuleId, u32);
+
 struct BfsState<'a> {
-    graph: &'a mut ProjectGraph,
+    // Shared, so module and file names can be borrowed for the whole walk and
+    // copied only into the steps of newly reached files.
+    graph: &'a ProjectGraph,
     module_index: &'a ModuleIndex,
     file_imports: HashMap<FileId, Vec<ImportSite>>,
     submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
     queue: VecDeque<FileId>,
-    reachable: HashSet<FileId>,
-    predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
+    reachable: IndexSet<FileId>,
+    predecessors: IndexMap<FileId, ReachPredecessor>,
     used_modules: Vec<UsedModule>,
     dynamic_sites: HashSet<ImportSiteRef>,
-    reach_edges: HashSet<(FileId, FileId)>,
+    /// `FileReachesFile` edges, one per (from, to), pushed once the walk ends.
+    reach_edges: IndexMap<(FileId, FileId), FileReachVia>,
 }
 
-/// An import site tagged with the file it appears in.
-type ImportSiteRef = (FileId, ModuleId, u32);
-
 impl<'a> BfsState<'a> {
-    fn new(
-        graph: &'a mut ProjectGraph,
-        module_index: &'a ModuleIndex,
-        file_imports: HashMap<FileId, Vec<ImportSite>>,
-        submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
-        dynamic_sites: HashSet<ImportSiteRef>,
-    ) -> Self {
+    fn new(graph: &'a ProjectGraph, parse: &ParseSummary, module_index: &'a ModuleIndex) -> Self {
         Self {
             graph,
             module_index,
-            file_imports,
-            submodule_imports,
+            file_imports: build_file_import_adjacency(graph),
+            submodule_imports: build_submodule_imports(graph, parse, module_index),
             queue: VecDeque::new(),
-            reachable: HashSet::new(),
-            predecessors: indexmap::IndexMap::new(),
+            reachable: IndexSet::new(),
+            predecessors: IndexMap::new(),
             used_modules: Vec::new(),
-            dynamic_sites,
-            reach_edges: HashSet::new(),
+            dynamic_sites: build_dynamic_sites(graph, parse),
+            reach_edges: IndexMap::new(),
         }
     }
 
-    fn finish(self) -> BfsOutcome {
-        BfsOutcome {
+    /// Mark `file_id` reached; `step` is only built for a file seen the first time.
+    fn enqueue_file(
+        &mut self,
+        file_id: FileId,
+        from: Option<FileId>,
+        step: impl FnOnce() -> TraceStep,
+    ) {
+        if self.reachable.insert(file_id) {
+            self.predecessors
+                .insert(file_id, ReachPredecessor { from, step: step() });
+            self.queue.push_back(file_id);
+        }
+    }
+
+    fn finish(self) -> (BfsOutcome, IndexMap<(FileId, FileId), FileReachVia>) {
+        let outcome = BfsOutcome {
             reachable: self.reachable,
             predecessors: self.predecessors,
             used_modules: self.used_modules,
-        }
+        };
+        (outcome, self.reach_edges)
     }
 
-    fn enqueue_file(&mut self, file_id: FileId, from: Option<FileId>, step: TraceStep) {
-        if self.reachable.contains(&file_id) {
-            return;
+    fn drain(&mut self) {
+        while let Some(file_id) = self.queue.pop_front() {
+            record_file_imports(self, file_id);
         }
-        self.reachable.insert(file_id);
-        self.predecessors
-            .insert(file_id, ReachPredecessor { from, step });
-        self.queue.push_back(file_id);
     }
 }
 
 /// Run BFS from entry roots through first-party import edges.
+///
+/// Framework-glob files are seeded after the walk from the entry roots and
+/// plugin refs has finished, so a file those reach keeps its import trace;
+/// the imports of the seeded files are then followed like any other file's.
+#[allow(clippy::too_many_arguments)]
 pub fn run_reachability_bfs(
     graph: &mut ProjectGraph,
     entry: &EntryPlan,
     plugins: &PluginHints,
     parse: &ParseSummary,
     module_index: &ModuleIndex,
+    framework: Vec<(FileId, ReachPredecessor)>,
 ) -> BfsOutcome {
-    let file_imports = build_file_import_adjacency(graph);
-    let submodule_imports = build_submodule_imports(graph, parse, module_index);
-    let dynamic_sites = build_dynamic_sites(graph, parse);
-    let mut state = BfsState::new(
-        graph,
-        module_index,
-        file_imports,
-        submodule_imports,
-        dynamic_sites,
-    );
+    record_module_references(graph, plugins);
+    let mut state = BfsState::new(graph, parse, module_index);
 
     for root in &entry.roots {
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
             continue;
         };
-        state.enqueue_file(
-            file_id,
-            None,
-            TraceStep::File {
-                file: file_id,
-                path: root.spec.path.clone(),
-            },
-        );
+        state.enqueue_file(file_id, None, || TraceStep::File {
+            file: file_id,
+            path: root.spec.path.clone(),
+        });
     }
-
     for reference in plugins.module_refs() {
-        enqueue_module_reference(&mut state, &reference.module, &reference.origin);
+        let label = reference.origin.label.as_str();
+        for name in module_and_parents(&reference.module) {
+            let Some(target) = state.module_index.resolve(name) else {
+                continue;
+            };
+            state.enqueue_file(target, None, || TraceStep::PluginRef {
+                module: name.to_owned(),
+                label: label.to_owned(),
+            });
+        }
     }
+    state.drain();
 
-    while let Some(file_id) = state.queue.pop_front() {
-        record_file_imports(&mut state, file_id);
+    for (file_id, ReachPredecessor { from, step }) in framework {
+        state.enqueue_file(file_id, from, || step);
     }
+    state.drain();
 
-    state.finish()
+    let (outcome, reach_edges) = state.finish();
+    for ((from, to), via) in reach_edges {
+        graph.push_edge(GraphEdge::FileReachesFile { from, to, via });
+    }
+    outcome
+}
+
+fn record_module_references(graph: &mut ProjectGraph, plugins: &PluginHints) {
+    for reference in plugins.module_refs() {
+        let module = graph.module_id(&reference.module).unwrap_or_else(|| {
+            graph.intern_module(reference.module.clone(), ModuleOrigin::Unknown)
+        });
+        graph.push_edge(GraphEdge::ConfigReferenceUsesModule {
+            origin: reference.origin.clone(),
+            module,
+        });
+    }
 }
 
 fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
+    let graph = state.graph;
     // Taking the adjacency list out of the map avoids cloning it. Each file is
     // enqueued at most once, so it is never visited again after this.
     let imports = state.file_imports.remove(&file_id).unwrap_or_default();
-    // Only third-party and stdlib imports name the source file, so projects
-    // whose imports are mostly first-party never build this string.
-    let mut source_path: Option<String> = None;
+    let source_path = graph.file(file_id).map_or("", |node| node.path.as_str());
 
     for (module_id, line) in imports {
-        let dynamic = state.dynamic_sites.contains(&(file_id, module_id, line));
-        let Some(module_node) = state.graph.module(module_id) else {
+        let Some(module_node) = graph.module(module_id) else {
             continue;
         };
-        let module_name = module_node.name.clone();
-        let module_origin = module_node.origin;
-        match module_origin {
+        let name = module_node.name.as_str();
+        match module_node.origin {
             ModuleOrigin::FirstParty => {
-                // Resolving before the step is built lets the step own the
-                // module name instead of taking a second copy of it.
-                let Some(target) = state.module_index.resolve(&module_name) else {
-                    continue;
-                };
-                let (step, via) = if dynamic {
-                    (
-                        TraceStep::DynamicImport {
-                            module: module_name,
-                            line,
-                        },
-                        FileReachVia::DynamicImport,
-                    )
-                } else {
-                    (
-                        TraceStep::Import {
-                            module: module_name,
-                            line,
-                        },
-                        FileReachVia::Import,
-                    )
-                };
-                enqueue_resolved_module(state, target, file_id, step, via);
+                let dynamic = state.dynamic_sites.contains(&(file_id, module_id, line));
+                enqueue_import(state, file_id, name, line, dynamic);
             },
-            ModuleOrigin::Stdlib | ModuleOrigin::ThirdParty => {
-                let import_root = import_root(&module_name).to_owned();
-                let file = source_path
-                    .get_or_insert_with(|| {
-                        state
-                            .graph
-                            .file(file_id)
-                            .map_or_else(String::new, |node| node.path.clone())
-                    })
-                    .clone();
+            origin @ (ModuleOrigin::Stdlib | ModuleOrigin::ThirdParty) => {
                 state.used_modules.push(UsedModule {
-                    full_module: module_name,
-                    import_root,
-                    origin: module_origin,
-                    file,
+                    full_module: name.to_owned(),
+                    import_root: import_root(name).to_owned(),
+                    origin,
+                    file: source_path.to_owned(),
                     line,
                 });
             },
@@ -195,54 +192,63 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
 
     let submodules = state.submodule_imports.remove(&file_id).unwrap_or_default();
     for (target, module, line) in submodules {
-        enqueue_resolved_module(
-            state,
-            target,
-            file_id,
-            TraceStep::Import { module, line },
-            FileReachVia::Import,
-        );
+        enqueue_resolved_module(state, target, file_id, FileReachVia::Import, || {
+            TraceStep::Import { module, line }
+        });
     }
+}
+
+/// Importing `pkg.sub.mod` runs `pkg/__init__.py` and `pkg/sub/__init__.py`
+/// before `mod`, so every dotted prefix that resolves is reached from the
+/// same site.
+fn enqueue_import(
+    state: &mut BfsState<'_>,
+    from_file: FileId,
+    module: &str,
+    line: u32,
+    dynamic: bool,
+) {
+    let via = if dynamic {
+        FileReachVia::DynamicImport
+    } else {
+        FileReachVia::Import
+    };
+    for name in module_and_parents(module) {
+        let Some(target) = state.module_index.resolve(name) else {
+            continue;
+        };
+        enqueue_resolved_module(state, target, from_file, via, || {
+            let module = name.to_owned();
+            if dynamic {
+                TraceStep::DynamicImport { module, line }
+            } else {
+                TraceStep::Import { module, line }
+            }
+        });
+    }
+}
+
+/// `module` itself, then each enclosing package from the outermost in.
+fn module_and_parents(module: &str) -> impl Iterator<Item = &str> {
+    std::iter::once(module).chain(
+        module
+            .match_indices('.')
+            .filter_map(move |(index, _)| module.get(..index)),
+    )
 }
 
 fn enqueue_resolved_module(
     state: &mut BfsState<'_>,
     target: FileId,
     from_file: FileId,
-    step: TraceStep,
     via: FileReachVia,
+    step: impl FnOnce() -> TraceStep,
 ) {
-    // One edge per (from, to): the same pair is otherwise pushed again for
-    // every further import site that resolves to the target file.
-    if from_file != target && state.reach_edges.insert((from_file, target)) {
-        state.graph.push_edge(GraphEdge::FileReachesFile {
-            from: from_file,
-            to: target,
-            via,
-        });
+    // The first site that links a pair decides its `via`.
+    if from_file != target {
+        state.reach_edges.entry((from_file, target)).or_insert(via);
     }
     state.enqueue_file(target, Some(from_file), step);
-}
-
-fn enqueue_module_reference(state: &mut BfsState<'_>, module: &str, origin: &ReferenceOrigin) {
-    let module_id = state
-        .graph
-        .intern_module(module.to_owned(), ModuleOrigin::Unknown);
-    state.graph.push_edge(GraphEdge::ConfigReferenceUsesModule {
-        origin: origin.clone(),
-        module: module_id,
-    });
-    let Some(target) = state.module_index.resolve(module) else {
-        return;
-    };
-    state.enqueue_file(
-        target,
-        None,
-        TraceStep::PluginRef {
-            module: module.to_owned(),
-            label: origin.label.clone(),
-        },
-    );
 }
 
 fn build_file_import_adjacency(graph: &ProjectGraph) -> HashMap<FileId, Vec<ImportSite>> {
@@ -414,24 +420,59 @@ mod tests {
     }
 
     fn graph_with_imports(root: ProjectRoot, modules: &[ParsedModule]) -> ProjectGraph {
+        graph_with_files(root, &PATHS, &["acme.a", "acme.b", "acme.c"], modules)
+    }
+
+    fn graph_with_files(
+        root: ProjectRoot,
+        paths: &[&str],
+        first_party: &[&str],
+        modules: &[ParsedModule],
+    ) -> ProjectGraph {
         let mut graph = ProjectGraph::new(root);
-        for path in PATHS {
+        for path in paths {
             graph
                 .intern_file(FileNode {
-                    path: path.to_owned(),
+                    path: (*path).to_owned(),
                     context: FileContext::Runtime,
                     kind: FileKind::Python,
                 })
                 .expect("file");
         }
-        for module in ["acme.a", "acme.b", "acme.c"] {
-            graph.intern_module(module.to_owned(), ModuleOrigin::FirstParty);
+        for module in first_party {
+            graph.intern_module((*module).to_owned(), ModuleOrigin::FirstParty);
         }
         for parsed in modules {
             let file_id = graph.file_id(&parsed.path).expect("parsed file");
             add_parsed_imports(&mut graph, file_id, parsed).expect("import edges");
         }
         graph
+    }
+
+    fn test_root() -> ProjectRoot {
+        ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        }
+    }
+
+    fn run_bfs(
+        graph: &mut ProjectGraph,
+        root: &ProjectRoot,
+        modules: Vec<ParsedModule>,
+        framework: Vec<(FileId, ReachPredecessor)>,
+    ) -> BfsOutcome {
+        let parse = ParseSummary { modules };
+        let module_index = ModuleIndex::build(graph, &sources(root));
+        run_reachability_bfs(
+            graph,
+            &entry_plan(),
+            &no_plugins(),
+            &parse,
+            &module_index,
+            framework,
+        )
     }
 
     fn reach_edges(graph: &ProjectGraph) -> Vec<(FileId, FileId, FileReachVia)> {
@@ -469,6 +510,7 @@ mod tests {
             &no_plugins(),
             &parse,
             &module_index,
+            Vec::new(),
         );
 
         assert_eq!(outcome.reachable.len(), 4);
@@ -515,6 +557,7 @@ mod tests {
             &no_plugins(),
             &parse,
             &module_index,
+            Vec::new(),
         );
 
         let step = &outcome.predecessors.get(&a_id).expect("predecessor").step;
@@ -563,6 +606,7 @@ mod tests {
             &no_plugins(),
             &parse,
             &module_index,
+            Vec::new(),
         );
 
         assert_eq!(outcome.reachable.len(), 2);
@@ -577,5 +621,64 @@ mod tests {
             vec![(main_id, a_id, FileReachVia::Import)]
         );
         assert!(outcome.used_modules.is_empty());
+    }
+
+    #[test]
+    fn submodule_import_reaches_every_parent_package() {
+        let root = test_root();
+        let paths = [
+            "src/acme/main.py",
+            "src/acme/__init__.py",
+            "src/acme/sub/__init__.py",
+            "src/acme/sub/c.py",
+        ];
+        let modules = vec![parsed("src/acme/main.py", &[("acme.sub.c", 4)], &[])];
+        let mut graph = graph_with_files(root.clone(), &paths, &["acme.sub.c"], &modules);
+        let outcome = run_bfs(&mut graph, &root, modules, Vec::new());
+
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        let edges = reach_edges(&graph);
+        assert_eq!(outcome.reachable.len(), 4);
+        for (path, expected) in [
+            ("src/acme/sub/c.py", "acme.sub.c"),
+            ("src/acme/__init__.py", "acme"),
+            ("src/acme/sub/__init__.py", "acme.sub"),
+        ] {
+            let file_id = graph.file_id(path).expect(path);
+            let step = &outcome.predecessors.get(&file_id).expect(path).step;
+            assert!(
+                matches!(step, TraceStep::Import { module, line: 4 } if module == expected),
+                "{path}: got {step:?}"
+            );
+            assert!(edges.contains(&(main_id, file_id, FileReachVia::Import)));
+        }
+    }
+
+    #[test]
+    fn framework_seeds_are_followed_after_the_entry_walk() {
+        let root = test_root();
+        let modules = vec![
+            parsed("src/acme/main.py", &[("acme.a", 1)], &[]),
+            parsed("src/acme/c.py", &[("acme.b", 2)], &[]),
+        ];
+        let mut graph = graph_with_imports(root.clone(), &modules);
+        let [a_id, b_id, c_id] = ["src/acme/a.py", "src/acme/b.py", "src/acme/c.py"]
+            .map(|path| graph.file_id(path).expect(path));
+        let seed = |file_id| {
+            let step = TraceStep::PluginRef {
+                module: "glob".to_owned(),
+                label: "django".to_owned(),
+            };
+            (file_id, ReachPredecessor { from: None, step })
+        };
+        let outcome = run_bfs(&mut graph, &root, modules, vec![seed(a_id), seed(c_id)]);
+
+        assert_eq!(outcome.reachable.len(), 4);
+        let [a_step, b_from, c_step] = [a_id, b_id, c_id]
+            .map(|file_id| outcome.predecessors.get(&file_id).expect("predecessor"));
+        assert!(matches!(a_step.step, TraceStep::Import { line: 1, .. }));
+        assert!(matches!(c_step.step, TraceStep::PluginRef { .. }));
+        assert_eq!(b_from.from, Some(c_id));
+        assert!(reach_edges(&graph).contains(&(c_id, b_id, FileReachVia::Import)));
     }
 }

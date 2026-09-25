@@ -96,4 +96,6 @@ pub struct ReachabilityReport {
     pub framework_used: IndexSet<FileId>,
     /// Shortest-path predecessors for [`super::trace::trace_to_file`].
     pub(super) predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
+    /// Whether a reachable file calls a loader with a non-literal module name.
+    pub(super) reached_opaque_dynamic_import: bool,
 }

@@ -24,14 +24,14 @@ pub(super) fn build_declared_index(manifest: &LoadedManifest) -> DeclaredIndex<'
 }
 
 /// Collect root-relative paths of reachable Python files.
-pub(super) fn reachable_paths(
-    graph: &ProjectGraph,
+pub(super) fn reachable_paths<'g>(
+    graph: &'g ProjectGraph,
     reachability: &ReachabilityReport,
-) -> HashSet<String> {
+) -> HashSet<&'g str> {
     reachability
         .reachable
         .iter()
-        .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.clone()))
+        .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.as_str()))
         .collect()
 }
 
@@ -45,15 +45,12 @@ pub(super) fn has_lockfile(manifest: &LoadedManifest, resolution: &ResolutionInd
 pub(super) fn collect_used_distributions(
     context: &RuleContext<'_>,
     plugins: &PluginHints,
+    reachable: &HashSet<&str>,
 ) -> IndexSet<String> {
     let RuleContext {
-        resolution,
-        reachability,
-        graph,
-        ..
+        resolution, graph, ..
     } = *context;
     let binary_resolutions = &resolution.binary_resolutions;
-    let reachable = reachable_paths(graph, reachability);
     let mut used = IndexSet::new();
 
     for import in &resolution.imports {
@@ -65,7 +62,7 @@ pub(super) fn collect_used_distributions(
         };
         // Plugin refs read from config files (pytest `-p`, mypy plugins) name a
         // file outside the graph; those count even though no BFS reaches them.
-        if !reachable.contains(&import.file) && graph.file_id(&import.file).is_some() {
+        if !reachable.contains(import.file.as_str()) && graph.file_id(&import.file).is_some() {
             continue;
         }
         used.insert(distribution.clone());
@@ -85,11 +82,11 @@ pub(super) fn collect_used_distributions(
 pub(super) fn mark_workspace_source_distributions(
     manifest: &LoadedManifest,
     resolution: &ResolutionIndex,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<&str>,
     used: &mut IndexSet<String>,
 ) {
     for import in &resolution.imports {
-        if import.origin != ModuleOrigin::FirstParty || !reachable.contains(&import.file) {
+        if import.origin != ModuleOrigin::FirstParty || !reachable.contains(import.file.as_str()) {
             continue;
         }
         let name = crate::manifest::normalize_distribution_name(&import.import_root);
@@ -230,6 +227,7 @@ mod tests {
                 config_module_refs: Vec::new(),
                 warnings: Vec::new(),
             },
+            &reachable_paths(&graph, &reachable),
         );
         assert!(used.contains("pyyaml"));
     }

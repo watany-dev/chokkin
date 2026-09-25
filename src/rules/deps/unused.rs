@@ -16,7 +16,7 @@ use super::context::{DeclarationBucket, declaration_buckets, include_path_detail
 /// Context for building CHK002 reachability evidence in `--explain` output.
 pub(super) struct UnusedEvidenceContext<'a> {
     pub rules: &'a RuleContext<'a>,
-    pub reachable: &'a HashSet<String>,
+    pub reachable: &'a HashSet<&'a str>,
     /// `[build-system].requires`, so a build plugin that is also declared as
     /// a dependency is explained as build tooling.
     pub build_requires: &'a [DeclaredDependency],
@@ -121,11 +121,11 @@ fn build_reachability_evidence(
 
     let reachable_imports = distribution_imports
         .iter()
-        .filter(|import| context.reachable.contains(&import.file))
+        .filter(|import| context.reachable.contains(import.file.as_str()))
         .collect::<Vec<_>>();
     let unreachable_imports = distribution_imports
         .iter()
-        .filter(|import| !context.reachable.contains(&import.file))
+        .filter(|import| !context.reachable.contains(import.file.as_str()))
         .collect::<Vec<_>>();
 
     if reachable_imports.is_empty() {
@@ -457,7 +457,7 @@ mod tests {
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(legacy_boto3_import());
 
-        let reachable = HashSet::from(["src/acme/main.py".to_owned()]);
+        let reachable = HashSet::from(["src/acme/main.py"]);
         let sources = empty_sources();
         let parse = crate::parser::ParseSummary::default();
         let rules = RuleContext {

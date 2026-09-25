@@ -28,6 +28,7 @@
     }
   ],
   "reachable": [
+    "src/acme/__init__.py",
     "src/acme/__main__.py",
     "src/acme/cli.py",
     "src/acme/plugin.py",

@@ -283,6 +283,10 @@ fn django_migrations_are_framework_used() {
             .iter()
             .any(|file| file.path == "mysite/migrations/0001_initial.py")
     );
+    // The migration's own imports are followed, so `django` counts as used.
+    assert!(report.used_modules.iter().any(|used| {
+        used.import_root == "django" && used.file == "mysite/migrations/0001_initial.py"
+    }));
 }
 
 #[test]

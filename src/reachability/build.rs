@@ -30,25 +30,23 @@ pub fn analyze_reachability(
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
     let module_index = ModuleIndex::build(graph, sources);
-    let bfs = run_reachability_bfs(graph, entry, plugins, parse, &module_index);
-
     let framework = apply_framework_globs(graph, sources, plugins)?;
-    let mut reachable: IndexSet<_> = bfs.reachable.into_iter().collect();
-    let mut predecessors = bfs.predecessors;
-    for file_id in &framework.files {
-        reachable.insert(*file_id);
-    }
-    // A file only the globs reach has no BFS predecessor, so `--trace` would
-    // print an empty path unless the matching glob is recorded as its step.
-    for (file_id, predecessor) in framework.predecessors {
-        predecessors.entry(file_id).or_insert(predecessor);
-    }
-
-    let parse_by_path = parse
-        .modules
-        .iter()
-        .map(|module| (module.path.as_str(), module))
-        .collect::<std::collections::HashMap<_, _>>();
+    let bfs = run_reachability_bfs(
+        graph,
+        entry,
+        plugins,
+        parse,
+        &module_index,
+        framework.predecessors,
+    );
+    let reachable = bfs.reachable;
+    let reached_opaque_dynamic_import = parse.modules.iter().any(|module| {
+        module.has_opaque_dynamic_import
+            && graph
+                .file_id(&module.path)
+                .is_some_and(|file_id| reachable.contains(&file_id))
+    });
+    let confidence = confidence_for_unreachable(mode.mode, reached_opaque_dynamic_import);
 
     let mut unreachable = Vec::new();
     for file in &sources.files {
@@ -68,11 +66,10 @@ pub fn analyze_reachability(
             continue;
         }
 
-        let parsed = parse_by_path.get(file.path.as_str()).copied();
         unreachable.push(UnreachableFile {
             file: file_id,
             path: file.path.clone(),
-            max_confidence: confidence_for_unreachable(mode.mode, parsed),
+            max_confidence: confidence,
         });
     }
 
@@ -83,7 +80,8 @@ pub fn analyze_reachability(
         unreachable,
         used_modules: bfs.used_modules,
         framework_used: framework.files,
-        predecessors,
+        predecessors: bfs.predecessors,
+        reached_opaque_dynamic_import,
     })
 }
 
@@ -92,21 +90,24 @@ pub fn analyze_reachability(
 /// Library mode caps orphans at `Maybe` because an outside caller may import
 /// them; a file outside the distributed packages has no such caller, so it is
 /// scored as in app mode.
+///
+/// `_parse` is no longer read (the report already knows whether reachable code
+/// has an opaque dynamic import); it stays so the public signature is unchanged.
 pub fn apply_public_surface(
     report: &mut ReachabilityReport,
     surface: &PublicSurface,
-    parse: &ParseSummary,
+    _parse: &ParseSummary,
     mode: &ResolvedMode,
 ) {
     if mode.mode != ProjectMode::Library {
         return;
     }
+    let confidence =
+        confidence_for_unreachable(ProjectMode::App, report.reached_opaque_dynamic_import);
     for file in &mut report.unreachable {
-        if surface.contains(&file.path) {
-            continue;
+        if !surface.contains(&file.path) {
+            file.max_confidence = confidence;
         }
-        let parsed = parse.modules.iter().find(|module| module.path == file.path);
-        file.max_confidence = confidence_for_unreachable(ProjectMode::App, parsed);
     }
 }
 
@@ -191,14 +192,13 @@ fn is_excluded(file: &crate::sources::DiscoveredFile, mode: &ResolvedMode) -> bo
         || (file.context == FileContext::Test && mode.mode == ProjectMode::Library)
 }
 
-fn confidence_for_unreachable(
-    mode: ProjectMode,
-    parsed: Option<&crate::parser::ParsedModule>,
-) -> Confidence {
-    if mode == ProjectMode::Library {
+/// An opaque `import_module(name)` in code that runs may load any orphan, so
+/// it lowers every orphan; one inside an orphan never runs and changes nothing.
+const fn confidence_for_unreachable(mode: ProjectMode, reached_opaque: bool) -> Confidence {
+    if matches!(mode, ProjectMode::Library) {
         return Confidence::Maybe;
     }
-    if parsed.is_some_and(|module| module.has_opaque_dynamic_import) {
+    if reached_opaque {
         return Confidence::Likely;
     }
     Confidence::Certain
@@ -209,7 +209,9 @@ mod tests {
     use super::*;
     use crate::config::PluginId;
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::graph::FileNode;
+    use crate::entry::EntryRoot;
+    use crate::graph::{FileNode, ModuleOrigin, add_parsed_imports};
+    use crate::parser::{ImportContext, ImportKind, ImportRef, ParsedModule};
     use crate::plugins::{FrameworkUsedGlob, PluginContribution, ReferenceOrigin};
     use crate::reachability::trace_to_file;
     use crate::resolver::ResolveConfidence;
@@ -229,6 +231,13 @@ mod tests {
         });
         PluginHints {
             contributions: vec![contribution],
+            ..no_plugins()
+        }
+    }
+
+    fn no_plugins() -> PluginHints {
+        PluginHints {
+            contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
             config_module_refs: Vec::new(),
@@ -236,22 +245,51 @@ mod tests {
         }
     }
 
-    #[test]
-    fn framework_glob_file_has_a_non_empty_trace() {
-        let root = ProjectRoot {
-            path: std::env::temp_dir(),
-            marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
-        };
-        let mut graph = ProjectGraph::new(root.clone());
-        let file_id = graph
-            .intern_file(FileNode {
-                path: MIGRATION.to_owned(),
-                context: FileContext::Runtime,
-                kind: FileKind::Python,
-            })
-            .expect("migration file");
-        let sources = DiscoveredSources {
+    fn parsed(path: &str, imports: &[&str], opaque: bool) -> ParsedModule {
+        ParsedModule {
+            path: path.to_owned(),
+            imports: imports
+                .iter()
+                .map(|module| ImportRef {
+                    module: (*module).to_owned(),
+                    name: None,
+                    alias: None,
+                    line: 1,
+                    kind: ImportKind::Import,
+                    context: ImportContext::Runtime,
+                    optional: false,
+                    platform_guarded: false,
+                    relative_level: 0,
+                })
+                .collect(),
+            has_opaque_dynamic_import: opaque,
+            ..ParsedModule::default()
+        }
+    }
+
+    fn app_entry(roots: &[&str]) -> EntryPlan {
+        EntryPlan {
+            mode: ResolvedMode {
+                mode: ProjectMode::App,
+                confidence: ResolveConfidence::Certain,
+            },
+            roots: roots
+                .iter()
+                .map(|path| EntryRoot {
+                    spec: crate::config::EntrySpec {
+                        path: (*path).to_owned(),
+                        symbol: None,
+                    },
+                    context: FileContext::Runtime,
+                    origins: Vec::new(),
+                })
+                .collect(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn flat_sources(root: ProjectRoot, paths: &[&str]) -> DiscoveredSources {
+        DiscoveredSources {
             root,
             layout: LayoutInfo {
                 layout: ProjectLayout::Flat,
@@ -259,34 +297,89 @@ mod tests {
                 inferred_globs: Vec::new(),
             },
             effective_globs: Vec::new(),
-            files: vec![DiscoveredFile {
-                path: MIGRATION.to_owned(),
-                kind: FileKind::Python,
-                context: FileContext::Runtime,
-            }],
+            files: paths
+                .iter()
+                .map(|path| DiscoveredFile {
+                    path: (*path).to_owned(),
+                    kind: FileKind::Python,
+                    context: FileContext::Runtime,
+                })
+                .collect(),
             warnings: Vec::new(),
-        };
-        let entry = EntryPlan {
-            mode: ResolvedMode {
-                mode: ProjectMode::App,
-                confidence: ResolveConfidence::Certain,
-            },
-            roots: Vec::new(),
-            warnings: Vec::new(),
-        };
-        let parse = ParseSummary::default();
+        }
+    }
 
+    fn graph_for(
+        sources: &DiscoveredSources,
+        parse: &ParseSummary,
+        origins: &[(&str, ModuleOrigin)],
+    ) -> ProjectGraph {
+        let mut graph = ProjectGraph::new(sources.root.clone());
+        for file in &sources.files {
+            graph
+                .intern_file(FileNode {
+                    path: file.path.clone(),
+                    context: file.context,
+                    kind: file.kind,
+                })
+                .expect("file");
+        }
+        for (module, origin) in origins {
+            graph.intern_module((*module).to_owned(), *origin);
+        }
+        for module in &parse.modules {
+            let file_id = graph.file_id(&module.path).expect("parsed file");
+            add_parsed_imports(&mut graph, file_id, module).expect("import edges");
+        }
+        graph
+    }
+
+    /// Analyze a flat `acme` project whose files are `parse`'s modules plus `extra`.
+    fn analyze(
+        parse: &ParseSummary,
+        extra: &[&str],
+        origins: &[(&str, ModuleOrigin)],
+        roots: &[&str],
+        plugins: &PluginHints,
+    ) -> (ProjectGraph, ReachabilityReport) {
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        };
+        let paths: Vec<&str> = parse
+            .modules
+            .iter()
+            .map(|module| module.path.as_str())
+            .chain(extra.iter().copied())
+            .collect();
+        let sources = flat_sources(root, &paths);
+        let mut graph = graph_for(&sources, parse, origins);
+        let entry = app_entry(roots);
         let report = analyze_reachability(
             &mut graph,
             &sources,
             &entry,
-            &plugin_hints(),
-            &parse,
+            plugins,
+            parse,
             &entry.mode,
             false,
         )
         .expect("reachability");
+        (graph, report)
+    }
 
+    #[test]
+    fn framework_glob_file_has_a_non_empty_trace() {
+        let (graph, report) = analyze(
+            &ParseSummary::default(),
+            &[MIGRATION],
+            &[],
+            &[],
+            &plugin_hints(),
+        );
+
+        let file_id = graph.file_id(MIGRATION).expect("migration file");
         assert!(report.framework_used.contains(&file_id));
         let trace = trace_to_file(&report, file_id).expect("trace");
         assert_eq!(
@@ -296,5 +389,49 @@ mod tests {
                 label: "django:**/migrations/*.py".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn framework_glob_file_imports_are_followed() {
+        let parse = ParseSummary {
+            modules: vec![parsed(MIGRATION, &["acme.models", "django.db"], false)],
+        };
+        let origins = [
+            ("acme.models", ModuleOrigin::FirstParty),
+            ("django.db", ModuleOrigin::ThirdParty),
+        ];
+        let (graph, report) = analyze(&parse, &["acme/models.py"], &origins, &[], &plugin_hints());
+
+        let models = graph.file_id("acme/models.py").expect("models");
+        assert!(report.reachable.contains(&models));
+        assert!(!report.framework_used.contains(&models));
+        assert!(report.unreachable.is_empty());
+        assert!(
+            report
+                .used_modules
+                .iter()
+                .any(|used| used.import_root == "django" && used.file == MIGRATION)
+        );
+    }
+
+    fn orphan_confidence(opaque_in: &str) -> Confidence {
+        let parse = ParseSummary {
+            modules: ["acme/main.py", "acme/orphan.py"]
+                .map(|path| parsed(path, &[], path == opaque_in))
+                .into(),
+        };
+        let (_, report) = analyze(&parse, &[], &[], &["acme/main.py"], &no_plugins());
+        assert_eq!(report.unreachable.len(), 1);
+        report.unreachable[0].max_confidence
+    }
+
+    #[test]
+    fn opaque_import_in_reachable_code_lowers_orphans_to_likely() {
+        assert_eq!(orphan_confidence("acme/main.py"), Confidence::Likely);
+    }
+
+    #[test]
+    fn opaque_import_inside_the_orphan_itself_keeps_it_certain() {
+        assert_eq!(orphan_confidence("acme/orphan.py"), Confidence::Certain);
     }
 }

@@ -19,7 +19,7 @@ use super::used::DeclaredIndex;
 pub(super) fn detect_misplaced_dependencies(
     declared: &DeclaredIndex<'_>,
     dependency: &DependencyRuleContext<'_>,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<&str>,
     workspace_declared: &[WorkspaceDeclaredIndex<'_>],
 ) -> Vec<IssueCandidate> {
     let DependencyRuleContext {
@@ -42,7 +42,7 @@ pub(super) fn detect_misplaced_dependencies(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        if !reachable.contains(&import.file) {
+        if !reachable.contains(import.file.as_str()) {
             continue;
         }
 
