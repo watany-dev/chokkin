@@ -80,10 +80,10 @@ pub use pipeline::{
     write_probe_warnings,
 };
 pub use plugins::{
-    BinaryUsage, EnablerScope, FrameworkUsedGlob, ModuleReference, PluginActivation,
-    PluginActivationReason, PluginContribution, PluginEntry, PluginExtractRequest, PluginHints,
-    PluginsError, PluginsWarning, ReferenceOrigin, SymbolReference, extract_plugin_hints,
-    extract_plugin_hints_with_cache, extract_plugin_hints_with_parse, resolve_plugin_activations,
+    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginActivation, PluginActivationReason,
+    PluginContribution, PluginEntry, PluginExtractRequest, PluginHints, PluginsError,
+    PluginsWarning, ReferenceOrigin, SymbolReference, extract_plugin_hints,
+    extract_plugin_hints_with_cache, extract_plugin_hints_with_parse,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
