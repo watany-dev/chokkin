@@ -437,6 +437,82 @@ fn platform_guard_import_marks_tzdata_used() {
     assert!(report.used_distributions.contains("tzdata"));
 }
 
+fn assert_used(report: &chokkin::DependencyReport, names: &[&str]) {
+    for name in names {
+        assert!(!has_rule(report, RuleId::Chk002, name), "{name} flagged");
+        assert!(report.used_distributions.contains(*name), "{name} unused");
+    }
+}
+
+#[test]
+fn pdm_scripts_mark_commands_and_call_modules_used() {
+    let report = reconcile_fixture("binary_pdm_scripts");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "httpx"]);
+}
+
+#[test]
+fn makefile_recipes_mark_binaries_used_without_following_variables() {
+    let report = reconcile_fixture("binary_makefile");
+    assert_used(&report, &["alembic", "celery"]);
+    assert!(has_rule(&report, RuleId::Chk002, "coverage"));
+    assert!(has_rule(&report, RuleId::Chk002, "gunicorn"));
+}
+
+#[test]
+fn justfile_recipes_mark_binaries_used_skipping_script_recipes() {
+    let report = reconcile_fixture("binary_justfile");
+    assert_used(&report, &["alembic", "celery"]);
+    assert!(has_rule(&report, RuleId::Chk002, "gunicorn"));
+}
+
+#[test]
+fn dockerfiles_mark_run_cmd_and_entrypoint_binaries_used() {
+    let report = reconcile_fixture("binary_dockerfile");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "uvicorn"]);
+}
+
+#[test]
+fn procfile_marks_process_binaries_used() {
+    let report = reconcile_fixture("binary_procfile");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "uvicorn"]);
+}
+
+#[test]
+fn gitlab_ci_scripts_mark_binaries_used() {
+    let report = reconcile_fixture("binary_gitlab_ci");
+    assert_used(&report, &["alembic", "celery", "gunicorn", "uvicorn"]);
+}
+
+#[test]
+fn pytest_addopts_mark_plugins_used() {
+    let report = reconcile_fixture("pytest_addopts_plugins");
+    assert_used(
+        &report,
+        &[
+            "pytest-benchmark",
+            "pytest-cov",
+            "pytest-django",
+            "pytest-timeout",
+            "pytest-xdist",
+        ],
+    );
+}
+
+#[test]
+fn pytest11_entry_points_mark_venv_plugins_used() {
+    let report = reconcile_fixture("pytest11_venv_plugins");
+    assert_used(&report, &["pytest-sugar"]);
+}
+
+#[test]
+fn mypy_plugins_and_type_checker_configs_mark_tools_used() {
+    let report = reconcile_fixture("mypy_plugins_typecheckers");
+    assert_used(
+        &report,
+        &["basedpyright", "django-stubs", "mypy", "pydantic", "ty"],
+    );
+}
+
 #[test]
 fn include_group_is_checked_once_under_its_declaring_group() {
     let manifest = load_deps(&fixture("include_group"), false).manifest;

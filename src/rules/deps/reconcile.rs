@@ -18,7 +18,7 @@ use super::missing::detect_missing_dependencies;
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies, is_types_stub};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
-    mark_self_referential_distribution, reachable_paths,
+    mark_pytest_plugin_distributions, mark_self_referential_distribution, reachable_paths,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
@@ -89,6 +89,7 @@ pub fn reconcile_with_context(
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());
     }
+    mark_pytest_plugin_distributions(resolution, &mut used);
 
     // types-* stubs are considered used when their runtime package is used.
     for name in declared.keys() {
@@ -222,6 +223,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -264,6 +266,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -332,6 +335,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();

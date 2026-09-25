@@ -115,11 +115,6 @@ pub fn push_binary(contrib: &mut PluginContribution, binary: &str, origin: Refer
     });
 }
 
-/// Count leading ASCII spaces (YAML indentation).
-pub fn leading_spaces(line: &str) -> usize {
-    line.chars().take_while(|ch| *ch == ' ').count()
-}
-
 /// Text fallback for [`decorator_line`] when a module failed to parse.
 ///
 /// Each line is normalized the way the parse path normalizes a decorator
