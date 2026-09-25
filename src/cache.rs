@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigSources;
 use crate::fix::atomic_write;
-use crate::manifest::ManifestSources;
+use crate::manifest::{ManifestSources, lockfile_candidates};
 use crate::parser::ParsedModule;
 use crate::path_util::normalize_rel_path;
 
@@ -418,8 +418,8 @@ fn manifest_input_fingerprints(
     if sources.setup_py {
         paths.push(root.join("setup.py"));
     }
-    if sources.uv_lock {
-        paths.push(root.join("uv.lock"));
+    if let Some(lockfile) = &sources.lockfile {
+        paths.push(root.join(&lockfile.path));
     }
     for path in &sources.requirements_files {
         paths.push(root.join(path));
@@ -450,13 +450,15 @@ fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerpr
         "requirements-docs.txt",
         "requirements-tests.txt",
         "requirements-test.txt",
-        "uv.lock",
     ] {
         let path = root.join(filename);
         if path.is_file() {
             paths.push(path);
         }
     }
+    // Every present lockfile, not just the one read, so a new higher-priority
+    // lockfile changes the key.
+    paths.extend(lockfile_candidates(root).into_iter().map(|(_, path)| path));
     fingerprint_paths(root, paths)
 }
 
@@ -1071,6 +1073,40 @@ mod tests {
         assert!(fingerprints.config.is_empty());
         assert_eq!(fingerprints.manifest.len(), 1);
         assert_eq!(fingerprints.manifest[0].path, "requirements.txt");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scan_fingerprints_track_read_and_candidate_lockfiles() {
+        let root = temp_cache_test_dir("scan-lockfile");
+        std::fs::write(root.join("poetry.lock"), "").expect("write poetry.lock");
+        std::fs::write(root.join("pylock.dev.toml"), "").expect("write pylock");
+        let config = ConfigSources {
+            dot_chokkin_toml: None,
+            chokkin_toml: None,
+            pyproject_tool_chokkin: false,
+        };
+        let manifest = ManifestSources {
+            lockfile: Some(crate::manifest::LockfileSource {
+                kind: crate::manifest::LockfileKind::Pylock,
+                path: "pylock.dev.toml".to_owned(),
+            }),
+            ..ManifestSources::default()
+        };
+
+        let read = ScanInputFingerprints::collect(&root, &config, &manifest).expect("fingerprints");
+        let candidates = ScanInputFingerprints::collect_manifest_candidates(&root, &config)
+            .expect("candidate fingerprints");
+
+        let paths = |fingerprints: &ScanInputFingerprints| {
+            fingerprints
+                .manifest
+                .iter()
+                .map(|fingerprint| fingerprint.path.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(&read), vec!["pylock.dev.toml"]);
+        assert_eq!(paths(&candidates), vec!["poetry.lock", "pylock.dev.toml"]);
         let _ = std::fs::remove_dir_all(root);
     }
 

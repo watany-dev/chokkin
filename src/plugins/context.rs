@@ -16,9 +16,6 @@ pub struct PluginContext<'a> {
     pub sources: &'a DiscoveredSources,
     /// Extracted manifest.
     pub manifest: &'a LoadedManifest,
-    /// Step 6 parse output when the caller already has it.
-    ///
-    /// `None` keeps the standalone entry points usable before step 6; the
-    /// extractors then fall back to reading sources themselves.
-    pub parse: Option<&'a ParseSummary>,
+    /// Step 6 parse output.
+    pub parse: &'a ParseSummary,
 }

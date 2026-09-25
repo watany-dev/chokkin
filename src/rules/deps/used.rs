@@ -38,7 +38,7 @@ pub(super) fn reachable_paths(
 /// Whether the project has lockfile data for transitive checks.
 #[must_use]
 pub(super) fn has_lockfile(manifest: &LoadedManifest, resolution: &ResolutionIndex) -> bool {
-    manifest.sources.uv_lock || !resolution.transitive.edges.is_empty()
+    manifest.sources.lockfile.is_some() || !resolution.transitive.edges.is_empty()
 }
 
 /// Distributions used by reachable imports, plugin refs, and binaries.
@@ -120,7 +120,7 @@ mod tests {
     use crate::resolver::{ResolveConfidence, ResolvedImport, TransitiveIndex};
 
     #[test]
-    fn detects_lockfile_from_uv_lock_flag() {
+    fn detects_lockfile_from_manifest_sources() {
         let manifest = LoadedManifest {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
@@ -134,7 +134,10 @@ mod tests {
             entry_points: Vec::new(),
             lockfile: LockfileGraph::default(),
             sources: ManifestSources {
-                uv_lock: true,
+                lockfile: Some(crate::manifest::LockfileSource {
+                    kind: crate::manifest::LockfileKind::Uv,
+                    path: "uv.lock".to_owned(),
+                }),
                 ..ManifestSources::default()
             },
             warnings: Vec::new(),

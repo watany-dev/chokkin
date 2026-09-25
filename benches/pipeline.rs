@@ -61,8 +61,8 @@ fn bench_pipeline(c: &mut Criterion) {
             Some(&cache),
         )
         .expect("parse");
-        let plugins =
-            extract_plugin_hints(&report.probe.root, &config, sources, manifest).expect("plugins");
+        let plugins = extract_plugin_hints(&report.probe.root, &config, sources, manifest, &parse)
+            .expect("plugins");
         for warm in [false, true] {
             let name = if warm { "analyze_warm" } else { "analyze_cold" };
             if warm {

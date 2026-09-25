@@ -10,7 +10,6 @@ mod setup_cfg;
 mod types;
 mod write;
 
-pub use apply::apply_fixes;
 pub(crate) use apply::apply_fixes_with_workspace;
 pub use error::FixError;
 pub(crate) use types::WorkspaceFixManifest;

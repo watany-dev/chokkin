@@ -107,15 +107,46 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        if has_lockfile && is_transitive_only(distribution, declared, &resolution.transitive) {
-            candidates.push(transitive_candidate(import, distribution));
-            continue;
-        }
-
-        candidates.push(missing_candidate(import, distribution, has_lockfile));
+        candidates.push(undeclared_candidate(
+            import,
+            distribution,
+            declared,
+            &resolution.transitive,
+            has_lockfile,
+        ));
     }
 
     candidates
+}
+
+/// How the lockfile accounts for an undeclared import (CHK004 evidence).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LockEvidence {
+    /// Reachable through the lock edges of a declared dependency.
+    TransitiveEdge,
+    /// Listed in the lockfile, but no edge from a declared dependency reaches
+    /// it (stale lock, or a format such as `pylock.toml` without edges).
+    LockedOnly,
+}
+
+/// §10: CHK004 when the lockfile accounts for the import, CHK003 otherwise.
+fn undeclared_candidate(
+    import: &ResolvedImport,
+    distribution: &str,
+    declared: &DeclaredIndex<'_>,
+    transitive: &TransitiveIndex,
+    has_lockfile: bool,
+) -> IssueCandidate {
+    if !has_lockfile {
+        return missing_candidate(import, distribution, false);
+    }
+    if is_transitive_only(distribution, declared, transitive) {
+        return transitive_candidate(import, distribution, LockEvidence::TransitiveEdge);
+    }
+    if transitive.edges.contains_key(distribution) {
+        return transitive_candidate(import, distribution, LockEvidence::LockedOnly);
+    }
+    missing_candidate(import, distribution, true)
 }
 
 /// Declarations that decide between CHK003/CHK004/CHK005 for one import.
@@ -224,7 +255,28 @@ fn optional_missing_candidate(
     }
 }
 
-fn transitive_candidate(import: &ResolvedImport, distribution: &str) -> IssueCandidate {
+fn transitive_candidate(
+    import: &ResolvedImport,
+    distribution: &str,
+    evidence: LockEvidence,
+) -> IssueCandidate {
+    let (confidence, message, detail) = match evidence {
+        LockEvidence::TransitiveEdge => (
+            Confidence::Certain,
+            format!(
+                "imported {distribution} directly but it is only available as a transitive dependency"
+            ),
+            "resolved via lockfile transitive closure",
+        ),
+        // Without an edge the lock may be stale, so the evidence is weaker.
+        LockEvidence::LockedOnly => (
+            Confidence::Likely,
+            format!(
+                "imported {distribution} directly but it is only pinned in the lockfile, not declared in the manifest"
+            ),
+            "listed in the lockfile but not reachable from any declared dependency",
+        ),
+    };
     IssueCandidate {
         rule: RuleId::Chk004,
         subject: IssueSubject::Import {
@@ -233,10 +285,8 @@ fn transitive_candidate(import: &ResolvedImport, distribution: &str) -> IssueCan
             line: import.line,
         },
         severity: Severity::Error,
-        confidence: Confidence::Certain,
-        message: format!(
-            "imported {distribution} directly but it is only available as a transitive dependency"
-        ),
+        confidence,
+        message,
         workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
             file: import.file.clone(),
@@ -245,7 +295,7 @@ fn transitive_candidate(import: &ResolvedImport, distribution: &str) -> IssueCan
         }],
         explain: ExplainData {
             summary: format!("{distribution} should be declared directly or import removed"),
-            details: vec!["resolved via lockfile transitive closure".to_owned()],
+            details: vec![detail.to_owned()],
         },
     }
 }
@@ -447,6 +497,37 @@ mod tests {
         };
         assert!(is_transitive_only("urllib3", &index, &transitive));
         assert!(!is_transitive_only("certifi", &index, &transitive));
+    }
+
+    #[test]
+    fn lock_evidence_separates_transitive_edge_from_locked_only() {
+        let requests = declared_dep("requests");
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("requests".to_owned(), vec![&requests]);
+        let transitive = || TransitiveIndex {
+            edges: BTreeMap::from([
+                ("requests".to_owned(), vec!["urllib3".to_owned()]),
+                ("urllib3".to_owned(), Vec::new()),
+                ("pyyaml".to_owned(), Vec::new()),
+            ]),
+        };
+
+        let edge = detect(&index, "urllib3", transitive());
+        assert_eq!(edge.len(), 1);
+        assert_eq!(edge[0].rule, RuleId::Chk004);
+        assert_eq!(edge[0].confidence, Confidence::Certain);
+        assert!(edge[0].message.contains("transitive dependency"));
+
+        let locked = detect(&index, "pyyaml", transitive());
+        assert_eq!(locked.len(), 1);
+        assert_eq!(locked[0].rule, RuleId::Chk004);
+        assert_eq!(locked[0].confidence, Confidence::Likely);
+        assert!(locked[0].message.contains("only pinned in the lockfile"));
+        assert_ne!(edge[0].explain.details, locked[0].explain.details);
+
+        let absent = detect(&index, "certifi", transitive());
+        assert_eq!(absent.len(), 1);
+        assert_eq!(absent[0].rule, RuleId::Chk003);
     }
 
     #[test]

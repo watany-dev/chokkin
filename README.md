@@ -28,7 +28,7 @@ chokkin    : unused files, dependencies, and public symbols from the whole proje
 uvx chokkin
 ```
 
-No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, `uv.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
+No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, and one lockfile: `uv.lock`, `pylock.toml`, `poetry.lock`, or `pdm.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
 
 ```text
 chokkin 0.4.1

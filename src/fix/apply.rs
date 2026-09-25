@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::discovery::ProjectRoot;
-use crate::manifest::LoadedManifest;
+use crate::manifest::{LoadedManifest, LockfileKind};
 use crate::rules::IssueReport;
 
 use super::containment::resolve_contained_path;
@@ -15,19 +15,6 @@ use super::setup_cfg::remove_dependency as remove_setup_cfg_dependency;
 use super::types::{
     AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason, WorkspaceFixManifest,
 };
-
-/// Apply safe automatic fixes for fixable issues in `report`.
-///
-/// Per-action failures are recorded in [`FixReport::skipped`].
-#[must_use]
-pub fn apply_fixes(
-    report: &IssueReport,
-    root: &ProjectRoot,
-    manifest: &LoadedManifest,
-    options: FixOptions,
-) -> FixReport {
-    apply_fixes_with_workspace(report, root, manifest, &[], options)
-}
 
 /// Apply safe automatic fixes with workspace member manifest context.
 pub fn apply_fixes_with_workspace(
@@ -62,18 +49,27 @@ pub fn apply_fixes_with_workspace(
         }
     }
 
-    if manifest.sources.uv_lock && !report_out.applied.is_empty() {
-        report_out
-            .reminders
-            .push("Run `uv lock` to refresh uv.lock".to_owned());
-    }
-    if manifest.sources.poetry && !report_out.applied.is_empty() {
-        report_out
-            .reminders
-            .push("Run `poetry lock` to refresh poetry.lock".to_owned());
+    if !report_out.applied.is_empty() {
+        report_out.reminders = lockfile_reminders(manifest);
     }
 
     report_out
+}
+
+/// chokkin never edits lockfiles (§13), so point at the tool that owns it.
+fn lockfile_reminders(manifest: &LoadedManifest) -> Vec<String> {
+    let mut reminders = Vec::new();
+    let kind = manifest.sources.lockfile.as_ref().map(|source| source.kind);
+    if kind == Some(LockfileKind::Uv) {
+        reminders.push("Run `uv lock` to refresh uv.lock".to_owned());
+    }
+    if manifest.sources.poetry || kind == Some(LockfileKind::Poetry) {
+        reminders.push("Run `poetry lock` to refresh poetry.lock".to_owned());
+    }
+    if kind == Some(LockfileKind::Pdm) {
+        reminders.push("Run `pdm lock` to refresh pdm.lock".to_owned());
+    }
+    reminders
 }
 
 fn apply_action(
@@ -342,10 +338,11 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
@@ -367,7 +364,8 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(&report, &root, &manifest, FixOptions::default());
+        let fix_report =
+            apply_fixes_with_workspace(&report, &root, &manifest, &[], FixOptions::default());
 
         assert!(dir.path().join("src/legacy.py").exists());
         assert!(fix_report.applied.is_empty());
@@ -388,10 +386,11 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 allow_remove_files: true,
@@ -414,10 +413,11 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 allow_remove_files: true,
                 ..FixOptions::default()
@@ -459,10 +459,11 @@ mod tests {
         manifest.sources.poetry = true;
         let report = issue_report(unused_dependency_issue("boto3"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
@@ -478,6 +479,33 @@ mod tests {
     }
 
     #[test]
+    fn lockfile_reminders_follow_lockfile_kind() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let root = project_root(dir.path());
+        let mut manifest = empty_manifest(&root);
+        assert!(lockfile_reminders(&manifest).is_empty());
+
+        manifest.sources.lockfile = Some(crate::manifest::LockfileSource {
+            kind: LockfileKind::Pdm,
+            path: "pdm.lock".to_owned(),
+        });
+        assert_eq!(
+            lockfile_reminders(&manifest),
+            vec!["Run `pdm lock` to refresh pdm.lock".to_owned()]
+        );
+
+        manifest.sources.poetry = true;
+        manifest.sources.lockfile = Some(crate::manifest::LockfileSource {
+            kind: LockfileKind::Poetry,
+            path: "poetry.lock".to_owned(),
+        });
+        assert_eq!(
+            lockfile_reminders(&manifest),
+            vec!["Run `poetry lock` to refresh poetry.lock".to_owned()]
+        );
+    }
+
+    #[test]
     fn add_missing_dependency_updates_pyproject() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let path = dir.path().join("pyproject.toml");
@@ -488,10 +516,11 @@ mod tests {
         manifest.sources.pyproject_toml = true;
         let report = issue_report(missing_dependency_issue("pyyaml"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()

@@ -24,6 +24,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - mypy `plugins` (`pydantic.mypy`, `mypy_django_plugin.main`, ...) and
     ty / pyright / basedpyright configs.
   - CHK008 details and `--explain` evidence name the origin as `file:line`.
+- `pylock.toml` / `pylock.<name>.toml` (PEP 751), `poetry.lock` (1.x / 2.x), and
+  `pdm.lock` are read for the CHK004 transitive check. When several are present,
+  one is chosen by priority uv.lock > pylock > poetry.lock > pdm.lock.
+  `--probe` shows the lockfile path and kind.
+- Fix reminders suggest `pdm lock` when the lockfile is `pdm.lock`.
+- Plugins are enabled automatically from declared dependencies (root or any
+  workspace member) and config files such as `mkdocs.yml`, `alembic.ini`,
+  `tox.ini`, `noxfile.py`, `.pre-commit-config.yaml`, and `docs/conf.py`. An
+  explicit `[tool.chokkin.plugins] x = false` still wins. `--probe` shows each
+  plugin's reason (`default`, `config`, `enabled-by: ...`, `disabled-by: config`).
+
+### Changed
+- CHK004 now separates a transitive edge from a declared dependency (Certain)
+  from a package that is only pinned in the lockfile (Likely, new message).
+  Previously the latter was reported as CHK003.
+- Library API: `ManifestSources.uv_lock: bool` is replaced by
+  `ManifestSources.lockfile: Option<LockfileSource>`.
+- Manifest cache unit bumped to `manifest-extract-v3`; every lockfile candidate
+  is part of the cache key.
 
 ## [0.4.1] - Unreleased
 

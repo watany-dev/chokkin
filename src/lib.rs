@@ -37,8 +37,7 @@ pub mod rules;
 pub mod sources;
 
 pub use baseline::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline,
-    apply_baseline_with_overrides, write_baseline,
+    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
 };
 pub use cache::{
     CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheBundle, ParseCacheKey,
@@ -56,9 +55,7 @@ pub use entry::{
     EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
     build_entry_roots,
 };
-pub use fix::{
-    AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason, apply_fixes,
-};
+pub use fix::{AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason};
 pub use graph::{
     DistributionId, EntryId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode,
     ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
@@ -66,8 +63,8 @@ pub use graph::{
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
-    extract_manifest, extract_manifest_with_cache, resolve_target_version,
+    LockfileGraph, LockfileKind, LockfileSource, ManifestError, ManifestSources, ManifestWarning,
+    ProjectMetadata, extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
     DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,
@@ -80,9 +77,9 @@ pub use pipeline::{
     write_probe_warnings,
 };
 pub use plugins::{
-    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry,
-    PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
-    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_cache,
+    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginActivation, PluginActivationReason,
+    PluginContribution, PluginEntry, PluginExtractRequest, PluginHints, PluginsError,
+    PluginsWarning, ReferenceOrigin, SymbolReference, extract_plugin_hints,
     extract_plugin_hints_with_parse,
 };
 pub use reachability::{
@@ -99,9 +96,8 @@ pub use resolver::{
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
     IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue, SymbolId,
-    SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues,
-    emit_issues_with_resolution, explain_issue, issue_fingerprint, issue_stable_target,
-    reconcile_dependencies,
+    SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues, explain_issue,
+    issue_fingerprint, issue_stable_target, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

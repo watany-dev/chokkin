@@ -1,0 +1,7 @@
+[project]
+name = "plugin-enablers"
+version = "0.1.0"
+dependencies = ["flask", "alembic"]
+
+[tool.chokkin.plugins]
+alembic = false

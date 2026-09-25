@@ -47,4 +47,13 @@ pub enum ManifestError {
         /// Human-readable parse error.
         message: String,
     },
+
+    /// `pylock.toml`, `poetry.lock`, or `pdm.lock` could not be parsed.
+    #[error("invalid lockfile {path}")]
+    InvalidLockfile {
+        /// Lockfile path.
+        path: PathBuf,
+        /// Human-readable parse error.
+        message: String,
+    },
 }
