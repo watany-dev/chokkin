@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::config::{EntrySpec, PluginId};
-use crate::manifest::literals::extract_python_list_assignment;
+use crate::manifest::literals::{assigned_value, parse_module, string_list};
 use crate::sources::FileContext;
 
 use super::context::PluginContext;
@@ -46,7 +46,8 @@ fn extract_sphinx(root: &Path, contrib: &mut PluginContribution) {
             origin_for_file(root, &conf, "docs/conf.py"),
         );
         if let Ok(contents) = std::fs::read_to_string(&conf)
-            && let Some(scan) = extract_python_list_assignment(&contents, "extensions")
+            && let Some(stmts) = parse_module(&contents)
+            && let Some(scan) = assigned_value(&stmts, "extensions").and_then(string_list)
         {
             let file = relative_path(root, &conf);
             for extension in scan.values {

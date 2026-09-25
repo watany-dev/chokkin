@@ -2,11 +2,10 @@
 
 use std::path::Path;
 
+use rustpython_parser::ast::{Expr, Keyword, Stmt};
+
 use super::error::ManifestError;
-use super::literals::{
-    LiteralScan, extract_delimited_body, extract_keyword_string, extract_string_list_argument,
-    find_keyword_assignment, scan_string_literals,
-};
+use super::literals::{LiteralScan, parse_module, string_list, string_value};
 use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
 use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
 use super::warnings::ManifestWarning;
@@ -30,22 +29,19 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
     let rel = relative_path(root, path);
     let mut result = SetupPyExtraction::default();
 
-    let Some(body) = setup_call_body(&contents) else {
+    let stmts = parse_module(&contents).unwrap_or_default();
+    let Some(keywords) = setup_call_keywords(&stmts) else {
         result
             .warnings
             .push(ManifestWarning::SetupPyNotStatic { file: rel });
         return Ok(result);
     };
 
-    if let Some(name) = extract_keyword_string(body, "name") {
-        result.metadata.name = Some(name);
-    }
-    if let Some(version) = extract_keyword_string(body, "version") {
-        result.metadata.version = Some(version);
-    }
+    result.metadata.name = keyword_value(keywords, "name").and_then(string_value);
+    result.metadata.version = keyword_value(keywords, "version").and_then(string_value);
 
-    let install_requires = extract_string_list_argument(body, "install_requires");
-    let extras_require = extract_extras_require(body);
+    let install_requires = keyword_value(keywords, "install_requires").and_then(string_list);
+    let extras_require = extract_extras_require(keywords);
 
     if install_requires.is_none() && extras_require.is_empty() {
         result
@@ -103,56 +99,72 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
     Ok(result)
 }
 
-fn setup_call_body(contents: &str) -> Option<&str> {
-    let setup_pos = contents.find("setup(")?;
-    let after_setup = &contents[setup_pos + "setup".len()..];
-    extract_delimited_body(after_setup, '(', ')')
+/// Keywords of the first `setup(...)` call at top level or under an `if`.
+fn setup_call_keywords(stmts: &[Stmt]) -> Option<&[Keyword]> {
+    stmts.iter().find_map(|stmt| match stmt {
+        Stmt::Expr(expr) => match &*expr.value {
+            Expr::Call(call) if is_setup(&call.func) => Some(call.keywords.as_slice()),
+            _ => None,
+        },
+        Stmt::If(if_stmt) => {
+            setup_call_keywords(&if_stmt.body).or_else(|| setup_call_keywords(&if_stmt.orelse))
+        },
+        _ => None,
+    })
 }
 
-fn extract_extras_require(body: &str) -> Vec<(String, LiteralScan)> {
-    let Some(pos) = find_keyword_assignment(body, "extras_require") else {
-        return Vec::new();
-    };
-    let after = &body[pos + "extras_require".len()..];
-    let Some(bracket_start) = after.find('{') else {
-        return Vec::new();
-    };
-    let Some(dict_body) = extract_delimited_body(&after[bracket_start..], '{', '}') else {
-        return Vec::new();
-    };
-
-    let mut extras = Vec::new();
-    let mut rest = dict_body;
-    while let Some((key, value, remaining)) = parse_dict_entry(rest) {
-        extras.push((key, scan_string_literals(value)));
-        rest = remaining;
+fn is_setup(func: &Expr) -> bool {
+    match func {
+        Expr::Name(name) => name.id.as_str() == "setup",
+        Expr::Attribute(attribute) => attribute.attr.as_str() == "setup",
+        _ => false,
     }
-    extras
 }
 
-fn parse_dict_entry(input: &str) -> Option<(String, &str, &str)> {
-    let (key, after_key) = super::literals::next_string_literal(input)?;
+fn keyword_value<'a>(keywords: &'a [Keyword], name: &str) -> Option<&'a Expr> {
+    keywords
+        .iter()
+        .find(|keyword| keyword.arg.as_ref().is_some_and(|arg| arg.as_str() == name))
+        .map(|keyword| &keyword.value)
+}
 
-    let after_colon = after_key.split_once(':')?.1;
-    let after_colon = after_colon.trim_start();
-    let bracket_start = after_colon.find('[')?;
-    let list_body = extract_delimited_body(&after_colon[bracket_start..], '[', ']')?;
-    let consumed = bracket_start + list_body.len() + 2;
-    let remaining = &after_colon[consumed.min(after_colon.len())..];
-    Some((key, list_body, remaining))
+fn extract_extras_require(keywords: &[Keyword]) -> Vec<(String, LiteralScan)> {
+    let Some(Expr::Dict(dict)) = keyword_value(keywords, "extras_require") else {
+        return Vec::new();
+    };
+    dict.keys
+        .iter()
+        .zip(&dict.values)
+        .filter_map(|(key, value)| Some((string_value(key.as_ref()?)?, string_list(value)?)))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn with_setup_keywords<T>(contents: &str, f: impl FnOnce(&[Keyword]) -> T) -> Option<T> {
+        let stmts = parse_module(contents)?;
+        setup_call_keywords(&stmts).map(f)
+    }
+
     #[test]
-    fn keyword_search_ignores_filename_false_positive() {
-        let body = r#"name="acme", filename="name=ignored""#;
-        assert_eq!(
-            extract_keyword_string(body, "name").as_deref(),
-            Some("acme")
-        );
+    fn setup_call_under_main_guard_is_found() {
+        let contents = "import setuptools\nif __name__ == \"__main__\":\n    setuptools.setup(name=\"acme\")\n";
+        let name = with_setup_keywords(contents, |keywords| {
+            keyword_value(keywords, "name").and_then(string_value)
+        });
+        assert_eq!(name.flatten().as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn extras_require_keeps_string_key_list_entries() {
+        let contents =
+            "setup(extras_require={\"test\": [\"pytest\"], \"dev\": \"ruff\", **more})\n";
+        let extras = with_setup_keywords(contents, extract_extras_require).expect("setup call");
+        assert_eq!(extras.len(), 1);
+        assert_eq!(extras[0].0, "test");
+        assert_eq!(extras[0].1.values, vec!["pytest".to_owned()]);
     }
 
     mod props {
@@ -174,23 +186,8 @@ mod tests {
 
         proptest! {
             #[test]
-            fn extract_delimited_body_never_panics(input in "\\PC{0,200}") {
-                for (open, close) in [('(', ')'), ('[', ']'), ('{', '}')] {
-                    if let Some(body) = extract_delimited_body(&input, open, close) {
-                        prop_assert!(input[1..].contains(body));
-                    }
-                }
-            }
-
-            #[test]
-            fn setup_call_body_never_panics(input in "\\PC{0,300}") {
-                let _ = setup_call_body(&input);
-            }
-
-            #[test]
-            fn extract_keyword_string_finds_rendered_name(name in "[A-Za-z0-9._-]{1,30}") {
-                let body = format!("name={}, version=\"1.0\"", python_quote(&name));
-                prop_assert_eq!(extract_keyword_string(&body, "name"), Some(name));
+            fn setup_call_keywords_never_panics(input in "\\PC{0,300}") {
+                let _ = with_setup_keywords(&input, <[Keyword]>::len);
             }
 
             #[test]
@@ -205,9 +202,11 @@ mod tests {
                 let contents = format!(
                     "from setuptools import setup\nsetup(\n    name=\"acme\",\n    install_requires=[{rendered}],\n)\n"
                 );
-                let body = setup_call_body(&contents).expect("setup call must be found");
-                let scan = extract_string_list_argument(body, "install_requires")
-                    .expect("install_requires must be found");
+                let scan = with_setup_keywords(&contents, |keywords| {
+                    keyword_value(keywords, "install_requires").and_then(string_list)
+                })
+                .flatten()
+                .expect("install_requires must be found");
                 prop_assert!(scan.complete);
                 prop_assert_eq!(scan.values, deps);
             }
