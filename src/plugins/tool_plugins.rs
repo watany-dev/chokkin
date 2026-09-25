@@ -127,7 +127,12 @@ fn push_addopts(hits: &mut SourceHits, addopts: &str, origin: &ReferenceOrigin) 
 /// project files rather than installed plugins and are skipped.
 fn push_mypy_plugins(hits: &mut SourceHits, plugins: &str, origin: &ReferenceOrigin) {
     for plugin in plugins.split([',', ' ', '\t', '\n']).map(str::trim) {
-        if plugin.is_empty() || plugin.contains(['/', '\\']) || plugin.ends_with(".py") {
+        if plugin.is_empty()
+            || plugin.contains(['/', '\\'])
+            || std::path::Path::new(plugin)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
+        {
             continue;
         }
         let module = plugin.split_once(':').map_or(plugin, |(module, _)| module);
