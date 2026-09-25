@@ -140,6 +140,12 @@ fn candidate_line(candidate: &IssueCandidate) -> Option<u32> {
     }
     match &candidate.subject {
         IssueSubject::Import { line, .. } => Some(*line),
+        IssueSubject::ScriptDistribution { .. } => {
+            candidate.origins.iter().find_map(|origin| match origin {
+                Origin::Manifest(origin) => origin.line,
+                _ => None,
+            })
+        },
         _ => None,
     }
 }
@@ -157,6 +163,7 @@ fn subject_file_path(subject: &IssueSubject) -> Option<&str> {
     match subject {
         IssueSubject::File { path } => Some(path.as_str()),
         IssueSubject::Import { file, .. } => Some(file.as_str()),
+        IssueSubject::ScriptDistribution { script, .. } => Some(script.as_str()),
         _ => None,
     }
 }
@@ -168,6 +175,12 @@ fn config_pattern_matches(
     file: Option<&str>,
     distribution: Option<&str>,
 ) -> bool {
+    // Checked before the `path:symbol` split: script targets contain `:`.
+    if let IssueSubject::ScriptDistribution { script, name } = subject {
+        return is_distribution_rule(rule)
+            && (glob_match(pattern, name)
+                || glob_match(pattern, &format!("script:{script}:{name}")));
+    }
     if let Some((path_pattern, symbol_pattern)) = pattern.split_once(':') {
         return symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject, file);
     }

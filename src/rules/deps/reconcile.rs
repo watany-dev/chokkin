@@ -1,8 +1,10 @@
 //! Dependency reconciliation orchestration (pipeline step 10).
 
+use std::collections::HashSet;
+
 use crate::config::ChokkinConfig;
 use crate::graph::ProjectGraph;
-use crate::manifest::{LoadedManifest, normalize_distribution_name};
+use crate::manifest::{InlineScript, LoadedManifest, normalize_distribution_name};
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
@@ -15,10 +17,12 @@ use super::binary::detect_unlisted_binaries;
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::detect_misplaced_dependencies;
 use super::missing::detect_missing_dependencies;
+use super::script::{detect_script_dependency_issues, is_script_third_party};
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies, is_types_stub};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
-    mark_self_referential_distribution, mark_workspace_source_distributions, reachable_paths,
+    mark_pytest_plugin_distributions, mark_self_referential_distribution,
+    mark_workspace_source_distributions, reachable_paths,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
@@ -51,10 +55,47 @@ pub fn reconcile_dependencies(
         manifest,
         plugins,
         workspace_boundaries,
+        &[],
     )
 }
 
+/// Reconcile the project manifest and, separately, each PEP 723 script block.
 pub fn reconcile_with_context(
+    dependency: &DependencyRuleContext<'_>,
+    manifest: &LoadedManifest,
+    plugins: &PluginHints,
+    workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
+    scripts: &[InlineScript],
+) -> DependencyReport {
+    if scripts.is_empty() {
+        return reconcile_project(dependency, manifest, plugins, workspace_boundaries);
+    }
+    let script_paths: HashSet<&str> = scripts.iter().map(|script| script.path.as_str()).collect();
+    let mut project_resolution = dependency.rules.resolution.clone();
+    project_resolution
+        .imports
+        .retain(|import| !is_script_third_party(import, &script_paths));
+    let project_rules = RuleContext {
+        resolution: &project_resolution,
+        ..*dependency.rules
+    };
+    let project = DependencyRuleContext {
+        rules: &project_rules,
+        ..*dependency
+    };
+    let mut report = reconcile_project(&project, manifest, plugins, workspace_boundaries);
+    let reachable = reachable_paths(dependency.rules.graph, dependency.rules.reachability);
+    report.candidates.extend(detect_script_dependency_issues(
+        scripts,
+        dependency.rules.resolution,
+        &reachable,
+        dependency.strict,
+    ));
+    sort_candidates(&mut report.candidates);
+    report
+}
+
+fn reconcile_project(
     dependency: &DependencyRuleContext<'_>,
     manifest: &LoadedManifest,
     plugins: &PluginHints,
@@ -90,6 +131,7 @@ pub fn reconcile_with_context(
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());
     }
+    mark_pytest_plugin_distributions(resolution, &mut used);
 
     // types-* stubs are considered used when their runtime package is used.
     for name in declared.keys() {
@@ -224,6 +266,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -266,6 +309,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -334,6 +378,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();

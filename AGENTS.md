@@ -81,7 +81,7 @@ src/
                   `severity.rs` / `metadata.rs` for Phase 3 overrides)
   reporters/      Built-in reporters: default, compact, json, markdown,
                   github, sarif
-  fix/            Optional manifest fixes (step 13: `apply_fixes`; atomic writes, root containment)
+  fix/            Optional manifest fixes (step 13: `apply_fixes_with_workspace`; atomic writes, root containment)
 pyproject.toml    maturin bin bindings — chokkin ships as a Python wheel
 docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing

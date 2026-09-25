@@ -82,6 +82,10 @@ fn write_manifest_warning(
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
         },
+        ManifestWarning::InlineScriptInvalid { file, reason } => write!(
+            formatter,
+            "manifest: ignored PEP 723 script block in `{file}`: {reason}"
+        ),
         ManifestWarning::DependencyGroupIncludeUndefined {
             file,
             group,
@@ -206,6 +210,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: vec![
                 PluginsWarning::PluginNoOp {
                     plugin: PluginId::Pytest,

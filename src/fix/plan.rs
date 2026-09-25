@@ -120,6 +120,9 @@ fn plan_issue_fix(
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
 ) -> Result<Option<FixAction>, SkippedFix> {
+    if matches!(issue.subject, IssueSubject::ScriptDistribution { .. }) {
+        return plan_script_fix(issue, options);
+    }
     match issue.rule {
         RuleId::Chk001 => plan_remove_file(issue, options),
         RuleId::Chk002 if issue.confidence == Confidence::Certain => plan_remove_dependency(issue),
@@ -144,6 +147,18 @@ fn plan_issue_fix(
         )),
         _ => Ok(None),
     }
+}
+
+/// Script findings must never fall through to the project manifest edits.
+fn plan_script_fix(issue: &Issue, options: FixOptions) -> Result<Option<FixAction>, SkippedFix> {
+    if issue.rule == RuleId::Chk002 || options.add_missing {
+        return Err(skipped(
+            issue,
+            SkippedReason::UnsupportedTarget,
+            "PEP 723 script blocks are not rewritten by --fix",
+        ));
+    }
+    Ok(None)
 }
 
 fn plan_add_missing_dependency(
@@ -599,5 +614,73 @@ mod tests {
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].detail.contains("workspace member `api`"));
         assert!(skipped[0].detail.contains("not inventoried"));
+    }
+
+    #[test]
+    fn script_issues_never_edit_the_project_manifest() {
+        let manifest = manifest_with(vec![DeclaredDependency {
+            name: "httpx".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        }]);
+        let script_issue = |rule| Issue {
+            rule,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "script".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: Some("scripts/tool.py".to_owned()),
+                line: Some(3),
+                manifest: None,
+            },
+            subject: IssueSubject::ScriptDistribution {
+                script: "scripts/tool.py".to_owned(),
+                name: "httpx".to_owned(),
+            },
+            explain: None,
+        };
+        let report = |rule| IssueReport {
+            issues: vec![script_issue(rule)],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let skipped = plan_fixes(
+            &report(RuleId::Chk002),
+            &manifest,
+            &[],
+            FixOptions::default(),
+        )
+        .expect_err("script CHK002 is skipped");
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+
+        let add_missing = FixOptions {
+            add_missing: true,
+            ..FixOptions::default()
+        };
+        let skipped = plan_fixes(&report(RuleId::Chk003), &manifest, &[], add_missing)
+            .expect_err("script CHK003 is skipped under --add-missing");
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+
+        let actions = plan_fixes(
+            &report(RuleId::Chk003),
+            &manifest,
+            &[],
+            FixOptions::default(),
+        )
+        .expect("plain CHK003 is not a fix target");
+        assert!(actions.is_empty());
     }
 }

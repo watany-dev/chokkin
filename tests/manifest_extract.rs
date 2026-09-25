@@ -10,8 +10,8 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    CacheOptions, ConfigSources, DependencyContext, LoadedConfig, ManifestError, ManifestWarning,
-    ProjectRoot, RootMarker, TargetVersion, default_config, discover_project_root,
+    CacheOptions, ConfigSources, DependencyContext, LoadedConfig, LockfileKind, ManifestError,
+    ManifestWarning, ProjectRoot, RootMarker, TargetVersion, default_config, discover_project_root,
     extract_manifest, extract_manifest_with_cache, load_config, resolve_target_version,
 };
 
@@ -256,7 +256,9 @@ fn dynamic_dependencies_use_requirements() {
 #[test]
 fn uv_lock_builds_graph() {
     let manifest = extract_fixture("uv_lock_graph");
-    assert!(manifest.sources.uv_lock);
+    let lockfile = manifest.sources.lockfile.as_ref().expect("uv.lock read");
+    assert_eq!(lockfile.kind, LockfileKind::Uv);
+    assert_eq!(lockfile.path, "uv.lock");
     let requests_deps = manifest
         .lockfile
         .edges

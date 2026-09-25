@@ -6,6 +6,7 @@ mod duplicate;
 mod misplaced;
 mod missing;
 mod reconcile;
+mod script;
 mod unused;
 mod used;
 

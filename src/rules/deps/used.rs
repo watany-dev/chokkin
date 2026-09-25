@@ -38,7 +38,7 @@ pub(super) fn reachable_paths(
 /// Whether the project has lockfile data for transitive checks.
 #[must_use]
 pub(super) fn has_lockfile(manifest: &LoadedManifest, resolution: &ResolutionIndex) -> bool {
-    manifest.sources.uv_lock || !resolution.transitive.edges.is_empty()
+    manifest.sources.lockfile.is_some() || !resolution.transitive.edges.is_empty()
 }
 
 /// Distributions used by reachable imports, plugin refs, and binaries.
@@ -63,7 +63,9 @@ pub(super) fn collect_used_distributions(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        if !reachable.contains(&import.file) {
+        // Plugin refs read from config files (pytest `-p`, mypy plugins) name a
+        // file outside the graph; those count even though no BFS reaches them.
+        if !reachable.contains(&import.file) && graph.file_id(&import.file).is_some() {
             continue;
         }
         used.insert(distribution.clone());
@@ -97,6 +99,20 @@ pub(super) fn mark_workspace_source_distributions(
     }
 }
 
+/// Treat `pytest11` plugins installed in the venv as used whenever pytest is,
+/// since pytest loads them without any import or config reference.
+pub(super) fn mark_pytest_plugin_distributions(
+    resolution: &ResolutionIndex,
+    used: &mut IndexSet<String>,
+) {
+    if !used.contains("pytest") {
+        return;
+    }
+    for distribution in &resolution.pytest_plugin_distributions {
+        used.insert(distribution.clone());
+    }
+}
+
 /// Treat a project's own distribution as used when declared (self-referential extras).
 pub(super) fn mark_self_referential_distribution(
     manifest: &LoadedManifest,
@@ -123,7 +139,7 @@ mod tests {
     use crate::resolver::{ResolveConfidence, ResolvedImport, TransitiveIndex};
 
     #[test]
-    fn detects_lockfile_from_uv_lock_flag() {
+    fn detects_lockfile_from_manifest_sources() {
         let manifest = LoadedManifest {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
@@ -138,7 +154,10 @@ mod tests {
             entry_points: Vec::new(),
             lockfile: LockfileGraph::default(),
             sources: ManifestSources {
-                uv_lock: true,
+                lockfile: Some(crate::manifest::LockfileSource {
+                    kind: crate::manifest::LockfileKind::Uv,
+                    path: "uv.lock".to_owned(),
+                }),
                 ..ManifestSources::default()
             },
             warnings: Vec::new(),
@@ -183,6 +202,7 @@ mod tests {
             warnings: Vec::new(),
             transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
+            pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
         let sources = crate::sources::DiscoveredSources {
             root: graph.root.clone(),
@@ -207,6 +227,7 @@ mod tests {
                 contributions: Vec::new(),
                 config_binary_usages: Vec::new(),
                 config_used_distributions: Vec::new(),
+                config_module_refs: Vec::new(),
                 warnings: Vec::new(),
             },
         );

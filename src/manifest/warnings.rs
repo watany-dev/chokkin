@@ -76,4 +76,11 @@ pub enum ManifestWarning {
         /// Groups along the cycle, starting and ending with the same group.
         groups: Vec<String>,
     },
+    /// A PEP 723 script block was ignored; the file stays a plain source.
+    InlineScriptInvalid {
+        /// Root-relative script path.
+        file: String,
+        /// Why the block was rejected.
+        reason: String,
+    },
 }

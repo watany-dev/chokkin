@@ -1,8 +1,9 @@
 //! Full project analysis orchestration (pipeline steps 1–13).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::baseline::{BaselineReport, apply_baseline_with_overrides, write_baseline};
+use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
@@ -11,10 +12,9 @@ use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability};
-use crate::resolver::{apply_resolution_to_graph, resolve_imports};
+use crate::resolver::{apply_resolution_to_graph, resolve_imports_with_script_targets};
 use crate::rules::{
-    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary,
-    emit_issues_with_resolution,
+    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
 
 use super::error::AnalyzeError;
@@ -126,9 +126,7 @@ fn apply_baseline_options(
     if options.update_baseline {
         return Ok(Some(write_baseline(issues, root, path)?));
     }
-    Ok(Some(apply_baseline_with_overrides(
-        issues, root, path, overrides,
-    )?))
+    Ok(Some(apply_baseline(issues, root, path, overrides)?))
 }
 
 struct AnalysisCore {
@@ -179,29 +177,36 @@ fn run_analysis_core(
         config: &loaded,
         sources: &probe.sources,
         manifest: &probe.manifest,
-        parse: Some(&parse),
+        parse: &parse,
         cache: Some(&options.cache),
     })?;
     let warnings = actionable_plugin_warnings(&plugins);
 
-    let entry = build_entry_roots(
+    let mut entry = build_entry_roots(
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
         &plugins,
         production,
     );
+    crate::entry::add_script_roots(&mut entry, &probe.scripts, &probe.sources, production);
 
     let mut graph = build_analysis_graph(probe, &parse, &plugins)?;
 
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
-    let resolution = resolve_imports(
+    let script_targets: BTreeMap<_, _> = probe
+        .scripts
+        .iter()
+        .filter_map(|script| Some((script.path.clone(), script.target_version.clone()?)))
+        .collect();
+    let resolution = resolve_imports_with_script_targets(
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
         &parse,
         &plugin_refs,
         &probe.workspace_members,
+        &script_targets,
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
     apply_entry_plan(&mut graph, &entry);
@@ -241,6 +246,7 @@ fn run_analysis_core(
         &probe.manifest,
         &plugins,
         &workspace_boundaries,
+        &probe.scripts,
     );
 
     let symbols = crate::rules::symbols::analyze_with_context(
@@ -251,7 +257,7 @@ fn run_analysis_core(
         &probe.manifest,
     );
 
-    let issues = emit_issues_with_resolution(
+    let issues = emit_issues(
         &reachability,
         &deps,
         &symbols,

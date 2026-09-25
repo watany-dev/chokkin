@@ -318,6 +318,71 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
     assert_eq!(cache.stats().hits, 0);
 }
 
+fn warns_type_alias(summary: &chokkin::ParseSummary) -> bool {
+    summary
+        .modules
+        .first()
+        .expect("parsed module")
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("`type` aliases"))
+}
+
+#[test]
+fn parse_cache_follows_pep723_block_edits() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source_path = temp.path().join("scripts/run.py");
+    std::fs::create_dir_all(source_path.parent().expect("source parent")).expect("mkdir");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: temp.path().to_path_buf(),
+    };
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+        },
+        effective_globs: Vec::new(),
+        files: vec![chokkin::DiscoveredFile {
+            path: "scripts/run.py".to_owned(),
+            kind: chokkin::FileKind::Python,
+            context: FileContext::Dev,
+        }],
+        warnings: Vec::new(),
+    };
+    let target = TargetVersion::default_py311();
+    let mut cache = ParseCacheStore::new();
+    let body = "type Alias = int\n";
+    let block =
+        |requires: &str| format!("# /// script\n# requires-python = \"{requires}\"\n# ///\n{body}");
+    let mut parse_with = |contents: &str| {
+        std::fs::write(&source_path, contents).expect("write source");
+        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+            .expect("parse")
+    };
+
+    assert!(warns_type_alias(&parse_with(body)), "project target py311");
+    assert!(
+        !warns_type_alias(&parse_with(&block(">=3.12"))),
+        "added block raises the script target"
+    );
+    assert!(
+        warns_type_alias(&parse_with(&block(">=3.9"))),
+        "edited block lowers it again"
+    );
+    assert!(
+        !warns_type_alias(&parse_with(&block(">=3.12"))),
+        "edited back"
+    );
+    assert!(
+        warns_type_alias(&parse_with(body)),
+        "removed block falls back to the project target"
+    );
+}
+
 #[test]
 fn parse_project_sources_extracts_notebook_code_cells() {
     let temp = tempfile::tempdir().expect("tempdir");
