@@ -176,7 +176,7 @@ fn run_analysis_core(
         config: &loaded,
         sources: &probe.sources,
         manifest: &probe.manifest,
-        parse: Some(&parse),
+        parse: &parse,
         cache: Some(&options.cache),
     })?;
     let warnings = actionable_plugin_warnings(&plugins);
