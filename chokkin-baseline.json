@@ -119,6 +119,21 @@
       "target": "tests/fixtures/deps/unused_boto3/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/uv_path_source/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/uv_path_source/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/uv_tool_constraints/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/uv_tool_constraints/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/uv_workspace_source/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/uv_workspace_source/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/workspace_member_dev_over_root/services/api/src/api/main.py"
