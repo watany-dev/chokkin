@@ -43,6 +43,47 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
     assert!(after.contains("requests"));
 }
 
+#[test]
+fn fix_removes_included_group_dependency_only_from_declaring_group() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("include_group"), temp.path()).expect("copy fixture");
+
+    let report = analyze_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    let fix_report = report.fix.expect("fix report");
+    assert_eq!(fix_report.applied.len(), 1);
+    assert_eq!(fix_report.applied[0].rule, RuleId::Chk002);
+
+    let after =
+        std::fs::read_to_string(temp.path().join("pyproject.toml")).expect("read pyproject");
+    let doc: toml::Table = toml::from_str(&after).expect("valid toml after fix");
+    let groups = doc["dependency-groups"].as_table().expect("groups table");
+    assert_eq!(
+        groups["Shared_Libs"].as_array().expect("array"),
+        &[toml::Value::String("httpx".to_owned())]
+    );
+    let server = groups["server"].as_array().expect("array");
+    assert_eq!(server.len(), 1);
+    assert_eq!(
+        server[0].get("include-group").and_then(toml::Value::as_str),
+        Some("shared-libs")
+    );
+    assert_eq!(
+        groups["dev"].as_array().expect("array")[0]
+            .get("include-group")
+            .and_then(toml::Value::as_str),
+        Some("test")
+    );
+}
+
 fn copy_dir_recursive(source: &Path, dest: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(source)? {

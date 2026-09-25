@@ -243,6 +243,7 @@ fn push_editable_dependency(
         context: default_context.clone(),
         origin,
         opaque,
+        included_via: Vec::new(),
     });
 }
 

@@ -77,6 +77,7 @@ pub fn parse_requirement(
             context,
             origin,
             opaque: false,
+            included_via: Vec::new(),
         });
     }
 
@@ -89,6 +90,7 @@ pub fn parse_requirement(
             context,
             origin,
             opaque: true,
+            included_via: Vec::new(),
         });
     }
 
@@ -97,6 +99,34 @@ pub fn parse_requirement(
         line: origin.line.unwrap_or(0),
         raw: raw.to_owned(),
     })
+}
+
+/// Parse a requirement from a PEP 508 manifest field (`pyproject.toml`,
+/// `setup.cfg`, `setup.py`).
+///
+/// `pep508_rs` follows pip and rejects a bare name ending in an archive
+/// extension (`foo.tlz`, `foo.whl`) as a file reference, but PEP 508 and
+/// `packaging` read it as a distribution name. requirements-file dependency
+/// lines keep pip's reading through [`parse_requirement`].
+pub fn parse_pep508_requirement(
+    raw: &str,
+    context: DependencyContext,
+    origin: DependencyOrigin,
+) -> Result<DeclaredDependency, ManifestWarning> {
+    let trimmed = raw.trim();
+    if leading_name_token(trimmed) == trimmed && is_strict_pep508_name(trimmed) {
+        return Ok(DeclaredDependency {
+            name: normalize_distribution_name(trimmed),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context,
+            origin,
+            opaque: false,
+            included_via: Vec::new(),
+        });
+    }
+    parse_requirement(raw, context, origin)
 }
 
 fn requirement_to_declared(
@@ -131,6 +161,7 @@ fn requirement_to_declared(
         context,
         origin,
         opaque,
+        included_via: Vec::new(),
     }
 }
 
@@ -197,6 +228,30 @@ mod tests {
                 },
             );
             assert!(result.is_err(), "raw={raw:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn pep508_manifest_accepts_archive_like_bare_name() {
+        // Regression: pep508_rs rejects `A.tlz` as a file reference.
+        for (raw, expected) in [
+            ("A.tlz", "a-tlz"),
+            ("pkg.whl", "pkg-whl"),
+            ("x.tar", "x-tar"),
+        ] {
+            let dep = parse_pep508_requirement(
+                raw,
+                DependencyContext::Group("dev".to_owned()),
+                DependencyOrigin {
+                    file: "pyproject.toml".to_owned(),
+                    line: None,
+                    label: "dependency-groups.dev[0]".to_owned(),
+                },
+            )
+            .expect("bare PEP 508 name must parse");
+            assert_eq!(dep.name, expected);
+            assert!(!dep.opaque);
+            assert_eq!(dep.specifier, None);
         }
     }
 
