@@ -188,6 +188,8 @@ requirements系filesのパース規則を定める。コメントはpip互換で
 
 `[dependency-groups]` は、build metadataには含めない開発用途の依存を `pyproject.toml` に格納する標準仕様。lint/test/docs用の依存を扱うため、`chokkin` ではmain dependencyとは別contextとして扱う。
 
+PEP 735 の `{include-group = "..."}` は、group名を PEP 503 と同じ規則で正規化して解決し、推移閉包として展開する。要件は include 先へ複製せず宣言元 group に 1 件だけ置き、`DeclaredDependency.included_via` に include 元から宣言元までの経路 (例: `["all", "dev", "test"]`) を持たせる。§10 の context 判定・CHK005 は宣言元 group と各経路の先頭 group の bucket をすべて有効な宣言先として扱い、CHK002 は有効な bucket がすべて dev のときだけ非 strict で抑制する。CHK009 は宣言元の context だけで判定するので、include だけで重複扱いにはならない。`--fix` は宣言元 group の label (`dependency-groups.<group>[i]`、index は include table も数える) だけを編集し、include 要素は書き換えない。`--explain` には `included via dependency-groups: server -> shared` の行で経路を出す。未定義 group への include (`DependencyGroupIncludeUndefined`) と循環 (`DependencyGroupIncludeCycle`) は manifest warning にして、解析は止めずに循環を切って続ける。
+
 Python packagingのentry pointsは、distributionが提供するcomponentを他のコードやinstallerに知らせる仕組みで、`console_scripts` はインストール時にCLI wrapperを作るために使われる。`chokkin` は `[project.scripts]`、`[project.gui-scripts]`、`[project.entry-points]` をentry rootとして扱う。
 
 ## 5. 設定ファイル仕様
@@ -324,6 +326,8 @@ File reaches File
 ```
 
 Python parserはRust実装でよい。Ruff ecosystemのparserを使うか、RustPython parserを使うかはライセンス・保守性・Python新構文対応速度で選ぶ。ただし、Ruffのparser crate群をAstralが安定APIとして公開し続ける保証はないため、採用する場合はversion固定またはvendoring前提のリスクを織り込む。重要なのは、ASTだけではなくtoken位置・comments・string literalを保持すること。`# chokkin: ignore[...]`、`__all__`、`TYPE_CHECKING`、`importlib.import_module("...")`（代入・`return`・呼び出し引数など式中のネストも含む）、framework設定のstring literalを拾う必要がある。
+
+現行は `rustpython-parser` 0.4。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従できないため、ADR 0001 の Amendment 2026-09-25 で `ruff_python_parser` への移行を決めた。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新し、parser の AST 型は `src/parser/` の外に出さない。`lazy import` (PEP 810) は通常の import と同じ edge にする。pin と切り替えの可否は #320 / #321 の実測で確定する (手順: `docs/dev/issue-294-parser-migration-plan.md`)。
 
 ## 7. import resolution仕様
 
@@ -747,7 +751,7 @@ chokkin/
                  #           step 11 `rules/symbols/` (`analyze_symbols`, CHK006–CHK007, CHK010);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
     reporters/   # 実装済み: default / compact / json / markdown reporter
-    fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg; atomic write, root containment)
+    fix/         # 実装済み: step 13 (`apply_fixes_with_workspace` — pyproject/requirements/setup.cfg; atomic write, root containment)
 ```
 
 `pyproject.toml` は概ねこうする。
@@ -846,16 +850,39 @@ v0.2で入れるもの。
 
 v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。
 
+v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap-gap-analysis.ja.md`)。
+
+```text
+- PEP 735 include-group 展開
+- PEP 723 inline script metadata (script 単位の entry + dependency scope)
+- pylock.toml (PEP 751) / poetry.lock / pdm.lock の読み取り
+- [tool.uv] sources / constraint / override / default-groups の読み取り
+- [build-system].requires の build context
+- binary usage 情報源の拡充 (PDM scripts / Makefile / justfile / Dockerfile / GitLab CI / pytest addopts / mypy plugins)
+- 依存宣言からの plugin 自動有効化
+- parser 移行の決定 (Python 3.12+ 構文、#140)
+```
+
+v0.6で入れるもの (Knip 相当の運用性)。
+
+```text
+- framework / format plugin 拡充 (Django 周辺 / Typer / Click / Streamlit / Airflow / Dagster / marimo など)
+- configuration hints (未使用 ignore / stale baseline / 空振り glob / 未使用 map entry)
+- --workspace / --max-issues / --performance
+- codeclimate reporter、chokkin 自身の pre-commit hook / GitHub Action、[tool.chokkin] JSON Schema
+- public API 宣言 (__all__ / pragma / public 設定) と symbol 単位 trace
+```
+
 v1.0で安定させるもの。
 
 ```text
-- plugin API (外部loading; v0.3ではRFCのみ)
+- plugin API (外部loading; v0.3ではRFCのみ。v1.0 は process boundary)
 - stable JSON schema (v0.3で schema_version + JSON Schema 公開済み)
 - stable exit code
 - stable ignore syntax (v0.3で回帰テスト固定)
-- safe autofix contract
+- safe autofix contract (ADR 0003)
 - large monorepo performance
-- editor/LSP連携
+- editor/LSP連携 (--watch / LSP / MCP server)
 ```
 
 v0.3 で実装済み: `[tool.chokkin.severity]` による rule severity override、SARIF rule metadata 安定化。
@@ -967,17 +994,18 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` に対応し、
     `python -m pytest` のような module invocation も既知binary利用として扱う。
     notebook parsing は `.ipynb` discovery と Python code-cell extraction を初期実装済み。
-    Flask/Celery decorator由来 module refs は literal scan として初期実装済み)
+    Flask/Celery decorator由来 module refs は step 6 の decorator sites から抽出する形で初期実装済み)
   - JSON reporter / baseline draft schema と migration 方針 (`docs/dev/schema-migration-notes.md`)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
-### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.4.0 リリース済み
+### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.4.1 リリース済み
 
 ```text
 目標   : v1.0で凍結する契約の準備
 v0.3   : Contract Stabilization
 v0.4   : CHK003 Reliability + Contract Formalization
+v0.4.1 : bug-fix / performance (並列 parse・stat ベース warm cache・cache 整合性修正)
 成果物 :
   - JSON reporterに schema_version を追加し、JSON Schemaを公開する ✅
   - baseline fileに schema_version を追加し、v0.2 draft baseline reader互換を維持する ✅
@@ -1003,25 +1031,98 @@ exit   :
   - v1.0条件「2 minor version連続でbreaking changeなし」の起点をv0.3にする
 ```
 
-### Phase 4: v1.0(条件達成次第)
+### Phase 4: v0.5 モダン packaging 追従(+6〜8週)
+
+```text
+目標   : 2026年の典型的な uv project (dependency-groups / inline script / lockfile) で
+         zero-config の誤検知・取りこぼしをなくす
+背景   : Phase 3 までで Knip の中核 issue 種別 (files / dependencies / unlisted /
+         binaries / unresolved / exports / duplicates) は揃った。残る誤検知源は
+         「chokkin がまだ読まない manifest・設定・構文」に移っている。
+成果物 : (ID は docs/dev/roadmap-gap-analysis.ja.md §3)
+  - R-01 PEP 735 include-group 展開
+  - R-02 PEP 723 inline script metadata (script 単位の CHK002 / CHK003)
+  - R-03 pylock.toml / poetry.lock / pdm.lock を CHK004 の transitive 判定に使う
+  - R-04 [tool.uv] sources / constraint / override / default-groups
+  - R-05 [build-system].requires の build context と wheel target の public surface
+  - R-06 binary / plugin usage 情報源の拡充 (PDM scripts / Makefile / justfile /
+         Dockerfile / Procfile / GitLab CI / pytest addopts / pytest11 / mypy plugins)
+  - R-07 依存宣言・設定ファイル存在からの plugin 自動有効化 (Knip enablers 相当)
+  - R-14 parser 再選定の ADR 0001 改訂 (移行先 `ruff_python_parser`、2026-09-25)。
+         PoC (#320) と 7 target の wheel build (#321) の実測で pin を確定する
+検証   : OSS corpus に uv-native / PEP 723 / 各 lockfile / PEP 695 project を追加し
+         (gap analysis §4)、recall sentinel に R-01〜R-05 の fixture を足す
+exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall sentinel 全件検出、
+         crash 0、cold 実行 medium 2s 維持、CHK003 件数が v0.4.1 比で増えない
+```
+
+### Phase 5: v0.6 Knip 相当の運用性(+6〜8週)
+
+```text
+目標   : 導入・抑制・説明・CI 連携を Knip と同じ水準にそろえる
+成果物 :
+  - R-08 framework / format plugin 拡充 (Django templatetags / management commands /
+         admin / AppConfig.ready、Typer / Click、Streamlit、Airflow / Dagster /
+         Prefect、Scrapy、Litestar、marimo、Jupytext)
+  - R-09 configuration hints (未使用 ignore directive / stale baseline fingerprint /
+         未使用 map・ignore entry / 空振り entry・project glob)。exit code には
+         影響させず、明示フラグで error 扱いにできる
+  - R-10 --workspace <member> / --max-issues N / --performance
+  - R-11 codeclimate reporter、chokkin の pre-commit hook と GitHub Action、
+         [tool.chokkin] JSON Schema (SchemaStore 登録)
+  - R-12 public API 宣言 (__all__ / `# chokkin: public` / `public` 設定)、
+         entry file export の検査、`--trace path:symbol`
+  - R-13 Import-Name / Import-Namespace を持つ wheel の harvest を bundled map 更新
+         pipeline に組み込む
+  - R-14 parser 移行の完了 (Python 3.14 t-string / PEP 758 を parse できる)。
+         backend 差し替え → PEP 695 / 750 / 758 / 810 対応の 2 段階 (ADR 0001)
+exit   : 追加した CLI flag・hint・reporter が JSON schema / SARIF / exit code の
+         既存契約を壊さない (v0.3 起点の「2 minor 連続 breaking なし」を継続)、
+         Phase 4 の gate を維持
+```
+
+### Phase 6: v0.7 検出範囲の拡張(preview)
+
+```text
+目標   : v1.0 で凍結しない preview rule と editor 連携の試作
+成果物 :
+  - R-15 依存宣言の整合性 (stdlib を依存宣言 / uv sources・constraint・override の
+         stale entry)
+  - R-16 unused class / enum members (app mode 限定 preview)
+  - R-17 型文脈専用 export の区別 (Knip types 相当)
+  - R-18 --watch と LSP の試作 (incremental 解析、--fix を code action で提供)
+  - R-20 conda environment.yml / pixi.toml の pypi 依存
+非目標 : preview rule を default on にしない。JSON schema の rule 一覧には載せるが
+         semver 契約 (ADR 0004) の安定対象に含めない
+```
+
+### Phase 7: v1.0(条件達成次第)
 
 ```text
 目標   : §16 v1.0 list の安定性保証
 内容   :
   - stable JSON schema / exit code / ignore syntax / safe autofix contract
   - ADR 0003 / 0004で合意したsafe autofix / semver契約を安定保証として運用する
-  - editor/LSP連携
-  - large monorepo performance の最終チューニング
+  - R-18 LSP / MCP server の正式提供
+  - R-19 外部 plugin loading (ADR 0002 の process boundary)
+  - large monorepo performance の最終チューニング (parser 移行後の cold parse 再計測)
+条件   :
+  - v0.3 起点で 2 minor version 連続 breaking change なし
+  - Phase 4 の拡充 corpus で §17 gate が合格
 ```
 
 ### 横断work(全phase継続)
 
 ```text
 - package-module-map / binary map のデータ収集と自動生成pipeline
+  (Import-Name metadata を持つ wheel の harvest を含む)
 - 誤検知報告template (--explain出力の添付を必須にする)
 - 検証用OSS project setの拡充とregression test化
   (20件のharnessは `scripts/oss-*` / `make oss-metrics` として整備済み。
-   各リリース前に再計測し `docs/dev/oss-validation-report.md` を更新する)
+   各リリース前に再計測し `docs/dev/oss-validation-report.md` を更新する。
+   Phase 4 で uv-native / PEP 723 / lockfile 別の project を追加する)
+- Knip と Python packaging 仕様の追従 (新しい issue 種別・PEP を
+  `docs/dev/roadmap-gap-analysis.ja.md` に反映し、優先度を見直す)
 ```
 
 リリース判断は期日ではなくexit criteriaで行う。特にPhase 1の誤検知率は、§20の「信頼を失いにくい」方針の定量版であり、未達のままv0.1を出さない。
@@ -1111,7 +1212,7 @@ warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使�
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
-Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果がある場合はその decorator site を、無い単体 API 呼び出しや構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査を使うが、どちらも同じ正規化名と判定関数で判定する。
+Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果の decorator site を使い、構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査にフォールバックするが、どちらも同じ正規化名と判定関数で判定する。
 
 Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 
@@ -1162,3 +1263,8 @@ Knip的な体験は「だいたい当たる静的解析」ではなく、「設�
 - Ruff unused import rule: <https://docs.astral.sh/ruff/rules/unused-import/>
 - Vulture: <https://pypi.org/project/vulture/>
 - deptry: <https://github.com/fpgmaas/deptry>
+- Knip configuration hints: <https://knip.dev/reference/configuration-hints>
+- PEP 723 Inline script metadata: <https://peps.python.org/pep-0723/>
+- PEP 751 pylock.toml: <https://peps.python.org/pep-0751/>
+- PEP 810 Explicit lazy imports: <https://peps.python.org/pep-0810/>
+- ロードマップのギャップ分析: [`roadmap-gap-analysis.ja.md`](./roadmap-gap-analysis.ja.md)

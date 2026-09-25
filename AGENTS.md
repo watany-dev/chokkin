@@ -10,7 +10,7 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.4.0 released on top of v0.1.0–v0.3.0. Default CLI runs
+**Status:** v0.4.1 released on top of v0.1.0–v0.4.0. Default CLI runs
 `analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
 `markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
 and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
@@ -45,10 +45,15 @@ over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
 is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
-budget. PyPI **v0.1.0** through **v0.4.0** have been released.
+budget. PyPI **v0.1.0** through **v0.4.1** have been released.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
-Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
+Implementation follows the phased roadmap in `docs/dev/spec.ja.md` §17. Next up
+is Phase 4 (v0.5, modern packaging: PEP 735 `include-group`, PEP 723 inline
+scripts, `pylock.toml` / `poetry.lock` / `pdm.lock`, `[tool.uv]`, build context,
+plugin auto-enable, parser re-selection), then Phase 5 (v0.6, Knip-parity
+operability). The Knip / Python-ecosystem gap analysis behind it, with `R-xx`
+backlog IDs, is `docs/dev/roadmap-gap-analysis.ja.md`.
 
 ## Repository structure
 
@@ -76,10 +81,11 @@ src/
                   `severity.rs` / `metadata.rs` for Phase 3 overrides)
   reporters/      Built-in reporters: default, compact, json, markdown,
                   github, sarif
-  fix/            Optional manifest fixes (step 13: `apply_fixes`; atomic writes, root containment)
+  fix/            Optional manifest fixes (step 13: `apply_fixes_with_workspace`; atomic writes, root containment)
 pyproject.toml    maturin bin bindings — chokkin ships as a Python wheel
 docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing
+  roadmap-gap-analysis.ja.md  Knip / Python-ecosystem gap analysis (R-xx backlog)
   schema/         Published JSON Schema for report and baseline (Phase 3)
   ci-porting-notes.md  Deferred CI items to enable as code matures
   formal/         Executable formal models (Python/Z3, TLA+) of src/ decision

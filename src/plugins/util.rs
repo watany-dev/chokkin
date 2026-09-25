@@ -14,7 +14,7 @@ use crate::manifest::util::{
     path_is_within_root, read_to_string, relative_path as manifest_relative_path,
 };
 use crate::parser::{ParseSeverity, ParsedModule};
-use crate::sources::{FileKind, path_to_module};
+use crate::sources::path_to_module;
 
 use super::context::PluginContext;
 use super::error::PluginsError;
@@ -58,9 +58,7 @@ fn decorator_line(
 
 /// Push a module reference for each Python source with a matching decorator.
 ///
-/// Uses the step 6 decorator sites when available and falls back to
-/// [`text_decorator_line`] for standalone callers, with the same predicate on
-/// both paths. Returns whether any reference was pushed.
+/// Returns whether any reference was pushed.
 pub fn push_decorated_modules(
     ctx: &PluginContext<'_>,
     contrib: &mut PluginContribution,
@@ -68,29 +66,11 @@ pub fn push_decorated_modules(
     label: &str,
 ) -> bool {
     let mut found = false;
-    if let Some(parse) = ctx.parse {
-        for module in &parse.modules {
-            let Some(line) = decorator_line(&ctx.root.path, module, is_decorator) else {
-                continue;
-            };
-            found |= push_decorated_module(ctx, contrib, &module.path, line, label);
-        }
-        return found;
-    }
-
-    // Standalone callers run before step 6, so there is nothing to reuse.
-    for file in &ctx.sources.files {
-        if file.kind != FileKind::Python {
-            continue;
-        }
-        let path = ctx.root.path.join(&file.path);
-        let Ok(contents) = std::fs::read_to_string(&path) else {
+    for module in &ctx.parse.modules {
+        let Some(line) = decorator_line(&ctx.root.path, module, is_decorator) else {
             continue;
         };
-        let Some(line) = text_decorator_line(&contents, is_decorator) else {
-            continue;
-        };
-        found |= push_decorated_module(ctx, contrib, &file.path, line, label);
+        found |= push_decorated_module(ctx, contrib, &module.path, line, label);
     }
     found
 }
@@ -140,7 +120,7 @@ pub fn leading_spaces(line: &str) -> usize {
     line.chars().take_while(|ch| *ch == ' ').count()
 }
 
-/// Text fallback for [`decorator_line`] when no parse output is available.
+/// Text fallback for [`decorator_line`] when a module failed to parse.
 ///
 /// Each line is normalized the way the parse path normalizes a decorator
 /// expression, so the same predicate decides both paths.

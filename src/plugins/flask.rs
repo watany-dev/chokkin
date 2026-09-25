@@ -110,9 +110,9 @@ fn extract_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bo
     }
 }
 
-/// Route decorator test shared by the parse and text paths: a method call on
-/// a receiver (`@app.route("/")`, `@bp.post(...)`). Bare `@app.route` and
-/// receiverless `@get(...)` are not Flask routes.
+/// Route decorator test shared by the parse path and its syntax-error text
+/// fallback: a method call on a receiver (`@app.route("/")`, `@bp.post(...)`).
+/// Bare `@app.route` and receiverless `@get(...)` are not Flask routes.
 fn is_route_decorator(name: &str, is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     is_call

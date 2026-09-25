@@ -107,9 +107,9 @@ fn extract_shell_scripts(root: &Path, contrib: &mut PluginContribution, found: &
     }
 }
 
-/// Task decorator test shared by the parse and text paths: bare
-/// `@shared_task` or any `@<receiver>.task` / `@<receiver>.shared_task`,
-/// called or not.
+/// Task decorator test shared by the parse path and its syntax-error text
+/// fallback: bare `@shared_task` or any `@<receiver>.task` /
+/// `@<receiver>.shared_task`, called or not.
 fn is_task_decorator(name: &str, _is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     match suffix {
