@@ -19,8 +19,9 @@ resolver tags member-owned imports, treats cross-member imports as first-party, 
 requires member-local direct dependency declarations, and reporters expose member ids on
 workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `--no-cache`
 (`.chokkin/cache`), and parse cache key primitives exist (`CacheKeyContext`,
-`SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse and disk
-`ParsedModule` JSON entries under `.chokkin/cache/parse/`. Config/manifest scan input
+`SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse (not used by the CLI) and one disk
+`ParseCacheBundle` per context under `.chokkin/cache/parse/`; writing a bundle or
+scan record sweeps the superseded ones. Config/manifest scan input
 fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
 `ScanCacheRecord`; typed scan payload storage is wired for config scan and
 manifest extraction. v0.2 release validation measurements were
