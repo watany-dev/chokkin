@@ -6,6 +6,9 @@
 #
 # CHK002 sentinels guard against over-suppressing unused dependencies.
 # CHK003 sentinels guard against over-suppressing missing dependencies.
+# CHK004 sentinels guard the lockfile transitive-only check.
+# The R-01..R-05 sentinels each declare one unused dependency in exactly one
+# declaration source, so a source-specific suppression cannot hide it.
 #
 # Format: slug<TAB>path (path absolute or relative to repo root).
 #
@@ -13,3 +16,10 @@
 unused_boto3	tests/fixtures/deps/unused_boto3
 optional_try_import	tests/fixtures/deps/optional_try_import
 missing_yaml	tests/fixtures/deps/missing_yaml
+include_group	tests/fixtures/deps/include_group
+pep723_unused_script	tests/fixtures/deps/pep723_unused_script
+lock_unused_pylock	tests/fixtures/deps/lock_unused_pylock
+lock_unused_poetry	tests/fixtures/deps/lock_unused_poetry
+lock_unused_pdm	tests/fixtures/deps/lock_unused_pdm
+uv_dev_dependencies_unused	tests/fixtures/deps/uv_dev_dependencies_unused
+build_plugin_declared	tests/fixtures/deps/build_plugin_declared

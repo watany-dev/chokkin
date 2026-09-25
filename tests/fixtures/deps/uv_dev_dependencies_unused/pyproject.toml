@@ -1,0 +1,11 @@
+[project]
+name = "uv-dev-dependencies-unused"
+version = "0.1.0"
+dependencies = ["boto3", "requests"]
+
+[project.scripts]
+acme-cli = "acme.main:main"
+
+[tool.uv]
+dev-dependencies = ["pytest"]
+constraint-dependencies = ["boto3<2"]
