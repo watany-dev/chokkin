@@ -4,7 +4,7 @@
 //! decided by each consumer (`rules::symbols::external` for CHK006, the Flask
 //! and Celery plugins for module references), so the parser holds no list.
 
-use rustpython_parser::ast::Expr;
+use ruff_python_ast::Expr;
 
 /// Normalize a decorator expression to a dotted name (`app.route`,
 /// `functools.lru_cache`), or `None` when it has no static name.
@@ -25,17 +25,16 @@ pub fn normalize_decorator(expr: &Expr) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use rustpython_parser::Parse;
-    use rustpython_parser::ast::{Stmt, Suite};
+    use ruff_python_ast::Stmt;
 
     use super::*;
 
     fn first_decorator(source: &str) -> Option<String> {
-        let stmts = Suite::parse(source, "<test>").expect("parse");
-        let Stmt::FunctionDef(function) = &stmts[0] else {
+        let parsed = ruff_python_parser::parse_module(source).expect("parse");
+        let Stmt::FunctionDef(function) = &parsed.suite()[0] else {
             panic!("expected function");
         };
-        normalize_decorator(&function.decorator_list[0])
+        normalize_decorator(&function.decorator_list[0].expression)
     }
 
     #[test]

@@ -78,7 +78,7 @@ jobs:
       - run: cargo test --locked --doc
 
   msrv:
-    name: MSRV (1.93)
+    name: MSRV (1.96)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -87,7 +87,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
-          toolchain: "1.93"
+          toolchain: "1.96"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo check --all-targets --locked
 
@@ -101,7 +101,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable # zizmor: ignore[superfluous-actions] keep CI toolchain consistent
         with:
-          toolchain: "1.93"
+          toolchain: "1.96"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Run chokkin with checked-in baseline
         run: cargo run --locked --release -- --baseline chokkin-baseline.json --reporter github

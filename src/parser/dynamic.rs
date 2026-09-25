@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use rustpython_parser::ast::{Alias, Constant, Expr, ExprCall};
+use ruff_python_ast::{Alias, Expr, ExprCall};
 
 /// Names one module binds to the dynamic import loaders.
 pub struct LoaderNames {
@@ -59,8 +59,9 @@ impl LoaderNames {
 /// Literal module name passed to a loader call, positionally or as `name=`.
 #[must_use]
 pub fn literal_module(call: &ExprCall) -> Option<String> {
-    let module = call.args.first().or_else(|| {
-        call.keywords
+    let module = call.arguments.args.first().or_else(|| {
+        call.arguments
+            .keywords
             .iter()
             .find(|keyword| {
                 keyword
@@ -71,10 +72,7 @@ pub fn literal_module(call: &ExprCall) -> Option<String> {
             .map(|keyword| &keyword.value)
     })?;
     match module {
-        Expr::Constant(constant) => match &constant.value {
-            Constant::Str(value) => Some(value.clone()),
-            _ => None,
-        },
+        Expr::StringLiteral(literal) => Some(literal.value.to_str().to_owned()),
         _ => None,
     }
 }

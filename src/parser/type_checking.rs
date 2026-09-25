@@ -2,22 +2,11 @@
 
 use std::collections::HashSet;
 
-use rustpython_parser::ast::{Expr, Stmt};
+use ruff_python_ast::Expr;
 
-/// Returns `true` when `stmt` is `if TYPE_CHECKING:` (or `if typing.TYPE_CHECKING:`).
+/// Returns `true` when `expr` is `TYPE_CHECKING` (or `typing.TYPE_CHECKING`), aliases included.
 #[must_use]
-pub fn is_type_checking_if(
-    stmt: &Stmt,
-    typing_aliases: &HashSet<String>,
-    type_checking_names: &HashSet<String>,
-) -> bool {
-    let Stmt::If(if_stmt) = stmt else {
-        return false;
-    };
-    is_type_checking_test(&if_stmt.test, typing_aliases, type_checking_names)
-}
-
-fn is_type_checking_test(
+pub fn is_type_checking_test(
     expr: &Expr,
     typing_aliases: &HashSet<String>,
     type_checking_names: &HashSet<String>,
@@ -37,34 +26,22 @@ fn is_type_checking_test(
 
 #[cfg(test)]
 mod tests {
-    use rustpython_parser::Parse;
-    use rustpython_parser::ast::Suite;
-
     use super::*;
 
-    #[test]
-    fn detects_type_checking_if() {
-        let source = "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\n";
-        let stmts = Suite::parse(source, "<test>").expect("parse");
-        let typing_aliases = HashSet::from(["typing".to_owned()]);
+    fn is_type_checking(source: &str, typing_aliases: &[&str]) -> bool {
+        let parsed = ruff_python_parser::parse_expression(source).expect("parse");
+        let typing_aliases = typing_aliases.iter().map(ToString::to_string).collect();
         let type_checking_names = HashSet::from(["TYPE_CHECKING".to_owned()]);
-        assert!(stmts.iter().any(|stmt| is_type_checking_if(
-            stmt,
-            &typing_aliases,
-            &type_checking_names
-        )));
+        is_type_checking_test(parsed.expr(), &typing_aliases, &type_checking_names)
+    }
+
+    #[test]
+    fn detects_type_checking_name() {
+        assert!(is_type_checking("TYPE_CHECKING", &["typing"]));
     }
 
     #[test]
     fn detects_type_checking_aliases() {
-        let source = "import typing as t\nif t.TYPE_CHECKING:\n    pass\n";
-        let stmts = Suite::parse(source, "<test>").expect("parse");
-        let typing_aliases = HashSet::from(["typing".to_owned(), "t".to_owned()]);
-        let type_checking_names = HashSet::from(["TYPE_CHECKING".to_owned()]);
-        assert!(stmts.iter().any(|stmt| is_type_checking_if(
-            stmt,
-            &typing_aliases,
-            &type_checking_names
-        )));
+        assert!(is_type_checking("t.TYPE_CHECKING", &["typing", "t"]));
     }
 }
