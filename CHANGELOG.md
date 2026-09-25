@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one is chosen by priority uv.lock > pylock > poetry.lock > pdm.lock.
   `--probe` shows the lockfile path and kind.
 - Fix reminders suggest `pdm lock` when the lockfile is `pdm.lock`.
+- Plugins are enabled automatically from declared dependencies (root or any
+  workspace member) and config files such as `mkdocs.yml`, `alembic.ini`,
+  `tox.ini`, `noxfile.py`, `.pre-commit-config.yaml`, and `docs/conf.py`. An
+  explicit `[tool.chokkin.plugins] x = false` still wins. `--probe` shows each
+  plugin's reason (`default`, `config`, `enabled-by: ...`, `disabled-by: config`).
 
 ### Changed
 - CHK004 now separates a transitive edge from a declared dependency (Certain)

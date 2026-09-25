@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use chokkin::{
-    ExitStatus, RuntimeOverrides, probe_project, write_probe_report, write_probe_warnings,
+    ExitStatus, PluginId, RuntimeOverrides, probe_project, write_probe_report, write_probe_warnings,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -61,6 +61,32 @@ fn probe_report_contains_resolved_workspace_count() {
     write_probe_report(&report, &mut output).expect("write");
     let text = String::from_utf8(output).expect("utf8");
     assert!(text.contains("Workspace: 2 members (2 inventoried)"));
+}
+
+#[test]
+fn probe_reports_plugin_activation_reasons() {
+    let root = fixture_path("probe/plugin_enablers");
+    let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");
+    let plugins = &report.effective_config.plugins;
+    assert_eq!(plugins.get(&PluginId::Flask), Some(&true));
+    assert_eq!(plugins.get(&PluginId::MkDocs), Some(&true));
+    assert_eq!(plugins.get(&PluginId::Alembic), Some(&false));
+    assert_eq!(plugins.get(&PluginId::Celery), Some(&false));
+
+    let mut output = Vec::new();
+    write_probe_report(&report, &mut output).expect("write");
+    let text = String::from_utf8(output).expect("utf8");
+    let expected = "\
+Plugins
+  pytest           : default
+  django           : default
+  fastapi          : default
+  flask            : enabled-by: dependency flask
+  mkdocs           : enabled-by: file mkdocs.yml
+  alembic          : disabled-by: config
+
+";
+    assert!(text.contains(expected), "{text}");
 }
 
 #[test]

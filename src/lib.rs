@@ -77,9 +77,10 @@ pub use pipeline::{
     write_probe_warnings,
 };
 pub use plugins::{
-    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry,
-    PluginExtractRequest, PluginHints, PluginsError, PluginsWarning, ReferenceOrigin,
-    SymbolReference, extract_plugin_hints, extract_plugin_hints_with_parse,
+    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginActivation, PluginActivationReason,
+    PluginContribution, PluginEntry, PluginExtractRequest, PluginHints, PluginsError,
+    PluginsWarning, ReferenceOrigin, SymbolReference, extract_plugin_hints,
+    extract_plugin_hints_with_parse,
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
