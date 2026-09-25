@@ -11,8 +11,8 @@ use serde_json::Value;
 
 use crate::VERSION;
 use crate::cache::{
-    CacheKeyContext, CacheOptions, ParseCacheBundle, ParseCacheKey, ParseCacheStore,
-    SourceFingerprint, stable_list_hash,
+    CacheKeyContext, CacheOptions, ParseCacheBundle, ParseCacheBundleRef, ParseCacheKey,
+    ParseCacheStore, SourceFingerprint, stable_list_hash,
 };
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
@@ -206,14 +206,14 @@ pub fn parse_project_sources_with_cache(
     // only the entries this run touched prunes results for sources that have
     // since changed or disappeared, so the file tracks the project instead of
     // growing with every edit.
-    let stored = read_disk_parse_bundle(disk_cache, &root.path, &context)?;
-    let mut retained = ParseCacheBundle::default();
-    let mut parsed_any = false;
+    let mut stored = read_disk_parse_bundle(disk_cache, &root.path, &context)?;
+    let stored_ids: Vec<String> = stored.entries.keys().cloned().collect();
 
     let pending = collect_pending(root, sources, &context, clock)?;
 
     let mut slots: Vec<Option<ParsedModule>> = vec![None; pending.len()];
-    drain_caches(&pending, &stored, cache.as_deref_mut(), &mut slots);
+    drain_caches(&pending, &mut stored, cache.as_deref_mut(), &mut slots);
+    drop(stored);
 
     let outstanding: Vec<usize> = slots
         .iter()
@@ -227,6 +227,7 @@ pub fn parse_project_sources_with_cache(
         pending: &pending,
         outstanding: &outstanding,
     };
+    let mut parsed_any = false;
     for (index, parsed) in run_parse_job(&job)? {
         parsed_any = true;
         if let Some(store) = cache.as_deref_mut()
@@ -238,26 +239,31 @@ pub fn parse_project_sources_with_cache(
     }
 
     if disk_cache.is_some() {
-        for (slot, entry) in slots.iter().zip(&pending) {
-            if let Some(key) = &entry.key
-                && let Some(parsed) = slot
-            {
-                retained.insert(key, parsed.clone());
-            }
+        let retained = retained_entries(&pending, &slots);
+        // Compare entry ids rather than counts: a store carried over from an
+        // earlier run can serve a different set of the same size.
+        if parsed_any || retained.entry_ids().ne(stored_ids.iter()) {
+            write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
         }
     }
 
-    let summary = ParseSummary {
+    Ok(ParseSummary {
         modules: slots.into_iter().flatten().collect(),
-    };
+    })
+}
 
-    // Compare entry ids rather than counts: a store carried over from an
-    // earlier run can serve a different set of the same size.
-    if parsed_any || retained.entries.keys().ne(stored.entries.keys()) {
-        write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
+/// Borrow every keyed module of this run for writing back to disk.
+fn retained_entries<'a>(
+    pending: &[PendingFile<'_>],
+    slots: &'a [Option<ParsedModule>],
+) -> ParseCacheBundleRef<'a> {
+    let mut retained = ParseCacheBundleRef::default();
+    for (slot, entry) in slots.iter().zip(pending) {
+        if let (Some(key), Some(parsed)) = (&entry.key, slot) {
+            retained.insert(key, parsed);
+        }
     }
-
-    Ok(summary)
+    retained
 }
 
 /// The clock racy mtimes are judged against, or `None` when no cache is in use.
@@ -308,10 +314,11 @@ fn collect_pending<'a>(
 ///
 /// Both caches need `&mut` on the store, so they are drained here rather than
 /// from the workers. Probing exactly once per file also keeps the hit/miss
-/// counters identical to the sequential implementation.
+/// counters identical to the sequential implementation. Disk hits are moved
+/// out of `stored` rather than cloned: the bundle is not used afterwards.
 fn drain_caches(
     pending: &[PendingFile<'_>],
-    stored: &ParseCacheBundle,
+    stored: &mut ParseCacheBundle,
     mut cache: Option<&mut ParseCacheStore>,
     slots: &mut [Option<ParsedModule>],
 ) {
@@ -320,8 +327,8 @@ fn drain_caches(
             continue;
         };
         *slot = match cache.as_deref_mut() {
-            Some(store) => store.get_or_promote(key, stored),
-            None => stored.get(key).cloned(),
+            Some(store) => store.get_or_take(key, stored),
+            None => stored.take(key),
         };
     }
 }
@@ -470,13 +477,13 @@ fn write_disk_parse_bundle(
     cache: Option<&CacheOptions>,
     project_root: &std::path::Path,
     context: &CacheKeyContext,
-    bundle: &ParseCacheBundle,
+    bundle: &ParseCacheBundleRef<'_>,
 ) -> Result<(), ParseError> {
     let Some(cache) = cache else {
         return Ok(());
     };
     cache
-        .write_parse_bundle(project_root, context, bundle)
+        .write_parse_bundle_ref(project_root, context, bundle)
         .map_err(|source| ParseError::Io {
             path: cache.parse_bundle_path(project_root, context),
             source,
