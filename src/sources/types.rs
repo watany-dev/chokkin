@@ -1,5 +1,6 @@
 //! Source file discovery types.
 
+use crate::cache::CacheKeyHasher;
 use crate::discovery::ProjectRoot;
 
 use super::warnings::SourcesWarning;
@@ -70,15 +71,6 @@ pub struct DiscoveredFile {
     pub context: FileContext,
 }
 
-/// Flat-layout package resolution outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlatResolution {
-    /// Selected package directory names.
-    pub packages: Vec<String>,
-    /// `true` when metadata could not disambiguate multiple candidates.
-    pub ambiguous: bool,
-}
-
 /// Layout inference result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutInfo {
@@ -88,10 +80,31 @@ pub struct LayoutInfo {
     pub packages: Vec<String>,
     /// Globs used when `config.project` was empty.
     pub inferred_globs: Vec<String>,
-    /// Flat-layout package directory candidates (empty unless `layout == Flat`).
-    pub flat_candidates: Vec<String>,
-    /// `true` when flat resolution fell back to the first candidate.
-    pub ambiguous_flat_resolution: bool,
+}
+
+impl LayoutInfo {
+    /// Stable hash of the layout inputs that cache keys depend on.
+    ///
+    /// Fields are hashed explicitly rather than through `Debug`, whose output
+    /// carries no stability guarantee and allocates a string proportional to
+    /// the package count. Sequence order is preserved because callers treat
+    /// the first matching candidate as the winner, so two permutations must
+    /// not share a cache entry.
+    #[must_use]
+    pub fn cache_key_hash(&self) -> String {
+        let mut hasher = CacheKeyHasher::new();
+        hasher.field_str(self.layout.as_str());
+        hash_str_list(&mut hasher, &self.packages);
+        hash_str_list(&mut hasher, &self.inferred_globs);
+        hasher.finish()
+    }
+}
+
+fn hash_str_list(hasher: &mut CacheKeyHasher, values: &[String]) {
+    hasher.field_u64(u64::try_from(values.len()).unwrap_or(u64::MAX));
+    for value in values {
+        hasher.field_str(value);
+    }
 }
 
 /// Outcome of source file discovery.
@@ -115,12 +128,5 @@ impl DiscoveredSources {
         self.files
             .iter()
             .filter(|file| file.kind == FileKind::Python)
-    }
-
-    /// Iterate files that can be parsed as Python source.
-    pub fn parseable_python_files(&self) -> impl Iterator<Item = &DiscoveredFile> {
-        self.files
-            .iter()
-            .filter(|file| matches!(file.kind, FileKind::Python | FileKind::Notebook))
     }
 }

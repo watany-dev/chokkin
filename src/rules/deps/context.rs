@@ -1,7 +1,9 @@
 //! Dependency context matching helpers (§10).
 
+use std::collections::BTreeSet;
+
 use crate::config::{ChokkinConfig, DependencyGroupsConfig};
-use crate::manifest::DependencyContext;
+use crate::manifest::{DeclaredDependency, DependencyContext};
 use crate::parser::ImportContext;
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
@@ -53,31 +55,64 @@ pub(super) fn declaration_bucket(
 ) -> DeclarationBucket {
     match context {
         DependencyContext::Runtime => DeclarationBucket::Runtime,
-        DependencyContext::Group(name) => {
-            if groups.type_groups.iter().any(|group| group == name) {
-                DeclarationBucket::Type
-            } else if groups.dev_groups.iter().any(|group| group == name) {
-                DeclarationBucket::Dev
-            } else if groups.runtime_groups.iter().any(|group| group == name) {
-                DeclarationBucket::Runtime
-            } else {
-                DeclarationBucket::Dev
-            }
-        },
+        DependencyContext::Group(name) => group_bucket(name, groups),
         DependencyContext::OptionalExtra(extra) | DependencyContext::SetupExtra(extra) => {
             DeclarationBucket::Optional(extra.clone())
         },
     }
 }
 
+fn group_bucket(name: &str, groups: &DependencyGroupsConfig) -> DeclarationBucket {
+    if groups.type_groups.iter().any(|group| group == name) {
+        DeclarationBucket::Type
+    } else if groups.dev_groups.iter().any(|group| group == name) {
+        DeclarationBucket::Dev
+    } else if groups.runtime_groups.iter().any(|group| group == name) {
+        DeclarationBucket::Runtime
+    } else {
+        DeclarationBucket::Dev
+    }
+}
+
+/// Buckets a declaration counts toward: its own context plus every group that
+/// pulls it in through PEP 735 `include-group`.
+#[must_use]
+pub(super) fn declaration_buckets(
+    dep: &DeclaredDependency,
+    groups: &DependencyGroupsConfig,
+) -> BTreeSet<DeclarationBucket> {
+    let mut buckets = BTreeSet::from([declaration_bucket(&dep.context, groups)]);
+    buckets.extend(
+        dep.included_via
+            .iter()
+            .filter_map(|chain| chain.first())
+            .map(|includer| group_bucket(includer, groups)),
+    );
+    buckets
+}
+
+/// `--explain` lines naming the include chains behind a group declaration.
+#[must_use]
+pub(super) fn include_path_details(dep: &DeclaredDependency) -> Vec<String> {
+    dep.included_via
+        .iter()
+        .map(|chain| format!("included via dependency-groups: {}", chain.join(" -> ")))
+        .collect()
+}
+
 /// Whether a declaration satisfies usage in the given context.
 #[must_use]
 pub(super) fn declaration_matches_usage(
-    context: &DependencyContext,
+    dep: &DeclaredDependency,
     usage: UsageContext,
     config: &ChokkinConfig,
 ) -> bool {
-    let bucket = declaration_bucket(context, &config.dependencies);
+    declaration_buckets(dep, &config.dependencies)
+        .iter()
+        .any(|bucket| bucket_matches_usage(bucket, usage))
+}
+
+fn bucket_matches_usage(bucket: &DeclarationBucket, usage: UsageContext) -> bool {
     match usage {
         UsageContext::Runtime => matches!(
             bucket,
@@ -116,20 +151,20 @@ pub(super) fn usage_context_for_import(
 /// Whether a declaration is considered directly declared for the usage context.
 #[must_use]
 pub(super) fn is_directly_declared(
-    declarations: &[&crate::manifest::DeclaredDependency],
+    declarations: &[&DeclaredDependency],
     usage: UsageContext,
     config: &ChokkinConfig,
 ) -> bool {
     declarations
         .iter()
-        .any(|dep| declaration_matches_usage(&dep.context, usage, config))
+        .any(|dep| declaration_matches_usage(dep, usage, config))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::default_config;
-    use crate::manifest::{DeclaredDependency, DependencyOrigin};
+    use crate::manifest::DependencyOrigin;
     use crate::sources::{DiscoveredSources, LayoutInfo, ProjectLayout};
 
     fn dep(context: DependencyContext) -> DeclaredDependency {
@@ -145,6 +180,7 @@ mod tests {
                 label: "test".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         }
     }
 
@@ -159,8 +195,6 @@ mod tests {
                 layout: ProjectLayout::Src,
                 packages: vec!["acme".to_owned()],
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -202,6 +236,39 @@ mod tests {
             UsageContext::Test,
             &config
         ));
+    }
+
+    #[test]
+    fn test_usage_accepts_type_group_included_by_dev_group() {
+        let config = default_config();
+        let mut typing_dep = dep(DependencyContext::Group("typing".to_owned()));
+        assert!(!is_directly_declared(
+            &[&typing_dep],
+            UsageContext::Test,
+            &config
+        ));
+        typing_dep.included_via = vec![vec!["dev".to_owned(), "typing".to_owned()]];
+        assert!(is_directly_declared(
+            &[&typing_dep],
+            UsageContext::Test,
+            &config
+        ));
+    }
+
+    #[test]
+    fn runtime_usage_accepts_group_included_by_runtime_group() {
+        let config = default_config();
+        let mut shared = dep(DependencyContext::Group("shared".to_owned()));
+        shared.included_via = vec![vec!["server".to_owned(), "shared".to_owned()]];
+        assert!(is_directly_declared(
+            &[&shared],
+            UsageContext::Runtime,
+            &config
+        ));
+        assert_eq!(
+            declaration_buckets(&shared, &config.dependencies),
+            BTreeSet::from([DeclarationBucket::Dev, DeclarationBucket::Runtime])
+        );
     }
 
     #[test]

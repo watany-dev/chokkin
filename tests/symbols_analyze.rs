@@ -38,11 +38,11 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
-    let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugin hints");
     let target = resolve_target_version(&loaded.effective, &manifest);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production)
-        .expect("entry plan");
+    let plugins =
+        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
+    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -54,17 +54,15 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
-        &root,
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
-    )
-    .expect("resolve imports");
+    );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph,
         &sources,
@@ -165,6 +163,33 @@ fn pytest_fixture_is_not_reported() {
 fn unused_reexport_emits_chk007() {
     let report = analyze_fixture("unused_reexport");
     assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));
+    assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "helpers"));
+}
+
+#[test]
+fn reexport_source_module_is_resolved_once() {
+    let report = analyze_fixture("unused_reexport");
+    let source_module = |name: &str| {
+        let candidate = report
+            .candidates
+            .iter()
+            .find(|candidate| {
+                candidate.rule == RuleId::Chk007
+                    && matches!(
+                        &candidate.subject,
+                        chokkin::IssueSubject::Symbol { name: n, .. } if n == name
+                    )
+            })
+            .expect("CHK007 candidate");
+        match candidate.origins.first() {
+            Some(chokkin::Origin::Import { module, .. }) => module.clone(),
+            other => panic!("unexpected origin: {other:?}"),
+        }
+    };
+    // `from .sub import foo`
+    assert_eq!(source_module("foo"), "acme.sub");
+    // `from . import helpers`
+    assert_eq!(source_module("helpers"), "acme.helpers");
 }
 
 #[test]

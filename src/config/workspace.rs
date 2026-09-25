@@ -1,17 +1,16 @@
 //! Workspace member discovery from uv and chokkin config.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobSetBuilder};
+use ignore::WalkBuilder;
 
 use crate::discovery::ProjectRoot;
 
 use super::error::ConfigError;
-use super::types::{
-    ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint, WorkspaceMemberSource,
-};
+use super::types::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
 
 /// Resolve workspace member directories below a project root.
 pub fn resolve_workspace_members(
@@ -38,7 +37,6 @@ pub fn resolve_workspace_members(
                 pyproject_toml: pyproject.is_file().then(|| {
                     normalize_relative_path(&format!("{}/pyproject.toml", override_cfg.path))
                 }),
-                source: WorkspaceMemberSource::Chokkin,
             },
         );
     }
@@ -91,55 +89,36 @@ fn resolve_uv_members(
             id,
             path: rel.clone(),
             pyproject_toml: Some(format!("{rel}/pyproject.toml")),
-            source: WorkspaceMemberSource::Uv,
         });
     }
     Ok(members)
 }
 
 fn find_pyprojects(root: &Path) -> Result<Vec<PathBuf>, ConfigError> {
+    let walker = WalkBuilder::new(root)
+        .standard_filters(false)
+        .filter_entry(|entry| {
+            !matches!(
+                entry.file_name().to_str(),
+                Some(".git" | ".venv" | "venv" | "__pycache__" | "target" | "node_modules")
+            )
+        })
+        .build();
     let mut out = Vec::new();
-    visit_dirs(root, root, &mut out)?;
-    Ok(out)
-}
-
-fn visit_dirs(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), ConfigError> {
-    let entries = fs::read_dir(dir).map_err(|source| ConfigError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|source| ConfigError::Io {
-            path: dir.to_path_buf(),
-            source,
+    for entry in walker {
+        let entry = entry.map_err(|error| ConfigError::Io {
+            path: root.to_path_buf(),
+            source: io::Error::other(error),
         })?;
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(|source| ConfigError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        if file_type.is_file() && entry.file_name().to_str() == Some("pyproject.toml") {
-            out.push(path);
-        } else if file_type.is_dir() && should_descend(root, &path) {
-            visit_dirs(root, &path, out)?;
+        if entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
+            && entry.file_name() == "pyproject.toml"
+        {
+            out.push(entry.into_path());
         }
     }
-    Ok(())
-}
-
-fn should_descend(root: &Path, path: &Path) -> bool {
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    let Some(name) = rel
-        .components()
-        .next_back()
-        .and_then(|component| component.as_os_str().to_str())
-    else {
-        return true;
-    };
-    !matches!(
-        name,
-        ".git" | ".venv" | "venv" | "__pycache__" | "target" | "node_modules"
-    )
+    Ok(out)
 }
 
 fn relative_path(root: &Path, path: &Path) -> Result<String, ConfigError> {
@@ -158,6 +137,8 @@ fn normalize_relative_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::config::default_config;
     use crate::discovery::RootMarker;
@@ -191,6 +172,24 @@ mod tests {
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].id, "api");
         assert_eq!(members[0].path, "services/api");
-        assert_eq!(members[0].source, WorkspaceMemberSource::Uv);
+    }
+
+    #[test]
+    fn uv_member_scan_skips_tool_dirs_but_not_other_hidden_dirs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for dir in [".venv/pkg", ".hidden/pkg"] {
+            fs::create_dir_all(temp.path().join(dir)).expect("mkdir");
+            fs::write(temp.path().join(dir).join("pyproject.toml"), "").expect("write");
+        }
+        let members = resolve_workspace_members(
+            &root(temp.path()),
+            &default_config(),
+            Some(&UvWorkspaceHint {
+                members: vec![".venv/*".to_owned(), ".hidden/*".to_owned()],
+            }),
+        )
+        .expect("resolve");
+        let paths: Vec<_> = members.iter().map(|member| member.path.as_str()).collect();
+        assert_eq!(paths, [".hidden/pkg"]);
     }
 }

@@ -65,7 +65,7 @@ fn member_basename(pattern: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ResolvedWorkspaceMember, WorkspaceMemberSource, default_config};
+    use crate::config::{ResolvedWorkspaceMember, default_config};
     use crate::manifest::ProjectMetadata;
     use crate::sources::{LayoutInfo, ProjectLayout};
 
@@ -75,8 +75,6 @@ mod tests {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         assert!(is_first_party_import(
             "acme",
@@ -91,8 +89,6 @@ mod tests {
             layout: ProjectLayout::Flat,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let metadata = ProjectMetadata {
             name: Some("my-package".to_owned()),
@@ -120,7 +116,6 @@ mod tests {
             id: "api".to_owned(),
             path: "services/api".to_owned(),
             pyproject_toml: Some("services/api/pyproject.toml".to_owned()),
-            source: WorkspaceMemberSource::Uv,
         };
         assert!(is_workspace_import(
             "api",

@@ -60,4 +60,20 @@ pub enum ManifestWarning {
         /// Missing constraints file path as written.
         path: String,
     },
+    /// A PEP 735 `{include-group = "..."}` names a group that is not defined.
+    DependencyGroupIncludeUndefined {
+        /// Root-relative path to `pyproject.toml`.
+        file: String,
+        /// Group containing the include, as written.
+        group: String,
+        /// Referenced group name, as written.
+        include: String,
+    },
+    /// PEP 735 `include-group` references form a cycle; expansion stops there.
+    DependencyGroupIncludeCycle {
+        /// Root-relative path to `pyproject.toml`.
+        file: String,
+        /// Groups along the cycle, starting and ending with the same group.
+        groups: Vec<String>,
+    },
 }

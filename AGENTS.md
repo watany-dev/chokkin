@@ -10,7 +10,7 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.4.0 released on top of v0.1.0–v0.3.0. Default CLI runs
+**Status:** v0.4.1 released on top of v0.1.0–v0.4.0. Default CLI runs
 `analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
 `markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
 and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
@@ -22,8 +22,8 @@ workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `-
 `SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse and disk
 `ParsedModule` JSON entries under `.chokkin/cache/parse/`. Config/manifest scan input
 fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
-`ScanCacheRecord`; typed scan payload storage is wired for config scan, manifest
-extraction, and module index cache. v0.2 release validation measurements were
+`ScanCacheRecord`; typed scan payload storage is wired for config scan and
+manifest extraction. v0.2 release validation measurements were
 recorded on 2026-06-15 with Rust 1.93: `make check`, OSS fixtures, full
 20-project OSS gate, and Criterion cache benches passed; synthetic 10k warm
 cache measured under 205 ms. Baseline CI adoption is dogfooded by this repo's
@@ -45,10 +45,15 @@ over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
 is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
-budget. PyPI **v0.1.0** through **v0.4.0** have been released.
+budget. PyPI **v0.1.0** through **v0.4.1** have been released.
 `src/graph/` provides skeleton nodes, import edges, distribution → module links,
 entry → file edges, and file → file reachability edges.
-Implementation follows the phased roadmap in `docs/dev/spec.ja.md`.
+Implementation follows the phased roadmap in `docs/dev/spec.ja.md` §17. Next up
+is Phase 4 (v0.5, modern packaging: PEP 735 `include-group`, PEP 723 inline
+scripts, `pylock.toml` / `poetry.lock` / `pdm.lock`, `[tool.uv]`, build context,
+plugin auto-enable, parser re-selection), then Phase 5 (v0.6, Knip-parity
+operability). The Knip / Python-ecosystem gap analysis behind it, with `R-xx`
+backlog IDs, is `docs/dev/roadmap-gap-analysis.ja.md`.
 
 ## Repository structure
 
@@ -76,13 +81,15 @@ src/
                   `severity.rs` / `metadata.rs` for Phase 3 overrides)
   reporters/      Built-in reporters: default, compact, json, markdown,
                   github, sarif
-  schema/         JSON/baseline `schema_version` constants (Phase 3)
-  fix/            Optional manifest fixes (step 13: `apply_fixes`; atomic writes, root containment)
+  fix/            Optional manifest fixes (step 13: `apply_fixes_with_workspace`; atomic writes, root containment)
 pyproject.toml    maturin bin bindings — chokkin ships as a Python wheel
 docs/dev/
   spec.ja.md      Full design specification (§1–§21) — read before implementing
+  roadmap-gap-analysis.ja.md  Knip / Python-ecosystem gap analysis (R-xx backlog)
   schema/         Published JSON Schema for report and baseline (Phase 3)
   ci-porting-notes.md  Deferred CI items to enable as code matures
+  formal/         Executable formal models (Python/Z3, TLA+) of src/ decision
+                  logic checked against the spec; run with `make formal`
 ```
 
 ## Critical design constraint: never execute project code
@@ -125,8 +132,12 @@ Install tools once with `make tools`.
 
 Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy
 extraction, `sources` for the file-discovery walk, `cache` for warm parse-cache
-reuse) with synthetic fixtures generated in `benches/support/mod.rs`. They are not part of `make check`;
-run them when touching hot paths:
+reuse, `reachability` for reachability analysis, `resolver` for bundled map
+construction, `pipeline` for full analysis plus cold/disk-warm parse,
+reachability, and discovery after cache population) with synthetic
+fixtures generated in `benches/support/mod.rs`. They are not part of `make check`;
+run them when touching hot paths. `pipeline` defaults to 1k ~2 KiB modules;
+set `CHOKKIN_BENCH_LARGE=1` for 5k/10k as well:
 
 ```bash
 make bench                      # run all benchmarks
@@ -189,8 +200,12 @@ Available skills:
 
 **Project skills** (authored in-repo):
 
-- `wrapup` — clean up changed code (`simplify`) then `update-docs`, run
-  `make check` if files changed, then remind to compact context.
+- `wrapup` — post-work review gate: `make check`, a correctness review and an
+  over-engineering review (`ponytail-review`), take in only the findings that
+  meet its criteria, then `cleanup-comments`. Invoked manually.
+- `cleanup-comments` — sweep code comments, keep only the "why" that cannot be
+  reconstructed from the code, turn TODO-like comments into issues. Invoked
+  manually.
 - `update-docs` — sync `src/` changes into `README.md`, `README.ja.md`,
   `docs/dev/spec.ja.md`, `CLAUDE.md`, and `AGENTS.md`.
 - `update-design` — score `docs/dev/spec.ja.md` (5 categories × 20 pts) and
@@ -217,13 +232,12 @@ npx skills@latest add https://github.com/DietrichGebert/ponytail/tree/main/skill
 mv .agents/skills/ponytail* .claude/skills/ && rm -rf .agents
 ```
 
-**Host-specific notes.** The Stop-hook auto-trigger, `/compact`, `simplify`,
-and `ExitPlanMode` referenced by some skills are Claude Code features. On Codex
-and Cursor the agent auto-selects skills by relevance (or you invoke them by
-name); run the `simplify` → `update-docs` → `make check` core manually and skip
-the Claude-only marker/compact steps. The Stop-hook enforcement that nags
-`wrapup` after edits lives only in `.claude/` (`hooks/stop-wrapup.sh` +
-`settings.json`).
+**Host-specific notes.** `/code-review`, `/compact`, and `ExitPlanMode`
+referenced by some skills are Claude Code features. On Codex and Cursor the
+agent auto-selects skills by relevance (or you invoke them by name); in
+`wrapup`, substitute a hand-written correctness review of
+`git diff <base>...HEAD` for `/code-review`. No hook auto-triggers `wrapup` on
+any host — it is invoked manually.
 
 ## Guardrail: ptuf
 

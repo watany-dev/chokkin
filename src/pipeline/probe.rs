@@ -11,6 +11,9 @@ use crate::config::{
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{LoadedManifest, extract_manifest_with_cache, resolve_target_version};
+use crate::plugins::{
+    EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
+};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, discover_sources};
 
 use super::error::ProbeError;
@@ -35,6 +38,8 @@ pub struct ProbeReport {
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
     /// Member-scoped manifest and source inventories.
     pub workspace_inputs: Vec<WorkspaceMemberInputs>,
+    /// Why each plugin is on or off; already applied to `effective_config.plugins`.
+    pub plugin_activations: Vec<PluginActivation>,
     /// Non-fatal warnings from manifest and source discovery.
     pub warnings: Vec<ProbeWarning>,
 }
@@ -89,6 +94,7 @@ pub fn probe_project_with_cache(
     let workspace_inputs =
         collect_workspace_inputs(&root, &loaded.workspace_members, overrides, cache)?;
     let warnings = collect_warnings(&manifest, &sources);
+    let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
 
     Ok(ProbeReport {
         version: VERSION,
@@ -99,8 +105,30 @@ pub fn probe_project_with_cache(
         sources,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
+        plugin_activations,
         warnings,
     })
+}
+
+fn activate_plugins(
+    config: &mut ChokkinConfig,
+    manifest: &LoadedManifest,
+    workspace_inputs: &[WorkspaceMemberInputs],
+) -> Vec<PluginActivation> {
+    let scopes: Vec<EnablerScope<'_>> = std::iter::once(EnablerScope {
+        member: None,
+        manifest,
+    })
+    .chain(workspace_inputs.iter().map(|input| EnablerScope {
+        member: Some(&input.member),
+        manifest: &input.manifest,
+    }))
+    .collect();
+    let activations = resolve_plugin_activations(config, &scopes);
+    for activation in &activations {
+        config.plugins.insert(activation.plugin, activation.enabled);
+    }
+    activations
 }
 
 fn collect_workspace_inputs(
@@ -169,7 +197,7 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     writeln!(
         out,
         "Config  : {}",
-        format_config_sources(&report.config_sources)
+        crate::reporters::config_label(&report.config_sources, "pyproject.toml [tool.chokkin]")
     )?;
     writeln!(
         out,
@@ -227,6 +255,14 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     )?;
     writeln!(out)?;
 
+    writeln!(out, "Plugins")?;
+    for activation in report.plugin_activations.iter().filter(|activation| {
+        activation.enabled || activation.reason != PluginActivationReason::Default
+    }) {
+        writeln!(out, "  {:<17}: {activation}", activation.plugin.as_key())?;
+    }
+    writeln!(out)?;
+
     if report.warnings.is_empty() {
         writeln!(out, "Warnings: 0")?;
     } else {
@@ -235,28 +271,6 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     writeln!(out)?;
     writeln!(out, "Summary: probe complete — analyzer not run yet")?;
     Ok(())
-}
-
-fn format_config_sources(sources: &ConfigSources) -> String {
-    let mut parts = Vec::new();
-    if sources.dot_chokkin_toml.is_some() {
-        parts.push(".chokkin.toml".to_owned());
-    }
-    if sources.chokkin_toml.is_some() {
-        parts.push("chokkin.toml".to_owned());
-    }
-    if sources.pyproject_tool_chokkin {
-        parts.push("pyproject.toml [tool.chokkin]".to_owned());
-    }
-    if parts.is_empty() {
-        if sources.used_defaults {
-            "defaults".to_owned()
-        } else {
-            "(none)".to_owned()
-        }
-    } else {
-        parts.join(", ")
-    }
 }
 
 fn format_layout(sources: &DiscoveredSources) -> String {
@@ -272,12 +286,13 @@ fn format_layout(sources: &DiscoveredSources) -> String {
 }
 
 fn format_lockfile(manifest: &LoadedManifest) -> String {
-    if manifest.sources.uv_lock {
-        let nodes = manifest.lockfile.edges.len();
-        format!("uv.lock ({nodes} nodes)")
-    } else {
-        "none".to_owned()
-    }
+    manifest.sources.lockfile.as_ref().map_or_else(
+        || "none".to_owned(),
+        |source| {
+            let nodes = manifest.lockfile.edges.len();
+            format!("{} ({}, {nodes} nodes)", source.path, source.kind.as_str())
+        },
+    )
 }
 
 struct ContextCounts {
@@ -388,8 +403,6 @@ mod tests {
                 layout: crate::sources::ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),

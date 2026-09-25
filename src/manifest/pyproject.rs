@@ -4,6 +4,7 @@ use std::path::Path;
 
 use toml::Value;
 
+use super::dependency_groups::extract_dependency_groups;
 use super::error::ManifestError;
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ProjectMetadata,
@@ -67,18 +68,14 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
             .get("optional-dependencies")
             .and_then(Value::as_table)
         {
-            for (extra, deps_value) in optional {
-                if let Some(deps) = deps_value.as_array() {
-                    push_dependency_array(
-                        deps,
-                        &rel,
-                        &DependencyContext::OptionalExtra(extra.clone()),
-                        &format!("project.optional-dependencies.{extra}"),
-                        &mut result.dependencies,
-                        &mut result.warnings,
-                    );
-                }
-            }
+            push_dependency_table(
+                optional,
+                &rel,
+                DependencyContext::OptionalExtra,
+                "project.optional-dependencies",
+                &mut result.dependencies,
+                &mut result.warnings,
+            );
         }
 
         if let Some(scripts) = project.get("scripts").and_then(Value::as_table) {
@@ -117,21 +114,34 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
     }
 
     if let Some(groups) = table.get("dependency-groups").and_then(Value::as_table) {
-        for (group, deps_value) in groups {
-            if let Some(deps) = deps_value.as_array() {
-                push_dependency_array(
-                    deps,
-                    &rel,
-                    &DependencyContext::Group(group.clone()),
-                    &format!("dependency-groups.{group}"),
-                    &mut result.dependencies,
-                    &mut result.warnings,
-                );
-            }
-        }
+        extract_dependency_groups(groups, &rel, &mut result.dependencies, &mut result.warnings);
     }
 
     Ok(result)
+}
+
+/// Push every `<name> = ["req", ...]` array of `table`, with `context(name)`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn push_dependency_table(
+    table: &toml::Table,
+    rel: &str,
+    context: fn(String) -> DependencyContext,
+    label_prefix: &str,
+    dependencies: &mut Vec<DeclaredDependency>,
+    warnings: &mut Vec<ManifestWarning>,
+) {
+    for (name, deps_value) in table {
+        if let Some(deps) = deps_value.as_array() {
+            push_dependency_array(
+                deps,
+                rel,
+                &context(name.clone()),
+                &format!("{label_prefix}.{name}"),
+                dependencies,
+                warnings,
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -358,43 +368,25 @@ fn extract_pdm_dependencies(
     };
 
     if let Some(dev_groups) = pdm.get("dev-dependencies").and_then(Value::as_table) {
-        for (group, deps_value) in dev_groups {
-            if let Some(deps) = deps_value.as_array() {
-                for (index, dep) in deps.iter().enumerate() {
-                    if let Some(raw) = dep.as_str() {
-                        push_dependency(DependencyPush {
-                            dependencies,
-                            warnings,
-                            raw,
-                            context: DependencyContext::Group(group.clone()),
-                            file: rel,
-                            label: format!("tool.pdm.dev-dependencies.{group}[{index}]"),
-                            line: None,
-                        });
-                    }
-                }
-            }
-        }
+        push_dependency_table(
+            dev_groups,
+            rel,
+            DependencyContext::Group,
+            "tool.pdm.dev-dependencies",
+            dependencies,
+            warnings,
+        );
     }
 
     if let Some(optional) = pdm.get("optional-dependencies").and_then(Value::as_table) {
-        for (extra, deps_value) in optional {
-            if let Some(deps) = deps_value.as_array() {
-                for (index, dep) in deps.iter().enumerate() {
-                    if let Some(raw) = dep.as_str() {
-                        push_dependency(DependencyPush {
-                            dependencies,
-                            warnings,
-                            raw,
-                            context: DependencyContext::OptionalExtra(extra.clone()),
-                            file: rel,
-                            label: format!("tool.pdm.optional-dependencies.{extra}[{index}]"),
-                            line: None,
-                        });
-                    }
-                }
-            }
-        }
+        push_dependency_table(
+            optional,
+            rel,
+            DependencyContext::OptionalExtra,
+            "tool.pdm.optional-dependencies",
+            dependencies,
+            warnings,
+        );
     }
 }
 
@@ -423,19 +415,14 @@ fn extract_hatch_dependencies(
         } else {
             env_name.clone()
         };
-        for (index, dep) in deps.iter().enumerate() {
-            if let Some(raw) = dep.as_str() {
-                push_dependency(DependencyPush {
-                    dependencies,
-                    warnings,
-                    raw,
-                    context: DependencyContext::Group(group.clone()),
-                    file: rel,
-                    label: format!("tool.hatch.envs.{env_name}.dependencies[{index}]"),
-                    line: None,
-                });
-            }
-        }
+        push_dependency_array(
+            deps,
+            rel,
+            &DependencyContext::Group(group),
+            &format!("tool.hatch.envs.{env_name}.dependencies"),
+            dependencies,
+            warnings,
+        );
     }
 }
 
@@ -472,6 +459,24 @@ mod tests {
         assert!(matches!(
             &result.dependencies[0].context,
             DependencyContext::Group(group) if group == "dev"
+        ));
+    }
+
+    #[test]
+    fn extracts_pdm_optional_dependencies() {
+        let result = extract(
+            "[project]\nname = \"x\"\n[tool.pdm.optional-dependencies]\nhttp = [\"httpx\"]\n",
+        )
+        .expect("valid pyproject");
+        assert_eq!(result.dependencies.len(), 1);
+        assert_eq!(result.dependencies[0].name, "httpx");
+        assert_eq!(
+            result.dependencies[0].origin.label,
+            "tool.pdm.optional-dependencies.http[0]"
+        );
+        assert!(matches!(
+            &result.dependencies[0].context,
+            DependencyContext::OptionalExtra(extra) if extra == "http"
         ));
     }
 

@@ -3,20 +3,18 @@
 use std::collections::BTreeMap;
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
-use crate::discovery::ProjectRoot;
 use crate::graph::ModuleOrigin;
 use crate::manifest::LoadedManifest;
 use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::ModuleReference;
 use crate::sources::DiscoveredSources;
 
-use super::error::ResolveError;
 use super::first_party::{is_first_party_import, is_workspace_import};
 use super::maps::{ImportMap, build_binary_map};
 use super::stdlib::is_stdlib_import;
-use super::transitive::build_transitive_index;
 use super::types::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, import_root,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
+    import_root,
 };
 use super::venv::load_venv_index;
 
@@ -24,21 +22,16 @@ use super::venv::load_venv_index;
 ///
 /// `workspace_members` marks cross-member imports as first-party so workspace
 /// packages do not become false missing-dependency findings.
-///
-/// # Errors
-///
-/// Returns [`ResolveError`] only for internal invariant failures (v0.1).
+#[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_imports(
-    root: &ProjectRoot,
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
     workspace_members: &[ResolvedWorkspaceMember],
-) -> Result<ResolutionIndex, ResolveError> {
-    let _ = root;
+) -> ResolutionIndex {
     let target = config
         .target_version
         .as_ref()
@@ -115,12 +108,19 @@ pub fn resolve_imports(
         ));
     }
 
-    Ok(ResolutionIndex {
+    ResolutionIndex {
         imports,
         warnings,
-        transitive: build_transitive_index(manifest),
+        transitive: transitive_index(manifest),
         binary_resolutions,
-    })
+        pytest_plugin_distributions: venv_index.pytest_plugins,
+    }
+}
+
+fn transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
+    TransitiveIndex {
+        edges: manifest.lockfile.edges.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,17 +234,7 @@ fn resolve_import_root(
         return root_resolution_from_candidates(root_name, distributions, None, warnings);
     }
 
-    let map_candidates = import_map.candidates(root_name);
-    if !map_candidates.is_empty() {
-        let distributions: Vec<String> = map_candidates
-            .iter()
-            .map(|candidate| candidate.distribution.clone())
-            .collect();
-        let confidence = map_candidates
-            .iter()
-            .map(|candidate| candidate.confidence)
-            .max_by_key(|confidence| confidence_rank(*confidence))
-            .unwrap_or(ResolveConfidence::Maybe);
+    if let Some((distributions, confidence)) = import_map.candidates(root_name) {
         return root_resolution_from_candidates(
             root_name,
             &distributions,
@@ -272,14 +262,6 @@ fn workspace_member_for_file(
         })
         .max_by_key(|member| member.path.len())
         .map(|member| member.id.clone())
-}
-
-fn confidence_rank(confidence: ResolveConfidence) -> u8 {
-    match confidence {
-        ResolveConfidence::Certain => 2,
-        ResolveConfidence::Likely => 1,
-        ResolveConfidence::Maybe => 0,
-    }
 }
 
 fn root_resolution_from_candidates(

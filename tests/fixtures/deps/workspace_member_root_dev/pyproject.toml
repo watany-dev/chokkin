@@ -1,0 +1,12 @@
+[project]
+name = "workspace-root"
+version = "0.1.0"
+
+[dependency-groups]
+dev = ["requests"]
+
+[project.scripts]
+api-cli = "api.main:main"
+
+[tool.uv.workspace]
+members = ["services/*"]

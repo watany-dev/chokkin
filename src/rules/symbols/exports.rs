@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{ImportKind, ParsedModule, file_module_name, resolve_relative_import};
-use crate::sources::LayoutInfo;
+use crate::parser::{ImportKind, ParsedModule};
+use crate::sources::{LayoutInfo, path_to_module};
 
 use super::graph::SymbolId;
 
@@ -37,7 +37,7 @@ pub(super) fn collect_reexports(
         let Some(package_module) = module_names
             .get(module.path.as_str())
             .cloned()
-            .or_else(|| file_module_name(&module.path, layout))
+            .or_else(|| path_to_module(&module.path, layout))
         else {
             continue;
         };
@@ -46,38 +46,27 @@ pub(super) fn collect_reexports(
             if import.kind != ImportKind::ImportFrom || import.relative_level == 0 {
                 continue;
             }
-            let Some(name) = import.name.as_ref() else {
+            // `module` is already resolved to an absolute name by the parser; an
+            // empty one means the relative import could not be resolved.
+            if import.module.is_empty() {
                 continue;
+            }
+            // `from . import x` carries no `name`: the parser folds `x` into `module`.
+            let name = match &import.name {
+                Some(name) => name.as_str(),
+                None => import
+                    .module
+                    .rsplit_once('.')
+                    .map_or(import.module.as_str(), |(_, last)| last),
             };
             if name.starts_with('_') && !module.exports.iter().any(|export| export == name) {
                 continue;
             }
 
-            let imported_name = if import.module.is_empty() {
-                Some(name.as_str())
-            } else {
-                None
-            };
-            let module_suffix = import.module.as_str();
-            let module_suffix = if module_suffix.is_empty() {
-                None
-            } else {
-                Some(module_suffix)
-            };
-            let Some(source_module) = resolve_relative_import(
-                &module.path,
-                layout,
-                import.relative_level,
-                module_suffix,
-                imported_name,
-            ) else {
-                continue;
-            };
-
             reexports.push(ReExport {
                 package_module: package_module.clone(),
-                name: name.clone(),
-                source_module,
+                name: name.to_owned(),
+                source_module: import.module.clone(),
                 path: module.path.clone(),
                 line: import.line,
             });

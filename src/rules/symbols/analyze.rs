@@ -6,15 +6,16 @@ use crate::config::{Confidence, ProjectMode};
 use crate::entry::{EntryPlan, ResolvedMode};
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
-use crate::parser::{ParseSummary, file_module_name};
+use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
 use crate::resolver::{ResolutionIndex, ResolveWarning};
+use crate::rules::RuleContext;
 use crate::rules::types::{
-    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, subject_sort_key,
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, sort_candidates,
 };
-use crate::sources::DiscoveredSources;
+use crate::sources::{DiscoveredSources, path_to_module};
 
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
@@ -35,6 +36,35 @@ pub fn analyze_symbols(
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
 ) -> SymbolReport {
+    analyze_with_context(
+        &RuleContext {
+            resolution,
+            reachability,
+            graph,
+            sources,
+            parse,
+        },
+        entry,
+        plugins,
+        mode,
+        manifest,
+    )
+}
+
+pub fn analyze_with_context(
+    context: &RuleContext<'_>,
+    entry: &EntryPlan,
+    plugins: &PluginHints,
+    mode: &ResolvedMode,
+    manifest: &LoadedManifest,
+) -> SymbolReport {
+    let RuleContext {
+        resolution,
+        reachability,
+        graph,
+        sources,
+        parse,
+    } = *context;
     let reachable = reachable_file_paths(graph, reachability);
     let module_names = build_module_names(parse, sources, &reachable);
     let reachable_modules: Vec<_> = parse
@@ -60,12 +90,7 @@ pub fn analyze_symbols(
         resolution, &reachable, manifest, sources,
     ));
 
-    candidates.sort_by(|left, right| {
-        left.rule
-            .as_code()
-            .cmp(right.rule.as_code())
-            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
-    });
+    sort_candidates(&mut candidates);
 
     let symbol_count = u32::try_from(registry.entries().len()).unwrap_or(u32::MAX);
 
@@ -97,7 +122,7 @@ fn build_module_names<'a>(
         if !reachable.contains(&module.path) {
             continue;
         }
-        if let Some(name) = file_module_name(&module.path, &sources.layout) {
+        if let Some(name) = path_to_module(&module.path, &sources.layout) {
             names.insert(module.path.as_str(), name);
         }
     }

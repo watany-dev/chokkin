@@ -7,11 +7,12 @@ use crate::config::{ChokkinConfig, RuntimeOverrides};
 use crate::entry::ResolvedMode;
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
+use crate::resolver::ResolutionIndex;
 use crate::rules::symbols::SymbolReport;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
     Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject, IssueSummary, Origin,
-    SuppressedIssue, subject_sort_key,
+    SuppressedIssue, sort_candidates,
 };
 
 use super::chk001::chk001_candidates;
@@ -23,6 +24,9 @@ use super::severity::apply_severity_override;
 use super::types::RuleId;
 
 /// Merge candidates, apply ignore/confidence filters, and compute exit status.
+///
+/// Dependency-rule ignore patterns are matched against distribution names
+/// taken from `resolution` (§18).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn emit_issues(
@@ -33,21 +37,17 @@ pub fn emit_issues(
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
     mode: &ResolvedMode,
+    resolution: &ResolutionIndex,
 ) -> IssueReport {
     let strict = overrides.strict.unwrap_or(false);
-    let matcher = IgnoreMatcher::build(config, parse);
+    let matcher = IgnoreMatcher::build(config, parse, resolution);
     let confidence_floor = effective_confidence_floor(config, overrides, strict);
 
     let mut candidates = chk001_candidates(&unreachable.unreachable, mode);
     candidates.extend(deps.candidates.clone());
     candidates.extend(symbols.candidates.clone());
 
-    candidates.sort_by(|left, right| {
-        left.rule
-            .as_code()
-            .cmp(right.rule.as_code())
-            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
-    });
+    sort_candidates(&mut candidates);
 
     let mut issues = Vec::new();
     let mut suppressed = Vec::new();
@@ -59,7 +59,7 @@ pub fn emit_issues(
         let ignore = matcher.matches_candidate(&candidate);
         let issue = candidate_to_issue(candidate);
 
-        if let Some(reason) = ignore.reason() {
+        if let Some(reason) = ignore {
             suppressed.push(SuppressedIssue { issue, reason });
             continue;
         }
@@ -184,7 +184,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
     }
 }
 
-fn build_summary(issues: &[Issue]) -> IssueSummary {
+pub(crate) fn build_summary(issues: &[Issue]) -> IssueSummary {
     let mut by_rule = BTreeMap::new();
     for issue in issues {
         *by_rule.entry(issue.rule).or_insert(0) += 1;
@@ -195,7 +195,11 @@ fn build_summary(issues: &[Issue]) -> IssueSummary {
     }
 }
 
-fn compute_exit_status(issues: &[Issue], overrides: &RuntimeOverrides, strict: bool) -> ExitStatus {
+pub(crate) fn compute_exit_status(
+    issues: &[Issue],
+    overrides: &RuntimeOverrides,
+    strict: bool,
+) -> ExitStatus {
     if overrides.no_exit_code == Some(true) {
         return ExitStatus::Success;
     }
@@ -229,17 +233,16 @@ mod tests {
 
     #[test]
     fn emits_chk001_for_unreachable_file() {
-        let mut report = ReachabilityReport::empty();
+        let mut report = ReachabilityReport::default();
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
-            reasons: vec![crate::reachability::UnreachableReason::NotReachable],
             max_confidence: Confidence::Certain,
         });
 
         let deps = DependencyReport::default();
         let symbols = SymbolReport::default();
-        let parse = ParseSummary::empty();
+        let parse = ParseSummary::default();
         let config = default_config();
 
         let issues = emit_issues(
@@ -250,6 +253,7 @@ mod tests {
             &config,
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         assert_eq!(issues.issues.len(), 1);
         assert_eq!(issues.issues[0].rule, RuleId::Chk001);
@@ -258,11 +262,10 @@ mod tests {
 
     #[test]
     fn no_exit_code_returns_success() {
-        let mut report = ReachabilityReport::empty();
+        let mut report = ReachabilityReport::default();
         report.unreachable.push(UnreachableFile {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
-            reasons: vec![crate::reachability::UnreachableReason::NotReachable],
             max_confidence: Confidence::Certain,
         });
 
@@ -270,13 +273,14 @@ mod tests {
             &report,
             &DependencyReport::default(),
             &SymbolReport::default(),
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides {
                 no_exit_code: Some(true),
                 ..RuntimeOverrides::default()
             },
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         assert_eq!(issues.exit_status, ExitStatus::Success);
     }
@@ -308,13 +312,14 @@ mod tests {
             .severity
             .insert("CHK002".to_owned(), crate::config::SeverityLevel::Off);
         let report = emit_issues(
-            &ReachabilityReport::empty(),
+            &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
             &config,
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         assert!(report.issues.is_empty());
     }
@@ -345,13 +350,14 @@ mod tests {
             ..DependencyReport::default()
         };
         let report = emit_issues(
-            &ReachabilityReport::empty(),
+            &ReachabilityReport::default(),
             &deps,
             &SymbolReport::default(),
-            &ParseSummary::empty(),
+            &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides::default(),
             &resolved_app_mode(),
+            &ResolutionIndex::default(),
         );
         let text = explain_issue(&report, "CHK002:boto3").expect("explain");
         assert!(text.contains("boto3 is declared but not used"));

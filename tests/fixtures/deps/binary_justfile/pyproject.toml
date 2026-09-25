@@ -1,0 +1,7 @@
+[project]
+name = "binary-justfile"
+version = "0.1.0"
+dependencies = ["alembic", "celery", "gunicorn"]
+
+[project.scripts]
+demo-cli = "acme.main:main"

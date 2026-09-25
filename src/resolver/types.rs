@@ -1,6 +1,6 @@
 //! Resolver types for import → distribution resolution.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::graph::ModuleOrigin;
 use crate::parser::ImportContext;
@@ -78,18 +78,8 @@ pub struct TransitiveIndex {
     pub edges: BTreeMap<String, Vec<String>>,
 }
 
-impl TransitiveIndex {
-    /// Empty index when no lockfile is available.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            edges: BTreeMap::new(),
-        }
-    }
-}
-
 /// Full resolution output for steps 8–12.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolutionIndex {
     /// Resolved imports from parse output and plugin refs.
     pub imports: Vec<ResolvedImport>,
@@ -99,19 +89,8 @@ pub struct ResolutionIndex {
     pub transitive: TransitiveIndex,
     /// Merged binary name → distribution map.
     pub binary_resolutions: BTreeMap<String, String>,
-}
-
-impl ResolutionIndex {
-    /// Creates an empty index.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            imports: Vec::new(),
-            warnings: Vec::new(),
-            transitive: TransitiveIndex::empty(),
-            binary_resolutions: BTreeMap::new(),
-        }
-    }
+    /// Installed distributions that pytest auto-loads through `pytest11` entry points.
+    pub pytest_plugin_distributions: BTreeSet<String>,
 }
 
 /// Extract the top-level import name from a dotted module path.

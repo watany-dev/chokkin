@@ -1,0 +1,10 @@
+[project]
+name = "pytest-addopts-plugins"
+version = "0.1.0"
+dependencies = ["pytest", "pytest-benchmark", "pytest-cov", "pytest-django", "pytest-timeout", "pytest-xdist"]
+
+[project.scripts]
+demo-cli = "acme.main:main"
+
+[tool.pytest.ini_options]
+addopts = ["--cov=acme", "--benchmark-skip"]

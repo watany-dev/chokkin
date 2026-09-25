@@ -7,10 +7,9 @@ mod module_index;
 mod trace;
 mod types;
 
-pub use build::{analyze_reachability, analyze_reachability_with_cache};
+pub use crate::sources::path_to_module;
+pub use build::analyze_reachability;
 pub use error::ReachabilityError;
-pub use module_index::{ModuleIndex, path_to_module};
+pub use module_index::ModuleIndex;
 pub use trace::trace_to_file;
-pub use types::{
-    ReachabilityReport, TracePath, TraceStep, UnreachableFile, UnreachableReason, UsedModule,
-};
+pub use types::{ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule};

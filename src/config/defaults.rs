@@ -1,13 +1,16 @@
 //! Default configuration and layer merging.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::Deserialize;
 
 use super::types::{
     ChokkinConfig, Confidence, DependencyGroupsConfig, PluginId, ProjectMode, TargetVersion,
 };
 
 /// Optional dependency group keys for one layer. Missing keys keep lower-priority values.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(clippy::struct_field_names)]
 pub(super) struct PartialDependencyGroups {
     pub dev_groups: Option<Vec<String>>,
@@ -32,7 +35,8 @@ impl PartialDependencyGroups {
 
 /// Optional fields for one configuration layer. `Some` values replace the merged
 /// result, except `plugins` and `dependencies` which merge per key (§3.1).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PartialConfig {
     pub entry: Option<Vec<super::types::EntrySpec>>,
     pub project: Option<Vec<String>>,
@@ -55,21 +59,7 @@ impl PartialConfig {
     /// Returns true when this layer sets at least one field.
     #[must_use]
     pub fn has_any_field(&self) -> bool {
-        self.entry.is_some()
-            || self.project.is_some()
-            || self.mode.is_some()
-            || self.production.is_some()
-            || self.target_version.is_some()
-            || self.respect_gitignore.is_some()
-            || self.confidence.is_some()
-            || self.exclude.is_some()
-            || self.dependencies.is_some()
-            || self.package_module_map.is_some()
-            || self.binary_map.is_some()
-            || self.plugins.is_some()
-            || self.ignore.is_some()
-            || self.severity.is_some()
-            || self.workspaces.is_some()
+        *self != Self::default()
     }
 }
 
@@ -95,6 +85,7 @@ pub fn default_config() -> ChokkinConfig {
         confidence: Confidence::Likely,
         exclude: vec![
             ".venv/**".to_owned(),
+            ".chokkin/**".to_owned(),
             "build/**".to_owned(),
             "dist/**".to_owned(),
             "**/__pycache__/**".to_owned(),
@@ -113,6 +104,7 @@ pub fn default_config() -> ChokkinConfig {
         package_module_map: BTreeMap::new(),
         binary_map: BTreeMap::new(),
         plugins,
+        explicit_plugins: BTreeSet::new(),
         ignore: BTreeMap::new(),
         severity: BTreeMap::new(),
         workspaces: BTreeMap::new(),
@@ -159,9 +151,8 @@ pub fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
             config.binary_map.clone_from(binary_map);
         }
         if let Some(plugins) = &layer.plugins {
-            for (plugin, enabled) in plugins {
-                config.plugins.insert(*plugin, *enabled);
-            }
+            config.plugins.extend(plugins);
+            config.explicit_plugins.extend(plugins.keys());
         }
         if let Some(ignore) = &layer.ignore {
             config.ignore.clone_from(ignore);
@@ -211,6 +202,10 @@ mod tests {
         assert_eq!(merged.plugins.get(&PluginId::Celery), Some(&true));
         assert_eq!(merged.plugins.get(&PluginId::Pytest), Some(&true));
         assert_eq!(merged.plugins.get(&PluginId::Tox), Some(&false));
+        assert_eq!(
+            merged.explicit_plugins.into_iter().collect::<Vec<_>>(),
+            [PluginId::Celery]
+        );
     }
 
     #[test]

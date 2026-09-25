@@ -9,11 +9,11 @@ use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots}
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
-use crate::plugins::extract_plugin_hints_with_cache;
-use crate::reachability::{ReachabilityReport, analyze_reachability_with_cache};
+use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
+use crate::reachability::{ReachabilityReport, analyze_reachability};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
-    IssueReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues, reconcile_dependencies,
+    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
 
 use super::error::AnalyzeError;
@@ -77,7 +77,7 @@ pub fn analyze_project(
         Some(&options.cache),
     )?;
     let mut core = run_analysis_core(&probe, overrides, &options)?;
-    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, &options)?;
+    let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, overrides, &options)?;
     let fix = if options.fix_enabled {
         let workspace_manifests = probe
             .workspace_inputs
@@ -95,7 +95,7 @@ pub fn analyze_project(
             &probe.manifest,
             &workspace_manifests,
             options.fix,
-        )?)
+        ))
     } else {
         None
     };
@@ -116,6 +116,7 @@ pub fn analyze_project(
 fn apply_baseline_options(
     issues: &mut IssueReport,
     root: &Path,
+    overrides: &RuntimeOverrides,
     options: &AnalyzeOptions,
 ) -> Result<Option<BaselineReport>, AnalyzeError> {
     let Some(path) = &options.baseline else {
@@ -124,7 +125,7 @@ fn apply_baseline_options(
     if options.update_baseline {
         return Ok(Some(write_baseline(issues, root, path)?));
     }
-    Ok(Some(apply_baseline(issues, root, path)?))
+    Ok(Some(apply_baseline(issues, root, path, overrides)?))
 }
 
 struct AnalysisCore {
@@ -152,15 +153,6 @@ fn run_analysis_core(
         workspace_members: probe.workspace_members.clone(),
     };
 
-    let plugins = extract_plugin_hints_with_cache(
-        &probe.root,
-        &loaded,
-        &probe.sources,
-        &probe.manifest,
-        Some(&options.cache),
-    )?;
-    let warnings = actionable_plugin_warnings(&plugins);
-
     let target = probe
         .effective_config
         .target_version
@@ -176,30 +168,42 @@ fn run_analysis_core(
         Some(&options.cache),
     )?;
 
+    // Step 5 runs after step 6 so Flask and Celery can read decorators off the
+    // parse output instead of re-opening every source file. Nothing in parse
+    // depends on plugin hints.
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &probe.root,
+        config: &loaded,
+        sources: &probe.sources,
+        manifest: &probe.manifest,
+        parse: &parse,
+        cache: Some(&options.cache),
+    })?;
+    let warnings = actionable_plugin_warnings(&plugins);
+
     let entry = build_entry_roots(
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
         &plugins,
         production,
-    )?;
+    );
 
     let mut graph = build_analysis_graph(probe, &parse, &plugins)?;
 
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     let resolution = resolve_imports(
-        &probe.root,
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
         &parse,
         &plugin_refs,
         &probe.workspace_members,
-    )?;
+    );
     apply_resolution_to_graph(&mut graph, &resolution)?;
-    apply_entry_plan(&mut graph, &entry)?;
+    apply_entry_plan(&mut graph, &entry);
 
-    let reachability = analyze_reachability_with_cache(
+    let reachability = analyze_reachability(
         &mut graph,
         &probe.sources,
         &entry,
@@ -207,7 +211,6 @@ fn run_analysis_core(
         &parse,
         &entry.mode,
         production,
-        Some(&options.cache),
     )?;
 
     let workspace_boundaries = probe
@@ -219,28 +222,29 @@ fn run_analysis_core(
         })
         .collect::<Vec<_>>();
 
-    let deps = reconcile_dependencies(
+    let context = RuleContext {
+        resolution: &resolution,
+        reachability: &reachability,
+        graph: &graph,
+        sources: &probe.sources,
+        parse: &parse,
+    };
+    let deps = crate::rules::deps::reconcile_with_context(
+        &DependencyRuleContext {
+            rules: &context,
+            config: &probe.effective_config,
+            strict,
+        },
         &probe.manifest,
-        &resolution,
-        &reachability,
         &plugins,
-        &probe.effective_config,
-        &probe.sources,
-        &parse,
-        &graph,
         &workspace_boundaries,
-        strict,
     );
 
-    let symbols = analyze_symbols(
-        &parse,
-        &resolution,
-        &reachability,
+    let symbols = crate::rules::symbols::analyze_with_context(
+        &context,
         &entry,
         &plugins,
         &entry.mode,
-        &graph,
-        &probe.sources,
         &probe.manifest,
     );
 
@@ -252,6 +256,7 @@ fn run_analysis_core(
         &probe.effective_config,
         overrides,
         &entry.mode,
+        &resolution,
     );
 
     let entry_mode = entry.mode.clone();

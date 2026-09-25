@@ -272,6 +272,28 @@ mod tests {
     }
 
     #[test]
+    fn own_cache_is_pruned_even_with_custom_excludes() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        write_file(&root.join(".chokkin/cache/parse/example.json"), "{}");
+        write_file(&root.join(".chokkin/hidden.py"), "");
+        write_file(&root.join("app.py"), "");
+        let patterns = effective_exclude(&["custom/**".to_owned()]);
+        let exclude = build_glob_set(&patterns).expect("excludes");
+        let entries: Vec<_> = configure_walker(root, &patterns, &exclude, false)
+            .expect("walker")
+            .build()
+            .map(|entry| entry.expect("entry").into_path())
+            .collect();
+        assert!(entries.contains(&root.join("app.py")));
+        assert!(
+            !entries
+                .iter()
+                .any(|path| path.starts_with(root.join(".chokkin")))
+        );
+    }
+
+    #[test]
     fn collect_files_honors_project_and_exclude_globs() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path();
@@ -287,8 +309,6 @@ mod tests {
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[]);
@@ -325,8 +345,6 @@ mod tests {
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[]);
@@ -358,8 +376,6 @@ mod tests {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: vec!["**/*.{py,pyi}".to_owned()],
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[".venv/**".to_owned()]);

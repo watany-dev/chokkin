@@ -29,7 +29,7 @@ pub struct PluginEntry {
 }
 
 /// Module name referenced from config (§9.2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleReference {
     /// Dotted module name.
     pub module: String,
@@ -66,17 +66,6 @@ pub struct FrameworkUsedGlob {
     pub origin: ReferenceOrigin,
 }
 
-/// Override file context assigned in Step 4 (§10).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileContextOverride {
-    /// Root-relative file or glob path.
-    pub path: String,
-    /// Context to apply.
-    pub context: FileContext,
-    /// Discovery origin.
-    pub origin: ReferenceOrigin,
-}
-
 /// Output from one enabled plugin extractor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginContribution {
@@ -92,8 +81,6 @@ pub struct PluginContribution {
     pub binary_usages: Vec<BinaryUsage>,
     /// Framework-used file globs.
     pub framework_used_globs: Vec<FrameworkUsedGlob>,
-    /// File context overrides.
-    pub file_context_overrides: Vec<FileContextOverride>,
 }
 
 impl PluginContribution {
@@ -107,7 +94,6 @@ impl PluginContribution {
             symbol_refs: Vec::new(),
             binary_usages: Vec::new(),
             framework_used_globs: Vec::new(),
-            file_context_overrides: Vec::new(),
         }
     }
 }
@@ -121,6 +107,8 @@ pub struct PluginHints {
     pub config_binary_usages: Vec<BinaryUsage>,
     /// Distributions used via config without a distinct CLI name.
     pub config_used_distributions: Vec<String>,
+    /// Module references from generic config scanning (pytest `-p`, mypy plugins, PDM `call`).
+    pub config_module_refs: Vec<ModuleReference>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,
 }
@@ -138,6 +126,7 @@ impl PluginHints {
         self.contributions
             .iter()
             .flat_map(|contrib| contrib.module_refs.iter())
+            .chain(self.config_module_refs.iter())
     }
 
     /// Iterate all binary usages.

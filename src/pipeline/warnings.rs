@@ -82,6 +82,19 @@ fn write_manifest_warning(
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
         },
+        ManifestWarning::DependencyGroupIncludeUndefined {
+            file,
+            group,
+            include,
+        } => write!(
+            formatter,
+            "manifest: dependency group `{group}` in `{file}` includes undefined group `{include}`"
+        ),
+        ManifestWarning::DependencyGroupIncludeCycle { file, groups } => write!(
+            formatter,
+            "manifest: dependency groups in `{file}` include each other in a cycle: {}",
+            groups.join(" -> ")
+        ),
     }
 }
 
@@ -193,6 +206,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: vec![
                 PluginsWarning::PluginNoOp {
                     plugin: PluginId::Pytest,

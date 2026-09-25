@@ -27,8 +27,6 @@ fn parse_fixture(name: &str) -> chokkin::ParsedModule {
         layout: ProjectLayout::Unknown,
         packages: Vec::new(),
         inferred_globs: Vec::new(),
-        flat_candidates: Vec::new(),
-        ambiguous_flat_resolution: false,
     };
     parse_file(
         &root,
@@ -54,15 +52,11 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         _ => LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
     };
     parse_file(
@@ -229,8 +223,6 @@ fn parse_project_sources_fixture_suite() {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files,
@@ -239,8 +231,7 @@ fn parse_project_sources_fixture_suite() {
 
     let summary =
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
-    assert!(summary.parsed_count >= 3);
-    assert_eq!(summary.skipped_count, 0);
+    assert!(summary.modules.len() >= 3);
 }
 
 #[test]
@@ -257,8 +248,6 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -299,8 +288,6 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
             layout: ProjectLayout::Src,
             packages: vec!["app".to_owned()],
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -365,8 +352,6 @@ fn parse_project_sources_extracts_notebook_code_cells() {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -379,8 +364,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
 
     let summary =
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
-    assert_eq!(summary.parsed_count, 1);
-    assert_eq!(summary.skipped_count, 0);
+    assert_eq!(summary.modules.len(), 1);
     let module = summary.modules.first().expect("module");
     assert_eq!(module.path, "analysis.ipynb");
     assert!(
@@ -413,8 +397,6 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
-            flat_candidates: Vec::new(),
-            ambiguous_flat_resolution: false,
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -427,9 +409,14 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
 
     let summary =
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
-    assert_eq!(summary.parsed_count, 1);
-    assert_eq!(summary.error_count, 0);
+    assert_eq!(summary.modules.len(), 1);
     let module = summary.modules.first().expect("module");
+    assert!(
+        module
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity != ParseSeverity::Error)
+    );
     assert!(module.imports.is_empty());
     assert!(module.diagnostics.iter().any(|diagnostic| {
         diagnostic.severity == ParseSeverity::Warning
@@ -462,4 +449,126 @@ fn collect_py_files(
             });
         }
     }
+}
+
+#[test]
+fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("mkdir");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: temp.path().to_path_buf(),
+    };
+    let mut files = Vec::new();
+    for index in 0..8 {
+        let path = format!("src/mod_{index}.py");
+        std::fs::write(temp.path().join(&path), "import requests\n").expect("write source");
+        files.push(chokkin::DiscoveredFile {
+            path,
+            kind: chokkin::FileKind::Python,
+            context: FileContext::Runtime,
+        });
+    }
+    let sources = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo {
+            layout: ProjectLayout::Src,
+            packages: Vec::new(),
+            inferred_globs: Vec::new(),
+        },
+        effective_globs: Vec::new(),
+        files,
+        warnings: Vec::new(),
+    };
+    let target = TargetVersion::default_py311();
+    let cache_options = chokkin::CacheOptions::default();
+
+    let cold =
+        parse_project_sources_with_cache(&root, &sources, &target, None, Some(&cache_options))
+            .expect("cold parse");
+
+    let parse_dir = temp.path().join(".chokkin/cache/parse");
+    let entries: Vec<_> = std::fs::read_dir(&parse_dir)
+        .expect("read parse cache dir")
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "8 sources must share one bundle, found {entries:?}"
+    );
+
+    let mut store = ParseCacheStore::new();
+    let warm = parse_project_sources_with_cache(
+        &root,
+        &sources,
+        &target,
+        Some(&mut store),
+        Some(&cache_options),
+    )
+    .expect("warm parse");
+
+    assert_eq!(cold, warm);
+    assert_eq!(store.stats().hits, 8, "every module came off the bundle");
+    assert_eq!(store.stats().misses, 0);
+    assert_eq!(store.stats().stores, 0);
+}
+
+#[test]
+fn disk_parse_cache_drops_entries_for_vanished_sources() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("mkdir");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+        start: temp.path().to_path_buf(),
+    };
+    let layout = LayoutInfo {
+        layout: ProjectLayout::Src,
+        packages: Vec::new(),
+        inferred_globs: Vec::new(),
+    };
+    let discovered = |path: &str| chokkin::DiscoveredFile {
+        path: path.to_owned(),
+        kind: chokkin::FileKind::Python,
+        context: FileContext::Runtime,
+    };
+    for path in ["src/kept.py", "src/gone.py"] {
+        std::fs::write(temp.path().join(path), "import requests\n").expect("write source");
+    }
+    let target = TargetVersion::default_py311();
+    let cache_options = chokkin::CacheOptions::default();
+
+    let both = chokkin::DiscoveredSources {
+        root: root.clone(),
+        layout,
+        effective_globs: Vec::new(),
+        files: vec![discovered("src/kept.py"), discovered("src/gone.py")],
+        warnings: Vec::new(),
+    };
+    parse_project_sources_with_cache(&root, &both, &target, None, Some(&cache_options))
+        .expect("first parse");
+
+    let one = chokkin::DiscoveredSources {
+        files: vec![discovered("src/kept.py")],
+        ..both
+    };
+    std::fs::remove_file(temp.path().join("src/gone.py")).expect("remove source");
+    parse_project_sources_with_cache(&root, &one, &target, None, Some(&cache_options))
+        .expect("second parse");
+
+    let parse_dir = temp.path().join(".chokkin/cache/parse");
+    let bundle_path = std::fs::read_dir(&parse_dir)
+        .expect("read parse cache dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .next()
+        .expect("bundle file");
+    let bundle = std::fs::read_to_string(&bundle_path).expect("read bundle");
+    assert!(bundle.contains("src/kept.py"));
+    assert!(
+        !bundle.contains("src/gone.py"),
+        "the removed source must be pruned from the bundle"
+    );
 }

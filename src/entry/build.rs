@@ -8,36 +8,26 @@ use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_targ
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
 use super::auto::detect_auto_entries;
-use super::error::EntryError;
 use super::merge::merge_entry_candidates;
 use super::mode::resolve_project_mode;
 use super::module::resolve_module_to_path;
 use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryWarning};
 
 /// Build the entry root plan for reachability analysis (pipeline step 8).
-///
-/// # Errors
-///
-/// Returns [`EntryError`] only when an internal invariant is violated.
+#[must_use]
 pub fn build_entry_roots(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     plugins: &PluginHints,
     production: bool,
-) -> Result<EntryPlan, EntryError> {
+) -> EntryPlan {
     let known_paths = known_file_paths(sources);
     let file_contexts = file_context_index(sources);
     let mut warnings = Vec::new();
     let mut candidates = Vec::new();
 
-    collect_config_entries(
-        config,
-        sources,
-        &known_paths,
-        &file_contexts,
-        &mut candidates,
-    );
+    collect_config_entries(config, &file_contexts, &mut candidates);
     collect_manifest_entries(
         manifest,
         sources,
@@ -65,11 +55,11 @@ pub fn build_entry_roots(
     roots.sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
 
-    Ok(EntryPlan {
+    EntryPlan {
         mode,
         roots,
         warnings,
-    })
+    }
 }
 
 fn known_file_paths(sources: &DiscoveredSources) -> BTreeSet<String> {
@@ -86,13 +76,11 @@ fn file_context_index(sources: &DiscoveredSources) -> BTreeMap<&str, FileContext
 
 fn collect_config_entries(
     config: &ChokkinConfig,
-    _sources: &DiscoveredSources,
-    known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,
     candidates: &mut Vec<EntryCandidate>,
 ) {
     for entry in &config.entry {
-        let context = context_for_path(&entry.path, known_paths, file_contexts);
+        let context = context_for_path(&entry.path, file_contexts);
         candidates.push(EntryCandidate {
             spec: entry.clone(),
             context,
@@ -166,7 +154,7 @@ fn collect_symbol_ref_entries(
             });
             continue;
         };
-        let context = context_for_path(&path, known_paths, file_contexts);
+        let context = context_for_path(&path, file_contexts);
         candidates.push(EntryCandidate {
             spec: EntrySpec {
                 path,
@@ -196,19 +184,11 @@ fn parse_manifest_target(target: &str) -> Option<(String, Option<String>)> {
     Some((trimmed.to_owned(), None))
 }
 
-fn context_for_path(
-    path: &str,
-    known_paths: &BTreeSet<String>,
-    file_contexts: &BTreeMap<&str, FileContext>,
-) -> FileContext {
-    if known_paths.contains(path) {
-        file_contexts
-            .get(path)
-            .copied()
-            .unwrap_or_else(|| assign_file_context(path))
-    } else {
-        assign_file_context(path)
-    }
+fn context_for_path(path: &str, file_contexts: &BTreeMap<&str, FileContext>) -> FileContext {
+    file_contexts
+        .get(path)
+        .copied()
+        .unwrap_or_else(|| assign_file_context(path))
 }
 
 fn retain_existing_root(
@@ -247,8 +227,6 @@ mod tests {
                 layout: ProjectLayout::Src,
                 packages: vec!["acme".to_owned()],
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files,
@@ -296,11 +274,11 @@ mod tests {
                 contributions: Vec::new(),
                 config_binary_usages: Vec::new(),
                 config_used_distributions: Vec::new(),
+                config_module_refs: Vec::new(),
                 warnings: Vec::new(),
             },
             true,
-        )
-        .expect("plan");
+        );
         assert!(
             plan.roots
                 .iter()

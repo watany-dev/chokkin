@@ -7,8 +7,8 @@ use std::path::Path;
 
 use chokkin::{
     Confidence, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
-    ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId, Severity,
-    apply_baseline, render_issues, write_baseline,
+    ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId,
+    RuntimeOverrides, Severity, apply_baseline, render_issues, write_baseline,
 };
 use jsonschema::Validator;
 use serde_json::Value;
@@ -126,7 +126,13 @@ fn baseline_v03_validates_and_reads_v02_without_schema_version() {
     fs::write(&baseline, format!("{v02}\n")).expect("write v0.2 baseline");
 
     let mut report = sample_report();
-    apply_baseline(&mut report, dir.path(), &baseline).expect("apply v0.2 baseline");
+    apply_baseline(
+        &mut report,
+        dir.path(),
+        &baseline,
+        &RuntimeOverrides::default(),
+    )
+    .expect("apply v0.2 baseline");
     assert!(report.issues.is_empty());
     assert_eq!(report.exit_status, ExitStatus::Success);
 }

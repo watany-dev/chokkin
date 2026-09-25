@@ -2,25 +2,34 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
+use crate::config::RuntimeOverrides;
+use crate::fix::atomic_write;
+use crate::path_util::normalize_rel_path;
+use crate::rules::emit::{build_summary, compute_exit_status};
 use crate::rules::{
-    Issue, IssueReport, IssueSummary, SuppressReason, SuppressedIssue, issue_fingerprint,
-    issue_stable_target,
+    IssueReport, SuppressReason, SuppressedIssue, issue_fingerprint, issue_stable_target,
 };
 
-use super::types::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, current_baseline_schema_version,
-};
+use super::types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
 
-/// Apply a baseline file by suppressing matching issues.
+/// Baseline file `schema_version` written by chokkin v0.3+.
+const BASELINE_SCHEMA_VERSION: &str = "1";
+
+/// Apply a baseline file, recomputing the exit status under `overrides`.
+///
+/// # Errors
+///
+/// Returns [`BaselineError`] when the baseline path escapes the project root or
+/// the file cannot be read or parsed.
 pub fn apply_baseline(
     report: &mut IssueReport,
     root: &Path,
     baseline_path: &Path,
+    overrides: &RuntimeOverrides,
 ) -> Result<BaselineReport, BaselineError> {
     let path = resolve_baseline_path(root, baseline_path)?;
     if !path.exists() {
@@ -54,7 +63,10 @@ pub fn apply_baseline(
 
     report.issues = kept;
     report.summary = build_summary(&report.issues);
-    report.exit_status = compute_exit_status(&report.issues, report.exit_status);
+    // Same thresholds as step 12, so a baseline that silences every error
+    // leaves a warning-only run at exit 0 (spec §16, §24).
+    report.exit_status =
+        compute_exit_status(&report.issues, overrides, overrides.strict.unwrap_or(false));
 
     Ok(BaselineReport {
         path: Some(display_path(root, &path)),
@@ -88,7 +100,7 @@ pub fn write_baseline(
         .collect::<Vec<_>>();
     let written = u32::try_from(issues.len()).unwrap_or(u32::MAX);
     let file = BaselineFile {
-        schema_version: current_baseline_schema_version().to_owned(),
+        schema_version: BASELINE_SCHEMA_VERSION.to_owned(),
         chokkin_version: VERSION.to_owned(),
         generated_at: generated_at(),
         issues,
@@ -97,7 +109,12 @@ pub fn write_baseline(
         path: display_path(root, &path),
         detail: source.to_string(),
     })?;
-    atomic_write(&path, &format!("{contents}\n"))?;
+    atomic_write(&path, format!("{contents}\n").as_bytes(), true).map_err(|source| {
+        BaselineError::Io {
+            path: path.display().to_string(),
+            source,
+        }
+    })?;
     Ok(BaselineReport {
         path: Some(display_path(root, &path)),
         suppressed: 0,
@@ -187,69 +204,8 @@ fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineE
     }
 }
 
-fn atomic_write(path: &Path, contents: &str) -> Result<(), BaselineError> {
-    let parent = path.parent().ok_or_else(|| BaselineError::Io {
-        path: path.display().to_string(),
-        source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing parent directory"),
-    })?;
-    let original_metadata = fs::metadata(path).ok();
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-baseline-")
-        .tempfile_in(parent)
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    temp.write_all(contents.as_bytes())
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    if let Some(metadata) = original_metadata {
-        temp.as_file()
-            .set_permissions(metadata.permissions())
-            .map_err(|source| BaselineError::Io {
-                path: path.display().to_string(),
-                source,
-            })?;
-    }
-    temp.persist(path).map_err(|error| BaselineError::Io {
-        path: path.display().to_string(),
-        source: error.error,
-    })?;
-    Ok(())
-}
-
-fn build_summary(issues: &[Issue]) -> IssueSummary {
-    let mut by_rule = std::collections::BTreeMap::new();
-    for issue in issues {
-        *by_rule.entry(issue.rule).or_insert(0) += 1;
-    }
-    IssueSummary {
-        total: u32::try_from(issues.len()).unwrap_or(u32::MAX),
-        by_rule,
-    }
-}
-
-fn compute_exit_status(issues: &[Issue], previous: crate::ExitStatus) -> crate::ExitStatus {
-    if previous == crate::ExitStatus::Success || issues.is_empty() {
-        crate::ExitStatus::Success
-    } else {
-        crate::ExitStatus::IssuesFound
-    }
-}
-
 fn display_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+    normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
 fn generated_at() -> String {
@@ -263,7 +219,7 @@ fn generated_at() -> String {
 mod tests {
     use super::*;
     use crate::config::Confidence;
-    use crate::rules::{Issue, IssueLocation, IssueSubject, RuleId, Severity};
+    use crate::rules::{Issue, IssueLocation, IssueSubject, IssueSummary, RuleId, Severity};
     use tempfile::TempDir;
 
     fn issue(path: &str) -> Issue {
@@ -333,6 +289,7 @@ mod tests {
 
         let mut current = issue("src/shared.py");
         current.workspace_member = Some("worker".to_owned());
+        current.severity = Severity::Error;
         let mut current_report = IssueReport {
             issues: vec![current],
             suppressed: Vec::new(),
@@ -343,8 +300,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let result =
-            apply_baseline(&mut current_report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut current_report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
         assert_eq!(result.suppressed, 0);
         assert_eq!(current_report.issues.len(), 1);
         assert_eq!(current_report.exit_status, crate::ExitStatus::IssuesFound);
@@ -364,11 +326,84 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
         write_baseline(&report, dir.path(), &baseline).expect("write baseline");
-        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
         assert_eq!(result.suppressed, 1);
         assert!(report.issues.is_empty());
         assert_eq!(report.exit_status, crate::ExitStatus::Success);
         assert_eq!(report.suppressed[0].reason, SuppressReason::Baseline);
+    }
+
+    /// The baseline silences the only exit-worthy issue, so the warning left
+    /// behind must not keep the run at exit 1 (spec §16, §24).
+    #[test]
+    fn baseline_exit_status_honours_severity_thresholds() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join("chokkin-baseline.json");
+        let mut blocking = issue("src/legacy.py");
+        blocking.severity = Severity::Error;
+        let frozen = IssueReport {
+            issues: vec![blocking.clone()],
+            suppressed: Vec::new(),
+            summary: build_summary(std::slice::from_ref(&blocking)),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        write_baseline(&frozen, dir.path(), &baseline).expect("write baseline");
+
+        let warning = issue("src/new.py");
+        let issues = vec![blocking, warning];
+        let mut report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
+
+        assert_eq!(result.suppressed, 1);
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.exit_status, crate::ExitStatus::Success);
+    }
+
+    /// `--strict` lowers the thresholds, so the same remaining warning fails.
+    #[test]
+    fn baseline_exit_status_follows_strict_override() {
+        let dir = TempDir::new().expect("tempdir");
+        let baseline = dir.path().join("chokkin-baseline.json");
+        write_baseline(&IssueReport::empty(), dir.path(), &baseline).expect("write baseline");
+        let warning = issue("src/new.py");
+        let issues = vec![warning];
+        let mut report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let overrides = RuntimeOverrides {
+            strict: Some(true),
+            ..RuntimeOverrides::default()
+        };
+        apply_baseline(&mut report, dir.path(), &baseline, &overrides).expect("apply baseline");
+        assert_eq!(report.exit_status, crate::ExitStatus::IssuesFound);
+
+        let overrides = RuntimeOverrides {
+            strict: Some(true),
+            no_exit_code: Some(true),
+            ..RuntimeOverrides::default()
+        };
+        apply_baseline(&mut report, dir.path(), &baseline, &overrides).expect("apply baseline");
+        assert_eq!(report.exit_status, crate::ExitStatus::Success);
     }
 
     #[test]
@@ -382,7 +417,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
 
         assert_eq!(result.suppressed, 0);
         assert_eq!(report.issues.len(), 1);
@@ -419,7 +460,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let result = apply_baseline(&mut report, dir.path(), &baseline).expect("apply baseline");
+        let result = apply_baseline(
+            &mut report,
+            dir.path(),
+            &baseline,
+            &RuntimeOverrides::default(),
+        )
+        .expect("apply baseline");
         assert_eq!(result.suppressed, 1);
         assert!(report.issues.is_empty());
     }
@@ -462,6 +509,7 @@ mod tests {
             &mut report,
             root.path(),
             &outside.path().join("baseline.json"),
+            &RuntimeOverrides::default(),
         )
         .expect_err("outside root");
         assert!(matches!(error, BaselineError::OutsideRoot { .. }));

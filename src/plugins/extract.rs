@@ -1,12 +1,18 @@
 //! Plugin hint extraction orchestration.
 
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
 use crate::VERSION;
 use crate::cache::{
-    CacheKeyContext, CacheOptions, ScanCacheKey, ScanInputFingerprints, stable_hex_hash,
+    CacheKeyContext, CacheOptions, ScanCacheKey, ScanInputFingerprints, SourceFingerprint,
+    stable_hex_hash,
 };
 use crate::config::{LoadedConfig, PluginId};
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
+use crate::parser::ParseSummary;
 use crate::sources::DiscoveredSources;
 
 use super::celery;
@@ -27,23 +33,53 @@ pub fn extract_plugin_hints(
     config: &LoadedConfig,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
+    parse: &ParseSummary,
 ) -> Result<PluginHints, PluginsError> {
-    extract_plugin_hints_with_cache(root, config, sources, manifest, None)
+    extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root,
+        config,
+        sources,
+        manifest,
+        parse,
+        cache: None,
+    })
+}
+
+/// Inputs for [`extract_plugin_hints_with_parse`].
+#[derive(Clone, Copy)]
+pub struct PluginExtractRequest<'a> {
+    /// Discovered project root.
+    pub root: &'a ProjectRoot,
+    /// Loaded chokkin configuration.
+    pub config: &'a LoadedConfig,
+    /// Discovered source files.
+    pub sources: &'a DiscoveredSources,
+    /// Extracted manifest.
+    pub manifest: &'a LoadedManifest,
+    /// Step 6 parse output.
+    pub parse: &'a ParseSummary,
+    /// Disk cache used for the generic config scan.
+    pub cache: Option<&'a CacheOptions>,
 }
 
 /// Extract framework hints, optionally caching generic config scan results.
-pub fn extract_plugin_hints_with_cache(
-    root: &ProjectRoot,
-    config: &LoadedConfig,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    cache: Option<&CacheOptions>,
+pub fn extract_plugin_hints_with_parse(
+    request: &PluginExtractRequest<'_>,
 ) -> Result<PluginHints, PluginsError> {
+    let PluginExtractRequest {
+        root,
+        config,
+        sources,
+        manifest,
+        parse,
+        cache,
+    } = *request;
     let ctx = PluginContext {
         root,
         config: &config.effective,
         sources,
         manifest,
+        parse,
     };
     let mut contributions = Vec::new();
     let mut warnings = Vec::new();
@@ -81,8 +117,15 @@ pub fn extract_plugin_hints_with_cache(
         contributions,
         config_binary_usages: scan.binary_usages,
         config_used_distributions: scan.used_distributions,
+        config_module_refs: scan.module_refs,
         warnings,
     })
+}
+
+#[derive(Serialize, Deserialize)]
+struct ConfigScanCachePayload {
+    scan: config_scan::ConfigScanResult,
+    inputs: Vec<SourceFingerprint>,
 }
 
 fn cached_config_scan(
@@ -94,25 +137,43 @@ fn cached_config_scan(
     let Some(cache) = cache.filter(|cache| cache.enabled) else {
         return Ok(config_scan::scan_config(ctx));
     };
+    let root = ctx.root.path.as_path();
     let key = config_scan_cache_key(config, manifest)?;
-    if let Some(scan) = cache
-        .read_scan_payload(ctx.root.path.as_path(), &key)
+    // Fingerprinted before scanning: an edit racing the scan then fails the
+    // next hit check instead of being recorded as already seen.
+    let inputs = config_scan_inputs(root)?;
+    if let Some(payload) = cache
+        .read_scan_payload::<ConfigScanCachePayload>(root, &key)
         .map_err(|source| PluginsError::Io {
-            path: cache.scan_entry_path(ctx.root.path.as_path(), &key),
+            path: cache.scan_entry_path(root, &key),
             source,
         })?
+        && payload.inputs == inputs
     {
-        return Ok(scan);
+        return Ok(payload.scan);
     }
 
-    let scan = config_scan::scan_config(ctx);
+    let payload = ConfigScanCachePayload {
+        scan: config_scan::scan_config(ctx),
+        inputs,
+    };
     cache
-        .write_scan_payload(ctx.root.path.as_path(), key, &scan)
+        .write_scan_payload(root, key, &payload)
         .map_err(|source| PluginsError::Io {
-            path: cache.directory_path(ctx.root.path.as_path()),
+            path: cache.directory_path(root),
             source,
         })?;
-    Ok(scan)
+    Ok(payload.scan)
+}
+
+fn config_scan_inputs(root: &Path) -> Result<Vec<SourceFingerprint>, PluginsError> {
+    config_scan::scan_input_paths(root)
+        .into_iter()
+        .map(|path| {
+            SourceFingerprint::from_absolute_stat(root, &path)
+                .map_err(|source| PluginsError::Io { path, source })
+        })
+        .collect()
 }
 
 fn config_scan_cache_key(
@@ -139,7 +200,7 @@ fn config_scan_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", manifest.sources).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "config-scan-v1".to_owned(),
+            unit_version: "config-scan-v3".to_owned(),
         },
         inputs,
     })
@@ -147,6 +208,8 @@ fn config_scan_cache_key(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::cache::CacheOptions;
 
@@ -167,7 +230,6 @@ mod tests {
             root: root.clone(),
             effective: config,
             sources: crate::config::ConfigSources {
-                used_defaults: true,
                 dot_chokkin_toml: None,
                 chokkin_toml: None,
                 pyproject_tool_chokkin: false,
@@ -181,8 +243,6 @@ mod tests {
                 layout: crate::sources::ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -199,33 +259,27 @@ mod tests {
             sources: crate::manifest::ManifestSources::default(),
             warnings: Vec::new(),
         };
-        let hints = extract_plugin_hints(&loaded.root, &loaded, &sources, &manifest)
-            .expect("extract hints");
+        let hints = extract_plugin_hints(
+            &loaded.root,
+            &loaded,
+            &sources,
+            &manifest,
+            &ParseSummary::default(),
+        )
+        .expect("extract hints");
         assert!(hints.contributions.is_empty());
     }
 
-    #[test]
-    #[allow(clippy::too_many_lines)]
-    fn config_scan_uses_disk_cache_payload() {
-        let root_path =
-            std::env::temp_dir().join(format!("chokkin-plugin-scan-cache-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root_path);
-        std::fs::create_dir_all(&root_path).expect("create root");
-        std::fs::write(
-            root_path.join("pyproject.toml"),
-            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[tool.mypy]\nstrict = true\n",
-        )
-        .expect("write pyproject");
+    fn scan_cache_fixture(root_path: &Path) -> (LoadedConfig, DiscoveredSources, LoadedManifest) {
         let root = ProjectRoot {
-            path: root_path.clone(),
+            path: root_path.to_path_buf(),
             marker: crate::discovery::RootMarker::PyProjectToml,
-            start: root_path.clone(),
+            start: root_path.to_path_buf(),
         };
         let loaded = LoadedConfig {
             root: root.clone(),
             effective: crate::default_config(),
             sources: crate::config::ConfigSources {
-                used_defaults: true,
                 dot_chokkin_toml: None,
                 chokkin_toml: None,
                 pyproject_tool_chokkin: false,
@@ -239,8 +293,6 @@ mod tests {
                 layout: crate::sources::ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -260,29 +312,54 @@ mod tests {
             },
             warnings: Vec::new(),
         };
-        let cache = CacheOptions::default();
+        (loaded, sources, manifest)
+    }
 
-        let first = extract_plugin_hints_with_cache(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            Some(&cache),
+    fn cached_binaries(root_path: &Path, cache: &CacheOptions) -> BTreeSet<String> {
+        let (loaded, sources, manifest) = scan_cache_fixture(root_path);
+        extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &ParseSummary::default(),
+            cache: Some(cache),
+        })
+        .expect("extract hints")
+        .config_binary_usages
+        .into_iter()
+        .map(|usage| usage.binary)
+        .collect()
+    }
+
+    #[test]
+    fn config_scan_uses_disk_cache_payload() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root_path = temp.path();
+        std::fs::write(
+            root_path.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[tool.mypy]\nstrict = true\n",
         )
-        .expect("first extract");
+        .expect("write pyproject");
+        let (loaded, sources, manifest) = scan_cache_fixture(root_path);
+        let cache = CacheOptions::default();
+        let parse = ParseSummary::default();
+        let request = PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &parse,
+            cache: Some(&cache),
+        };
+
+        let first = extract_plugin_hints_with_parse(&request).expect("first extract");
         let key = config_scan_cache_key(&loaded, &manifest).expect("cache key");
-        let cached: config_scan::ConfigScanResult = cache
-            .read_scan_payload(&root_path, &key)
+        let cached: ConfigScanCachePayload = cache
+            .read_scan_payload(root_path, &key)
             .expect("read payload")
             .expect("payload hit");
-        let second = extract_plugin_hints_with_cache(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            Some(&cache),
-        )
-        .expect("second extract");
+        let second = extract_plugin_hints_with_parse(&request).expect("second extract");
 
         assert!(
             first
@@ -290,8 +367,37 @@ mod tests {
                 .iter()
                 .any(|usage| usage.binary == "mypy")
         );
-        assert_eq!(cached.binary_usages, first.config_binary_usages);
+        assert_eq!(cached.scan.binary_usages, first.config_binary_usages);
         assert_eq!(second.config_binary_usages, first.config_binary_usages);
-        let _ = std::fs::remove_dir_all(root_path);
+    }
+
+    #[test]
+    fn config_scan_cache_misses_when_scanned_file_is_created_or_edited() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root_path = temp.path();
+        std::fs::write(
+            root_path.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("write pyproject");
+        let cache = CacheOptions::default();
+
+        assert!(!cached_binaries(root_path, &cache).contains("mypy"));
+
+        std::fs::write(
+            root_path.join("tox.ini"),
+            "[testenv]\ncommands = mypy src\n",
+        )
+        .expect("write tox.ini");
+        assert!(cached_binaries(root_path, &cache).contains("mypy"));
+
+        std::fs::create_dir(root_path.join("scripts")).expect("create scripts");
+        std::fs::write(root_path.join("scripts/lint.sh"), "ruff check .\n").expect("write script");
+        assert!(cached_binaries(root_path, &cache).contains("ruff"));
+
+        std::fs::write(root_path.join("scripts/lint.sh"), "black .\n").expect("edit script");
+        let binaries = cached_binaries(root_path, &cache);
+        assert!(binaries.contains("black"));
+        assert!(!binaries.contains("ruff"));
     }
 }

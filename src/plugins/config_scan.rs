@@ -1,17 +1,19 @@
 //! Static config scanning for CLI / dev-tool usage (Phase 1.5 §4.A).
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use toml::Value;
 
 use crate::manifest::{DependencyContext, normalize_distribution_name};
-use crate::resolver::build_binary_map;
+use crate::resolver::{VenvIndex, build_binary_map};
 
+use super::commands::SourceHits;
+use super::config_text::{PyprojectDoc, leading_spaces};
 use super::context::PluginContext;
-use super::types::{BinaryUsage, ReferenceOrigin};
-use super::util::{read_pyproject_table, relative_path};
+use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin};
+use super::util::relative_path;
+use super::{task_files, tool_plugins};
 
 /// Output from config scanning.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -20,6 +22,33 @@ pub struct ConfigScanResult {
     pub binary_usages: Vec<BinaryUsage>,
     /// Distributions used without a distinct CLI name (themes, tox extras, etc.).
     pub used_distributions: Vec<String>,
+    /// Modules named as plugins or callables in config (pytest `-p`, mypy
+    /// `plugins`, PDM `call`).
+    #[serde(default)]
+    pub module_refs: Vec<ModuleReference>,
+}
+
+const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
+const PRE_COMMIT_CONFIG: &str = ".pre-commit-config.yaml";
+const TOX_CONFIG: &str = "tox.ini";
+const SCRIPT_DIRS: [&str; 2] = ["scripts", "bin"];
+
+/// Files [`scan_config`] may read beyond the config and manifest inputs.
+///
+/// Every existing candidate is listed, not only the ones a scan read, so a
+/// cache entry is invalidated when a candidate appears after it was written.
+#[must_use]
+pub fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = MKDOCS_CONFIG_NAMES
+        .into_iter()
+        .chain([PRE_COMMIT_CONFIG, TOX_CONFIG])
+        .map(|name| root.join(name))
+        .filter(|path| path.is_file())
+        .collect();
+    paths.extend(shell_script_paths(root));
+    paths.extend(task_files::input_paths(root));
+    paths.extend(tool_plugins::input_paths(root));
+    paths
 }
 
 /// Scan project configuration for dev-tool / CLI usage.
@@ -28,13 +57,24 @@ pub fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     let root = ctx.root.path.as_path();
     let mut result = ConfigScanResult::default();
     let mut seen_binaries: HashSet<(String, String)> = HashSet::new();
+    let pyproject = PyprojectDoc::load(root);
+    let binary_map = build_binary_map(ctx.config, &VenvIndex::default());
+    let known = |name: &str| {
+        binary_map.contains_key(name)
+            || tool_key_to_binary(name).is_some()
+            || hook_id_to_binary(name).is_some()
+    };
 
-    scan_pyproject_tools(root, &mut result, &mut seen_binaries);
+    scan_pyproject_tools(pyproject.as_ref(), &mut result, &mut seen_binaries);
     scan_manifest_entry_points(ctx, &mut result, &mut seen_binaries);
     scan_mkdocs_config(root, &mut result, &mut seen_binaries);
     scan_pre_commit_config(root, &mut result, &mut seen_binaries);
     scan_tox_config(root, ctx, &mut result, &mut seen_binaries);
     scan_shell_scripts(root, &mut result, &mut seen_binaries);
+    let hits = task_files::scan(root, pyproject.as_ref(), &known);
+    merge_hits(&mut result, &mut seen_binaries, hits);
+    let hits = tool_plugins::scan(root, pyproject.as_ref());
+    merge_hits(&mut result, &mut seen_binaries, hits);
 
     result.used_distributions.sort();
     result.used_distributions.dedup();
@@ -42,35 +82,35 @@ pub fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
 }
 
 fn scan_pyproject_tools(
-    root: &Path,
+    pyproject: Option<&PyprojectDoc>,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    let path = root.join("pyproject.toml");
-    if !path.is_file() {
-        return;
-    }
-    let Ok(table) = read_pyproject_table(&path) else {
+    let Some(doc) = pyproject else {
         return;
     };
-    let rel = relative_path(root, &path);
-    let Some(tool) = table.get("tool").and_then(Value::as_table) else {
+    let Some(tool) = doc.table("tool") else {
         return;
     };
     for key in tool.keys() {
         if let Some(binary) = tool_key_to_binary(key) {
-            push_binary(
-                result,
-                seen,
-                binary,
-                ReferenceOrigin {
-                    file: rel.clone(),
-                    line: None,
-                    label: format!("tool.{key}"),
-                },
-            );
+            push_binary(result, seen, binary, doc.origin("tool", key));
         }
     }
+}
+
+fn merge_hits(
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    hits: SourceHits,
+) {
+    for usage in hits.binaries {
+        push_binary(result, seen, &usage.binary, usage.origin);
+    }
+    for distribution in &hits.distributions {
+        push_distribution(result, distribution);
+    }
+    result.module_refs.extend(hits.module_refs);
 }
 
 fn scan_manifest_entry_points(
@@ -102,7 +142,7 @@ fn scan_mkdocs_config(
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    for name in ["mkdocs.yml", "mkdocs.yaml"] {
+    for name in MKDOCS_CONFIG_NAMES {
         let path = root.join(name);
         if !path.is_file() {
             continue;
@@ -232,16 +272,12 @@ fn unquote_yaml_scalar(value: &str) -> &str {
     value.trim().trim_matches('"').trim_matches('\'').trim()
 }
 
-fn leading_spaces(line: &str) -> usize {
-    line.chars().take_while(|ch| *ch == ' ').count()
-}
-
 fn scan_pre_commit_config(
     root: &Path,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    let path = root.join(".pre-commit-config.yaml");
+    let path = root.join(PRE_COMMIT_CONFIG);
     if !path.is_file() {
         return;
     }
@@ -249,7 +285,7 @@ fn scan_pre_commit_config(
     let origin = ReferenceOrigin {
         file: rel,
         line: None,
-        label: ".pre-commit-config.yaml".to_owned(),
+        label: PRE_COMMIT_CONFIG.to_owned(),
     };
     push_binary(result, seen, "pre-commit", origin.clone());
 
@@ -277,7 +313,7 @@ fn scan_tox_config(
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    let path = root.join("tox.ini");
+    let path = root.join(TOX_CONFIG);
     if !path.is_file() {
         return;
     }
@@ -285,7 +321,7 @@ fn scan_tox_config(
     let origin = ReferenceOrigin {
         file: rel,
         line: None,
-        label: "tox.ini".to_owned(),
+        label: TOX_CONFIG.to_owned(),
     };
     push_binary(result, seen, "tox", origin.clone());
 
@@ -410,39 +446,44 @@ fn mark_optional_extra_dependencies(
     }
 }
 
+/// Sorted so the first-seen origin of a binary does not depend on `read_dir` order.
+fn shell_script_paths(root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for dir_name in SCRIPT_DIRS {
+        let Ok(entries) = std::fs::read_dir(root.join(dir_name)) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect();
+        files.sort();
+        paths.extend(files);
+    }
+    paths
+}
+
 fn scan_shell_scripts(
     root: &Path,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    for dir_name in ["scripts", "bin"] {
-        let dir = root.join(dir_name);
-        if !dir.is_dir() {
-            continue;
-        }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    for path in shell_script_paths(root) {
+        let rel = relative_path(root, &path);
+        let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let rel = relative_path(root, &path);
-            let Ok(contents) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let origin = ReferenceOrigin {
-                file: rel,
-                line: None,
-                label: path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("script")
-                    .to_owned(),
-            };
-            scan_lines_for_binaries(&contents, result, seen, &origin);
-        }
+        let origin = ReferenceOrigin {
+            file: rel,
+            line: None,
+            label: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("script")
+                .to_owned(),
+        };
+        scan_lines_for_binaries(&contents, result, seen, &origin);
     }
 }
 
@@ -556,6 +597,7 @@ mod tests {
     use crate::manifest::{
         DependencyOrigin, LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata,
     };
+    use crate::parser::ParseSummary;
     use crate::sources::{DiscoveredSources, LayoutInfo, ProjectLayout};
 
     fn empty_manifest(root: ProjectRoot) -> LoadedManifest {
@@ -570,6 +612,29 @@ mod tests {
             sources: ManifestSources::default(),
             warnings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn scan_input_paths_lists_existing_candidates_with_sorted_scripts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(root.join("tox.ini"), "[tox]\n").expect("write tox.ini");
+        std::fs::create_dir(root.join("scripts")).expect("create scripts");
+        std::fs::create_dir(root.join("scripts/nested")).expect("create nested");
+        std::fs::create_dir(root.join("bin")).expect("create bin");
+        for name in ["scripts/b.sh", "scripts/a.sh", "bin/run"] {
+            std::fs::write(root.join(name), "").expect("write script");
+        }
+
+        let paths: Vec<_> = scan_input_paths(root)
+            .iter()
+            .map(|path| relative_path(root, path))
+            .collect();
+
+        assert_eq!(
+            paths,
+            ["tox.ini", "scripts/a.sh", "scripts/b.sh", "bin/run"]
+        );
     }
 
     #[test]
@@ -595,19 +660,19 @@ mod tests {
                 layout: ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
         let manifest = empty_manifest(root.clone());
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         let binaries: BTreeSet<_> = result
@@ -642,19 +707,19 @@ mod tests {
                 layout: ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
         let manifest = empty_manifest(root.clone());
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         assert!(
@@ -711,6 +776,7 @@ mod tests {
                     label: "project.optional-dependencies.docs[0]".to_owned(),
                 },
                 opaque: false,
+                included_via: Vec::new(),
             });
         let config = crate::default_config();
         let sources = DiscoveredSources {
@@ -719,18 +785,18 @@ mod tests {
                 layout: ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
@@ -778,6 +844,7 @@ mod tests {
                     label: "project.optional-dependencies.docs[0]".to_owned(),
                 },
                 opaque: false,
+                included_via: Vec::new(),
             });
         let config = crate::default_config();
         let sources = DiscoveredSources {
@@ -786,18 +853,18 @@ mod tests {
                 layout: ProjectLayout::Unknown,
                 packages: Vec::new(),
                 inferred_globs: Vec::new(),
-                flat_candidates: Vec::new(),
-                ambiguous_flat_resolution: false,
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
+        let parse = ParseSummary::default();
         let ctx = PluginContext {
             root: &root,
             config: &config,
             sources: &sources,
             manifest: &manifest,
+            parse: &parse,
         };
         let result = scan_config(&ctx);
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));

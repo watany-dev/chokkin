@@ -1,6 +1,6 @@
 //! Configuration types for the chokkin analyzer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::discovery::ProjectRoot;
 
 /// Project analysis mode (§5, §8). `Auto` is resolved in a later pipeline step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(try_from = "String")]
 pub enum ProjectMode {
     /// Infer app vs library from manifests and layout.
     #[default]
@@ -42,6 +43,14 @@ impl ProjectMode {
     }
 }
 
+impl TryFrom<String> for ProjectMode {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value).ok_or_else(|| format!("expected auto, app, or library; got {value}"))
+    }
+}
+
 impl fmt::Display for ProjectMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
@@ -49,15 +58,16 @@ impl fmt::Display for ProjectMode {
 }
 
 /// Minimum confidence for emitted issues (§5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize)]
+#[serde(try_from = "String")]
 pub enum Confidence {
-    /// Only `certain` issues.
-    Certain,
+    /// All issues including `maybe`.
+    Maybe,
     /// `certain` and `likely` issues.
     #[default]
     Likely,
-    /// All issues including `maybe`.
-    Maybe,
+    /// Only `certain` issues.
+    Certain,
 }
 
 impl Confidence {
@@ -80,21 +90,14 @@ impl Confidence {
             _ => None,
         }
     }
+}
 
-    /// Numeric rank for floor comparisons (`Certain` is strongest).
-    #[must_use]
-    pub const fn rank(self) -> u8 {
-        match self {
-            Self::Certain => 2,
-            Self::Likely => 1,
-            Self::Maybe => 0,
-        }
-    }
+impl TryFrom<String> for Confidence {
+    type Error = String;
 
-    /// Returns true when `self` meets or exceeds `floor`.
-    #[must_use]
-    pub const fn meets_floor(self, floor: Self) -> bool {
-        self.rank() >= floor.rank()
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value)
+            .ok_or_else(|| format!("expected certain, likely, or maybe; got {value}"))
     }
 }
 
@@ -105,7 +108,8 @@ impl fmt::Display for Confidence {
 }
 
 /// Per-rule severity override level (Phase 3 / v0.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
 pub enum SeverityLevel {
     /// Disable the rule entirely.
     Off,
@@ -141,8 +145,18 @@ impl SeverityLevel {
     }
 }
 
+impl TryFrom<String> for SeverityLevel {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, String> {
+        Self::parse(&value)
+            .ok_or_else(|| format!("expected one of off, info, warning, error; got {value}"))
+    }
+}
+
 /// Known chokkin plugins (§5, §9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
+#[serde(try_from = "String")]
 pub enum PluginId {
     /// pytest test discovery and fixtures.
     Pytest,
@@ -229,8 +243,17 @@ impl PluginId {
     }
 }
 
+impl TryFrom<String> for PluginId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::from_key(&value).ok_or_else(|| format!("unknown plugin {value}"))
+    }
+}
+
 /// Parsed Python target version (§5 `target_version`), e.g. `py311`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
 pub struct TargetVersion(String);
 
 impl TargetVersion {
@@ -269,6 +292,14 @@ impl TargetVersion {
     }
 }
 
+impl TryFrom<String> for TargetVersion {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value).ok_or_else(|| format!("expected py3XX form; got {value}"))
+    }
+}
+
 impl fmt::Display for TargetVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
@@ -276,7 +307,8 @@ impl fmt::Display for TargetVersion {
 }
 
 /// Entry root: file path, optionally `path:symbol` for WSGI/ASGI callables.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
 pub struct EntrySpec {
     /// Path relative to project root (no `:` suffix).
     pub path: String,
@@ -322,6 +354,14 @@ impl EntrySpec {
     }
 }
 
+impl TryFrom<String> for EntrySpec {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value)
+    }
+}
+
 /// Dependency group name mappings (§5 `[tool.chokkin.dependencies]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyGroupsConfig {
@@ -334,7 +374,8 @@ pub struct DependencyGroupsConfig {
 }
 
 /// Per-workspace overrides under `[tool.chokkin.workspaces.<id>]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceOverride {
     /// Member path relative to the project root.
     pub path: String,
@@ -373,6 +414,8 @@ pub struct ChokkinConfig {
     pub binary_map: BTreeMap<String, String>,
     /// Plugin enablement flags.
     pub plugins: BTreeMap<PluginId, bool>,
+    /// Plugins set by a config layer; these win over dependency / file enablers.
+    pub explicit_plugins: BTreeSet<PluginId>,
     /// Per-rule ignore patterns (loaded only; matching is a later step).
     pub ignore: BTreeMap<String, Vec<String>>,
     /// Per-rule severity overrides (`off` / `info` / `warning` / `error`).
@@ -384,8 +427,6 @@ pub struct ChokkinConfig {
 /// Which config files contributed to the effective configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigSources {
-    /// Hardcoded defaults always contribute.
-    pub used_defaults: bool,
     /// `.chokkin.toml` at the project root, if present.
     pub dot_chokkin_toml: Option<PathBuf>,
     /// `chokkin.toml` at the project root, if present.
@@ -416,15 +457,6 @@ pub struct UvWorkspaceHint {
     pub members: Vec<String>,
 }
 
-/// Source that declared a workspace member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspaceMemberSource {
-    /// `[tool.uv.workspace].members`.
-    Uv,
-    /// `[tool.chokkin.workspaces.<id>]`.
-    Chokkin,
-}
-
 /// Workspace member resolved relative to the project root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedWorkspaceMember {
@@ -435,8 +467,6 @@ pub struct ResolvedWorkspaceMember {
     pub path: String,
     /// Root-relative member `pyproject.toml` path when present.
     pub pyproject_toml: Option<String>,
-    /// Declaration source.
-    pub source: WorkspaceMemberSource,
 }
 
 /// CLI flags that override file config (§2). Unset fields do not override.

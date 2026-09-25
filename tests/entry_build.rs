@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use chokkin::{
     EntryOrigin, EntryWarning, GraphEdge, ProjectMode, ProjectRoot, RootMarker, apply_entry_plan,
     build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
-    extract_manifest, extract_plugin_hints, load_config,
+    extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
+    resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -49,7 +50,10 @@ fn load_pipeline(path: &Path) -> PipelineInputs {
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
-    let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugin hints");
+    let target = resolve_target_version(&loaded.effective, &manifest);
+    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
+    let plugins =
+        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
     let config = loaded.effective;
     PipelineInputs {
         config,
@@ -75,8 +79,7 @@ fn django_manage_is_entry_with_plugin_origins() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     assert_eq!(plan.mode.mode, ProjectMode::App);
     let manage = plan
@@ -101,8 +104,7 @@ fn fastapi_asgi_is_auto_detected() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     let paths = entry_paths(&plan);
     assert!(paths.iter().any(|path| path.contains("asgi.py")));
@@ -118,8 +120,7 @@ fn library_only_resolves_library_mode() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     assert_eq!(plan.mode.mode, ProjectMode::Library);
 }
@@ -133,8 +134,7 @@ fn explicit_config_entry_merges_with_auto() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     let manage = plan
         .roots
@@ -159,8 +159,7 @@ fn missing_config_entry_emits_warning() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     assert!(
         plan.warnings
@@ -179,8 +178,7 @@ fn production_excludes_test_context_entries() {
         &inputs.sources,
         &inputs.plugins,
         true,
-    )
-    .expect("entry plan");
+    );
 
     assert!(
         plan.roots
@@ -198,11 +196,10 @@ fn apply_entry_plan_adds_graph_edges() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
     let mut graph =
         build_graph_skeleton(&inputs.manifest, &inputs.sources).expect("graph skeleton");
-    apply_entry_plan(&mut graph, &plan).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &plan);
 
     assert!(graph.entry_count() > 0);
     assert!(
@@ -222,8 +219,7 @@ fn manifest_script_resolves_to_module_file() {
         &inputs.sources,
         &inputs.plugins,
         false,
-    )
-    .expect("entry plan");
+    );
 
     let script_entry = plan.roots.iter().find(|root| {
         root.origins.iter().any(|origin| {

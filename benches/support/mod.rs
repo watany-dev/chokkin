@@ -181,3 +181,30 @@ pub fn synth_pyproject_project(n_deps: u64) -> TempDir {
     write(root, "pyproject.toml", &body);
     temp
 }
+
+/// Source files of approximately 2 KiB with imports, symbols and expressions.
+pub fn synth_realistic_project(n_files: u64) -> TempDir {
+    let project = synth_src_project(n_files);
+    let mut entries = String::new();
+    for index in 0..n_files {
+        let mut body =
+            format!("import requests\n\ndef fetch_{index}(url):\n    return requests.get(url)\n");
+        while body.len() < 2_048 {
+            let offset = body.len();
+            writeln!(body, "\ndef transform_{offset}(values):\n    total = 0\n    for value in values:\n        if value > 0:\n            total += value * 2\n    return total\n").expect("function");
+        }
+        write(
+            project.path(),
+            &format!("src/bench_acme/sub_{}/mod_{index}.py", index / 50),
+            &body,
+        );
+        writeln!(
+            entries,
+            "from bench_acme.sub_{}.mod_{index} import fetch_{index}",
+            index / 50
+        )
+        .expect("entry import");
+    }
+    write(project.path(), "src/bench_acme/__init__.py", &entries);
+    project
+}

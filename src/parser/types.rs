@@ -30,8 +30,10 @@ pub struct ImportRef {
     /// Imported module name (normalized dotted name; empty = unresolved relative).
     pub module: String,
     /// `from … import` symbol name when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Local alias (`as` name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
     /// 1-based source line.
     pub line: u32,
@@ -40,11 +42,21 @@ pub struct ImportRef {
     /// Import context for dependency rules.
     pub context: ImportContext,
     /// `true` when the import appears inside a `try` block body.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
     /// `true` when the import appears under an `if sys.platform …` guard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub platform_guarded: bool,
     /// Relative import dot count (`0` = absolute).
+    #[serde(default, skip_serializing_if = "is_zero_level")]
     pub relative_level: u8,
+}
+
+/// Serialization helper: `relative_level` is `0` for the common absolute import.
+// serde's `skip_serializing_if` hands the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero_level(level: &u8) -> bool {
+    *level == 0
 }
 
 /// A literal dynamic import (`importlib.import_module("…")` or `__import__("…")`).
@@ -78,6 +90,21 @@ pub enum SymbolKind {
     Variable,
 }
 
+/// One decorator occurrence, at any nesting level.
+///
+/// Plugins need the decorator's own line, which `SymbolDef` cannot carry: it
+/// records the definition line and only for module-level symbols.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecoratorSite {
+    /// Normalized dotted decorator name (`app.route`, `shared_task`, …); a
+    /// subscript receiver keeps only its base (`apps[].route`).
+    pub name: String,
+    /// 1-based line of the decorator itself.
+    pub line: u32,
+    /// Written as a call (`@app.route("/")`) rather than bare (`@app.route`).
+    pub is_call: bool,
+}
+
 /// A top-level symbol definition for Step 11.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolDef {
@@ -90,8 +117,10 @@ pub struct SymbolDef {
     /// Whether the symbol is considered public.
     pub is_public: bool,
     /// Normalized decorator names (`app.get`, `pytest.fixture`, …).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decorators: Vec<String>,
     /// Defined inside a `TYPE_CHECKING` block.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub in_type_checking: bool,
 }
 
@@ -127,70 +156,43 @@ pub struct ParseDiagnostic {
 }
 
 /// Result of parsing one `.py` file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedModule {
     /// Root-relative path using `/` separators.
     pub path: String,
     /// Extracted import references.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<ImportRef>,
     /// Literal dynamic imports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dynamic_imports: Vec<DynamicImport>,
     /// Attribute accesses for `import module; module.name` symbol tracking.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_accesses: Vec<AttributeAccess>,
     /// Top-level symbol definitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<SymbolDef>,
+    /// Normalized decorators seen anywhere in the module.
+    pub decorator_sites: Vec<DecoratorSite>,
     /// Names listed in `__all__`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exports: Vec<String>,
     /// Extracted ignore directives.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<IgnoreDirective>,
     /// Non-literal dynamic import was seen.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub has_opaque_dynamic_import: bool,
     /// Non-fatal parse issues.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,
 }
 
 /// Aggregate result of parsing all project `.py` sources.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseSummary {
     /// One parsed module per `.py` file.
     pub modules: Vec<ParsedModule>,
-    /// Successfully parsed files (including those with syntax diagnostics).
-    pub parsed_count: u32,
-    /// Files with at least one syntax error diagnostic.
-    pub error_count: u32,
-    /// Skipped files (`.pyi` stubs, etc.).
-    pub skipped_count: u32,
-}
-
-impl ParsedModule {
-    /// Empty parsed module for a path (used when syntax parse fails early).
-    #[must_use]
-    pub fn empty(path: String) -> Self {
-        Self {
-            path,
-            imports: Vec::new(),
-            dynamic_imports: Vec::new(),
-            attribute_accesses: Vec::new(),
-            symbols: Vec::new(),
-            exports: Vec::new(),
-            ignores: Vec::new(),
-            has_opaque_dynamic_import: false,
-            diagnostics: Vec::new(),
-        }
-    }
-}
-
-impl ParseSummary {
-    /// Creates an empty summary.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            modules: Vec::new(),
-            parsed_count: 0,
-            error_count: 0,
-            skipped_count: 0,
-        }
-    }
 }
 
 /// Map file context to the default import context.

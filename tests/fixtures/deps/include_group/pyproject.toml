@@ -1,0 +1,13 @@
+[project]
+name = "include-group"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+Shared_Libs = ["httpx", "boto3"]
+server = [{ include-group = "shared-libs" }]
+test = ["pytest"]
+dev = [{ include-group = "test" }]
+
+[project.scripts]
+acme-cli = "acme.main:main"

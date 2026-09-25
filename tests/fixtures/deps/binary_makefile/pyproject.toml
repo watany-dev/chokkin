@@ -1,0 +1,7 @@
+[project]
+name = "binary-makefile"
+version = "0.1.0"
+dependencies = ["alembic", "celery", "coverage", "gunicorn"]
+
+[project.scripts]
+demo-cli = "acme.main:main"

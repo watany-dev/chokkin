@@ -50,6 +50,10 @@ pub struct DeclaredDependency {
     pub origin: DependencyOrigin,
     /// URL / VCS without extractable distribution name.
     pub opaque: bool,
+    /// PEP 735 `include-group` chains that pull this group requirement into
+    /// other groups, each ordered from the including group to the declaring one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub included_via: Vec<Vec<String>>,
 }
 
 /// Console script or entry-point declaration from packaging metadata.
@@ -83,8 +87,42 @@ pub struct ProjectMetadata {
 pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
-    /// Lockfile `requires-python` when present.
-    pub requires_python: Option<String>,
+}
+
+/// Lockfile formats read into [`LockfileGraph`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockfileKind {
+    /// `uv.lock`.
+    Uv,
+    /// PEP 751 `pylock.toml` / `pylock.<name>.toml`.
+    Pylock,
+    /// `poetry.lock`.
+    Poetry,
+    /// `pdm.lock`.
+    Pdm,
+}
+
+impl LockfileKind {
+    /// Short format name for probe output.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uv => "uv",
+            Self::Pylock => "pylock",
+            Self::Poetry => "poetry",
+            Self::Pdm => "pdm",
+        }
+    }
+}
+
+/// The lockfile that fed [`LoadedManifest::lockfile`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockfileSource {
+    /// Lockfile format.
+    pub kind: LockfileKind,
+    /// Root-relative path, e.g. `pylock.dev.toml`.
+    pub path: String,
 }
 
 /// Which manifest files contributed to extraction.
@@ -95,12 +133,18 @@ pub struct ManifestSources {
     pub pyproject_toml: bool,
     /// Root-relative requirements file paths that contributed.
     pub requirements_files: Vec<String>,
+    /// Root-relative requirements include/constraint paths that were probed
+    /// but did not exist; the manifest cache rechecks them on a hit.
+    pub requirements_missing: Vec<String>,
     /// `setup.cfg` contributed.
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).
     pub setup_py: bool,
-    /// `uv.lock` contributed.
+    /// `uv.lock` contributed. Kept for library API compatibility; mirrors
+    /// `lockfile` having [`LockfileKind::Uv`].
     pub uv_lock: bool,
+    /// Lockfile that contributed the transitive graph.
+    pub lockfile: Option<LockfileSource>,
     /// Poetry sections were detected.
     pub poetry: bool,
 }

@@ -7,22 +7,23 @@ use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, subject_sort_key};
+use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, sort_candidates};
+use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::DiscoveredSources;
 
 use super::binary::detect_unlisted_binaries;
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::detect_misplaced_dependencies;
-use super::missing::{collect_optional_imports, detect_missing_dependencies};
+use super::missing::detect_missing_dependencies;
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies, is_types_stub};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
-    mark_self_referential_distribution, reachable_paths,
+    mark_pytest_plugin_distributions, mark_self_referential_distribution, reachable_paths,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
 #[must_use]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub fn reconcile_dependencies(
     manifest: &LoadedManifest,
     resolution: &ResolutionIndex,
@@ -35,6 +36,41 @@ pub fn reconcile_dependencies(
     workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
     strict: bool,
 ) -> DependencyReport {
+    reconcile_with_context(
+        &DependencyRuleContext {
+            rules: &RuleContext {
+                resolution,
+                reachability,
+                graph,
+                sources,
+                parse,
+            },
+            config,
+            strict,
+        },
+        manifest,
+        plugins,
+        workspace_boundaries,
+    )
+}
+
+pub fn reconcile_with_context(
+    dependency: &DependencyRuleContext<'_>,
+    manifest: &LoadedManifest,
+    plugins: &PluginHints,
+    workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
+) -> DependencyReport {
+    let DependencyRuleContext {
+        rules: context,
+        config,
+        strict,
+    } = *dependency;
+    let RuleContext {
+        resolution,
+        reachability,
+        graph,
+        ..
+    } = *context;
     let declared = build_declared_index(manifest);
     let workspace_declared = workspace_boundaries
         .iter()
@@ -45,21 +81,15 @@ pub fn reconcile_dependencies(
         .collect::<Vec<_>>();
     let lockfile_present = has_lockfile(manifest, resolution);
     let reachable = reachable_paths(graph, reachability);
-    let optional_imports = collect_optional_imports(parse);
 
-    let mut used = collect_used_distributions(
-        resolution,
-        reachability,
-        plugins,
-        graph,
-        &resolution.binary_resolutions,
-    );
+    let mut used = collect_used_distributions(context, plugins);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
 
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());
     }
+    mark_pytest_plugin_distributions(resolution, &mut used);
 
     // types-* stubs are considered used when their runtime package is used.
     for name in declared.keys() {
@@ -91,24 +121,17 @@ pub fn reconcile_dependencies(
 
     candidates.extend(detect_missing_dependencies(
         &declared,
-        resolution,
+        dependency,
         &reachable,
-        &optional_imports,
         lockfile_present,
-        config,
-        sources,
         &workspace_declared,
-        strict,
     ));
 
     candidates.extend(detect_misplaced_dependencies(
         &declared,
-        resolution,
+        dependency,
         &reachable,
-        config,
-        sources,
         &workspace_declared,
-        strict,
     ));
 
     candidates.extend(detect_unlisted_binaries(&declared, resolution, plugins));
@@ -118,17 +141,11 @@ pub fn reconcile_dependencies(
         config,
     ));
 
-    candidates.sort_by(|left, right| {
-        left.rule
-            .as_code()
-            .cmp(right.rule.as_code())
-            .then_with(|| subject_sort_key(&left.subject).cmp(&subject_sort_key(&right.subject)))
-    });
+    sort_candidates(&mut candidates);
 
     DependencyReport {
         candidates,
         used_distributions: used,
-        diagnostics: Vec::new(),
     }
 }
 
@@ -182,14 +199,12 @@ mod tests {
                     layout: crate::sources::ProjectLayout::Src,
                     packages: Vec::new(),
                     inferred_globs: Vec::new(),
-                    flat_candidates: Vec::new(),
-                    ambiguous_flat_resolution: false,
                 },
                 effective_globs: Vec::new(),
                 files: Vec::new(),
                 warnings: Vec::new(),
             },
-            ParseSummary::empty(),
+            ParseSummary::default(),
             ProjectGraph::new(manifest.root.clone()),
         )
     }
@@ -202,12 +217,13 @@ mod tests {
     #[test]
     fn empty_project_produces_no_candidates() {
         let manifest = minimal_manifest(Vec::new());
-        let resolution = ResolutionIndex::empty();
-        let reachability = ReachabilityReport::empty();
+        let resolution = ResolutionIndex::default();
+        let reachability = ReachabilityReport::default();
         let plugins = PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -241,14 +257,16 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         };
         let manifest = minimal_manifest(vec![dep]);
-        let resolution = ResolutionIndex::empty();
-        let reachability = ReachabilityReport::empty();
+        let resolution = ResolutionIndex::default();
+        let reachability = ReachabilityReport::default();
         let plugins = PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -286,6 +304,7 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         };
         let manifest = minimal_manifest(vec![dep]);
         let (sources, parse, mut graph) = reconcile_inputs(&manifest);
@@ -296,9 +315,9 @@ mod tests {
                 kind: crate::sources::FileKind::Python,
             })
             .expect("file id");
-        let mut reachability = ReachabilityReport::empty();
+        let mut reachability = ReachabilityReport::default();
         reachability.reachable.insert(file_id);
-        let mut resolution = ResolutionIndex::empty();
+        let mut resolution = ResolutionIndex::default();
         resolution.imports.push(crate::resolver::ResolvedImport {
             import_root: "yaml".to_owned(),
             full_module: "yaml".to_owned(),
@@ -316,6 +335,7 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();

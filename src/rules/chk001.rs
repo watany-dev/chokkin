@@ -2,7 +2,7 @@
 
 use crate::config::Confidence;
 use crate::entry::ResolvedMode;
-use crate::reachability::{UnreachableFile, UnreachableReason};
+use crate::reachability::UnreachableFile;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Severity};
 
 /// Build CHK001 candidates from unreachable files.
@@ -14,10 +14,6 @@ pub fn chk001_candidates(
     let mut candidates = Vec::new();
 
     for file in unreachable {
-        if !is_chk001_candidate(file) {
-            continue;
-        }
-
         let confidence = file.max_confidence;
         let severity = chk001_severity(mode.mode, confidence);
 
@@ -33,22 +29,12 @@ pub fn chk001_candidates(
             origins: Vec::new(),
             explain: ExplainData {
                 summary: format!("{path} is unreachable from entry roots", path = file.path),
-                details: file
-                    .reasons
-                    .iter()
-                    .map(|reason| format!("reason: {reason:?}"))
-                    .collect(),
+                details: vec!["reason: NotReachable".to_owned()],
             },
         });
     }
 
     candidates
-}
-
-fn is_chk001_candidate(file: &UnreachableFile) -> bool {
-    file.reasons
-        .iter()
-        .any(|reason| matches!(reason, UnreachableReason::NotReachable))
 }
 
 fn chk001_severity(mode: crate::config::ProjectMode, confidence: Confidence) -> Severity {

@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, ExitStatus, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, SeverityLevel,
-    add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
+    Confidence, ExitStatus, ProjectRoot, ResolutionIndex, RootMarker, RuleId, RuntimeOverrides,
+    SeverityLevel, add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
     discover_sources, emit_issues, extract_manifest, extract_plugin_hints, load_config,
     parse_project_sources, reconcile_dependencies, resolve_imports, resolve_target_version,
@@ -36,11 +36,11 @@ fn load_emit(path: &Path) -> EmitInputs {
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
-    let plugins = extract_plugin_hints(&root, &loaded, &sources, &manifest).expect("plugin hints");
     let target = resolve_target_version(&loaded.effective, &manifest);
     let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false)
-        .expect("entry plan");
+    let plugins =
+        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
+    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -52,17 +52,15 @@ fn load_emit(path: &Path) -> EmitInputs {
         let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
-        &root,
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
-    )
-    .expect("resolve imports");
+    );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry).expect("apply entry plan");
+    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph,
         &sources,
@@ -118,6 +116,7 @@ fn emit_reports_unused_dependency() {
         &inputs.config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -143,6 +142,7 @@ fn config_ignore_suppresses_matching_issue() {
         &config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -166,6 +166,7 @@ fn likely_unused_dependency_hidden_when_confidence_is_certain() {
         &config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     );
     assert!(
         report
@@ -184,6 +185,7 @@ fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> cho
         config,
         &RuntimeOverrides::default(),
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     )
 }
 
@@ -200,6 +202,7 @@ fn emit_with_config_and_overrides(
         config,
         overrides,
         &inputs.entry.mode,
+        &ResolutionIndex::default(),
     )
 }
 

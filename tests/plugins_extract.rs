@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config,
+    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
+    resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -30,12 +31,17 @@ fn project_root_at(path: &Path) -> ProjectRoot {
 }
 
 fn extract_fixture(name: &str) -> chokkin::PluginHints {
-    let path = fixture(name);
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
+    extract_at(&fixture(name))
+}
+
+fn extract_at(path: &Path) -> chokkin::PluginHints {
+    let root = discover_project_root(path).unwrap_or_else(|_| project_root_at(path));
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+    let target = resolve_target_version(&config.effective, &manifest);
+    let parse = parse_project_sources(&root, &sources, &target).expect("parse sources");
+    extract_plugin_hints(&root, &config, &sources, &manifest, &parse).expect("extract plugin hints")
 }
 
 fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
@@ -441,14 +447,11 @@ fn partial_settings_warns() {
 }
 
 fn extract_fixture_from_deps(name: &str) -> chokkin::PluginHints {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/deps")
-        .join(name);
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
-    let config = load_config(&root).expect("load config");
-    let manifest = extract_manifest(&root, &config).expect("extract manifest");
-    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    extract_plugin_hints(&root, &config, &sources, &manifest).expect("extract plugin hints")
+    extract_at(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/deps")
+            .join(name),
+    )
 }
 
 #[test]
@@ -481,4 +484,104 @@ fn no_django_no_panic() {
             }
         )
     }));
+}
+
+/// Flask and Celery module-ref lines for `pkg.mod` in a one-module project.
+fn decorator_lines(source: &str) -> [Option<u32>; 2] {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"decorators\"\nversion = \"0.1.0\"\ndependencies = [\"flask\", \"celery\"]\n\n[tool.chokkin.plugins]\nflask = true\ncelery = true\n",
+    )
+    .expect("write pyproject");
+    std::fs::create_dir_all(root.join("src/pkg")).expect("create package");
+    std::fs::write(root.join("src/pkg/__init__.py"), "").expect("write init");
+    std::fs::write(root.join("src/pkg/mod.py"), source).expect("write module");
+
+    let hints = extract_at(root);
+    [PluginId::Flask, PluginId::Celery].map(|plugin| {
+        plugin_contrib(&hints, plugin)
+            .module_refs
+            .iter()
+            .find(|reference| reference.module == "pkg.mod")
+            .and_then(|reference| reference.origin.line)
+    })
+}
+
+#[test]
+fn flask_and_celery_decorator_lines() {
+    // (source, Flask route line, Celery task line)
+    let cases: &[(&str, Option<u32>, Option<u32>)] = &[
+        ("@app.route(\"/\")\ndef f():\n    pass\n", Some(1), None),
+        ("@app.route (\"/\")\ndef f():\n    pass\n", Some(1), None),
+        (
+            "@app.route(\n    \"/\",\n)\ndef f():\n    pass\n",
+            Some(1),
+            None,
+        ),
+        ("@apps[0].route(\"/\")\ndef f():\n    pass\n", Some(1), None),
+        ("@app.route\ndef f():\n    pass\n", None, None),
+        ("@cache.get\ndef f():\n    pass\n", None, None),
+        (
+            "@cache.get\ndef a():\n    pass\n\n@bp.post(\"/x\")\ndef b():\n    pass\n",
+            Some(5),
+            None,
+        ),
+        (
+            "def create_app():\n    @app.route(\"/\")\n    def index():\n        pass\n",
+            Some(2),
+            None,
+        ),
+        (
+            "@functools.lru_cache(maxsize=cfg.get(\"n\"))\ndef f():\n    pass\n",
+            None,
+            None,
+        ),
+        (
+            "@api.post(\"/\") if flag else f\ndef f():\n    pass\n",
+            None,
+            None,
+        ),
+        ("@shared_task\ndef f():\n    pass\n", None, Some(1)),
+        ("@celery.task\ndef f():\n    pass\n", None, Some(1)),
+        ("@my_app.task\ndef f():\n    pass\n", None, Some(1)),
+        (
+            "@celery.shared_task(bind=True)\ndef f():\n    pass\n",
+            None,
+            Some(1),
+        ),
+        ("@shared_task_wrapper\ndef f():\n    pass\n", None, None),
+        ("@app.tasks\ndef f():\n    pass\n", None, None),
+        ("@app.task_cls\ndef f():\n    pass\n", None, None),
+        ("@register(app.task(x))\ndef f():\n    pass\n", None, None),
+    ];
+    for &(source, flask, celery) in cases {
+        let [flask_line, celery_line] = decorator_lines(source);
+        assert_eq!(flask_line, flask, "flask: {source}");
+        assert_eq!(celery_line, celery, "celery: {source}");
+    }
+}
+
+#[test]
+fn flask_route_modules_survive_syntax_error_in_parse_path() {
+    let hints = extract_fixture("flask_syntax_error");
+    assert!(
+        plugin_contrib(&hints, PluginId::Flask)
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "web.routes" && reference.origin.line == Some(1))
+    );
+}
+
+#[test]
+fn celery_task_modules_survive_syntax_error_in_parse_path() {
+    let hints = extract_fixture("celery_syntax_error");
+    assert!(
+        plugin_contrib(&hints, PluginId::Celery)
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "worker.tasks"
+                && reference.origin.line == Some(1))
+    );
 }

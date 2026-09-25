@@ -3,14 +3,12 @@
 use std::path::Path;
 
 use crate::config::{EntrySpec, PluginId};
-use crate::manifest::literals::extract_python_list_assignment;
+use crate::manifest::literals::{assigned_value, parse_module, string_list};
 use crate::sources::FileContext;
 
 use super::context::PluginContext;
-use super::types::{
-    BinaryUsage, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
-};
-use super::util::relative_path;
+use super::types::{ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin};
+use super::util::{origin_for_file, push_binary, relative_path};
 use super::warnings::PluginsWarning;
 
 /// Extract static Sphinx, `MkDocs`, and Alembic hints.
@@ -42,9 +40,14 @@ fn extract_sphinx(root: &Path, contrib: &mut PluginContribution) {
     let conf = root.join("docs").join("conf.py");
     if conf.is_file() {
         push_entry(contrib, root, &conf, FileContext::Docs, "docs/conf.py");
-        push_binary(contrib, root, &conf, "sphinx-build", "docs/conf.py");
+        push_binary(
+            contrib,
+            "sphinx-build",
+            origin_for_file(root, &conf, "docs/conf.py"),
+        );
         if let Ok(contents) = std::fs::read_to_string(&conf)
-            && let Some(scan) = extract_python_list_assignment(&contents, "extensions")
+            && let Some(stmts) = parse_module(&contents)
+            && let Some(scan) = assigned_value(&stmts, "extensions").and_then(string_list)
         {
             let file = relative_path(root, &conf);
             for extension in scan.values {
@@ -65,7 +68,7 @@ fn extract_mkdocs(root: &Path, contrib: &mut PluginContribution) {
     for name in ["mkdocs.yml", "mkdocs.yaml"] {
         let path = root.join(name);
         if path.is_file() {
-            push_binary(contrib, root, &path, "mkdocs", name);
+            push_binary(contrib, "mkdocs", origin_for_file(root, &path, name));
             return;
         }
     }
@@ -78,7 +81,11 @@ fn extract_alembic(root: &Path, contrib: &mut PluginContribution) {
     }
     let ini = root.join("alembic.ini");
     if ini.is_file() {
-        push_binary(contrib, root, &ini, "alembic", "alembic.ini");
+        push_binary(
+            contrib,
+            "alembic",
+            origin_for_file(root, &ini, "alembic.ini"),
+        );
     }
 }
 
@@ -98,23 +105,6 @@ fn push_entry(
         context,
         origin: ReferenceOrigin {
             file: rel,
-            line: None,
-            label: label.to_owned(),
-        },
-    });
-}
-
-fn push_binary(
-    contrib: &mut PluginContribution,
-    root: &Path,
-    path: &Path,
-    binary: &str,
-    label: &str,
-) {
-    contrib.binary_usages.push(BinaryUsage {
-        binary: binary.to_owned(),
-        origin: ReferenceOrigin {
-            file: relative_path(root, path),
             line: None,
             label: label.to_owned(),
         },

@@ -1,62 +1,52 @@
-//! Atomic manifest file writes with permission preservation.
+//! Atomic file writes with permission preservation.
 
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::Path;
 
 use super::error::FixError;
 
-/// Write `contents` to `path` atomically via a same-directory temp file and rename.
-///
-/// # Errors
-///
-/// Returns [`FixError::Io`] when the temp file or final rename fails.
-pub fn atomic_write(path: &Path, contents: &str) -> Result<(), FixError> {
-    let rel = path
-        .file_name()
+fn manifest_name<'a>(path: &'a Path, fallback: &'static str) -> &'a str {
+    path.file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("manifest");
+        .unwrap_or(fallback)
+}
 
-    let parent = path.parent().ok_or_else(|| FixError::Io {
-        path: rel.to_owned(),
-        source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing parent directory"),
-    })?;
-
-    let original_metadata = fs::metadata(path).ok();
-
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-")
-        .tempfile_in(parent)
-        .map_err(|source| FixError::Io {
-            path: rel.to_owned(),
-            source,
-        })?;
-
-    temp.write_all(contents.as_bytes())
-        .map_err(|source| FixError::Io {
-            path: rel.to_owned(),
-            source,
-        })?;
-    temp.as_file().sync_all().map_err(|source| FixError::Io {
+/// Read a manifest, returning its display name alongside the contents.
+pub(super) fn read_manifest<'a>(
+    path: &'a Path,
+    fallback: &'static str,
+) -> Result<(&'a str, String), FixError> {
+    let rel = manifest_name(path, fallback);
+    let contents = fs::read_to_string(path).map_err(|source| FixError::Io {
         path: rel.to_owned(),
         source,
     })?;
+    Ok((rel, contents))
+}
 
-    if let Some(metadata) = &original_metadata {
-        let permissions = metadata.permissions();
-        temp.as_file()
-            .set_permissions(permissions)
-            .map_err(|source| FixError::Io {
-                path: rel.to_owned(),
-                source,
-            })?;
+/// Write `bytes` to `path` atomically via a same-directory temp file and rename,
+/// keeping the existing file's permissions. `sync` fsyncs before the rename.
+///
+/// # Errors
+///
+/// Returns the underlying I/O error when the temp file, write, or rename fails.
+pub fn atomic_write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing parent directory"))?;
+    let original_metadata = fs::metadata(path).ok();
+    let mut temp = tempfile::Builder::new()
+        .prefix(".chokkin-")
+        .tempfile_in(parent)?;
+    temp.write_all(bytes)?;
+    if sync {
+        temp.as_file().sync_all()?;
     }
-
-    temp.persist(path).map_err(|error| FixError::Io {
-        path: rel.to_owned(),
-        source: error.error,
-    })?;
-
+    if let Some(metadata) = original_metadata {
+        temp.as_file().set_permissions(metadata.permissions())?;
+    }
+    temp.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -70,7 +60,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("pyproject.toml");
         fs::write(&path, "old").expect("write");
-        atomic_write(&path, "new").expect("atomic write");
+        atomic_write(&path, b"new", true).expect("atomic write");
         assert_eq!(fs::read_to_string(&path).expect("read"), "new");
     }
 
@@ -86,7 +76,7 @@ mod tests {
         permissions.set_mode(0o600);
         fs::set_permissions(&path, permissions).expect("chmod");
 
-        atomic_write(&path, "new").expect("atomic write");
+        atomic_write(&path, b"new", true).expect("atomic write");
 
         let mode = fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);

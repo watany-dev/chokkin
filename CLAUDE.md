@@ -28,8 +28,11 @@ For anything outside these prefixes, Claude will prompt for confirmation.
 [ptuf](https://github.com/watany-dev/ptuf)). Invoke with `/<name>` or via the
 Skill tool:
 
-- `wrapup` — runs `simplify` then `update-docs`, runs `make check` if files
-  changed, then reminds you to `/compact`. Auto-triggered by the Stop hook.
+- `wrapup` — post-work review gate: `make check`, then `/code-review`
+  (correctness) and `ponytail-review` (over-engineering), take in only the
+  findings that meet its criteria, then `cleanup-comments`. Manual only.
+- `cleanup-comments` — sweeps code comments, keeps only the "why" that cannot be
+  reconstructed from the code, turns TODO-like comments into issues. Manual only.
 - `update-docs` — syncs `src/` changes into `README.md`, `README.ja.md`,
   `docs/dev/spec.ja.md`, `CLAUDE.md`, and `AGENTS.md`.
 - `update-design` — scores `docs/dev/spec.ja.md` (5 categories × 20 pts) and
@@ -39,20 +42,14 @@ Skill tool:
 - `grill-me` — interviews you about a plan/design, then records an ADR under
   `docs/adr/`.
 
-## Stop hook
+## Hooks
 
-`.claude/settings.json` registers a `Stop` hook
-(`.claude/hooks/stop-wrapup.sh`). When a session that edited files
-(`Edit`/`Write`/`MultiEdit`/`NotebookEdit`) tries to end, the hook blocks and
-asks you to run `wrapup`. The hook tracks state via a marker file
-(`/tmp/chokkin-wrapup-<session_id>`) instead of `stop_hook_active`; `wrapup` must
-`touch` that marker on completion or the Stop hook loops indefinitely. The hook
-needs `jq`; without it (or outside a git repo) it fails safe and lets the
-session end.
+None. `wrapup` is invoked manually (`/wrapup`, or "作業後レビュー" / "仕上げて")
+when an implementation task is finished and about to be committed.
 
 ## Settings
 
-`.claude/settings.json` also sets `effortLevel: high`, `language: japanese`,
+`.claude/settings.json` sets `effortLevel: high`, `language: japanese`,
 `autoMemoryEnabled: false`, and `CLAUDE_CODE_DISABLE_1M_CONTEXT: "1"` alongside
 the shell `permissions` above.
 

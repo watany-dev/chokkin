@@ -1,0 +1,7 @@
+[project]
+name = "binary-gitlab-ci"
+version = "0.1.0"
+dependencies = ["alembic", "celery", "gunicorn", "uvicorn"]
+
+[project.scripts]
+demo-cli = "acme.main:main"

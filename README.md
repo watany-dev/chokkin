@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.4.0 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. **v0.1.0 through v0.4.0 have been released.**
+> **Status: v0.4.1 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. v0.4.1 is a bug-fix and performance release (parallel parsing, stat-keyed warm cache, cache-correctness fixes). **v0.1.0 through v0.4.1 have been released.**
 
 ## Why chokkin?
 
@@ -28,10 +28,10 @@ chokkin    : unused files, dependencies, and public symbols from the whole proje
 uvx chokkin
 ```
 
-No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, `uv.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
+No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, and one lockfile: `uv.lock`, `pylock.toml`, `poetry.lock`, or `pdm.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
 
 ```text
-chokkin 0.4.0
+chokkin 0.4.1
 
 Project: acme-api
 Config : pyproject.toml
@@ -107,7 +107,7 @@ Key flags:
 - `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
 - `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files. `--add-missing` adds Certain CHK003 findings to non-Poetry `[project].dependencies` when the distribution is unambiguous; workspace findings are inserted into the member `pyproject.toml` when that member manifest was inventoried. Unsupported cases are reported as skipped fixes with details on stderr.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
-- `--no-cache` — disable Phase 2 cache reads/writes. Parse, manifest/config scan, and module-index cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
+- `--no-cache` — disable Phase 2 cache reads/writes. Parse and manifest/config scan cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported and how reachability was judged. `CHK002` explain includes top-level modules and reachable/unreachable import evidence; `--trace` prints a positive path for reachable files and a negative trace (reason, entry roots, incoming import chain) for unreachable files. These are the intended path for investigating and reporting false positives.
@@ -144,6 +144,7 @@ respect_gitignore = true
 confidence = "likely"     # certain | likely | maybe
 exclude = [
   ".venv/**",
+  ".chokkin/**",
   "build/**",
   "dist/**",
   "**/__pycache__/**",
@@ -174,6 +175,8 @@ CHK001 = "off"
 CHK006 = "info"
 CHK002 = "error"
 ```
+
+The root `.chokkin/` directory is reserved for analyzer data and is always excluded, even with custom excludes. Keep analyzed source files outside it.
 
 ### Modes
 
@@ -279,6 +282,8 @@ chokkin never executes your project's code — analysis is fully static. It also
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). The full design specification (analysis engine, import resolution strategy, roadmap) is in [`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md) (Japanese).
+
+The `pipeline` benchmark covers full cold/warm analysis, disk parse caching, reachability caching, and discovery after cache population with ~2 KiB modules. Run `cargo bench --bench pipeline`; set `CHOKKIN_BENCH_LARGE=1` to add 5k/10k to the default 1k case.
 
 ## License
 

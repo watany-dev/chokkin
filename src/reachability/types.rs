@@ -3,24 +3,7 @@
 use indexmap::IndexSet;
 
 use crate::config::Confidence;
-use crate::graph::{EntryId, FileId, ModuleOrigin};
-
-/// Why a file is excluded from or downgraded in unused-file candidacy (§11).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnreachableReason {
-    /// No path from any entry root was found.
-    NotReachable,
-    /// `__init__.py` files are excluded from CHK001.
-    ExcludedInit,
-    /// Stub files are excluded from CHK001.
-    ExcludedStub,
-    /// Test-context files are excluded in library mode.
-    ExcludedTestContext,
-    /// Non-runtime context excluded when `production = true`.
-    ExcludedProductionContext,
-    /// Matched a framework-used glob from a plugin.
-    FrameworkUsed,
-}
+use crate::graph::{FileId, ModuleOrigin};
 
 /// A module import recorded for dependency reconciliation (Step 10).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,8 +27,6 @@ pub struct UnreachableFile {
     pub file: FileId,
     /// Root-relative path using `/` separators.
     pub path: String,
-    /// Exclusion or downgrade reasons for Step 12.
-    pub reasons: Vec<UnreachableReason>,
     /// Upper bound on issue confidence for Step 12.
     pub max_confidence: Confidence,
 }
@@ -53,13 +34,6 @@ pub struct UnreachableFile {
 /// One step in a reachability trace path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceStep {
-    /// Entry root that started the path.
-    Entry {
-        /// Entry node id.
-        entry: EntryId,
-        /// Human-readable label.
-        label: String,
-    },
     /// Traversal through a project file.
     File {
         /// Graph file id.
@@ -110,7 +84,7 @@ pub(super) struct ReachPredecessor {
 
 /// Outcome of reachability analysis.
 #[allow(clippy::partial_pub_fields)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReachabilityReport {
     /// Files reachable from entry roots or framework globs.
     pub reachable: IndexSet<FileId>,
@@ -122,18 +96,4 @@ pub struct ReachabilityReport {
     pub framework_used: IndexSet<FileId>,
     /// Shortest-path predecessors for [`super::trace::trace_to_file`].
     pub(super) predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
-}
-
-impl ReachabilityReport {
-    /// Empty report for unit tests and early pipeline stages.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            reachable: IndexSet::new(),
-            unreachable: Vec::new(),
-            used_modules: Vec::new(),
-            framework_used: IndexSet::new(),
-            predecessors: indexmap::IndexMap::new(),
-        }
-    }
 }

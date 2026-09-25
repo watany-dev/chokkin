@@ -40,7 +40,7 @@ uvx chokkin
 初回実行で、設定なしでも以下を行う。
 
 ```text
-1. pyproject.toml / setup.cfg / setup.py / requirements*.txt / uv.lock を探索
+1. pyproject.toml / setup.cfg / setup.py / requirements*.txt / lockfile を探索
 2. src layout / flat layout / tests / scripts / docs / config files を推定
 3. entry points と framework entry を推定
 4. Python import graph を構築
@@ -119,7 +119,7 @@ exit codeはCI向けに固定する。
 --explain      : `CHK002:<distribution>` など selector に対し、宣言箇所と到達性
                  evidence（top-level modules、reachable/unreachable import）を出す。
 --trace        : 到達可能な file には entry からの positive trace、未到達 file には
-                 negative trace（UnreachableReason、entry roots、incoming import 連鎖）を出す。
+                 negative trace（未到達理由、entry roots、incoming import 連鎖）を出す。
 ```
 
 `--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、v0.2でSARIF/GitHub reporterを追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
@@ -177,16 +177,20 @@ dev-requirements.txt
 constraints.txt
 setup.cfg
 setup.py  # static parseのみ。実行しない。
-uv.lock
+uv.lock / pylock.toml / pylock.<name>.toml / poetry.lock / pdm.lock
 ```
+
+lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>.toml(名前順) > poetry.lock > pdm.lock とする。複数形式を合成しないのは、同一projectで形式が混在するのは移行途中であり、新しい側(uv/PEP 751)が実体に近いため。読んだlockfileの種類と相対pathは `ManifestSources.lockfile` に記録し、`--probe` に表示する。どの形式も package名と依存edgeだけを `LockfileGraph` に読み、同名packageのedgeは合流させる。pylock.tomlは `[[packages]].dependencies[].name`、poetry.lockは `[package.dependencies]` のkey(1.x / 2.x共通)、pdm.lockは `dependencies` のPEP 508文字列の先頭名を使う。pdm.lockの `groups` / `extras` は読まない。CHK004はimportが宣言依存から到達可能かだけを問い、group別の到達性はmanifest側のcontextで判定済みのため。候補lockfileはすべてcacheの入力fingerprintに入れる(優先順位が変わると読む対象が変わるため)。lockfileは読むだけで編集しない。
 
 requirements系filesのパース規則を定める。コメントはpip互換で「行頭または空白が先行する `#`」のみを除去し、URLフラグメント（`#sha256=` / `#egg=`）は保持する。`-r` / `--requirement`（`--requirement=other.txt` 含む）は再帰的に追跡する。`-c` / `--constraint` はversion制約の情報源としてのみ読み、`LoadedManifest.constraints` に積み、依存宣言とは合流させない（ファイル欠如はwarning）。`-e ./path` とlocal path指定はworkspace/first-party候補として扱い、distribution名は空のopaque依存として記録する。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
 
-`setup.py` は `setup()` 呼び出し本体のみを静的パースする。リスト走査が途中で破綻した場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
+`setup.py` はrustpython-parserでASTにし、`setup()` 呼び出しのキーワード引数のみを静的に読む(構文エラー時は静的解析不可として扱う)。リストに文字列リテラル以外の要素が混ざる場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
 
 `setup.py` が静的に解析できない場合(動的な `install_requires` 構築など)は、warningを出してそのsourceをskipし、他のsourceで解析を継続する。`[project]` の `dynamic = ["dependencies"]` が指定されている場合は、setuptoolsの慣習に従い `requirements*.txt` 側を依存宣言の実体として読む。
 
 `[dependency-groups]` は、build metadataには含めない開発用途の依存を `pyproject.toml` に格納する標準仕様。lint/test/docs用の依存を扱うため、`chokkin` ではmain dependencyとは別contextとして扱う。
+
+PEP 735 の `{include-group = "..."}` は、group名を PEP 503 と同じ規則で正規化して解決し、推移閉包として展開する。要件は include 先へ複製せず宣言元 group に 1 件だけ置き、`DeclaredDependency.included_via` に include 元から宣言元までの経路 (例: `["all", "dev", "test"]`) を持たせる。§10 の context 判定・CHK005 は宣言元 group と各経路の先頭 group の bucket をすべて有効な宣言先として扱い、CHK002 は有効な bucket がすべて dev のときだけ非 strict で抑制する。CHK009 は宣言元の context だけで判定するので、include だけで重複扱いにはならない。`--fix` は宣言元 group の label (`dependency-groups.<group>[i]`、index は include table も数える) だけを編集し、include 要素は書き換えない。`--explain` には `included via dependency-groups: server -> shared` の行で経路を出す。未定義 group への include (`DependencyGroupIncludeUndefined`) と循環 (`DependencyGroupIncludeCycle`) は manifest warning にして、解析は止めずに循環を切って続ける。
 
 Python packagingのentry pointsは、distributionが提供するcomponentを他のコードやinstallerに知らせる仕組みで、`console_scripts` はインストール時にCLI wrapperを作るために使われる。`chokkin` は `[project.scripts]`、`[project.gui-scripts]`、`[project.entry-points]` をentry rootとして扱う。
 
@@ -215,6 +219,7 @@ respect_gitignore = true
 confidence = "likely"     # certain | likely | maybe
 exclude = [
   ".venv/**",
+  ".chokkin/**",
   "build/**",
   "dist/**",
   "**/__pycache__/**",
@@ -254,6 +259,8 @@ CHK006 = "info"
 CHK002 = "error"
 ```
 
+ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
+
 workspace設定。
 
 ```toml
@@ -268,7 +275,7 @@ entry = ["src/worker/__main__.py"]
 project = ["src/**/*.py", "tests/**/*.py"]
 ```
 
-uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
+uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。CHK003 / CHK004 / CHK005 の振り分けは「import元 member に宣言があればそれを、なければ root の宣言を」見る共通 lookup で行い、1 importにつきどれか1つだけを出す（member が宣言していなくても root で dev-only なら CHK005）。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
 
 `chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
 
@@ -321,6 +328,8 @@ File reaches File
 ```
 
 Python parserはRust実装でよい。Ruff ecosystemのparserを使うか、RustPython parserを使うかはライセンス・保守性・Python新構文対応速度で選ぶ。ただし、Ruffのparser crate群をAstralが安定APIとして公開し続ける保証はないため、採用する場合はversion固定またはvendoring前提のリスクを織り込む。重要なのは、ASTだけではなくtoken位置・comments・string literalを保持すること。`# chokkin: ignore[...]`、`__all__`、`TYPE_CHECKING`、`importlib.import_module("...")`（代入・`return`・呼び出し引数など式中のネストも含む）、framework設定のstring literalを拾う必要がある。
+
+現行は `rustpython-parser` 0.4。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従できないため、ADR 0001 の Amendment 2026-09-25 で `ruff_python_parser` への移行を決めた。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新し、parser の AST 型は `src/parser/` の外に出さない。`lazy import` (PEP 810) は通常の import と同じ edge にする。pin と切り替えの可否は #320 / #321 の実測で確定する (手順: `docs/dev/issue-294-parser-migration-plan.md`)。
 
 ## 7. import resolution仕様
 
@@ -409,6 +418,8 @@ sphinx
 mkdocs
 alembic
 ```
+
+plugin の有効/無効は `[tool.chokkin.plugins]` の明示値 > enabler > 既定値 (pytest / django / fastapi のみ on) の順で決める (v0.5, R-07)。enabler は Knip の enablers 相当で、`src/plugins/enablers.rs` の表 1 か所にまとめ、root と各 workspace member の宣言済み依存 (例: `flask` / `celery` / `sphinx` / `mkdocs` / `alembic`) と設定ファイルの存在 (`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `docs/conf.py` / `mkdocs.yml` / `alembic.ini`) だけを見る。github-actions は workflow がほぼ全 repo にあり未宣言 tool の CHK008 を大量に出すため enabler を持たない。解決は probe (Step 1〜4) の末尾で行い、結果を `effective_config.plugins` に書き戻すので config-scan cache key にも自然に入る。`--probe` の `Plugins` 節は有効な plugin と既定以外の理由を持つ plugin を `default` / `config` / `disabled-by: config` / `enabled-by: dependency <name> [(member <id>)]` / `enabled-by: file <path>` で表示する。
 
 pluginの責務は3つだけにする。
 
@@ -518,7 +529,7 @@ src/ で import urllib3
     -> CHK002 unused_dependency
 ```
 
-判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。
+判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。CHK004のevidenceは2種類に分ける。宣言依存からlockfileのedgeで到達できる場合は「transitive edge」(Certain)、lockfileにpackageとしては載っているが宣言依存から到達できない場合は「lockにあるが未宣言」(Likely)とし、messageとexplain detailで区別する。
 
 environment markerとextrasの扱いも定める。
 
@@ -572,6 +583,8 @@ entry roots
 
 project files - reachable files = unused file candidates
 ```
+
+`from pkg import name` は `pkg` に加えて、`pkg.name` が first-party module に解決できればその file への import edge としても辿る（Python は `name` が submodule ならそれを読み込むため）。相対 import の `from . import name` と同じ規則になる。
 
 ただし、以下はデフォルトで除外または低confidenceにする。
 
@@ -697,7 +710,7 @@ manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、comm
 
 書き込み安全性: manifest編集は同一ディレクトリへの一時ファイル作成→`rename` でアトミックに置換する(`fix/write.rs`)。既存ファイルのpermissionsは可能な範囲で引き継ぐ。fix対象パスはproject root内に収まることを検証し、ルート外への書き込みはskipする。requirementsの `-r`/`-c` インクルードとDjango `settings.py` 探索も同様にルート封じ込めする。
 
-lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`chokkin` はlockfileを直接編集しない。fix適用後に `uv lock` / `poetry lock` の実行を促すメッセージを出力する。
+lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`chokkin` はlockfileを直接編集しない。fix適用後に、読んだlockfileの種類に応じて `uv lock` / `poetry lock` / `pdm lock` の実行を促すメッセージを出力する(poetry管理のprojectはlockfileがなくても `poetry lock` を促す)。
 
 ## 14. 既存Pythonエコシステムの課題と解決
 
@@ -710,7 +723,7 @@ lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.l
 |libraryのpublic APIは外部利用される    |内部参照がなくても公開APIかもしれない                                           |app/library modeを分け、libraryではunused exports/filesを低confidenceにする                           |
 |dev/test/docs/lint/type依存が混在する|`pytest` がmain dependenciesにある                                 |dependency contextを導入し、misplaced dependencyを出す                                             |
 |namespace packageがある          |`google.*`, `zope.*`                                           |namespace package modeと `Import-Namespace` を使う                                             |
-|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。非literalはopaque dynamic importとしてconfidenceを下げる                                 |
+|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる                                 |
 |monorepo/workspaceで依存境界が曖昧    |root depsをmemberが使う                                            |workspace graphを作り、`--strict` でmemberごとの直接依存を要求する                                          |
 |auto-fixが危険                   |dead code削除で実行時破壊                                              |default fixはmanifest中心。file/code削除は明示フラグ必須                                                 |
 
@@ -734,7 +747,7 @@ chokkin/
     sources/     # 実装済み: pipeline step 4 (source file discovery)
     plugins/     # 実装済み: pipeline step 5 (config/plugin extraction)
     graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
-    parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`)
+    parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`; cold parse は `std::thread::scope` でファイル単位並列、出力は discovery 順)
     resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps, venv RECORD/entry_points, versioned stdlib)
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
@@ -742,7 +755,7 @@ chokkin/
                  #           step 11 `rules/symbols/` (`analyze_symbols`, CHK006–CHK007, CHK010);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
     reporters/   # 実装済み: default / compact / json / markdown reporter
-    fix/         # 実装済み: step 13 (`apply_fixes` — pyproject/requirements/setup.cfg; atomic write, root containment)
+    fix/         # 実装済み: step 13 (`apply_fixes_with_workspace` — pyproject/requirements/setup.cfg; atomic write, root containment)
 ```
 
 `pyproject.toml` は概ねこうする。
@@ -841,16 +854,39 @@ v0.2で入れるもの。
 
 v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。
 
+v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap-gap-analysis.ja.md`)。
+
+```text
+- PEP 735 include-group 展開
+- PEP 723 inline script metadata (script 単位の entry + dependency scope)
+- pylock.toml (PEP 751) / poetry.lock / pdm.lock の読み取り
+- [tool.uv] sources / constraint / override / default-groups の読み取り
+- [build-system].requires の build context
+- binary usage 情報源の拡充 (PDM scripts / Makefile / justfile / Dockerfile / GitLab CI / pytest addopts / mypy plugins)
+- 依存宣言からの plugin 自動有効化
+- parser 移行の決定 (Python 3.12+ 構文、#140)
+```
+
+v0.6で入れるもの (Knip 相当の運用性)。
+
+```text
+- framework / format plugin 拡充 (Django 周辺 / Typer / Click / Streamlit / Airflow / Dagster / marimo など)
+- configuration hints (未使用 ignore / stale baseline / 空振り glob / 未使用 map entry)
+- --workspace / --max-issues / --performance
+- codeclimate reporter、chokkin 自身の pre-commit hook / GitHub Action、[tool.chokkin] JSON Schema
+- public API 宣言 (__all__ / pragma / public 設定) と symbol 単位 trace
+```
+
 v1.0で安定させるもの。
 
 ```text
-- plugin API (外部loading; v0.3ではRFCのみ)
+- plugin API (外部loading; v0.3ではRFCのみ。v1.0 は process boundary)
 - stable JSON schema (v0.3で schema_version + JSON Schema 公開済み)
 - stable exit code
 - stable ignore syntax (v0.3で回帰テスト固定)
-- safe autofix contract
+- safe autofix contract (ADR 0003)
 - large monorepo performance
-- editor/LSP連携
+- editor/LSP連携 (--watch / LSP / MCP server)
 ```
 
 v0.3 で実装済み: `[tool.chokkin.severity]` による rule severity override、SARIF rule metadata 安定化。
@@ -962,17 +998,18 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
     GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` に対応し、
     `python -m pytest` のような module invocation も既知binary利用として扱う。
     notebook parsing は `.ipynb` discovery と Python code-cell extraction を初期実装済み。
-    Flask/Celery decorator由来 module refs は literal scan として初期実装済み)
+    Flask/Celery decorator由来 module refs は step 6 の decorator sites から抽出する形で初期実装済み)
   - JSON reporter / baseline draft schema と migration 方針 (`docs/dev/schema-migration-notes.md`)
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
-### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.4.0 リリース済み
+### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.4.1 リリース済み
 
 ```text
 目標   : v1.0で凍結する契約の準備
 v0.3   : Contract Stabilization
 v0.4   : CHK003 Reliability + Contract Formalization
+v0.4.1 : bug-fix / performance (並列 parse・stat ベース warm cache・cache 整合性修正)
 成果物 :
   - JSON reporterに schema_version を追加し、JSON Schemaを公開する ✅
   - baseline fileに schema_version を追加し、v0.2 draft baseline reader互換を維持する ✅
@@ -998,25 +1035,98 @@ exit   :
   - v1.0条件「2 minor version連続でbreaking changeなし」の起点をv0.3にする
 ```
 
-### Phase 4: v1.0(条件達成次第)
+### Phase 4: v0.5 モダン packaging 追従(+6〜8週)
+
+```text
+目標   : 2026年の典型的な uv project (dependency-groups / inline script / lockfile) で
+         zero-config の誤検知・取りこぼしをなくす
+背景   : Phase 3 までで Knip の中核 issue 種別 (files / dependencies / unlisted /
+         binaries / unresolved / exports / duplicates) は揃った。残る誤検知源は
+         「chokkin がまだ読まない manifest・設定・構文」に移っている。
+成果物 : (ID は docs/dev/roadmap-gap-analysis.ja.md §3)
+  - R-01 PEP 735 include-group 展開
+  - R-02 PEP 723 inline script metadata (script 単位の CHK002 / CHK003)
+  - R-03 pylock.toml / poetry.lock / pdm.lock を CHK004 の transitive 判定に使う
+  - R-04 [tool.uv] sources / constraint / override / default-groups
+  - R-05 [build-system].requires の build context と wheel target の public surface
+  - R-06 binary / plugin usage 情報源の拡充 (PDM scripts / Makefile / justfile /
+         Dockerfile / Procfile / GitLab CI / pytest addopts / pytest11 / mypy plugins)
+  - R-07 依存宣言・設定ファイル存在からの plugin 自動有効化 (Knip enablers 相当)
+  - R-14 parser 再選定の ADR 0001 改訂 (移行先 `ruff_python_parser`、2026-09-25)。
+         PoC (#320) と 7 target の wheel build (#321) の実測で pin を確定する
+検証   : OSS corpus に uv-native / PEP 723 / 各 lockfile / PEP 695 project を追加し
+         (gap analysis §4)、recall sentinel に R-01〜R-05 の fixture を足す
+exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall sentinel 全件検出、
+         crash 0、cold 実行 medium 2s 維持、CHK003 件数が v0.4.1 比で増えない
+```
+
+### Phase 5: v0.6 Knip 相当の運用性(+6〜8週)
+
+```text
+目標   : 導入・抑制・説明・CI 連携を Knip と同じ水準にそろえる
+成果物 :
+  - R-08 framework / format plugin 拡充 (Django templatetags / management commands /
+         admin / AppConfig.ready、Typer / Click、Streamlit、Airflow / Dagster /
+         Prefect、Scrapy、Litestar、marimo、Jupytext)
+  - R-09 configuration hints (未使用 ignore directive / stale baseline fingerprint /
+         未使用 map・ignore entry / 空振り entry・project glob)。exit code には
+         影響させず、明示フラグで error 扱いにできる
+  - R-10 --workspace <member> / --max-issues N / --performance
+  - R-11 codeclimate reporter、chokkin の pre-commit hook と GitHub Action、
+         [tool.chokkin] JSON Schema (SchemaStore 登録)
+  - R-12 public API 宣言 (__all__ / `# chokkin: public` / `public` 設定)、
+         entry file export の検査、`--trace path:symbol`
+  - R-13 Import-Name / Import-Namespace を持つ wheel の harvest を bundled map 更新
+         pipeline に組み込む
+  - R-14 parser 移行の完了 (Python 3.14 t-string / PEP 758 を parse できる)。
+         backend 差し替え → PEP 695 / 750 / 758 / 810 対応の 2 段階 (ADR 0001)
+exit   : 追加した CLI flag・hint・reporter が JSON schema / SARIF / exit code の
+         既存契約を壊さない (v0.3 起点の「2 minor 連続 breaking なし」を継続)、
+         Phase 4 の gate を維持
+```
+
+### Phase 6: v0.7 検出範囲の拡張(preview)
+
+```text
+目標   : v1.0 で凍結しない preview rule と editor 連携の試作
+成果物 :
+  - R-15 依存宣言の整合性 (stdlib を依存宣言 / uv sources・constraint・override の
+         stale entry)
+  - R-16 unused class / enum members (app mode 限定 preview)
+  - R-17 型文脈専用 export の区別 (Knip types 相当)
+  - R-18 --watch と LSP の試作 (incremental 解析、--fix を code action で提供)
+  - R-20 conda environment.yml / pixi.toml の pypi 依存
+非目標 : preview rule を default on にしない。JSON schema の rule 一覧には載せるが
+         semver 契約 (ADR 0004) の安定対象に含めない
+```
+
+### Phase 7: v1.0(条件達成次第)
 
 ```text
 目標   : §16 v1.0 list の安定性保証
 内容   :
   - stable JSON schema / exit code / ignore syntax / safe autofix contract
   - ADR 0003 / 0004で合意したsafe autofix / semver契約を安定保証として運用する
-  - editor/LSP連携
-  - large monorepo performance の最終チューニング
+  - R-18 LSP / MCP server の正式提供
+  - R-19 外部 plugin loading (ADR 0002 の process boundary)
+  - large monorepo performance の最終チューニング (parser 移行後の cold parse 再計測)
+条件   :
+  - v0.3 起点で 2 minor version 連続 breaking change なし
+  - Phase 4 の拡充 corpus で §17 gate が合格
 ```
 
 ### 横断work(全phase継続)
 
 ```text
 - package-module-map / binary map のデータ収集と自動生成pipeline
+  (Import-Name metadata を持つ wheel の harvest を含む)
 - 誤検知報告template (--explain出力の添付を必須にする)
 - 検証用OSS project setの拡充とregression test化
   (20件のharnessは `scripts/oss-*` / `make oss-metrics` として整備済み。
-   各リリース前に再計測し `docs/dev/oss-validation-report.md` を更新する)
+   各リリース前に再計測し `docs/dev/oss-validation-report.md` を更新する。
+   Phase 4 で uv-native / PEP 723 / lockfile 別の project を追加する)
+- Knip と Python packaging 仕様の追従 (新しい issue 種別・PEP を
+  `docs/dev/roadmap-gap-analysis.ja.md` に反映し、優先度を見直す)
 ```
 
 リリース判断は期日ではなくexit criteriaで行う。特にPhase 1の誤検知率は、§20の「信頼を失いにくい」方針の定量版であり、未達のままv0.1を出さない。
@@ -1047,7 +1157,7 @@ CHK001 = [
   "src/acme/generated/**/*.py",
 ]
 CHK002 = ["boto3", "google-cloud-*"]
-CHK003 = ["pkg_resources"]
+CHK003 = ["setuptools"]  # module名 (pkg_resources) ではなく distribution名
 CHK006 = ["src/acme/public_api.py:*"]
 ```
 
@@ -1071,38 +1181,70 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の `.chokkin/cache` を既定directoryにする。cache directory は root 配下に閉じ込め、absolute path や `..` を含む custom `CacheOptions` でも project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scan / module index の各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせ、mtime/sizeに加えてfile bytesのstable content hashを含める。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/<key>.json` に `ParsedModule` JSON を保存する。corrupt JSON はmiss扱いにしてsourceを再parseする。
+cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。`ParseCacheStore` によるin-memory reuseに加え、disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。disk bundleからのヒットは `ParseCacheStats::hits` に数える。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
 
-cache keyは以下を使う。
+parse cache keyは以下を使う（`CacheKeyContext` + `SourceFingerprint`）。
 
 ```text
 chokkin version
-config hash
-manifest hash
-lockfile hash
+config hash         # effective globs の hash
+manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
+unit version        # parse-v5。ParsedModule の形や key 規則を変えたら上げる
 file path
-file mtime
 file size
-file content hash
-plugin version
+file mtime
+file content hash   # mtime 不明か racy window 内のときだけ。それ以外は空
 ```
 
-config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_record` / `write_scan_record` による disk backend と、`read_scan_payload` / `write_scan_payload` による typed JSON payload slot は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。module index は path-based payload として保存し、current graph の `FileId` に再解決する。
+lockfile や plugin の version は parse の出力に影響しないため key に含めない。
+
+config/manifest scan cache は `ScanInputFingerprints` で、実際に読んだ config file と manifest file の `SourceFingerprint` を保持する。uv workspace だけを持つ `pyproject.toml` も config input として扱う。requirements の再帰読取り結果は `ManifestSources.requirements_files` を通じて fingerprint 対象にする。`ScanCacheKey` と `ScanCacheRecord` は `.chokkin/cache/scan/<key>.json` のmetadata envelopeとして使う。`read_scan_payload` / `write_scan_payload` が typed payload を record に直接埋め込んで読み書きする disk backend は初期実装済みで、corrupt JSON、key mismatch、schema_version mismatch、payload shape mismatch はmiss扱いにする。generic config scanner (`ConfigScanResult`) と full manifest extraction (`LoadedManifest`) のpayload wiring は初期実装済み。manifest payload は extraction 後に判明する recursive requirements 入力 fingerprint も payload 内に保持し、cache hit 時に再検証して stale hit を避ける。`-r` / `-c` の解決で探したが存在しなかった候補パスは `ManifestSources.requirements_missing` に残し、不在 fingerprint として同じ inputs に含める。これにより、後から作られた制約ファイルや include 元ディレクトリ側のシャドーイングファイルも hit 時に検出する。module index は cache しない。graph のパス列に対する文字列ループで毎回構築する方が、全パスを hash する cache key の計算より安いため。
 
 parallelize対象は、file discovery、parse、import extraction、symbol extraction、plugin config parse。graph resolutionだけは集約後に行う。
 
-warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は manifest/source/cache の全benchを走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
+`benches/pipeline.rs` は約 2KiB の Python module（関数・ループ・条件式）を使い、
+`analyze_cold` / `analyze_warm`、`parse_cold_no_cache` /
+`parse_cold_with_disk_cache` / `parse_disk_warm`、`reachability`、
+`discover_populated_cache` を測る。
+通常は 1k modules、`CHOKKIN_BENCH_LARGE=1 cargo bench --bench pipeline` で
+5k / 10k も追加する。cold は解析 cache が空の状態であり、OS page cache は消さない。
+fixture 作成・cache 削除・graph clone は計測外。warm parse は in-memory store を渡さず
+CLI と同じ disk reuse を測る。全群は `make bench-save` / `make bench-cmp` の対象になる。
+
+warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `reachability` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 
-Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route`, `@bp.get` など)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。
+R-06 で binary / plugin usage の情報源を拡充した。共通の command 解析 (`\` 継続の結合、`;` `|` `&` と改行での分割、`@` `-` / `exec` `env` などの wrapper、`uv run` / `poetry run` などの runner、`python -m` の剥がし、`$…` や `{{…}}` で始まる語は変数展開として追わない、pip / uv などの環境管理ツールは binary 扱いしない) は `src/plugins/commands.rs`、行番号付きで TOML / INI / YAML を読む補助は `src/plugins/config_text.rs` に置く。
+
+- `src/plugins/task_files.rs`: `[tool.pdm.scripts]` (文字列 / `cmd` 文字列・配列 / `shell` / `composite`、`call` は module reference、`_` は無視)、`GNUmakefile` / `makefile` / `Makefile` の tab 付き recipe 行、`justfile` / `Justfile` / `.justfile` の recipe 本体 (`sh` 以外の shebang recipe は除外)、`Dockerfile` / `Containerfile` / `*.Dockerfile` / `Dockerfile.*` の `RUN` / `CMD` / `ENTRYPOINT` (shell form と exec form)、`Procfile`、`.gitlab-ci.yml` の `script` / `before_script` / `after_script` (list・inline 配列・block scalar、`!reference` は無視)。Makefile / justfile の変数・include は追わない。
+- `src/plugins/tool_plugins.rs`: pytest `addopts` (`[tool.pytest.ini_options]` / `pytest.ini` / `tox.ini [pytest]` / `setup.cfg [tool:pytest]`) の `-p mod` を module reference (`-p no:x` は無視)、`--cov` / `-n` / `--benchmark-*` などの plugin option を `src/plugins/plugin_map.rs` の表で distribution に対応づける。mypy `plugins` (`[tool.mypy]` / `mypy.ini` / `.mypy.ini` / `setup.cfg [mypy]`) は module reference (`mypy_django_plugin` → `django-stubs` などは表で対応づけ)、`[tool.ty]` / `ty.toml` / `[tool.pyright]` / `pyrightconfig.json` / `[tool.basedpyright]` は該当 type checker を used にする。
+- `.venv` の `pytest11` entry point を持つ distribution は pytest 自体が used のとき used とする (`ResolutionIndex.pytest_plugin_distributions`)。
+- 読むファイルはすべて config-scan cache key (`scan_input_paths`) に入り、`--explain` の evidence は `file:line` で origin を示す。
+
+Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果の decorator site を使い、構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査にフォールバックするが、どちらも同じ正規化名と判定関数で判定する。
 
 Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 
 notebook parsing は v0.2 plugin 拡充の初期実装として、source discovery が `.ipynb` を `FileKind::Notebook` として拾い、parser が `cells[].cell_type == "code"` の `source` だけを連結して既存の Python static parser に渡す。markdown/raw cell と outputs は無視し、notebook JSON が壊れている場合は per-file warning diagnostic に留める。
 
 step 11 symbol usage analysis (`src/rules/symbols/`) は、CHK006/CHK007 の参照有無判定に `ReferenceIndex` (`graph.rs`) を使う。旧実装は登録済みシンボルごとに参照一覧を線形走査しており project size に対し二乗コストになっていた (10k/20k合成fixtureで実行命令数の約4割を占有)。`ReferenceIndex::build` が reachable module 群を一度だけ走査して `HashMap<SymbolId, bool>` (値は「他moduleから参照されたか」) を構築し、以降のlookupをO(1)にする。2k/10k/20k合成fixtureでissue出力が修正前後で完全一致することを確認済み。
+
+### ルール解析の内部入力
+
+step 10/11 は借用 `RuleContext` で resolution / reachability / graph / sources /
+parse を共有する。設定と strict は依存ルール固有の `DependencyRuleContext` にまとめる。
+公開 `reconcile_dependencies` / `analyze_symbols` のシグネチャは互換 wrapper として維持し、
+pipeline は context を直接渡す。候補の安定 sort（rule code → subject）は
+step 10/11/12 で同じ helper を使い、同一キーの入力順を保持する。
+
+### bundled resolver map の再利用
+
+bundled import reverse map と binary map は `LazyLock` でプロセス内に一度だけ構築する。
+import map は静的参照を持ち、user map は解析ごとに構築する。binary map は公開返却型
+`BTreeMap` を維持するため静的 map を clone し、user → venv の順で上書きする。
+候補の sort / dedup、user import override の優先順位は変えない。
 
 ## 20. 注意点
 
@@ -1132,3 +1274,8 @@ Knip的な体験は「だいたい当たる静的解析」ではなく、「設�
 - Ruff unused import rule: <https://docs.astral.sh/ruff/rules/unused-import/>
 - Vulture: <https://pypi.org/project/vulture/>
 - deptry: <https://github.com/fpgmaas/deptry>
+- Knip configuration hints: <https://knip.dev/reference/configuration-hints>
+- PEP 723 Inline script metadata: <https://peps.python.org/pep-0723/>
+- PEP 751 pylock.toml: <https://peps.python.org/pep-0751/>
+- PEP 810 Explicit lazy imports: <https://peps.python.org/pep-0810/>
+- ロードマップのギャップ分析: [`roadmap-gap-analysis.ja.md`](./roadmap-gap-analysis.ja.md)
