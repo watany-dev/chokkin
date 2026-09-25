@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (amended 2026-09-22 and 2026-09-25; the 2026-09-25 migration decision is conditional on the #320 / #321 measurements)
+Accepted (amended 2026-09-22 and 2026-09-25; the 2026-09-25 migration is a go at `=0.0.15`, see "Measurement results")
 
 ## Context
 
@@ -64,9 +64,11 @@ those conditions supersede the trigger list above.
 
 ## Amendment 2026-09-25 (issue #294, R-14)
 
-Status of this amendment: **direction accepted, pin and cut-over conditional on
-measurement.** The switch itself is decided; the exact version pin and the go/no-go
-for the v0.6 cut-over wait for the open measurements listed below (#320, #321).
+Status of this amendment: **accepted; go for the v0.6 cut-over at
+`ruff_* =0.0.15`.** When first written, the pin and the go/no-go waited on the
+PoC (#320) and the wheel matrix (#321). Both results are under
+[Measurement results](#measurement-results-2026-09-25). The cold parse 10k
+benchmark is still open. It does not block the go (see there).
 
 ### Why the 2026-09-22 decision no longer holds
 
@@ -100,9 +102,11 @@ parser's AST types inside `src/parser/`.
    `git = "https://github.com/astral-sh/ruff", rev = "<full 40-char sha>"`
    (never a branch or tag), `deny.toml` gets `allow-git` for that URL only, and
    we go back to crates.io at the next publish that contains the rev.
-4. **Adapter boundary.** Ruff AST types appear only under `src/parser/` (today
-   the same is true of rustpython types: 8 files). `ParsedModule` and everything
-   downstream (`graph`, `reachability`, `rules`, `cache`) stays backend-neutral.
+4. **Adapter boundary.** Ruff AST types appear only under `src/parser/` and in
+   the `setup.py` literal evaluator (`src/manifest/literals.rs`,
+   `src/manifest/setup_py.rs`). The same 10 files hold the rustpython types
+   today. `ParsedModule`, the manifest output types, and everything downstream
+   (`graph`, `reachability`, `rules`, `cache`) stay backend-neutral.
    Production ships one backend; a second backend exists only on the PoC branch
    behind a `parser-ruff` feature for head-to-head measurement.
 5. **`lazy import` (PEP 810)** creates the same edge as a plain `import` /
@@ -131,25 +135,41 @@ parser's AST types inside `src/parser/`.
 
 | Stage | Release | Content | Exit |
 | --- | --- | --- | --- |
-| 0 | v0.5 | This amendment; PoC branch with `parser-ruff` feature (#320); wheel matrix on the PoC branch (#321) | Measurements below recorded; ADR pin filled in |
-| 1 | v0.6 | Swap the backend in `src/parser/` (`parse.rs`, `visit.rs`, `exports.rs`, `dynamic.rs`, `decorators.rs`, `attributes.rs`, `type_checking.rs`, `platform_guard.rs`); remove `rustpython-parser` and its six `deny.toml` ignores; add the Dependabot group | All existing parser / golden tests pass or have a classified diff; 7-target wheels build |
+| 0 | v0.5 | This amendment; PoC (#320, draft PR #349); wheel matrix on the PoC branch (#321) | Done: measurements below recorded, pin set to `=0.0.15` |
+| 1 | v0.6 | Swap the backend in `src/parser/` (`parse.rs`, `visit.rs`, `exports.rs`, `dynamic.rs`, `decorators.rs`, `attributes.rs`, `type_checking.rs`, `platform_guard.rs`, plus a byte-offset → line index) and in `src/manifest/literals.rs` / `setup_py.rs`; remove `rustpython-parser` and the six ignores in `deny.toml` and `.cargo/audit.toml`; raise MSRV to 1.96; bump the parse cache `unit_version`; add the Dependabot group | All existing parser / golden tests pass or have a classified diff; 7-target wheels build |
 | 2 | v0.6 | Use the new syntax: PEP 695 and `type` aliases in the AST (retire the text-match `syntax_target_hint` for `type`), t-strings visited like f-strings, PEP 758 handlers, `lazy import` edges | Fixtures for each PEP; R-14 closed |
 
-`src/manifest/literals.rs` is **not** in the migration scope: it is a text
-scanner over `setup.py` / plugin config sources and does not use the parser. It
-stays as is; moving it onto the AST is a separate, optional change.
+### Measurement results (2026-09-25)
 
-### Open measurements (block the pin, not the direction)
-
-- **#320:** head-to-head 10k cold parse, fixture diff classification, and PEP
-  695 / 750 / 758 parse checks.
-- **#321:** wheel build for all 7 targets. The known risk is `stacker` → `psm`,
-  whose build script compiles assembly, on `aarch64-unknown-linux-musl` and
-  `x86_64-unknown-linux-musl`.
-
-Both are blocked in the current agent environment (`static.crates.io` is denied),
-so procedures and pass/fail criteria are in
+The PoC swaps the backend directly (no `parser-ruff` feature, because wheels
+build with default features) on draft PR #349. It is verified in GitHub Actions,
+since the agent environment cannot download from `static.crates.io`. Details and
+per-target numbers are in
 [`docs/dev/issue-294-parser-migration-plan.md`](../dev/issue-294-parser-migration-plan.md).
-If #321 finds a target that cannot build and has no workaround, this amendment is
-reopened. Staying on `rustpython-parser` is then the fallback, with 3.12+ syntax
-handled only as syntax-error diagnostics.
+
+- **Pin: `=0.0.15`** for `ruff_python_parser`, `ruff_python_ast` and
+  `ruff_text_size`. These crates need **Rust 1.96**, so the MSRV rises from 1.93
+  to 1.96 with the cut-over.
+- **#320, correctness:** every integration test under `tests/` passes unchanged
+  on every CI OS, including the line numbers checked against
+  `tests/fixtures/parse` and `tests/fixtures/parser_spike`. Only the unit tests
+  that build ASTs directly were rewritten. PEP 695 (`class C[T]`,
+  `def f[T]`, `type X = …`), PEP 750 t-strings, PEP 758 `except A, B:` and
+  PEP 810 `lazy import` / `lazy from` parse without syntax errors. The
+  `lazy` imports become edges, and so do attribute references in the new
+  syntax (return annotations, class bases, t-string fields).
+- **#320, speed:** not measured. CI has no bench job, and the agent environment
+  cannot build the crates. This does not block the go: per the plan, new syntax
+  support is a correctness fix and is not rejected for speed alone. The
+  `make bench-cmp` on the Stage 1 PR is the gate. A median ratio above 1.2 is
+  recorded here and handled in the v0.7 performance work.
+- **#321, wheels:** all 7 targets and the sdist build, including `stacker` →
+  `psm` on both musl targets. Wheels are 0.4–1.4% smaller. The whole Release run
+  took 3:51 against 3:23 on main, far from the 60-minute job timeout.
+- **Supply chain:** crates.io only, so `deny.toml` `[sources]` is unchanged and
+  the six `unic-*` ignores go away. `cargo deny` needs one crate-scoped license
+  exception, for `ar_archive_writer` (`Apache-2.0 WITH LLVM-exception`, a build
+  dependency of `psm`). `cargo audit` passes with an empty ignore list.
+
+The fallback in the original text (stay on `rustpython-parser` if a wheel
+target cannot build) is not needed.

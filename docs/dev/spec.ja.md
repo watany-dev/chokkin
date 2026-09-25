@@ -333,7 +333,7 @@ File reaches File
 
 Python parserはRust実装でよい。Ruff ecosystemのparserを使うか、RustPython parserを使うかはライセンス・保守性・Python新構文対応速度で選ぶ。ただし、Ruffのparser crate群をAstralが安定APIとして公開し続ける保証はないため、採用する場合はversion固定またはvendoring前提のリスクを織り込む。重要なのは、ASTだけではなくtoken位置・comments・string literalを保持すること。`# chokkin: ignore[...]`、`__all__`、`TYPE_CHECKING`、`importlib.import_module("...")`（代入・`return`・呼び出し引数など式中のネストも含む）、framework設定のstring literalを拾う必要がある。
 
-現行は `rustpython-parser` 0.4。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従できないため、ADR 0001 の Amendment 2026-09-25 で `ruff_python_parser` への移行を決めた。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新し、parser の AST 型は `src/parser/` の外に出さない。`lazy import` (PEP 810) は通常の import と同じ edge にする。pin と切り替えの可否は #320 / #321 の実測で確定する (手順: `docs/dev/issue-294-parser-migration-plan.md`)。
+現行は `rustpython-parser` 0.4。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従できないため、ADR 0001 の Amendment 2026-09-25 で `ruff_python_parser` への移行を決めた。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新する。`lazy import` (PEP 810) は通常の import と同じ edge にする。#320 / #321 の実測 (PoC は draft PR #349) を受けて、pin を `=0.0.15` (MSRV 1.96) に確定し、v0.6 での切り替えを決めた。parser の AST 型を扱うのは `src/parser/` と `setup.py` の literal 評価 (`src/manifest/literals.rs` / `setup_py.rs`) に限り、`ParsedModule` 以降は backend に依存しない (結果: `docs/dev/issue-294-parser-migration-plan.md`)。
 
 ## 7. import resolution仕様
 
@@ -1103,7 +1103,7 @@ exit   :
          Dockerfile / Procfile / GitLab CI / pytest addopts / pytest11 / mypy plugins)
   - R-07 依存宣言・設定ファイル存在からの plugin 自動有効化 (Knip enablers 相当)
   - R-14 parser 再選定の ADR 0001 改訂 (移行先 `ruff_python_parser`、2026-09-25)。
-         PoC (#320) と 7 target の wheel build (#321) の実測で pin を確定する
+         PoC (#320) と 7 target の wheel build (#321) の実測で pin を `=0.0.15` に確定
 検証   : OSS corpus に uv-native / PEP 723 / 各 lockfile / PEP 695 project を追加し
          (gap analysis §4)、recall sentinel に R-01〜R-05 の fixture を足す
 exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall sentinel 全件検出、
@@ -1129,7 +1129,8 @@ exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall se
   - R-13 Import-Name / Import-Namespace を持つ wheel の harvest を bundled map 更新
          pipeline に組み込む
   - R-14 parser 移行の完了 (Python 3.14 t-string / PEP 758 を parse できる)。
-         backend 差し替え → PEP 695 / 750 / 758 / 810 対応の 2 段階 (ADR 0001)
+         backend 差し替え (`ruff_* =0.0.15`、MSRV 1.96) → PEP 695 / 750 / 758 / 810
+         対応の 2 段階 (ADR 0001)
 exit   : 追加した CLI flag・hint・reporter が JSON schema / SARIF / exit code の
          既存契約を壊さない (v0.3 起点の「2 minor 連続 breaking なし」を継続)、
          Phase 4 の gate を維持
