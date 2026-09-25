@@ -6,6 +6,8 @@
 
 use toml::Value;
 
+use crate::path_util::join_rel;
+
 use super::types::{PackageFind, WheelTargets};
 
 /// Parse the wheel target tables of `pyproject.toml`.
@@ -80,14 +82,6 @@ fn normalize_path(raw: &str) -> String {
         String::new()
     } else {
         path.to_owned()
-    }
-}
-
-fn join(base: &str, rel: &str) -> String {
-    if base.is_empty() {
-        rel.to_owned()
-    } else {
-        format!("{base}/{rel}")
     }
 }
 
@@ -182,7 +176,7 @@ fn setuptools_package_path(package: &str, package_dir: &[(String, String)]) -> S
             if rest.is_empty() {
                 return dir.clone();
             }
-            return join(dir, &rest.replace('.', "/"));
+            return join_rel(dir, &rest.replace('.', "/"));
         }
         match prefix.rfind('.') {
             Some(index) => prefix = &prefix[..index],
@@ -193,7 +187,7 @@ fn setuptools_package_path(package: &str, package_dir: &[(String, String)]) -> S
         .iter()
         .find(|(key, _)| key.is_empty())
         .map_or("", |(_, dir)| dir.as_str());
-    join(base, &package.replace('.', "/"))
+    join_rel(base, &package.replace('.', "/"))
 }
 
 fn package_find(spec: &toml::Table) -> PackageFind {
@@ -234,7 +228,12 @@ fn flit_targets(tool: &toml::Table) -> Option<WheelTargets> {
     let module = name.replace('.', "/");
     let paths = ["", "src"]
         .iter()
-        .flat_map(|base| [join(base, &module), join(base, &format!("{module}.py"))])
+        .flat_map(|base| {
+            [
+                join_rel(base, &module),
+                join_rel(base, &format!("{module}.py")),
+            ]
+        })
         .collect();
     targets("tool.flit.module", paths, Vec::new())
 }
@@ -254,7 +253,10 @@ fn maturin_targets(tool: &toml::Table, project_name: Option<&str>) -> Option<Whe
     let base = python_source.map(normalize_path).unwrap_or_default();
     targets(
         "tool.maturin",
-        vec![join(&base, &package), join(&base, &format!("{package}.py"))],
+        vec![
+            join_rel(&base, &package),
+            join_rel(&base, &format!("{package}.py")),
+        ],
         Vec::new(),
     )
 }
@@ -288,6 +290,17 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn hatch_wheel_without_packages_inherits_global_build() {
+        let targets = parse(
+            "[tool.hatch.build]\npackages = [\"src/acme\"]\n[tool.hatch.build.targets.wheel]\nsources = [\"src\"]\n",
+            Some("hatchling.build"),
+        )
+        .expect("targets");
+        assert_eq!(targets.source, "tool.hatch.build");
+        assert_eq!(targets.paths, vec!["src/acme"]);
     }
 
     #[test]

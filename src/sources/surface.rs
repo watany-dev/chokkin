@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use globset::{Glob, GlobMatcher};
 
 use crate::manifest::{PackageFind, WheelTargets};
+use crate::path_util::join_rel;
 
 use super::types::DiscoveredFile;
 
@@ -128,7 +129,7 @@ impl FindTarget {
         let regular = self.regular_packages.as_ref().is_none_or(|regular| {
             std::iter::once(package_dir)
                 .chain(parent_dirs(package_dir))
-                .all(|dir| regular.contains(&join(base, dir)))
+                .all(|dir| regular.contains(&join_rel(base, dir)))
         });
         let package = package_dir.replace('/', ".");
         regular
@@ -159,14 +160,6 @@ fn parent_dirs(path: &str) -> impl Iterator<Item = &str> {
         .rev()
         .filter(|(_, ch)| *ch == '/')
         .map(move |(index, _)| &path[..index])
-}
-
-fn join(base: &str, rel: &str) -> String {
-    if base.is_empty() {
-        rel.to_owned()
-    } else {
-        format!("{base}/{rel}")
-    }
 }
 
 #[cfg(test)]

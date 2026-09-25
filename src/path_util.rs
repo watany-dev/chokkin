@@ -23,6 +23,16 @@ pub fn normalize_rel_path(path: &Path) -> String {
     }
 }
 
+/// Join root-relative `/`-separated paths, where `""` is the root.
+#[must_use]
+pub fn join_rel(base: &str, rel: &str) -> String {
+    if base.is_empty() {
+        rel.to_owned()
+    } else {
+        format!("{base}/{rel}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
