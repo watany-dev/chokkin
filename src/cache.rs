@@ -1188,7 +1188,7 @@ mod tests {
                     .to_string_lossy()
                     .into_owned()
             })
-            .filter(|name| name.ends_with(".json"))
+            .filter(|name| Path::new(name).extension().is_some_and(|ext| ext == "json"))
             .collect();
         names.sort();
         names
