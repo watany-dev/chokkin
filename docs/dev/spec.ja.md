@@ -417,6 +417,8 @@ mkdocs
 alembic
 ```
 
+plugin の有効/無効は `[tool.chokkin.plugins]` の明示値 > enabler > 既定値 (pytest / django / fastapi のみ on) の順で決める (v0.5, R-07)。enabler は Knip の enablers 相当で、`src/plugins/enablers.rs` の表 1 か所にまとめ、root と各 workspace member の宣言済み依存 (例: `flask` / `celery` / `sphinx` / `mkdocs` / `alembic`) と設定ファイルの存在 (`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `docs/conf.py` / `mkdocs.yml` / `alembic.ini`) だけを見る。github-actions は workflow がほぼ全 repo にあり未宣言 tool の CHK008 を大量に出すため enabler を持たない。解決は probe (Step 1〜4) の末尾で行い、結果を `effective_config.plugins` に書き戻すので config-scan cache key にも自然に入る。`--probe` の `Plugins` 節は有効な plugin と既定以外の理由を持つ plugin を `default` / `config` / `disabled-by: config` / `enabled-by: dependency <name> [(member <id>)]` / `enabled-by: file <path>` で表示する。
+
 pluginの責務は3つだけにする。
 
 ```text
