@@ -464,6 +464,11 @@
       "target": "tests/fixtures/plugins/fastapi_scripts/src/pkg/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/plugins/fastapi_src_main/src/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/plugins/fastapi_src_main/src/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/plugins/fastapi_uvicorn_tool/src/pkg/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/plugins/fastapi_uvicorn_tool/src/pkg/main.py"
@@ -742,6 +747,16 @@
       "fingerprint": "CHK001:tests/fixtures/sources/src_layout/src/acme/module.py",
       "code": "CHK001",
       "target": "tests/fixtures/sources/src_layout/src/acme/module.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/symbols/fastapi_websocket/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/fastapi_websocket/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/symbols/fastapi_websocket/src/acme/routes.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/symbols/fastapi_websocket/src/acme/routes.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/symbols/import_attr_access/src/acme/main.py",
