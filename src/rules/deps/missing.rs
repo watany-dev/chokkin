@@ -414,6 +414,7 @@ mod tests {
             warnings: Vec::new(),
             transitive,
             binary_resolutions: BTreeMap::new(),
+            pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
         let graph = crate::graph::ProjectGraph::new(sources.root.clone());
         detect_missing_dependencies(

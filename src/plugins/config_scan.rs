@@ -4,14 +4,16 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use toml::Value;
 
 use crate::manifest::{DependencyContext, normalize_distribution_name};
-use crate::resolver::build_binary_map;
+use crate::resolver::{VenvIndex, build_binary_map};
 
+use super::commands::SourceHits;
+use super::config_text::{PyprojectDoc, leading_spaces};
 use super::context::PluginContext;
-use super::types::{BinaryUsage, ReferenceOrigin};
-use super::util::{read_pyproject_table, relative_path};
+use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin};
+use super::util::relative_path;
+use super::{task_files, tool_plugins};
 
 /// Output from config scanning.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -20,6 +22,10 @@ pub struct ConfigScanResult {
     pub binary_usages: Vec<BinaryUsage>,
     /// Distributions used without a distinct CLI name (themes, tox extras, etc.).
     pub used_distributions: Vec<String>,
+    /// Modules named as plugins or callables in config (pytest `-p`, mypy
+    /// `plugins`, PDM `call`).
+    #[serde(default)]
+    pub module_refs: Vec<ModuleReference>,
 }
 
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
@@ -40,6 +46,8 @@ pub fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
         .filter(|path| path.is_file())
         .collect();
     paths.extend(shell_script_paths(root));
+    paths.extend(task_files::input_paths(root));
+    paths.extend(tool_plugins::input_paths(root));
     paths
 }
 
@@ -49,13 +57,24 @@ pub fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     let root = ctx.root.path.as_path();
     let mut result = ConfigScanResult::default();
     let mut seen_binaries: HashSet<(String, String)> = HashSet::new();
+    let pyproject = PyprojectDoc::load(root);
+    let binary_map = build_binary_map(ctx.config, &VenvIndex::default());
+    let known = |name: &str| {
+        binary_map.contains_key(name)
+            || tool_key_to_binary(name).is_some()
+            || hook_id_to_binary(name).is_some()
+    };
 
-    scan_pyproject_tools(root, &mut result, &mut seen_binaries);
+    scan_pyproject_tools(pyproject.as_ref(), &mut result, &mut seen_binaries);
     scan_manifest_entry_points(ctx, &mut result, &mut seen_binaries);
     scan_mkdocs_config(root, &mut result, &mut seen_binaries);
     scan_pre_commit_config(root, &mut result, &mut seen_binaries);
     scan_tox_config(root, ctx, &mut result, &mut seen_binaries);
     scan_shell_scripts(root, &mut result, &mut seen_binaries);
+    let hits = task_files::scan(root, pyproject.as_ref(), &known);
+    merge_hits(&mut result, &mut seen_binaries, hits);
+    let hits = tool_plugins::scan(root, pyproject.as_ref());
+    merge_hits(&mut result, &mut seen_binaries, hits);
 
     result.used_distributions.sort();
     result.used_distributions.dedup();
@@ -63,35 +82,35 @@ pub fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
 }
 
 fn scan_pyproject_tools(
-    root: &Path,
+    pyproject: Option<&PyprojectDoc>,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
 ) {
-    let path = root.join("pyproject.toml");
-    if !path.is_file() {
-        return;
-    }
-    let Ok(table) = read_pyproject_table(&path) else {
+    let Some(doc) = pyproject else {
         return;
     };
-    let rel = relative_path(root, &path);
-    let Some(tool) = table.get("tool").and_then(Value::as_table) else {
+    let Some(tool) = doc.table("tool") else {
         return;
     };
     for key in tool.keys() {
         if let Some(binary) = tool_key_to_binary(key) {
-            push_binary(
-                result,
-                seen,
-                binary,
-                ReferenceOrigin {
-                    file: rel.clone(),
-                    line: None,
-                    label: format!("tool.{key}"),
-                },
-            );
+            push_binary(result, seen, binary, doc.origin("tool", key));
         }
     }
+}
+
+fn merge_hits(
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    hits: SourceHits,
+) {
+    for usage in hits.binaries {
+        push_binary(result, seen, &usage.binary, usage.origin);
+    }
+    for distribution in &hits.distributions {
+        push_distribution(result, distribution);
+    }
+    result.module_refs.extend(hits.module_refs);
 }
 
 fn scan_manifest_entry_points(
@@ -251,10 +270,6 @@ fn strip_yaml_comment(line: &str) -> &str {
 
 fn unquote_yaml_scalar(value: &str) -> &str {
     value.trim().trim_matches('"').trim_matches('\'').trim()
-}
-
-fn leading_spaces(line: &str) -> usize {
-    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 fn scan_pre_commit_config(

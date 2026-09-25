@@ -63,7 +63,9 @@ pub(super) fn collect_used_distributions(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        if !reachable.contains(&import.file) {
+        // Plugin refs read from config files (pytest `-p`, mypy plugins) name a
+        // file outside the graph; those count even though no BFS reaches them.
+        if !reachable.contains(&import.file) && graph.file_id(&import.file).is_some() {
             continue;
         }
         used.insert(distribution.clone());
@@ -76,6 +78,20 @@ pub(super) fn collect_used_distributions(
     }
 
     used
+}
+
+/// Treat `pytest11` plugins installed in the venv as used whenever pytest is,
+/// since pytest loads them without any import or config reference.
+pub(super) fn mark_pytest_plugin_distributions(
+    resolution: &ResolutionIndex,
+    used: &mut IndexSet<String>,
+) {
+    if !used.contains("pytest") {
+        return;
+    }
+    for distribution in &resolution.pytest_plugin_distributions {
+        used.insert(distribution.clone());
+    }
 }
 
 /// Treat a project's own distribution as used when declared (self-referential extras).
@@ -163,6 +179,7 @@ mod tests {
             warnings: Vec::new(),
             transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
+            pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
         let sources = crate::sources::DiscoveredSources {
             root: graph.root.clone(),
@@ -187,6 +204,7 @@ mod tests {
                 contributions: Vec::new(),
                 config_binary_usages: Vec::new(),
                 config_used_distributions: Vec::new(),
+                config_module_refs: Vec::new(),
                 warnings: Vec::new(),
             },
         );

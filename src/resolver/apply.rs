@@ -83,6 +83,7 @@ mod tests {
             warnings: Vec::new(),
             transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
+            pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
 
         apply_resolution_to_graph(&mut graph, &index).expect("apply");
@@ -143,6 +144,7 @@ mod tests {
             warnings: Vec::new(),
             transitive: TransitiveIndex::default(),
             binary_resolutions: BTreeMap::new(),
+            pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
 
         apply_resolution_to_graph(&mut graph, &index).expect("apply");

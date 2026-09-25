@@ -1,7 +1,9 @@
 //! Config / plugin extraction (pipeline step 5).
 
 mod celery;
+mod commands;
 mod config_scan;
+mod config_text;
 mod context;
 mod devtools;
 mod django;
@@ -10,7 +12,10 @@ mod error;
 mod extract;
 mod fastapi;
 mod flask;
+mod plugin_map;
 mod pytest;
+mod task_files;
+mod tool_plugins;
 mod types;
 mod util;
 mod warnings;

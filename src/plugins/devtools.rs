@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::config::PluginId;
 use crate::resolver::{VenvIndex, build_binary_map};
 
+use super::config_text::{is_yaml_block_scalar, leading_spaces, yaml_block_body};
 use super::context::PluginContext;
 use super::types::{BinaryUsage, PluginContribution, ReferenceOrigin};
 use super::util::{read_pyproject_table, relative_path};
@@ -177,24 +178,8 @@ fn workflow_run_commands(contents: &str) -> Vec<(usize, String)> {
             continue;
         };
 
-        if is_workflow_block_scalar(run.command) {
-            let mut block = String::new();
-            let mut cursor = index + 1;
-            while let Some(block_line) = lines.get(cursor) {
-                if block_line.trim().is_empty() {
-                    block.push('\n');
-                    cursor += 1;
-                    continue;
-                }
-                if leading_spaces(block_line) <= run.indent {
-                    break;
-                }
-                if !block.is_empty() {
-                    block.push('\n');
-                }
-                block.push_str(block_line.trim_start());
-                cursor += 1;
-            }
+        if is_yaml_block_scalar(run.command) {
+            let (block, cursor) = yaml_block_body(&lines, index + 1, run.indent);
             if !block.trim().is_empty() {
                 commands.push((index, block));
             }
@@ -219,15 +204,6 @@ fn workflow_run_value(line: &str) -> Option<WorkflowRunValue<'_>> {
         .or_else(|| trimmed.strip_prefix("- run:"))
         .map(str::trim)?;
     Some(WorkflowRunValue { indent, command })
-}
-
-fn leading_spaces(line: &str) -> usize {
-    line.chars().take_while(|ch| *ch == ' ').count()
-}
-
-fn is_workflow_block_scalar(command: &str) -> bool {
-    let trimmed = command.trim_start();
-    trimmed.starts_with('|') || trimmed.starts_with('>')
 }
 
 fn command_known_binaries(command: &str, binary_map: &BTreeMap<String, String>) -> Vec<String> {

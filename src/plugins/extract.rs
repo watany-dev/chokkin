@@ -130,6 +130,7 @@ pub fn extract_plugin_hints_with_parse(
         contributions,
         config_binary_usages: scan.binary_usages,
         config_used_distributions: scan.used_distributions,
+        config_module_refs: scan.module_refs,
         warnings,
     })
 }
@@ -212,7 +213,7 @@ fn config_scan_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", manifest.sources).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "config-scan-v2".to_owned(),
+            unit_version: "config-scan-v3".to_owned(),
         },
         inputs,
     })

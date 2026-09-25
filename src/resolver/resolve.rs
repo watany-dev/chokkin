@@ -113,6 +113,7 @@ pub fn resolve_imports(
         warnings,
         transitive: transitive_index(manifest),
         binary_resolutions,
+        pytest_plugin_distributions: venv_index.pytest_plugins,
     }
 }
 

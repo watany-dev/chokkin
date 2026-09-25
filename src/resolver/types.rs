@@ -1,6 +1,6 @@
 //! Resolver types for import → distribution resolution.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::graph::ModuleOrigin;
 use crate::parser::ImportContext;
@@ -89,6 +89,8 @@ pub struct ResolutionIndex {
     pub transitive: TransitiveIndex,
     /// Merged binary name → distribution map.
     pub binary_resolutions: BTreeMap<String, String>,
+    /// Installed distributions that pytest auto-loads through `pytest11` entry points.
+    pub pytest_plugin_distributions: BTreeSet<String>,
 }
 
 /// Extract the top-level import name from a dotted module path.

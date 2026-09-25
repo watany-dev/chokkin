@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- More sources for binary / plugin usage (R-06):
+  - PDM scripts (`cmd` / `shell` / `composite`; `call` as module reference),
+    Makefile and justfile recipes, Dockerfile / Containerfile `RUN` / `CMD` /
+    `ENTRYPOINT`, Procfile, and `.gitlab-ci.yml` scripts.
+  - pytest `addopts` (`-p` plugins and options such as `--cov` / `-n` /
+    `--benchmark-*`) from pyproject, `pytest.ini`, `tox.ini`, and `setup.cfg`,
+    plus `pytest11` entry points in `.venv`.
+  - mypy `plugins` (`pydantic.mypy`, `mypy_django_plugin.main`, ...) and
+    ty / pyright / basedpyright configs.
+  - CHK008 details and `--explain` evidence name the origin as `file:line`.
+
 ## [0.4.1] - Unreleased
 
 ### Fixed

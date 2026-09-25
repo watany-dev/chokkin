@@ -274,6 +274,7 @@ mod tests {
                 contributions: Vec::new(),
                 config_binary_usages: Vec::new(),
                 config_used_distributions: Vec::new(),
+                config_module_refs: Vec::new(),
                 warnings: Vec::new(),
             },
             true,
