@@ -15,6 +15,12 @@ use super::util::{
 };
 use super::warnings::PluginsWarning;
 
+/// App modules directly under `src/` (`src/main.py` with `src/` as the import
+/// root). §8 auto-detection already covers root `main.py` / `app.py` /
+/// `asgi.py` / `wsgi.py` and the same names inside a `src/<package>/`, but not
+/// top-level modules of `src/` itself; this list adds only that gap.
+const SRC_APP_ENTRY_CANDIDATES: &[&str] = &["src/asgi.py", "src/main.py"];
+
 /// Extract `FastAPI` / uvicorn-related plugin hints.
 pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Fastapi);
@@ -89,7 +95,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         }
     }
 
-    for candidate in ["asgi.py", "main.py", "src/asgi.py", "src/main.py"] {
+    for &candidate in SRC_APP_ENTRY_CANDIDATES {
         if ctx.sources.files.iter().any(|file| file.path == candidate) {
             found = true;
             contrib.entries.push(PluginEntry {

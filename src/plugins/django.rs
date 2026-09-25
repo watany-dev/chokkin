@@ -23,6 +23,11 @@ use super::util::{
 };
 use super::warnings::PluginsWarning;
 
+/// Settings whose string-list values become module references (spec §9
+/// Django plugin). Each is also reported as a partial parse when present but
+/// not a literal list, so `TEMPLATES` (a list of dicts) cannot go here; add a
+/// field such as `AUTHENTICATION_BACKENDS` only with a fixture whose module is
+/// otherwise reported unused.
 const LIST_FIELDS: &[&str] = &["INSTALLED_APPS", "MIDDLEWARE"];
 
 /// Extract Django-related plugin hints.
