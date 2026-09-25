@@ -120,6 +120,9 @@ fn plan_issue_fix(
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
 ) -> Result<Option<FixAction>, SkippedFix> {
+    if matches!(issue.subject, IssueSubject::ScriptDistribution { .. }) {
+        return plan_script_fix(issue, options);
+    }
     match issue.rule {
         RuleId::Chk001 => plan_remove_file(issue, options),
         RuleId::Chk002 if issue.confidence == Confidence::Certain => plan_remove_dependency(issue),
@@ -144,6 +147,18 @@ fn plan_issue_fix(
         )),
         _ => Ok(None),
     }
+}
+
+/// Script findings must never fall through to the project manifest edits.
+fn plan_script_fix(issue: &Issue, options: FixOptions) -> Result<Option<FixAction>, SkippedFix> {
+    if issue.rule == RuleId::Chk002 || options.add_missing {
+        return Err(skipped(
+            issue,
+            SkippedReason::UnsupportedTarget,
+            "PEP 723 script blocks are not rewritten by --fix",
+        ));
+    }
+    Ok(None)
 }
 
 fn plan_add_missing_dependency(

@@ -256,7 +256,7 @@ pub fn resolve_target_version(config: &ChokkinConfig, manifest: &LoadedManifest)
     TargetVersion::default_py311()
 }
 
-fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
+pub(crate) fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
     let mut best: Option<(u32, u32)> = None;
 
     for part in specifier.split(',') {

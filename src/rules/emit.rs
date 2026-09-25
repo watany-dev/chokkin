@@ -130,6 +130,9 @@ fn subject_key_matches(subject: &IssueSubject, key: &str) -> bool {
         IssueSubject::Import { module, file, line } => {
             format!("{file}:{line}:{module}") == key || module == key
         },
+        IssueSubject::ScriptDistribution { script, name } => {
+            format!("script:{script}:{name}") == key || name == key
+        },
     }
 }
 
@@ -197,6 +200,10 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
             } => {
                 file = Some(import_file.clone());
                 line = Some(*import_line);
+            },
+            IssueSubject::ScriptDistribution { script, .. } => {
+                file = Some(script.clone());
+                line = manifest.as_ref().and_then(|origin| origin.line);
             },
             _ => {},
         }

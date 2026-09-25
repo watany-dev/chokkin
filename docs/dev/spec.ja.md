@@ -142,6 +142,8 @@ MVPでは以下のrule IDを固定する。
 |`CHK009`|`duplicate_dependency` |main/dev/optionalに重複宣言されている                       |warning                     |
 |`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |warning                     |
 
+PEP 723 script (`# /// script` block を持つ `.py`) の CHK002 / CHK003 は project manifest ではなく script block の `dependencies` に対して判定し、subject を `script:<root 相対 path>:<distribution>` とする (例: `CHK003:script:scripts/tool.py:pyyaml`)。JSON では `path` に script、`distribution` に distribution 名を入れ、`target` / baseline fingerprint / `[tool.chokkin.ignore]` / `--explain` は同じ `script:` 形式を受け付ける。詳細は §10。
+
 `unused_export` はPythonでは危険。JavaScript/TypeScriptの `export` と違い、Pythonではmodule top-levelの名前が原則import可能になる。最初は `unused_export` をpreview ruleまたはlibrary modeではinfo扱いにする。
 
 ## 4. project discovery仕様
@@ -562,6 +564,29 @@ except ImportError:
 ```
 
 この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
+
+PEP 723 inline script metadata (v0.5, R-02) は script 単位の dependency scope として扱う。
+
+```text
+検出   : probe (step 4) で source の .py を file text から走査する (AST は使わない)
+         `# /// script` 〜 最後の `# ///` を TOML として読む。CRLF 可
+         block が 2 つ以上 / TOML が壊れている / 型が違う -> warning、通常 source 扱い
+entry  : script file 自体を entry root (origin: script) にする。script から到達する
+         first-party file は CHK001 にならない。--production では production context の
+         script だけを entry にする
+照合   : script file 自身の third-party import は script block の `dependencies` と照合し、
+         project manifest の CHK002/CHK003/CHK005 判定からは除外する
+         script 経由の first-party import とその先の file は従来どおり project scope
+target : script の `requires-python` 下限を、その file の parse と stdlib 判定の
+         target version にする。未指定なら project の target version
+report : subject は `script:<path>:<distribution>`。CHK003 は Error/certain
+         (optional / platform-guarded import は対象外)。CHK002 は project CHK002 と
+         同じく marker 付きを default で除外し、--strict で報告する
+         到達しない script (--production で dev context 等) は判定しない
+fix    : script block は書き換えない。--fix は UnsupportedTarget で skip する
+cache  : block は file text の一部なので parse cache の file fingerprint で無効化される
+         (target version も file text から導出するため key 不整合は起きない)
+```
 
 ## 11. unused files判定
 
@@ -1180,7 +1205,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v5。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v6。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime

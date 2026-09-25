@@ -6,6 +6,7 @@ pub(crate) mod literals;
 mod pep508_util;
 mod pyproject;
 mod requirements;
+mod script;
 mod setup_cfg;
 mod setup_py;
 mod types;
@@ -16,6 +17,9 @@ mod warnings;
 pub use error::ManifestError;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub use pep508_util::normalize_distribution_name;
+pub use script::{
+    InlineScript, discover_inline_scripts, inline_script_target, parse_inline_script,
+};
 pub use types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
     LockfileGraph, ManifestSources, ProjectMetadata,

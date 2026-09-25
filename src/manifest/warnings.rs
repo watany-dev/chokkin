@@ -60,4 +60,11 @@ pub enum ManifestWarning {
         /// Missing constraints file path as written.
         path: String,
     },
+    /// A PEP 723 script block was ignored; the file stays a plain source.
+    InlineScriptInvalid {
+        /// Root-relative script path.
+        file: String,
+        /// Why the block was rejected.
+        reason: String,
+    },
 }

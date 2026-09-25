@@ -65,9 +65,10 @@ pub use graph::{
 };
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
-    DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
-    extract_manifest, extract_manifest_with_cache, resolve_target_version,
+    DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, InlineScript,
+    LoadedManifest, LockfileGraph, ManifestError, ManifestSources, ManifestWarning,
+    ProjectMetadata, discover_inline_scripts, extract_manifest, extract_manifest_with_cache,
+    inline_script_target, parse_inline_script, resolve_target_version,
 };
 pub use parser::{
     DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,

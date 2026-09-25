@@ -1,5 +1,6 @@
 //! Full project analysis orchestration (pipeline steps 1–13).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline_with_overrides, write_baseline};
@@ -11,7 +12,7 @@ use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability};
-use crate::resolver::{apply_resolution_to_graph, resolve_imports};
+use crate::resolver::{apply_resolution_to_graph, resolve_imports_with_script_targets};
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary,
     emit_issues_with_resolution,
@@ -184,24 +185,31 @@ fn run_analysis_core(
     })?;
     let warnings = actionable_plugin_warnings(&plugins);
 
-    let entry = build_entry_roots(
+    let mut entry = build_entry_roots(
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
         &plugins,
         production,
     );
+    crate::entry::add_script_roots(&mut entry, &probe.scripts, &probe.sources, production);
 
     let mut graph = build_analysis_graph(probe, &parse, &plugins)?;
 
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
-    let resolution = resolve_imports(
+    let script_targets: BTreeMap<_, _> = probe
+        .scripts
+        .iter()
+        .filter_map(|script| Some((script.path.clone(), script.target_version.clone()?)))
+        .collect();
+    let resolution = resolve_imports_with_script_targets(
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
         &parse,
         &plugin_refs,
         &probe.workspace_members,
+        &script_targets,
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
     apply_entry_plan(&mut graph, &entry);
@@ -241,6 +249,7 @@ fn run_analysis_core(
         &probe.manifest,
         &plugins,
         &workspace_boundaries,
+        &probe.scripts,
     );
 
     let symbols = crate::rules::symbols::analyze_with_context(

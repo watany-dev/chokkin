@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PEP 723 inline script metadata (`# /// script`): each script is an entry root
+  with its own dependency scope. Its third-party imports are checked against
+  the script block instead of the project manifest, reported as
+  `CHK002` / `CHK003` with subject `script:<path>:<distribution>`, and its
+  `requires-python` lower bound drives parse and stdlib classification for that
+  file. `--probe` lists detected scripts; invalid or duplicate blocks produce a
+  warning and the file stays an ordinary source. `--fix` does not rewrite
+  script blocks.
+
 ## [0.4.1] - Unreleased
 
 ### Fixed

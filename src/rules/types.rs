@@ -141,6 +141,13 @@ pub enum IssueSubject {
         /// 1-based line number.
         line: u32,
     },
+    /// Distribution in a PEP 723 script's own dependency scope.
+    ScriptDistribution {
+        /// Root-relative script path.
+        script: String,
+        /// Normalized distribution name.
+        name: String,
+    },
 }
 
 /// Where evidence for an issue was found.
@@ -313,6 +320,9 @@ pub fn issue_stable_target(issue: &Issue) -> String {
         IssueSubject::Import { module, file, .. } => {
             format!("{}:{module}", normalize_rel_path(Path::new(file)))
         },
+        IssueSubject::ScriptDistribution { script, name } => {
+            format!("script:{}:{name}", normalize_rel_path(Path::new(script)))
+        },
     };
     issue
         .workspace_member
@@ -333,6 +343,7 @@ pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
         IssueSubject::File { path } => path.clone(),
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
         IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
+        IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
     }
 }
 
