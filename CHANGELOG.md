@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- PEP 735 `{include-group = "..."}` in `[dependency-groups]` is expanded
+  transitively (group names normalized). A group pulled into a runtime group
+  counts as runtime for CHK002 / CHK005; requirements stay under their declaring
+  group, so CHK009 and `--fix` never act on the including group. `--explain`
+  shows the include path, and undefined or circular includes become manifest
+  warnings.
 - PEP 723 inline script metadata (`# /// script`): each script is an entry root
   with its own dependency scope. Its third-party imports are checked against
   the script block instead of the project manifest, reported as

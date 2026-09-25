@@ -86,6 +86,19 @@ fn write_manifest_warning(
             formatter,
             "manifest: ignored PEP 723 script block in `{file}`: {reason}"
         ),
+        ManifestWarning::DependencyGroupIncludeUndefined {
+            file,
+            group,
+            include,
+        } => write!(
+            formatter,
+            "manifest: dependency group `{group}` in `{file}` includes undefined group `{include}`"
+        ),
+        ManifestWarning::DependencyGroupIncludeCycle { file, groups } => write!(
+            formatter,
+            "manifest: dependency groups in `{file}` include each other in a cycle: {}",
+            groups.join(" -> ")
+        ),
     }
 }
 

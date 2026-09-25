@@ -295,6 +295,7 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         };
         let manifest = minimal_manifest(vec![dep]);
         let resolution = ResolutionIndex::default();
@@ -340,6 +341,7 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         };
         let manifest = minimal_manifest(vec![dep]);
         let (sources, parse, mut graph) = reconcile_inputs(&manifest);
