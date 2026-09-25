@@ -52,11 +52,11 @@ pub fn decorator_line(
         .min()
 }
 
-/// Text fallback for [`decorator_line`] when no parse output is available.
+/// Text fallback for [`decorator_line`] when a module failed to parse.
 ///
 /// Each line is normalized the way the parse path normalizes a decorator
 /// expression, so the same predicate decides both paths.
-pub fn text_decorator_line(contents: &str, matches: fn(&str, bool) -> bool) -> Option<u32> {
+fn text_decorator_line(contents: &str, matches: fn(&str, bool) -> bool) -> Option<u32> {
     contents.lines().enumerate().find_map(|(index, line)| {
         let (name, is_call) = text_decorator(line)?;
         if matches(&name, is_call) {

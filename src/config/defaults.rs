@@ -2,12 +2,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::Deserialize;
+
 use super::types::{
     ChokkinConfig, Confidence, DependencyGroupsConfig, PluginId, ProjectMode, TargetVersion,
 };
 
 /// Optional dependency group keys for one layer. Missing keys keep lower-priority values.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(clippy::struct_field_names)]
 pub(super) struct PartialDependencyGroups {
     pub dev_groups: Option<Vec<String>>,
@@ -32,7 +35,8 @@ impl PartialDependencyGroups {
 
 /// Optional fields for one configuration layer. `Some` values replace the merged
 /// result, except `plugins` and `dependencies` which merge per key (§3.1).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PartialConfig {
     pub entry: Option<Vec<super::types::EntrySpec>>,
     pub project: Option<Vec<String>>,

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::sources::{FileKind, path_to_module};
+use crate::sources::path_to_module;
 
 use super::context::PluginContext;
 use super::types::{
@@ -11,7 +11,7 @@ use super::types::{
 };
 use super::util::{
     decorator_line, decorator_suffix, manifest_has_dependency, parse_module_symbol,
-    read_pyproject_table, relative_path, text_decorator_line,
+    read_pyproject_table, relative_path,
 };
 use super::warnings::PluginsWarning;
 
@@ -110,29 +110,11 @@ fn extract_task_modules(
     contrib: &mut PluginContribution,
     found: &mut bool,
 ) {
-    if let Some(parse) = ctx.parse {
-        for module in &parse.modules {
-            let Some(line) = decorator_line(&ctx.root.path, module, is_task_decorator) else {
-                continue;
-            };
-            push_task_module(ctx, contrib, found, &module.path, line);
-        }
-        return;
-    }
-
-    // Standalone callers run before step 6, so there is nothing to reuse.
-    for file in &ctx.sources.files {
-        if file.kind != FileKind::Python {
-            continue;
-        }
-        let path = ctx.root.path.join(&file.path);
-        let Ok(contents) = std::fs::read_to_string(&path) else {
+    for module in &ctx.parse.modules {
+        let Some(line) = decorator_line(&ctx.root.path, module, is_task_decorator) else {
             continue;
         };
-        let Some(line) = text_decorator_line(&contents, is_task_decorator) else {
-            continue;
-        };
-        push_task_module(ctx, contrib, found, &file.path, line);
+        push_task_module(ctx, contrib, found, &module.path, line);
     }
 }
 
@@ -157,9 +139,9 @@ fn push_task_module(
     });
 }
 
-/// Task decorator test shared by the parse and text paths: bare
-/// `@shared_task` or any `@<receiver>.task` / `@<receiver>.shared_task`,
-/// called or not.
+/// Task decorator test shared by the parse path and its syntax-error text
+/// fallback: bare `@shared_task` or any `@<receiver>.task` /
+/// `@<receiver>.shared_task`, called or not.
 fn is_task_decorator(name: &str, _is_call: bool) -> bool {
     let (receiver, suffix) = decorator_suffix(name);
     match suffix {

@@ -19,10 +19,7 @@ mod warnings;
 pub(crate) use enablers::{EnablerScope, resolve_plugin_activations};
 pub use enablers::{PluginActivation, PluginActivationReason};
 pub use error::PluginsError;
-pub use extract::{
-    PluginExtractRequest, extract_plugin_hints, extract_plugin_hints_with_cache,
-    extract_plugin_hints_with_parse,
-};
+pub use extract::{PluginExtractRequest, extract_plugin_hints, extract_plugin_hints_with_parse};
 pub use types::{
     BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry, PluginHints,
     ReferenceOrigin, SymbolReference,
