@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plugin's reason (`default`, `config`, `enabled-by: ...`, `disabled-by: config`).
 
 ### Changed
+- Fewer string clones in the reachability BFS and the dependency rules'
+  reachable-file sets (#136). Findings are unchanged.
 - CHK004 now separates a transitive edge from a declared dependency (Certain)
   from a package that is only pinned in the lockfile (Likely, new message).
   Previously the latter was reported as CHK003.
@@ -70,6 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ManifestSources.lockfile: Option<LockfileSource>`.
 - Manifest cache unit bumped to `manifest-extract-v3`; every lockfile candidate
   is part of the cache key.
+
+### Fixed
+- Reachability (#266): `import pkg.sub.mod` (static, dynamic literal or
+  plugin module reference) now also reaches the parent packages'
+  `__init__.py` files. Framework-glob files such as Django migrations are
+  followed by the import walk, so their imports reach first-party files and
+  count as used third-party imports. CHK001 confidence drops to `likely` when
+  reachable code has an opaque dynamic import; an unreachable file's own
+  opaque import no longer affects its confidence.
 
 ## [0.4.1] - Unreleased
 

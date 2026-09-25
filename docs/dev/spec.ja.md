@@ -617,6 +617,10 @@ project files - reachable files = unused file candidates
 
 `from pkg import name` は `pkg` に加えて、`pkg.name` が first-party module に解決できればその file への import edge としても辿る（Python は `name` が submodule ならそれを読み込むため）。相対 import の `from . import name` と同じ規則になる。
 
+`import pkg.sub.mod` は `pkg.sub.mod` の file に加えて、親 package の `pkg/__init__.py` と `pkg/sub/__init__.py` にも到達させる（Python は submodule を import する前に親 package を初期化するため）。dynamic import の literal と plugin の module reference にも同じ規則を適用する。
+
+framework glob に一致する file（Django の `migrations/**/*.py` など）は framework-used の root として扱う。entry roots からの走査が終わった後にこれらを queue に入れ、その import も辿る。entry から既に到達している file の trace は上書きしない。
+
 ただし、以下はデフォルトで除外または低confidenceにする。
 
 ```text
@@ -639,6 +643,9 @@ certain:
 
 likely:
   dynamic importはあるが対象module名と一致しない
+  (到達可能なfileに対象module名を静的に決められないdynamic importが1つでもあれば、
+   全unreachable fileをlikelyにする。unreachable file自身のdynamic importは
+   実行されないので判定に使わない)
 
 maybe:
   library mode、namespace package、wildcard importがある
