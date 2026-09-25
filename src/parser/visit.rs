@@ -2,12 +2,11 @@
 
 use std::collections::HashSet;
 
-use rustpython_parser::ast::Ranged;
-use rustpython_parser::ast::{
-    Alias, Arguments, Comprehension, ExceptHandler, Expr, Stmt, StmtImport, StmtImportFrom,
-    StmtTry, StmtTryStar,
+use ruff_python_ast::visitor::{Visitor, walk_expr};
+use ruff_python_ast::{
+    Alias, Decorator, ExceptHandler, Expr, Identifier, Stmt, StmtImport, StmtImportFrom,
 };
-use rustpython_parser::source_code::RandomLocator;
+use ruff_text_size::Ranged;
 
 use crate::sources::{FileContext, LayoutInfo};
 
@@ -15,9 +14,10 @@ use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
 use super::dynamic::{LoaderNames, literal_module};
 use super::exports::extract_exports;
-use super::platform_guard::is_platform_guard_if;
+use super::lines::LineIndex;
+use super::platform_guard::is_platform_guard_test;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
-use super::type_checking::is_type_checking_if;
+use super::type_checking::is_type_checking_test;
 use super::types::{
     AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef,
     ParsedModule, SymbolDef, SymbolKind, import_context_for_file,
@@ -27,7 +27,7 @@ use super::types::{
 pub struct ModuleVisitor<'a> {
     path: &'a str,
     layout: &'a LayoutInfo,
-    locator: &'a mut RandomLocator<'a>,
+    lines: &'a LineIndex,
     default_context: ImportContext,
     in_type_checking: bool,
     try_depth: u32,
@@ -45,13 +45,13 @@ impl<'a> ModuleVisitor<'a> {
         path: &'a str,
         layout: &'a LayoutInfo,
         file_context: FileContext,
-        locator: &'a mut RandomLocator<'a>,
+        lines: &'a LineIndex,
     ) -> Self {
         let default_context = import_context_for_file(file_context);
         Self {
             path,
             layout,
-            locator,
+            lines,
             default_context,
             in_type_checking: false,
             try_depth: 0,
@@ -78,408 +78,51 @@ impl<'a> ModuleVisitor<'a> {
     /// `__all__` is read first because [`Self::record_symbol`] consults the export
     /// list to decide whether an underscore-prefixed symbol is public.
     pub fn visit_module(&mut self, stmts: &[Stmt]) {
-        self.parsed.exports = extract_exports(stmts, self.locator, &mut self.parsed.diagnostics);
-        for stmt in stmts {
-            self.visit_stmt(stmt);
-        }
+        self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
+        self.visit_body(stmts);
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn visit_stmt(&mut self, stmt: &Stmt) {
-        match stmt {
-            Stmt::Import(import) => self.visit_import(import),
-            Stmt::ImportFrom(import_from) => self.visit_import_from(import_from),
-            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {
-                self.visit_def(stmt);
-            },
-            Stmt::Assign(assign) => {
-                if self.module_level {
-                    let line = self.line_number(assign);
-                    for target in &assign.targets {
-                        if let Expr::Name(name) = target {
-                            self.record_symbol(
-                                name.id.to_string(),
-                                SymbolKind::Variable,
-                                line,
-                                &[],
-                            );
-                        }
-                    }
-                }
-                for target in &assign.targets {
-                    self.visit_expr(target);
-                }
-                self.visit_expr(&assign.value);
-            },
-            Stmt::AnnAssign(ann_assign) => {
-                if self.module_level
-                    && let Expr::Name(name) = &*ann_assign.target
-                {
-                    let line = self.line_number(ann_assign);
-                    self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
-                }
-                self.visit_expr(&ann_assign.target);
-                self.visit_expr(&ann_assign.annotation);
-                if let Some(value) = &ann_assign.value {
-                    self.visit_expr(value);
-                }
-            },
-            Stmt::AugAssign(aug_assign) => self.visit_expr(&aug_assign.value),
-            Stmt::Return(return_stmt) => {
-                if let Some(value) = &return_stmt.value {
-                    self.visit_expr(value);
-                }
-            },
-            Stmt::Expr(expr_stmt) => self.visit_expr(&expr_stmt.value),
-            Stmt::If(if_stmt) => {
-                self.visit_expr(&if_stmt.test);
-                let was_type_checking = self.in_type_checking;
-                let was_platform_guard = self.platform_guard_depth;
-                if is_type_checking_if(stmt, &self.typing_aliases, &self.type_checking_names) {
-                    self.in_type_checking = true;
-                }
-                if is_platform_guard_if(stmt) {
-                    self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
-                }
-                for inner in &if_stmt.body {
-                    self.visit_stmt(inner);
-                }
-                self.in_type_checking = was_type_checking;
-                self.platform_guard_depth = was_platform_guard;
-                for inner in &if_stmt.orelse {
-                    self.visit_stmt(inner);
-                }
-            },
-            Stmt::Try(StmtTry {
-                body,
-                handlers,
-                orelse,
-                finalbody,
-                ..
-            })
-            | Stmt::TryStar(StmtTryStar {
-                body,
-                handlers,
-                orelse,
-                finalbody,
-                ..
-            }) => {
-                self.try_depth = self.try_depth.saturating_add(1);
-                for inner in body {
-                    self.visit_stmt(inner);
-                }
-                self.try_depth = self.try_depth.saturating_sub(1);
-                for handler in handlers {
-                    let ExceptHandler::ExceptHandler(handler) = handler;
-                    if let Some(exc_type) = &handler.type_ {
-                        self.visit_expr(exc_type);
-                    }
-                    for inner in &handler.body {
-                        self.visit_stmt(inner);
-                    }
-                }
-                for inner in orelse {
-                    self.visit_stmt(inner);
-                }
-                for inner in finalbody {
-                    self.visit_stmt(inner);
-                }
-            },
-            Stmt::With(with_stmt) => {
-                for item in &with_stmt.items {
-                    self.visit_expr(&item.context_expr);
-                }
-                self.visit_body(&with_stmt.body);
-            },
-            Stmt::AsyncWith(with_stmt) => {
-                for item in &with_stmt.items {
-                    self.visit_expr(&item.context_expr);
-                }
-                self.visit_body(&with_stmt.body);
-            },
-            Stmt::Match(match_stmt) => {
-                self.visit_expr(&match_stmt.subject);
-                for case in &match_stmt.cases {
-                    if let Some(guard) = &case.guard {
-                        self.visit_expr(guard);
-                    }
-                    for inner in &case.body {
-                        self.visit_stmt(inner);
-                    }
-                }
-            },
-            Stmt::For(for_stmt) => {
-                self.visit_expr(&for_stmt.iter);
-                self.visit_body(&for_stmt.body);
-                self.visit_body(&for_stmt.orelse);
-            },
-            Stmt::AsyncFor(for_stmt) => {
-                self.visit_expr(&for_stmt.iter);
-                self.visit_body(&for_stmt.body);
-                self.visit_body(&for_stmt.orelse);
-            },
-            Stmt::While(while_stmt) => {
-                self.visit_expr(&while_stmt.test);
-                self.visit_body(&while_stmt.body);
-                self.visit_body(&while_stmt.orelse);
-            },
-            Stmt::Raise(raise) => {
-                if let Some(exc) = &raise.exc {
-                    self.visit_expr(exc);
-                }
-                if let Some(cause) = &raise.cause {
-                    self.visit_expr(cause);
-                }
-            },
-            Stmt::Assert(assert) => {
-                self.visit_expr(&assert.test);
-                if let Some(msg) = &assert.msg {
-                    self.visit_expr(msg);
-                }
-            },
-            Stmt::Delete(delete) => {
-                for target in &delete.targets {
-                    self.visit_expr(target);
-                }
-            },
-            _ => {},
+    /// Visit one `if`/`elif`/`else` branch; `test` is `None` for `else`.
+    fn visit_branch<'ast>(&mut self, test: Option<&'ast Expr>, body: &'ast [Stmt]) {
+        let was_type_checking = self.in_type_checking;
+        let was_platform_guard = self.platform_guard_depth;
+        if let Some(test) = test {
+            self.visit_expr(test);
+            if is_type_checking_test(test, &self.typing_aliases, &self.type_checking_names) {
+                self.in_type_checking = true;
+            }
+            if is_platform_guard_test(test) {
+                self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
+            }
         }
+        self.visit_body(body);
+        self.in_type_checking = was_type_checking;
+        self.platform_guard_depth = was_platform_guard;
     }
 
-    fn visit_def(&mut self, stmt: &Stmt) {
-        let (name, decorators, body, kind) = match stmt {
-            Stmt::FunctionDef(def) => (
-                &def.name,
-                &def.decorator_list,
-                &def.body,
-                SymbolKind::Function,
-            ),
-            Stmt::AsyncFunctionDef(def) => (
-                &def.name,
-                &def.decorator_list,
-                &def.body,
-                SymbolKind::Function,
-            ),
-            Stmt::ClassDef(def) => (&def.name, &def.decorator_list, &def.body, SymbolKind::Class),
-            _ => return,
-        };
+    fn visit_def<'ast>(
+        &mut self,
+        name: &Identifier,
+        decorators: &'ast [Decorator],
+        body: &'ast [Stmt],
+        kind: SymbolKind,
+        signature: impl FnOnce(&mut Self),
+    ) {
         self.record_decorators(decorators);
         for decorator in decorators {
-            self.visit_expr(decorator);
+            self.visit_expr(&decorator.expression);
         }
-        match stmt {
-            Stmt::FunctionDef(def) => {
-                self.visit_arguments(&def.args);
-                if let Some(returns) = &def.returns {
-                    self.visit_expr(returns);
-                }
-            },
-            Stmt::AsyncFunctionDef(def) => {
-                self.visit_arguments(&def.args);
-                if let Some(returns) = &def.returns {
-                    self.visit_expr(returns);
-                }
-            },
-            Stmt::ClassDef(def) => {
-                for base in &def.bases {
-                    self.visit_expr(base);
-                }
-                for keyword in &def.keywords {
-                    self.visit_expr(&keyword.value);
-                }
-            },
-            _ => {},
-        }
+        signature(self);
         if self.module_level {
-            let line = self.line_number(stmt);
+            // The def's own range starts at its first decorator; CPython reports
+            // the `def`/`class` line, which is where the name sits.
+            let line = self.line_number(name);
             self.record_symbol(name.to_string(), kind, line, decorators);
         }
         let saved = self.module_level;
         self.module_level = false;
         self.visit_body(body);
         self.module_level = saved;
-    }
-
-    fn visit_arguments(&mut self, arguments: &Arguments) {
-        for arg in arguments
-            .posonlyargs
-            .iter()
-            .chain(&arguments.args)
-            .chain(&arguments.kwonlyargs)
-        {
-            if let Some(annotation) = &arg.def.annotation {
-                self.visit_expr(annotation);
-            }
-            if let Some(default) = &arg.default {
-                self.visit_expr(default);
-            }
-        }
-        for arg in arguments.vararg.iter().chain(&arguments.kwarg) {
-            if let Some(annotation) = &arg.annotation {
-                self.visit_expr(annotation);
-            }
-        }
-    }
-
-    fn visit_body(&mut self, body: &[Stmt]) {
-        for inner in body {
-            self.visit_stmt(inner);
-        }
-    }
-
-    /// Walk one expression for dynamic imports and module attribute accesses.
-    ///
-    /// Both used to be separate full-tree passes; folding them into the statement
-    /// walk keeps cold parse to a single traversal per file.
-    #[allow(clippy::too_many_lines)]
-    fn visit_expr(&mut self, expr: &Expr) {
-        match expr {
-            Expr::Attribute(attribute) => {
-                if let Some(receiver) = attribute_receiver(&attribute.value) {
-                    let line = self.line_number(attribute);
-                    self.parsed.attribute_accesses.push(AttributeAccess {
-                        receiver,
-                        name: attribute.attr.to_string(),
-                        line,
-                    });
-                }
-                self.visit_expr(&attribute.value);
-            },
-            Expr::Call(call) => {
-                if self.loader_names.is_loader(&call.func) {
-                    if let Some(module) = literal_module(call) {
-                        let line = self.line_number(call);
-                        self.parsed
-                            .dynamic_imports
-                            .push(DynamicImport { module, line });
-                    } else if !call.args.is_empty() || !call.keywords.is_empty() {
-                        self.parsed.has_opaque_dynamic_import = true;
-                    }
-                }
-                // `map(importlib.import_module, names)` loads modules this walk never sees.
-                if call
-                    .args
-                    .iter()
-                    .chain(call.keywords.iter().map(|keyword| &keyword.value))
-                    .any(|arg| self.loader_names.is_loader(arg))
-                {
-                    self.parsed.has_opaque_dynamic_import = true;
-                }
-                self.visit_expr(&call.func);
-                for arg in &call.args {
-                    self.visit_expr(arg);
-                }
-                for keyword in &call.keywords {
-                    self.visit_expr(&keyword.value);
-                }
-            },
-            Expr::BoolOp(bool_op) => {
-                for value in &bool_op.values {
-                    self.visit_expr(value);
-                }
-            },
-            Expr::NamedExpr(named) => self.visit_expr(&named.value),
-            Expr::BinOp(bin_op) => {
-                self.visit_expr(&bin_op.left);
-                self.visit_expr(&bin_op.right);
-            },
-            Expr::UnaryOp(unary) => self.visit_expr(&unary.operand),
-            Expr::Lambda(lambda) => {
-                self.visit_arguments(&lambda.args);
-                self.visit_expr(&lambda.body);
-            },
-            Expr::IfExp(if_exp) => {
-                self.visit_expr(&if_exp.test);
-                self.visit_expr(&if_exp.body);
-                self.visit_expr(&if_exp.orelse);
-            },
-            Expr::Dict(dict) => {
-                for (key, value) in dict.keys.iter().zip(&dict.values) {
-                    if let Some(key) = key {
-                        self.visit_expr(key);
-                    }
-                    self.visit_expr(value);
-                }
-            },
-            Expr::Set(set) => {
-                for value in &set.elts {
-                    self.visit_expr(value);
-                }
-            },
-            Expr::ListComp(list_comp) => {
-                self.visit_expr(&list_comp.elt);
-                self.visit_comprehensions(&list_comp.generators);
-            },
-            Expr::SetComp(set_comp) => {
-                self.visit_expr(&set_comp.elt);
-                self.visit_comprehensions(&set_comp.generators);
-            },
-            Expr::DictComp(dict_comp) => {
-                self.visit_expr(&dict_comp.key);
-                self.visit_expr(&dict_comp.value);
-                self.visit_comprehensions(&dict_comp.generators);
-            },
-            Expr::GeneratorExp(generator) => {
-                self.visit_expr(&generator.elt);
-                self.visit_comprehensions(&generator.generators);
-            },
-            Expr::Await(await_expr) => self.visit_expr(&await_expr.value),
-            Expr::Yield(yield_expr) => {
-                if let Some(value) = &yield_expr.value {
-                    self.visit_expr(value);
-                }
-            },
-            Expr::YieldFrom(yield_from) => self.visit_expr(&yield_from.value),
-            Expr::Compare(compare) => {
-                self.visit_expr(&compare.left);
-                for comparator in &compare.comparators {
-                    self.visit_expr(comparator);
-                }
-            },
-            Expr::Subscript(subscript) => {
-                self.visit_expr(&subscript.value);
-                self.visit_expr(&subscript.slice);
-            },
-            Expr::Starred(starred) => self.visit_expr(&starred.value),
-            Expr::List(list) => {
-                for value in &list.elts {
-                    self.visit_expr(value);
-                }
-            },
-            Expr::Tuple(tuple) => {
-                for value in &tuple.elts {
-                    self.visit_expr(value);
-                }
-            },
-            Expr::FormattedValue(formatted) => self.visit_expr(&formatted.value),
-            Expr::JoinedStr(joined) => {
-                for value in &joined.values {
-                    self.visit_expr(value);
-                }
-            },
-            Expr::Slice(slice) => {
-                if let Some(lower) = &slice.lower {
-                    self.visit_expr(lower);
-                }
-                if let Some(upper) = &slice.upper {
-                    self.visit_expr(upper);
-                }
-                if let Some(step) = &slice.step {
-                    self.visit_expr(step);
-                }
-            },
-            Expr::Constant(_) | Expr::Name(_) => {},
-        }
-    }
-
-    fn visit_comprehensions(&mut self, comprehensions: &[Comprehension]) {
-        for comprehension in comprehensions {
-            self.visit_expr(&comprehension.target);
-            self.visit_expr(&comprehension.iter);
-            for if_clause in &comprehension.ifs {
-                self.visit_expr(if_clause);
-            }
-        }
     }
 
     fn visit_import(&mut self, import: &StmtImport) {
@@ -516,11 +159,7 @@ impl<'a> ModuleVisitor<'a> {
         let context = self.current_import_context();
         let optional = self.try_depth > 0;
         let platform_guarded = self.platform_guard_depth > 0;
-        let level = import_from
-            .level
-            .as_ref()
-            .map_or(0, rustpython_parser::ast::Int::to_u32);
-        let level = u8::try_from(level).unwrap_or(u8::MAX);
+        let level = u8::try_from(import_from.level).unwrap_or(u8::MAX);
         let module_suffix = import_from.module.as_ref().map(ToString::to_string);
 
         for alias in &import_from.names {
@@ -602,10 +241,19 @@ impl<'a> ModuleVisitor<'a> {
         }
     }
 
-    fn record_symbol(&mut self, name: String, kind: SymbolKind, line: u32, decorators: &[Expr]) {
+    fn record_symbol(
+        &mut self,
+        name: String,
+        kind: SymbolKind,
+        line: u32,
+        decorators: &[Decorator],
+    ) {
         let is_public =
             !name.starts_with('_') || self.parsed.exports.iter().any(|export| export == &name);
-        let normalized = decorators.iter().filter_map(normalize_decorator).collect();
+        let normalized = decorators
+            .iter()
+            .filter_map(|decorator| normalize_decorator(&decorator.expression))
+            .collect();
         self.parsed.symbols.push(SymbolDef {
             name,
             kind,
@@ -621,13 +269,13 @@ impl<'a> ModuleVisitor<'a> {
     /// Plugins (Flask routes, Celery tasks) read these instead of re-opening
     /// each source file, so app-factory patterns that decorate inside a
     /// function must land here too.
-    fn record_decorators(&mut self, decorators: &[Expr]) {
+    fn record_decorators(&mut self, decorators: &[Decorator]) {
         for decorator in decorators {
-            let Some(name) = normalize_decorator(decorator) else {
+            let Some(name) = normalize_decorator(&decorator.expression) else {
                 continue;
             };
-            let line = self.line_number(decorator);
-            let is_call = matches!(decorator, Expr::Call(_));
+            let line = self.line_number(&decorator.expression);
+            let is_call = matches!(decorator.expression, Expr::Call(_));
             self.parsed.decorator_sites.push(DecoratorSite {
                 name,
                 line,
@@ -636,8 +284,188 @@ impl<'a> ModuleVisitor<'a> {
         }
     }
 
-    fn line_number<R: Ranged>(&mut self, node: &R) -> u32 {
-        self.locator.locate(node.start()).row.get()
+    fn line_number<R: Ranged>(&self, node: &R) -> u32 {
+        self.lines.line(node.start())
+    }
+}
+
+impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
+    #[allow(clippy::too_many_lines)]
+    fn visit_stmt(&mut self, stmt: &'ast Stmt) {
+        match stmt {
+            Stmt::Import(import) => self.visit_import(import),
+            Stmt::ImportFrom(import_from) => self.visit_import_from(import_from),
+            Stmt::FunctionDef(def) => self.visit_def(
+                &def.name,
+                &def.decorator_list,
+                &def.body,
+                SymbolKind::Function,
+                |visitor| {
+                    visitor.visit_parameters(&def.parameters);
+                    if let Some(returns) = &def.returns {
+                        visitor.visit_expr(returns);
+                    }
+                },
+            ),
+            Stmt::ClassDef(def) => self.visit_def(
+                &def.name,
+                &def.decorator_list,
+                &def.body,
+                SymbolKind::Class,
+                |visitor| {
+                    if let Some(arguments) = &def.arguments {
+                        visitor.visit_arguments(arguments);
+                    }
+                },
+            ),
+            Stmt::Assign(assign) => {
+                if self.module_level {
+                    let line = self.line_number(assign);
+                    for target in &assign.targets {
+                        if let Expr::Name(name) = target {
+                            self.record_symbol(
+                                name.id.to_string(),
+                                SymbolKind::Variable,
+                                line,
+                                &[],
+                            );
+                        }
+                    }
+                }
+                for target in &assign.targets {
+                    self.visit_expr(target);
+                }
+                self.visit_expr(&assign.value);
+            },
+            Stmt::AnnAssign(ann_assign) => {
+                if self.module_level
+                    && let Expr::Name(name) = &*ann_assign.target
+                {
+                    let line = self.line_number(ann_assign);
+                    self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
+                }
+                self.visit_expr(&ann_assign.target);
+                self.visit_expr(&ann_assign.annotation);
+                if let Some(value) = &ann_assign.value {
+                    self.visit_expr(value);
+                }
+            },
+            Stmt::AugAssign(aug_assign) => self.visit_expr(&aug_assign.value),
+            Stmt::Return(return_stmt) => {
+                if let Some(value) = &return_stmt.value {
+                    self.visit_expr(value);
+                }
+            },
+            Stmt::Expr(expr_stmt) => self.visit_expr(&expr_stmt.value),
+            Stmt::If(if_stmt) => {
+                self.visit_branch(Some(&if_stmt.test), &if_stmt.body);
+                for clause in &if_stmt.elif_else_clauses {
+                    self.visit_branch(clause.test.as_ref(), &clause.body);
+                }
+            },
+            Stmt::Try(try_stmt) => {
+                self.try_depth = self.try_depth.saturating_add(1);
+                self.visit_body(&try_stmt.body);
+                self.try_depth = self.try_depth.saturating_sub(1);
+                for handler in &try_stmt.handlers {
+                    let ExceptHandler::ExceptHandler(handler) = handler;
+                    if let Some(exc_type) = &handler.type_ {
+                        self.visit_expr(exc_type);
+                    }
+                    self.visit_body(&handler.body);
+                }
+                self.visit_body(&try_stmt.orelse);
+                self.visit_body(&try_stmt.finalbody);
+            },
+            Stmt::With(with_stmt) => {
+                for item in &with_stmt.items {
+                    self.visit_expr(&item.context_expr);
+                }
+                self.visit_body(&with_stmt.body);
+            },
+            Stmt::Match(match_stmt) => {
+                self.visit_expr(&match_stmt.subject);
+                for case in &match_stmt.cases {
+                    if let Some(guard) = &case.guard {
+                        self.visit_expr(guard);
+                    }
+                    self.visit_body(&case.body);
+                }
+            },
+            Stmt::For(for_stmt) => {
+                self.visit_expr(&for_stmt.iter);
+                self.visit_body(&for_stmt.body);
+                self.visit_body(&for_stmt.orelse);
+            },
+            Stmt::While(while_stmt) => {
+                self.visit_expr(&while_stmt.test);
+                self.visit_body(&while_stmt.body);
+                self.visit_body(&while_stmt.orelse);
+            },
+            Stmt::Raise(raise) => {
+                if let Some(exc) = &raise.exc {
+                    self.visit_expr(exc);
+                }
+                if let Some(cause) = &raise.cause {
+                    self.visit_expr(cause);
+                }
+            },
+            Stmt::Assert(assert) => {
+                self.visit_expr(&assert.test);
+                if let Some(msg) = &assert.msg {
+                    self.visit_expr(msg);
+                }
+            },
+            Stmt::Delete(delete) => {
+                for target in &delete.targets {
+                    self.visit_expr(target);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    /// Walk one expression for dynamic imports and module attribute accesses.
+    ///
+    /// Both used to be separate full-tree passes; folding them into the statement
+    /// walk keeps cold parse to a single traversal per file.
+    fn visit_expr(&mut self, expr: &'ast Expr) {
+        match expr {
+            Expr::Attribute(attribute) => {
+                if let Some(receiver) = attribute_receiver(&attribute.value) {
+                    let line = self.line_number(attribute);
+                    self.parsed.attribute_accesses.push(AttributeAccess {
+                        receiver,
+                        name: attribute.attr.to_string(),
+                        line,
+                    });
+                }
+            },
+            Expr::Call(call) => {
+                let arguments = &call.arguments;
+                if self.loader_names.is_loader(&call.func) {
+                    if let Some(module) = literal_module(call) {
+                        let line = self.line_number(call);
+                        self.parsed
+                            .dynamic_imports
+                            .push(DynamicImport { module, line });
+                    } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
+                        self.parsed.has_opaque_dynamic_import = true;
+                    }
+                }
+                // `map(importlib.import_module, names)` loads modules this walk never sees.
+                if arguments
+                    .args
+                    .iter()
+                    .chain(arguments.keywords.iter().map(|keyword| &keyword.value))
+                    .any(|arg| self.loader_names.is_loader(arg))
+                {
+                    self.parsed.has_opaque_dynamic_import = true;
+                }
+            },
+            _ => {},
+        }
+        walk_expr(self, expr);
     }
 }
 
@@ -647,22 +475,19 @@ fn alias_as_name(alias: &Alias) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use rustpython_parser::Parse;
-    use rustpython_parser::ast::Suite;
-
     use super::*;
     use crate::sources::ProjectLayout;
 
     fn visit_source(source: &str) -> ParsedModule {
-        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let module = ruff_python_parser::parse_module(source).expect("parse");
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
-        let mut locator = RandomLocator::new(source);
-        let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &mut locator);
-        visitor.visit_module(&stmts);
+        let lines = LineIndex::new(source);
+        let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &lines);
+        visitor.visit_module(module.suite());
         visitor.into_parsed()
     }
 
@@ -923,5 +748,69 @@ g = lambda x=utils.G: x
         let parsed =
             visit_source("from acme import utils\ntry:\n    pass\nexcept* utils.G:\n    pass\n");
         assert_eq!(attribute_lines(&parsed, "G"), vec![4]);
+    }
+
+    #[test]
+    fn walks_elif_branches_with_guards() {
+        let parsed = visit_source(
+            "import sys\nfrom typing import TYPE_CHECKING\nif sys.platform == \"win32\":\n    import winreg\nelif TYPE_CHECKING:\n    import typed_lib\nelse:\n    import plain_lib\n",
+        );
+        let find = |module: &str| {
+            parsed
+                .imports
+                .iter()
+                .find(|import| import.module == module)
+                .expect("import recorded")
+        };
+        assert!(find("winreg").platform_guarded);
+        assert_eq!(find("typed_lib").context, ImportContext::Type);
+        assert!(!find("typed_lib").platform_guarded);
+        assert_eq!(find("plain_lib").context, ImportContext::Runtime);
+    }
+
+    #[test]
+    fn records_decorated_symbol_on_def_line() {
+        let parsed = visit_source("@decorate\n@other\ndef f():\n    pass\n");
+        let symbol = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "f")
+            .expect("symbol f");
+        assert_eq!(symbol.line, 3);
+    }
+
+    #[test]
+    fn parses_python_313_and_314_syntax() {
+        // PEP 695 type params, PEP 758 bare except tuples, PEP 750 t-strings.
+        let source = "\
+from acme import utils
+type Alias = utils.A
+def f[T](x: T) -> utils.B:
+    pass
+class C[T](utils.Base):
+    pass
+try:
+    pass
+except ValueError, TypeError:
+    pass
+value = t\"{utils.C}\"
+";
+        let parsed = visit_source(source);
+        for (name, line) in [("B", 3), ("Base", 5), ("C", 11)] {
+            assert_eq!(attribute_lines(&parsed, name), vec![line], "utils.{name}");
+        }
+        assert!(parsed.symbols.iter().any(|symbol| symbol.name == "f"));
+        assert!(parsed.symbols.iter().any(|symbol| symbol.name == "C"));
+    }
+
+    #[test]
+    fn treats_lazy_import_as_import() {
+        let parsed = visit_source("lazy import json\nlazy from acme import utils\n");
+        let modules: Vec<_> = parsed
+            .imports
+            .iter()
+            .map(|import| import.module.as_str())
+            .collect();
+        assert_eq!(modules, vec!["json", "acme"]);
     }
 }

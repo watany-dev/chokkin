@@ -6,6 +6,7 @@ mod dynamic;
 mod error;
 mod exports;
 mod ignores;
+mod lines;
 mod parse;
 mod platform_guard;
 mod relative;
