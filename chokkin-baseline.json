@@ -94,6 +94,21 @@
       "target": "tests/fixtures/deps/include_group/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/lock_unused_pdm/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/lock_unused_pdm/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/lock_unused_poetry/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/lock_unused_poetry/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/lock_unused_pylock/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/lock_unused_pylock/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/map_alias/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/map_alias/src/acme/main.py"
@@ -137,6 +152,11 @@
       "fingerprint": "CHK001:tests/fixtures/deps/pdm_dev_deps/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/pdm_dev_deps/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/pep723_unused_script/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/pep723_unused_script/src/acme/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/platform_guard_import/src/acme/main.py",
@@ -192,6 +212,11 @@
       "fingerprint": "CHK001:tests/fixtures/deps/unused_boto3/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/unused_boto3/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/uv_dev_dependencies_unused/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/uv_dev_dependencies_unused/src/acme/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/uv_path_source/src/acme/main.py",
@@ -817,6 +842,11 @@
       "fingerprint": "CHK001:tests/fixtures/symbols/unused_reexport/src/acme/sub.py",
       "code": "CHK001",
       "target": "tests/fixtures/symbols/unused_reexport/src/acme/sub.py"
+    },
+    {
+      "fingerprint": "CHK002:script:tests/fixtures/deps/pep723_unused_script/scripts/tool.py:boto3",
+      "code": "CHK002",
+      "target": "script:tests/fixtures/deps/pep723_unused_script/scripts/tool.py:boto3"
     },
     {
       "fingerprint": "CHK006:scripts/generate-package-map.py:AUTO_PACKAGES",

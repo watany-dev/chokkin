@@ -1,4 +1,6 @@
-# OSS clone manifest for the Phase 1 §17 validation set (20 projects).
+# OSS clone manifest for the Phase 1 §17 validation set (20 projects) plus the
+# R-01..R-07 feature corpus (#323; selection rationale in
+# docs/dev/oss-validation-report.md).
 #
 # Used by scripts/clone-oss-fixtures.sh to populate target/oss-clones/<slug>,
 # then by scripts/oss-metrics.sh to measure false-positive rate and cold-run
@@ -38,3 +40,13 @@ black	cli	large	24.8.0	https://github.com/psf/black
 fastapi	framework	large	0.115.0	https://github.com/fastapi/fastapi
 djangorestframework	rest	large	3.15.2	https://github.com/encode/django-rest-framework
 django	framework	large	5.1.1	https://github.com/django/django
+# --- R-01..R-07 feature corpus (#323) ---
+pydantic	library	medium	v2.13.5	https://github.com/pydantic/pydantic
+mlflow	app	large	v3.16.1	https://github.com/mlflow/mlflow
+airflow	app	large	3.3.2	https://github.com/apache/airflow
+fastmcp	framework	large	v4.0.9	https://github.com/jlowin/fastmcp
+mcp-python-sdk	library	large	v2.2.0	https://github.com/modelcontextprotocol/python-sdk
+virtualenv	cli	medium	21.12.1	https://github.com/pypa/virtualenv
+poetry	cli	medium	2.5.1	https://github.com/python-poetry/poetry
+pdm	cli	medium	2.29.2	https://github.com/pdm-project/pdm
+mitmproxy	app	large	v12.2.3	https://github.com/mitmproxy/mitmproxy

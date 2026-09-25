@@ -4,7 +4,7 @@
 #
 # Tab-separated columns (lines starting with # and blank lines are ignored):
 #   slug          project slug from scripts/oss-clones.manifest
-#   code          CHK002 | CHK003
+#   code          CHK002 | CHK003 | CHK004 (CHK004 only on recall sentinels)
 #   target        stable JSON target field (was distribution for dep rules)
 #   verdict       fp | tp | deferred
 #   bucket        root-cause bucket for CHK003 fp or deferred; use - otherwise
@@ -180,6 +180,16 @@ django	CHK002	tzdata	fp	-	optional/conditional/platform-guarded runtime import n
 unused_boto3	CHK002	boto3	tp	-	recall sentinel: declared runtime dep with no import anywhere; must stay detected
 optional_try_import	CHK002	requests	tp	-	recall sentinel: unused runtime dep coexisting with a correctly-suppressed optional import — guards 4.C against over-suppression
 missing_yaml	CHK003	src/acme/main.py:yaml	tp	-	recall sentinel: undeclared pyyaml import must stay detected as CHK003
+include_group	CHK002	boto3	tp	-	recall sentinel (R-01): unused dep declared only in a dependency group pulled in via include-group
+pep723_unused_script	CHK002	script:scripts/tool.py:boto3	tp	-	recall sentinel (R-02): unused dep declared only in a PEP 723 script block
+lock_unused_pylock	CHK002	boto3	tp	-	recall sentinel (R-03): unused direct dep in a pylock.toml project
+lock_unused_pylock	CHK004	src/acme/main.py:urllib3	tp	-	recall sentinel (R-03): urllib3 imported but only locked as a transitive of requests
+lock_unused_poetry	CHK002	boto3	tp	-	recall sentinel (R-03): unused direct dep in a poetry.lock project
+lock_unused_poetry	CHK004	src/acme/main.py:urllib3	tp	-	recall sentinel (R-03): urllib3 imported but only locked as a transitive of requests
+lock_unused_pdm	CHK002	boto3	tp	-	recall sentinel (R-03): unused direct dep in a pdm.lock project
+lock_unused_pdm	CHK004	src/acme/main.py:urllib3	tp	-	recall sentinel (R-03): urllib3 imported but only locked as a transitive of requests
+uv_dev_dependencies_unused	CHK002	boto3	tp	-	recall sentinel (R-04): unused runtime dep next to [tool.uv] dev-dependencies and a constraint on the same name
+build_plugin_declared	CHK002	hatch-vcs	tp	-	recall sentinel (R-05): build plugin declared as a runtime dep in a project with build-system
 
 # --- CHK003 OSS corpus (auto-generated from target/oss-metrics/findings.tsv) ---
 # Regenerate: python3 scripts/generate-chk003-labels.py target/oss-metrics/findings.tsv

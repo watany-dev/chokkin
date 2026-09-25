@@ -1,0 +1,8 @@
+[project]
+name = "pep723-unused-script"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["requests"]
+
+[project.scripts]
+acme-cli = "acme.main:main"
