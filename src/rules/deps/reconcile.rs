@@ -106,6 +106,7 @@ pub fn reconcile_with_context(
         reachability,
         graph,
         reachable: &reachable,
+        build_requires: &manifest.metadata.build_requires,
     };
 
     for deps in declared.values() {

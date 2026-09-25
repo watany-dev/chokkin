@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `[build-system].requires` and `build-backend` are inventoried as build
+  context (R-05, #311). They never feed CHK002/CHK003. An unused project or dev
+  dependency that is also a build requirement (e.g. `hatch-vcs`,
+  `setuptools-scm`) gets `also in build-system.requires` in its CHK002 evidence.
+  `--probe` shows the backend and requires.
+- Library mode derives the public surface from wheel target settings (R-05,
+  #312). These are hatch `packages` / `only-include`, setuptools `packages` /
+  `packages.find` / `package-dir` / `py-modules`, pdm `includes`, flit
+  `module`, and maturin `python-source` / `module-name`. Unreachable files
+  outside the surface keep app-mode CHK001 confidence, and CHK006 stays a
+  warning for symbols outside it. Without such settings nothing changes.
+- The manifest cache format moved to v3, so existing manifest cache entries are
+  rebuilt once.
+
 ## [0.4.1] - Unreleased
 
 ### Fixed

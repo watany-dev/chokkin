@@ -5,10 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, GraphEdge, ProjectMode, ProjectRoot, RootMarker, add_parsed_imports,
-    analyze_reachability, apply_entry_plan, apply_resolution_to_graph, build_entry_roots,
-    build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
-    extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
+    Confidence, GraphEdge, ProjectMode, ProjectRoot, PublicSurface, RootMarker, add_parsed_imports,
+    analyze_reachability, apply_entry_plan, apply_public_surface, apply_resolution_to_graph,
+    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
+    extract_manifest, extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
     resolve_target_version, trace_to_file,
 };
 
@@ -25,6 +25,7 @@ fn plugins_fixture(name: &str) -> PathBuf {
 }
 
 struct ReachabilityInputs {
+    manifest: chokkin::LoadedManifest,
     sources: chokkin::DiscoveredSources,
     plugins: chokkin::PluginHints,
     parse: chokkin::ParseSummary,
@@ -67,6 +68,7 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     apply_entry_plan(&mut graph, &entry);
 
     ReachabilityInputs {
+        manifest,
         sources,
         plugins,
         parse,
@@ -163,6 +165,40 @@ fn library_mode_caps_orphan_confidence() {
         .find(|file| file.path == "src/acme/orphan.py")
         .expect("orphan");
     assert_eq!(orphan.max_confidence, Confidence::Maybe);
+}
+
+#[test]
+fn library_mode_unshipped_orphan_keeps_certain_confidence() {
+    let mut inputs = load_reachability(&fixture("library_wheel_targets"), false);
+    let mut report = analyze_reachability(
+        &mut inputs.graph,
+        &inputs.sources,
+        &inputs.entry,
+        &inputs.plugins,
+        &inputs.parse,
+        &inputs.entry.mode,
+        false,
+    )
+    .expect("reachability");
+    let surface = PublicSurface::resolve(
+        inputs.manifest.metadata.wheel_targets.as_ref(),
+        &inputs.sources.files,
+    )
+    .expect("wheel surface");
+    apply_public_surface(&mut report, &surface, &inputs.parse, &inputs.entry.mode);
+
+    let confidence_of = |path: &str| {
+        report
+            .unreachable
+            .iter()
+            .find(|file| file.path == path)
+            .map(|file| file.max_confidence)
+    };
+    assert_eq!(confidence_of("src/acme/orphan.py"), Some(Confidence::Maybe));
+    assert_eq!(
+        confidence_of("src/internal_tools/orphan.py"),
+        Some(Confidence::Certain)
+    );
 }
 
 #[test]

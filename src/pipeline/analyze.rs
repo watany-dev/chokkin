@@ -10,12 +10,13 @@ use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_w
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
-use crate::reachability::{ReachabilityReport, analyze_reachability};
+use crate::reachability::{ReachabilityReport, analyze_reachability, apply_public_surface};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary,
     emit_issues_with_resolution,
 };
+use crate::sources::PublicSurface;
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project_with_cache};
@@ -206,7 +207,7 @@ fn run_analysis_core(
     apply_resolution_to_graph(&mut graph, &resolution)?;
     apply_entry_plan(&mut graph, &entry);
 
-    let reachability = analyze_reachability(
+    let mut reachability = analyze_reachability(
         &mut graph,
         &probe.sources,
         &entry,
@@ -215,6 +216,12 @@ fn run_analysis_core(
         &entry.mode,
         production,
     )?;
+    if let Some(surface) = PublicSurface::resolve(
+        probe.manifest.metadata.wheel_targets.as_ref(),
+        &probe.sources.files,
+    ) {
+        apply_public_surface(&mut reachability, &surface, &parse, &entry.mode);
+    }
 
     let workspace_boundaries = probe
         .workspace_inputs

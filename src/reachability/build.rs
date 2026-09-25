@@ -7,7 +7,7 @@ use crate::entry::{EntryPlan, ResolvedMode};
 use crate::graph::ProjectGraph;
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
-use crate::sources::{DiscoveredSources, FileContext, FileKind, build_glob_set};
+use crate::sources::{DiscoveredSources, FileContext, FileKind, PublicSurface, build_glob_set};
 
 use super::bfs::run_reachability_bfs;
 use super::error::ReachabilityError;
@@ -85,6 +85,29 @@ pub fn analyze_reachability(
         framework_used: framework.files,
         predecessors,
     })
+}
+
+/// Re-score library-mode orphans that the wheel does not ship (R-05).
+///
+/// Library mode caps orphans at `Maybe` because an outside caller may import
+/// them; a file outside the distributed packages has no such caller, so it is
+/// scored as in app mode.
+pub fn apply_public_surface(
+    report: &mut ReachabilityReport,
+    surface: &PublicSurface,
+    parse: &ParseSummary,
+    mode: &ResolvedMode,
+) {
+    if mode.mode != ProjectMode::Library {
+        return;
+    }
+    for file in &mut report.unreachable {
+        if surface.contains(&file.path) {
+            continue;
+        }
+        let parsed = parse.modules.iter().find(|module| module.path == file.path);
+        file.max_confidence = confidence_for_unreachable(ProjectMode::App, parsed);
+    }
 }
 
 /// Files a plugin's framework glob marks as used, with the glob that matched.

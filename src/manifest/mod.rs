@@ -12,12 +12,13 @@ mod types;
 pub(crate) mod util;
 mod uv_lock;
 mod warnings;
+mod wheel;
 
 pub use error::ManifestError;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub use pep508_util::normalize_distribution_name;
 pub use types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, ManifestSources, ProjectMetadata,
+    LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, WheelTargets,
 };
 pub use warnings::ManifestWarning;

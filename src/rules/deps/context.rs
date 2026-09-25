@@ -67,6 +67,9 @@ pub(super) fn declaration_bucket(
         DependencyContext::OptionalExtra(extra) | DependencyContext::SetupExtra(extra) => {
             DeclarationBucket::Optional(extra.clone())
         },
+        // Build requirements never enter the declared index; this arm only
+        // keeps the match total.
+        DependencyContext::Build => DeclarationBucket::Dev,
     }
 }
 

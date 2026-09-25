@@ -409,3 +409,22 @@ fn platform_guard_import_marks_tzdata_used() {
     assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
     assert!(report.used_distributions.contains("tzdata"));
 }
+
+#[test]
+fn build_plugin_declared_as_runtime_dep_notes_build_requires() {
+    let report = reconcile_fixture("build_plugin_declared");
+    let unused =
+        candidate_for_distribution(&report, RuleId::Chk002, "hatch-vcs").expect("hatch-vcs CHK002");
+    assert!(
+        unused
+            .explain
+            .details
+            .iter()
+            .any(|detail| detail.contains("also in build-system.requires")),
+        "details: {:?}",
+        unused.explain.details
+    );
+    assert!(!has_rule(&report, RuleId::Chk002, "hatchling"));
+    assert!(!has_rule(&report, RuleId::Chk003, "hatchling"));
+    assert!(!has_rule(&report, RuleId::Chk002, "requests"));
+}

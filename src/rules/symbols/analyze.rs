@@ -15,7 +15,7 @@ use crate::rules::RuleContext;
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, sort_candidates,
 };
-use crate::sources::{DiscoveredSources, path_to_module};
+use crate::sources::{DiscoveredSources, PublicSurface, path_to_module};
 
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
@@ -79,8 +79,14 @@ pub fn analyze_with_context(
     let external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
 
-    let mut candidates =
-        detect_unused_exports(&registry, &reference_index, &external_symbols, mode.mode);
+    let surface = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
+    let mut candidates = detect_unused_exports(
+        &registry,
+        &reference_index,
+        &external_symbols,
+        mode.mode,
+        surface.as_ref(),
+    );
     candidates.extend(detect_unused_reexports(
         &reexports,
         &reference_index,
@@ -134,6 +140,7 @@ fn detect_unused_exports(
     references: &ReferenceIndex,
     external_symbols: &indexmap::IndexSet<SymbolId>,
     mode: ProjectMode,
+    surface: Option<&PublicSurface>,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
@@ -145,7 +152,10 @@ fn detect_unused_exports(
             continue;
         }
 
-        let (severity, confidence) = unused_export_severity(mode, entry.in_all);
+        // A library symbol the wheel does not ship has no outside caller (R-05).
+        let shipped = surface.is_none_or(|surface| surface.contains(&entry.path));
+        let symbol_mode = if shipped { mode } else { ProjectMode::App };
+        let (severity, confidence) = unused_export_severity(symbol_mode, entry.in_all);
         candidates.push(IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {

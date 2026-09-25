@@ -66,8 +66,8 @@ pub use graph::{
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, ManifestError, ManifestSources, ManifestWarning, ProjectMetadata,
-    extract_manifest, extract_manifest_with_cache, resolve_target_version,
+    LockfileGraph, ManifestError, ManifestSources, ManifestWarning, PackageFind, ProjectMetadata,
+    WheelTargets, extract_manifest, extract_manifest_with_cache, resolve_target_version,
 };
 pub use parser::{
     DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,
@@ -87,7 +87,7 @@ pub use plugins::{
 };
 pub use reachability::{
     ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
-    analyze_reachability, path_to_module, trace_to_file,
+    analyze_reachability, apply_public_surface, path_to_module, trace_to_file,
 };
 pub use reporters::{
     RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
@@ -105,7 +105,7 @@ pub use rules::{
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
-    SourcesError, SourcesWarning, discover_sources,
+    PublicSurface, SourcesError, SourcesWarning, discover_sources,
 };
 
 /// The version of chokkin, taken from `Cargo.toml`.
