@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group, so CHK009 and `--fix` never act on the including group. `--explain`
   shows the include path, and undefined or circular includes become manifest
   warnings.
+- PEP 723 inline script metadata (`# /// script`): each script is an entry root
+  with its own dependency scope. Its third-party imports are checked against
+  the script block instead of the project manifest, reported as
+  `CHK002` / `CHK003` with subject `script:<path>:<distribution>`, and its
+  `requires-python` lower bound drives parse and stdlib classification for that
+  file. `--probe` lists detected scripts; invalid or duplicate blocks produce a
+  warning and the file stays an ordinary source. `--fix` does not rewrite
+  script blocks.
 - More sources for binary / plugin usage (R-06):
   - PDM scripts (`cmd` / `shell` / `composite`; `call` as module reference),
     Makefile and justfile recipes, Dockerfile / Containerfile `RUN` / `CMD` /

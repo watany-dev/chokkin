@@ -46,6 +46,8 @@ pub enum EntryOrigin {
         /// Human-readable origin label.
         label: String,
     },
+    /// PEP 723 inline script metadata (`# /// script`).
+    Script,
 }
 
 /// One merged entry root after deduplication.

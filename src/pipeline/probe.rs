@@ -10,7 +10,10 @@ use crate::config::{
     apply_overrides, load_config,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
-use crate::manifest::{LoadedManifest, extract_manifest_with_cache, resolve_target_version};
+use crate::manifest::{
+    InlineScript, LoadedManifest, discover_inline_scripts, extract_manifest_with_cache,
+    resolve_target_version,
+};
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
@@ -38,6 +41,8 @@ pub struct ProbeReport {
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
     /// Member-scoped manifest and source inventories.
     pub workspace_inputs: Vec<WorkspaceMemberInputs>,
+    /// PEP 723 scripts among the discovered Python files.
+    pub scripts: Vec<InlineScript>,
     /// Why each plugin is on or off; already applied to `effective_config.plugins`.
     pub plugin_activations: Vec<PluginActivation>,
     /// Non-fatal warnings from manifest and source discovery.
@@ -93,7 +98,12 @@ pub fn probe_project_with_cache(
     let sources = discover_sources(&root, &loaded, &manifest)?;
     let workspace_inputs =
         collect_workspace_inputs(&root, &loaded.workspace_members, overrides, cache)?;
-    let warnings = collect_warnings(&manifest, &sources);
+    let (scripts, script_warnings) = discover_inline_scripts(
+        &root.path,
+        sources.python_files().map(|file| file.path.as_str()),
+    );
+    let mut warnings = collect_warnings(&manifest, &sources);
+    warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
     let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
 
     Ok(ProbeReport {
@@ -105,6 +115,7 @@ pub fn probe_project_with_cache(
         sources,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
+        scripts,
         plugin_activations,
         warnings,
     })
@@ -253,6 +264,7 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         "  contexts         : runtime {}, test {}, dev {}, docs {}",
         context_counts.runtime, context_counts.test, context_counts.dev, context_counts.docs
     )?;
+    write_scripts(&report.scripts, out)?;
     writeln!(out)?;
 
     writeln!(out, "Plugins")?;
@@ -270,6 +282,20 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     }
     writeln!(out)?;
     writeln!(out, "Summary: probe complete — analyzer not run yet")?;
+    Ok(())
+}
+
+fn write_scripts(scripts: &[InlineScript], out: &mut impl Write) -> io::Result<()> {
+    writeln!(out, "  inline scripts   : {}", scripts.len())?;
+    for script in scripts {
+        writeln!(
+            out,
+            "    {} ({} dependencies, requires-python {})",
+            script.path,
+            script.dependencies.len(),
+            script.requires_python.as_deref().unwrap_or("unset")
+        )?;
+    }
     Ok(())
 }
 
@@ -379,6 +405,30 @@ mod tests {
         assert!(text.contains("(probe)"));
         assert!(text.contains("Project : demo"));
         assert!(text.contains("Summary: probe complete"));
+    }
+
+    #[test]
+    fn probe_lists_inline_scripts() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+        fs::create_dir(temp.path().join("scripts")).expect("mkdir");
+        fs::write(
+            temp.path().join("scripts/run.py"),
+            "# /// script\n# requires-python = \">=3.12\"\n# dependencies = [\"rich\"]\n# ///\nimport rich\n",
+        )
+        .expect("write");
+
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        assert_eq!(report.scripts.len(), 1);
+        let mut output = Vec::new();
+        write_probe_report(&report, &mut output).expect("write");
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(text.contains("inline scripts   : 1"));
+        assert!(text.contains("scripts/run.py (1 dependencies, requires-python >=3.12)"));
     }
 
     #[test]

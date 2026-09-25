@@ -2,6 +2,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use chokkin::{
@@ -115,4 +116,64 @@ fn venv_metadata_takes_priority() {
         .find(|resolved| resolved.import_root == "demo_pkg")
         .expect("demo_pkg");
     assert_eq!(demo.distribution.as_deref(), Some("demo-dist"));
+}
+
+#[test]
+fn pep723_requires_python_sets_the_script_stdlib_target() {
+    // Generated at test time: a checked-in copy would be analyzed by the
+    // repository's own chokkin baseline run as a reachable script.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let block = |spec: &str| {
+        format!("# /// script\n# requires-python = \"{spec}\"\n# ///\nimport tomllib\n")
+    };
+    std::fs::create_dir_all(temp.path().join("scripts")).expect("scripts dir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pep723-target\"\nversion = \"0.1.0\"\nrequires-python = \">=3.10\"\n"
+                .to_owned(),
+        ),
+        ("app.py", "import tomllib\n".to_owned()),
+        ("scripts/new.py", block(">=3.11")),
+        ("scripts/old.py", block(">=3.10")),
+    ] {
+        std::fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let root = discover_project_root(temp.path()).expect("root");
+    let mut loaded = load_config(&root).expect("config");
+    let manifest = extract_manifest(&root, &loaded).expect("manifest");
+    let target = resolve_target_version(&loaded.effective, &manifest);
+    assert_eq!(target.as_str(), "py310");
+    loaded.effective.target_version = Some(target.clone());
+    let sources = discover_sources(&root, &loaded, &manifest).expect("sources");
+    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
+    let (scripts, warnings) = chokkin::discover_inline_scripts(
+        &root.path,
+        sources.python_files().map(|file| file.path.as_str()),
+    );
+    assert!(warnings.is_empty());
+    let script_targets: BTreeMap<_, _> = scripts
+        .iter()
+        .filter_map(|script| Some((script.path.clone(), script.target_version.clone()?)))
+        .collect();
+    let index = chokkin::resolver::resolve_imports_with_script_targets(
+        &loaded.effective,
+        &manifest,
+        &sources,
+        &parse,
+        &[],
+        &loaded.workspace_members,
+        &script_targets,
+    );
+    let tomllib_in = |file: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.file == file && resolved.import_root == "tomllib")
+            .unwrap_or_else(|| panic!("tomllib import in {file}"))
+    };
+
+    assert_eq!(tomllib_in("scripts/new.py").origin, ModuleOrigin::Stdlib);
+    assert_ne!(tomllib_in("scripts/old.py").origin, ModuleOrigin::Stdlib);
+    assert_ne!(tomllib_in("app.py").origin, ModuleOrigin::Stdlib);
 }

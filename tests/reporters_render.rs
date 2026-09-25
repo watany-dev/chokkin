@@ -199,3 +199,42 @@ fn sarif_reporter_includes_stable_partial_fingerprint() {
         "CHK003:api:src/acme/app.py:requests"
     );
 }
+
+fn script_report() -> IssueReport {
+    let mut report = report();
+    report.issues[0].workspace_member = None;
+    report.issues[0].location = IssueLocation {
+        file: Some("scripts\\tool.py".to_owned()),
+        line: Some(10),
+        manifest: None,
+    };
+    report.issues[0].subject = IssueSubject::ScriptDistribution {
+        script: "scripts\\tool.py".to_owned(),
+        name: "pyyaml".to_owned(),
+    };
+    report
+}
+
+#[test]
+fn reporters_render_pep723_script_subject() {
+    let json = render_issues(ReporterId::Json, &script_report(), &context());
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json report");
+    let issue = &parsed["issues"][0];
+    assert_eq!(issue["target"], "script:scripts/tool.py:pyyaml");
+    assert_eq!(issue["fingerprint"], "CHK003:script:scripts/tool.py:pyyaml");
+    assert_eq!(issue["path"], "scripts/tool.py");
+    assert_eq!(issue["distribution"], "pyyaml");
+    assert_eq!(issue["file"], "scripts/tool.py");
+
+    let sarif = render_issues(ReporterId::Sarif, &script_report(), &context());
+    let parsed: serde_json::Value = serde_json::from_str(&sarif).expect("valid sarif json");
+    assert!(sarif.contains("\"uri\": \"scripts/tool.py\""));
+    assert!(sarif.contains("\"startLine\": 10"));
+    assert_eq!(
+        parsed["runs"][0]["results"][0]["partialFingerprints"]["chokkin/v0"],
+        "CHK003:script:scripts/tool.py:pyyaml"
+    );
+
+    let github = render_issues(ReporterId::Github, &script_report(), &context());
+    assert!(github.contains("title=CHK003 script%3A"));
+}

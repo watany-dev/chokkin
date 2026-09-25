@@ -32,6 +32,32 @@ pub fn resolve_imports(
     plugin_refs: &[ModuleReference],
     workspace_members: &[ResolvedWorkspaceMember],
 ) -> ResolutionIndex {
+    resolve_imports_with_script_targets(
+        config,
+        manifest,
+        sources,
+        parse,
+        plugin_refs,
+        workspace_members,
+        &BTreeMap::new(),
+    )
+}
+
+/// [`resolve_imports`] with per-file target versions for PEP 723 scripts.
+///
+/// A script's `requires-python` decides which modules are stdlib for the
+/// imports in that file; every other file uses the project target.
+#[must_use]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn resolve_imports_with_script_targets(
+    config: &ChokkinConfig,
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+    parse: &ParseSummary,
+    plugin_refs: &[ModuleReference],
+    workspace_members: &[ResolvedWorkspaceMember],
+    script_targets: &BTreeMap<String, TargetVersion>,
+) -> ResolutionIndex {
     let target = config
         .target_version
         .as_ref()
@@ -42,9 +68,10 @@ pub fn resolve_imports(
     let venv_index = load_venv_index(&manifest.root, &mut warnings);
     let binary_resolutions = build_binary_map(config, &venv_index);
     let mut imports = Vec::new();
-    let mut root_cache: BTreeMap<String, RootResolution> = BTreeMap::new();
+    let mut root_cache: RootCache = BTreeMap::new();
 
     for module in &parse.modules {
+        let file_target = script_targets.get(&module.path).unwrap_or(&target);
         for import in &module.imports {
             if import.module.is_empty() {
                 continue;
@@ -56,7 +83,7 @@ pub fn resolve_imports(
                 import.context,
                 import.optional,
                 import.platform_guarded,
-                &target,
+                file_target,
                 sources,
                 manifest,
                 config,
@@ -75,7 +102,7 @@ pub fn resolve_imports(
                 ImportContext::Runtime,
                 false,
                 false,
-                &target,
+                file_target,
                 sources,
                 manifest,
                 config,
@@ -123,6 +150,10 @@ fn transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
     }
 }
 
+/// Keyed by (target version, import root): stdlib membership depends on the
+/// target, which differs between PEP 723 scripts.
+type RootCache = BTreeMap<(String, String), RootResolution>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RootResolution {
     origin: ModuleOrigin,
@@ -146,11 +177,11 @@ fn resolve_import_site(
     import_map: &ImportMap,
     venv_imports: &BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
-    root_cache: &mut BTreeMap<String, RootResolution>,
+    root_cache: &mut RootCache,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
     let core = root_cache
-        .entry(root_name.clone())
+        .entry((target.as_str().to_owned(), root_name.clone()))
         .or_insert_with(|| {
             resolve_import_root(
                 &root_name,

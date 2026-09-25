@@ -43,12 +43,16 @@ pub fn parse_file(
         path: absolute,
         source,
     })?;
+    // A PEP 723 script runs under its own `requires-python`, so the syntax
+    // gate follows it. Reading it from the text keeps the parse cache valid:
+    // the file fingerprint already covers the block.
+    let script_target = crate::manifest::inline_script_target(&source);
     Ok(parse_python_source(
         path,
         &source,
         layout,
         file_context,
-        target,
+        script_target.as_ref().unwrap_or(target),
     ))
 }
 
@@ -488,7 +492,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v5".to_owned(),
+        unit_version: "parse-v6".to_owned(),
     }
 }
 

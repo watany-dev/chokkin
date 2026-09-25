@@ -29,6 +29,7 @@ pub fn format_subject(subject: &IssueSubject) -> String {
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
         IssueSubject::Import { module, file, line } => format!("{file}:{line} {module}"),
+        IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
     }
 }
 
