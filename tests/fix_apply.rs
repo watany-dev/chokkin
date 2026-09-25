@@ -5,11 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    ExitStatus, FixOptions, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, add_parsed_imports,
-    analyze_reachability, analyze_symbols, apply_entry_plan, apply_fixes,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, emit_issues, extract_manifest, extract_plugin_hints, load_config,
-    parse_project_sources, reconcile_dependencies, resolve_imports, resolve_target_version,
+    ExitStatus, FixOptions, IssueReport, LoadedManifest, ProjectRoot, RootMarker, RuleId,
+    RuntimeOverrides, add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
+    apply_fixes, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
+    discover_project_root, discover_sources, emit_issues, extract_manifest, extract_plugin_hints,
+    load_config, parse_project_sources, reconcile_dependencies, resolve_imports,
+    resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -18,17 +19,12 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-#[test]
-fn fix_removes_certain_unused_dependency_from_pyproject() {
-    let source = fixture("unused_boto3");
-    let temp = tempfile::tempdir().expect("tempdir");
-    copy_dir_recursive(&source, temp.path()).expect("copy fixture");
-    let path = temp.path().to_path_buf();
-
-    let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
-        path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
+/// Run steps 1-12 on `path` and return what `apply_fixes` needs.
+fn analyze(path: &Path) -> (ProjectRoot, LoadedManifest, IssueReport) {
+    let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
+        path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.clone(),
+        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
@@ -99,6 +95,14 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
         &RuntimeOverrides::default(),
         &entry.mode,
     );
+    (root, manifest, issues)
+}
+
+#[test]
+fn fix_removes_certain_unused_dependency_from_pyproject() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("unused_boto3"), temp.path()).expect("copy fixture");
+    let (root, manifest, issues) = analyze(temp.path());
     assert_eq!(issues.exit_status, ExitStatus::IssuesFound);
 
     let pyproject = root.path.join("pyproject.toml");
@@ -112,6 +116,37 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
     let after = std::fs::read_to_string(&pyproject).expect("read pyproject after fix");
     assert!(!after.contains("\"boto3\""));
     assert!(after.contains("requests"));
+}
+
+#[test]
+fn fix_removes_included_group_dependency_only_from_declaring_group() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("include_group"), temp.path()).expect("copy fixture");
+    let (root, manifest, issues) = analyze(temp.path());
+
+    let fix_report = apply_fixes(&issues, &root, &manifest, FixOptions::default());
+    assert_eq!(fix_report.applied.len(), 1);
+    assert_eq!(fix_report.applied[0].rule, RuleId::Chk002);
+
+    let after = std::fs::read_to_string(root.path.join("pyproject.toml")).expect("read pyproject");
+    let doc: toml::Table = toml::from_str(&after).expect("valid toml after fix");
+    let groups = doc["dependency-groups"].as_table().expect("groups table");
+    assert_eq!(
+        groups["Shared_Libs"].as_array().expect("array"),
+        &[toml::Value::String("httpx".to_owned())]
+    );
+    let server = groups["server"].as_array().expect("array");
+    assert_eq!(server.len(), 1);
+    assert_eq!(
+        server[0].get("include-group").and_then(toml::Value::as_str),
+        Some("shared-libs")
+    );
+    assert_eq!(
+        groups["dev"].as_array().expect("array")[0]
+            .get("include-group")
+            .and_then(toml::Value::as_str),
+        Some("test")
+    );
 }
 
 fn copy_dir_recursive(source: &Path, dest: &Path) -> std::io::Result<()> {

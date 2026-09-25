@@ -52,6 +52,10 @@ pub struct DeclaredDependency {
     pub origin: DependencyOrigin,
     /// URL / VCS without extractable distribution name.
     pub opaque: bool,
+    /// PEP 735 `include-group` chains that pull this group requirement into
+    /// other groups, each ordered from the including group to the declaring one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub included_via: Vec<Vec<String>>,
 }
 
 /// Console script or entry-point declaration from packaging metadata.

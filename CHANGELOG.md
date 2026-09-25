@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- PEP 735 `{include-group = "..."}` in `[dependency-groups]` is expanded
+  transitively (group names normalized). A group pulled into a runtime group
+  counts as runtime for CHK002 / CHK005; requirements stay under their declaring
+  group, so CHK009 and `--fix` never act on the including group. `--explain`
+  shows the include path, and undefined or circular includes become manifest
+  warnings.
 - `[build-system].requires` and `build-backend` are inventoried as build
   context (R-05, #311). They never feed CHK002/CHK003. An unused project or dev
   dependency that is also a build requirement (e.g. `hatch-vcs`,

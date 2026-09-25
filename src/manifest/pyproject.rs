@@ -4,6 +4,7 @@ use std::path::Path;
 
 use toml::Value;
 
+use super::dependency_groups::extract_dependency_groups;
 use super::error::ManifestError;
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ProjectMetadata,
@@ -116,14 +117,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
     extract_build_system(&table, &rel, &mut result);
 
     if let Some(groups) = table.get("dependency-groups").and_then(Value::as_table) {
-        push_dependency_table(
-            groups,
-            &rel,
-            DependencyContext::Group,
-            "dependency-groups",
-            &mut result.dependencies,
-            &mut result.warnings,
-        );
+        extract_dependency_groups(groups, &rel, &mut result.dependencies, &mut result.warnings);
     }
 
     Ok(result)
@@ -131,7 +125,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
 
 /// Push every `<name> = ["req", ...]` array of `table`, with `context(name)`.
 #[allow(clippy::too_many_arguments)]
-fn push_dependency_table(
+pub(super) fn push_dependency_table(
     table: &toml::Table,
     rel: &str,
     context: fn(String) -> DependencyContext,

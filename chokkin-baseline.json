@@ -54,6 +54,11 @@
       "target": "tests/fixtures/deps/duplicate_requests/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/include_group/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/include_group/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/map_alias/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/map_alias/src/acme/main.py"
