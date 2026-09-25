@@ -10,6 +10,7 @@ use crate::config::{ChokkinConfig, LoadedConfig, TargetVersion};
 use crate::discovery::ProjectRoot;
 
 use super::error::ManifestError;
+use super::lockfile::extract_lockfile;
 use super::pyproject::extract_pyproject;
 use super::requirements::extract_requirements_file;
 use super::setup_cfg::extract_setup_cfg;
@@ -18,7 +19,6 @@ use super::types::{
     DeclaredDependency, DependencyContext, LoadedManifest, LockfileGraph, ManifestSources,
     ProjectMetadata,
 };
-use super::uv_lock::extract_uv_lock;
 use super::warnings::ManifestWarning;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -120,10 +120,9 @@ pub fn extract_manifest(
         warnings.extend(extracted.warnings);
     }
 
-    let uv_lock_path = root_path.join("uv.lock");
-    if uv_lock_path.is_file() {
-        lockfile = extract_uv_lock(&uv_lock_path)?;
-        sources.uv_lock = true;
+    if let Some((source, graph)) = extract_lockfile(root_path)? {
+        lockfile = graph;
+        sources.lockfile = Some(source);
     }
 
     Ok(LoadedManifest {
@@ -203,7 +202,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v2".to_owned(),
+            unit_version: "manifest-extract-v3".to_owned(),
         },
         inputs,
     })

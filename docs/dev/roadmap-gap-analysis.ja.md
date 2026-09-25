@@ -23,7 +23,7 @@ chokkin v0.4.1 に「何があり、何が足りないか」を整理し、優�
 | `files` | CHK001 `unused_file` | ✅ | library mode は低 confidence |
 | `dependencies` / `devDependencies` | CHK002 `unused_dependency` | ✅ | dev group は default 抑制、`--strict` で error |
 | `optionalPeerDependencies` | CHK002 (optional-dependencies) | ✅ | extras / marker を区別 |
-| `unlisted` | CHK003 `missing_dependency` / CHK004 `transitive_dependency` | ✅ | transitive 判定は `uv.lock` のみ (→ R-03) |
+| `unlisted` | CHK003 `missing_dependency` / CHK004 `transitive_dependency` | ✅ | transitive 判定は `uv.lock` / `pylock.toml` / `poetry.lock` / `pdm.lock` (R-03) |
 | `binaries` | CHK008 `unlisted_binary` | ✅ | 読む設定ファイルの網羅性に課題 (→ R-06) |
 | `unresolved` | CHK010 `unresolved_import` | ✅ | |
 | `exports` / `nsExports` | CHK006 `unused_export` / CHK007 `unused_reexport` | ✅ preview | public API 宣言手段が弱い (→ R-12) |
@@ -71,7 +71,7 @@ chokkin v0.4.1 に「何があり、何が足りないか」を整理し、優�
 | | PEP 735 `{include-group = "..."}` | 未展開 | ❌ | R-01 |
 | inline script | PEP 723 `# /// script` (`uv run script.py`, `uv add --script`) | 未対応。script の import が project の CHK003 になる | ❌ | R-02 |
 | lockfile | `uv.lock` | transitive 判定に利用 | ✅ | |
-| | PEP 751 `pylock.toml` / `poetry.lock` / `pdm.lock` | 未読 | ❌ | R-03 |
+| | PEP 751 `pylock.toml` / `poetry.lock` / `pdm.lock` | transitive 判定に利用 (優先順 uv.lock > pylock > poetry > pdm) | ✅ | R-03 |
 | uv 設定 | `[tool.uv.sources]` / `constraint-dependencies` / `override-dependencies` / `default-groups` / legacy `dev-dependencies` | workspace member 以外は未読 | ❌ | R-04 |
 | build | `[build-system].requires`、`hatch-vcs` / `setuptools-scm` などの build plugin | build context が無い | ❌ | R-05 |
 | | wheel に含まれる package (`[tool.hatch.build.targets.wheel]` / `[tool.setuptools.packages.find]`) | layout 推定のみ | △ | R-05 |

@@ -85,6 +85,42 @@ pub struct LockfileGraph {
     pub edges: BTreeMap<String, Vec<String>>,
 }
 
+/// Lockfile formats read into [`LockfileGraph`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockfileKind {
+    /// `uv.lock`.
+    Uv,
+    /// PEP 751 `pylock.toml` / `pylock.<name>.toml`.
+    Pylock,
+    /// `poetry.lock`.
+    Poetry,
+    /// `pdm.lock`.
+    Pdm,
+}
+
+impl LockfileKind {
+    /// Short format name for probe output.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uv => "uv",
+            Self::Pylock => "pylock",
+            Self::Poetry => "poetry",
+            Self::Pdm => "pdm",
+        }
+    }
+}
+
+/// The lockfile that fed [`LoadedManifest::lockfile`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockfileSource {
+    /// Lockfile format.
+    pub kind: LockfileKind,
+    /// Root-relative path, e.g. `pylock.dev.toml`.
+    pub path: String,
+}
+
 /// Which manifest files contributed to extraction.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
@@ -100,8 +136,8 @@ pub struct ManifestSources {
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).
     pub setup_py: bool,
-    /// `uv.lock` contributed.
-    pub uv_lock: bool,
+    /// Lockfile that contributed the transitive graph.
+    pub lockfile: Option<LockfileSource>,
     /// Poetry sections were detected.
     pub poetry: bool,
 }

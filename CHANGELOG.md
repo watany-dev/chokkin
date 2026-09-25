@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pylock.toml` / `pylock.<name>.toml` (PEP 751), `poetry.lock` (1.x / 2.x), and
+  `pdm.lock` are read for the CHK004 transitive check. When several are present,
+  one is chosen by priority uv.lock > pylock > poetry.lock > pdm.lock.
+  `--probe` shows the lockfile path and kind.
+- Fix reminders suggest `pdm lock` when the lockfile is `pdm.lock`.
+
+### Changed
+- CHK004 now separates a transitive edge from a declared dependency (Certain)
+  from a package that is only pinned in the lockfile (Likely, new message).
+  Previously the latter was reported as CHK003.
+- Library API: `ManifestSources.uv_lock: bool` is replaced by
+  `ManifestSources.lockfile: Option<LockfileSource>`.
+- Manifest cache unit bumped to `manifest-extract-v3`; every lockfile candidate
+  is part of the cache key.
+
 ## [0.4.1] - Unreleased
 
 ### Fixed

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::discovery::ProjectRoot;
-use crate::manifest::LoadedManifest;
+use crate::manifest::{LoadedManifest, LockfileKind};
 use crate::rules::IssueReport;
 
 use super::containment::resolve_contained_path;
@@ -62,18 +62,27 @@ pub fn apply_fixes_with_workspace(
         }
     }
 
-    if manifest.sources.uv_lock && !report_out.applied.is_empty() {
-        report_out
-            .reminders
-            .push("Run `uv lock` to refresh uv.lock".to_owned());
-    }
-    if manifest.sources.poetry && !report_out.applied.is_empty() {
-        report_out
-            .reminders
-            .push("Run `poetry lock` to refresh poetry.lock".to_owned());
+    if !report_out.applied.is_empty() {
+        report_out.reminders = lockfile_reminders(manifest);
     }
 
     report_out
+}
+
+/// chokkin never edits lockfiles (§13), so point at the tool that owns it.
+fn lockfile_reminders(manifest: &LoadedManifest) -> Vec<String> {
+    let mut reminders = Vec::new();
+    let kind = manifest.sources.lockfile.as_ref().map(|source| source.kind);
+    if kind == Some(LockfileKind::Uv) {
+        reminders.push("Run `uv lock` to refresh uv.lock".to_owned());
+    }
+    if manifest.sources.poetry || kind == Some(LockfileKind::Poetry) {
+        reminders.push("Run `poetry lock` to refresh poetry.lock".to_owned());
+    }
+    if kind == Some(LockfileKind::Pdm) {
+        reminders.push("Run `pdm lock` to refresh pdm.lock".to_owned());
+    }
+    reminders
 }
 
 fn apply_action(
@@ -472,6 +481,33 @@ mod tests {
                 .reminders
                 .iter()
                 .any(|reminder| { reminder.contains("poetry lock") })
+        );
+    }
+
+    #[test]
+    fn lockfile_reminders_follow_lockfile_kind() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let root = project_root(dir.path());
+        let mut manifest = empty_manifest(&root);
+        assert!(lockfile_reminders(&manifest).is_empty());
+
+        manifest.sources.lockfile = Some(crate::manifest::LockfileSource {
+            kind: LockfileKind::Pdm,
+            path: "pdm.lock".to_owned(),
+        });
+        assert_eq!(
+            lockfile_reminders(&manifest),
+            vec!["Run `pdm lock` to refresh pdm.lock".to_owned()]
+        );
+
+        manifest.sources.poetry = true;
+        manifest.sources.lockfile = Some(crate::manifest::LockfileSource {
+            kind: LockfileKind::Poetry,
+            path: "poetry.lock".to_owned(),
+        });
+        assert_eq!(
+            lockfile_reminders(&manifest),
+            vec!["Run `poetry lock` to refresh poetry.lock".to_owned()]
         );
     }
 
