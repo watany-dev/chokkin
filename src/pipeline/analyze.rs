@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::baseline::{BaselineReport, apply_baseline_with_overrides, write_baseline};
+use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::{CacheOptions, ParseCacheStore};
 use crate::config::RuntimeOverrides;
 use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
@@ -13,8 +13,7 @@ use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability};
 use crate::resolver::{apply_resolution_to_graph, resolve_imports};
 use crate::rules::{
-    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary,
-    emit_issues_with_resolution,
+    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
 
 use super::error::AnalyzeError;
@@ -126,9 +125,7 @@ fn apply_baseline_options(
     if options.update_baseline {
         return Ok(Some(write_baseline(issues, root, path)?));
     }
-    Ok(Some(apply_baseline_with_overrides(
-        issues, root, path, overrides,
-    )?))
+    Ok(Some(apply_baseline(issues, root, path, overrides)?))
 }
 
 struct AnalysisCore {
@@ -251,7 +248,7 @@ fn run_analysis_core(
         &probe.manifest,
     );
 
-    let issues = emit_issues_with_resolution(
+    let issues = emit_issues(
         &reachability,
         &deps,
         &symbols,

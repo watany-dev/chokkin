@@ -120,8 +120,15 @@ fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     assert!(rendered.contains("\"startLine\": 7"));
     assert!(rendered.contains("\"workspaceMember\": \"api\""));
     assert!(rendered.contains("\"helpUri\": \"https://github.com/watany-dev/chokkin/blob/main/docs/dev/spec.ja.md#chk003\""));
-    assert!(rendered.contains("\"fullDescription\": { \"text\": \"Source imports a distribution"));
     assert_eq!(parsed["version"], "2.1.0");
+    let chk003 = &parsed["runs"][0]["tool"]["driver"]["rules"][2];
+    assert_eq!(chk003["id"], "CHK003");
+    assert!(
+        chk003["fullDescription"]["text"]
+            .as_str()
+            .expect("fullDescription text")
+            .starts_with("Source imports a distribution")
+    );
 }
 
 #[test]

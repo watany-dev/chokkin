@@ -410,3 +410,53 @@ fn platform_guard_import_marks_tzdata_used() {
     assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
     assert!(report.used_distributions.contains("tzdata"));
 }
+
+#[test]
+fn include_group_is_checked_once_under_its_declaring_group() {
+    let manifest = load_deps(&fixture("include_group"), false).manifest;
+    assert!(manifest.warnings.is_empty(), "{:?}", manifest.warnings);
+    let boto3 = manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.name == "boto3")
+        .collect::<Vec<_>>();
+    assert_eq!(boto3.len(), 1);
+    assert_eq!(
+        boto3[0].included_via,
+        vec![vec!["server".to_owned(), "Shared_Libs".to_owned()]]
+    );
+
+    let report = reconcile_fixture("include_group");
+    // httpx is only declared in a group, but `server` pulls it into runtime.
+    assert!(!has_rule(&report, RuleId::Chk005, "httpx"));
+    assert!(!has_rule(&report, RuleId::Chk002, "pytest"));
+    assert!(
+        report
+            .candidates
+            .iter()
+            .all(|candidate| candidate.rule != RuleId::Chk009)
+    );
+
+    let unused = report
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.rule == RuleId::Chk002)
+        .collect::<Vec<_>>();
+    assert_eq!(unused.len(), 1);
+    let boto3 = unused[0];
+    assert!(matches!(
+        &boto3.subject,
+        chokkin::IssueSubject::Distribution { name } if name == "boto3"
+    ));
+    assert!(matches!(
+        boto3.origins.as_slice(),
+        [chokkin::Origin::Manifest(origin)] if origin.label == "dependency-groups.Shared_Libs[1]"
+    ));
+    assert!(
+        boto3
+            .explain
+            .details
+            .iter()
+            .any(|line| line == "included via dependency-groups: server -> Shared_Libs")
+    );
+}

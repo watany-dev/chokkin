@@ -16,19 +16,6 @@ use super::types::{
     AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason, WorkspaceFixManifest,
 };
 
-/// Apply safe automatic fixes for fixable issues in `report`.
-///
-/// Per-action failures are recorded in [`FixReport::skipped`].
-#[must_use]
-pub fn apply_fixes(
-    report: &IssueReport,
-    root: &ProjectRoot,
-    manifest: &LoadedManifest,
-    options: FixOptions,
-) -> FixReport {
-    apply_fixes_with_workspace(report, root, manifest, &[], options)
-}
-
 /// Apply safe automatic fixes with workspace member manifest context.
 pub fn apply_fixes_with_workspace(
     report: &IssueReport,
@@ -303,6 +290,7 @@ mod tests {
                     label: "project.dependencies[0]".to_owned(),
                 },
                 opaque: false,
+                included_via: Vec::new(),
             }],
             constraints: Vec::new(),
             uv_workspace: None,
@@ -341,10 +329,11 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
@@ -366,7 +355,8 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(&report, &root, &manifest, FixOptions::default());
+        let fix_report =
+            apply_fixes_with_workspace(&report, &root, &manifest, &[], FixOptions::default());
 
         assert!(dir.path().join("src/legacy.py").exists());
         assert!(fix_report.applied.is_empty());
@@ -387,10 +377,11 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 allow_remove_files: true,
@@ -413,10 +404,11 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 allow_remove_files: true,
                 ..FixOptions::default()
@@ -452,15 +444,17 @@ mod tests {
                 label: "project.dependencies[0]".to_owned(),
             },
             opaque: false,
+            included_via: Vec::new(),
         });
         manifest.sources.pyproject_toml = true;
         manifest.sources.poetry = true;
         let report = issue_report(unused_dependency_issue("boto3"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
@@ -486,10 +480,11 @@ mod tests {
         manifest.sources.pyproject_toml = true;
         let report = issue_report(missing_dependency_issue("pyyaml"));
 
-        let fix_report = apply_fixes(
+        let fix_report = apply_fixes_with_workspace(
             &report,
             &root,
             &manifest,
+            &[],
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
