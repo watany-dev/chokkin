@@ -177,6 +177,10 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `docs/dev/oss-validation-report.md` — committed §17 CHK002 scorecard.
   **Current status: CHK002 FP gate met** (0/0 after Phase 1.5). Per-rule label
   coverage stocktake: `docs/dev/v0.3-stocktake-coverage.md`.
+- `scripts/oss-remove-and-test.py` (`make oss-oracle`) — opt-in CHK001
+  remove-and-test oracle (#85 WS2). **Executes untrusted project tests** in
+  disposable copies; isolated runners only, never release/default CI. Report:
+  `docs/dev/chk001-remove-and-test.md`.
 
 ## PR hygiene
 

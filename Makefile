@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
 
-.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics check-generated formal help
+.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-oracle check-generated formal help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -52,6 +52,14 @@ oss-clones:
 
 oss-metrics:
 	scripts/oss-metrics.sh --build $(ARGS)
+
+# oss-oracle: CHK001 remove-and-test oracle (#85 WS2). RUNS UNTRUSTED PROJECT
+#             TESTS in disposable copies of target/oss-clones/ — opt-in, local
+#             or isolated runner only, never release/default CI. Installs
+#             nothing; pass ARGS="--python /path/to/venv/bin/python" to use a
+#             pre-provisioned interpreter. See docs/dev/chk001-remove-and-test.md.
+oss-oracle:
+	scripts/oss-remove-and-test.py --build --execute $(ARGS)
 
 ## ─── Security & supply chain ──────────────────────────────────────────────────
 deny:
