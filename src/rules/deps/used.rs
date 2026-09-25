@@ -78,6 +78,25 @@ pub(super) fn collect_used_distributions(
     used
 }
 
+/// `workspace = true` dependencies resolve as first-party imports, so they
+/// carry no distribution; match them back by normalized import name.
+pub(super) fn mark_workspace_source_distributions(
+    manifest: &LoadedManifest,
+    resolution: &ResolutionIndex,
+    reachable: &HashSet<String>,
+    used: &mut IndexSet<String>,
+) {
+    for import in &resolution.imports {
+        if import.origin != ModuleOrigin::FirstParty || !reachable.contains(&import.file) {
+            continue;
+        }
+        let name = crate::manifest::normalize_distribution_name(&import.import_root);
+        if manifest.uv.is_workspace_source(&name) {
+            used.insert(name);
+        }
+    }
+}
+
 /// Treat a project's own distribution as used when declared (self-referential extras).
 pub(super) fn mark_self_referential_distribution(
     manifest: &LoadedManifest,
@@ -114,6 +133,7 @@ mod tests {
             metadata: ProjectMetadata::default(),
             dependencies: Vec::new(),
             constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
             uv_workspace: None,
             entry_points: Vec::new(),
             lockfile: LockfileGraph::default(),
@@ -220,6 +240,7 @@ mod tests {
             },
             dependencies: vec![dep],
             constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
             uv_workspace: None,
             entry_points: Vec::new(),
             lockfile: LockfileGraph::default(),

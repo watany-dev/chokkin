@@ -11,6 +11,7 @@ mod setup_py;
 mod types;
 pub(crate) mod util;
 mod uv_lock;
+mod uv_tool;
 mod warnings;
 
 pub use error::ManifestError;
@@ -18,6 +19,7 @@ pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_
 pub use pep508_util::normalize_distribution_name;
 pub use types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, ManifestSources, ProjectMetadata,
+    LockfileGraph, ManifestSources, ProjectMetadata, UvDefaultGroups, UvSource, UvSourceKind,
+    UvToolSettings,
 };
 pub use warnings::ManifestWarning;

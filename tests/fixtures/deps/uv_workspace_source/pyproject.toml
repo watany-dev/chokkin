@@ -1,0 +1,13 @@
+[project]
+name = "uv-workspace-source"
+version = "0.1.0"
+dependencies = ["billing"]
+
+[project.scripts]
+uv-workspace-source = "acme.main:main"
+
+[tool.uv.sources]
+billing = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `[tool.uv]` is read beyond workspace members:
+  - legacy `dev-dependencies` join the `dev` dependency group, and `--fix` can remove them
+  - `constraint-dependencies` / `override-dependencies` are kept as constraints, never declarations
+  - `default-groups` is stored, but `--production` does not use it
+  - `[tool.uv.sources]` path / editable entries resolve imports from the local tree without a venv
+  - `workspace = true` dependencies count as used when imported
+
 ## [0.4.1] - Unreleased
 
 ### Fixed

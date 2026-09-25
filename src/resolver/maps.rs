@@ -34,6 +34,7 @@ use super::types::ResolveConfidence;
 pub struct ImportMap {
     bundled: &'static BTreeMap<String, Vec<String>>,
     user: BTreeMap<String, Vec<String>>,
+    local: BTreeMap<String, Vec<String>>,
 }
 
 impl ImportMap {
@@ -45,12 +46,28 @@ impl ImportMap {
             |(distribution, imports)| (distribution.as_str(), imports.iter().map(String::as_str)),
         ));
 
-        Self { bundled, user }
+        Self {
+            bundled,
+            user,
+            local: BTreeMap::new(),
+        }
+    }
+
+    /// Add import roots served by local path sources; they win over the user
+    /// and bundled maps because the manifest names the distribution explicitly.
+    #[must_use]
+    pub fn with_local_sources(mut self, local: BTreeMap<String, Vec<String>>) -> Self {
+        self.local = local;
+        self
     }
 
     /// Look up distribution candidates for `import_root`.
     #[must_use]
     pub fn candidates(&self, import_root: &str) -> Option<(Vec<String>, ResolveConfidence)> {
+        if let Some(local) = self.local.get(import_root) {
+            return Some((local.clone(), ResolveConfidence::Certain));
+        }
+
         if let Some(user) = self.user.get(import_root) {
             return Some((user.clone(), ResolveConfidence::Likely));
         }
@@ -194,6 +211,16 @@ mod tests {
                 "expected {import_root} -> {distribution}, got {candidates:?}"
             );
         }
+    }
+
+    #[test]
+    fn local_sources_win_over_bundled_map() {
+        let local = BTreeMap::from([("yaml".to_owned(), vec!["my-yaml".to_owned()])]);
+        let import_map = ImportMap::build(&default_config()).with_local_sources(local);
+        assert_eq!(
+            import_map.candidates("yaml"),
+            Some((vec!["my-yaml".to_owned()], ResolveConfidence::Certain))
+        );
     }
 
     #[test]

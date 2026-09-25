@@ -409,3 +409,32 @@ fn platform_guard_import_marks_tzdata_used() {
     assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
     assert!(report.used_distributions.contains("tzdata"));
 }
+
+#[test]
+fn uv_constraints_are_not_declarations() {
+    let report = reconcile_fixture("uv_tool_constraints");
+    for name in ["urllib3", "idna", "requests"] {
+        assert!(!has_rule(&report, RuleId::Chk002, name), "{name}");
+    }
+    assert!(!has_rule(&report, RuleId::Chk009, "requests"));
+}
+
+#[test]
+fn uv_path_source_resolves_without_venv() {
+    let inputs = load_deps(&fixture("uv_path_source"), false);
+    assert!(!inputs.resolution.warnings.iter().any(|warning| matches!(
+        warning,
+        chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "mylib"
+    )));
+    let report = reconcile_fixture("uv_path_source");
+    assert!(rules_mentioning(&report, "mylib").is_empty());
+    assert!(!has_rule(&report, RuleId::Chk002, "my-lib"));
+    assert!(report.used_distributions.contains("my-lib"));
+}
+
+#[test]
+fn uv_workspace_source_dependency_is_used() {
+    let report = reconcile_fixture("uv_workspace_source");
+    assert!(!has_rule(&report, RuleId::Chk002, "billing"));
+    assert!(rules_mentioning(&report, "billing").is_empty());
+}

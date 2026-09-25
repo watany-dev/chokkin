@@ -478,3 +478,36 @@ fn setup_cfg_install_requires() {
     assert!(names.contains(&"requests"), "dependencies: {names:?}");
     assert!(names.contains(&"flask"), "dependencies: {names:?}");
 }
+
+fn dev_group_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
+    let dev = DependencyContext::Group("dev".to_owned());
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.context == dev)
+        .map(|dep| dep.name.as_str())
+        .collect()
+}
+
+#[test]
+fn uv_dev_dependencies_join_dev_group_in_every_format() {
+    assert_eq!(
+        dev_group_names(&extract_fixture("uv_dev_legacy")),
+        vec!["pytest"]
+    );
+    assert_eq!(
+        dev_group_names(&extract_fixture("uv_dev_groups")),
+        vec!["pytest"]
+    );
+    let both = extract_fixture("uv_dev_both");
+    let mut names = dev_group_names(&both);
+    names.sort_unstable();
+    assert_eq!(names, vec!["pytest", "ruff"]);
+    assert_eq!(
+        both.uv.default_groups,
+        Some(chokkin::UvDefaultGroups::Groups(vec![
+            "dev".to_owned(),
+            "lint".to_owned()
+        ]))
+    );
+}

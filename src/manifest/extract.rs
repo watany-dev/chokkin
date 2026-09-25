@@ -16,7 +16,7 @@ use super::setup_cfg::extract_setup_cfg;
 use super::setup_py::extract_setup_py;
 use super::types::{
     DeclaredDependency, DependencyContext, LoadedManifest, LockfileGraph, ManifestSources,
-    ProjectMetadata,
+    ProjectMetadata, UvToolSettings,
 };
 use super::uv_lock::extract_uv_lock;
 use super::warnings::ManifestWarning;
@@ -41,6 +41,7 @@ pub fn extract_manifest(
     let mut warnings = Vec::new();
     let mut sources = ManifestSources::default();
     let mut lockfile = LockfileGraph::default();
+    let mut uv = UvToolSettings::default();
     let pyproject_path = root_path.join("pyproject.toml");
     if pyproject_path.is_file() {
         let extracted = extract_pyproject(root_path, &pyproject_path)?;
@@ -48,6 +49,8 @@ pub fn extract_manifest(
         dependencies.extend(extracted.dependencies);
         entry_points.extend(extracted.entry_points);
         sources.poetry = extracted.poetry_detected;
+        constraints.extend(extracted.constraints);
+        uv = extracted.uv;
         warnings.extend(extracted.warnings);
         sources.pyproject_toml = true;
     }
@@ -131,6 +134,7 @@ pub fn extract_manifest(
         metadata,
         dependencies,
         constraints,
+        uv,
         uv_workspace: config.uv_workspace.clone(),
         entry_points,
         lockfile,
@@ -203,7 +207,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v2".to_owned(),
+            unit_version: "manifest-extract-v3".to_owned(),
         },
         inputs,
     })

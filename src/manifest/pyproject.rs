@@ -7,8 +7,10 @@ use toml::Value;
 use super::error::ManifestError;
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ProjectMetadata,
+    UvToolSettings,
 };
 use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
+use super::uv_tool::extract_uv_tool;
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `pyproject.toml`.
@@ -24,6 +26,10 @@ pub struct PyprojectExtraction {
     pub warnings: Vec<ManifestWarning>,
     /// `[tool.poetry]` section was detected.
     pub poetry_detected: bool,
+    /// `[tool.uv]` constraint / override entries.
+    pub constraints: Vec<DeclaredDependency>,
+    /// `[tool.uv]` sources and default groups.
+    pub uv: UvToolSettings,
 }
 
 /// Extract manifest data from `pyproject.toml`.
@@ -41,6 +47,10 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
 
     result.poetry_detected = detect_tool_sections(&table, &mut result.warnings);
     extract_tool_dependencies(&table, &rel, &mut result.dependencies, &mut result.warnings);
+    let uv = extract_uv_tool(&table, &rel, &mut result.warnings);
+    result.dependencies.extend(uv.dependencies);
+    result.constraints = uv.constraints;
+    result.uv = uv.settings;
 
     if let Some(project) = table.get("project").and_then(Value::as_table) {
         result.metadata = parse_project_metadata(project);

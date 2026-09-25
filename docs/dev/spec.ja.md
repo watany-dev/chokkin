@@ -184,6 +184,8 @@ requirements系filesのパース規則を定める。コメントはpip互換で
 
 `setup.py` は `setup()` 呼び出し本体のみを静的パースする。リスト走査が途中で破綻した場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
 
+`[tool.uv]` のその他のキーは次のように読む（R-04）。legacy `dev-dependencies` は `[dependency-groups] dev` と同じ `Group("dev")` 宣言として合流させ、`--fix` は `tool.uv.dev-dependencies[i]` ラベルで配列要素を削除できる。`constraint-dependencies` / `override-dependencies` は `-c` と同様に `LoadedManifest.constraints` へ積み、origin ラベル（`tool.uv.constraint-dependencies[i]` 等）を保持するが、CHK002/CHK003/CHK009 の入力にはしない。`default-groups` は `LoadedManifest.uv.default_groups` に保持するのみで、`--production` は参照しない（production は runtime 以外の context を常に除外するため、インストール既定値に依存させない）。`[tool.uv.sources]` は path / editable / workspace / git / url / index の種別と記述どおりの相対pathを `LoadedManifest.uv.sources` に保持する（絶対pathはキャッシュに入れない）。path / editable source はStep 7でroot基準に解決したローカルtreeからlayout推論でimport名を導出し、そのdistributionへのCertainな対応としてvenvなしで解決する（キャッシュ外で毎回読むためstaleにならない。package未検出時はdistribution名の `-`→`_` をimport名とする）。`workspace = true` source は既存のworkspace member判定でfirst-partyとして解決し、到達可能なimportがあればそのdependencyをusedとして扱う。
+
 `setup.py` が静的に解析できない場合(動的な `install_requires` 構築など)は、warningを出してそのsourceをskipし、他のsourceで解析を継続する。`[project]` の `dynamic = ["dependencies"]` が指定されている場合は、setuptoolsの慣習に従い `requirements*.txt` 側を依存宣言の実体として読む。
 
 `[dependency-groups]` は、build metadataには含めない開発用途の依存を `pyproject.toml` に格納する標準仕様。lint/test/docs用の依存を扱うため、`chokkin` ではmain dependencyとは別contextとして扱う。

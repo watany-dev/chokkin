@@ -18,7 +18,7 @@ use super::missing::detect_missing_dependencies;
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies, is_types_stub};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
-    mark_self_referential_distribution, reachable_paths,
+    mark_self_referential_distribution, mark_workspace_source_distributions, reachable_paths,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
@@ -85,6 +85,7 @@ pub fn reconcile_with_context(
     let mut used = collect_used_distributions(context, plugins);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
+    mark_workspace_source_distributions(manifest, resolution, &reachable, &mut used);
 
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());
@@ -180,6 +181,7 @@ mod tests {
             metadata: ProjectMetadata::default(),
             dependencies: deps,
             constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
             uv_workspace: None,
             entry_points: Vec::new(),
             lockfile: LockfileGraph::default(),
