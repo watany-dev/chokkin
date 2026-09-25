@@ -443,8 +443,11 @@ settings.py をentryにする
 INSTALLED_APPS の文字列をmodule referenceにする
 MIDDLEWARE の文字列をsymbol/module referenceにする
 ROOT_URLCONF をmodule referenceにする
+WSGI_APPLICATION / ASGI_APPLICATION を module:symbol reference にする
 migrations/**/*.py はframework-used扱いにする
 ```
+
+文字列 list として読む設定は `src/plugins/django.rs` の `LIST_FIELDS` (`INSTALLED_APPS` / `MIDDLEWARE`) に限る。literal list でなければ partial parse 警告を出すため、dict の list である `TEMPLATES` は入れない。`AUTHENTICATION_BACKENDS` などを足すのは、その参照先 module が unused と誤検知される fixture ができてからにする。
 
 pytest pluginの例。
 
@@ -462,8 +465,10 @@ FastAPI/Uvicorn pluginの例。
 
 ```text
 uvicorn acme.api:app を module:symbol reference として読む
-@router.get / @app.post decorated functionをexternally used扱いにする
+src/main.py / src/asgi.py をentryにする
 ```
+
+root 直下と `src/<package>/` 直下の `main.py` / `asgi.py` などは §8 の自動推定が entry にするため、plugin は §8 が拾わない `src/` 直下の module だけを足す (`SRC_APP_ENTRY_CANDIDATES`)。`@router.get` / `@router.websocket` などの handler を externally used にするのは plugin ではなく §12 の decorator 判定。
 
 Celery pluginの例。
 
@@ -687,6 +692,8 @@ Django model/admin/app config
 dataclass referenced by annotation
 entry point target
 ```
+
+decorator 由来の used 判定は `src/rules/symbols/external.rs` の `REGISTRATION_DECORATOR_SUFFIXES` 1 か所で持つ (`get` / `post` / `put` / `delete` / `patch` / `route` / `websocket` / `fixture` / `shared_task` / `task` / `command` の suffix と `pytest.mark.*`)。parser は静的に名前の付く decorator をすべて記録し、Flask route / Celery task の module reference は各 plugin が自前の述語で判定する。suffix を足すのは、`tests/fixtures/symbols/` にその誤検知を再現する fixture を置いてからにする。
 
 `__all__` があるmoduleでは、`__all__` をpublic API宣言として扱う。`__all__` にあるが内部から使われないものは、library modeではinfo、app modeではwarningにする。wheel target から public surface が求まる場合、surface 外 module の symbol は library mode でも warning にする (§8)。
 
@@ -1221,7 +1228,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v6。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v7。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime

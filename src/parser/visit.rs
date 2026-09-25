@@ -616,7 +616,7 @@ impl<'a> ModuleVisitor<'a> {
         });
     }
 
-    /// Record every recognized decorator, nested definitions included.
+    /// Record every statically named decorator, nested definitions included.
     ///
     /// Plugins (Flask routes, Celery tasks) read these instead of re-opening
     /// each source file, so app-factory patterns that decorate inside a
