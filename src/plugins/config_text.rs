@@ -54,7 +54,6 @@ pub(super) fn toml_words(value: &Value) -> Option<String> {
     Some(words.join(" "))
 }
 
-/// Root-relative path and contents of `root/name` when it is a readable file.
 pub(super) fn read_root_file(root: &Path, name: &str) -> Option<(String, String)> {
     let path = root.join(name);
     let contents = std::fs::read_to_string(&path).ok()?;
