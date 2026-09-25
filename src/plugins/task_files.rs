@@ -14,6 +14,7 @@ use super::config_text::{
     toml_words, yaml_block_body,
 };
 use super::types::ReferenceOrigin;
+use super::util::relative_path;
 
 /// Candidates in the order make / just search them; only the first found is read.
 const MAKEFILE_NAMES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
@@ -49,12 +50,8 @@ pub(super) fn scan(
         scan_justfile(&rel, &contents, known, &mut hits);
     }
     for path in dockerfile_paths(root) {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if let Some((rel, contents)) = read_root_file(root, name) {
-            scan_dockerfile(&rel, &contents, known, &mut hits);
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            scan_dockerfile(&relative_path(root, &path), &contents, known, &mut hits);
         }
     }
     if let Some((rel, contents)) = read_root_file(root, PROCFILE) {
