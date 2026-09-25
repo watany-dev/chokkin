@@ -1,6 +1,6 @@
 //! Configuration types for the chokkin analyzer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -357,6 +357,8 @@ pub struct ChokkinConfig {
     pub binary_map: BTreeMap<String, String>,
     /// Plugin enablement flags.
     pub plugins: BTreeMap<PluginId, bool>,
+    /// Plugins set by a config layer; these win over dependency / file enablers.
+    pub explicit_plugins: BTreeSet<PluginId>,
     /// Per-rule ignore patterns (loaded only; matching is a later step).
     pub ignore: BTreeMap<String, Vec<String>>,
     /// Per-rule severity overrides (`off` / `info` / `warning` / `error`).

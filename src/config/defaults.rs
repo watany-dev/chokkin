@@ -1,6 +1,6 @@
 //! Default configuration and layer merging.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::types::{
     ChokkinConfig, Confidence, DependencyGroupsConfig, PluginId, ProjectMode, TargetVersion,
@@ -100,6 +100,7 @@ pub fn default_config() -> ChokkinConfig {
         package_module_map: BTreeMap::new(),
         binary_map: BTreeMap::new(),
         plugins,
+        explicit_plugins: BTreeSet::new(),
         ignore: BTreeMap::new(),
         severity: BTreeMap::new(),
         workspaces: BTreeMap::new(),
@@ -147,6 +148,7 @@ pub fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
         }
         if let Some(plugins) = &layer.plugins {
             config.plugins.extend(plugins);
+            config.explicit_plugins.extend(plugins.keys());
         }
         if let Some(ignore) = &layer.ignore {
             config.ignore.clone_from(ignore);
@@ -196,6 +198,10 @@ mod tests {
         assert_eq!(merged.plugins.get(&PluginId::Celery), Some(&true));
         assert_eq!(merged.plugins.get(&PluginId::Pytest), Some(&true));
         assert_eq!(merged.plugins.get(&PluginId::Tox), Some(&false));
+        assert_eq!(
+            merged.explicit_plugins.into_iter().collect::<Vec<_>>(),
+            [PluginId::Celery]
+        );
     }
 
     #[test]
