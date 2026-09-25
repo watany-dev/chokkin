@@ -114,6 +114,21 @@
       "target": "tests/fixtures/deps/transitive_urllib3/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3_pdm/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/transitive_urllib3_pdm/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3_poetry/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/transitive_urllib3_poetry/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3_pylock/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/transitive_urllib3_pylock/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/unlisted_pytest/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/unlisted_pytest/src/acme/main.py"

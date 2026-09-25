@@ -231,6 +231,32 @@ fn transitive_urllib3_emits_chk004() {
     assert_eq!(candidate.severity, Severity::Error);
 }
 
+fn chk004_summary(name: &str) -> Vec<(String, Severity, Confidence)> {
+    reconcile_fixture(name)
+        .candidates
+        .into_iter()
+        .filter(|candidate| candidate.rule == RuleId::Chk004)
+        .map(|candidate| (candidate.message, candidate.severity, candidate.confidence))
+        .collect()
+}
+
+#[test]
+fn lockfile_formats_match_uv_lock_chk004() {
+    let expected = chk004_summary("transitive_urllib3");
+    assert_eq!(expected.len(), 1);
+    assert!(expected[0].0.contains("urllib3"));
+    for (name, kind) in [
+        ("transitive_urllib3_pylock", chokkin::LockfileKind::Pylock),
+        ("transitive_urllib3_poetry", chokkin::LockfileKind::Poetry),
+        ("transitive_urllib3_pdm", chokkin::LockfileKind::Pdm),
+    ] {
+        let inputs = load_deps(&fixture(name), false);
+        let source = inputs.manifest.sources.lockfile.expect(name);
+        assert_eq!(source.kind, kind, "{name}");
+        assert_eq!(chk004_summary(name), expected, "{name}");
+    }
+}
+
 #[test]
 fn workspace_member_root_declared_dependency_is_allowed_by_default() {
     let report = reconcile_fixture("workspace_member_strict");
