@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 
+use pep508_rs::pep440_rs::{Operator, VersionSpecifiers};
+
 use crate::VERSION;
 use crate::cache::{
     CacheKeyContext, CacheOptions, ScanCacheKey, ScanInputFingerprints, stable_hex_hash,
@@ -256,48 +258,31 @@ pub fn resolve_target_version(config: &ChokkinConfig, manifest: &LoadedManifest)
     TargetVersion::default_py311()
 }
 
+/// Effective lower bound of `requires-python`: the highest `>=`/`>`/`~=`/`==` release.
 fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
-    let mut best: Option<(u32, u32)> = None;
-
-    for part in specifier.split(',') {
-        let part = part.trim();
-        if part.starts_with('<') || part.starts_with("!=") {
-            continue;
-        }
-        let lower_bound = part
-            .strip_prefix(">=")
-            .or_else(|| part.strip_prefix("~="))
-            .or_else(|| part.strip_prefix('>'))
-            .unwrap_or(part);
-        let digits = lower_bound.trim_start_matches("py").trim();
-        let (major, minor) = parse_python_version(digits)?;
-        let candidate = (major, minor);
-        if best.is_none_or(|current| candidate > current) {
-            best = Some(candidate);
-        }
-    }
-
-    best.and_then(|(major, minor)| {
-        TargetVersion::parse(&format!("py{major}{minor:02}"))
-            .or_else(|| TargetVersion::parse(&format!("py{major}{minor}")))
-    })
-}
-
-fn parse_python_version(digits: &str) -> Option<(u32, u32)> {
-    if let Some((major, minor)) = digits.split_once('.') {
-        let major = major.parse().ok()?;
-        let minor = minor
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect::<String>()
-            .parse()
-            .ok()?;
-        return Some((major, minor));
-    }
-
-    let major = digits.chars().next()?.to_digit(10)?;
-    let minor = digits.chars().skip(1).collect::<String>().parse().ok()?;
-    Some((major, minor))
+    let specifiers: VersionSpecifiers = specifier.parse().ok()?;
+    let (major, minor) = specifiers
+        .iter()
+        .filter(|spec| {
+            matches!(
+                spec.operator(),
+                Operator::GreaterThanEqual
+                    | Operator::GreaterThan
+                    | Operator::TildeEqual
+                    | Operator::Equal
+                    | Operator::EqualStar
+                    | Operator::ExactEqual
+            )
+        })
+        .map(|spec| {
+            let release = spec.version().release();
+            (
+                release.first().copied().unwrap_or(0),
+                release.get(1).copied().unwrap_or(0),
+            )
+        })
+        .max()?;
+    TargetVersion::parse(&format!("py{major}{minor:02}"))
 }
 
 fn merge_metadata(
@@ -388,6 +373,20 @@ mod tests {
     }
 
     #[test]
+    fn infers_target_version_from_tilde_and_exact_specifiers() {
+        let tilde = infer_target_version_from_requires_python("~=3.9").expect("infer");
+        assert_eq!(tilde.as_str(), "py309");
+        let exact = infer_target_version_from_requires_python("==3.11.*").expect("infer");
+        assert_eq!(exact.as_str(), "py311");
+    }
+
+    #[test]
+    fn ignores_upper_bounds_and_rejects_invalid_specifier() {
+        assert!(infer_target_version_from_requires_python("<3.13,!=3.9.*").is_none());
+        assert!(infer_target_version_from_requires_python("not a specifier").is_none());
+    }
+
+    #[test]
     fn merge_metadata_keeps_pyproject_requires_python() {
         let base = ProjectMetadata {
             requires_python: Some(">=3.12".to_owned()),
@@ -456,19 +455,6 @@ mod tests {
                         .expect("compound bound must infer");
                 let expected = format!("py3{high:02}");
                 prop_assert_eq!(inferred.as_str(), expected.as_str());
-            }
-
-            #[test]
-            fn parse_python_version_never_panics(digits in "\\PC{0,20}") {
-                let _ = parse_python_version(&digits);
-            }
-
-            #[test]
-            fn parse_python_version_roundtrips_dotted(major in 0u32..10, minor in 0u32..100) {
-                prop_assert_eq!(
-                    parse_python_version(&format!("{major}.{minor}")),
-                    Some((major, minor))
-                );
             }
 
             #[test]
