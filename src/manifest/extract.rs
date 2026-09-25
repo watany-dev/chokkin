@@ -16,8 +16,8 @@ use super::requirements::extract_requirements_file;
 use super::setup_cfg::extract_setup_cfg;
 use super::setup_py::extract_setup_py;
 use super::types::{
-    DeclaredDependency, DependencyContext, LoadedManifest, LockfileGraph, ManifestSources,
-    ProjectMetadata,
+    DeclaredDependency, DependencyContext, LoadedManifest, LockfileGraph, LockfileKind,
+    ManifestSources, ProjectMetadata,
 };
 use super::warnings::ManifestWarning;
 
@@ -122,6 +122,7 @@ pub fn extract_manifest(
 
     if let Some((source, graph)) = extract_lockfile(root_path)? {
         lockfile = graph;
+        sources.uv_lock = source.kind == LockfileKind::Uv;
         sources.lockfile = Some(source);
     }
 

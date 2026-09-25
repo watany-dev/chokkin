@@ -136,6 +136,9 @@ pub struct ManifestSources {
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).
     pub setup_py: bool,
+    /// `uv.lock` contributed. Kept for library API compatibility; mirrors
+    /// `lockfile` having [`LockfileKind::Uv`].
+    pub uv_lock: bool,
     /// Lockfile that contributed the transitive graph.
     pub lockfile: Option<LockfileSource>,
     /// Poetry sections were detected.
