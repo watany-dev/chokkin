@@ -190,6 +190,8 @@ requirements系filesのパース規則を定める。コメントはpip互換で
 
 `[dependency-groups]` は、build metadataには含めない開発用途の依存を `pyproject.toml` に格納する標準仕様。lint/test/docs用の依存を扱うため、`chokkin` ではmain dependencyとは別contextとして扱う。
 
+PEP 735 の `{include-group = "..."}` は、group名を PEP 503 と同じ規則で正規化して解決し、推移閉包として展開する。要件は include 先へ複製せず宣言元 group に 1 件だけ置き、`DeclaredDependency.included_via` に include 元から宣言元までの経路 (例: `["all", "dev", "test"]`) を持たせる。§10 の context 判定・CHK005 は宣言元 group と各経路の先頭 group の bucket をすべて有効な宣言先として扱い、CHK002 は有効な bucket がすべて dev のときだけ非 strict で抑制する。CHK009 は宣言元の context だけで判定するので、include だけで重複扱いにはならない。`--fix` は宣言元 group の label (`dependency-groups.<group>[i]`、index は include table も数える) だけを編集し、include 要素は書き換えない。`--explain` には `included via dependency-groups: server -> shared` の行で経路を出す。未定義 group への include (`DependencyGroupIncludeUndefined`) と循環 (`DependencyGroupIncludeCycle`) は manifest warning にして、解析は止めずに循環を切って続ける。
+
 Python packagingのentry pointsは、distributionが提供するcomponentを他のコードやinstallerに知らせる仕組みで、`console_scripts` はインストール時にCLI wrapperを作るために使われる。`chokkin` は `[project.scripts]`、`[project.gui-scripts]`、`[project.entry-points]` をentry rootとして扱う。
 
 ## 5. 設定ファイル仕様

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- PEP 735 `{include-group = "..."}` in `[dependency-groups]` is expanded
+  transitively (group names normalized). A group pulled into a runtime group
+  counts as runtime for CHK002 / CHK005; requirements stay under their declaring
+  group, so CHK009 and `--fix` never act on the including group. `--explain`
+  shows the include path, and undefined or circular includes become manifest
+  warnings.
 - `pylock.toml` / `pylock.<name>.toml` (PEP 751), `poetry.lock` (1.x / 2.x), and
   `pdm.lock` are read for the CHK004 transitive check. When several are present,
   one is chosen by priority uv.lock > pylock > poetry.lock > pdm.lock.
