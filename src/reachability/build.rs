@@ -410,7 +410,7 @@ mod tests {
             report
                 .used_modules
                 .iter()
-                .any(|used| { used.import_root == "django" && used.file == MIGRATION })
+                .any(|used| used.import_root == "django" && used.file == MIGRATION)
         );
     }
 
