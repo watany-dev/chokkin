@@ -139,8 +139,9 @@ byte 数、build 時間は maturin step の所要時間。
 
 - **7 target の wheel**: 全 target で成功。`stacker` → `psm` の asm build script も
   musl / aarch64 の cross build で問題なし。
-- **sdist**: 成功。crates.io の依存だけで git 依存は無いので、build 時に GitHub へ
-  到達する必要は無い。
+- **sdist**: `build-sdist` は成功。CI では sdist からの build までは試していない。
+  依存はすべて crates.io のもので git 依存は無いため、build 時に GitHub へ到達できる
+  必要は無い。
 - **wheel サイズ**: 全 target で 0.4〜1.4% 小さくなった。
 - **build 時間**: target ごとに −18 s〜+35 s。run 全体は 3:23 → 3:51 で、60 分の
   job timeout には十分な余裕がある。
