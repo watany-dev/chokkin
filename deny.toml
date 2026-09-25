@@ -30,6 +30,10 @@ allow = [
     "Artistic-2.0",
 ]
 confidence-threshold = 0.8
+# Build-only dep of ruff_python_parser (stacker -> psm); LLVM's permissive exception.
+exceptions = [
+    { crate = "ar_archive_writer", allow = ["Apache-2.0 WITH LLVM-exception"] },
+]
 
 [licenses.private]
 ignore = true
