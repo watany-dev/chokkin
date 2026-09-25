@@ -82,7 +82,8 @@ download できず、PoC の build も bench もまだ取れていない (#140 �
 
 `Release` workflow (`.github/workflows/release.yml`) は `pull_request` と
 `workflow_dispatch` でも 7 target の `build-wheels` と `build-sdist` を回す
-(GitHub Release と PyPI publish は tag push のときだけ)。検証用の workflow は足さず、
+(GitHub Release と PyPI publish は tag push のときだけ)。検証専用の workflow は
+この matrix の複製になり、pin した action や matrix の更新でずれていくので足さず、
 次のどちらかで回す:
 
 - PoC branch から draft PR を開く (main には merge しない)。
@@ -114,9 +115,3 @@ main の直近 run に同じ操作をして baseline にする。
 | build 時間 | target ごとの増減を記録。60 分の job timeout に余裕がある | timeout に近ければ ADR に記録 |
 | `cargo deny` | CI の `Security (cargo-deny)` が通る。git 依存なら `deny.toml` に `allow-git` を足した上で通る | 出た advisory / license を記録 |
 | `cargo audit` | `Security Audit` workflow (手動実行可) が通る | 同上 |
-
-## 検証用 workflow を足さない理由
-
-既存の `Release` workflow が PR と手動実行で全 target を build するので、検証専用の
-workflow は同じ matrix の複製になる。複製は pin した action の更新や matrix の変更で
-ずれていくため、足さない。
