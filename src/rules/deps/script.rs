@@ -18,13 +18,13 @@ pub(super) fn is_script_third_party(import: &ResolvedImport, script_paths: &Hash
 pub(super) fn detect_script_dependency_issues(
     scripts: &[InlineScript],
     resolution: &ResolutionIndex,
-    reachable: &HashSet<String>,
+    reachable: &HashSet<&str>,
     strict: bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
     for script in scripts
         .iter()
-        .filter(|script| reachable.contains(&script.path))
+        .filter(|script| reachable.contains(script.path.as_str()))
     {
         let imports: Vec<&ResolvedImport> = resolution
             .imports
@@ -203,7 +203,7 @@ mod tests {
             imports: vec![import("rich", "rich", 7), import("yaml", "pyyaml", 8)],
             ..ResolutionIndex::default()
         };
-        let reachable = HashSet::from(["scripts/tool.py".to_owned()]);
+        let reachable = HashSet::from(["scripts/tool.py"]);
         let found: Vec<_> =
             detect_script_dependency_issues(&[script], &resolution, &reachable, false)
                 .into_iter()

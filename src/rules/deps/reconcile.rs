@@ -123,7 +123,7 @@ fn reconcile_project(
     let lockfile_present = has_lockfile(manifest, resolution);
     let reachable = reachable_paths(graph, reachability);
 
-    let mut used = collect_used_distributions(context, plugins);
+    let mut used = collect_used_distributions(context, plugins, &reachable);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
     mark_workspace_source_distributions(manifest, resolution, &reachable, &mut used);

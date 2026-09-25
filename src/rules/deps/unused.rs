@@ -17,7 +17,7 @@ pub(super) struct UnusedEvidenceContext<'a> {
     pub resolution: &'a ResolutionIndex,
     pub reachability: &'a ReachabilityReport,
     pub graph: &'a ProjectGraph,
-    pub reachable: &'a HashSet<String>,
+    pub reachable: &'a HashSet<&'a str>,
     /// `[build-system].requires`, so a build plugin that is also declared as
     /// a dependency is explained as build tooling.
     pub build_requires: &'a [DeclaredDependency],
@@ -121,11 +121,11 @@ fn build_reachability_evidence(
 
     let reachable_imports = distribution_imports
         .iter()
-        .filter(|import| context.reachable.contains(&import.file))
+        .filter(|import| context.reachable.contains(import.file.as_str()))
         .collect::<Vec<_>>();
     let unreachable_imports = distribution_imports
         .iter()
-        .filter(|import| !context.reachable.contains(&import.file))
+        .filter(|import| !context.reachable.contains(import.file.as_str()))
         .collect::<Vec<_>>();
 
     if reachable_imports.is_empty() {
@@ -434,7 +434,7 @@ mod tests {
             confidence: ResolveConfidence::Certain,
         });
 
-        let reachable = HashSet::from(["src/acme/main.py".to_owned()]);
+        let reachable = HashSet::from(["src/acme/main.py"]);
         let evidence = UnusedEvidenceContext {
             resolution: &resolution,
             reachability: &reachability,
