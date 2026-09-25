@@ -203,6 +203,15 @@ mod tests {
         );
         let all = extract("[tool.uv]\ndefault-groups = \"all\"\n");
         assert_eq!(all.settings.default_groups, Some(UvDefaultGroups::All));
+        let invalid = extract("[tool.uv]\ndefault-groups = \"dev\"\n");
+        assert_eq!(invalid.settings.default_groups, None);
+    }
+
+    #[test]
+    fn unknown_source_shape_is_other() {
+        let result = extract("[tool.uv.sources]\nfoo = { editable = true }\nbar = \"x\"\n");
+        assert_eq!(result.settings.sources.len(), 1);
+        assert_eq!(result.settings.sources[0].kind, UvSourceKind::Other);
     }
 
     #[test]
