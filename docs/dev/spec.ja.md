@@ -963,6 +963,11 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 誤検知の ground truth は `scripts/oss-fixtures.labels.tsv` に `fp`/`tp`/`deferred`
 で記録し、**CHK002** の未分類 (unknown + deferred) が残ると FP gate は通らない。
 最新の §17 CHK002 scorecard は `docs/dev/oss-validation-report.md` に残す。
+CHK001 の実世界 precision は opt-in の remove-and-test oracle
+(`scripts/oss-remove-and-test.py` / `make oss-oracle`) で測る。flag されたファイルを
+使い捨てコピーで削除し、project 自身の pytest を baseline と比較する。解析対象コードを
+実行するため chokkin 本体・release・既定 CI からは呼ばない
+(`docs/dev/chk001-remove-and-test.md`)。
 
 FP gateは「報告された CHK002」を分母にするため、**何も報告しなければ自明に通る**。
 これを塞ぐため、ハーネスは `scripts/oss-recall.manifest` の **recall sentinel**
