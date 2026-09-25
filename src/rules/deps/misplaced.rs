@@ -8,7 +8,8 @@ use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, Rul
 use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::context::{
-    DeclarationBucket, UsageContext, declaration_bucket, usage_context_for_import,
+    DeclarationBucket, UsageContext, declaration_bucket, declaration_buckets, include_path_details,
+    usage_context_for_import,
 };
 use super::missing::{WorkspaceDeclaredIndex, governing_declarations};
 use super::used::DeclaredIndex;
@@ -62,9 +63,13 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         };
 
-        let has_runtime = declarations.iter().any(|dep| {
+        let buckets: Vec<DeclarationBucket> = declarations
+            .iter()
+            .flat_map(|&dep| declaration_buckets(dep, &config.dependencies))
+            .collect();
+        let has_runtime = buckets.iter().any(|bucket| {
             matches!(
-                declaration_bucket(&dep.context, &config.dependencies),
+                bucket,
                 DeclarationBucket::Runtime | DeclarationBucket::Optional(_)
             )
         });
@@ -72,12 +77,9 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         }
 
-        let has_dev_only = declarations.iter().any(|dep| {
-            matches!(
-                declaration_bucket(&dep.context, &config.dependencies),
-                DeclarationBucket::Dev | DeclarationBucket::Type
-            )
-        });
+        let has_dev_only = buckets
+            .iter()
+            .any(|bucket| matches!(bucket, DeclarationBucket::Dev | DeclarationBucket::Type));
         if !has_dev_only {
             continue;
         }
@@ -111,7 +113,13 @@ pub(super) fn detect_misplaced_dependencies(
             }],
             explain: ExplainData {
                 summary: format!("{distribution} is misplaced for runtime usage"),
-                details: vec![format!("declared in: {}", contexts.join(", "))],
+                details: std::iter::once(format!("declared in: {}", contexts.join(", ")))
+                    .chain(
+                        declarations
+                            .iter()
+                            .flat_map(|&dep| include_path_details(dep)),
+                    )
+                    .collect(),
             },
         });
     }
