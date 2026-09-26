@@ -218,6 +218,11 @@ Available skills:
 - `update-plan` — validate a plan to `update-design` standards before finalizing.
 - `grill-me` — interview you about a plan/design, then record an ADR under
   `docs/adr/`.
+- `doghooding` — dogfood chokkin against a named OSS Python project: clone it
+  outside the repo, compare chokkin with deptry + vulture (static only — never
+  install or run the target), and file chokkin's misses / false positives /
+  crashes as anonymised issues with minimal fixtures. Invoke with
+  `/doghooding owner/repo`.
 
 **Ponytail skills** ([DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail);
 vendored via `skills-lock.json`; on-demand in Cursor with `/ponytail`, `@ponytail`, or

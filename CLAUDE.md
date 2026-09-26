@@ -41,6 +41,9 @@ Skill tool:
   `ExitPlanMode`.
 - `grill-me` — interviews you about a plan/design, then records an ADR under
   `docs/adr/`.
+- `doghooding` — runs chokkin vs deptry + vulture over a real OSS project
+  (`/doghooding owner/repo`) and files chokkin's gaps as anonymised issues with
+  minimal fixtures. The upstream name never lands in commits or issues.
 
 ## Hooks
 
