@@ -1,0 +1,35 @@
+name: Parser bench (temporary, #351)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CHOKKIN_BENCH_LARGE: "1"
+
+jobs:
+  bench:
+    name: Parser bench (rustpython vs ruff)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - name: Baseline (rustpython, main)
+        run: |
+          git checkout --detach origin/main
+          cargo bench --locked --bench pipeline -- --save-baseline rustpython 'pipeline_2kb/(parse_cold_no_cache|analyze_cold)/10000'
+      - name: Compare (ruff, PR head)
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --detach "$HEAD_SHA"
+          cargo bench --locked --bench pipeline -- --baseline rustpython 'pipeline_2kb/(parse_cold_no_cache|analyze_cold)/10000'
