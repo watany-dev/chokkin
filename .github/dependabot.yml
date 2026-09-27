@@ -17,6 +17,9 @@ updates:
     cooldown:
       default-days: 7
     groups:
+      # ruff crates are exact-pinned and must move in lockstep (ADR 0001).
+      ruff-parser:
+        patterns: ["ruff_*"]
       cargo-minor-and-patch:
         update-types: [minor, patch]
 
