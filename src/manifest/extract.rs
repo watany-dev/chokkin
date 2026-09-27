@@ -291,17 +291,17 @@ pub fn infer_target_version_from_requires_python(specifier: &str) -> Option<Targ
 /// Highest Python 3 minor `requires-python` allows, from `<`/`<=`/`==`/`~=`
 /// bounds. `None` when no bound caps the 3.x minor (or the specifier is invalid).
 pub fn requires_python_max_minor(specifier: &str) -> Option<u32> {
-    let specifiers: VersionSpecifiers = specifier.parse().ok()?;
+    let specifiers = parse_version_specifiers(specifier)?;
     specifiers
         .iter()
         .filter_map(|spec| {
-            let release = spec.version().release();
+            let release = &spec.release;
             if release.first() != Some(&3) {
                 return None;
             }
             let minor = u32::try_from(release.get(1).copied().unwrap_or(0)).ok()?;
             let has_patch = release.iter().skip(2).any(|part| *part > 0);
-            match spec.operator() {
+            match spec.operator {
                 Operator::LessThan if has_patch => Some(minor),
                 Operator::LessThan => Some(minor.saturating_sub(1)),
                 Operator::LessThanEqual
