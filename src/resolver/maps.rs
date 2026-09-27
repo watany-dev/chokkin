@@ -230,6 +230,14 @@ mod tests {
         );
         assert_eq!(first("databricks.sdk").as_deref(), Some("databricks-sdk"));
         assert_eq!(first("poetry.core.version").as_deref(), Some("poetry-core"));
+        assert_eq!(
+            first("azure.identity.aio").as_deref(),
+            Some("azure-identity")
+        );
+        assert_eq!(
+            first("opentelemetry.exporter.otlp.proto.grpc.trace_exporter").as_deref(),
+            Some("opentelemetry-exporter-otlp-proto-grpc")
+        );
         assert_eq!(first("google"), None);
         assert_eq!(first("yaml.loader"), None);
     }
@@ -249,6 +257,27 @@ mod tests {
                     .as_ref()
                     .is_some_and(|(c, _)| c.iter().any(|d| d == distribution)),
                 "expected {import_root} -> {distribution}, got {candidates:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_import_names_that_differ_from_the_distribution() {
+        let import_map = ImportMap::build(&default_config());
+        for (import_root, distribution) in [
+            ("nacl", "pynacl"),
+            ("dateutil", "python-dateutil"),
+            ("grpc", "grpcio"),
+            ("zmq", "pyzmq"),
+            ("attr", "attrs"),
+            ("dns", "dnspython"),
+            ("pkg_resources", "setuptools"),
+            ("vertexai", "google-cloud-aiplatform"),
+        ] {
+            assert_eq!(
+                import_map.candidates(import_root),
+                Some((vec![distribution.to_owned()], ResolveConfidence::Certain)),
+                "{import_root}"
             );
         }
     }

@@ -20,32 +20,41 @@ IMPORT_ROOT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 def wheel_candidate(path: Path) -> tuple[str, set[str], str]:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     with zipfile.ZipFile(path) as wheel:
-        names = wheel.namelist()
-        metadata_paths = sorted(
-            name for name in names if name.endswith(".dist-info/METADATA")
-        )
-        if len(metadata_paths) != 1:
-            raise ValueError(f"{path}: expected exactly one .dist-info/METADATA")
+        distribution, imports = wheel_imports(wheel, str(path))
+    return distribution, imports, digest
 
-        metadata_path = metadata_paths[0]
-        distribution = BytesParser().parsebytes(wheel.read(metadata_path)).get("Name")
-        if not distribution:
-            raise ValueError(f"{path}: METADATA has no Name field")
 
-        dist_info = metadata_path.removesuffix("METADATA")
-        top_level = f"{dist_info}top_level.txt"
-        if top_level in names:
-            imports = {
-                line.strip()
-                for line in wheel.read(top_level).decode("utf-8").splitlines()
-                if IMPORT_ROOT.fullmatch(line.strip())
-            }
-        else:
-            imports = imports_from_record(wheel, f"{dist_info}RECORD")
+def wheel_imports(wheel: zipfile.ZipFile, label: str) -> tuple[str, set[str]]:
+    names = wheel.namelist()
+    # Only the wheel's own top-level dist-info counts; setuptools and bleach
+    # vendor other distributions' dist-info directories deeper in the tree.
+    metadata_paths = sorted(
+        name
+        for name in names
+        if name.endswith(".dist-info/METADATA") and name.count("/") == 1
+    )
+    if len(metadata_paths) != 1:
+        raise ValueError(f"{label}: expected exactly one .dist-info/METADATA")
+
+    metadata_path = metadata_paths[0]
+    distribution = BytesParser().parsebytes(wheel.read(metadata_path)).get("Name")
+    if not distribution:
+        raise ValueError(f"{label}: METADATA has no Name field")
+
+    dist_info = metadata_path.removesuffix("METADATA")
+    top_level = f"{dist_info}top_level.txt"
+    if top_level in names:
+        imports = {
+            line.strip()
+            for line in wheel.read(top_level).decode("utf-8").splitlines()
+            if IMPORT_ROOT.fullmatch(line.strip())
+        }
+    else:
+        imports = imports_from_record(wheel, f"{dist_info}RECORD")
 
     if not imports:
-        raise ValueError(f"{path}: no import roots found in top_level.txt or RECORD")
-    return distribution, imports, digest
+        raise ValueError(f"{label}: no import roots found in top_level.txt or RECORD")
+    return distribution, imports
 
 
 def imports_from_record(wheel: zipfile.ZipFile, record_path: str) -> set[str]:
