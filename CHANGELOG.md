@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Composite GitHub Action (`action.yml`): `uses: watany-dev/chokkin@vX.Y.Z`
+  runs chokkin from PyPI via `uv`, with `version`, `working-directory`,
+  `baseline`, `reporter`, `sarif-file`, and `args` inputs. The SARIF report is
+  written before the gating run so it can be uploaded even when that run fails.
 - PEP 735 `{include-group = "..."}` in `[dependency-groups]` is expanded
   transitively (group names normalized). A group pulled into a runtime group
   counts as runtime for CHK002 / CHK005; requirements stay under their declaring

@@ -1,0 +1,82 @@
+name: chokkin
+description: Report unused files, dependencies, and symbols in a Python project.
+author: watany-dev
+branding:
+  icon: scissors
+  color: green
+
+inputs:
+  version:
+    description: chokkin version to run from PyPI (e.g. "0.4.1"), or "latest".
+    required: false
+    # Bumped together with Cargo.toml / pyproject.toml on each release.
+    default: "0.4.1"
+  working-directory:
+    description: Project root to analyze.
+    required: false
+    default: "."
+  baseline:
+    description: Baseline file path (relative to working-directory). Only findings not in the baseline fail the job.
+    required: false
+    default: ""
+  reporter:
+    description: Reporter for the gating run (default, compact, json, markdown, github, sarif).
+    required: false
+    default: github
+  sarif-file:
+    description: If set, also write a SARIF report to this path (relative to working-directory) for code scanning upload.
+    required: false
+    default: ""
+  args:
+    description: Extra CLI arguments, whitespace-separated (e.g. "--production --confidence likely").
+    required: false
+    default: ""
+
+outputs:
+  sarif-file:
+    description: Absolute path of the SARIF report, when sarif-file is set.
+    value: ${{ steps.sarif.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+    # Runs before the gating step so the report exists even when that step fails.
+    - id: sarif
+      if: inputs.sarif-file != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CHOKKIN_VERSION: ${{ inputs.version }}
+        CHOKKIN_BASELINE: ${{ inputs.baseline }}
+        CHOKKIN_SARIF: ${{ inputs.sarif-file }}
+        CHOKKIN_ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail -f
+        spec=chokkin
+        [ "$CHOKKIN_VERSION" = latest ] || spec="chokkin@$CHOKKIN_VERSION"
+        cmd=(uvx "$spec" --no-exit-code --reporter sarif)
+        [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
+        # shellcheck disable=SC2206
+        cmd+=($CHOKKIN_ARGS)
+        mkdir -p "$(dirname "$CHOKKIN_SARIF")"
+        "${cmd[@]}" > "$CHOKKIN_SARIF"
+        echo "path=$(cd "$(dirname "$CHOKKIN_SARIF")" && pwd)/$(basename "$CHOKKIN_SARIF")" >> "$GITHUB_OUTPUT"
+
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CHOKKIN_VERSION: ${{ inputs.version }}
+        CHOKKIN_BASELINE: ${{ inputs.baseline }}
+        CHOKKIN_REPORTER: ${{ inputs.reporter }}
+        CHOKKIN_ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail -f
+        spec=chokkin
+        [ "$CHOKKIN_VERSION" = latest ] || spec="chokkin@$CHOKKIN_VERSION"
+        cmd=(uvx "$spec" --reporter "$CHOKKIN_REPORTER")
+        [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
+        # shellcheck disable=SC2206
+        cmd+=($CHOKKIN_ARGS)
+        "${cmd[@]}"
