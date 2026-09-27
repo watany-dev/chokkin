@@ -294,6 +294,7 @@ mod tests {
             layout: LayoutInfo {
                 layout: ProjectLayout::Flat,
                 packages: vec!["acme".to_owned()],
+                local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
             },
             effective_globs: Vec::new(),

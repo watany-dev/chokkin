@@ -78,11 +78,22 @@ pub struct LayoutInfo {
     pub layout: ProjectLayout,
     /// Package directory names (e.g. `acme` for `src/acme` or `acme/`).
     pub packages: Vec<String>,
+    /// Root-level non-distribution packages (`tests/` with `__init__.py`)
+    /// that import as `tests.*` but never count as the distributed package.
+    pub local_packages: Vec<String>,
     /// Globs used when `config.project` was empty.
     pub inferred_globs: Vec<String>,
 }
 
 impl LayoutInfo {
+    #[must_use]
+    pub fn in_local_package(&self, path: &str) -> bool {
+        self.local_packages.iter().any(|package| {
+            path.strip_prefix(package.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
     /// Stable hash of the layout inputs that cache keys depend on.
     ///
     /// Fields are hashed explicitly rather than through `Debug`, whose output
@@ -95,6 +106,7 @@ impl LayoutInfo {
         let mut hasher = CacheKeyHasher::new();
         hasher.field_str(self.layout.as_str());
         hash_str_list(&mut hasher, &self.packages);
+        hash_str_list(&mut hasher, &self.local_packages);
         hash_str_list(&mut hasher, &self.inferred_globs);
         hasher.finish()
     }

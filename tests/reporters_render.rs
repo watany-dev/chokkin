@@ -37,6 +37,7 @@ fn issue() -> Issue {
             module: "requests".to_owned(),
             file: "src/acme/app.py".to_owned(),
             line: 7,
+            distribution: Some("requests".to_owned()),
         },
         explain: None,
     }
@@ -160,6 +161,7 @@ fn json_reporter_normalizes_path_separators() {
         module: "requests".to_owned(),
         file: "src\\acme\\app.py".to_owned(),
         line: 7,
+        distribution: Some("requests".to_owned()),
     };
 
     let rendered = render_issues(ReporterId::Json, &report, &context());
@@ -167,7 +169,9 @@ fn json_reporter_normalizes_path_separators() {
 
     assert_eq!(parsed["issues"][0]["file"], "src/acme/app.py");
     assert_eq!(parsed["issues"][0]["path"], "src/acme/app.py");
-    assert_eq!(parsed["issues"][0]["symbol"], "src/acme/app.py:7 requests");
+    assert_eq!(parsed["issues"][0]["line"], 7);
+    assert_eq!(parsed["issues"][0]["symbol"], "requests");
+    assert_eq!(parsed["issues"][0]["distribution"], "requests");
 }
 
 #[test]
@@ -189,6 +193,7 @@ fn sarif_reporter_includes_stable_partial_fingerprint() {
         module: "requests".to_owned(),
         file: "src\\acme\\app.py".to_owned(),
         line: 7,
+        distribution: Some("requests".to_owned()),
     };
 
     let rendered = render_issues(ReporterId::Sarif, &report, &context());

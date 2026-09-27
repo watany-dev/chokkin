@@ -73,7 +73,7 @@ See [AGENTS.md](./AGENTS.md) for the full architecture overview.
 Releases are driven by git tags. The release workflow builds prebuilt wheels
 for all platforms and publishes to PyPI via Trusted Publishing:
 
-1. Update `version` in `Cargo.toml` and `pyproject.toml`.
+1. Update `version` in `Cargo.toml` and `pyproject.toml`, and the `version` input default in `action.yml`.
 2. Run `cargo generate-lockfile` to update `Cargo.lock`.
 3. Commit: `chore: release vX.Y.Z`.
 4. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.

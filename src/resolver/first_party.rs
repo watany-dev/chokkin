@@ -18,6 +18,7 @@ pub fn is_first_party_import(
     if layout
         .packages
         .iter()
+        .chain(&layout.local_packages)
         .any(|package| normalize_distribution_name(package) == import_norm)
     {
         return true;
@@ -107,13 +108,16 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: vec!["tests".to_owned()],
             inferred_globs: Vec::new(),
         };
-        assert!(is_first_party_import(
-            "acme",
-            &layout,
-            &ProjectMetadata::default()
-        ));
+        for root in ["acme", "tests"] {
+            assert!(is_first_party_import(
+                root,
+                &layout,
+                &ProjectMetadata::default()
+            ));
+        }
     }
 
     #[test]
@@ -121,6 +125,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         let metadata = ProjectMetadata {

@@ -26,6 +26,7 @@ fn parse_fixture(name: &str) -> chokkin::ParsedModule {
     let layout = LayoutInfo {
         layout: ProjectLayout::Unknown,
         packages: Vec::new(),
+        local_packages: Vec::new(),
         inferred_globs: Vec::new(),
     };
     parse_file(
@@ -51,11 +52,13 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
         "imports" => LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         _ => LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
     };
@@ -222,6 +225,7 @@ fn parse_project_sources_fixture_suite() {
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         effective_globs: Vec::new(),
@@ -247,6 +251,7 @@ fn parse_project_sources_reuses_cache_when_inputs_match() {
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         effective_globs: Vec::new(),
@@ -287,6 +292,7 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["app".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         effective_globs: Vec::new(),
@@ -343,6 +349,7 @@ fn parse_cache_follows_pep723_block_edits() {
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         effective_globs: Vec::new(),
@@ -416,6 +423,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         effective_globs: Vec::new(),
@@ -461,6 +469,7 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         effective_globs: Vec::new(),
@@ -540,6 +549,7 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         },
         effective_globs: Vec::new(),
@@ -592,6 +602,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
     let layout = LayoutInfo {
         layout: ProjectLayout::Src,
         packages: Vec::new(),
+        local_packages: Vec::new(),
         inferred_globs: Vec::new(),
     };
     let discovered = |path: &str| chokkin::DiscoveredFile {

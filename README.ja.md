@@ -237,7 +237,7 @@ uvx chokkin --baseline chokkin-baseline.json --update-baseline
 git add chokkin-baseline.json
 ```
 
-その後、pull request check に baseline を組み込みます。この job は GitHub annotation を出し、code scanning 用 SARIF を保存し、baseline にない新規 finding だけで失敗します。
+その後、同梱の GitHub Action で pull request check に baseline を組み込みます。GitHub annotation を出し、code scanning 用 SARIF を保存し、baseline にない新規 finding だけで失敗します。
 
 ```yaml
 name: chokkin
@@ -253,17 +253,31 @@ jobs:
   chokkin:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Annotations
-        run: uvx chokkin --baseline chokkin-baseline.json --reporter github
-      - name: SARIF
-        if: always()
-        run: uvx chokkin --baseline chokkin-baseline.json --reporter sarif > chokkin.sarif
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: actions/checkout@v7
+      - uses: watany-dev/chokkin@v0.4.1
+        with:
+          baseline: chokkin-baseline.json
+          sarif-file: chokkin.sarif
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: chokkin.sarif
+```
+
+| Input | Default | 説明 |
+| --- | --- | --- |
+| `version` | action の ref と同じリリース | PyPI から実行する chokkin のバージョン。`latest` も可 |
+| `working-directory` | `.` | 解析する project root |
+| `baseline` | — | baseline ファイル。新規 finding だけで失敗 |
+| `reporter` | `github` | 判定用 run の reporter |
+| `sarif-file` | — | SARIF の出力先(判定 run が失敗しても書き出す) |
+| `args` | — | 追加の CLI 引数(例: `--production --confidence likely`) |
+
+action を使わない場合は `uvx` でバージョンを固定します。
+
+```yaml
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uvx chokkin@0.4.1 --baseline chokkin-baseline.json --reporter github
 ```
 
 ## インストール

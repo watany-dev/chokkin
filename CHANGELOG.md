@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Composite GitHub Action (`action.yml`): `uses: watany-dev/chokkin@vX.Y.Z`
+  runs chokkin from PyPI via `uv`, with `version`, `working-directory`,
+  `baseline`, `reporter`, `sarif-file`, and `args` inputs. The SARIF report is
+  written before the gating run so it can be uploaded even when that run fails.
 - PEP 735 `{include-group = "..."}` in `[dependency-groups]` is expanded
   transitively (group names normalized). A group pulled into a runtime group
   counts as runtime for CHK002 / CHK005; requirements stay under their declaring
@@ -130,6 +134,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `msvcrt`, `winreg`, `_thread`, `_ssl` and `sre_parse` that caused CHK010 /
   CHK003 / CHK004 false positives. `test` (CPython's regression suite, not
   in that list) is no longer treated as stdlib (#357).
+- A root `tests/`, `scripts/` or `docs/` directory with `__init__.py` is now a
+  first-party package, so `from tests.helpers import x` no longer raises
+  CHK010 and helpers reached only this way are not CHK001. These packages keep
+  their test/dev/docs context, never count as the flat-layout distribution
+  package, and their symbols are not checked by CHK006 / CHK007 (#359).
+- JSON reporter: CHK003 / CHK004 issues now fill `distribution` with the
+  resolved distribution name (it was always `null`), and CHK003 / CHK004 /
+  CHK010 put only the imported module in `symbol` instead of
+  `"<path>:<line> <module>"`; the location stays in `file` / `line`.
+  `schema_version` stays `"1"`. `target`, fingerprints, baselines and SARIF are
+  unchanged. `--fix --add-missing` reads the distribution from the issue
+  instead of the explain text. Library API: `IssueSubject::Import` gains
+  `distribution: Option<String>` (#363).
 - A module is stdlib when it is stdlib on any Python minor from
   `target_version` up to the `requires-python` upper bound (the newest bundled
   set when unbounded). `tomllib` behind a `sys.version_info` guard in a

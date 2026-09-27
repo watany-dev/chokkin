@@ -140,6 +140,9 @@ pub enum IssueSubject {
         file: String,
         /// 1-based line number.
         line: u32,
+        /// Normalized distribution the import resolved to; `None` when the
+        /// import is unresolved (CHK010).
+        distribution: Option<String>,
     },
     /// Distribution in a PEP 723 script's own dependency scope.
     ScriptDistribution {
@@ -342,7 +345,9 @@ pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::File { path } => path.clone(),
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
-        IssueSubject::Import { module, file, line } => format!("{file}:{line}:{module}"),
+        IssueSubject::Import {
+            module, file, line, ..
+        } => format!("{file}:{line}:{module}"),
         IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
     }
 }
