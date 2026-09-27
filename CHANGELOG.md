@@ -118,6 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `workspace = true` dependency counts as used when a used workspace
   member's own files import a module from its tree (a root that ships
   `airflow-core` and `task-sdk` uses both, since core imports `airflow.sdk`).
+- A module is stdlib when it is stdlib on any Python minor from
+  `target_version` up to the `requires-python` upper bound (the newest bundled
+  set when unbounded). `tomllib` behind a `sys.version_info` guard in a
+  `>=3.10` project is no longer a CHK010. An unguarded `import tomllib` there
+  is no longer reported either (#358).
 
 ## [0.4.1] - Unreleased
 

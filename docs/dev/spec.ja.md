@@ -344,7 +344,7 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 解決戦略は多層にする。
 
 ```text
-1. stdlib判定 (`target_version` に応じた bundled リスト: `resolver/stdlib/py310.txt` 〜 `py313.txt`。`scripts/generate-stdlib-modules.py` で再生成)
+1. stdlib判定 (bundled リスト `resolver/stdlib/py310.txt` 〜 `py313.txt`。`scripts/generate-stdlib-modules.py` で再生成。`target_version` から `requires-python` の上限 minor (上限なしなら最新 bundled) までのいずれかで stdlib なら stdlib。`sys.version_info` ガード下の `tomllib` 等を誤検出しないため)
 2. first-party module判定
 3. workspace member判定
 4. local .venv の dist-info / METADATA / top_level.txt / RECORD を読む
@@ -603,7 +603,8 @@ entry  : script file 自体を entry root (origin: script) にする。script �
          project manifest の CHK002/CHK003/CHK005 判定からは除外する
          script 経由の first-party import とその先の file は従来どおり project scope
 target : script の `requires-python` 下限を、その file の parse と stdlib 判定の
-         target version にする。未指定なら project の target version
+         target version にする (stdlib 判定の上限も script の `requires-python`)。
+         未指定なら project の target version
 report : subject は `script:<path>:<distribution>`。CHK003 は Error/certain
          (optional / platform-guarded import は対象外)。CHK002 は project CHK002 と
          同じく marker 付きを default で除外し、--strict で報告する

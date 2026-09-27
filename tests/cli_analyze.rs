@@ -303,6 +303,29 @@ fn binary_pep723_script_reports_script_scoped_dependencies() {
 }
 
 #[test]
+fn binary_version_guarded_stdlib_import_is_not_chk010() {
+    // #358: `tomllib` is stdlib on 3.11+, which `>=3.10,<3.15` covers.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"guarded\"\nversion = \"0.1.0\"\nrequires-python = \">=3.10,<3.15\"\ndependencies = [\"tomli; python_version < '3.11'\"]\n\n[project.scripts]\nguarded = \"guarded:main\"\n",
+        ),
+        (
+            "guarded.py",
+            "import sys\n\nif sys.version_info >= (3, 11):\n    import tomllib\nelse:\n    import tomli as tomllib\n\n\ndef main() -> None:\n    tomllib.loads(\"\")\n",
+        ),
+    ] {
+        fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let keys = issue_keys(&json_issues(temp.path(), &[]));
+    assert!(
+        keys.iter().all(|(_, target)| !target.contains("tomllib")),
+        "{keys:?}"
+    );
+}
+
+#[test]
 fn binary_pep723_script_findings_in_sarif() {
     let project = pep723_project();
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
