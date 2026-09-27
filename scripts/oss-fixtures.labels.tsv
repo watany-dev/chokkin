@@ -1183,7 +1183,7 @@ airflow	CHK002	script:scripts/ci/prek/check_revision_heads_map.py:packaging	tp	-
 airflow	CHK002	script:scripts/ci/prek/check_schema_defaults.py:packaging	tp	-	never imported by the script or its helpers
 airflow	CHK002	script:scripts/ci/prek/generate_airflow_diagrams.py:diagrams	fp	-	runs each diagram source with sys.executable, which imports diagrams
 airflow	CHK002	script:scripts/ci/prek/lint_helm.py:requests	tp	-	never imported; subprocess only runs helm/docker
-airflow	CHK002	script:scripts/ci/prek/ruff_format.py:ruff	fp	-	runs `ruff format` through subprocess with shell=True
+airflow	CHK002	script:scripts/ci/prek/ruff_format.py:ruff	fp	-	runs `ruff format` through subprocess with shell=True (resolved by shell_commands)
 airflow	CHK002	script:scripts/ci/prek/sort_in_the_wild.py:termcolor	tp	-	never imported by the script or its helpers
 airflow	CHK002	script:scripts/ci/prek/sort_in_the_wild.py:wcmatch	tp	-	never imported by the script or its helpers
 airflow	CHK002	script:scripts/ci/prek/update_providers_build_files.py:requests	tp	-	never imported by the script or its helpers

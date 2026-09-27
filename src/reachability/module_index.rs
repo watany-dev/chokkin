@@ -43,7 +43,7 @@ impl ModuleIndex {
             })
             .map(|(module, file_id)| (module.as_str(), *file_id))
             .collect();
-        modules.sort_unstable();
+        modules.sort_unstable_by_key(|(module, _)| *module);
         modules
     }
 }
