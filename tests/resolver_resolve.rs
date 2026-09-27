@@ -177,3 +177,21 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
     assert_ne!(tomllib_in("scripts/old.py").origin, ModuleOrigin::Stdlib);
     assert_ne!(tomllib_in("app.py").origin, ModuleOrigin::Stdlib);
 }
+
+#[test]
+fn declared_name_resolves_an_unmapped_normalized_root() {
+    let index = resolve_fixture("declared_unmapped");
+    let origin = |root: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == root)
+            .map(|resolved| (resolved.origin, resolved.distribution.clone()))
+            .expect("import")
+    };
+    assert_eq!(
+        origin("resolvelib"),
+        (ModuleOrigin::ThirdParty, Some("resolvelib".to_owned()))
+    );
+    assert_eq!(origin("notdeclaredanywhere"), (ModuleOrigin::Unknown, None));
+}

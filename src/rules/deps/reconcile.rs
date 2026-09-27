@@ -89,6 +89,7 @@ pub fn reconcile_with_context(
         scripts,
         dependency.rules.resolution,
         &reachable,
+        &dependency.rules.sources.files,
         dependency.strict,
     ));
     sort_candidates(&mut report.candidates);

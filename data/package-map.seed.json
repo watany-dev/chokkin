@@ -129,6 +129,12 @@
       ]
     },
     {
+      "distribution": "apache-airflow-client",
+      "imports": [
+        "airflow_client"
+      ]
+    },
+    {
       "distribution": "django",
       "imports": [
         "django"

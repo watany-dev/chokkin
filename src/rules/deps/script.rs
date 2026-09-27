@@ -7,6 +7,7 @@ use crate::graph::ModuleOrigin;
 use crate::manifest::{InlineScript, normalize_distribution_name};
 use crate::resolver::{ResolutionIndex, ResolvedImport};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
+use crate::sources::DiscoveredFile;
 
 /// Third-party imports made directly by a script file; project reconciliation
 /// must not see them.
@@ -19,6 +20,7 @@ pub(super) fn detect_script_dependency_issues(
     scripts: &[InlineScript],
     resolution: &ResolutionIndex,
     reachable: &HashSet<&str>,
+    files: &[DiscoveredFile],
     strict: bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -26,25 +28,78 @@ pub(super) fn detect_script_dependency_issues(
         .iter()
         .filter(|script| reachable.contains(script.path.as_str()))
     {
-        let imports: Vec<&ResolvedImport> = resolution
-            .imports
-            .iter()
-            .filter(|import| {
-                import.file == script.path
-                    && import.origin == ModuleOrigin::ThirdParty
-                    && import.distribution.is_some()
-            })
-            .collect();
         let declared: BTreeSet<String> = script
             .dependencies
             .iter()
             .filter(|dep| !dep.opaque)
             .map(|dep| normalize_distribution_name(&dep.name))
             .collect();
+        let mut local_files = HashSet::new();
+        let mut imports = Vec::new();
+        for import in resolution
+            .imports
+            .iter()
+            .filter(|import| import.file == script.path)
+        {
+            let local = script_local_files(&script.path, &import.import_root, files);
+            if local.is_empty() {
+                imports.push(import);
+            } else {
+                local_files.extend(local);
+            }
+        }
+        // The block also installs what the helper modules next to the script
+        // import, so their imports count as uses of the script's dependencies.
+        let used: BTreeSet<String> = resolution
+            .imports
+            .iter()
+            .filter(|import| local_files.contains(import.file.as_str()))
+            .chain(imports.iter().copied())
+            .filter_map(|import| used_distribution(import, &declared))
+            .collect();
+        imports.retain(|import| {
+            import.origin == ModuleOrigin::ThirdParty && import.distribution.is_some()
+        });
         candidates.extend(missing_in_script(script, &imports, &declared));
-        candidates.extend(unused_in_script(script, &imports, strict));
+        candidates.extend(unused_in_script(script, &used, strict));
     }
     candidates
+}
+
+/// Files of the module or package `import_root` next to `script`: the script
+/// runs with its own directory first on `sys.path`, so they shadow any
+/// distribution of the same name.
+fn script_local_files<'f>(
+    script: &str,
+    import_root: &str,
+    files: &'f [DiscoveredFile],
+) -> Vec<&'f str> {
+    let dir = script.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let prefix = if dir.is_empty() {
+        import_root.to_owned()
+    } else {
+        format!("{dir}/{import_root}")
+    };
+    files
+        .iter()
+        .filter(|file| {
+            file.path
+                .strip_prefix(&prefix)
+                .is_some_and(|rest| matches!(rest, ".py" | ".pyi") || rest.starts_with('/'))
+        })
+        .map(|file| file.path.as_str())
+        .collect()
+}
+
+/// The resolver leaves an already-normalized root without a map entry as
+/// unknown (§7 step 8); the block declaring that name is the evidence.
+fn used_distribution(import: &ResolvedImport, declared: &BTreeSet<String>) -> Option<String> {
+    match import.origin {
+        ModuleOrigin::ThirdParty => import_distribution(import),
+        ModuleOrigin::Unknown => Some(normalize_distribution_name(&import.import_root))
+            .filter(|name| declared.contains(name)),
+        _ => None,
+    }
 }
 
 fn import_distribution(import: &ResolvedImport) -> Option<String> {
@@ -104,13 +159,9 @@ fn missing_in_script(
 
 fn unused_in_script(
     script: &InlineScript,
-    imports: &[&ResolvedImport],
+    used: &BTreeSet<String>,
     strict: bool,
 ) -> Vec<IssueCandidate> {
-    let used: BTreeSet<String> = imports
-        .iter()
-        .filter_map(|import| import_distribution(import))
-        .collect();
     let mut seen = BTreeSet::new();
     let mut candidates = Vec::new();
     for dep in &script.dependencies {
@@ -157,6 +208,7 @@ mod tests {
     use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
     use crate::parser::ImportContext;
     use crate::resolver::ResolveConfidence;
+    use crate::sources::{FileContext, FileKind};
 
     fn dependency(name: &str, line: u32) -> DeclaredDependency {
         DeclaredDependency {
@@ -205,7 +257,7 @@ mod tests {
         };
         let reachable = HashSet::from(["scripts/tool.py"]);
         let found: Vec<_> =
-            detect_script_dependency_issues(&[script], &resolution, &reachable, false)
+            detect_script_dependency_issues(&[script], &resolution, &reachable, &[], false)
                 .into_iter()
                 .map(|candidate| (candidate.rule, candidate.subject))
                 .collect();
@@ -234,8 +286,108 @@ mod tests {
             &[script],
             &ResolutionIndex::default(),
             &HashSet::new(),
+            &[],
             false,
         );
         assert!(found.is_empty());
+    }
+
+    #[test]
+    fn modules_next_to_the_script_are_not_missing() {
+        let script = InlineScript {
+            path: "scripts/tool.py".to_owned(),
+            dependencies: Vec::new(),
+            requires_python: None,
+            target_version: None,
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![
+                import("common_utils", "common-utils", 5),
+                import("helpers", "helpers", 6),
+                import("common", "common", 7),
+            ],
+            ..ResolutionIndex::default()
+        };
+        let files: Vec<DiscoveredFile> = [
+            "scripts/tool.py",
+            "scripts/common_utils.py",
+            "scripts/helpers/__init__.py",
+            "common.py",
+        ]
+        .into_iter()
+        .map(|path| DiscoveredFile {
+            path: path.to_owned(),
+            kind: FileKind::Python,
+            context: FileContext::Dev,
+        })
+        .collect();
+        let reachable = HashSet::from(["scripts/tool.py"]);
+        let found: Vec<_> =
+            detect_script_dependency_issues(&[script], &resolution, &reachable, &files, false)
+                .into_iter()
+                .map(|candidate| candidate.subject)
+                .collect();
+        assert_eq!(
+            found,
+            [IssueSubject::ScriptDistribution {
+                script: "scripts/tool.py".to_owned(),
+                name: "common".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn helper_module_and_unmapped_imports_use_script_dependencies() {
+        let script = InlineScript {
+            path: "scripts/tool.py".to_owned(),
+            dependencies: vec![
+                dependency("rich", 3),
+                dependency("termcolor", 4),
+                dependency("httpx", 5),
+            ],
+            requires_python: None,
+            target_version: None,
+        };
+        let helper_import = ResolvedImport {
+            file: "scripts/common_utils.py".to_owned(),
+            ..import("rich", "rich", 2)
+        };
+        let unmapped = ResolvedImport {
+            origin: ModuleOrigin::Unknown,
+            distribution: None,
+            ..import("termcolor", "termcolor", 8)
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![
+                import("common_utils", "common-utils", 7),
+                unmapped,
+                helper_import,
+            ],
+            ..ResolutionIndex::default()
+        };
+        let files: Vec<DiscoveredFile> = ["scripts/tool.py", "scripts/common_utils.py"]
+            .into_iter()
+            .map(|path| DiscoveredFile {
+                path: path.to_owned(),
+                kind: FileKind::Python,
+                context: FileContext::Dev,
+            })
+            .collect();
+        let reachable = HashSet::from(["scripts/tool.py"]);
+        let found: Vec<_> =
+            detect_script_dependency_issues(&[script], &resolution, &reachable, &files, false)
+                .into_iter()
+                .map(|candidate| (candidate.rule, candidate.subject))
+                .collect();
+        assert_eq!(
+            found,
+            [(
+                RuleId::Chk002,
+                IssueSubject::ScriptDistribution {
+                    script: "scripts/tool.py".to_owned(),
+                    name: "httpx".to_owned(),
+                }
+            )]
+        );
     }
 }

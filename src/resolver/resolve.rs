@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
-use crate::manifest::LoadedManifest;
+use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::ModuleReference;
 use crate::sources::DiscoveredSources;
@@ -273,6 +273,20 @@ fn resolve_import_root(
             Some(confidence),
             warnings,
         );
+    }
+
+    // Step 8 skips an already-normalized root, but a declared dependency of
+    // exactly that name is enough evidence that it provides the import.
+    if manifest
+        .dependencies
+        .iter()
+        .any(|dep| normalize_distribution_name(&dep.name) == root_name)
+    {
+        return RootResolution {
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some(root_name.to_owned()),
+            confidence: ResolveConfidence::Maybe,
+        };
     }
 
     RootResolution {

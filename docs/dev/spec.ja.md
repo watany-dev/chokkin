@@ -349,8 +349,10 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 5. Core Metadata の Import-Name / Import-Namespace を読む
 6. bundled package-module-map を使う
 7. user-defined package_module_map を使う
-8. 最後に PEP 503 `normalize_distribution_name` で推定(import root が既に正規化済みの場合は skip)
+8. 最後に PEP 503 `normalize_distribution_name` で推定(import root が既に正規化済みの場合は skip。ただし manifest が同名の dependency を宣言していれば、その distribution とみなす(confidence `Maybe`))
 ```
+
+PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root も、block が同名を宣言していれば使用とみなす。
 
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 

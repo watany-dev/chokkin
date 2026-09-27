@@ -11,6 +11,7 @@ pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("ansible", &["ansible"]),
     ("anyio", &["anyio"]),
     ("apache-airflow", &["airflow"]),
+    ("apache-airflow-client", &["airflow_client"]),
     ("appdirs", &["appdirs"]),
     ("argon2-cffi", &["argon2", "argon2_cffi"]),
     ("arrow", &["arrow"]),
