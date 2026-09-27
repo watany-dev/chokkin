@@ -197,6 +197,9 @@ class RangeFile(io.RawIOBase):
     """Seekable read-only view of a remote wheel, fetched with HTTP Range."""
 
     def __init__(self, url: str, size: int) -> None:
+        # The URL comes from PyPI's JSON; refuse anything but https (urllib also opens file://).
+        if not url.startswith("https://"):
+            raise OSError(f"{url}: refusing non-https wheel URL")
         self.url = url
         self.size = size
         self.pos = 0
@@ -205,7 +208,7 @@ class RangeFile(io.RawIOBase):
 
     def fetch(self, start: int, end: int) -> bytes:
         request = urllib.request.Request(self.url, headers={"Range": f"bytes={start}-{end}"})
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:  # nosemgrep
             if response.status != 206:
                 raise OSError(f"{self.url}: Range request answered {response.status}")
             return response.read()
@@ -247,7 +250,8 @@ def load_harvester():
 
 def wheel_contents(dist: str, harvester) -> tuple[set[str], list[str]] | str:
     """Import roots and member paths of `dist`'s latest wheel, or why there are none."""
-    with urllib.request.urlopen(PYPI_JSON.format(dist), timeout=60) as response:
+    # PYPI_JSON is a fixed https URL; only the dist name is interpolated.
+    with urllib.request.urlopen(PYPI_JSON.format(dist), timeout=60) as response:  # nosemgrep
         release = json.load(response)
     wheels = [item for item in release["urls"] if item["packagetype"] == "bdist_wheel"]
     if not wheels:
