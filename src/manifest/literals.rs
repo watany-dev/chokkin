@@ -1,7 +1,7 @@
 //! Static extraction of Python string and string-list literals from the AST.
 
-use rustpython_parser::Parse;
-use rustpython_parser::ast::{Constant, Expr, Stmt, Suite};
+use ruff_python_ast::{Expr, Stmt, Suite};
+use ruff_python_parser::Parsed;
 
 /// Result of reading a Python list literal for string elements.
 #[derive(Debug)]
@@ -14,7 +14,9 @@ pub struct LiteralScan {
 
 /// Parse Python source without executing it; `None` on a syntax error.
 pub fn parse_module(contents: &str) -> Option<Suite> {
-    Suite::parse(contents, "<manifest>").ok()
+    ruff_python_parser::parse_module(contents)
+        .ok()
+        .map(Parsed::into_suite)
 }
 
 /// Value of the first top-level `name = ...` assignment.
@@ -33,10 +35,8 @@ pub fn assigned_value<'a>(stmts: &'a [Stmt], name: &str) -> Option<&'a Expr> {
 
 /// The string when `expr` is a string literal.
 pub fn string_value(expr: &Expr) -> Option<String> {
-    if let Expr::Constant(constant) = expr
-        && let Constant::Str(value) = &constant.value
-    {
-        Some(value.clone())
+    if let Expr::StringLiteral(literal) = expr {
+        Some(literal.value.to_str().to_owned())
     } else {
         None
     }

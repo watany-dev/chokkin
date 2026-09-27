@@ -79,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The FastAPI plugin no longer adds root `main.py` / `asgi.py` as entries,
   since the §8 auto-detection already does; it keeps `src/main.py` /
   `src/asgi.py`.
+- The Python parser is now `ruff_python_parser` (exact pin `=0.0.15`) instead
+  of `rustpython-parser` (ADR 0001, #351). MSRV rises from 1.93 to 1.96. A
+  symbol on a decorated `def` / `class` is reported on the `def` / `class`
+  line, and `elif` branches get the same `TYPE_CHECKING` / platform guard
+  handling as `if`. Syntax errors no longer carry the text-matched
+  `(requires pyXY)` hint. Parse cache unit bumped to `parse-v8`.
 
 ### Fixed
 - Reachability (#266): `import pkg.sub.mod` (static, dynamic literal or

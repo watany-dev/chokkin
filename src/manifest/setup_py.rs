@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use rustpython_parser::ast::{Expr, Keyword, Stmt};
+use ruff_python_ast::{Expr, Keyword, Stmt};
 
 use super::error::ManifestError;
 use super::literals::{LiteralScan, parse_module, string_list, string_value};
@@ -103,12 +103,15 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
 fn setup_call_keywords(stmts: &[Stmt]) -> Option<&[Keyword]> {
     stmts.iter().find_map(|stmt| match stmt {
         Stmt::Expr(expr) => match &*expr.value {
-            Expr::Call(call) if is_setup(&call.func) => Some(call.keywords.as_slice()),
+            Expr::Call(call) if is_setup(&call.func) => Some(&*call.arguments.keywords),
             _ => None,
         },
-        Stmt::If(if_stmt) => {
-            setup_call_keywords(&if_stmt.body).or_else(|| setup_call_keywords(&if_stmt.orelse))
-        },
+        Stmt::If(if_stmt) => setup_call_keywords(&if_stmt.body).or_else(|| {
+            if_stmt
+                .elif_else_clauses
+                .iter()
+                .find_map(|clause| setup_call_keywords(&clause.body))
+        }),
         _ => None,
     })
 }
@@ -132,10 +135,9 @@ fn extract_extras_require(keywords: &[Keyword]) -> Vec<(String, LiteralScan)> {
     let Some(Expr::Dict(dict)) = keyword_value(keywords, "extras_require") else {
         return Vec::new();
     };
-    dict.keys
+    dict.items
         .iter()
-        .zip(&dict.values)
-        .filter_map(|(key, value)| Some((string_value(key.as_ref()?)?, string_list(value)?)))
+        .filter_map(|item| Some((string_value(item.key.as_ref()?)?, string_list(&item.value)?)))
         .collect()
 }
 

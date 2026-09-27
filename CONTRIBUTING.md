@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 1.93+ (MSRV — see `rust-version` in `Cargo.toml`; CI also tests latest stable)
+- Rust 1.96+ (MSRV — see `rust-version` in `Cargo.toml`; CI also tests latest stable)
 - [uv](https://docs.astral.sh/uv/) (for `uvx maturin` wheel builds)
 
 Install development tools:

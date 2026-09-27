@@ -4,9 +4,8 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
-use rustpython_parser::ast;
-use rustpython_parser::source_code::RandomLocator;
-use rustpython_parser::{Parse, ParseError as RpParseError};
+use ruff_python_ast::Stmt;
+use ruff_python_parser::ParseError as RuffParseError;
 use serde_json::Value;
 
 use crate::VERSION;
@@ -20,6 +19,7 @@ use crate::sources::{DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo};
 
 use super::error::ParseError;
 use super::ignores::extract_ignores;
+use super::lines::LineIndex;
 use super::types::{ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule};
 use super::visit::ModuleVisitor;
 
@@ -63,13 +63,13 @@ fn parse_python_source(
     file_context: crate::sources::FileContext,
     target: &TargetVersion,
 ) -> ParsedModule {
-    let mut locator = RandomLocator::new(source);
-    let mut parsed = match ast::Suite::parse(source, path) {
-        Ok(stmts) => {
-            let mut visitor = ModuleVisitor::new(path, layout, file_context, &mut locator);
-            visitor.visit_module(&stmts);
+    let lines = LineIndex::new(source);
+    let mut parsed = match ruff_python_parser::parse_module(source) {
+        Ok(module) => {
+            let mut visitor = ModuleVisitor::new(path, layout, file_context, &lines);
+            visitor.visit_module(module.suite());
             let mut parsed = visitor.into_parsed();
-            note_unsupported_syntax(target, &stmts, &mut parsed.diagnostics);
+            note_unsupported_syntax(target, module.suite(), &mut parsed.diagnostics);
             parsed
         },
         Err(error) => {
@@ -79,7 +79,7 @@ fn parse_python_source(
             };
             parsed
                 .diagnostics
-                .push(syntax_diagnostic(path, &mut locator, &error, target));
+                .push(syntax_diagnostic(path, &lines, &error));
             parsed
         },
     };
@@ -499,7 +499,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v7".to_owned(),
+        unit_version: "parse-v8".to_owned(),
     }
 }
 
@@ -533,42 +533,21 @@ fn source_fingerprint(
     })
 }
 
-fn syntax_diagnostic(
-    path: &str,
-    locator: &mut RandomLocator<'_>,
-    error: &RpParseError,
-    target: &TargetVersion,
-) -> ParseDiagnostic {
-    let line = locator.locate(error.offset).row.get();
-    let mut message = format!("syntax error in `{path}`: {error}");
-    if let Some(hint) = syntax_target_hint(error, target) {
-        use std::fmt::Write as _;
-        let _ = write!(message, " (requires {hint})");
-    }
+fn syntax_diagnostic(path: &str, lines: &LineIndex, error: &RuffParseError) -> ParseDiagnostic {
+    // `ParseError`'s own Display appends a byte range; the line is reported separately.
     ParseDiagnostic {
-        line,
-        message,
+        line: lines.line(error.location.start()),
+        message: format!("syntax error in `{path}`: {}", error.error),
         severity: ParseSeverity::Error,
     }
 }
 
-fn syntax_target_hint(error: &RpParseError, target: &TargetVersion) -> Option<&'static str> {
-    let text = error.to_string();
-    if text.contains("match") && target.minor() < 10 {
-        return Some("py310");
-    }
-    if text.contains("type") && target.minor() < 12 {
-        return Some("py312");
-    }
-    None
-}
-
 fn note_unsupported_syntax(
     target: &TargetVersion,
-    stmts: &[ast::Stmt],
+    stmts: &[Stmt],
     diagnostics: &mut Vec<ParseDiagnostic>,
 ) {
-    if target.minor() < 12 && stmts.iter().any(ast::Stmt::is_type_alias_stmt) {
+    if target.minor() < 12 && stmts.iter().any(Stmt::is_type_alias_stmt) {
         diagnostics.push(ParseDiagnostic {
             line: 0,
             message: "file uses `type` aliases; set target_version to py312".to_owned(),
