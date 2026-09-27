@@ -118,6 +118,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `workspace = true` dependency counts as used when a used workspace
   member's own files import a module from its tree (a root that ships
   `airflow-core` and `task-sdk` uses both, since core imports `airflow.sdk`).
+- An import root with `_` or capitals that no map names (e.g. a local
+  `e2e_config`) no longer turns into a guessed third-party distribution
+  (`e2e-config`) that hid the CHK010. It resolves only when a declared or
+  locked distribution (including the importing file's PEP 723 block or
+  workspace member manifest) has the same normalized name (`import foo_bar`
+  with `Foo_Bar` declared); otherwise it is CHK010 (#361).
 
 ## [0.4.1] - Unreleased
 

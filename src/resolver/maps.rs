@@ -81,8 +81,7 @@ impl ImportMap {
             return Some((bundled.clone(), confidence));
         }
 
-        canonicalize_match(import_root)
-            .map(|distribution| (vec![distribution], ResolveConfidence::Maybe))
+        None
     }
 
     /// Look up the longest dotted prefix of `module` (at least two segments)
@@ -132,15 +131,6 @@ fn sort_dedup_map_values(map: &mut BTreeMap<String, Vec<String>>) {
     for values in map.values_mut() {
         values.sort();
         values.dedup();
-    }
-}
-
-fn canonicalize_match(import_root: &str) -> Option<String> {
-    let normalized = normalize_distribution_name(import_root);
-    if normalized.is_empty() || normalized == import_root {
-        None
-    } else {
-        Some(normalized)
     }
 }
 
@@ -274,14 +264,9 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_matches_mixed_case_import_root() {
+    fn unmapped_root_has_no_guessed_candidate() {
         let import_map = ImportMap::build(&default_config());
-        assert_eq!(
-            import_map.candidates("DefinitelyNotInBundledMap"),
-            Some((
-                vec!["definitelynotinbundledmap".to_owned()],
-                ResolveConfidence::Maybe
-            ))
-        );
+        assert_eq!(import_map.candidates("DefinitelyNotInBundledMap"), None);
+        assert_eq!(import_map.candidates("e2e_config"), None);
     }
 }

@@ -212,13 +212,20 @@ fn reexport_source_module_is_resolved_once() {
 #[test]
 fn unresolved_import_emits_chk010() {
     let report = analyze_fixture("unresolved_import");
-    assert!(report.candidates.iter().any(|candidate| {
-        candidate.rule == RuleId::Chk010
-            && matches!(
-                &candidate.subject,
-                chokkin::IssueSubject::Import { module, .. } if module == "notarealpkg"
-            )
-    }));
+    // `some_local_mod` normalizes to a different name; the spelling alone must
+    // not turn it into a guessed third-party distribution (#361).
+    for root in ["notarealpkg", "some_local_mod"] {
+        assert!(
+            report.candidates.iter().any(|candidate| {
+                candidate.rule == RuleId::Chk010
+                    && matches!(
+                        &candidate.subject,
+                        chokkin::IssueSubject::Import { module, .. } if module == root
+                    )
+            }),
+            "expected CHK010 for {root}"
+        );
+    }
 }
 
 #[test]

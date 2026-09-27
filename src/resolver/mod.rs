@@ -13,6 +13,7 @@ mod venv;
 pub use apply::apply_resolution_to_graph;
 pub(crate) use first_party::is_first_party_import;
 pub use maps::{ImportMap, build_binary_map};
+pub(crate) use resolve::{ScopedDeclarations, resolve_imports_for_analysis};
 pub use resolve::{resolve_imports, resolve_imports_with_script_targets};
 pub use types::{
     ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,

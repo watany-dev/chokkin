@@ -300,3 +300,46 @@ fn declared_distribution_named_like_the_import_resolves_without_map_entry() {
     assert_eq!(root("openai").distribution.as_deref(), Some("openai"));
     assert_eq!(root("notdeclaredpkg").origin, ModuleOrigin::Unknown);
 }
+
+#[test]
+fn normalized_root_resolves_only_through_a_declared_or_locked_name() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"normalized-demo\"\nversion = \"0.1.0\"\ndependencies = [\"Foo_Bar\"]\n",
+        ),
+        (
+            "uv.lock",
+            "version = 1\n\n[[package]]\nname = \"foo-bar\"\nversion = \"1.0\"\ndependencies = [{ name = \"locked-only\" }]\n\n[[package]]\nname = \"locked-only\"\nversion = \"1.0\"\n",
+        ),
+        (
+            "app.py",
+            "import foo_bar\nimport Locked_Only\nimport e2e_config\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let root = |name: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == name)
+            .map_or_else(
+                || panic!("{name} import"),
+                |resolved| (resolved.origin, resolved.distribution.clone()),
+            )
+    };
+
+    assert_eq!(
+        root("foo_bar"),
+        (ModuleOrigin::ThirdParty, Some("foo-bar".to_owned()))
+    );
+    assert_eq!(
+        root("Locked_Only"),
+        (ModuleOrigin::ThirdParty, Some("locked-only".to_owned()))
+    );
+    assert_eq!(root("e2e_config"), (ModuleOrigin::Unknown, None));
+    assert!(index.warnings.iter().any(|warning| matches!(
+        warning,
+        chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "e2e_config"
+    )));
+}
