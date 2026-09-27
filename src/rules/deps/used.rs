@@ -86,13 +86,13 @@ pub(super) fn collect_used_distributions(
 /// entry point targets count as such imports too.
 pub(super) fn mark_workspace_source_distributions(
     manifest: &LoadedManifest,
-    resolution: &ResolutionIndex,
+    context: &RuleContext<'_>,
     reachable: &HashSet<&str>,
-    files: &[DiscoveredFile],
     workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
     used: &mut IndexSet<String>,
 ) {
-    let first_party: Vec<&str> = resolution
+    let first_party: Vec<&str> = context
+        .resolution
         .imports
         .iter()
         .filter(|import| {
@@ -132,7 +132,7 @@ pub(super) fn mark_workspace_source_distributions(
         let Some(member_path) = member_path(manifest, boundary.manifest) else {
             continue;
         };
-        let provided = member_modules(&member_path, files);
+        let provided = member_modules(&member_path, &context.sources.files);
         if modules.iter().any(|module| provided.contains(*module)) {
             used.insert(name);
         }

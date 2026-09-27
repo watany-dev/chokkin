@@ -17,6 +17,7 @@ pub(super) fn is_script_third_party(import: &ResolvedImport, script_paths: &Hash
 }
 
 /// Per-script CHK002 and CHK003 candidates for reachable scripts.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn detect_script_dependency_issues(
     scripts: &[InlineScript],
     resolution: &ResolutionIndex,

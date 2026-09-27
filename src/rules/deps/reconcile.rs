@@ -131,9 +131,8 @@ fn reconcile_project(
     mark_self_referential_distribution(manifest, &declared, &mut used);
     mark_workspace_source_distributions(
         manifest,
-        resolution,
+        context,
         &reachable,
-        &context.sources.files,
         workspace_boundaries,
         &mut used,
     );

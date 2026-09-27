@@ -1192,7 +1192,7 @@ airflow	CHK002	script:scripts/tools/check_if_limited_dependencies.py:click	fp	-	
 airflow	CHK002	script:scripts/tools/check_if_limited_dependencies.py:pyyaml	fp	-	runs another Python file with sys.executable in the block's environment
 fastmcp	CHK002	script:examples/memory.py:pydantic-ai-slim	fp	-	provides the pydantic_ai import
 fastmcp	CHK002	script:examples/screenshot.py:pillow	fp	-	pyautogui.screenshot needs Pillow at runtime without the script importing PIL
-poetry	CHK002	trove-classifiers	fp	-	imported by console/commands/check.py, loaded via import_module("poetry.console.commands." + ...)
+poetry	CHK002	trove-classifiers	fp	-	imported by console/commands/check.py, loaded via import_module("poetry.console.commands." + ...) (resolved by dynamic_import_prefixes)
 pdm	CHK002	httpcore	tp	-	never imported; only a transitive requirement of httpx
 pdm	CHK002	virtualenv	fp	-	run with [sys.executable, "-m", "virtualenv"]
 mitmproxy	CHK002	hyperframe	tp	-	runtime dependency only imported by tests
