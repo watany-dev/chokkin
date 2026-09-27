@@ -222,6 +222,12 @@
       ]
     },
     {
+      "distribution": "poetry-core",
+      "imports": [
+        "poetry.core"
+      ]
+    },
+    {
       "distribution": "databricks-sdk",
       "imports": [
         "databricks.sdk"

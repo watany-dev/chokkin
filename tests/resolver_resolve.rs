@@ -195,3 +195,32 @@ fn declared_name_resolves_an_unmapped_normalized_root() {
     );
     assert_eq!(origin("notdeclaredanywhere"), (ModuleOrigin::Unknown, None));
 }
+
+#[test]
+fn dotted_map_entry_overrides_a_first_party_root_without_the_module() {
+    let index = resolve_fixture("first_party_namespace");
+    let origin = |module: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == module)
+            .map(|resolved| (resolved.origin, resolved.distribution.clone()))
+            .expect("import")
+    };
+    assert_eq!(origin("poetry.console"), (ModuleOrigin::FirstParty, None));
+    assert_eq!(
+        origin("poetry.core.version"),
+        (ModuleOrigin::ThirdParty, Some("poetry-core".to_owned()))
+    );
+}
+
+#[test]
+fn local_module_keeps_a_first_party_namespace_root() {
+    let index = resolve_fixture("first_party_namespace_local");
+    let resolved = index
+        .imports
+        .iter()
+        .find(|resolved| resolved.full_module == "google.protobuf")
+        .expect("import");
+    assert_eq!(resolved.origin, ModuleOrigin::FirstParty);
+}

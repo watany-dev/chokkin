@@ -1,0 +1,4 @@
+[project]
+name = "poetry"
+version = "0.1.0"
+dependencies = ["poetry-core>=2.0"]

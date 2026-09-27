@@ -7,7 +7,7 @@ use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::ModuleReference;
-use crate::sources::DiscoveredSources;
+use crate::sources::{DiscoveredFile, DiscoveredSources};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
@@ -205,18 +205,19 @@ fn resolve_import_site(
             )
         })
         .clone();
-    let core = match core.origin {
-        ModuleOrigin::ThirdParty | ModuleOrigin::Unknown => import_map
-            .namespace_candidates(imported)
-            .map_or(core, |(distributions, confidence)| {
-                root_resolution_from_candidates(
-                    &root_name,
-                    &distributions,
-                    Some(confidence),
-                    warnings,
-                )
-            }),
-        ModuleOrigin::FirstParty | ModuleOrigin::Stdlib => core,
+    let core = match (core.origin, import_map.namespace_candidates(imported)) {
+        (ModuleOrigin::Stdlib, _) | (_, None) => core,
+        // A first-party root may share its namespace with a distribution
+        // (`poetry` and `poetry.core`); the local tree wins when it has the
+        // module itself.
+        (ModuleOrigin::FirstParty, Some((module, ..)))
+            if has_local_module(module, &sources.files) =>
+        {
+            core
+        },
+        (_, Some((_, distributions, confidence))) => {
+            root_resolution_from_candidates(&root_name, &distributions, Some(confidence), warnings)
+        },
     };
 
     if core.origin == ModuleOrigin::Unknown {
@@ -315,6 +316,22 @@ fn resolve_import_root(
         distribution: None,
         confidence: ResolveConfidence::Maybe,
     }
+}
+
+/// Whether any discovered file is `module` or lies under it, whatever the
+/// layout or workspace member it belongs to.
+fn has_local_module(module: &str, files: &[DiscoveredFile]) -> bool {
+    let path = module.replace('.', "/");
+    files.iter().any(|file| {
+        let file = file.path.replace('\\', "/");
+        [
+            format!("{path}.py"),
+            format!("{path}.pyi"),
+            format!("{path}/"),
+        ]
+        .iter()
+        .any(|suffix| file.starts_with(suffix.as_str()) || file.contains(&format!("/{suffix}")))
+    })
 }
 
 fn workspace_member_for_file(

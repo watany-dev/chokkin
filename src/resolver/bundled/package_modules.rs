@@ -171,6 +171,7 @@ pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("platformdirs", &["platformdirs"]),
     ("plotly", &["plotly"]),
     ("pluggy", &["pluggy"]),
+    ("poetry-core", &["poetry.core"]),
     ("polars", &["polars"]),
     ("pre-commit", &["pre_commit"]),
     ("prometheus-client", &["prometheus_client"]),

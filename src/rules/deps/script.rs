@@ -91,14 +91,17 @@ fn script_local_files<'f>(
         .collect()
 }
 
-/// The resolver leaves an already-normalized root without a map entry as
-/// unknown (§7 step 8); the block declaring that name is the evidence.
+/// An unknown root (no map entry) or a first-party one (a script shipped with
+/// the project it imports, installed from the index by `uv run`) counts when
+/// the block declares exactly that name.
 fn used_distribution(import: &ResolvedImport, declared: &BTreeSet<String>) -> Option<String> {
     match import.origin {
         ModuleOrigin::ThirdParty => import_distribution(import),
-        ModuleOrigin::Unknown => Some(normalize_distribution_name(&import.import_root))
-            .filter(|name| declared.contains(name)),
-        _ => None,
+        ModuleOrigin::Unknown | ModuleOrigin::FirstParty => {
+            Some(normalize_distribution_name(&import.import_root))
+                .filter(|name| declared.contains(name))
+        },
+        ModuleOrigin::Stdlib => None,
     }
 }
 
@@ -344,6 +347,7 @@ mod tests {
                 dependency("rich", 3),
                 dependency("termcolor", 4),
                 dependency("httpx", 5),
+                dependency("fastmcp", 6),
             ],
             requires_python: None,
             target_version: None,
@@ -357,10 +361,16 @@ mod tests {
             distribution: None,
             ..import("termcolor", "termcolor", 8)
         };
+        let own_project = ResolvedImport {
+            origin: ModuleOrigin::FirstParty,
+            distribution: None,
+            ..import("fastmcp", "fastmcp", 9)
+        };
         let resolution = ResolutionIndex {
             imports: vec![
                 import("common_utils", "common-utils", 7),
                 unmapped,
+                own_project,
                 helper_import,
             ],
             ..ResolutionIndex::default()
