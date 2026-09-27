@@ -86,7 +86,6 @@ pub struct LayoutInfo {
 }
 
 impl LayoutInfo {
-    /// Whether root-relative `path` lies inside one of `local_packages`.
     #[must_use]
     pub fn in_local_package(&self, path: &str) -> bool {
         self.local_packages.iter().any(|package| {
