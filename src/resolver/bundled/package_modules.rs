@@ -189,6 +189,8 @@ pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("pycodestyle", &["pycodestyle"]),
     ("pycparser", &["pycparser"]),
     ("pydantic", &["pydantic"]),
+    ("pydantic-ai", &["pydantic_ai"]),
+    ("pydantic-ai-slim", &["pydantic_ai"]),
     ("pydantic-core", &["pydantic_core"]),
     ("pydeck", &["pydeck"]),
     ("pyflakes", &["pyflakes"]),

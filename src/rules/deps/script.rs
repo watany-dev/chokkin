@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashSet};
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
 use crate::manifest::{InlineScript, normalize_distribution_name};
-use crate::resolver::{ResolutionIndex, ResolvedImport};
+use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 use crate::sources::DiscoveredFile;
 
@@ -21,6 +21,7 @@ pub(super) fn detect_script_dependency_issues(
     resolution: &ResolutionIndex,
     reachable: &HashSet<&str>,
     files: &[DiscoveredFile],
+    import_map: &ImportMap,
     strict: bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -55,12 +56,12 @@ pub(super) fn detect_script_dependency_issues(
             .iter()
             .filter(|import| local_files.contains(import.file.as_str()))
             .chain(imports.iter().copied())
-            .filter_map(|import| used_distribution(import, &declared))
+            .filter_map(|import| used_distribution(import, &declared, import_map))
             .collect();
         imports.retain(|import| {
             import.origin == ModuleOrigin::ThirdParty && import.distribution.is_some()
         });
-        candidates.extend(missing_in_script(script, &imports, &declared));
+        candidates.extend(missing_in_script(script, &imports, &declared, import_map));
         candidates.extend(unused_in_script(script, &used, strict));
     }
     candidates
@@ -91,18 +92,34 @@ fn script_local_files<'f>(
         .collect()
 }
 
-/// An unknown root (no map entry) or a first-party one (a script shipped with
-/// the project it imports, installed from the index by `uv run`) counts when
-/// the block declares exactly that name.
-fn used_distribution(import: &ResolvedImport, declared: &BTreeSet<String>) -> Option<String> {
-    match import.origin {
-        ModuleOrigin::ThirdParty => import_distribution(import),
-        ModuleOrigin::Unknown | ModuleOrigin::FirstParty => {
-            Some(normalize_distribution_name(&import.import_root))
-                .filter(|name| declared.contains(name))
-        },
-        ModuleOrigin::Stdlib => None,
+/// The declared distribution an import uses. Besides the resolved
+/// distribution, any distribution the map gives for the root counts
+/// (`pydantic_ai` from `pydantic-ai-slim`), and so does an unknown or
+/// first-party root the block declares by name (a script shipped with the
+/// project it imports, installed from the index by `uv run`). The project's own
+/// `github` package does not shadow `PyGithub` either, since `uv run` executes
+/// the script in its own environment.
+fn used_distribution(
+    import: &ResolvedImport,
+    declared: &BTreeSet<String>,
+    import_map: &ImportMap,
+) -> Option<String> {
+    if import.origin == ModuleOrigin::Stdlib {
+        return None;
     }
+    let by_name = (import.origin != ModuleOrigin::ThirdParty).then(|| import.import_root.clone());
+    let mapped = import_map
+        .candidates(&import.import_root)
+        .map(|(distributions, _)| distributions)
+        .unwrap_or_default();
+    import
+        .distribution
+        .iter()
+        .cloned()
+        .chain(by_name)
+        .chain(mapped)
+        .map(|name| normalize_distribution_name(&name))
+        .find(|name| declared.contains(name))
 }
 
 fn import_distribution(import: &ResolvedImport) -> Option<String> {
@@ -116,6 +133,7 @@ fn missing_in_script(
     script: &InlineScript,
     imports: &[&ResolvedImport],
     declared: &BTreeSet<String>,
+    import_map: &ImportMap,
 ) -> Vec<IssueCandidate> {
     let mut reported = BTreeSet::new();
     let mut candidates = Vec::new();
@@ -126,7 +144,9 @@ fn missing_in_script(
         let Some(name) = import_distribution(import) else {
             continue;
         };
-        if declared.contains(&name) || !reported.insert(name.clone()) {
+        if used_distribution(import, declared, import_map).is_some()
+            || !reported.insert(name.clone())
+        {
             continue;
         }
         candidates.push(IssueCandidate {
@@ -213,6 +233,10 @@ mod tests {
     use crate::resolver::ResolveConfidence;
     use crate::sources::{FileContext, FileKind};
 
+    fn import_map() -> ImportMap {
+        ImportMap::build(&crate::config::default_config())
+    }
+
     fn dependency(name: &str, line: u32) -> DeclaredDependency {
         DeclaredDependency {
             name: name.to_owned(),
@@ -259,11 +283,17 @@ mod tests {
             ..ResolutionIndex::default()
         };
         let reachable = HashSet::from(["scripts/tool.py"]);
-        let found: Vec<_> =
-            detect_script_dependency_issues(&[script], &resolution, &reachable, &[], false)
-                .into_iter()
-                .map(|candidate| (candidate.rule, candidate.subject))
-                .collect();
+        let found: Vec<_> = detect_script_dependency_issues(
+            &[script],
+            &resolution,
+            &reachable,
+            &[],
+            &import_map(),
+            false,
+        )
+        .into_iter()
+        .map(|candidate| (candidate.rule, candidate.subject))
+        .collect();
         let subject = |name: &str| IssueSubject::ScriptDistribution {
             script: "scripts/tool.py".to_owned(),
             name: name.to_owned(),
@@ -290,6 +320,7 @@ mod tests {
             &ResolutionIndex::default(),
             &HashSet::new(),
             &[],
+            &import_map(),
             false,
         );
         assert!(found.is_empty());
@@ -325,11 +356,17 @@ mod tests {
         })
         .collect();
         let reachable = HashSet::from(["scripts/tool.py"]);
-        let found: Vec<_> =
-            detect_script_dependency_issues(&[script], &resolution, &reachable, &files, false)
-                .into_iter()
-                .map(|candidate| candidate.subject)
-                .collect();
+        let found: Vec<_> = detect_script_dependency_issues(
+            &[script],
+            &resolution,
+            &reachable,
+            &files,
+            &import_map(),
+            false,
+        )
+        .into_iter()
+        .map(|candidate| candidate.subject)
+        .collect();
         assert_eq!(
             found,
             [IssueSubject::ScriptDistribution {
@@ -348,6 +385,8 @@ mod tests {
                 dependency("termcolor", 4),
                 dependency("httpx", 5),
                 dependency("fastmcp", 6),
+                dependency("PyGithub", 7),
+                dependency("pydantic-ai-slim", 8),
             ],
             requires_python: None,
             target_version: None,
@@ -366,11 +405,18 @@ mod tests {
             distribution: None,
             ..import("fastmcp", "fastmcp", 9)
         };
+        let project_package = ResolvedImport {
+            origin: ModuleOrigin::FirstParty,
+            distribution: None,
+            ..import("github", "github", 10)
+        };
         let resolution = ResolutionIndex {
             imports: vec![
+                import("pydantic_ai", "pydantic-ai", 11),
                 import("common_utils", "common-utils", 7),
                 unmapped,
                 own_project,
+                project_package,
                 helper_import,
             ],
             ..ResolutionIndex::default()
@@ -384,11 +430,17 @@ mod tests {
             })
             .collect();
         let reachable = HashSet::from(["scripts/tool.py"]);
-        let found: Vec<_> =
-            detect_script_dependency_issues(&[script], &resolution, &reachable, &files, false)
-                .into_iter()
-                .map(|candidate| (candidate.rule, candidate.subject))
-                .collect();
+        let found: Vec<_> = detect_script_dependency_issues(
+            &[script],
+            &resolution,
+            &reachable,
+            &files,
+            &import_map(),
+            false,
+        )
+        .into_iter()
+        .map(|candidate| (candidate.rule, candidate.subject))
+        .collect();
         assert_eq!(
             found,
             [(

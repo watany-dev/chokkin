@@ -8,7 +8,7 @@ use crate::manifest::{InlineScript, LoadedManifest, normalize_distribution_name}
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
-use crate::resolver::ResolutionIndex;
+use crate::resolver::{ImportMap, ResolutionIndex};
 use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, sort_candidates};
 use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::DiscoveredSources;
@@ -90,6 +90,7 @@ pub fn reconcile_with_context(
         dependency.rules.resolution,
         &reachable,
         &dependency.rules.sources.files,
+        &ImportMap::build(dependency.config),
         dependency.strict,
     ));
     sort_candidates(&mut report.candidates);

@@ -228,6 +228,18 @@
       ]
     },
     {
+      "distribution": "pydantic-ai",
+      "imports": [
+        "pydantic_ai"
+      ]
+    },
+    {
+      "distribution": "pydantic-ai-slim",
+      "imports": [
+        "pydantic_ai"
+      ]
+    },
+    {
       "distribution": "pygithub",
       "imports": [
         "github"
