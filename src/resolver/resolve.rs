@@ -297,17 +297,19 @@ fn resolve_import_root(
         );
     }
 
-    // Step 8 skips an already-normalized root, but a declared dependency of
-    // exactly that name is enough evidence that it provides the import.
+    // `openai` / `tiktoken` are absent from the bundled map and already in
+    // canonical form, so no map above names them; a declared or locked
+    // distribution of the exact same name is the evidence instead.
     if manifest
         .dependencies
         .iter()
         .any(|dep| normalize_distribution_name(&dep.name) == root_name)
+        || manifest.lockfile.edges.contains_key(root_name)
     {
         return RootResolution {
             origin: ModuleOrigin::ThirdParty,
             distribution: Some(root_name.to_owned()),
-            confidence: ResolveConfidence::Maybe,
+            confidence: ResolveConfidence::Likely,
         };
     }
 

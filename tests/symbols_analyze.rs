@@ -274,3 +274,35 @@ fn import_module_attribute_access_counts_as_external_reference() {
         "dead_api"
     ));
 }
+
+#[test]
+fn star_import_in_init_is_not_a_reexport() {
+    // Generated at test time: a checked-in copy would be analyzed by the
+    // repository's own chokkin baseline run.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src/acme")).expect("package dir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"star-reexport\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"src/acme/main.py\"]\n",
+        ),
+        ("src/acme/__init__.py", "from .sub import *\n"),
+        ("src/acme/main.py", "import acme\n"),
+        ("src/acme/sub.py", "VALUE = 1\n"),
+    ] {
+        std::fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let inputs = load_symbols(temp.path(), false);
+    let report = analyze_symbols(
+        &inputs.parse,
+        &inputs.resolution,
+        &inputs.reachability,
+        &inputs.entry,
+        &inputs.plugins,
+        &inputs.entry.mode,
+        &inputs.graph,
+        &inputs.sources,
+        &inputs.manifest,
+    );
+    assert!(!has_symbol_rule(&report, RuleId::Chk007, "acme", "*"));
+}

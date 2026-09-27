@@ -3,7 +3,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chokkin::{
     ModuleOrigin, ProjectRoot, ResolveConfidence, RootMarker, discover_project_root,
@@ -18,11 +18,14 @@ fn resolver_fixture(name: &str) -> PathBuf {
 }
 
 fn resolve_fixture(name: &str) -> chokkin::ResolutionIndex {
-    let path = resolver_fixture(name);
-    let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
-        path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
+    resolve_path(&resolver_fixture(name))
+}
+
+fn resolve_path(path: &Path) -> chokkin::ResolutionIndex {
+    let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
+        path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.clone(),
+        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("config");
     let manifest = extract_manifest(&root, &loaded).expect("manifest");
@@ -223,4 +226,32 @@ fn local_module_keeps_a_first_party_namespace_root() {
         .find(|resolved| resolved.full_module == "google.protobuf")
         .expect("import");
     assert_eq!(resolved.origin, ModuleOrigin::FirstParty);
+}
+
+#[test]
+fn declared_distribution_named_like_the_import_resolves_without_map_entry() {
+    // `openai` is absent from the bundled map and already canonical, so only
+    // the declaration can tell it apart from an unknown module.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"declared-same-name\"\nversion = \"0.1.0\"\ndependencies = [\"openai\"]\n",
+        ),
+        ("app.py", "import openai\nimport notdeclaredpkg\n"),
+    ] {
+        std::fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let index = resolve_path(temp.path());
+    let root = |name: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == name)
+            .unwrap_or_else(|| panic!("{name} import"))
+    };
+
+    assert_eq!(root("openai").origin, ModuleOrigin::ThirdParty);
+    assert_eq!(root("openai").distribution.as_deref(), Some("openai"));
+    assert_eq!(root("notdeclaredpkg").origin, ModuleOrigin::Unknown);
 }

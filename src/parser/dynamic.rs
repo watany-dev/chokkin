@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use rustpython_parser::ast::{Alias, Constant, Expr, ExprCall, Operator};
+use ruff_python_ast::{Alias, Expr, ExprCall, Operator};
 
 /// Names one module binds to the dynamic import loaders.
 pub struct LoaderNames {
@@ -68,7 +68,9 @@ pub fn literal_module(call: &ExprCall) -> Option<String> {
 pub fn module_prefix(call: &ExprCall) -> Option<String> {
     let literal = match module_argument(call)? {
         Expr::BinOp(binop) if matches!(binop.op, Operator::Add) => leftmost_str(&binop.left)?,
-        Expr::JoinedStr(joined) => str_constant(joined.values.first()?)?,
+        Expr::FString(fstring) if !fstring.value.is_implicit_concatenated() => {
+            &*fstring.value.elements().next()?.as_literal()?.value
+        },
         _ => return None,
     };
     let package = literal.strip_suffix('.')?;
@@ -76,8 +78,9 @@ pub fn module_prefix(call: &ExprCall) -> Option<String> {
 }
 
 fn module_argument(call: &ExprCall) -> Option<&Expr> {
-    call.args.first().or_else(|| {
-        call.keywords
+    call.arguments.args.first().or_else(|| {
+        call.arguments
+            .keywords
             .iter()
             .find(|keyword| {
                 keyword
@@ -146,10 +149,7 @@ pub fn command_word(expr: &Expr) -> Option<&str> {
 
 fn str_constant(expr: &Expr) -> Option<&str> {
     match expr {
-        Expr::Constant(constant) => match &constant.value {
-            Constant::Str(value) => Some(value.as_str()),
-            _ => None,
-        },
+        Expr::StringLiteral(literal) => Some(literal.value.to_str()),
         _ => None,
     }
 }
@@ -165,17 +165,15 @@ fn is_dotted_identifier(module: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use rustpython_parser::Parse;
-    use rustpython_parser::ast::{Expr, Stmt, Suite};
+    use ruff_python_ast::Expr;
 
     use super::{PythonRun, command_word, module_prefix, python_run};
 
     fn expr(source: &str) -> Expr {
-        let stmts = Suite::parse(source, "<test>").expect("parse");
-        let Some(Stmt::Expr(stmt)) = stmts.into_iter().next() else {
-            panic!("expected an expression statement");
-        };
-        *stmt.value
+        ruff_python_parser::parse_expression(source)
+            .expect("parse")
+            .expr()
+            .clone()
     }
 
     fn run(source: &str) -> Option<PythonRun> {

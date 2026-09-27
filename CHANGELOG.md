@@ -79,6 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The FastAPI plugin no longer adds root `main.py` / `asgi.py` as entries,
   since the §8 auto-detection already does; it keeps `src/main.py` /
   `src/asgi.py`.
+- The Python parser is now `ruff_python_parser` (exact pin `=0.0.15`) instead
+  of `rustpython-parser` (ADR 0001, #351). MSRV rises from 1.93 to 1.96. A
+  symbol on a decorated `def` / `class` is reported on the `def` / `class`
+  line, and `elif` branches get the same `TYPE_CHECKING` / platform guard
+  handling as `if`. Syntax errors no longer carry the text-matched
+  `(requires pyXY)` hint. Parse cache unit bumped to `parse-v8`.
+- PEP 695 syntax is walked: `type X = ...` records `X` as a module-level
+  symbol, and attribute references in the alias value and in type parameter
+  bounds / defaults (`def f[T: m.A = m.B]`, `class C[T: m.A]`) now count as
+  uses (#352). Parse cache unit bumped to `parse-v9`.
 
 ### Fixed
 - Reachability (#266): `import pkg.sub.mod` (static, dynamic literal or
@@ -88,10 +98,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count as used third-party imports. CHK001 confidence drops to `likely` when
   reachable code has an opaque dynamic import; an unreachable file's own
   opaque import no longer affects its confidence.
+- Star imports (`from m import *`, `from . import *`) are no longer dropped by
+  the parser. They reach `m` for CHK001 and count as imports for the
+  dependency rules, but are not CHK007 re-exports. The parse cache moved to
+  `parse-v8` (found by dogfooding on litellm).
+- An import root that is missing from the bundled map but matches a declared
+  or locked distribution by exact name (e.g. `openai`, `tokenizers`) now
+  resolves to that distribution. Before, it stayed unresolved, which caused
+  false CHK002 / CHK010 reports.
 - `[sys.executable, "-m", "pkg", ...]` argument lists count as a use of `pkg`
   but are never reported as missing. A PEP 723 script that runs another file
   with `sys.executable` gets no script CHK002, since the child shares the
-  block's environment. Parse cache unit bumped to `parse-v8`.
+  block's environment. Parse cache unit bumped to `parse-v10`.
 - `importlib.import_module("pkg.commands." + name)` (or an f-string with a
   literal prefix) reaches every first-party module under `pkg.commands`, so
   lazily loaded command modules and their imports count as used. In a PEP 723
