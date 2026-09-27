@@ -205,6 +205,24 @@ fn issue_keys(issues: &[serde_json::Value]) -> Vec<(String, String)> {
         .collect()
 }
 
+#[test]
+fn binary_json_import_issues_carry_distribution_and_module() {
+    for (fixture, code, module, distribution) in [
+        ("missing_yaml", "CHK003", "yaml", "pyyaml"),
+        ("transitive_urllib3", "CHK004", "urllib3", "urllib3"),
+    ] {
+        let issues = json_issues(&fixture_path(&["deps", fixture]), &[]);
+        let issue = issues
+            .iter()
+            .find(|issue| issue["code"] == code)
+            .expect("import issue");
+        assert_eq!(issue["distribution"], distribution, "{fixture}");
+        assert_eq!(issue["symbol"], module, "{fixture}");
+        assert_eq!(issue["path"], "src/acme/main.py", "{fixture}");
+        assert_eq!(issue["line"], 2, "{fixture}");
+    }
+}
+
 const PEP723_TOOL: &str = r#"# /// script
 # requires-python = ">=3.11"
 # dependencies = [

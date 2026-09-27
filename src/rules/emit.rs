@@ -102,9 +102,9 @@ fn subject_key_matches(subject: &IssueSubject, key: &str) -> bool {
         IssueSubject::File { path } => path == key,
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name == key,
         IssueSubject::Symbol { module, name } => format!("{module}:{name}") == key || name == key,
-        IssueSubject::Import { module, file, line } => {
-            format!("{file}:{line}:{module}") == key || module == key
-        },
+        IssueSubject::Import {
+            module, file, line, ..
+        } => format!("{file}:{line}:{module}") == key || module == key,
         IssueSubject::ScriptDistribution { script, name } => {
             format!("script:{script}:{name}") == key || name == key
         },

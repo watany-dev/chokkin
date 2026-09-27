@@ -139,6 +139,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CHK010 and helpers reached only this way are not CHK001. These packages keep
   their test/dev/docs context, never count as the flat-layout distribution
   package, and their symbols are not checked by CHK006 / CHK007 (#359).
+- JSON reporter: CHK003 / CHK004 issues now fill `distribution` with the
+  resolved distribution name (it was always `null`), and CHK003 / CHK004 /
+  CHK010 put only the imported module in `symbol` instead of
+  `"<path>:<line> <module>"`; the location stays in `file` / `line`.
+  `schema_version` stays `"1"`. `target`, fingerprints, baselines and SARIF are
+  unchanged. `--fix --add-missing` reads the distribution from the issue
+  instead of the explain text. Library API: `IssueSubject::Import` gains
+  `distribution: Option<String>` (#363).
 
 ## [0.4.1] - Unreleased
 

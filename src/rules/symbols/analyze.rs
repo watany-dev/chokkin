@@ -291,6 +291,7 @@ fn detect_unresolved_imports(
                 module: import.clone(),
                 file: file.clone(),
                 line: *line,
+                distribution: None,
             },
             severity: Severity::Warning,
             confidence: Confidence::Likely,

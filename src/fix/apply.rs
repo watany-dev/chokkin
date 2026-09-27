@@ -262,6 +262,7 @@ mod tests {
                 module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
                 line: 1,
+                distribution: Some(distribution.to_owned()),
             },
             explain: Some(ExplainData {
                 summary: format!("{distribution} is imported but not declared"),

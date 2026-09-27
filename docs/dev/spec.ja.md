@@ -907,7 +907,7 @@ v0.2で入れるもの。
 - cache
 ```
 
-v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。
+v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。
 
 v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap-gap-analysis.ja.md`)。
 
