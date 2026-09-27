@@ -92,6 +92,24 @@ mod tests {
     }
 
     #[test]
+    fn platform_and_private_modules_are_stdlib_for_every_target() {
+        for version in ["py308", "py310", "py311", "py312", "py313", "py314"] {
+            let target = TargetVersion::parse(version).expect("version");
+            for module in ["unicodedata", "msvcrt", "winreg", "_thread"] {
+                assert!(is_stdlib_import(module, &target), "{module} on {version}");
+            }
+        }
+    }
+
+    #[test]
+    fn distutils_removed_for_py312() {
+        let py311 = TargetVersion::default_py311();
+        let py312 = TargetVersion::parse("py312").expect("py312");
+        assert!(is_stdlib_import("distutils", &py311));
+        assert!(!is_stdlib_import("distutils", &py312));
+    }
+
+    #[test]
     fn pep594_modules_removed_for_py313() {
         assert!(exact("py312").contains("cgi"));
         assert!(!exact("py313").contains("cgi"));

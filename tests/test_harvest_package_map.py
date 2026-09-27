@@ -47,6 +47,27 @@ class HarvestPackageMapTest(unittest.TestCase):
                 all(len(source["sha256"]) == 64 for source in payload["sources"])
             )
 
+    def test_ignores_vendored_dist_info(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "outer-1.0-py3-none-any.whl"
+            self.write_wheel(wheel, "Outer", "outer\n", None)
+            with zipfile.ZipFile(wheel, "a") as archive:
+                archive.writestr(
+                    "outer/_vendor/inner-2.0.dist-info/METADATA",
+                    "Name: inner\nVersion: 2.0\n",
+                )
+
+            run = subprocess.run(
+                [sys.executable, str(SCRIPT), str(wheel)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                json.loads(run.stdout)["packages"],
+                [{"distribution": "Outer", "imports": ["outer"]}],
+            )
+
     @staticmethod
     def write_wheel(
         path: Path, distribution: str, top_level: str | None, record: str | None

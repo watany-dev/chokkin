@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses (#352). Parse cache unit bumped to `parse-v9`.
 
 ### Fixed
+- The bundled package map no longer maps distributions to import names they
+  do not ship (`pynacl` -> `nacl`, `pyzmq` -> `zmq`, `dnspython` -> `dns`,
+  `attrs` -> `attr`, `setuptools` -> `pkg_resources`, and 12 more), and adds
+  `azure-*` / `opentelemetry-exporter-*` namespace entries plus `vertexai`,
+  `a2a`, `vcr`, `ddtrace`, `onelogin` and `ulid`, so these no longer raise
+  CHK010 / CHK002 without a venv. `generate-package-map.py --verify-wheels`
+  checks every entry against the latest PyPI wheel (#362).
 - Reachability (#266): `import pkg.sub.mod` (static, dynamic literal or
   plugin module reference) now also reaches the parent packages'
   `__init__.py` files. Framework-glob files such as Django migrations are
@@ -118,6 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `workspace = true` dependency counts as used when a used workspace
   member's own files import a module from its tree (a root that ships
   `airflow-core` and `task-sdk` uses both, since core imports `airflow.sdk`).
+- The bundled stdlib lists are generated from each version's
+  `sys.stdlib_module_names`, adding 124 missing modules such as `unicodedata`,
+  `msvcrt`, `winreg`, `_thread`, `_ssl` and `sre_parse` that caused CHK010 /
+  CHK003 / CHK004 false positives. `test` (CPython's regression suite, not
+  in that list) is no longer treated as stdlib (#357).
 - A module is stdlib when it is stdlib on any Python minor from
   `target_version` up to the `requires-python` upper bound (the newest bundled
   set when unbounded). `tomllib` behind a `sys.version_info` guard in a
