@@ -1156,3 +1156,14 @@ werkzeug	CHK003	tests/test_urls.py:pytest	deferred	dev-context	deferred: verify 
 werkzeug	CHK003	tests/test_utils.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	tests/test_wrappers.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	tests/test_wsgi.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
+
+# R-01..R-07 corpus (#323): CHK003 that are new over 573ff37 (PEP 723 scripts are now checked against their own block)
+airflow	CHK003	script:clients/python/test_python_client.py:pytest	tp	-	script imports pytest; the PEP 723 block does not declare it
+airflow	CHK003	script:clients/python/test_python_client.py:tests-common	fp	workspace-boundary	tests_common is the devel-common workspace member (devel-common/src), not a PyPI distribution
+airflow	CHK003	script:scripts/ci/prek/check_excluded_provider_markers.py:tomli	tp	-	block pins requires-python <3.11, where tomllib is missing, and the fallback import tomli is not declared
+airflow	CHK003	script:scripts/ci/prek/check_extra_packages_ref.py:tomli	tp	-	same tomli fallback without a declaration in the block
+fastmcp	CHK003	script:examples/memory.py:pydantic	tp	-	imports pydantic directly; the block only declares packages that pull it in transitively
+fastmcp	CHK003	script:examples/memory.py:pydantic-ai	fp	map-gap	block declares pydantic-ai-slim, which also provides the pydantic_ai import
+fastmcp	CHK003	script:examples/providers/sqlite/server.py:rich	tp	-	imports rich directly; only transitively installed via fastmcp
+fastmcp	CHK003	script:examples/text_me.py:pydantic	tp	-	imports pydantic directly; only transitively installed via fastmcp
+fastmcp	CHK003	script:examples/text_me.py:pydantic-settings	tp	-	imports pydantic_settings directly; only transitively installed via fastmcp
