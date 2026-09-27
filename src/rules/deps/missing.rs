@@ -444,6 +444,7 @@ mod tests {
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
                 packages: vec!["acme".to_owned()],
+                local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
             },
             effective_globs: Vec::new(),

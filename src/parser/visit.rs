@@ -552,6 +552,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         let lines = LineIndex::new(source);

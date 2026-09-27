@@ -105,6 +105,7 @@ mod tests {
         LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         }
     }
@@ -141,6 +142,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         assert_eq!(
@@ -173,6 +175,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         assert_eq!(
@@ -186,6 +189,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         assert!(resolve_relative_import("routes.py", &layout, 1, None, Some("sibling")).is_none());
