@@ -344,7 +344,7 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 解決戦略は多層にする。
 
 ```text
-1. stdlib判定 (`target_version` に応じた bundled リスト: `resolver/stdlib/py310.txt` 〜 `py313.txt`。`scripts/generate-stdlib-modules.py` で再生成)
+1. stdlib判定 (`target_version` に応じた bundled リスト: `resolver/stdlib/py310.txt` 〜 `py313.txt`。各版の `sys.stdlib_module_names` から `scripts/generate-stdlib-modules.py` で再生成。3.9以前はpy310、3.14以降はpy313のリストを使う)
 2. first-party module判定
 3. workspace member判定
 4. local .venv の dist-info / METADATA / top_level.txt / RECORD を読む
