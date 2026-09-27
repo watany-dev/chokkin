@@ -11,7 +11,7 @@ use crate::sources::{DiscoveredFile, DiscoveredSources};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
-use super::stdlib::is_stdlib_import;
+use super::stdlib::StdlibRange;
 use super::types::{
     ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
     import_root,
@@ -43,10 +43,10 @@ pub fn resolve_imports(
     )
 }
 
-/// [`resolve_imports`] with per-file target versions for PEP 723 scripts.
+/// [`resolve_imports`] with per-file stdlib ranges for PEP 723 scripts.
 ///
 /// A script's `requires-python` decides which modules are stdlib for the
-/// imports in that file; every other file uses the project target.
+/// imports in that file; every other file uses the project range.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_imports_with_script_targets(
@@ -56,7 +56,7 @@ pub fn resolve_imports_with_script_targets(
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
     workspace_members: &[ResolvedWorkspaceMember],
-    script_targets: &BTreeMap<String, TargetVersion>,
+    script_targets: &BTreeMap<String, StdlibRange>,
 ) -> ResolutionIndex {
     resolve_imports_for_analysis(
         config,
@@ -89,13 +89,14 @@ pub fn resolve_imports_for_analysis(
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
     workspace_members: &[ResolvedWorkspaceMember],
-    script_targets: &BTreeMap<String, TargetVersion>,
+    script_targets: &BTreeMap<String, StdlibRange>,
     scoped: &ScopedDeclarations,
 ) -> ResolutionIndex {
     let target = config
         .target_version
         .as_ref()
         .map_or_else(TargetVersion::default_py311, Clone::clone);
+    let stdlib = StdlibRange::new(&target, manifest.metadata.requires_python.as_deref());
 
     let import_map = ImportMap::build(config)
         .with_local_sources(path_source_imports(&manifest.root.path, &manifest.uv));
@@ -106,7 +107,7 @@ pub fn resolve_imports_for_analysis(
     let mut root_cache: RootCache = BTreeMap::new();
 
     for module in &parse.modules {
-        let file_target = script_targets.get(&module.path).unwrap_or(&target);
+        let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
         for import in &module.imports {
             if import.module.is_empty() {
                 continue;
@@ -123,7 +124,7 @@ pub fn resolve_imports_for_analysis(
                 import.context,
                 import.optional,
                 import.platform_guarded,
-                file_target,
+                file_stdlib,
                 sources,
                 manifest,
                 config,
@@ -144,7 +145,7 @@ pub fn resolve_imports_for_analysis(
                 ImportContext::Runtime,
                 false,
                 false,
-                file_target,
+                file_stdlib,
                 sources,
                 manifest,
                 config,
@@ -167,7 +168,7 @@ pub fn resolve_imports_for_analysis(
             ImportContext::Runtime,
             false,
             false,
-            &target,
+            stdlib,
             sources,
             manifest,
             config,
@@ -195,9 +196,9 @@ fn transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
     }
 }
 
-/// Keyed by (target version, import root): stdlib membership depends on the
-/// target, which differs between PEP 723 scripts.
-type RootCache = BTreeMap<(String, String), RootResolution>;
+/// Keyed by (stdlib range, import root): stdlib membership depends on the
+/// range, which differs between PEP 723 scripts.
+type RootCache = BTreeMap<(StdlibRange, String), RootResolution>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RootResolution {
@@ -215,7 +216,7 @@ fn resolve_import_site(
     context: ImportContext,
     optional: bool,
     platform_guarded: bool,
-    target: &TargetVersion,
+    stdlib: StdlibRange,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     config: &ChokkinConfig,
@@ -228,11 +229,11 @@ fn resolve_import_site(
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
     let core = root_cache
-        .entry((target.as_str().to_owned(), root_name.clone()))
+        .entry((stdlib, root_name.clone()))
         .or_insert_with(|| {
             resolve_import_root(
                 &root_name,
-                target,
+                stdlib,
                 sources,
                 manifest,
                 config,
@@ -291,7 +292,7 @@ fn resolve_import_site(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn resolve_import_root(
     root_name: &str,
-    target: &TargetVersion,
+    stdlib: StdlibRange,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     config: &ChokkinConfig,
@@ -300,7 +301,7 @@ fn resolve_import_root(
     venv_imports: &BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> RootResolution {
-    if is_stdlib_import(root_name, target) {
+    if stdlib.contains(root_name) {
         return RootResolution {
             origin: ModuleOrigin::Stdlib,
             distribution: None,

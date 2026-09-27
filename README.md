@@ -237,9 +237,9 @@ uvx chokkin --baseline chokkin-baseline.json --update-baseline
 git add chokkin-baseline.json
 ```
 
-Then wire the baseline into pull request checks. This job emits GitHub
-annotations, writes SARIF for code scanning, and fails only for findings not
-already present in the baseline:
+Then wire the baseline into pull request checks with the bundled GitHub
+Action. It emits GitHub annotations, writes SARIF for code scanning, and fails
+only for findings not already present in the baseline:
 
 ```yaml
 name: chokkin
@@ -255,17 +255,31 @@ jobs:
   chokkin:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Annotations
-        run: uvx chokkin --baseline chokkin-baseline.json --reporter github
-      - name: SARIF
-        if: always()
-        run: uvx chokkin --baseline chokkin-baseline.json --reporter sarif > chokkin.sarif
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: actions/checkout@v7
+      - uses: watany-dev/chokkin@v0.4.1
+        with:
+          baseline: chokkin-baseline.json
+          sarif-file: chokkin.sarif
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: chokkin.sarif
+```
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `version` | release of the action ref | chokkin version from PyPI, or `latest` |
+| `working-directory` | `.` | Project root to analyze |
+| `baseline` | — | Baseline file; only new findings fail the job |
+| `reporter` | `github` | Reporter for the gating run |
+| `sarif-file` | — | Also write SARIF here (written even when the gating run fails) |
+| `args` | — | Extra CLI arguments, e.g. `--production --confidence likely` |
+
+Without the action, pin the version with `uvx`:
+
+```yaml
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uvx chokkin@0.4.1 --baseline chokkin-baseline.json --reporter github
 ```
 
 ## Installation

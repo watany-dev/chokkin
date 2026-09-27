@@ -6,7 +6,7 @@ use crate::config::{Confidence, ProjectMode};
 use crate::entry::{EntryPlan, ResolvedMode};
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
-use crate::parser::ParseSummary;
+use crate::parser::{ParseSummary, ParsedModule};
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
@@ -66,12 +66,17 @@ pub fn analyze_with_context(
         parse,
     } = *context;
     let reachable = reachable_file_paths(graph, reachability);
-    let module_names = build_module_names(parse, sources, &reachable);
+    // Root `tests/`-style packages are importable but not an API surface:
+    // pytest calls their functions, so their symbols would all read as unused.
     let reachable_modules: Vec<_> = parse
         .modules
         .iter()
-        .filter(|module| reachable.contains(module.path.as_str()))
+        .filter(|module| {
+            reachable.contains(module.path.as_str())
+                && !sources.layout.in_local_package(&module.path)
+        })
         .collect();
+    let module_names = build_module_names(&reachable_modules, sources);
 
     let registry = build_registry(&reachable_modules, &module_names);
     let reference_index = ReferenceIndex::build(&reachable_modules, &module_names);
@@ -119,15 +124,11 @@ fn reachable_file_paths<'g>(
 }
 
 fn build_module_names<'a>(
-    parse: &'a ParseSummary,
+    modules: &[&'a ParsedModule],
     sources: &DiscoveredSources,
-    reachable: &HashSet<&str>,
 ) -> HashMap<&'a str, String> {
     let mut names = HashMap::new();
-    for module in &parse.modules {
-        if !reachable.contains(module.path.as_str()) {
-            continue;
-        }
+    for module in modules {
         if let Some(name) = path_to_module(&module.path, &sources.layout) {
             names.insert(module.path.as_str(), name);
         }
@@ -290,6 +291,7 @@ fn detect_unresolved_imports(
                 module: import.clone(),
                 file: file.clone(),
                 line: *line,
+                distribution: None,
             },
             severity: Severity::Warning,
             confidence: Confidence::Likely,

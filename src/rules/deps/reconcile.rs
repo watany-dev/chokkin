@@ -249,6 +249,7 @@ mod tests {
                 layout: crate::sources::LayoutInfo {
                     layout: crate::sources::ProjectLayout::Src,
                     packages: Vec::new(),
+                    local_packages: Vec::new(),
                     inferred_globs: Vec::new(),
                 },
                 effective_globs: Vec::new(),

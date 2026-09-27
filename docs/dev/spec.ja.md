@@ -344,7 +344,7 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 解決戦略は多層にする。
 
 ```text
-1. stdlib判定 (`target_version` に応じた bundled リスト: `resolver/stdlib/py310.txt` 〜 `py313.txt`。各版の `sys.stdlib_module_names` から `scripts/generate-stdlib-modules.py` で再生成。3.9以前はpy310、3.14以降はpy313のリストを使う)
+1. stdlib判定 (bundled リスト `resolver/stdlib/py310.txt` 〜 `py313.txt`。各版の `sys.stdlib_module_names` から `scripts/generate-stdlib-modules.py` で再生成。`target_version` から `requires-python` の上限 minor (上限なしなら最新 bundled) までのいずれかで stdlib なら stdlib。`sys.version_info` ガード下の `tomllib` 等を誤検出しないため)
 2. first-party module判定
 3. workspace member判定
 4. local .venv の dist-info / METADATA / top_level.txt / RECORD を読む
@@ -520,6 +520,8 @@ scripts/**                                                  -> dev (設定で変
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
 ```
 
+root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。
+
 判定例。
 
 ```text
@@ -605,7 +607,8 @@ entry  : script file 自体を entry root (origin: script) にする。script �
          project manifest の CHK002/CHK003/CHK005 判定からは除外する
          script 経由の first-party import とその先の file は従来どおり project scope
 target : script の `requires-python` 下限を、その file の parse と stdlib 判定の
-         target version にする。未指定なら project の target version
+         target version にする (stdlib 判定の上限も script の `requires-python`)。
+         未指定なら project の target version
 report : subject は `script:<path>:<distribution>`。CHK003 は Error/certain
          (optional / platform-guarded import は対象外)。CHK002 は project CHK002 と
          同じく marker 付きを default で除外し、--strict で報告する
@@ -905,7 +908,7 @@ v0.2で入れるもの。
 - cache
 ```
 
-v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。
+v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。
 
 v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap-gap-analysis.ja.md`)。
 
