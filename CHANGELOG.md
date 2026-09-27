@@ -85,6 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line, and `elif` branches get the same `TYPE_CHECKING` / platform guard
   handling as `if`. Syntax errors no longer carry the text-matched
   `(requires pyXY)` hint. Parse cache unit bumped to `parse-v8`.
+- PEP 695 syntax is walked: `type X = ...` records `X` as a module-level
+  symbol, and attribute references in the alias value and in type parameter
+  bounds / defaults (`def f[T: m.A = m.B]`, `class C[T: m.A]`) now count as
+  uses (#352). Parse cache unit bumped to `parse-v9`.
 
 ### Fixed
 - Reachability (#266): `import pkg.sub.mod` (static, dynamic literal or

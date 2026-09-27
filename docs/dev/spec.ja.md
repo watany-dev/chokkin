@@ -333,7 +333,7 @@ File reaches File
 
 Python parserはRust実装でよい。Ruff ecosystemのparserを使うか、RustPython parserを使うかはライセンス・保守性・Python新構文対応速度で選ぶ。ただし、Ruffのparser crate群をAstralが安定APIとして公開し続ける保証はないため、採用する場合はversion固定またはvendoring前提のリスクを織り込む。重要なのは、ASTだけではなくtoken位置・comments・string literalを保持すること。`# chokkin: ignore[...]`、`__all__`、`TYPE_CHECKING`、`importlib.import_module("...")`（代入・`return`・呼び出し引数など式中のネストも含む）、framework設定のstring literalを拾う必要がある。
 
-現行は `ruff_python_parser` `=0.0.15` (MSRV 1.96)。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従するため、ADR 0001 の Amendment 2026-09-25 と #320 / #321 の実測 (PoC は draft PR #349) を受けて、#351 で `rustpython-parser` 0.4 から移行した。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新する (dependabot の `ruff-parser` group)。parser の AST 型を扱うのは `src/parser/` と `setup.py` の literal 評価 (`src/manifest/literals.rs` / `setup_py.rs`) に限り、`ParsedModule` 以降は backend に依存しない (結果: `docs/dev/issue-294-parser-migration-plan.md`)。行番号は byte offset から `src/parser/lines.rs` の `LineIndex` で求める。decorator 付きの def/class の symbol 行は CPython と同じく `def` / `class` の行にする。`lazy import` (PEP 810) は通常の import と同じ edge にする。
+現行は `ruff_python_parser` `=0.0.15` (MSRV 1.96)。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従するため、ADR 0001 の Amendment 2026-09-25 と #320 / #321 の実測 (PoC は draft PR #349) を受けて、#351 で `rustpython-parser` 0.4 から移行した。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新する (dependabot の `ruff-parser` group)。parser の AST 型を扱うのは `src/parser/` と `setup.py` の literal 評価 (`src/manifest/literals.rs` / `setup_py.rs`) に限り、`ParsedModule` 以降は backend に依存しない (結果: `docs/dev/issue-294-parser-migration-plan.md`)。行番号は byte offset から `src/parser/lines.rs` の `LineIndex` で求める。decorator 付きの def/class の symbol 行は CPython と同じく `def` / `class` の行にする。`type X = …` (PEP 695) は module level の変数と同じ symbol にし、alias の値と type parameter の bound / default も走査する。t-string (PEP 750) と `except A, B:` (PEP 758) は f-string / tuple の except と同じに走査する。`lazy import` (PEP 810) は通常の import と同じ edge にする。
 
 ## 7. import resolution仕様
 
@@ -1241,7 +1241,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v7。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v9。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime
