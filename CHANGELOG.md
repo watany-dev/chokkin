@@ -125,6 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `workspace = true` dependency counts as used when a used workspace
   member's own files import a module from its tree (a root that ships
   `airflow-core` and `task-sdk` uses both, since core imports `airflow.sdk`).
+- The bundled stdlib lists are generated from each version's
+  `sys.stdlib_module_names`, adding 124 missing modules such as `unicodedata`,
+  `msvcrt`, `winreg`, `_thread`, `_ssl` and `sre_parse` that caused CHK010 /
+  CHK003 / CHK004 false positives. `test` (CPython's regression suite, not
+  in that list) is no longer treated as stdlib (#357).
 
 ## [0.4.1] - Unreleased
 
