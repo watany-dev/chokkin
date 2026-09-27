@@ -243,7 +243,7 @@ mod tests {
     fn ignores_other_argument_lists() {
         assert_eq!(run(r#"[sys.executable, "-c", code]"#), None);
         assert_eq!(run(r#"[sys.executable, "-m", name]"#), None);
-        assert_eq!(run(r#"[sys.executable]"#), None);
+        assert_eq!(run("[sys.executable]"), None);
         assert_eq!(run(r#"["python", "-m", "pip"]"#), None);
     }
 }
