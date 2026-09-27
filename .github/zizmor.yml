@@ -9,4 +9,3 @@ rules:
     ignore:
       - ci.yml
       - audit.yml
-      - oss-metrics.yml

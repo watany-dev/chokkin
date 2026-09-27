@@ -34,10 +34,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable # zizmor: ignore[superfluous-actions] keep CI toolchain consistent
-        with:
-          toolchain: stable
-          components: clippy
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Build HEAD
         run: cargo build --release --locked --bin chokkin
