@@ -1113,7 +1113,10 @@ exit   :
 検証   : OSS corpus に uv-native / PEP 723 / 各 lockfile / PEP 695 project を追加し
          (gap analysis §4)、recall sentinel に R-01〜R-05 の fixture を足す
 exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall sentinel 全件検出、
-         crash 0、cold 実行 medium 2s 維持、CHK003 件数が v0.4.1 比で増えない
+         crash 0、cold 実行 medium 2s 維持、CHK003 件数 (tp label を除く) が
+         v0.4.1 比で増えない
+状態   : exit 達成 (PR #367、docs/dev/oss-validation-report.md)。CHK002 誤検知率
+         3.7% (1/27、未分類0)、recall 48/48、crash 0、CHK003 288 → 283
 ```
 
 ### Phase 5: v0.6 Knip 相当の運用性(+6〜8週)
