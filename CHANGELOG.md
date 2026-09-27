@@ -94,6 +94,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count as used third-party imports. CHK001 confidence drops to `likely` when
   reachable code has an opaque dynamic import; an unreachable file's own
   opaque import no longer affects its confidence.
+- Star imports (`from m import *`, `from . import *`) are no longer dropped by
+  the parser. They reach `m` for CHK001 and count as imports for the
+  dependency rules, but are not CHK007 re-exports. The parse cache moved to
+  `parse-v8` (found by dogfooding on litellm).
+- An import root that is missing from the bundled map but matches a declared
+  or locked distribution by exact name (e.g. `openai`, `tokenizers`) now
+  resolves to that distribution. Before, it stayed unresolved, which caused
+  false CHK002 / CHK010 reports.
 
 ## [0.4.1] - Unreleased
 

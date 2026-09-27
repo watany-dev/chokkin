@@ -48,7 +48,8 @@ pub(super) fn collect_reexports(
             }
             // `module` is already resolved to an absolute name by the parser; an
             // empty one means the relative import could not be resolved.
-            if import.module.is_empty() {
+            // `from .m import *` re-exports no statically known name.
+            if import.module.is_empty() || import.name.as_deref() == Some("*") {
                 continue;
             }
             // `from . import x` carries no `name`: the parser folds `x` into `module`.
