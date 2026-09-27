@@ -301,6 +301,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             Stmt::ImportFrom(import_from) => self.visit_import_from(import_from),
             Stmt::FunctionDef(def) => {
                 self.visit_decorators(&def.decorator_list);
+                if let Some(type_params) = &def.type_params {
+                    self.visit_type_params(type_params);
+                }
                 self.visit_parameters(&def.parameters);
                 if let Some(returns) = &def.returns {
                     self.visit_expr(returns);
@@ -314,6 +317,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             },
             Stmt::ClassDef(def) => {
                 self.visit_decorators(&def.decorator_list);
+                if let Some(type_params) = &def.type_params {
+                    self.visit_type_params(type_params);
+                }
                 if let Some(arguments) = &def.arguments {
                     self.visit_arguments(arguments);
                 }
@@ -350,6 +356,18 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 if let Some(value) = &ann_assign.value {
                     self.visit_expr(value);
                 }
+            },
+            Stmt::TypeAlias(alias) => {
+                if self.module_level
+                    && let Expr::Name(name) = &*alias.name
+                {
+                    let line = self.line_number(alias);
+                    self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
+                }
+                if let Some(type_params) = &alias.type_params {
+                    self.visit_type_params(type_params);
+                }
+                self.visit_expr(&alias.value);
             },
             Stmt::AugAssign(aug_assign) => self.visit_expr(&aug_assign.value),
             Stmt::Return(return_stmt) => {
@@ -791,24 +809,40 @@ g = lambda x=utils.G: x
 
     #[test]
     fn parses_python_313_and_314_syntax() {
-        // PEP 695 type params, PEP 758 bare except tuples, PEP 750 t-strings.
+        // PEP 695 type params and aliases, PEP 758 bare except tuples, PEP 750 t-strings.
         let source = "\
 from acme import utils
-type Alias = utils.A
-def f[T](x: T) -> utils.B:
+type Alias[K: utils.K] = utils.A
+def f[T: utils.D = utils.E](x: T) -> utils.B:
     pass
-class C[T](utils.Base):
+class C[T: utils.F](utils.Base):
     pass
 try:
     pass
-except ValueError, TypeError:
+except utils.G, TypeError:
     pass
 value = t\"{utils.C}\"
 ";
         let parsed = visit_source(source);
-        for (name, line) in [("B", 3), ("Base", 5), ("C", 11)] {
+        for (name, line) in [
+            ("K", 2),
+            ("A", 2),
+            ("D", 3),
+            ("E", 3),
+            ("B", 3),
+            ("F", 5),
+            ("Base", 5),
+            ("G", 9),
+            ("C", 11),
+        ] {
             assert_eq!(attribute_lines(&parsed, name), vec![line], "utils.{name}");
         }
+        let alias = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "Alias")
+            .expect("symbol Alias");
+        assert_eq!((alias.kind, alias.line), (SymbolKind::Variable, 2));
         assert!(parsed.symbols.iter().any(|symbol| symbol.name == "f"));
         assert!(parsed.symbols.iter().any(|symbol| symbol.name == "C"));
     }
