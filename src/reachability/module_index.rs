@@ -29,6 +29,23 @@ impl ModuleIndex {
     pub fn resolve(&self, module: &str) -> Option<FileId> {
         self.module_to_file.get(module).copied()
     }
+
+    /// Modules strictly inside package `prefix`, sorted by name.
+    #[must_use]
+    pub fn under(&self, prefix: &str) -> Vec<(&str, FileId)> {
+        let mut modules: Vec<_> = self
+            .module_to_file
+            .iter()
+            .filter(|(module, _)| {
+                module
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('.'))
+            })
+            .map(|(module, file_id)| (module.as_str(), *file_id))
+            .collect();
+        modules.sort_unstable();
+        modules
+    }
 }
 
 #[cfg(test)]
@@ -74,5 +91,11 @@ mod tests {
             .expect("new file");
         let updated = ModuleIndex::build(&graph, &sources);
         assert_eq!(updated.resolve("acme.bar"), Some(added));
+        assert_eq!(
+            updated.under("acme"),
+            vec![("acme.bar", added), ("acme.foo", file_id)]
+        );
+        assert!(updated.under("acme.foo").is_empty());
+        assert!(updated.under("acm").is_empty());
     }
 }

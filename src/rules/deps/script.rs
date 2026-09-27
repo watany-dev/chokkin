@@ -53,7 +53,11 @@ pub(super) fn detect_script_dependency_issues(
         }
         // The block also installs what the helper modules next to the script
         // import, so their imports count as uses of the script's dependencies.
-        let used: BTreeSet<String> = resolution
+        let parsed = parse
+            .modules
+            .iter()
+            .find(|module| module.path == script.path);
+        let mut used: BTreeSet<String> = resolution
             .imports
             .iter()
             .filter(|import| local_files.contains(import.file.as_str()))
@@ -64,13 +68,19 @@ pub(super) fn detect_script_dependency_issues(
             import.origin == ModuleOrigin::ThirdParty && import.distribution.is_some()
         });
         candidates.extend(missing_in_script(script, &imports, &declared, import_map));
+        // A tool the script runs as a command (`ruff format …`) is used
+        // without being imported.
+        used.extend(
+            parsed
+                .iter()
+                .flat_map(|module| &module.shell_commands)
+                .map(String::as_str)
+                .map(normalize_distribution_name)
+                .filter(|name| declared.contains(name)),
+        );
         // A file run with `sys.executable` shares the block's environment, and
         // its imports cannot be followed.
-        let runs_python_file = parse
-            .modules
-            .iter()
-            .any(|module| module.path == script.path && module.runs_python_file);
-        if !runs_python_file {
+        if !parsed.is_some_and(|module| module.runs_python_file) {
             candidates.extend(unused_in_script(script, &used, strict));
         }
     }
@@ -351,6 +361,43 @@ mod tests {
         .map(|candidate| candidate.rule)
         .collect();
         assert_eq!(found, [RuleId::Chk003]);
+    }
+
+    #[test]
+    fn tools_run_as_commands_are_used() {
+        let script = InlineScript {
+            path: "scripts/tool.py".to_owned(),
+            dependencies: vec![dependency("ruff", 3), dependency("httpx", 4)],
+            requires_python: None,
+            target_version: None,
+        };
+        let parse = ParseSummary {
+            modules: vec![crate::parser::ParsedModule {
+                path: "scripts/tool.py".to_owned(),
+                shell_commands: vec!["Ruff".to_owned(), "grep".to_owned()],
+                ..crate::parser::ParsedModule::default()
+            }],
+        };
+        let reachable = HashSet::from(["scripts/tool.py"]);
+        let found: Vec<_> = detect_script_dependency_issues(
+            &[script],
+            &ResolutionIndex::default(),
+            &reachable,
+            &[],
+            &parse,
+            &import_map(),
+            false,
+        )
+        .into_iter()
+        .map(|candidate| candidate.subject)
+        .collect();
+        assert_eq!(
+            found,
+            [IssueSubject::ScriptDistribution {
+                script: "scripts/tool.py".to_owned(),
+                name: "httpx".to_owned(),
+            }]
+        );
     }
 
     #[test]

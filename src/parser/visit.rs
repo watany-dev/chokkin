@@ -1,6 +1,6 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use rustpython_parser::ast::Ranged;
 use rustpython_parser::ast::{
@@ -13,7 +13,9 @@ use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
-use super::dynamic::{LoaderNames, PythonRun, literal_module, python_run};
+use super::dynamic::{
+    LoaderNames, PythonRun, command_word, literal_module, module_prefix, python_run,
+};
 use super::exports::extract_exports;
 use super::platform_guard::is_platform_guard_if;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
@@ -36,6 +38,7 @@ pub struct ModuleVisitor<'a> {
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
+    command_words: BTreeSet<String>,
     parsed: ParsedModule,
 }
 
@@ -60,6 +63,7 @@ impl<'a> ModuleVisitor<'a> {
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
+            command_words: BTreeSet::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -69,7 +73,15 @@ impl<'a> ModuleVisitor<'a> {
 
     /// Consume the visitor and return the accumulated parse result.
     #[must_use]
-    pub fn into_parsed(self) -> ParsedModule {
+    pub fn into_parsed(mut self) -> ParsedModule {
+        let runs_commands = self
+            .parsed
+            .imports
+            .iter()
+            .any(|import| import.module == "subprocess");
+        if runs_commands {
+            self.parsed.shell_commands = self.command_words.into_iter().collect();
+        }
         self.parsed
     }
 
@@ -353,6 +365,12 @@ impl<'a> ModuleVisitor<'a> {
                             .dynamic_imports
                             .push(DynamicImport { module, line });
                     } else if !call.args.is_empty() || !call.keywords.is_empty() {
+                        if let Some(module) = module_prefix(call) {
+                            let line = self.line_number(call);
+                            self.parsed
+                                .dynamic_import_prefixes
+                                .push(DynamicImport { module, line });
+                        }
                         self.parsed.has_opaque_dynamic_import = true;
                     }
                 }
@@ -470,7 +488,12 @@ impl<'a> ModuleVisitor<'a> {
                     self.visit_expr(step);
                 }
             },
-            Expr::Constant(_) | Expr::Name(_) => {},
+            Expr::Constant(_) => {
+                if let Some(word) = command_word(expr) {
+                    self.command_words.insert(word.to_owned());
+                }
+            },
+            Expr::Name(_) => {},
         }
     }
 
@@ -763,6 +786,28 @@ mod tests {
     fn marks_opaque_assignment_with_non_literal() {
         let parsed = visit_source("import importlib\nmod = importlib.import_module(name)\n");
         assert!(parsed.dynamic_imports.is_empty());
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn records_command_words_only_with_subprocess() {
+        let source = "cmd = \"ruff format --check\"\nrun(cmd, shell=True)\n";
+        assert!(visit_source(source).shell_commands.is_empty());
+        let parsed = visit_source(&format!("import subprocess\n{source}"));
+        assert_eq!(parsed.shell_commands, vec!["ruff".to_owned()]);
+    }
+
+    #[test]
+    fn records_prefix_of_built_module_name() {
+        let parsed =
+            visit_source("import importlib\nimportlib.import_module(\"acme.commands.\" + name)\n");
+        assert!(parsed.dynamic_imports.is_empty());
+        let prefixes: Vec<_> = parsed
+            .dynamic_import_prefixes
+            .iter()
+            .map(|dynamic| (dynamic.module.as_str(), dynamic.line))
+            .collect();
+        assert_eq!(prefixes, vec![("acme.commands", 2)]);
         assert!(parsed.has_opaque_dynamic_import);
     }
 

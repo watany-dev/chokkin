@@ -92,6 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   but are never reported as missing. A PEP 723 script that runs another file
   with `sys.executable` gets no script CHK002, since the child shares the
   block's environment. Parse cache unit bumped to `parse-v8`.
+- `importlib.import_module("pkg.commands." + name)` (or an f-string with a
+  literal prefix) reaches every first-party module under `pkg.commands`, so
+  lazily loaded command modules and their imports count as used. In a PEP 723
+  script that imports `subprocess`, a declared dependency named by the first
+  word of a command-line string literal (`"ruff format ..."`) counts as used.
 
 ## [0.4.1] - Unreleased
 

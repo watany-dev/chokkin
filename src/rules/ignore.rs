@@ -449,6 +449,7 @@ mod tests {
             path: "src/acme/main.py".to_owned(),
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
+            dynamic_import_prefixes: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
@@ -459,6 +460,7 @@ mod tests {
             }],
             has_opaque_dynamic_import: false,
             runs_python_file: false,
+            shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });
@@ -495,6 +497,7 @@ mod tests {
             path: "src/acme/api.py".to_owned(),
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
+            dynamic_import_prefixes: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
@@ -505,6 +508,7 @@ mod tests {
             }],
             has_opaque_dynamic_import: false,
             runs_python_file: false,
+            shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });

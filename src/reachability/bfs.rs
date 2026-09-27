@@ -41,6 +41,7 @@ struct BfsState<'a> {
     module_index: &'a ModuleIndex,
     file_imports: HashMap<FileId, Vec<ImportSite>>,
     submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
+    prefix_imports: HashMap<FileId, Vec<SubmoduleSite>>,
     queue: VecDeque<FileId>,
     reachable: IndexSet<FileId>,
     predecessors: IndexMap<FileId, ReachPredecessor>,
@@ -57,6 +58,7 @@ impl<'a> BfsState<'a> {
             module_index,
             file_imports: build_file_import_adjacency(graph),
             submodule_imports: build_submodule_imports(graph, parse, module_index),
+            prefix_imports: build_prefix_imports(graph, parse, module_index),
             queue: VecDeque::new(),
             reachable: IndexSet::new(),
             predecessors: IndexMap::new(),
@@ -196,6 +198,13 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
             TraceStep::Import { module, line }
         });
     }
+
+    let prefixed = state.prefix_imports.remove(&file_id).unwrap_or_default();
+    for (target, module, line) in prefixed {
+        enqueue_resolved_module(state, target, file_id, FileReachVia::DynamicImport, || {
+            TraceStep::DynamicImport { module, line }
+        });
+    }
 }
 
 /// Importing `pkg.sub.mod` runs `pkg/__init__.py` and `pkg/sub/__init__.py`
@@ -286,6 +295,30 @@ fn build_submodule_imports(
                     .entry(file_id)
                     .or_default()
                     .push((target, submodule, import.line));
+            }
+        }
+    }
+    sites
+}
+
+/// `import_module("pkg.commands." + name)` may load any module under
+/// `pkg.commands`, so each such site reaches all of them.
+fn build_prefix_imports(
+    graph: &ProjectGraph,
+    parse: &ParseSummary,
+    module_index: &ModuleIndex,
+) -> HashMap<FileId, Vec<SubmoduleSite>> {
+    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
+    for module in &parse.modules {
+        let Some(file_id) = graph.file_id(&module.path) else {
+            continue;
+        };
+        for prefix in &module.dynamic_import_prefixes {
+            for (name, target) in module_index.under(&prefix.module) {
+                sites
+                    .entry(file_id)
+                    .or_default()
+                    .push((target, name.to_owned(), prefix.line));
             }
         }
     }
@@ -530,6 +563,51 @@ mod tests {
         assert_eq!(edges.len(), 3);
         assert!(edges.contains(&(main_id, b_id, FileReachVia::DynamicImport)));
         assert!(edges.contains(&(b_id, c_id, FileReachVia::DynamicImport)));
+    }
+
+    #[test]
+    fn prefixed_dynamic_import_reaches_every_module_under_the_package() {
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+            start: std::env::temp_dir(),
+        };
+        let modules = vec![ParsedModule {
+            path: "src/acme/main.py".to_owned(),
+            dynamic_import_prefixes: vec![DynamicImport {
+                module: "acme".to_owned(),
+                line: 4,
+            }],
+            ..ParsedModule::default()
+        }];
+        let mut graph = graph_with_imports(root.clone(), &modules);
+        let parse = ParseSummary { modules };
+
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let outcome = run_reachability_bfs(
+            &mut graph,
+            &entry_plan(),
+            &no_plugins(),
+            &parse,
+            &module_index,
+            Vec::new(),
+        );
+
+        assert_eq!(outcome.reachable.len(), 4);
+        for path in &PATHS[1..] {
+            let file_id = graph.file_id(path).expect("file");
+            let step = &outcome
+                .predecessors
+                .get(&file_id)
+                .expect("predecessor")
+                .step;
+            assert!(
+                matches!(step, TraceStep::DynamicImport { line: 4, .. }),
+                "expected a dynamic import step, got {step:?}"
+            );
+            assert!(reach_edges(&graph).contains(&(main_id, file_id, FileReachVia::DynamicImport)));
+        }
     }
 
     #[test]

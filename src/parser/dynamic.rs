@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use rustpython_parser::ast::{Alias, Constant, Expr, ExprCall};
+use rustpython_parser::ast::{Alias, Constant, Expr, ExprCall, Operator};
 
 /// Names one module binds to the dynamic import loaders.
 pub struct LoaderNames {
@@ -59,7 +59,24 @@ impl LoaderNames {
 /// Literal module name passed to a loader call, positionally or as `name=`.
 #[must_use]
 pub fn literal_module(call: &ExprCall) -> Option<String> {
-    let module = call.args.first().or_else(|| {
+    str_constant(module_argument(call)?).map(str::to_owned)
+}
+
+/// Package whose submodule a loader call builds from a literal prefix:
+/// `"pkg.commands." + name` or `f"pkg.commands.{name}"` gives `pkg.commands`.
+#[must_use]
+pub fn module_prefix(call: &ExprCall) -> Option<String> {
+    let literal = match module_argument(call)? {
+        Expr::BinOp(binop) if matches!(binop.op, Operator::Add) => leftmost_str(&binop.left)?,
+        Expr::JoinedStr(joined) => str_constant(joined.values.first()?)?,
+        _ => return None,
+    };
+    let package = literal.strip_suffix('.')?;
+    is_dotted_identifier(package).then(|| package.to_owned())
+}
+
+fn module_argument(call: &ExprCall) -> Option<&Expr> {
+    call.args.first().or_else(|| {
         call.keywords
             .iter()
             .find(|keyword| {
@@ -69,13 +86,14 @@ pub fn literal_module(call: &ExprCall) -> Option<String> {
                     .is_some_and(|arg| arg.as_str() == "name")
             })
             .map(|keyword| &keyword.value)
-    })?;
-    match module {
-        Expr::Constant(constant) => match &constant.value {
-            Constant::Str(value) => Some(value.clone()),
-            _ => None,
-        },
-        _ => None,
+    })
+}
+
+/// The literal a chain of `+` starts with (`"a." + b + ".c"` gives `a.`).
+fn leftmost_str(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::BinOp(binop) if matches!(binop.op, Operator::Add) => leftmost_str(&binop.left),
+        _ => str_constant(expr),
     }
 }
 
@@ -112,6 +130,20 @@ pub fn python_run(elts: &[Expr]) -> Option<PythonRun> {
     }
 }
 
+/// The program a shell command line would run: the first word of a string
+/// literal that has more than one (`"ruff format --check"` gives `ruff`).
+#[must_use]
+pub fn command_word(expr: &Expr) -> Option<&str> {
+    let mut words = str_constant(expr)?.split_whitespace();
+    let first = words.next()?;
+    words.next()?;
+    let valid = first.starts_with(|c: char| c.is_ascii_alphabetic())
+        && first
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    valid.then_some(first)
+}
+
 fn str_constant(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Constant(constant) => match &constant.value {
@@ -136,18 +168,62 @@ mod tests {
     use rustpython_parser::Parse;
     use rustpython_parser::ast::{Expr, Stmt, Suite};
 
-    use super::{PythonRun, python_run};
+    use super::{PythonRun, command_word, module_prefix, python_run};
+
+    fn expr(source: &str) -> Expr {
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let Some(Stmt::Expr(stmt)) = stmts.into_iter().next() else {
+            panic!("expected an expression statement");
+        };
+        *stmt.value
+    }
 
     fn run(source: &str) -> Option<PythonRun> {
-        let stmts = Suite::parse(source, "<test>").expect("parse");
-        let Some(Stmt::Expr(stmt)) = stmts.first() else {
-            return None;
-        };
-        match &*stmt.value {
+        match expr(source) {
             Expr::List(list) => python_run(&list.elts),
             Expr::Tuple(tuple) => python_run(&tuple.elts),
             _ => None,
         }
+    }
+
+    fn prefix(source: &str) -> Option<String> {
+        let Expr::Call(call) = expr(source) else {
+            panic!("expected a call");
+        };
+        module_prefix(&call)
+    }
+
+    #[test]
+    fn recognizes_prefixed_module_names() {
+        assert_eq!(
+            prefix(r#"import_module("pkg.commands." + ".".join(words))"#),
+            Some("pkg.commands".to_owned())
+        );
+        assert_eq!(
+            prefix(r#"import_module("pkg." + name + ".impl")"#),
+            Some("pkg".to_owned())
+        );
+        assert_eq!(
+            prefix(r#"import_module(f"pkg.plugins.{name}")"#),
+            Some("pkg.plugins".to_owned())
+        );
+        assert_eq!(prefix(r#"import_module("pkg" + name)"#), None);
+        assert_eq!(prefix(r#"import_module(f"{base}.plugins")"#), None);
+        assert_eq!(prefix("import_module(name)"), None);
+    }
+
+    #[test]
+    fn takes_the_program_of_command_lines() {
+        let word = |source: &str| command_word(&expr(source)).map(str::to_owned);
+        assert_eq!(
+            word(r#""ruff format --force-exclude 2>&1""#),
+            Some("ruff".to_owned())
+        );
+        assert_eq!(word(r#""pre-commit run""#), Some("pre-commit".to_owned()));
+        assert_eq!(word(r#""ruff""#), None);
+        assert_eq!(word(r#""./tool.sh run""#), None);
+        assert_eq!(word(r#""`ruff` failed""#), None);
+        assert_eq!(word("name"), None);
     }
 
     #[test]
