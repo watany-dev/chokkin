@@ -147,6 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. `--fix --add-missing` reads the distribution from the issue
   instead of the explain text. Library API: `IssueSubject::Import` gains
   `distribution: Option<String>` (#363).
+- A module is stdlib when it is stdlib on any Python minor from
+  `target_version` up to the `requires-python` upper bound (the newest bundled
+  set when unbounded). `tomllib` behind a `sys.version_info` guard in a
+  `>=3.10` project is no longer a CHK010. An unguarded `import tomllib` there
+  is no longer reported either (#358).
 
 ## [0.4.1] - Unreleased
 

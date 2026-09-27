@@ -12,7 +12,9 @@ use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability, apply_public_surface};
-use crate::resolver::{apply_resolution_to_graph, resolve_imports_with_script_targets};
+use crate::resolver::{
+    StdlibRange, apply_resolution_to_graph, resolve_imports_with_script_targets,
+};
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
@@ -199,7 +201,11 @@ fn run_analysis_core(
     let script_targets: BTreeMap<_, _> = probe
         .scripts
         .iter()
-        .filter_map(|script| Some((script.path.clone(), script.target_version.clone()?)))
+        .filter_map(|script| {
+            let target = script.target_version.as_ref()?;
+            let range = StdlibRange::new(target, script.requires_python.as_deref());
+            Some((script.path.clone(), range))
+        })
         .collect();
     let resolution = resolve_imports_with_script_targets(
         &probe.effective_config,
