@@ -6,6 +6,7 @@ mod extract;
 pub(crate) mod literals;
 mod lockfile;
 mod pdm_lock;
+mod pep508;
 mod pep508_util;
 mod poetry_lock;
 mod pylock;

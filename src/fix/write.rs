@@ -1,8 +1,10 @@
 //! Atomic file writes with permission preservation.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::error::FixError;
 
@@ -36,24 +38,59 @@ pub fn atomic_write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing parent directory"))?;
     let original_metadata = fs::metadata(path).ok();
-    let mut temp = tempfile::Builder::new()
-        .prefix(".chokkin-")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    if sync {
-        temp.as_file().sync_all()?;
+    let (temp_path, mut file) = create_temp_in(parent)?;
+    let result = (|| {
+        file.write_all(bytes)?;
+        if sync {
+            file.sync_all()?;
+        }
+        if let Some(metadata) = original_metadata {
+            file.set_permissions(metadata.permissions())?;
+        }
+        drop(file);
+        fs::rename(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
     }
-    if let Some(metadata) = original_metadata {
-        temp.as_file().set_permissions(metadata.permissions())?;
+    result
+}
+
+/// Create a fresh `.chokkin-*.tmp` file in `dir`; `create_new` guarantees we
+/// never clobber a file another process (or a stale run) left behind.
+fn create_temp_in(dir: &Path) -> io::Result<(PathBuf, fs::File)> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut last_error = None;
+    for _ in 0..16 {
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let name = format!(".chokkin-{}-{seq}.tmp", process::id());
+        let candidate = dir.join(name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => last_error = Some(error),
+            Err(error) => return Err(error),
+        }
     }
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    Err(last_error.unwrap_or_else(|| io::Error::other("could not create temp file")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn assert_no_temp_files(dir: &Path) {
+        let leftovers: Vec<_> = fs::read_dir(dir)
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".chokkin-"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp file left behind: {leftovers:?}");
+    }
 
     #[test]
     fn atomic_write_replaces_contents() {
@@ -62,6 +99,18 @@ mod tests {
         fs::write(&path, "old").expect("write");
         atomic_write(&path, b"new", true).expect("atomic write");
         assert_eq!(fs::read_to_string(&path).expect("read"), "new");
+        assert_no_temp_files(dir.path());
+    }
+
+    #[test]
+    fn atomic_write_removes_temp_file_when_rename_fails() {
+        let dir = TempDir::new().expect("tempdir");
+        let target = dir.path().join("occupied");
+        fs::create_dir(&target).expect("mkdir");
+        fs::write(target.join("child"), "x").expect("write");
+
+        assert!(atomic_write(&target, b"new", false).is_err());
+        assert_no_temp_files(dir.path());
     }
 
     #[cfg(unix)]

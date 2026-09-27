@@ -1004,7 +1004,7 @@ mod tests {
         std::fs::write(&path, "import requests\n").expect("write source");
         // Backdate past the racy window so the file counts as settled without
         // making the test sleep.
-        let settled = SystemTime::now() - RACY_MTIME_WINDOW - Duration::from_secs(60);
+        let settled = SystemTime::now() - RACY_MTIME_WINDOW - Duration::from_mins(1);
         let handle = std::fs::File::options()
             .write(true)
             .open(&path)
@@ -1049,7 +1049,7 @@ mod tests {
         std::fs::write(&path, "import requests\n").expect("write source");
         // A filesystem clock lagging the local one by a minute stamps a fresh
         // edit a minute in the past; the local clock would call it settled.
-        let lagging = SystemTime::now() - Duration::from_secs(60);
+        let lagging = SystemTime::now() - Duration::from_mins(1);
         let handle = std::fs::File::options()
             .write(true)
             .open(&path)

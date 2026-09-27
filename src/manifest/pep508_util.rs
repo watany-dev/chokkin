@@ -1,9 +1,5 @@
 //! PEP 508 parsing helpers.
 
-use std::str::FromStr;
-
-use pep508_rs::{Requirement, VerbatimUrl};
-
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::warnings::ManifestWarning;
 
@@ -60,12 +56,17 @@ pub fn parse_requirement(
         });
     }
 
-    // pep508_rs panics on inputs whose lenient name token fails strict
-    // PEP 508 validation (e.g. `pkg_[extra]`), so gate the call ourselves.
-    if is_strict_pep508_name(leading_name_token(trimmed))
-        && let Ok(requirement) = Requirement::<VerbatimUrl>::from_str(trimmed)
-    {
-        return Ok(requirement_to_declared(&requirement, context, origin));
+    if let Some(requirement) = super::pep508::parse_requirement(trimmed) {
+        return Ok(DeclaredDependency {
+            name: normalize_distribution_name(&requirement.name),
+            extras: requirement.extras,
+            marker: requirement.marker,
+            specifier: requirement.version_or_url,
+            context,
+            origin,
+            opaque: false,
+            included_via: Vec::new(),
+        });
     }
 
     if let Some(name) = extract_egg_name(trimmed) {
@@ -104,7 +105,7 @@ pub fn parse_requirement(
 /// Parse a requirement from a PEP 508 manifest field (`pyproject.toml`,
 /// `setup.cfg`, `setup.py`).
 ///
-/// `pep508_rs` follows pip and rejects a bare name ending in an archive
+/// [`parse_requirement`] follows pip and rejects a bare name ending in an archive
 /// extension (`foo.tlz`, `foo.whl`) as a file reference, but PEP 508 and
 /// `packaging` read it as a distribution name. requirements-file dependency
 /// lines keep pip's reading through [`parse_requirement`].
@@ -127,42 +128,6 @@ pub fn parse_pep508_requirement(
         });
     }
     parse_requirement(raw, context, origin)
-}
-
-fn requirement_to_declared(
-    requirement: &Requirement<VerbatimUrl>,
-    context: DependencyContext,
-    origin: DependencyOrigin,
-) -> DeclaredDependency {
-    let name = normalize_distribution_name(requirement.name.as_ref());
-    let opaque = name.is_empty();
-
-    let extras = requirement
-        .extras
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
-
-    let marker = requirement
-        .marker
-        .contents()
-        .map(|contents| contents.to_string());
-
-    let specifier = requirement
-        .version_or_url
-        .as_ref()
-        .map(std::string::ToString::to_string);
-
-    DeclaredDependency {
-        name,
-        extras,
-        marker,
-        specifier,
-        context,
-        origin,
-        opaque,
-        included_via: Vec::new(),
-    }
 }
 
 /// Leading run of PEP 508 name characters (`[A-Za-z0-9._-]`).
@@ -216,7 +181,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_name_token_without_panicking() {
-        // Regression: pep508_rs panics internally on `<name>_[` inputs.
+        // Regression: the lenient name token `pkg_` must not reach extras parsing.
         for raw in ["0_[", "pkg_[extra]", "x-[dev]", "a.[b]"] {
             let result = parse_requirement(
                 raw,
@@ -233,7 +198,7 @@ mod tests {
 
     #[test]
     fn pep508_manifest_accepts_archive_like_bare_name() {
-        // Regression: pep508_rs rejects `A.tlz` as a file reference.
+        // Regression: pip's reading rejects `A.tlz` as a file reference.
         for (raw, expected) in [
             ("A.tlz", "a-tlz"),
             ("pkg.whl", "pkg-whl"),

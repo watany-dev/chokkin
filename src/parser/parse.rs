@@ -749,7 +749,7 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         // Settled mtimes keep the keys stat-only, so they stay equal across
         // runs however slowly the test executes.
-        let settled = SystemTime::now() - std::time::Duration::from_secs(60);
+        let settled = SystemTime::now() - std::time::Duration::from_mins(1);
         for name in ["aaa.py", "bbb.py"] {
             let path = temp.path().join(name);
             fs::write(&path, "import os\n").expect("write");
