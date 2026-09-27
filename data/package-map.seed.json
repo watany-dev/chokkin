@@ -228,6 +228,18 @@
       ]
     },
     {
+      "distribution": "pygithub",
+      "imports": [
+        "github"
+      ]
+    },
+    {
+      "distribution": "python-dateutil",
+      "imports": [
+        "dateutil"
+      ]
+    },
+    {
       "distribution": "databricks-sdk",
       "imports": [
         "databricks.sdk"
@@ -353,7 +365,6 @@
     "pydantic-core",
     "pydeck",
     "pyflakes",
-    "pygithub",
     "pynacl",
     "pyopenssl",
     "pyproject-hooks",

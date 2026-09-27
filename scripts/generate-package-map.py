@@ -80,7 +80,6 @@ AUTO_PACKAGES = [
     "pyparsing",
     "pytest",
     "pytest-cov",
-    "python-dateutil",
     "pytz",
     "pyyaml",
     "redis",

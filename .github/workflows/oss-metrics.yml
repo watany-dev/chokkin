@@ -65,8 +65,8 @@ jobs:
       - name: Report
         env:
           LC_ALL: C
-        # The log gets the compact part only; the full scorecard (every
-        # finding) goes to the job summary and the artifact.
+        # The full scorecard lists every finding and outgrows the job summary
+        # limit, so it only goes to the artifact.
         run: |
           base=target/oss-metrics-baseline
           head=target/oss-metrics
@@ -88,16 +88,17 @@ jobs:
               <(awk -F'\t' 'NR>1 && $2=="CHK003" {print $1"\t"$3}' "$head/findings.tsv" | sort -u)
             echo '```'
             echo ""
-            echo "## Unclassified CHK002 / CHK003 on HEAD"
+            echo "## Unclassified CHK002 on HEAD"
             echo ""
             echo '```tsv'
-            awk -F'\t' 'NR>1 && ($2=="CHK002" || $2=="CHK003") && ($4=="unknown" || $4=="deferred")' \
-              "$head/findings.tsv"
+            awk -F'\t' 'NR>1 && $2=="CHK002" && ($4=="unknown" || $4=="deferred")' "$head/findings.tsv"
             echo '```'
+            echo ""
+            awk -F'\t' 'NR>1 && $2=="CHK003" && ($4=="unknown" || $4=="deferred") {n++}
+              END {print "Unclassified CHK003 on HEAD: " n+0}' "$head/findings.tsv"
             echo ""
             sed -n '/## Exit criteria/,/## Per-rule/p' "$head/report.md" | sed '$d'
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          cat "$head/report.md" >>"$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
