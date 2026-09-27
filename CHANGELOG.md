@@ -118,6 +118,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `workspace = true` dependency counts as used when a used workspace
   member's own files import a module from its tree (a root that ships
   `airflow-core` and `task-sdk` uses both, since core imports `airflow.sdk`).
+- JSON reporter: CHK003 / CHK004 issues now fill `distribution` with the
+  resolved distribution name (it was always `null`), and CHK003 / CHK004 /
+  CHK010 put only the imported module in `symbol` instead of
+  `"<path>:<line> <module>"`; the location stays in `file` / `line`.
+  `schema_version` stays `"1"`. `target`, fingerprints, baselines and SARIF are
+  unchanged. `--fix --add-missing` reads the distribution from the issue
+  instead of the explain text. Library API: `IssueSubject::Import` gains
+  `distribution: Option<String>` (#363).
 
 ## [0.4.1] - Unreleased
 

@@ -104,8 +104,8 @@ Each issue currently contains:
 | `file` | string or null | primary file location when known |
 | `line` | integer or null | primary file line when known |
 | `path` | string or null | file/import subject path when applicable |
-| `distribution` | string or null | dependency subject when applicable |
-| `symbol` | string or null | symbol/import subject when applicable |
+| `distribution` | string or null | dependency subject when applicable; for CHK003 / CHK004 import issues, the distribution the import resolved to |
+| `symbol` | string or null | symbol subject (`module:name`), or the imported dotted module for CHK003 / CHK004 / CHK010 |
 | `binary` | string or null | binary subject when applicable |
 | `manifest` | object or null | manifest origin with `file` and nullable `line` |
 
@@ -145,6 +145,19 @@ removed or renamed, `schema_version` stays `"1"`):
 Project-scope findings do not change shape; a distribution imported only by a
 script no longer appears as a project CHK003, so existing baselines may carry
 entries that no longer match.
+
+### Import subjects (v0.5)
+
+CHK003 / CHK004 / CHK010 point at an import site. Their JSON issue has `path`
+(the importing file), `symbol` (the imported dotted module, e.g.
+`google.cloud.storage`), and for CHK003 / CHK004 `distribution` (the
+distribution the resolver chose; `null` for CHK010). When several
+distributions share an import root, `distribution` is the one the resolver
+picked, which is also the one the message names and `[tool.chokkin.ignore]`
+matches. Before v0.5, `distribution` was always `null` and `symbol` was
+`"<path>:<line> <module>"`; the location is in `file` / `line`. `target` and
+the fingerprint (`<code>:<path>:<module>`) did not change, so baselines stay
+valid and `schema_version` stays `"1"`.
 
 ## SARIF Draft
 

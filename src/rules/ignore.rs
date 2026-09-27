@@ -9,17 +9,11 @@ use crate::parser::{IgnoreDirective, ParseSummary};
 use crate::resolver::ResolutionIndex;
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
 
-/// Import site (file, line, dotted module) used to recover a distribution name.
-type ImportSite = (String, u32, String);
-
 /// Compiled ignore matchers for config and source directives.
 #[derive(Debug)]
 pub struct IgnoreMatcher {
     config: BTreeMap<RuleId, Vec<String>>,
     directives: BTreeMap<String, Vec<IgnoreDirective>>,
-    // CHK003/CHK004 carry an `Import` subject, but §18 matches dependency rules
-    // on the distribution name, which only the resolver knows.
-    distributions: BTreeMap<ImportSite, String>,
     // CHK008 carries the binary name, but §18 names the (already normalized)
     // distribution it maps to.
     binary_distributions: BTreeMap<String, String>,
@@ -29,7 +23,7 @@ impl IgnoreMatcher {
     /// Build matchers from config, parsed modules, and resolved imports.
     ///
     /// Invalid glob patterns are skipped (config validation should catch most).
-    /// `resolution` supplies the distribution names that dependency-rule
+    /// `resolution` supplies the binary → distribution names that CHK008
     /// ignores match against (§18); pass `ResolutionIndex::default()` when it is
     /// not available.
     pub fn build(
@@ -56,20 +50,9 @@ impl IgnoreMatcher {
             directives.insert(module.path.clone(), module.ignores.clone());
         }
 
-        let mut distributions = BTreeMap::new();
-        for import in &resolution.imports {
-            if let Some(distribution) = &import.distribution {
-                distributions.insert(
-                    (import.file.clone(), import.line, import.full_module.clone()),
-                    distribution.clone(),
-                );
-            }
-        }
-
         Self {
             config: config_rules,
             directives,
-            distributions,
             binary_distributions: resolution.binary_resolutions.clone(),
         }
     }
@@ -90,20 +73,19 @@ impl IgnoreMatcher {
             return false;
         };
         let distribution = self.distribution_for(subject);
-        patterns.iter().any(|pattern| {
-            config_pattern_matches(rule, pattern, subject, file, distribution.as_deref())
-        })
+        patterns
+            .iter()
+            .any(|pattern| config_pattern_matches(rule, pattern, subject, file, distribution))
     }
 
     /// Distribution the candidate is really about, for `Import` and `Binary`
     /// subjects.
-    fn distribution_for(&self, subject: &IssueSubject) -> Option<String> {
+    fn distribution_for<'s>(&'s self, subject: &'s IssueSubject) -> Option<&'s str> {
         match subject {
-            IssueSubject::Import { module, file, line } => self
-                .distributions
-                .get(&(file.clone(), *line, module.clone()))
-                .cloned(),
-            IssueSubject::Binary { name } => self.binary_distributions.get(name).cloned(),
+            IssueSubject::Import { distribution, .. } => distribution.as_deref(),
+            IssueSubject::Binary { name } => {
+                self.binary_distributions.get(name).map(String::as_str)
+            },
             _ => None,
         }
     }
@@ -300,13 +282,14 @@ mod tests {
 
     const APP: &str = "src/acme/app.py";
 
-    fn import_candidate(rule: RuleId, module: &str) -> IssueCandidate {
+    fn import_candidate(rule: RuleId, module: &str, distribution: Option<&str>) -> IssueCandidate {
         IssueCandidate {
             rule,
             subject: IssueSubject::Import {
                 module: module.to_owned(),
                 file: APP.to_owned(),
                 line: 1,
+                distribution: distribution.map(str::to_owned),
             },
             severity: Severity::Error,
             confidence: crate::config::Confidence::Certain,
@@ -321,25 +304,6 @@ mod tests {
         }
     }
 
-    fn resolution_for(module: &str, distribution: &str) -> ResolutionIndex {
-        ResolutionIndex {
-            imports: vec![crate::resolver::ResolvedImport {
-                import_root: module.split('.').next().unwrap_or(module).to_owned(),
-                full_module: module.to_owned(),
-                file: APP.to_owned(),
-                workspace_member: None,
-                line: 1,
-                context: crate::parser::ImportContext::Runtime,
-                optional: false,
-                platform_guarded: false,
-                origin: crate::graph::ModuleOrigin::ThirdParty,
-                distribution: Some(distribution.to_owned()),
-                confidence: crate::resolver::ResolveConfidence::Certain,
-            }],
-            ..ResolutionIndex::default()
-        }
-    }
-
     fn ignores(patterns: &[&str], rule: RuleId, module: &str, distribution: &str) -> bool {
         let mut config = default_config();
         config.ignore.insert(
@@ -349,9 +313,10 @@ mod tests {
         let matcher = IgnoreMatcher::build(
             &config,
             &ParseSummary::default(),
-            &resolution_for(module, distribution),
+            &ResolutionIndex::default(),
         );
-        matcher.matches_candidate(&import_candidate(rule, module)) == Some(SuppressReason::Config)
+        matcher.matches_candidate(&import_candidate(rule, module, Some(distribution)))
+            == Some(SuppressReason::Config)
     }
 
     /// §18: dependency-rule ignores are distribution-name globs, even though
@@ -383,7 +348,7 @@ mod tests {
 
     /// Without a resolved distribution there is nothing to match against.
     #[test]
-    fn config_ignore_without_resolution_leaves_dependency_candidate() {
+    fn config_ignore_without_distribution_leaves_dependency_candidate() {
         let mut config = default_config();
         config
             .ignore
@@ -394,7 +359,7 @@ mod tests {
             &ResolutionIndex::default(),
         );
         assert_eq!(
-            matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml")),
+            matcher.matches_candidate(&import_candidate(RuleId::Chk003, "yaml", None)),
             None
         );
     }
@@ -471,6 +436,7 @@ mod tests {
                 module: "missing".to_owned(),
                 file: "src/acme/main.py".to_owned(),
                 line: 4,
+                distribution: None,
             },
             severity: Severity::Error,
             confidence: crate::config::Confidence::Certain,

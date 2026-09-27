@@ -28,7 +28,9 @@ pub fn format_subject(subject: &IssueSubject) -> String {
         IssueSubject::File { path } => path.clone(),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
-        IssueSubject::Import { module, file, line } => format!("{file}:{line} {module}"),
+        IssueSubject::Import {
+            module, file, line, ..
+        } => format!("{file}:{line} {module}"),
         IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
     }
 }
@@ -107,6 +109,7 @@ mod tests {
                 module: "requests".to_owned(),
                 file: "services/api/src/api/main.py".to_owned(),
                 line: 1,
+                distribution: Some("requests".to_owned()),
             },
             explain: None,
         };

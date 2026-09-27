@@ -231,11 +231,10 @@ fn plan_add_missing_to_manifest(
 }
 
 fn missing_distribution_name(issue: &Issue) -> Option<String> {
-    issue
-        .explain
-        .as_ref()
-        .and_then(|explain| explain.summary.split_whitespace().next())
-        .map(crate::manifest::normalize_distribution_name)
+    match &issue.subject {
+        IssueSubject::Import { distribution, .. } => distribution.clone(),
+        _ => None,
+    }
 }
 
 fn plan_remove_file(issue: &Issue, options: FixOptions) -> Result<Option<FixAction>, SkippedFix> {
@@ -490,6 +489,7 @@ mod tests {
                 module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
                 line: 1,
+                distribution: Some("pyyaml".to_owned()),
             },
             explain: Some(ExplainData {
                 summary: "pyyaml is imported but not declared".to_owned(),
@@ -542,6 +542,7 @@ mod tests {
                 module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
                 line: 1,
+                distribution: Some("pyyaml".to_owned()),
             },
             explain: Some(ExplainData {
                 summary: "pyyaml is imported but not declared".to_owned(),
@@ -588,6 +589,7 @@ mod tests {
                 module: "yaml".to_owned(),
                 file: "services/api/src/app.py".to_owned(),
                 line: 1,
+                distribution: Some("pyyaml".to_owned()),
             },
             explain: Some(ExplainData {
                 summary: "pyyaml is imported but not declared".to_owned(),

@@ -96,11 +96,17 @@ fn json_issue(issue: &Issue) -> JsonIssue<'_> {
             (None, None, Some(format!("{module}:{name}")), None)
         },
         IssueSubject::Binary { name } => (None, None, None, Some(name.as_str())),
-        IssueSubject::Import { module, file, line } => {
-            let path = normalize_rel_path(Path::new(file));
-            let symbol = format!("{path}:{line} {module}");
-            (Some(path), None, Some(symbol), None)
-        },
+        IssueSubject::Import {
+            module,
+            file,
+            distribution,
+            ..
+        } => (
+            Some(normalize_rel_path(Path::new(file))),
+            distribution.as_deref(),
+            Some(module.clone()),
+            None,
+        ),
         IssueSubject::ScriptDistribution { script, name } => (
             Some(normalize_rel_path(Path::new(script))),
             Some(name.as_str()),
