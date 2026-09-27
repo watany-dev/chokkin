@@ -118,6 +118,12 @@ scripts/oss-metrics.sh -b ../chokkin-573ff37/target/release/chokkin -o target/os
 make oss-metrics
 ```
 
+`.github/workflows/oss-metrics.yml` runs the same steps on GitHub Actions
+(`workflow_dispatch`, or a push that touches the corpus / labels / scripts),
+prints the table below and the unclassified HEAD findings to the job summary,
+and fails unless the §17 Phase 4 gate passes and the CHK003 total does not grow
+over `573ff37`.
+
 | Corpus | Build | CHK002 | CHK003 | Unclassified CHK002 | Unclassified CHK003 |
 |---|---|---|---|---|---|
 | 20-project set | `573ff37` | pending | pending | pending | pending |
