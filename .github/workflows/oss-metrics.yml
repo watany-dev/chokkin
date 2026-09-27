@@ -94,6 +94,12 @@ jobs:
             awk -F'\t' 'NR>1 && $2=="CHK002" && ($4=="unknown" || $4=="deferred")' "$head/findings.tsv"
             echo '```'
             echo ""
+            echo "## CHK002 fp on HEAD"
+            echo ""
+            echo '```tsv'
+            awk -F'\t' 'NR>1 && $2=="CHK002" && $4=="fp"' "$head/findings.tsv"
+            echo '```'
+            echo ""
             awk -F'\t' 'NR>1 && $2=="CHK003" && ($4=="unknown" || $4=="deferred") {n++}
               END {print "Unclassified CHK003 on HEAD: " n+0}' "$head/findings.tsv"
             echo ""
