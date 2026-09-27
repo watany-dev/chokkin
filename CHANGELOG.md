@@ -152,6 +152,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set when unbounded). `tomllib` behind a `sys.version_info` guard in a
   `>=3.10` project is no longer a CHK010. An unguarded `import tomllib` there
   is no longer reported either (#358).
+- An import root with `_` or capitals that no map names (e.g. a local
+  `e2e_config`) no longer turns into a guessed third-party distribution
+  (`e2e-config`) that hid the CHK010. It resolves only when a declared or
+  locked distribution (including the importing file's PEP 723 block or
+  workspace member manifest) has the same normalized name (`import foo_bar`
+  with `Foo_Bar` declared); otherwise it is CHK010 (#361).
 
 ## [0.4.1] - Unreleased
 

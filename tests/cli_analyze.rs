@@ -387,6 +387,48 @@ fn binary_pep723_script_findings_follow_baseline_and_config_ignore() {
     );
 }
 
+#[test]
+fn binary_scoped_declarations_resolve_normalized_roots() {
+    // The PEP 723 block and the member manifest declare these names for their
+    // own files only; the root manifest and lockfile know neither (#361).
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"scoped-root\"\nversion = \"0.1.0\"\n\n[project.scripts]\napi-cli = \"api.main:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+        ),
+        (
+            "services/api/pyproject.toml",
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\ndependencies = [\"Member_Dep\"]\n",
+        ),
+        ("services/api/src/api/__init__.py", ""),
+        (
+            "services/api/src/api/main.py",
+            "import member_dep\n\n\ndef main() -> None:\n    member_dep.run()\n",
+        ),
+        (
+            "scripts/tool.py",
+            "# /// script\n# dependencies = [\"Foo_Bar\"]\n# ///\nimport foo_bar\nimport other_local_mod\n\nfoo_bar.run(other_local_mod)\n",
+        ),
+    ];
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create dir");
+        }
+        fs::write(path, text).expect("write fixture");
+    }
+
+    let keys = issue_keys(&json_issues(temp.path(), &[]));
+    let unresolved = |root: &str| {
+        keys.iter()
+            .any(|(code, target)| code == "CHK010" && target.ends_with(root))
+    };
+    assert!(unresolved("other_local_mod"), "{keys:?}");
+    assert!(!unresolved("foo_bar"), "{keys:?}");
+    assert!(!unresolved("member_dep"), "{keys:?}");
+}
+
 fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
