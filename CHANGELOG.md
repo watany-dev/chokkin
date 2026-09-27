@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses (#352). Parse cache unit bumped to `parse-v9`.
 
 ### Fixed
+- The bundled package map no longer maps distributions to import names they
+  do not ship (`pynacl` -> `nacl`, `pyzmq` -> `zmq`, `dnspython` -> `dns`,
+  `attrs` -> `attr`, `setuptools` -> `pkg_resources`, and 12 more), and adds
+  `azure-*` / `opentelemetry-exporter-*` namespace entries plus `vertexai`,
+  `a2a`, `vcr`, `ddtrace`, `onelogin` and `ulid`, so these no longer raise
+  CHK010 / CHK002 without a venv. `generate-package-map.py --verify-wheels`
+  checks every entry against the latest PyPI wheel (#362).
 - Reachability (#266): `import pkg.sub.mod` (static, dynamic literal or
   plugin module reference) now also reaches the parent packages'
   `__init__.py` files. Framework-glob files such as Django migrations are

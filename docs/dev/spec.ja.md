@@ -358,6 +358,8 @@ PEP 723 script の CHK002/CHK003 は script block に対して判定する。scr
 
 `google` / `opentelemetry` / `databricks` のように複数 distribution が共有する namespace package は root だけでは決まらないため、root が third-party / unknown に分類された import は、user map と bundled map の dotted key(`google.protobuf`、`opentelemetry.sdk` など、2 segment 以上)を import 先の module 名(`from a.b import c` は `a.b.c`)に対して最長一致で引き、見つかればその distribution で上書きする。first-party root(`poetry` に対する `poetry.core` など)も、一致した dotted module が project 内のどのファイルにも無い場合に限り同様に上書きする。
 
+`azure` のように root 自体を提供する distribution が無い namespace は dotted key(`azure.identity` など)だけを bundled map に載せ、未登録の sub-package を任意の 1 distribution に誤って寄せない。bundled map は `data/package-map.seed.json` から `scripts/generate-package-map.py` で生成し、`--verify-wheels`(ネットワーク必須、CI 対象外)で各 entry の import 名を PyPI 最新 wheel の `top_level.txt` / RECORD と照合する。
+
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 
 Core Metadata 2.5(PEP 794、2025年9月承認)には `Import-Name` と `Import-Namespace` が定義されており、distributionが提供するimport名を表す。ただし承認直後でエコシステムへの普及はこれからであり、当面はこのfieldを持つpackageがほぼ存在しない。したがって現時点ではbundled package-module-mapと `.venv` metadataを主情報源とし、`Import-Name` は普及に応じて優先度を上げていく将来の主情報源と位置付ける。
