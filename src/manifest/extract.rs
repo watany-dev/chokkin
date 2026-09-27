@@ -2,8 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use pep508_rs::pep440_rs::{Operator, VersionSpecifiers};
-
 use crate::VERSION;
 use crate::cache::{
     CacheKeyContext, CacheOptions, ScanCacheKey, ScanInputFingerprints, stable_hex_hash,
@@ -13,6 +11,7 @@ use crate::discovery::ProjectRoot;
 
 use super::error::ManifestError;
 use super::lockfile::extract_lockfile;
+use super::pep508::{Operator, parse_version_specifiers};
 use super::pyproject::extract_pyproject;
 use super::requirements::extract_requirements_file;
 use super::setup_cfg::extract_setup_cfg;
@@ -264,12 +263,12 @@ pub fn resolve_target_version(config: &ChokkinConfig, manifest: &LoadedManifest)
 
 /// Effective lower bound of `requires-python`: the highest `>=`/`>`/`~=`/`==` release.
 pub fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
-    let specifiers: VersionSpecifiers = specifier.parse().ok()?;
+    let specifiers = parse_version_specifiers(specifier)?;
     let (major, minor) = specifiers
         .iter()
         .filter(|spec| {
             matches!(
-                spec.operator(),
+                spec.operator,
                 Operator::GreaterThanEqual
                     | Operator::GreaterThan
                     | Operator::TildeEqual
@@ -279,7 +278,7 @@ pub fn infer_target_version_from_requires_python(specifier: &str) -> Option<Targ
             )
         })
         .map(|spec| {
-            let release = spec.version().release();
+            let release = &spec.release;
             (
                 release.first().copied().unwrap_or(0),
                 release.get(1).copied().unwrap_or(0),

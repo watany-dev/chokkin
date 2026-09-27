@@ -1,5 +1,3 @@
-#![allow(clippy::multiple_crate_versions)] // pep508_rs depends on thiserror 1.x
-
 //! `chokkin` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
