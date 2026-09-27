@@ -77,8 +77,13 @@ pub fn resolve_imports_with_script_targets(
             if import.module.is_empty() {
                 continue;
             }
+            let imported = import.name.as_ref().map_or_else(
+                || import.module.clone(),
+                |name| format!("{}.{name}", import.module),
+            );
             imports.push(resolve_import_site(
                 &import.module,
+                &imported,
                 &module.path,
                 import.line,
                 import.context,
@@ -97,6 +102,7 @@ pub fn resolve_imports_with_script_targets(
         }
         for dynamic in &module.dynamic_imports {
             imports.push(resolve_import_site(
+                &dynamic.module,
                 &dynamic.module,
                 &module.path,
                 dynamic.line,
@@ -118,6 +124,7 @@ pub fn resolve_imports_with_script_targets(
 
     for reference in plugin_refs {
         imports.push(resolve_import_site(
+            &reference.module,
             &reference.module,
             &reference.origin.file,
             reference.origin.line.unwrap_or(0),
@@ -165,6 +172,7 @@ struct RootResolution {
 #[allow(clippy::too_many_arguments)]
 fn resolve_import_site(
     full_module: &str,
+    imported: &str,
     file: &str,
     line: u32,
     context: ImportContext,
@@ -197,6 +205,19 @@ fn resolve_import_site(
             )
         })
         .clone();
+    let core = match core.origin {
+        ModuleOrigin::ThirdParty | ModuleOrigin::Unknown => import_map
+            .namespace_candidates(imported)
+            .map_or(core, |(distributions, confidence)| {
+                root_resolution_from_candidates(
+                    &root_name,
+                    &distributions,
+                    Some(confidence),
+                    warnings,
+                )
+            }),
+        ModuleOrigin::FirstParty | ModuleOrigin::Stdlib => core,
+    };
 
     if core.origin == ModuleOrigin::Unknown {
         warnings.push(ResolveWarning::UnresolvedImport {

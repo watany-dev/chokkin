@@ -159,6 +159,7 @@ type_groups = ["types", "typing", "mypy"]
 [tool.chokkin.package_module_map]
 "PyYAML" = ["yaml"]
 "Pillow" = ["PIL"]
+"protobuf" = ["google.protobuf"]  # namespace package 配下は dotted name で1つの distribution に絞れる
 
 # CLI名 -> distribution名。CHK008/CHK002のbinary usage判定に使う
 [tool.chokkin.binary_map]

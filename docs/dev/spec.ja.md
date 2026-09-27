@@ -239,6 +239,8 @@ type_groups = ["types", "typing", "mypy"]
 "Pillow" = ["PIL"]
 "python-dotenv" = ["dotenv"]
 "scikit-learn" = ["sklearn"]
+# namespace package の配下は dotted name で指定できる(最長一致)
+"protobuf" = ["google.protobuf"]
 
 [tool.chokkin.binary_map]
 # CLI名 -> distribution名。CHK008/CHK002のbinary usage判定に使う
@@ -353,6 +355,8 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 ```
 
 PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root も、block が同名を宣言していれば使用とみなす。
+
+`google` / `opentelemetry` / `databricks` のように複数 distribution が共有する namespace package は root だけでは決まらないため、root が third-party / unknown に分類された import は、user map と bundled map の dotted key(`google.protobuf`、`opentelemetry.sdk` など、2 segment 以上)を import 先の module 名(`from a.b import c` は `a.b.c`)に対して最長一致で引き、見つかればその distribution で上書きする。
 
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 
