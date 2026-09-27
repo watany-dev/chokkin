@@ -115,6 +115,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lazily loaded command modules and their imports count as used. In a PEP 723
   script that imports `subprocess`, a declared dependency named by the first
   word of a command-line string literal (`"ruff format ..."`) counts as used.
+- A `workspace = true` dependency counts as used when a used workspace
+  member's own files import a module from its tree (a root that ships
+  `airflow-core` and `task-sdk` uses both, since core imports `airflow.sdk`).
 
 ## [0.4.1] - Unreleased
 

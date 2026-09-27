@@ -83,7 +83,9 @@ pub(super) fn collect_used_distributions(
 /// carry no distribution; match them back by normalized import name, or by
 /// the member tree that holds the imported module (`airflow` from
 /// `airflow-core/src/airflow` uses `apache-airflow-core`). The manifest's own
-/// entry point targets count as such imports too.
+/// entry point targets count as such imports too, and so do the first-party
+/// imports of a used member's own files: `airflow-core` importing `airflow.sdk`
+/// uses `apache-airflow-task-sdk`, since the root ships both trees.
 pub(super) fn mark_workspace_source_distributions(
     manifest: &LoadedManifest,
     context: &RuleContext<'_>,
@@ -117,26 +119,54 @@ pub(super) fn mark_workspace_source_distributions(
         .iter()
         .filter_map(|entry| entry.target.split(':').next())
         .map(str::trim);
-    let modules: HashSet<&str> = first_party.iter().copied().chain(entry_modules).collect();
+    let mut modules: HashSet<&str> = first_party.iter().copied().chain(entry_modules).collect();
+    let mut pending = Vec::new();
     for boundary in workspace_boundaries {
         let Some(name) = boundary.manifest.metadata.name.as_deref() else {
             continue;
         };
         let name = normalize_distribution_name(name);
-        if used.contains(&name)
-            || !declared.contains(&name)
-            || !manifest.uv.is_workspace_source(&name)
-        {
+        if !declared.contains(&name) || !manifest.uv.is_workspace_source(&name) {
             continue;
         }
         let Some(member_path) = member_path(manifest, boundary.manifest) else {
             continue;
         };
         let provided = member_modules(&member_path, &context.sources.files);
-        if modules.iter().any(|module| provided.contains(*module)) {
+        pending.push((name, member_path, provided));
+    }
+
+    loop {
+        let (now_used, rest): (Vec<_>, Vec<_>) =
+            pending.into_iter().partition(|(name, _, provided)| {
+                used.contains(name) || modules.iter().any(|module| provided.contains(*module))
+            });
+        pending = rest;
+        if now_used.is_empty() {
+            break;
+        }
+        for (name, member_path, _) in now_used {
+            if !member_path.is_empty() {
+                modules.extend(member_first_party_imports(context.resolution, &member_path));
+            }
             used.insert(name);
         }
     }
+}
+
+/// First-party modules imported by files under a non-root member tree.
+fn member_first_party_imports<'a>(
+    resolution: &'a ResolutionIndex,
+    member_path: &str,
+) -> impl Iterator<Item = &'a str> + use<'a> {
+    let prefix = format!("{member_path}/");
+    resolution
+        .imports
+        .iter()
+        .filter(move |import| {
+            import.origin == ModuleOrigin::FirstParty && import.file.starts_with(&prefix)
+        })
+        .map(|import| import.full_module.as_str())
 }
 
 /// Root-relative `/` path of a workspace member; empty for the root itself.
@@ -388,5 +418,47 @@ mod tests {
         assert!(!modules.contains("utils"));
         assert!(!modules.contains("models"));
         assert!(!modules.contains("airflow.sdk"));
+    }
+
+    #[test]
+    fn member_first_party_imports_stay_in_member_tree() {
+        let import = |file: &str, module: &str, origin: ModuleOrigin| ResolvedImport {
+            import_root: import_root(module).to_owned(),
+            full_module: module.to_owned(),
+            file: file.to_owned(),
+            workspace_member: None,
+            line: 1,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            origin,
+            distribution: None,
+            confidence: ResolveConfidence::Certain,
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![
+                import(
+                    "airflow-core/src/airflow/models/dag.py",
+                    "airflow.sdk",
+                    ModuleOrigin::FirstParty,
+                ),
+                import(
+                    "airflow-core/src/airflow/models/dag.py",
+                    "yaml",
+                    ModuleOrigin::ThirdParty,
+                ),
+                import(
+                    "airflow-core-extra/src/extra.py",
+                    "extra.api",
+                    ModuleOrigin::FirstParty,
+                ),
+            ],
+            warnings: Vec::new(),
+            transitive: TransitiveIndex::default(),
+            binary_resolutions: BTreeMap::new(),
+            pytest_plugin_distributions: std::collections::BTreeSet::new(),
+        };
+        let modules: Vec<&str> = member_first_party_imports(&resolution, "airflow-core").collect();
+        assert_eq!(modules, ["airflow.sdk"]);
     }
 }

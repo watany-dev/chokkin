@@ -11,7 +11,7 @@
 #   note          short justification (how it was verified)
 #
 # Bucket vocabulary (CHK003 fp/deferred): map-gap | workspace-boundary | optional-import |
-# dev-context | transitive-policy | metadata-gap
+# dev-context | transitive-policy | metadata-gap | first-party
 #
 # scripts/oss-metrics.sh matches findings on (slug, code, target).
 # Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
@@ -1167,6 +1167,19 @@ fastmcp	CHK003	script:examples/memory.py:pydantic-ai	fp	map-gap	block declares p
 fastmcp	CHK003	script:examples/providers/sqlite/server.py:rich	tp	-	imports rich directly; only transitively installed via fastmcp
 fastmcp	CHK003	script:examples/text_me.py:pydantic	tp	-	imports pydantic directly; only transitively installed via fastmcp
 fastmcp	CHK003	script:examples/text_me.py:pydantic-settings	tp	-	imports pydantic_settings directly; only transitively installed via fastmcp
+fastmcp	CHK003	script:examples/memory.py:openai	tp	-	imports openai directly; only transitively installed via the pydantic-ai-slim[openai] extra
+fastmcp	CHK003	script:examples/text_me.py:httpx2	tp	-	imports httpx2; the block only declares fastmcp
+mlflow	CHK003	mlflow/langchain/chat_agent_langgraph.py:langgraph.prebuilt	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/chat_agent_langgraph.py:langgraph.prebuilt.tool_node	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/databricks_dependencies.py:langgraph.prebuilt	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/databricks_dependencies.py:langgraph.prebuilt.tool_node	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/databricks_dependencies.py:langgraph.utils.runnable	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/utils/chat.py:langgraph.graph.state	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/utils/logging.py:langgraph.graph.state	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/protos/unity_catalog_prompt_messages_pb2_grpc.py:grpc._utilities	tp	-	generated code try-imports grpc._utilities; grpcio is not declared
+mlflow	CHK003	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:grpc._utilities	tp	-	generated code try-imports grpc._utilities; grpcio is not declared
+mlflow	CHK003	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:unity_catalog_prompt_messages_pb2	fp	first-party	generated absolute import of the sibling mlflow/protos/unity_catalog_prompt_messages_pb2.py, not a distribution
+mlflow	CHK003	mlflow/pytest/plugin.py:_pytest.outcomes	deferred	dev-context	pytest plugin shipped in the package; pytest is only in a dependency group
 
 # R-01..R-07 corpus (#323): CHK002 on HEAD (tp verified by grep; fp rows cover findings the fixes should remove)
 airflow	CHK002	apache-airflow-core	fp	-	workspace member used through its member tree / entry points
