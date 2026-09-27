@@ -1,6 +1,6 @@
 //! Full project analysis orchestration (pipeline steps 1–13).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
@@ -9,10 +9,13 @@ use crate::config::RuntimeOverrides;
 use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
+use crate::manifest::{DeclaredDependency, normalize_distribution_name};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability, apply_public_surface};
-use crate::resolver::{apply_resolution_to_graph, resolve_imports_with_script_targets};
+use crate::resolver::{
+    ScopedDeclarations, StdlibRange, apply_resolution_to_graph, resolve_imports_for_analysis,
+};
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
@@ -199,9 +202,13 @@ fn run_analysis_core(
     let script_targets: BTreeMap<_, _> = probe
         .scripts
         .iter()
-        .filter_map(|script| Some((script.path.clone(), script.target_version.clone()?)))
+        .filter_map(|script| {
+            let target = script.target_version.as_ref()?;
+            let range = StdlibRange::new(target, script.requires_python.as_deref());
+            Some((script.path.clone(), range))
+        })
         .collect();
-    let resolution = resolve_imports_with_script_targets(
+    let resolution = resolve_imports_for_analysis(
         &probe.effective_config,
         &probe.manifest,
         &probe.sources,
@@ -209,6 +216,7 @@ fn run_analysis_core(
         &plugin_refs,
         &probe.workspace_members,
         &script_targets,
+        &scoped_declarations(probe),
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
     apply_entry_plan(&mut graph, &entry);
@@ -286,6 +294,31 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
+    let names = |dependencies: &[DeclaredDependency]| {
+        dependencies
+            .iter()
+            .map(|dep| normalize_distribution_name(&dep.name))
+            .collect::<BTreeSet<_>>()
+    };
+    ScopedDeclarations {
+        scripts: probe
+            .scripts
+            .iter()
+            .map(|script| (script.path.clone(), names(&script.dependencies)))
+            .collect(),
+        members: probe
+            .workspace_inputs
+            .iter()
+            .map(|input| {
+                let mut declared = names(&input.manifest.dependencies);
+                declared.extend(input.manifest.lockfile.edges.keys().cloned());
+                (input.member.id.clone(), declared)
+            })
+            .collect(),
+    }
 }
 
 fn build_analysis_graph(

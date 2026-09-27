@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use chokkin::resolver::StdlibRange;
 use chokkin::{
     ModuleOrigin, ProjectRoot, ResolveConfidence, RootMarker, discover_project_root,
     discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
@@ -138,7 +139,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
         ),
         ("app.py", "import tomllib\n".to_owned()),
         ("scripts/new.py", block(">=3.11")),
-        ("scripts/old.py", block(">=3.10")),
+        ("scripts/old.py", block(">=3.10,<3.11")),
     ] {
         std::fs::write(temp.path().join(file), text).expect("write fixture");
     }
@@ -157,7 +158,11 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
     assert!(warnings.is_empty());
     let script_targets: BTreeMap<_, _> = scripts
         .iter()
-        .filter_map(|script| Some((script.path.clone(), script.target_version.clone()?)))
+        .filter_map(|script| {
+            let target = script.target_version.as_ref()?;
+            let range = StdlibRange::new(target, script.requires_python.as_deref());
+            Some((script.path.clone(), range))
+        })
         .collect();
     let index = chokkin::resolver::resolve_imports_with_script_targets(
         &loaded.effective,
@@ -178,7 +183,8 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
 
     assert_eq!(tomllib_in("scripts/new.py").origin, ModuleOrigin::Stdlib);
     assert_ne!(tomllib_in("scripts/old.py").origin, ModuleOrigin::Stdlib);
-    assert_ne!(tomllib_in("app.py").origin, ModuleOrigin::Stdlib);
+    // #358: `>=3.10` also covers 3.11+, where `tomllib` is stdlib.
+    assert_eq!(tomllib_in("app.py").origin, ModuleOrigin::Stdlib);
 }
 
 /// Write a throwaway project: a checked-in copy would be analyzed by the
@@ -299,4 +305,47 @@ fn declared_distribution_named_like_the_import_resolves_without_map_entry() {
     assert_eq!(root("openai").origin, ModuleOrigin::ThirdParty);
     assert_eq!(root("openai").distribution.as_deref(), Some("openai"));
     assert_eq!(root("notdeclaredpkg").origin, ModuleOrigin::Unknown);
+}
+
+#[test]
+fn normalized_root_resolves_only_through_a_declared_or_locked_name() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"normalized-demo\"\nversion = \"0.1.0\"\ndependencies = [\"Foo_Bar\"]\n",
+        ),
+        (
+            "uv.lock",
+            "version = 1\n\n[[package]]\nname = \"foo-bar\"\nversion = \"1.0\"\ndependencies = [{ name = \"locked-only\" }]\n\n[[package]]\nname = \"locked-only\"\nversion = \"1.0\"\n",
+        ),
+        (
+            "app.py",
+            "import foo_bar\nimport Locked_Only\nimport e2e_config\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let root = |name: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == name)
+            .map_or_else(
+                || panic!("{name} import"),
+                |resolved| (resolved.origin, resolved.distribution.clone()),
+            )
+    };
+
+    assert_eq!(
+        root("foo_bar"),
+        (ModuleOrigin::ThirdParty, Some("foo-bar".to_owned()))
+    );
+    assert_eq!(
+        root("Locked_Only"),
+        (ModuleOrigin::ThirdParty, Some("locked-only".to_owned()))
+    );
+    assert_eq!(root("e2e_config"), (ModuleOrigin::Unknown, None));
+    assert!(index.warnings.iter().any(|warning| matches!(
+        warning,
+        chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "e2e_config"
+    )));
 }

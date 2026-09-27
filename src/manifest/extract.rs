@@ -288,6 +288,34 @@ pub fn infer_target_version_from_requires_python(specifier: &str) -> Option<Targ
     TargetVersion::parse(&format!("py{major}{minor:02}"))
 }
 
+/// Highest Python 3 minor `requires-python` allows, from `<`/`<=`/`==`/`~=`
+/// bounds. `None` when no bound caps the 3.x minor (or the specifier is invalid).
+pub fn requires_python_max_minor(specifier: &str) -> Option<u32> {
+    let specifiers: VersionSpecifiers = specifier.parse().ok()?;
+    specifiers
+        .iter()
+        .filter_map(|spec| {
+            let release = spec.version().release();
+            if release.first() != Some(&3) {
+                return None;
+            }
+            let minor = u32::try_from(release.get(1).copied().unwrap_or(0)).ok()?;
+            let has_patch = release.iter().skip(2).any(|part| *part > 0);
+            match spec.operator() {
+                Operator::LessThan if has_patch => Some(minor),
+                Operator::LessThan => Some(minor.saturating_sub(1)),
+                Operator::LessThanEqual
+                | Operator::Equal
+                | Operator::EqualStar
+                | Operator::ExactEqual => Some(minor),
+                // `~=3.11` only pins the major; `~=3.11.2` pins the minor.
+                Operator::TildeEqual if release.len() > 2 => Some(minor),
+                _ => None,
+            }
+        })
+        .min()
+}
+
 fn merge_metadata(
     mut base: ProjectMetadata,
     overlay: ProjectMetadata,
@@ -387,6 +415,19 @@ mod tests {
     fn ignores_upper_bounds_and_rejects_invalid_specifier() {
         assert!(infer_target_version_from_requires_python("<3.13,!=3.9.*").is_none());
         assert!(infer_target_version_from_requires_python("not a specifier").is_none());
+    }
+
+    #[test]
+    fn reads_highest_allowed_minor_from_requires_python() {
+        assert_eq!(requires_python_max_minor(">=3.10,<3.15"), Some(14));
+        assert_eq!(requires_python_max_minor(">=3.10,<3.12.1"), Some(12));
+        assert_eq!(requires_python_max_minor("<=3.12,<3.14"), Some(12));
+        assert_eq!(requires_python_max_minor("==3.11.*"), Some(11));
+        assert_eq!(requires_python_max_minor("~=3.11.2"), Some(11));
+        assert_eq!(requires_python_max_minor("~=3.11"), None);
+        assert_eq!(requires_python_max_minor(">=3.10,<4"), None);
+        assert_eq!(requires_python_max_minor(">=3.10"), None);
+        assert_eq!(requires_python_max_minor("not a specifier"), None);
     }
 
     #[test]

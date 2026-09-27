@@ -10,9 +10,10 @@ use crate::parser::ImportContext;
 pub enum ResolveConfidence {
     /// Stdlib, first-party, venv metadata, or unique bundled match.
     Certain,
-    /// User-provided `package_module_map`.
+    /// User-provided `package_module_map`, or a declared / locked
+    /// distribution whose normalized name matches the import root.
     Likely,
-    /// Canonicalize fallback or ambiguous candidates.
+    /// Ambiguous candidates, or a root that did not resolve at all.
     Maybe,
 }
 

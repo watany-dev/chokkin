@@ -23,6 +23,7 @@ mod warnings;
 mod wheel;
 
 pub use error::ManifestError;
+pub(crate) use extract::requires_python_max_minor;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub(crate) use lockfile::lockfile_candidates;
 pub use pep508_util::normalize_distribution_name;

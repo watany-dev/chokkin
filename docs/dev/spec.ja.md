@@ -344,14 +344,14 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 解決戦略は多層にする。
 
 ```text
-1. stdlib判定 (`target_version` に応じた bundled リスト: `resolver/stdlib/py310.txt` 〜 `py313.txt`。各版の `sys.stdlib_module_names` から `scripts/generate-stdlib-modules.py` で再生成。3.9以前はpy310、3.14以降はpy313のリストを使う)
+1. stdlib判定 (bundled リスト `resolver/stdlib/py310.txt` 〜 `py313.txt`。各版の `sys.stdlib_module_names` から `scripts/generate-stdlib-modules.py` で再生成。`target_version` から `requires-python` の上限 minor (上限なしなら最新 bundled) までのいずれかで stdlib なら stdlib。`sys.version_info` ガード下の `tomllib` 等を誤検出しないため)
 2. first-party module判定
 3. workspace member判定
 4. local .venv の dist-info / METADATA / top_level.txt / RECORD を読む
 5. Core Metadata の Import-Name / Import-Namespace を読む
 6. bundled package-module-map を使う
 7. user-defined package_module_map を使う
-8. 最後に PEP 503 `normalize_distribution_name` で推定(import root が既に正規化済みの場合は skip。ただし manifest が同名の dependency を宣言していれば、その distribution とみなす(confidence `Maybe`))
+8. 最後に import root を PEP 503 `normalize_distribution_name` で正規化し、manifest の宣言依存か lockfile の package(import したファイルの PEP 723 script block・所属 workspace member の manifest / lockfile も含む)に同じ正規化名があればその distribution とみなす(confidence `Likely`。`import foo_bar` と宣言 `Foo_Bar` など)。一致しなければ推測はせず `Unknown`(CHK010)にする。綴りだけでは third-party と決めない(#361)
 ```
 
 PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root と first-party の import root(project 同梱の script が `uv run` で index から自 project を入れるケース)も、block が同名を宣言していれば使用とみなす。`[sys.executable, <file>, ...]` で別 file を実行する script は、子 process が block の環境を共有し import を追えないため script の CHK002 を出さない。`subprocess` を import する script では、複数語の文字列 literal(`"ruff format ..."`)の先頭語をコマンド名とみなし、同名の宣言依存を使用として数える。
@@ -607,7 +607,8 @@ entry  : script file 自体を entry root (origin: script) にする。script �
          project manifest の CHK002/CHK003/CHK005 判定からは除外する
          script 経由の first-party import とその先の file は従来どおり project scope
 target : script の `requires-python` 下限を、その file の parse と stdlib 判定の
-         target version にする。未指定なら project の target version
+         target version にする (stdlib 判定の上限も script の `requires-python`)。
+         未指定なら project の target version
 report : subject は `script:<path>:<distribution>`。CHK003 は Error/certain
          (optional / platform-guarded import は対象外)。CHK002 は project CHK002 と
          同じく marker 付きを default で除外し、--strict で報告する

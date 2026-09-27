@@ -1,6 +1,6 @@
 //! Import resolution orchestration.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
@@ -11,7 +11,7 @@ use crate::sources::{DiscoveredFile, DiscoveredSources};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
-use super::stdlib::is_stdlib_import;
+use super::stdlib::StdlibRange;
 use super::types::{
     ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
     import_root,
@@ -43,12 +43,12 @@ pub fn resolve_imports(
     )
 }
 
-/// [`resolve_imports`] with per-file target versions for PEP 723 scripts.
+/// [`resolve_imports`] with per-file stdlib ranges for PEP 723 scripts.
 ///
 /// A script's `requires-python` decides which modules are stdlib for the
-/// imports in that file; every other file uses the project target.
+/// imports in that file; every other file uses the project range.
 #[must_use]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_imports_with_script_targets(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
@@ -56,12 +56,47 @@ pub fn resolve_imports_with_script_targets(
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
     workspace_members: &[ResolvedWorkspaceMember],
-    script_targets: &BTreeMap<String, TargetVersion>,
+    script_targets: &BTreeMap<String, StdlibRange>,
+) -> ResolutionIndex {
+    resolve_imports_for_analysis(
+        config,
+        manifest,
+        sources,
+        parse,
+        plugin_refs,
+        workspace_members,
+        script_targets,
+        &ScopedDeclarations::default(),
+    )
+}
+
+/// Distributions declared outside the root manifest, for the files they cover.
+#[derive(Debug, Default)]
+pub struct ScopedDeclarations {
+    /// PEP 723 script path → normalized names its block declares.
+    pub scripts: BTreeMap<String, BTreeSet<String>>,
+    /// Workspace member id → normalized names its manifest declares or locks.
+    pub members: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// [`resolve_imports_with_script_targets`] that also resolves an unmapped
+/// root through the script block or member manifest owning the file.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn resolve_imports_for_analysis(
+    config: &ChokkinConfig,
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+    parse: &ParseSummary,
+    plugin_refs: &[ModuleReference],
+    workspace_members: &[ResolvedWorkspaceMember],
+    script_targets: &BTreeMap<String, StdlibRange>,
+    scoped: &ScopedDeclarations,
 ) -> ResolutionIndex {
     let target = config
         .target_version
         .as_ref()
         .map_or_else(TargetVersion::default_py311, Clone::clone);
+    let stdlib = StdlibRange::new(&target, manifest.metadata.requires_python.as_deref());
 
     let import_map = ImportMap::build(config)
         .with_local_sources(path_source_imports(&manifest.root.path, &manifest.uv));
@@ -72,7 +107,7 @@ pub fn resolve_imports_with_script_targets(
     let mut root_cache: RootCache = BTreeMap::new();
 
     for module in &parse.modules {
-        let file_target = script_targets.get(&module.path).unwrap_or(&target);
+        let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
         for import in &module.imports {
             if import.module.is_empty() {
                 continue;
@@ -89,13 +124,14 @@ pub fn resolve_imports_with_script_targets(
                 import.context,
                 import.optional,
                 import.platform_guarded,
-                file_target,
+                file_stdlib,
                 sources,
                 manifest,
                 config,
                 workspace_members,
                 &import_map,
                 &venv_index.imports,
+                scoped,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -109,13 +145,14 @@ pub fn resolve_imports_with_script_targets(
                 ImportContext::Runtime,
                 false,
                 false,
-                file_target,
+                file_stdlib,
                 sources,
                 manifest,
                 config,
                 workspace_members,
                 &import_map,
                 &venv_index.imports,
+                scoped,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -131,13 +168,14 @@ pub fn resolve_imports_with_script_targets(
             ImportContext::Runtime,
             false,
             false,
-            &target,
+            stdlib,
             sources,
             manifest,
             config,
             workspace_members,
             &import_map,
             &venv_index.imports,
+            scoped,
             &mut warnings,
             &mut root_cache,
         ));
@@ -158,9 +196,9 @@ fn transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
     }
 }
 
-/// Keyed by (target version, import root): stdlib membership depends on the
-/// target, which differs between PEP 723 scripts.
-type RootCache = BTreeMap<(String, String), RootResolution>;
+/// Keyed by (stdlib range, import root): stdlib membership depends on the
+/// range, which differs between PEP 723 scripts.
+type RootCache = BTreeMap<(StdlibRange, String), RootResolution>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RootResolution {
@@ -178,23 +216,24 @@ fn resolve_import_site(
     context: ImportContext,
     optional: bool,
     platform_guarded: bool,
-    target: &TargetVersion,
+    stdlib: StdlibRange,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     config: &ChokkinConfig,
     workspace_members: &[ResolvedWorkspaceMember],
     import_map: &ImportMap,
     venv_imports: &BTreeMap<String, Vec<String>>,
+    scoped: &ScopedDeclarations,
     warnings: &mut Vec<ResolveWarning>,
     root_cache: &mut RootCache,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
     let core = root_cache
-        .entry((target.as_str().to_owned(), root_name.clone()))
+        .entry((stdlib, root_name.clone()))
         .or_insert_with(|| {
             resolve_import_root(
                 &root_name,
-                target,
+                stdlib,
                 sources,
                 manifest,
                 config,
@@ -220,6 +259,13 @@ fn resolve_import_site(
         },
     };
 
+    let workspace_member = workspace_member_for_file(file, workspace_members);
+    let core = if core.origin == ModuleOrigin::Unknown {
+        scoped_declaration(&root_name, file, workspace_member.as_deref(), scoped).unwrap_or(core)
+    } else {
+        core
+    };
+
     if core.origin == ModuleOrigin::Unknown {
         warnings.push(ResolveWarning::UnresolvedImport {
             import: root_name.clone(),
@@ -232,7 +278,7 @@ fn resolve_import_site(
         import_root: root_name,
         full_module: full_module.to_owned(),
         file: file.to_owned(),
-        workspace_member: workspace_member_for_file(file, workspace_members),
+        workspace_member,
         line,
         context,
         optional,
@@ -246,7 +292,7 @@ fn resolve_import_site(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn resolve_import_root(
     root_name: &str,
-    target: &TargetVersion,
+    stdlib: StdlibRange,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     config: &ChokkinConfig,
@@ -255,7 +301,7 @@ fn resolve_import_root(
     venv_imports: &BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> RootResolution {
-    if is_stdlib_import(root_name, target) {
+    if stdlib.contains(root_name) {
         return RootResolution {
             origin: ModuleOrigin::Stdlib,
             distribution: None,
@@ -297,18 +343,20 @@ fn resolve_import_root(
         );
     }
 
-    // `openai` / `tiktoken` are absent from the bundled map and already in
-    // canonical form, so no map above names them; a declared or locked
-    // distribution of the exact same name is the evidence instead.
+    // No map names the root. A declared or locked distribution whose
+    // normalized name matches (`openai`, or `Foo_Bar` for `import foo_bar`)
+    // is the only evidence left; the spelling alone is not, or a local module
+    // like `e2e_config` would pass as a missing `e2e-config` (#361).
+    let distribution = normalize_distribution_name(root_name);
     if manifest
         .dependencies
         .iter()
-        .any(|dep| normalize_distribution_name(&dep.name) == root_name)
-        || manifest.lockfile.edges.contains_key(root_name)
+        .any(|dep| normalize_distribution_name(&dep.name) == distribution)
+        || manifest.lockfile.edges.contains_key(&distribution)
     {
         return RootResolution {
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some(root_name.to_owned()),
+            distribution: Some(distribution),
             confidence: ResolveConfidence::Likely,
         };
     }
@@ -318,6 +366,29 @@ fn resolve_import_root(
         distribution: None,
         confidence: ResolveConfidence::Maybe,
     }
+}
+
+/// Per-file counterpart of the declared-name step in [`resolve_import_root`]:
+/// a script block or member manifest declares for its own files only, so it
+/// cannot go through the per-root cache.
+fn scoped_declaration(
+    root_name: &str,
+    file: &str,
+    workspace_member: Option<&str>,
+    scoped: &ScopedDeclarations,
+) -> Option<RootResolution> {
+    let distribution = normalize_distribution_name(root_name);
+    scoped
+        .scripts
+        .get(file)
+        .into_iter()
+        .chain(workspace_member.and_then(|member| scoped.members.get(member)))
+        .any(|names| names.contains(&distribution))
+        .then_some(RootResolution {
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some(distribution),
+            confidence: ResolveConfidence::Likely,
+        })
 }
 
 /// Whether any discovered file is `module` or lies under it, whatever the
