@@ -44,6 +44,50 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
 }
 
 #[test]
+fn fix_moves_direct_reference_with_extras_to_runtime() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("misplaced_pytest"), temp.path()).expect("copy fixture");
+    let pyproject = temp.path().join("pyproject.toml");
+    let before = std::fs::read_to_string(&pyproject).expect("read pyproject");
+    let url = "https://example.com/pytest-8.0-py3-none-any.whl";
+    std::fs::write(
+        &pyproject,
+        before.replace(
+            r#"dev = ["pytest"]"#,
+            &format!(r#"dev = ["pytest[testing] @ {url}"]"#),
+        ),
+    )
+    .expect("write pyproject");
+
+    let report = analyze_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    let fix_report = report.fix.expect("fix report");
+    assert!(
+        fix_report
+            .applied
+            .iter()
+            .any(|applied| applied.rule == RuleId::Chk005)
+    );
+
+    let after = std::fs::read_to_string(&pyproject).expect("read pyproject after fix");
+    let doc: toml::Table = toml::from_str(&after).expect("valid toml");
+    let deps = doc["project"]["dependencies"].as_array().expect("array");
+    assert!(
+        deps.iter()
+            .any(|dep| dep.as_str() == Some(&format!("pytest[testing] @ {url}"))),
+        "{after}"
+    );
+}
+
+#[test]
 fn fix_removes_included_group_dependency_only_from_declaring_group() {
     let temp = tempfile::tempdir().expect("tempdir");
     copy_dir_recursive(&fixture("include_group"), temp.path()).expect("copy fixture");
