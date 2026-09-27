@@ -3,7 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
+import importlib.util
+import io
 import json
+import sys
+import urllib.request
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,14 +18,20 @@ SEED = ROOT / "data" / "package-map.seed.json"
 BINARY_SEED = ROOT / "data" / "binary-map.seed.json"
 OUT_PKG = ROOT / "src" / "resolver" / "bundled" / "package_modules.rs"
 OUT_BIN = ROOT / "src" / "resolver" / "bundled" / "binaries.rs"
+HARVEST = ROOT / "scripts" / "harvest-package-map.py"
+PYPI_JSON = "https://pypi.org/pypi/{}/json"
+# Wheels keep the central directory at the end; one tail fetch usually covers it.
+TAIL_BYTES = 1 << 20
+# Imports that recent wheels dropped but projects pinned to older releases still use.
+LEGACY_IMPORTS = {"setuptools": {"pkg_resources"}}
 
 # Common packages where distribution name normalizes to the import root.
+# `--verify-wheels` checks that assumption against the latest PyPI wheels;
+# a distribution whose import name differs belongs in the seed's `packages`.
 AUTO_PACKAGES = [
     "aiohttp",
     "anyio",
-    "attrs",
     "babel",
-    "black",
     "boto3",
     "botocore",
     "cachetools",
@@ -30,7 +43,6 @@ AUTO_PACKAGES = [
     "coverage",
     "cryptography",
     "django",
-    "dnspython",
     "docutils",
     "fastapi",
     "filelock",
@@ -39,7 +51,6 @@ AUTO_PACKAGES = [
     "frozenlist",
     "fsspec",
     "greenlet",
-    "grpcio",
     "h11",
     "httpcore",
     "httpx",
@@ -57,7 +68,6 @@ AUTO_PACKAGES = [
     "matplotlib",
     "more-itertools",
     "multidict",
-    "mypy",
     "numpy",
     "oauthlib",
     "openpyxl",
@@ -68,30 +78,23 @@ AUTO_PACKAGES = [
     "pathspec",
     "platformdirs",
     "pluggy",
-    "protobuf",
     "psutil",
-    "psycopg2-binary",
     "pyarrow",
     "pycparser",
     "pydantic",
     "pygments",
-    "pyjwt",
-    "pymongo",
     "pyparsing",
     "pytest",
     "pytest-cov",
     "pytz",
-    "pyyaml",
     "redis",
     "referencing",
     "regex",
     "requests",
     "rich",
-    "rpds-py",
     "rsa",
     "ruff",
     "s3transfer",
-    "setuptools",
     "six",
     "sniffio",
     "soupsieve",
@@ -165,7 +168,11 @@ def render_packages(packages: dict[str, list[str]]) -> str:
     ]
     for dist, imports in packages.items():
         import_list = ", ".join(f'"{name}"' for name in imports)
-        lines.append(f'    ("{dist}", &[{import_list}]),')
+        line = f'    ("{dist}", &[{import_list}]),'
+        # rustfmt keeps a tuple element on one line up to 67 columns here.
+        if len(line) > 67:
+            line = f'    (\n        "{dist}",\n        &[{import_list}],\n    ),'
+        lines.append(line)
     lines.append("];")
     lines.append("")
     return "\n".join(lines)
@@ -186,10 +193,121 @@ def render_binaries(entries: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+class RangeFile(io.RawIOBase):
+    """Seekable read-only view of a remote wheel, fetched with HTTP Range."""
+
+    def __init__(self, url: str, size: int) -> None:
+        self.url = url
+        self.size = size
+        self.pos = 0
+        self.tail_start = max(0, size - TAIL_BYTES)
+        self.tail = self.fetch(self.tail_start, size - 1)
+
+    def fetch(self, start: int, end: int) -> bytes:
+        request = urllib.request.Request(self.url, headers={"Range": f"bytes={start}-{end}"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            if response.status != 206:
+                raise OSError(f"{self.url}: Range request answered {response.status}")
+            return response.read()
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self.pos
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        base = {io.SEEK_SET: 0, io.SEEK_CUR: self.pos, io.SEEK_END: self.size}[whence]
+        self.pos = base + offset
+        return self.pos
+
+    def read(self, size: int = -1) -> bytes:
+        end = self.size if size < 0 else min(self.size, self.pos + size)
+        if end <= self.pos:
+            return b""
+        if self.pos >= self.tail_start:
+            data = self.tail[self.pos - self.tail_start : end - self.tail_start]
+        else:
+            data = self.fetch(self.pos, end - 1)
+        self.pos += len(data)
+        return data
+
+
+def load_harvester():
+    spec = importlib.util.spec_from_file_location("harvest_package_map", HARVEST)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"cannot load {HARVEST}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def wheel_contents(dist: str, harvester) -> tuple[set[str], list[str]] | str:
+    """Import roots and member paths of `dist`'s latest wheel, or why there are none."""
+    with urllib.request.urlopen(PYPI_JSON.format(dist), timeout=60) as response:
+        release = json.load(response)
+    wheels = [item for item in release["urls"] if item["packagetype"] == "bdist_wheel"]
+    if not wheels:
+        return "no wheel in the latest release"
+    wheel = next((item for item in wheels if item["filename"].endswith("-none-any.whl")), wheels[0])
+    with zipfile.ZipFile(RangeFile(wheel["url"], wheel["size"])) as archive:
+        _, imports = harvester.wheel_imports(archive, wheel["filename"])
+        return imports, archive.namelist()
+
+
+def has_module(dotted: str, names: list[str]) -> bool:
+    path = dotted.replace(".", "/")
+    return any(name == f"{path}.py" or name.startswith(f"{path}/") for name in names)
+
+
+def verify_wheels(packages: dict[str, list[str]]) -> int:
+    """Check every mapped import root against the latest PyPI wheel (network)."""
+    harvester = load_harvester()
+
+    def check(dist: str) -> str | None:
+        try:
+            contents = wheel_contents(dist, harvester)
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:
+            return f"{dist}: skipped ({error})"
+        if isinstance(contents, str):
+            return f"{dist}: skipped ({contents})"
+        roots, names = contents
+        imports = set(packages[dist]) - LEGACY_IMPORTS.get(dist, set())
+        mapped = {name.split(".")[0] for name in imports}
+        if mapped - roots:
+            return f"{dist}: MISMATCH map={sorted(mapped - roots)} wheel={sorted(roots)}"
+        absent = sorted(name for name in imports if "." in name and not has_module(name, names))
+        if absent:
+            return f"{dist}: MISMATCH map={absent} not in wheel"
+        unmapped = sorted(root for root in roots - mapped if not root.startswith("_"))
+        if unmapped:
+            return f"{dist}: unmapped wheel roots {unmapped}"
+        return None
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = [line for line in pool.map(check, packages) if line]
+    for line in results:
+        print(line, file=sys.stderr)
+    return 1 if any("MISMATCH" in line for line in results) else 0
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--verify-wheels",
+        action="store_true",
+        help="check mapped import roots against the latest PyPI wheels (needs network)",
+    )
+    args = parser.parse_args()
+
     packages = load_packages()
     if len(packages) < 200:
         raise SystemExit(f"expected >= 200 package map entries, got {len(packages)}")
+    if args.verify_wheels:
+        raise SystemExit(verify_wheels(packages))
 
     OUT_PKG.parent.mkdir(parents=True, exist_ok=True)
     OUT_PKG.write_text(render_packages(packages), encoding="utf-8")
