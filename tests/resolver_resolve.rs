@@ -181,6 +181,98 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
     assert_ne!(tomllib_in("app.py").origin, ModuleOrigin::Stdlib);
 }
 
+/// Write a throwaway project: a checked-in copy would be analyzed by the
+/// repository's own chokkin baseline run as unreachable files.
+fn temp_project(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("fixture dir");
+        }
+        std::fs::write(path, text).expect("write fixture");
+    }
+    temp
+}
+
+#[test]
+fn declared_name_resolves_an_unmapped_normalized_root() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"declared-unmapped-demo\"\nversion = \"0.1.0\"\ndependencies = [\"resolvelib>=1.0\"]\n",
+        ),
+        ("main.py", "import resolvelib\nimport notdeclaredanywhere\n"),
+    ]);
+    let index = resolve_path(temp.path());
+    let origin = |root: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == root)
+            .map(|resolved| (resolved.origin, resolved.distribution.clone()))
+            .expect("import")
+    };
+    assert_eq!(
+        origin("resolvelib"),
+        (ModuleOrigin::ThirdParty, Some("resolvelib".to_owned()))
+    );
+    assert_eq!(origin("notdeclaredanywhere"), (ModuleOrigin::Unknown, None));
+}
+
+#[test]
+fn dotted_map_entry_overrides_a_first_party_root_without_the_module() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"poetry\"\nversion = \"0.1.0\"\ndependencies = [\"poetry-core>=2.0\"]\n",
+        ),
+        ("src/poetry/__init__.py", ""),
+        ("src/poetry/console/__init__.py", ""),
+        (
+            "src/poetry/app.py",
+            "from poetry.console import main\nfrom poetry.core.version import Version\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let origin = |module: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == module)
+            .map(|resolved| (resolved.origin, resolved.distribution.clone()))
+            .expect("import")
+    };
+    assert_eq!(origin("poetry.console"), (ModuleOrigin::FirstParty, None));
+    assert_eq!(
+        origin("poetry.core.version"),
+        (ModuleOrigin::ThirdParty, Some("poetry-core".to_owned()))
+    );
+}
+
+#[test]
+fn local_module_keeps_a_first_party_namespace_root() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"protobuf\"\nversion = \"0.1.0\"\n",
+        ),
+        ("src/google/__init__.py", ""),
+        ("src/google/protobuf/__init__.py", ""),
+        (
+            "src/google/protobuf/message.py",
+            "from google.protobuf import descriptor\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let resolved = index
+        .imports
+        .iter()
+        .find(|resolved| resolved.full_module == "google.protobuf")
+        .expect("import");
+    assert_eq!(resolved.origin, ModuleOrigin::FirstParty);
+}
+
 #[test]
 fn declared_distribution_named_like_the_import_resolves_without_map_entry() {
     // `openai` is absent from the bundled map and already canonical, so only

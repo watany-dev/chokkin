@@ -188,7 +188,7 @@ requirements系filesのパース規則を定める。コメントはpip互換で
 
 `setup.py` は `ruff_python_parser` でASTにし、`setup()` 呼び出しのキーワード引数のみを静的に読む(構文エラー時は静的解析不可として扱う)。リストに文字列リテラル以外の要素が混ざる場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
 
-`[tool.uv]` のその他のキーは次のように読む（R-04）。legacy `dev-dependencies` は `[dependency-groups] dev` と同じ `Group("dev")` 宣言として合流させ、`--fix` は `tool.uv.dev-dependencies[i]` ラベルで配列要素を削除できる。`constraint-dependencies` / `override-dependencies` は `-c` と同様に `LoadedManifest.constraints` へ積み、origin ラベル（`tool.uv.constraint-dependencies[i]` 等）を保持するが、CHK002/CHK003/CHK009 の入力にはしない。`default-groups` は `LoadedManifest.uv.default_groups` に保持するのみで、`--production` は参照しない（production は runtime 以外の context を常に除外するため、インストール既定値に依存させない）。`[tool.uv.sources]` は path / editable / workspace / git / url / index の種別と記述どおりの相対pathを `LoadedManifest.uv.sources` に保持する（絶対pathはキャッシュに入れない）。path / editable source はStep 7でroot基準に解決したローカルtreeからlayout推論でimport名を導出し、そのdistributionへのCertainな対応としてvenvなしで解決する（キャッシュ外で毎回読むためstaleにならない。package未検出時はdistribution名の `-`→`_` をimport名とする）。`workspace = true` source は既存のworkspace member判定でfirst-partyとして解決し、到達可能なimportがあればそのdependencyをusedとして扱う。
+`[tool.uv]` のその他のキーは次のように読む（R-04）。legacy `dev-dependencies` は `[dependency-groups] dev` と同じ `Group("dev")` 宣言として合流させ、`--fix` は `tool.uv.dev-dependencies[i]` ラベルで配列要素を削除できる。`constraint-dependencies` / `override-dependencies` は `-c` と同様に `LoadedManifest.constraints` へ積み、origin ラベル（`tool.uv.constraint-dependencies[i]` 等）を保持するが、CHK002/CHK003/CHK009 の入力にはしない。`default-groups` は `LoadedManifest.uv.default_groups` に保持するのみで、`--production` は参照しない（production は runtime 以外の context を常に除外するため、インストール既定値に依存させない）。`[tool.uv.sources]` は path / editable / workspace / git / url / index の種別と記述どおりの相対pathを `LoadedManifest.uv.sources` に保持する（絶対pathはキャッシュに入れない）。path / editable source はStep 7でroot基準に解決したローカルtreeからlayout推論でimport名を導出し、そのdistributionへのCertainな対応としてvenvなしで解決する（キャッシュ外で毎回読むためstaleにならない。package未検出時はdistribution名の `-`→`_` をimport名とする）。`workspace = true` source は既存のworkspace member判定でfirst-partyとして解決し、到達可能なimportがあればそのdependencyをusedとして扱う。used になったmemberのtree内ファイルのimport（stdlib以外。`airflow` のようにdistributionへ解決されるものも含む）も同様に数え、他memberのtreeに届けばそのmemberもusedとする（`airflow-core` が `airflow.sdk` をimportすれば `apache-airflow-task-sdk` もused）。
 
 `setup.py` が静的に解析できない場合(動的な `install_requires` 構築など)は、warningを出してそのsourceをskipし、他のsourceで解析を継続する。`[project]` の `dynamic = ["dependencies"]` が指定されている場合は、setuptoolsの慣習に従い `requirements*.txt` 側を依存宣言の実体として読む。
 
@@ -239,6 +239,8 @@ type_groups = ["types", "typing", "mypy"]
 "Pillow" = ["PIL"]
 "python-dotenv" = ["dotenv"]
 "scikit-learn" = ["sklearn"]
+# namespace package の配下は dotted name で指定できる(最長一致)
+"protobuf" = ["google.protobuf"]
 
 [tool.chokkin.binary_map]
 # CLI名 -> distribution名。CHK008/CHK002のbinary usage判定に使う
@@ -349,8 +351,12 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 5. Core Metadata の Import-Name / Import-Namespace を読む
 6. bundled package-module-map を使う
 7. user-defined package_module_map を使う
-8. 最後に PEP 503 `normalize_distribution_name` で推定(import root が既に正規化済みの場合は skip)
+8. 最後に PEP 503 `normalize_distribution_name` で推定(import root が既に正規化済みの場合は skip。ただし manifest が同名の dependency を宣言していれば、その distribution とみなす(confidence `Maybe`))
 ```
+
+PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root と first-party の import root(project 同梱の script が `uv run` で index から自 project を入れるケース)も、block が同名を宣言していれば使用とみなす。`[sys.executable, <file>, ...]` で別 file を実行する script は、子 process が block の環境を共有し import を追えないため script の CHK002 を出さない。`subprocess` を import する script では、複数語の文字列 literal(`"ruff format ..."`)の先頭語をコマンド名とみなし、同名の宣言依存を使用として数える。
+
+`google` / `opentelemetry` / `databricks` のように複数 distribution が共有する namespace package は root だけでは決まらないため、root が third-party / unknown に分類された import は、user map と bundled map の dotted key(`google.protobuf`、`opentelemetry.sdk` など、2 segment 以上)を import 先の module 名(`from a.b import c` は `a.b.c`)に対して最長一致で引き、見つかればその distribution で上書きする。first-party root(`poetry` に対する `poetry.core` など)も、一致した dotted module が project 内のどのファイルにも無い場合に限り同様に上書きする。
 
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 
@@ -768,7 +774,7 @@ lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.l
 |libraryのpublic APIは外部利用される    |内部参照がなくても公開APIかもしれない                                           |app/library modeを分け、libraryではunused exports/filesを低confidenceにする                           |
 |dev/test/docs/lint/type依存が混在する|`pytest` がmain dependenciesにある                                 |dependency contextを導入し、misplaced dependencyを出す                                             |
 |namespace packageがある          |`google.*`, `zope.*`                                           |namespace package modeと `Import-Namespace` を使う                                             |
-|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる                                 |
+|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる。`[sys.executable, "-m", "pkg"]` は `pkg` の使用として数えるが、未宣言でも CHK003 にはしない。`"pkg.commands." + name` や `f"pkg.commands.{name}"` のようにliteralの接頭辞で組み立てた名前は、`pkg.commands` 配下の first-party module すべてへ到達させる(confidenceはopaqueのまま下げる)                                 |
 |monorepo/workspaceで依存境界が曖昧    |root depsをmemberが使う                                            |workspace graphを作り、`--strict` でmemberごとの直接依存を要求する                                          |
 |auto-fixが危険                   |dead code削除で実行時破壊                                              |default fixはmanifest中心。file/code削除は明示フラグ必須                                                 |
 
@@ -1107,7 +1113,10 @@ exit   :
 検証   : OSS corpus に uv-native / PEP 723 / 各 lockfile / PEP 695 project を追加し
          (gap analysis §4)、recall sentinel に R-01〜R-05 の fixture を足す
 exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall sentinel 全件検出、
-         crash 0、cold 実行 medium 2s 維持、CHK003 件数が v0.4.1 比で増えない
+         crash 0、cold 実行 medium 2s 維持、CHK003 件数 (tp label を除く) が
+         v0.4.1 比で増えない
+状態   : exit 達成 (PR #367、docs/dev/oss-validation-report.md)。CHK002 誤検知率
+         3.7% (1/27、未分類0)、recall 48/48、crash 0、CHK003 288 → 283
 ```
 
 ### Phase 5: v0.6 Knip 相当の運用性(+6〜8週)
@@ -1241,7 +1250,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v9。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v10。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime

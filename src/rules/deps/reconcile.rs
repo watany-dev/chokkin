@@ -8,7 +8,7 @@ use crate::manifest::{InlineScript, LoadedManifest, normalize_distribution_name}
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
-use crate::resolver::ResolutionIndex;
+use crate::resolver::{ImportMap, ResolutionIndex};
 use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, sort_candidates};
 use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::DiscoveredSources;
@@ -89,6 +89,9 @@ pub fn reconcile_with_context(
         scripts,
         dependency.rules.resolution,
         &reachable,
+        &dependency.rules.sources.files,
+        dependency.rules.parse,
+        &ImportMap::build(dependency.config),
         dependency.strict,
     ));
     sort_candidates(&mut report.candidates);
@@ -126,7 +129,13 @@ fn reconcile_project(
     let mut used = collect_used_distributions(context, plugins, &reachable);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
-    mark_workspace_source_distributions(manifest, resolution, &reachable, &mut used);
+    mark_workspace_source_distributions(
+        manifest,
+        context,
+        &reachable,
+        workspace_boundaries,
+        &mut used,
+    );
 
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());

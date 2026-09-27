@@ -105,7 +105,7 @@ Rejected candidates: `logfire` `v5.1.1` has no `include-group` at the tag;
 `pip` keeps its `pylock.toml` under `build-project/`, and chokkin only reads a
 lockfile at the project root.
 
-### Before/after R-01..R-07 (pending)
+### Before/after R-01..R-07
 
 The baseline is commit `573ff37` (before #327–#333; there is no `v0.4.1`
 tag), built in a `git worktree` and compared with `main` on the same corpus:
@@ -118,17 +118,55 @@ scripts/oss-metrics.sh -b ../chokkin-573ff37/target/release/chokkin -o target/os
 make oss-metrics
 ```
 
-| Corpus | Build | CHK002 | CHK003 | Unclassified CHK002 | Unclassified CHK003 |
-|---|---|---|---|---|---|
-| 20-project set | `573ff37` | pending | pending | pending | pending |
-| 20-project set | `main` | pending | pending | pending | pending |
-| R-01..R-07 corpus | `573ff37` | pending | pending | pending | pending |
-| R-01..R-07 corpus | `main` | pending | pending | pending | pending |
+`.github/workflows/oss-metrics.yml` runs the same steps on GitHub Actions
+(`workflow_dispatch`, or a push that touches the corpus / labels / scripts),
+prints the table below and the unclassified HEAD findings to the job summary,
+and fails unless the §17 Phase 4 gate passes and the CHK003 total, without
+`tp`-labelled findings and recall fixtures, does not grow over `573ff37`.
 
-Not measured yet: neither build could be compiled in the environment
-this change was written in (crate downloads were blocked). Until the corpus
-findings are labelled in `scripts/oss-fixtures.labels.tsv`, its CHK002 findings
-count as unclassified and `make oss-metrics ARGS=--gate` fails the FP gate.
+Measured on GitHub Actions run
+[36306495456](https://github.com/watany-dev/chokkin/actions/runs/36306495456)
+(PR #367 head `02ea86c`). "Recall fixtures" are the in-repo sentinels from
+`scripts/oss-recall.manifest`.
+
+| Corpus | CHK002 `573ff37` | CHK002 HEAD | CHK003 `573ff37` | CHK003 HEAD |
+|---|---:|---:|---:|---:|
+| 20-project set | 0 | 0 | 116 | 116 |
+| R-01..R-07 corpus (9 projects) | 40 | 18 | 172 | 185 |
+| Recall fixtures (10) | 7 | 9 | 4 | 1 |
+
+R-01..R-07 corpus per project:
+
+| Project | CHK002 `573ff37` | CHK002 HEAD | CHK003 `573ff37` | CHK003 HEAD |
+|---|---:|---:|---:|---:|
+| airflow | 2 | 14 | 0 | 4 |
+| fastmcp | 0 | 1 | 2 | 8 |
+| mcp-python-sdk | 0 | 0 | 4 | 0 |
+| mitmproxy | 9 | 2 | 1 | 1 |
+| mlflow | 9 | 0 | 158 | 169 |
+| pdm | 11 | 1 | 4 | 0 |
+| poetry | 9 | 0 | 2 | 2 |
+| pydantic | 0 | 0 | 1 | 1 |
+| virtualenv | 0 | 0 | 0 | 0 |
+
+- CHK002 on HEAD: 27 findings, 0 unclassified, 1 fp
+  (`fastmcp` `script:examples/screenshot.py:pillow`: declared in the PEP 723
+  block, never imported by the script).
+- The CHK003 growth is new true positives: PEP 723 scripts are now checked
+  against their own block (airflow, fastmcp), and mlflow imports `langgraph`
+  submodules and `grpc` that it does not declare. Excluding `tp`-labelled
+  findings and recall fixtures, CHK003 goes from 288 to 283.
+- Unclassified CHK003 on HEAD: 241 (not gated).
+
+Gate result:
+
+| Criterion | Target | Measured | Result |
+|---|---|---|---|
+| Unused-dep FP rate (CHK002) | < 5% | 3.7% (1 FP / 27 reported, 0 unclassified) | PASS |
+| Recall (`tp` labels) | all detected | 48/48 detected | PASS |
+| Crashes (exit 3) | 0 | 0 | PASS |
+| Cold run, medium project | <= 2000 ms | all within budget | PASS |
+| CHK003 excluding `tp` | <= `573ff37` | 283 <= 288 | PASS |
 
 ## Phase 1.5 remediation summary
 

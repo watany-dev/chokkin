@@ -1,6 +1,6 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_expr};
 use ruff_python_ast::{
@@ -12,7 +12,9 @@ use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
-use super::dynamic::{LoaderNames, literal_module};
+use super::dynamic::{
+    LoaderNames, PythonRun, command_word, literal_module, module_prefix, python_run,
+};
 use super::exports::extract_exports;
 use super::lines::LineIndex;
 use super::platform_guard::is_platform_guard_test;
@@ -36,6 +38,7 @@ pub struct ModuleVisitor<'a> {
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
+    command_words: BTreeSet<String>,
     parsed: ParsedModule,
 }
 
@@ -60,6 +63,7 @@ impl<'a> ModuleVisitor<'a> {
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
+            command_words: BTreeSet::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -69,7 +73,15 @@ impl<'a> ModuleVisitor<'a> {
 
     /// Consume the visitor and return the accumulated parse result.
     #[must_use]
-    pub fn into_parsed(self) -> ParsedModule {
+    pub fn into_parsed(mut self) -> ParsedModule {
+        let runs_commands = self
+            .parsed
+            .imports
+            .iter()
+            .any(|import| import.module == "subprocess");
+        if runs_commands {
+            self.parsed.shell_commands = self.command_words.into_iter().collect();
+        }
         self.parsed
     }
 
@@ -126,6 +138,31 @@ impl<'a> ModuleVisitor<'a> {
         self.module_level = false;
         self.visit_body(body);
         self.module_level = saved;
+    }
+
+    /// `[sys.executable, "-m", "pkg"]` uses `pkg` without importing it. It is
+    /// recorded as an optional import so it counts as a use but is never
+    /// reported missing (`pip` rarely is declared).
+    fn record_python_run(&mut self, expr: &Expr, elts: &[Expr]) {
+        match python_run(elts) {
+            Some(PythonRun::Module(module)) => {
+                let line = self.line_number(expr);
+                let context = self.current_import_context();
+                self.parsed.imports.push(ImportRef {
+                    module,
+                    name: None,
+                    alias: None,
+                    line,
+                    kind: ImportKind::Import,
+                    context,
+                    optional: true,
+                    platform_guarded: false,
+                    relative_level: 0,
+                });
+            },
+            Some(PythonRun::File) => self.parsed.runs_python_file = true,
+            None => {},
+        }
     }
 
     fn visit_import(&mut self, import: &StmtImport) {
@@ -469,6 +506,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                             .dynamic_imports
                             .push(DynamicImport { module, line });
                     } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
+                        if let Some(module) = module_prefix(call) {
+                            let line = self.line_number(call);
+                            self.parsed
+                                .dynamic_import_prefixes
+                                .push(DynamicImport { module, line });
+                        }
                         self.parsed.has_opaque_dynamic_import = true;
                     }
                 }
@@ -480,6 +523,13 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                     .any(|arg| self.loader_names.is_loader(arg))
                 {
                     self.parsed.has_opaque_dynamic_import = true;
+                }
+            },
+            Expr::List(list) => self.record_python_run(expr, &list.elts),
+            Expr::Tuple(tuple) => self.record_python_run(expr, &tuple.elts),
+            Expr::StringLiteral(_) => {
+                if let Some(word) = command_word(expr) {
+                    self.command_words.insert(word.to_owned());
                 }
             },
             _ => {},
@@ -508,6 +558,25 @@ mod tests {
         let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &lines);
         visitor.visit_module(module.suite());
         visitor.into_parsed()
+    }
+
+    #[test]
+    fn python_runs_record_optional_imports_and_file_runs() {
+        let parsed = visit_source(
+            "import subprocess, sys\ncmd = [\n    sys.executable,\n    \"-m\",\n    \"virtualenv\",\n]\n",
+        );
+        let run = parsed
+            .imports
+            .iter()
+            .find(|import| import.module == "virtualenv")
+            .expect("virtualenv import");
+        assert!(run.optional);
+        assert_eq!(run.line, 2);
+        assert!(!parsed.runs_python_file);
+
+        let parsed =
+            visit_source("import subprocess, sys\nsubprocess.run([sys.executable, path])\n");
+        assert!(parsed.runs_python_file);
     }
 
     #[test]
@@ -570,6 +639,28 @@ mod tests {
     fn marks_opaque_assignment_with_non_literal() {
         let parsed = visit_source("import importlib\nmod = importlib.import_module(name)\n");
         assert!(parsed.dynamic_imports.is_empty());
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn records_command_words_only_with_subprocess() {
+        let source = "cmd = \"ruff format --check\"\nrun(cmd, shell=True)\n";
+        assert!(visit_source(source).shell_commands.is_empty());
+        let parsed = visit_source(&format!("import subprocess\n{source}"));
+        assert_eq!(parsed.shell_commands, vec!["ruff".to_owned()]);
+    }
+
+    #[test]
+    fn records_prefix_of_built_module_name() {
+        let parsed =
+            visit_source("import importlib\nimportlib.import_module(\"acme.commands.\" + name)\n");
+        assert!(parsed.dynamic_imports.is_empty());
+        let prefixes: Vec<_> = parsed
+            .dynamic_import_prefixes
+            .iter()
+            .map(|dynamic| (dynamic.module.as_str(), dynamic.line))
+            .collect();
+        assert_eq!(prefixes, vec![("acme.commands", 2)]);
         assert!(parsed.has_opaque_dynamic_import);
     }
 

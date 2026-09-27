@@ -11,7 +11,7 @@
 #   note          short justification (how it was verified)
 #
 # Bucket vocabulary (CHK003 fp/deferred): map-gap | workspace-boundary | optional-import |
-# dev-context | transitive-policy | metadata-gap
+# dev-context | transitive-policy | metadata-gap | first-party
 #
 # scripts/oss-metrics.sh matches findings on (slug, code, target).
 # Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
@@ -1156,3 +1156,57 @@ werkzeug	CHK003	tests/test_urls.py:pytest	deferred	dev-context	deferred: verify 
 werkzeug	CHK003	tests/test_utils.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	tests/test_wrappers.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	tests/test_wsgi.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
+
+# R-01..R-07 corpus (#323): CHK003 that are new over 573ff37 (PEP 723 scripts are now checked against their own block)
+airflow	CHK003	script:clients/python/test_python_client.py:pytest	tp	-	script imports pytest; the PEP 723 block does not declare it
+airflow	CHK003	script:clients/python/test_python_client.py:tests-common	fp	workspace-boundary	tests_common is the devel-common workspace member (devel-common/src), not a PyPI distribution
+airflow	CHK003	script:scripts/ci/prek/check_excluded_provider_markers.py:tomli	tp	-	block pins requires-python <3.11, where tomllib is missing, and the fallback import tomli is not declared
+airflow	CHK003	script:scripts/ci/prek/check_extra_packages_ref.py:tomli	tp	-	same tomli fallback without a declaration in the block
+fastmcp	CHK003	script:examples/memory.py:pydantic	tp	-	imports pydantic directly; the block only declares packages that pull it in transitively
+fastmcp	CHK003	script:examples/memory.py:pydantic-ai	fp	map-gap	block declares pydantic-ai-slim, which also provides the pydantic_ai import
+fastmcp	CHK003	script:examples/providers/sqlite/server.py:rich	tp	-	imports rich directly; only transitively installed via fastmcp
+fastmcp	CHK003	script:examples/text_me.py:pydantic	tp	-	imports pydantic directly; only transitively installed via fastmcp
+fastmcp	CHK003	script:examples/text_me.py:pydantic-settings	tp	-	imports pydantic_settings directly; only transitively installed via fastmcp
+fastmcp	CHK003	script:examples/memory.py:openai	tp	-	imports openai directly; only transitively installed via the pydantic-ai-slim[openai] extra
+fastmcp	CHK003	script:examples/text_me.py:httpx2	tp	-	imports httpx2; the block only declares fastmcp
+mlflow	CHK003	mlflow/langchain/chat_agent_langgraph.py:langgraph.prebuilt	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/chat_agent_langgraph.py:langgraph.prebuilt.tool_node	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/databricks_dependencies.py:langgraph.prebuilt	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/databricks_dependencies.py:langgraph.prebuilt.tool_node	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/databricks_dependencies.py:langgraph.utils.runnable	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/utils/chat.py:langgraph.graph.state	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/langchain/utils/logging.py:langgraph.graph.state	tp	-	optional try-import (except ImportError) of langgraph, which is only in uv.lock and not declared
+mlflow	CHK003	mlflow/protos/unity_catalog_prompt_messages_pb2_grpc.py:grpc._utilities	tp	-	generated code try-imports grpc._utilities; grpcio is not declared
+mlflow	CHK003	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:grpc._utilities	tp	-	generated code try-imports grpc._utilities; grpcio is not declared
+mlflow	CHK003	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:unity_catalog_prompt_messages_pb2	fp	first-party	generated absolute import of the sibling mlflow/protos/unity_catalog_prompt_messages_pb2.py, not a distribution
+mlflow	CHK003	mlflow/pytest/plugin.py:_pytest.outcomes	deferred	dev-context	pytest plugin shipped in the package; pytest is only in a dependency group
+
+# R-01..R-07 corpus (#323): CHK002 on HEAD (tp verified by grep; fp rows cover findings the fixes should remove)
+airflow	CHK002	apache-airflow-core	fp	-	workspace member used through its member tree / entry points
+airflow	CHK002	apache-airflow-task-sdk	fp	-	airflow-core files import airflow.sdk from the task-sdk member tree
+airflow	CHK002	script:dev/stats/get_important_pr_candidates.py:pygithub	fp	-	imports github, the PyGithub import name
+airflow	CHK002	script:scripts/ci/prek/boring_cyborg.py:wcmatch	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/capture_airflowctl_help.py:argcomplete	tp	-	never imported; the help capture runs inside breeze
+airflow	CHK002	script:scripts/ci/prek/check_aiobotocore_optional.py:click	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/check_extra_packages_ref.py:hatchling	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/check_imports_in_providers.py:ruff	tp	-	ruff runs inside breeze via run_command_via_breeze_run, not in the block's environment
+airflow	CHK002	script:scripts/ci/prek/check_kubeconform.py:requests	tp	-	never imported; subprocess only runs helm/kubeconform
+airflow	CHK002	script:scripts/ci/prek/check_provider_docs.py:jinja2	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/check_revision_heads_map.py:packaging	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/check_schema_defaults.py:packaging	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/generate_airflow_diagrams.py:diagrams	fp	-	runs each diagram source with sys.executable, which imports diagrams
+airflow	CHK002	script:scripts/ci/prek/lint_helm.py:requests	tp	-	never imported; subprocess only runs helm/docker
+airflow	CHK002	script:scripts/ci/prek/ruff_format.py:ruff	fp	-	runs `ruff format` through subprocess with shell=True (resolved by shell_commands)
+airflow	CHK002	script:scripts/ci/prek/sort_in_the_wild.py:termcolor	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/sort_in_the_wild.py:wcmatch	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/ci/prek/update_providers_build_files.py:requests	tp	-	never imported by the script or its helpers
+airflow	CHK002	script:scripts/in_container/install_development_dependencies.py:click	tp	-	click comes from in_container_utils, which imports rich_click as click
+airflow	CHK002	script:scripts/tools/check_if_limited_dependencies.py:click	fp	-	runs another Python file with sys.executable in the block's environment
+airflow	CHK002	script:scripts/tools/check_if_limited_dependencies.py:pyyaml	fp	-	runs another Python file with sys.executable in the block's environment
+fastmcp	CHK002	script:examples/memory.py:pydantic-ai-slim	fp	-	provides the pydantic_ai import
+fastmcp	CHK002	script:examples/screenshot.py:pillow	fp	-	pyautogui.screenshot needs Pillow at runtime without the script importing PIL (not inferable statically)
+poetry	CHK002	trove-classifiers	fp	-	imported by console/commands/check.py, loaded via import_module("poetry.console.commands." + ...) (resolved by dynamic_import_prefixes)
+pdm	CHK002	httpcore	tp	-	never imported; only a transitive requirement of httpx
+pdm	CHK002	virtualenv	fp	-	run with [sys.executable, "-m", "virtualenv"]
+mitmproxy	CHK002	hyperframe	tp	-	runtime dependency only imported by tests
+mitmproxy	CHK002	msgpack	tp	-	never imported; the msgpack contentview is in mitmproxy_rs

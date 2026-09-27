@@ -1,0 +1,138 @@
+name: OSS metrics
+
+# v0.5 release gate (#325) and the before/after measurement for the R-01..R-07
+# corpus (#323). Clones third-party projects and only reads them statically;
+# nothing from the clones is executed.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/oss-metrics.yml
+      - scripts/oss-*
+      - scripts/clone-oss-fixtures.sh
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # v0.4.1 has no tag; this is "chore: prepare v0.4.1 release (#284)".
+  BASELINE_REV: 573ff37
+
+jobs:
+  oss-metrics:
+    name: OSS metrics (baseline vs HEAD)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build HEAD
+        run: cargo build --release --locked --bin chokkin
+      - name: Test HEAD
+        run: |
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+      - name: Build baseline
+        run: |
+          git worktree add "$RUNNER_TEMP/chokkin-baseline" "$BASELINE_REV"
+          cargo build --release --locked --bin chokkin \
+            --manifest-path "$RUNNER_TEMP/chokkin-baseline/Cargo.toml" \
+            --target-dir target/baseline
+      - name: Clone corpus
+        run: scripts/clone-oss-fixtures.sh
+      - name: Measure baseline
+        run: scripts/oss-metrics.sh -b target/baseline/release/chokkin -o target/oss-metrics-baseline
+      - name: Measure HEAD
+        # The gate verdict is recorded and enforced in the last step so the
+        # report and artifacts are produced even when it fails.
+        run: |
+          status=0
+          scripts/oss-metrics.sh -o target/oss-metrics --gate || status=$?
+          echo "$status" >target/oss-metrics/gate.status
+      - name: Report
+        env:
+          LC_ALL: C
+        # The full scorecard lists every finding and outgrows the job summary
+        # limit, so it only goes to the artifact.
+        run: |
+          base=target/oss-metrics-baseline
+          head=target/oss-metrics
+          {
+            echo "# Before/after (${BASELINE_REV} vs HEAD)"
+            echo ""
+            echo "| Project | CHK002 base | CHK002 head | CHK003 base | CHK003 head |"
+            echo "|---|---:|---:|---:|---:|"
+            join -t $'\t' \
+              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' "$base/summary.tsv" | sort) \
+              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' "$head/summary.tsv" | sort) |
+              awk -F'\t' '{printf "| %s | %s | %s | %s | %s |\n",$1,$2,$4,$3,$5}'
+            echo ""
+            echo "## CHK003 on HEAD only (slug, target)"
+            echo ""
+            echo '```tsv'
+            comm -13 \
+              <(awk -F'\t' 'NR>1 && $2=="CHK003" {print $1"\t"$3}' "$base/findings.tsv" | sort -u) \
+              <(awk -F'\t' 'NR>1 && $2=="CHK003" {print $1"\t"$3}' "$head/findings.tsv" | sort -u)
+            echo '```'
+            echo ""
+            echo "## Unclassified CHK002 on HEAD"
+            echo ""
+            echo '```tsv'
+            awk -F'\t' 'NR>1 && $2=="CHK002" && ($4=="unknown" || $4=="deferred")' "$head/findings.tsv"
+            echo '```'
+            echo ""
+            echo "## CHK002 fp on HEAD"
+            echo ""
+            echo '```tsv'
+            awk -F'\t' 'NR>1 && $2=="CHK002" && $4=="fp"' "$head/findings.tsv"
+            echo '```'
+            echo ""
+            awk -F'\t' 'NR>1 && $2=="CHK003" && ($4=="unknown" || $4=="deferred") {n++}
+              END {print "Unclassified CHK003 on HEAD: " n+0}' "$head/findings.tsv"
+            echo ""
+            sed -n '/## Exit criteria/,/## Per-rule/p' "$head/report.md" | sed '$d'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: oss-metrics
+          path: |
+            target/oss-metrics/*.tsv
+            target/oss-metrics/report.md
+            target/oss-metrics-baseline/*.tsv
+            target/oss-metrics-baseline/report.md
+            target/oss-clones/clones.lock.tsv
+          retention-days: 30
+      # Spec §17 Phase 4 exit criteria. oss-metrics.sh --gate covers FP rate,
+      # recall, crashes and cold-run time; the CHK003 count is compared here
+      # because the script only sees one build. Findings labelled `tp` are
+      # real missing dependencies HEAD newly detects, so they are not counted.
+      - name: Release gate
+        run: |
+          status="$(cat target/oss-metrics/gate.status)"
+          chk003() {
+            awk -F'\t' 'FNR==NR { if ($2=="recall") recall[$1]=1; next }
+              FNR>1 && $2=="CHK003" && $4!="tp" && !($1 in recall) {n++}
+              END {print n+0}' "$1/summary.tsv" "$1/findings.tsv"
+          }
+          base="$(chk003 target/oss-metrics-baseline)"
+          head="$(chk003 target/oss-metrics)"
+          echo "CHK003 (excluding tp): baseline=${base} head=${head}"
+          if [[ "$head" -gt "$base" ]]; then
+            echo "CHK003 grew over ${BASELINE_REV}" >&2
+            status=1
+          fi
+          exit "$status"

@@ -84,6 +84,34 @@ impl ImportMap {
         canonicalize_match(import_root)
             .map(|distribution| (vec![distribution], ResolveConfidence::Maybe))
     }
+
+    /// Look up the longest dotted prefix of `module` (at least two segments)
+    /// in the user and bundled maps. Namespace packages such as `google` or
+    /// `opentelemetry` are shared by several distributions, so only a deeper
+    /// entry like `google.protobuf` names the one that provides the import.
+    /// Returns the matched prefix with its candidates.
+    #[must_use]
+    pub fn namespace_candidates<'m>(
+        &self,
+        module: &'m str,
+    ) -> Option<(&'m str, Vec<String>, ResolveConfidence)> {
+        let mut prefix = module;
+        while let Some((parent, _)) = prefix.rsplit_once('.') {
+            if let Some(user) = self.user.get(prefix) {
+                return Some((prefix, user.clone(), ResolveConfidence::Likely));
+            }
+            if let Some(bundled) = self.bundled.get(prefix) {
+                let confidence = if bundled.len() == 1 {
+                    ResolveConfidence::Certain
+                } else {
+                    ResolveConfidence::Maybe
+                };
+                return Some((prefix, bundled.clone(), confidence));
+            }
+            prefix = parent;
+        }
+        None
+    }
 }
 
 fn build_reverse_map<'a>(
@@ -192,6 +220,28 @@ mod tests {
             import_map.candidates("yaml"),
             Some((vec!["pyyaml".to_owned()], ResolveConfidence::Likely))
         );
+    }
+
+    #[test]
+    fn namespace_candidates_pick_the_deepest_entry() {
+        let import_map = ImportMap::build(&default_config());
+        let first = |module: &str| {
+            import_map
+                .namespace_candidates(module)
+                .and_then(|(_, candidates, _)| candidates.into_iter().next())
+        };
+        assert_eq!(
+            first("google.protobuf.message").as_deref(),
+            Some("protobuf")
+        );
+        assert_eq!(
+            first("opentelemetry.sdk.trace").as_deref(),
+            Some("opentelemetry-sdk")
+        );
+        assert_eq!(first("databricks.sdk").as_deref(), Some("databricks-sdk"));
+        assert_eq!(first("poetry.core.version").as_deref(), Some("poetry-core"));
+        assert_eq!(first("google"), None);
+        assert_eq!(first("yaml.loader"), None);
     }
 
     #[test]

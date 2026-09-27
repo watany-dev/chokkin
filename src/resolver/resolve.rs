@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
-use crate::manifest::LoadedManifest;
+use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::ModuleReference;
-use crate::sources::DiscoveredSources;
+use crate::sources::{DiscoveredFile, DiscoveredSources};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
@@ -77,8 +77,13 @@ pub fn resolve_imports_with_script_targets(
             if import.module.is_empty() {
                 continue;
             }
+            let imported = import.name.as_ref().map_or_else(
+                || import.module.clone(),
+                |name| format!("{}.{name}", import.module),
+            );
             imports.push(resolve_import_site(
                 &import.module,
+                &imported,
                 &module.path,
                 import.line,
                 import.context,
@@ -97,6 +102,7 @@ pub fn resolve_imports_with_script_targets(
         }
         for dynamic in &module.dynamic_imports {
             imports.push(resolve_import_site(
+                &dynamic.module,
                 &dynamic.module,
                 &module.path,
                 dynamic.line,
@@ -118,6 +124,7 @@ pub fn resolve_imports_with_script_targets(
 
     for reference in plugin_refs {
         imports.push(resolve_import_site(
+            &reference.module,
             &reference.module,
             &reference.origin.file,
             reference.origin.line.unwrap_or(0),
@@ -165,6 +172,7 @@ struct RootResolution {
 #[allow(clippy::too_many_arguments)]
 fn resolve_import_site(
     full_module: &str,
+    imported: &str,
     file: &str,
     line: u32,
     context: ImportContext,
@@ -197,6 +205,20 @@ fn resolve_import_site(
             )
         })
         .clone();
+    let core = match (core.origin, import_map.namespace_candidates(imported)) {
+        (ModuleOrigin::Stdlib, _) | (_, None) => core,
+        // A first-party root may share its namespace with a distribution
+        // (`poetry` and `poetry.core`); the local tree wins when it has the
+        // module itself.
+        (ModuleOrigin::FirstParty, Some((module, ..)))
+            if has_local_module(module, &sources.files) =>
+        {
+            core
+        },
+        (_, Some((_, distributions, confidence))) => {
+            root_resolution_from_candidates(&root_name, &distributions, Some(confidence), warnings)
+        },
+    };
 
     if core.origin == ModuleOrigin::Unknown {
         warnings.push(ResolveWarning::UnresolvedImport {
@@ -281,7 +303,7 @@ fn resolve_import_root(
     if manifest
         .dependencies
         .iter()
-        .any(|dep| dep.name == root_name)
+        .any(|dep| normalize_distribution_name(&dep.name) == root_name)
         || manifest.lockfile.edges.contains_key(root_name)
     {
         return RootResolution {
@@ -296,6 +318,22 @@ fn resolve_import_root(
         distribution: None,
         confidence: ResolveConfidence::Maybe,
     }
+}
+
+/// Whether any discovered file is `module` or lies under it, whatever the
+/// layout or workspace member it belongs to.
+fn has_local_module(module: &str, files: &[DiscoveredFile]) -> bool {
+    let path = module.replace('.', "/");
+    files.iter().any(|file| {
+        let file = file.path.replace('\\', "/");
+        [
+            format!("{path}.py"),
+            format!("{path}.pyi"),
+            format!("{path}/"),
+        ]
+        .iter()
+        .any(|suffix| file.starts_with(suffix.as_str()) || file.contains(&format!("/{suffix}")))
+    })
 }
 
 fn workspace_member_for_file(

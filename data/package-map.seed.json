@@ -39,25 +39,30 @@
     {
       "distribution": "protobuf",
       "imports": [
-        "google"
+        "google",
+        "google.protobuf"
       ]
     },
     {
       "distribution": "google-api-core",
       "imports": [
-        "google"
+        "google",
+        "google.api_core"
       ]
     },
     {
       "distribution": "google-auth",
       "imports": [
-        "google"
+        "google",
+        "google.auth",
+        "google.oauth2"
       ]
     },
     {
       "distribution": "google-cloud-storage",
       "imports": [
-        "google"
+        "google",
+        "google.cloud.storage"
       ]
     },
     {
@@ -129,6 +134,12 @@
       ]
     },
     {
+      "distribution": "apache-airflow-client",
+      "imports": [
+        "airflow_client"
+      ]
+    },
+    {
       "distribution": "django",
       "imports": [
         "django"
@@ -184,6 +195,72 @@
       "imports": [
         "multipart",
         "python_multipart"
+      ]
+    },
+    {
+      "distribution": "GitPython",
+      "imports": [
+        "git"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-api",
+      "imports": [
+        "opentelemetry"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-sdk",
+      "imports": [
+        "opentelemetry.sdk"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-proto",
+      "imports": [
+        "opentelemetry.proto"
+      ]
+    },
+    {
+      "distribution": "poetry-core",
+      "imports": [
+        "poetry.core"
+      ]
+    },
+    {
+      "distribution": "pydantic-ai",
+      "imports": [
+        "pydantic_ai"
+      ]
+    },
+    {
+      "distribution": "pydantic-ai-slim",
+      "imports": [
+        "pydantic_ai"
+      ]
+    },
+    {
+      "distribution": "pygithub",
+      "imports": [
+        "github"
+      ]
+    },
+    {
+      "distribution": "python-dateutil",
+      "imports": [
+        "dateutil"
+      ]
+    },
+    {
+      "distribution": "databricks-sdk",
+      "imports": [
+        "databricks.sdk"
+      ]
+    },
+    {
+      "distribution": "grpcio",
+      "imports": [
+        "grpc"
       ]
     }
   ],
@@ -300,7 +377,6 @@
     "pydantic-core",
     "pydeck",
     "pyflakes",
-    "pygithub",
     "pynacl",
     "pyopenssl",
     "pyproject-hooks",

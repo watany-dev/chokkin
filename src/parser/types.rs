@@ -167,6 +167,10 @@ pub struct ParsedModule {
     /// Literal dynamic imports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dynamic_imports: Vec<DynamicImport>,
+    /// Packages whose submodules a dynamic import loads by a name built from a
+    /// literal prefix (`import_module("pkg.commands." + name)`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dynamic_import_prefixes: Vec<DynamicImport>,
     /// Attribute accesses for `import module; module.name` symbol tracking.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_accesses: Vec<AttributeAccess>,
@@ -184,6 +188,14 @@ pub struct ParsedModule {
     /// Non-literal dynamic import was seen.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub has_opaque_dynamic_import: bool,
+    /// Runs another Python file with `sys.executable`, in this interpreter's
+    /// environment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub runs_python_file: bool,
+    /// In a module that imports `subprocess`, the first words of string
+    /// literals that look like command lines: programs it may run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shell_commands: Vec<String>,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,
