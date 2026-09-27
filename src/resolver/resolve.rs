@@ -275,6 +275,22 @@ fn resolve_import_root(
         );
     }
 
+    // `openai` / `tiktoken` are absent from the bundled map and already in
+    // canonical form, so no map above names them; a declared or locked
+    // distribution of the exact same name is the evidence instead.
+    if manifest
+        .dependencies
+        .iter()
+        .any(|dep| dep.name == root_name)
+        || manifest.lockfile.edges.contains_key(root_name)
+    {
+        return RootResolution {
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some(root_name.to_owned()),
+            confidence: ResolveConfidence::Likely,
+        };
+    }
+
     RootResolution {
         origin: ModuleOrigin::Unknown,
         distribution: None,

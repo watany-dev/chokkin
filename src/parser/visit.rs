@@ -524,11 +524,12 @@ impl<'a> ModuleVisitor<'a> {
         let module_suffix = import_from.module.as_ref().map(ToString::to_string);
 
         for alias in &import_from.names {
-            if alias.name.as_str() == "*" {
-                continue;
-            }
+            // `from m import *` still loads `m`; it is kept with name `*` so
+            // `from . import *` resolves to the package itself and consumers
+            // can tell it apart from `from . import m`.
+            let is_star = alias.name.as_str() == "*";
 
-            if level == 0 {
+            if level == 0 && !is_star {
                 self.loader_names
                     .record_import_from(module_suffix.as_deref(), alias);
             }
@@ -568,7 +569,7 @@ impl<'a> ModuleVisitor<'a> {
                         .push(unresolved_relative_diagnostic(self.path, line));
                     String::new()
                 });
-                let name = if module_suffix.is_some() {
+                let name = if module_suffix.is_some() || is_star {
                     Some(alias.name.to_string())
                 } else {
                     None
@@ -676,6 +677,15 @@ mod tests {
         assert!(parsed.attribute_accesses.iter().any(|access| {
             access.receiver == "acme.utils" && access.name == "CONFIG" && access.line == 3
         }));
+    }
+
+    #[test]
+    fn keeps_star_import_as_module_import() {
+        let parsed = visit_source("from acme.models import *\n");
+        assert_eq!(parsed.imports.len(), 1);
+        assert_eq!(parsed.imports[0].module, "acme.models");
+        assert_eq!(parsed.imports[0].name.as_deref(), Some("*"));
+        assert_eq!(parsed.imports[0].kind, ImportKind::ImportFrom);
     }
 
     #[test]

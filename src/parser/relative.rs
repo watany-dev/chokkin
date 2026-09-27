@@ -33,7 +33,14 @@ pub fn resolve_relative_import(
         return Some(join_module(&base, suffix));
     }
 
-    imported_name.map(|name| join_module(&base, name))
+    // `from . import *` loads the package itself, not a `*` submodule.
+    imported_name.map(|name| {
+        if name == "*" {
+            base
+        } else {
+            join_module(&base, name)
+        }
+    })
 }
 
 /// Build a diagnostic for an unresolved relative import.
@@ -116,6 +123,15 @@ mod tests {
         let resolved =
             resolve_relative_import("src/acme/api/routes.py", &layout, 1, None, Some("sibling"));
         assert_eq!(resolved, Some("acme.api.sibling".to_owned()));
+    }
+
+    #[test]
+    fn relative_star_import_resolves_to_the_package() {
+        let layout = src_layout();
+        assert_eq!(
+            resolve_relative_import("src/acme/api/__init__.py", &layout, 1, None, Some("*")),
+            Some("acme.api".to_owned())
+        );
     }
 
     #[test]

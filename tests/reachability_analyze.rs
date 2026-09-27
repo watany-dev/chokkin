@@ -499,3 +499,44 @@ mod golden {
         );
     }
 }
+
+#[test]
+fn star_imports_reach_their_source_modules() {
+    // Generated at test time: a checked-in copy would be analyzed by the
+    // repository's own chokkin baseline run.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src/acme/pkg/ns")).expect("package dirs");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"star-import\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"src/acme/main.py\"]\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/main.py", "from acme.pkg import *\n"),
+        ("src/acme/pkg/__init__.py", "from .ns.a import *\n"),
+        ("src/acme/pkg/ns/__init__.py", ""),
+        ("src/acme/pkg/ns/a.py", "from . import *\nVALUE = 1\n"),
+    ] {
+        std::fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let mut inputs = load_reachability(temp.path(), false);
+    let report = analyze_reachability(
+        &mut inputs.graph,
+        &inputs.sources,
+        &inputs.entry,
+        &inputs.plugins,
+        &inputs.parse,
+        &inputs.entry.mode,
+        false,
+    )
+    .expect("reachability");
+
+    for file in [
+        "src/acme/pkg/__init__.py",
+        "src/acme/pkg/ns/__init__.py",
+        "src/acme/pkg/ns/a.py",
+    ] {
+        let id = inputs.graph.file_id(file).expect("file id");
+        assert!(report.reachable.contains(&id), "{file} should be reachable");
+    }
+}
