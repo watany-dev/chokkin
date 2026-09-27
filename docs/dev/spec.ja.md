@@ -344,7 +344,7 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 解決戦略は多層にする。
 
 ```text
-1. stdlib判定 (`target_version` に応じた bundled リスト: `resolver/stdlib/py310.txt` 〜 `py313.txt`。`scripts/generate-stdlib-modules.py` で再生成)
+1. stdlib判定 (`target_version` に応じた bundled リスト: `resolver/stdlib/py310.txt` 〜 `py313.txt`。各版の `sys.stdlib_module_names` から `scripts/generate-stdlib-modules.py` で再生成。3.9以前はpy310、3.14以降はpy313のリストを使う)
 2. first-party module判定
 3. workspace member判定
 4. local .venv の dist-info / METADATA / top_level.txt / RECORD を読む
@@ -357,6 +357,8 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root と first-party の import root(project 同梱の script が `uv run` で index から自 project を入れるケース)も、block が同名を宣言していれば使用とみなす。`[sys.executable, <file>, ...]` で別 file を実行する script は、子 process が block の環境を共有し import を追えないため script の CHK002 を出さない。`subprocess` を import する script では、複数語の文字列 literal(`"ruff format ..."`)の先頭語をコマンド名とみなし、同名の宣言依存を使用として数える。
 
 `google` / `opentelemetry` / `databricks` のように複数 distribution が共有する namespace package は root だけでは決まらないため、root が third-party / unknown に分類された import は、user map と bundled map の dotted key(`google.protobuf`、`opentelemetry.sdk` など、2 segment 以上)を import 先の module 名(`from a.b import c` は `a.b.c`)に対して最長一致で引き、見つかればその distribution で上書きする。first-party root(`poetry` に対する `poetry.core` など)も、一致した dotted module が project 内のどのファイルにも無い場合に限り同様に上書きする。
+
+`azure` のように root 自体を提供する distribution が無い namespace は dotted key(`azure.identity` など)だけを bundled map に載せ、未登録の sub-package を任意の 1 distribution に誤って寄せない。bundled map は `data/package-map.seed.json` から `scripts/generate-package-map.py` で生成し、`--verify-wheels`(ネットワーク必須、CI 対象外)で各 entry の import 名を PyPI 最新 wheel の `top_level.txt` / RECORD と照合する。
 
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 

@@ -104,6 +104,7 @@
     {
       "distribution": "attrs",
       "imports": [
+        "attr",
         "attrs"
       ]
     },
@@ -166,22 +167,20 @@
     {
       "distribution": "argon2-cffi",
       "imports": [
-        "argon2",
-        "argon2_cffi"
+        "argon2"
       ]
     },
     {
       "distribution": "pyopenssl",
       "imports": [
-        "OpenSSL",
-        "pyopenssl"
+        "OpenSSL"
       ]
     },
     {
       "distribution": "pysocks",
       "imports": [
         "socks",
-        "pysocks"
+        "sockshandler"
       ]
     },
     {
@@ -262,6 +261,237 @@
       "imports": [
         "grpc"
       ]
+    },
+    {
+      "distribution": "ansible",
+      "imports": [
+        "ansible_collections"
+      ]
+    },
+    {
+      "distribution": "ansible-core",
+      "imports": [
+        "ansible"
+      ]
+    },
+    {
+      "distribution": "black",
+      "imports": [
+        "black",
+        "blackd",
+        "blib2to3"
+      ]
+    },
+    {
+      "distribution": "cattrs",
+      "imports": [
+        "cattr",
+        "cattrs"
+      ]
+    },
+    {
+      "distribution": "dnspython",
+      "imports": [
+        "dns"
+      ]
+    },
+    {
+      "distribution": "factory-boy",
+      "imports": [
+        "factory"
+      ]
+    },
+    {
+      "distribution": "fonttools",
+      "imports": [
+        "fontTools"
+      ]
+    },
+    {
+      "distribution": "mypy",
+      "imports": [
+        "mypy",
+        "mypyc"
+      ]
+    },
+    {
+      "distribution": "pip-tools",
+      "imports": [
+        "piptools"
+      ]
+    },
+    {
+      "distribution": "proto-plus",
+      "imports": [
+        "proto"
+      ]
+    },
+    {
+      "distribution": "pynacl",
+      "imports": [
+        "nacl"
+      ]
+    },
+    {
+      "distribution": "python-slugify",
+      "imports": [
+        "slugify"
+      ]
+    },
+    {
+      "distribution": "pyzmq",
+      "imports": [
+        "zmq"
+      ]
+    },
+    {
+      "distribution": "rpds-py",
+      "imports": [
+        "rpds"
+      ]
+    },
+    {
+      "distribution": "setuptools",
+      "imports": [
+        "pkg_resources",
+        "setuptools"
+      ]
+    },
+    {
+      "distribution": "slack-sdk",
+      "imports": [
+        "slack",
+        "slack_sdk"
+      ]
+    },
+    {
+      "distribution": "toolz",
+      "imports": [
+        "tlz",
+        "toolz"
+      ]
+    },
+    {
+      "distribution": "websocket-client",
+      "imports": [
+        "websocket"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-exporter-otlp-proto-common",
+      "imports": [
+        "opentelemetry.exporter.otlp.proto.common"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-exporter-otlp-proto-grpc",
+      "imports": [
+        "opentelemetry.exporter.otlp.proto.grpc"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-exporter-otlp-proto-http",
+      "imports": [
+        "opentelemetry.exporter.otlp.proto.http"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-semantic-conventions",
+      "imports": [
+        "opentelemetry.semconv"
+      ]
+    },
+    {
+      "distribution": "azure-core",
+      "imports": [
+        "azure.core"
+      ]
+    },
+    {
+      "distribution": "azure-cosmos",
+      "imports": [
+        "azure.cosmos"
+      ]
+    },
+    {
+      "distribution": "azure-eventhub",
+      "imports": [
+        "azure.eventhub"
+      ]
+    },
+    {
+      "distribution": "azure-identity",
+      "imports": [
+        "azure.identity"
+      ]
+    },
+    {
+      "distribution": "azure-keyvault-keys",
+      "imports": [
+        "azure.keyvault.keys"
+      ]
+    },
+    {
+      "distribution": "azure-keyvault-secrets",
+      "imports": [
+        "azure.keyvault.secrets"
+      ]
+    },
+    {
+      "distribution": "azure-servicebus",
+      "imports": [
+        "azure.servicebus"
+      ]
+    },
+    {
+      "distribution": "azure-storage-blob",
+      "imports": [
+        "azure.storage.blob"
+      ]
+    },
+    {
+      "distribution": "azure-storage-file-datalake",
+      "imports": [
+        "azure.storage.filedatalake"
+      ]
+    },
+    {
+      "distribution": "azure-storage-queue",
+      "imports": [
+        "azure.storage.queue"
+      ]
+    },
+    {
+      "distribution": "a2a-sdk",
+      "imports": [
+        "a2a"
+      ]
+    },
+    {
+      "distribution": "google-cloud-aiplatform",
+      "imports": [
+        "google",
+        "google.cloud.aiplatform",
+        "vertexai"
+      ]
+    },
+    {
+      "distribution": "vcrpy",
+      "imports": [
+        "vcr"
+      ]
+    },
+    {
+      "distribution": "python3-saml",
+      "imports": [
+        "onelogin"
+      ]
+    },
+    {
+      "distribution": "python-ulid",
+      "imports": [
+        "ulid"
+      ]
     }
   ],
   "auto_packages": [
@@ -269,9 +499,7 @@
     "aiosqlite",
     "alembic",
     "annotated-types",
-    "ansible",
     "appdirs",
-    "argon2-cffi",
     "arrow",
     "asgiref",
     "astroid",
@@ -285,7 +513,6 @@
     "bokeh",
     "brotli",
     "build",
-    "cattrs",
     "cfgv",
     "chardet",
     "cherrypy",
@@ -296,6 +523,7 @@
     "croniter",
     "cycler",
     "dask",
+    "ddtrace",
     "decorator",
     "defusedxml",
     "deprecated",
@@ -308,10 +536,8 @@
     "et-xmlfile",
     "executing",
     "fabric",
-    "factory-boy",
     "faker",
     "fastjsonschema",
-    "fonttools",
     "freezegun",
     "furl",
     "gdown",
@@ -362,13 +588,11 @@
     "passlib",
     "pendulum",
     "pexpect",
-    "pip-tools",
     "plotly",
     "polars",
     "pre-commit",
     "prometheus-client",
     "prompt-toolkit",
-    "proto-plus",
     "ptyprocess",
     "pure-eval",
     "pyasn1",
@@ -377,21 +601,14 @@
     "pydantic-core",
     "pydeck",
     "pyflakes",
-    "pynacl",
-    "pyopenssl",
     "pyproject-hooks",
     "pyrsistent",
-    "pysocks",
-    "python-multipart",
-    "python-slugify",
-    "pyzmq",
     "qrcode",
     "rapidfuzz",
     "reportlab",
     "requests-oauthlib",
     "responses",
     "retrying",
-    "ruamel-yaml",
     "s3fs",
     "scipy",
     "scrapy",
@@ -401,7 +618,6 @@
     "sendgrid",
     "sentry-sdk",
     "simplejson",
-    "slack-sdk",
     "sortedcontainers",
     "stack-data",
     "stripe",
@@ -412,7 +628,6 @@
     "threadpoolctl",
     "toml",
     "tomlkit",
-    "toolz",
     "tornado",
     "traitlets",
     "trio",
@@ -426,7 +641,6 @@
     "vine",
     "wcwidth",
     "webencodings",
-    "websocket-client",
     "websockets",
     "whoosh",
     "xlsxwriter",
