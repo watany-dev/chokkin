@@ -65,6 +65,7 @@ mod tests {
         LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         }
     }
@@ -108,6 +109,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         let paths = known(&["acme/foo.py"]);
@@ -122,6 +124,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         let paths = known(&["services/api/src/api/main.py"]);

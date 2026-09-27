@@ -403,6 +403,7 @@ mod tests {
         LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         }
     }

@@ -10,10 +10,28 @@ use super::warnings::SourcesWarning;
 
 const NON_PACKAGE_DIRS: &[&str] = &["tests", "scripts", "docs", "build", "dist", ".venv"];
 
+/// `NON_PACKAGE_DIRS` that hold project source rather than build or
+/// environment output, so an `__init__.py` makes them importable by name
+/// (pytest puts the rootdir on `sys.path`).
+const LOCAL_PACKAGE_DIRS: &[&str] = &["tests", "scripts", "docs"];
+
 /// Infer project layout and default `project` globs (§3.1), plus a warning
 /// when several flat-layout packages exist and metadata cannot pick one.
 #[must_use]
 pub fn infer_layout(
+    root: &Path,
+    metadata: &ProjectMetadata,
+) -> (LayoutInfo, Option<SourcesWarning>) {
+    let (mut layout, warning) = infer_distribution_layout(root, metadata);
+    layout.local_packages = LOCAL_PACKAGE_DIRS
+        .iter()
+        .filter(|name| root.join(name).join("__init__.py").is_file())
+        .map(|name| (*name).to_owned())
+        .collect();
+    (layout, warning)
+}
+
+fn infer_distribution_layout(
     root: &Path,
     metadata: &ProjectMetadata,
 ) -> (LayoutInfo, Option<SourcesWarning>) {
@@ -25,6 +43,7 @@ pub fn infer_layout(
             let layout = LayoutInfo {
                 layout: ProjectLayout::Src,
                 packages,
+                local_packages: Vec::new(),
                 inferred_globs,
             };
             return (layout, None);
@@ -38,6 +57,7 @@ pub fn infer_layout(
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
             packages,
+            local_packages: Vec::new(),
             inferred_globs,
         };
         return (layout, warning);
@@ -46,6 +66,7 @@ pub fn infer_layout(
     let layout = LayoutInfo {
         layout: ProjectLayout::Unknown,
         packages: Vec::new(),
+        local_packages: Vec::new(),
         inferred_globs: default_globs(ProjectLayout::Unknown, &[]),
     };
     (layout, None)
@@ -147,21 +168,21 @@ pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
     let stem = path.strip_suffix(".py")?;
     let module_path = stem.strip_suffix("/__init__").unwrap_or(stem);
 
-    match layout.layout {
+    let distributed = match layout.layout {
         ProjectLayout::Src => src_module_name(module_path),
-        ProjectLayout::Flat => flat_module_name(module_path, layout),
-        ProjectLayout::Unknown => {
-            src_module_name(module_path).or_else(|| flat_module_name(module_path, layout))
-        },
-    }
+        ProjectLayout::Flat => package_module_name(module_path, &layout.packages),
+        ProjectLayout::Unknown => src_module_name(module_path)
+            .or_else(|| package_module_name(module_path, &layout.packages)),
+    };
+    distributed.or_else(|| package_module_name(module_path, &layout.local_packages))
 }
 
 fn src_module_name(path: &str) -> Option<String> {
     path.strip_prefix("src/").map(|rest| rest.replace('/', "."))
 }
 
-fn flat_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
-    for package in &layout.packages {
+fn package_module_name(path: &str, packages: &[String]) -> Option<String> {
+    for package in packages {
         if path == *package {
             return Some(package.clone());
         }
@@ -189,6 +210,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         assert_eq!(
@@ -207,6 +229,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         assert_eq!(
@@ -221,6 +244,7 @@ mod tests {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
             packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
             inferred_globs: Vec::new(),
         };
         assert_eq!(
@@ -228,6 +252,30 @@ mod tests {
             Some("acme.core".to_owned())
         );
         assert_eq!(path_to_module("scripts/run.py", &layout), None);
+    }
+
+    #[test]
+    fn infer_layout_indexes_root_tests_package_without_distributing_it() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        for dir in ["acme", "tests", "build"] {
+            fs::create_dir_all(temp.path().join(dir)).expect("create dir");
+            fs::write(temp.path().join(dir).join("__init__.py"), "").expect("write");
+        }
+        let (layout, warning) = infer_layout(temp.path(), &ProjectMetadata::default());
+        assert_eq!(layout.layout, ProjectLayout::Flat);
+        assert_eq!(layout.packages, vec!["acme".to_owned()]);
+        assert_eq!(layout.local_packages, vec!["tests".to_owned()]);
+        assert_eq!(warning, None);
+        assert_eq!(
+            path_to_module("tests/integration/client.py", &layout),
+            Some("tests.integration.client".to_owned())
+        );
+        assert_eq!(
+            path_to_module("tests/__init__.py", &layout),
+            Some("tests".to_owned())
+        );
+        assert_eq!(path_to_module("build/lib.py", &layout), None);
+        assert_eq!(path_to_module("testsuite/x.py", &layout), None);
     }
 
     #[test]

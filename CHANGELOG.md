@@ -118,6 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `workspace = true` dependency counts as used when a used workspace
   member's own files import a module from its tree (a root that ships
   `airflow-core` and `task-sdk` uses both, since core imports `airflow.sdk`).
+- A root `tests/`, `scripts/` or `docs/` directory with `__init__.py` is now a
+  first-party package, so `from tests.helpers import x` no longer raises
+  CHK010 and helpers reached only this way are not CHK001. These packages keep
+  their test/dev/docs context, never count as the flat-layout distribution
+  package, and their symbols are not checked by CHK006 / CHK007 (#359).
 
 ## [0.4.1] - Unreleased
 
