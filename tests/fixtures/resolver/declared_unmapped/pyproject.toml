@@ -1,4 +1,0 @@
-[project]
-name = "declared-unmapped-demo"
-version = "0.1.0"
-dependencies = ["resolvelib>=1.0"]
