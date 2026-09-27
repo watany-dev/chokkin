@@ -458,6 +458,7 @@ mod tests {
                 line: 4,
             }],
             has_opaque_dynamic_import: false,
+            runs_python_file: false,
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });
@@ -503,6 +504,7 @@ mod tests {
                 line: 12,
             }],
             has_opaque_dynamic_import: false,
+            runs_python_file: false,
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         });

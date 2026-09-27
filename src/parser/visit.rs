@@ -13,7 +13,7 @@ use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
-use super::dynamic::{LoaderNames, literal_module};
+use super::dynamic::{LoaderNames, PythonRun, literal_module, python_run};
 use super::exports::extract_exports;
 use super::platform_guard::is_platform_guard_if;
 use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
@@ -442,11 +442,13 @@ impl<'a> ModuleVisitor<'a> {
             },
             Expr::Starred(starred) => self.visit_expr(&starred.value),
             Expr::List(list) => {
+                self.record_python_run(expr, &list.elts);
                 for value in &list.elts {
                     self.visit_expr(value);
                 }
             },
             Expr::Tuple(tuple) => {
+                self.record_python_run(expr, &tuple.elts);
                 for value in &tuple.elts {
                     self.visit_expr(value);
                 }
@@ -469,6 +471,31 @@ impl<'a> ModuleVisitor<'a> {
                 }
             },
             Expr::Constant(_) | Expr::Name(_) => {},
+        }
+    }
+
+    /// `[sys.executable, "-m", "pkg"]` uses `pkg` without importing it. It is
+    /// recorded as an optional import so it counts as a use but is never
+    /// reported missing (`pip` rarely is declared).
+    fn record_python_run(&mut self, expr: &Expr, elts: &[Expr]) {
+        match python_run(elts) {
+            Some(PythonRun::Module(module)) => {
+                let line = self.line_number(expr);
+                let context = self.current_import_context();
+                self.parsed.imports.push(ImportRef {
+                    module,
+                    name: None,
+                    alias: None,
+                    line,
+                    kind: ImportKind::Import,
+                    context,
+                    optional: true,
+                    platform_guarded: false,
+                    relative_level: 0,
+                });
+            },
+            Some(PythonRun::File) => self.parsed.runs_python_file = true,
+            None => {},
         }
     }
 
@@ -664,6 +691,25 @@ mod tests {
         let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &mut locator);
         visitor.visit_module(&stmts);
         visitor.into_parsed()
+    }
+
+    #[test]
+    fn python_runs_record_optional_imports_and_file_runs() {
+        let parsed = visit_source(
+            "import subprocess, sys\ncmd = [\n    sys.executable,\n    \"-m\",\n    \"virtualenv\",\n]\n",
+        );
+        let run = parsed
+            .imports
+            .iter()
+            .find(|import| import.module == "virtualenv")
+            .expect("virtualenv import");
+        assert!(run.optional);
+        assert_eq!(run.line, 2);
+        assert!(!parsed.runs_python_file);
+
+        let parsed =
+            visit_source("import subprocess, sys\nsubprocess.run([sys.executable, path])\n");
+        assert!(parsed.runs_python_file);
     }
 
     #[test]

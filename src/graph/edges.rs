@@ -96,6 +96,7 @@ mod tests {
             exports: Vec::new(),
             ignores: Vec::new(),
             has_opaque_dynamic_import: false,
+            runs_python_file: false,
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
         };

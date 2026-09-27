@@ -78,3 +78,96 @@ pub fn literal_module(call: &ExprCall) -> Option<String> {
         _ => None,
     }
 }
+
+/// What a `[sys.executable, …]` argument list runs in this interpreter's
+/// environment.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PythonRun {
+    /// `[sys.executable, "-m", "module", …]`.
+    Module(String),
+    /// `[sys.executable, <file>, …]` with a path the parser cannot follow.
+    File,
+}
+
+/// Recognize a `subprocess` argument list starting with `sys.executable`.
+#[must_use]
+pub fn python_run(elts: &[Expr]) -> Option<PythonRun> {
+    let (first, rest) = elts.split_first()?;
+    let Expr::Attribute(attribute) = first else {
+        return None;
+    };
+    if attribute.attr.as_str() != "executable"
+        || !matches!(&*attribute.value, Expr::Name(name) if name.id.as_str() == "sys")
+    {
+        return None;
+    }
+    match rest {
+        [flag, module, ..] if str_constant(flag) == Some("-m") => str_constant(module)
+            .filter(|module| is_dotted_identifier(module))
+            .map(|module| PythonRun::Module(module.to_owned())),
+        [argument, ..] if str_constant(argument).is_none_or(|value| !value.starts_with('-')) => {
+            Some(PythonRun::File)
+        },
+        _ => None,
+    }
+}
+
+fn str_constant(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Constant(constant) => match &constant.value {
+            Constant::Str(value) => Some(value.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_dotted_identifier(module: &str) -> bool {
+    module.split('.').all(|part| {
+        part.chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use rustpython_parser::Parse;
+    use rustpython_parser::ast::{Expr, Stmt, Suite};
+
+    use super::{PythonRun, python_run};
+
+    fn run(source: &str) -> Option<PythonRun> {
+        let stmts = Suite::parse(source, "<test>").expect("parse");
+        let Some(Stmt::Expr(stmt)) = stmts.first() else {
+            return None;
+        };
+        match &*stmt.value {
+            Expr::List(list) => python_run(&list.elts),
+            Expr::Tuple(tuple) => python_run(&tuple.elts),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn recognizes_module_and_file_runs() {
+        assert_eq!(
+            run(r#"[sys.executable, "-m", "virtualenv", path]"#),
+            Some(PythonRun::Module("virtualenv".to_owned()))
+        );
+        assert_eq!(
+            run("(sys.executable, script.as_posix())"),
+            Some(PythonRun::File)
+        );
+        assert_eq!(run(r#"[sys.executable, "tool.py"]"#), Some(PythonRun::File));
+    }
+
+    #[test]
+    fn ignores_other_argument_lists() {
+        assert_eq!(run(r#"[sys.executable, "-c", code]"#), None);
+        assert_eq!(run(r#"[sys.executable, "-m", name]"#), None);
+        assert_eq!(run(r#"[sys.executable]"#), None);
+        assert_eq!(run(r#"["python", "-m", "pip"]"#), None);
+    }
+}

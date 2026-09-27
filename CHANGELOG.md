@@ -88,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count as used third-party imports. CHK001 confidence drops to `likely` when
   reachable code has an opaque dynamic import; an unreachable file's own
   opaque import no longer affects its confidence.
+- `[sys.executable, "-m", "pkg", ...]` argument lists count as a use of `pkg`
+  but are never reported as missing. A PEP 723 script that runs another file
+  with `sys.executable` gets no script CHK002, since the child shares the
+  block's environment. Parse cache unit bumped to `parse-v8`.
 
 ## [0.4.1] - Unreleased
 

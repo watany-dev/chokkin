@@ -5,11 +5,13 @@ use std::collections::{BTreeMap, HashSet};
 use indexmap::IndexSet;
 
 use crate::graph::{ModuleOrigin, ProjectGraph};
-use crate::manifest::LoadedManifest;
+use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
-use crate::resolver::ResolutionIndex;
+use crate::resolver::{ResolutionIndex, import_root};
 use crate::rules::RuleContext;
+use crate::rules::types::WorkspaceDependencyBoundary;
+use crate::sources::DiscoveredFile;
 
 /// Index of declared dependencies keyed by normalized distribution name.
 pub(super) type DeclaredIndex<'a> = BTreeMap<String, Vec<&'a crate::manifest::DeclaredDependency>>;
@@ -78,22 +80,115 @@ pub(super) fn collect_used_distributions(
 }
 
 /// `workspace = true` dependencies resolve as first-party imports, so they
-/// carry no distribution; match them back by normalized import name.
+/// carry no distribution; match them back by normalized import name, or by
+/// the member tree that holds the imported module (`airflow` from
+/// `airflow-core/src/airflow` uses `apache-airflow-core`). The manifest's own
+/// entry point targets count as such imports too.
 pub(super) fn mark_workspace_source_distributions(
     manifest: &LoadedManifest,
     resolution: &ResolutionIndex,
     reachable: &HashSet<&str>,
+    files: &[DiscoveredFile],
+    workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
     used: &mut IndexSet<String>,
 ) {
-    for import in &resolution.imports {
-        if import.origin != ModuleOrigin::FirstParty || !reachable.contains(import.file.as_str()) {
-            continue;
-        }
-        let name = crate::manifest::normalize_distribution_name(&import.import_root);
+    let first_party: Vec<&str> = resolution
+        .imports
+        .iter()
+        .filter(|import| {
+            import.origin == ModuleOrigin::FirstParty && reachable.contains(import.file.as_str())
+        })
+        .map(|import| import.full_module.as_str())
+        .collect();
+    for module in &first_party {
+        let name = normalize_distribution_name(import_root(module));
         if manifest.uv.is_workspace_source(&name) {
             used.insert(name);
         }
     }
+
+    let declared: HashSet<String> = manifest
+        .dependencies
+        .iter()
+        .map(|dep| normalize_distribution_name(&dep.name))
+        .collect();
+    let entry_modules = manifest
+        .entry_points
+        .iter()
+        .filter_map(|entry| entry.target.split(':').next())
+        .map(str::trim);
+    let modules: HashSet<&str> = first_party.iter().copied().chain(entry_modules).collect();
+    for boundary in workspace_boundaries {
+        let Some(name) = boundary.manifest.metadata.name.as_deref() else {
+            continue;
+        };
+        let name = normalize_distribution_name(name);
+        if used.contains(&name)
+            || !declared.contains(&name)
+            || !manifest.uv.is_workspace_source(&name)
+        {
+            continue;
+        }
+        let Some(member_path) = member_path(manifest, boundary.manifest) else {
+            continue;
+        };
+        let provided = member_modules(&member_path, files);
+        if modules.iter().any(|module| provided.contains(*module)) {
+            used.insert(name);
+        }
+    }
+}
+
+/// Root-relative `/` path of a workspace member; empty for the root itself.
+fn member_path(root: &LoadedManifest, member: &LoadedManifest) -> Option<String> {
+    let relative = member.root.path.strip_prefix(&root.root.path).ok()?;
+    let parts: Vec<String> = relative
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    Some(parts.join("/"))
+}
+
+/// Dotted module names the files under `member_path` provide, imported from
+/// the member root or from a `src` directory (`providers/x/src/airflow/models.py`
+/// gives `airflow` and `airflow.models`).
+fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashSet<String> {
+    let mut modules = HashSet::new();
+    for file in files {
+        let relative = if member_path.is_empty() {
+            Some(file.path.as_str())
+        } else {
+            file.path
+                .strip_prefix(member_path)
+                .and_then(|rest| rest.strip_prefix('/'))
+        };
+        let Some(relative) = relative else {
+            continue;
+        };
+        let Some(stem) = relative
+            .strip_suffix(".py")
+            .or_else(|| relative.strip_suffix(".pyi"))
+        else {
+            continue;
+        };
+        let mut parts: Vec<&str> = stem.split('/').collect();
+        if parts.last() == Some(&"__init__") {
+            parts.pop();
+        }
+        let starts = std::iter::once(0).chain(
+            parts
+                .iter()
+                .enumerate()
+                .filter(|(_, part)| **part == "src")
+                .map(|(index, _)| index + 1),
+        );
+        for start in starts {
+            for end in start + 1..=parts.len() {
+                modules.insert(parts[start..end].join("."));
+            }
+        }
+    }
+    modules
 }
 
 /// Treat `pytest11` plugins installed in the venv as used whenever pytest is,
@@ -271,5 +366,27 @@ mod tests {
         let mut used = IndexSet::new();
         mark_self_referential_distribution(&manifest, &declared, &mut used);
         assert!(used.contains("self-extra"));
+    }
+
+    #[test]
+    fn member_modules_start_at_member_root_or_src() {
+        let file = |path: &str| DiscoveredFile {
+            path: path.to_owned(),
+            kind: crate::sources::FileKind::Python,
+            context: crate::sources::FileContext::Runtime,
+        };
+        let files = [
+            file("airflow-core/src/airflow/__init__.py"),
+            file("airflow-core/src/airflow/models/dag.py"),
+            file("airflow-core/tests/utils.py"),
+            file("task-sdk/src/airflow/sdk/__init__.py"),
+        ];
+        let modules = member_modules("airflow-core", &files);
+        assert!(modules.contains("airflow"));
+        assert!(modules.contains("airflow.models.dag"));
+        assert!(modules.contains("tests.utils"));
+        assert!(!modules.contains("utils"));
+        assert!(!modules.contains("models"));
+        assert!(!modules.contains("airflow.sdk"));
     }
 }

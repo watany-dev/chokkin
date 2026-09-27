@@ -90,6 +90,7 @@ pub fn reconcile_with_context(
         dependency.rules.resolution,
         &reachable,
         &dependency.rules.sources.files,
+        dependency.rules.parse,
         &ImportMap::build(dependency.config),
         dependency.strict,
     ));
@@ -128,7 +129,14 @@ fn reconcile_project(
     let mut used = collect_used_distributions(context, plugins, &reachable);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
-    mark_workspace_source_distributions(manifest, resolution, &reachable, &mut used);
+    mark_workspace_source_distributions(
+        manifest,
+        resolution,
+        &reachable,
+        &context.sources.files,
+        workspace_boundaries,
+        &mut used,
+    );
 
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());

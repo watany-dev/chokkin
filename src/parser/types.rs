@@ -184,6 +184,10 @@ pub struct ParsedModule {
     /// Non-literal dynamic import was seen.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub has_opaque_dynamic_import: bool,
+    /// Runs another Python file with `sys.executable`, in this interpreter's
+    /// environment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub runs_python_file: bool,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,

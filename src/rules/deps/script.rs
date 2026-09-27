@@ -5,6 +5,7 @@ use std::collections::{BTreeSet, HashSet};
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
 use crate::manifest::{InlineScript, normalize_distribution_name};
+use crate::parser::ParseSummary;
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 use crate::sources::DiscoveredFile;
@@ -21,6 +22,7 @@ pub(super) fn detect_script_dependency_issues(
     resolution: &ResolutionIndex,
     reachable: &HashSet<&str>,
     files: &[DiscoveredFile],
+    parse: &ParseSummary,
     import_map: &ImportMap,
     strict: bool,
 ) -> Vec<IssueCandidate> {
@@ -62,7 +64,15 @@ pub(super) fn detect_script_dependency_issues(
             import.origin == ModuleOrigin::ThirdParty && import.distribution.is_some()
         });
         candidates.extend(missing_in_script(script, &imports, &declared, import_map));
-        candidates.extend(unused_in_script(script, &used, strict));
+        // A file run with `sys.executable` shares the block's environment, and
+        // its imports cannot be followed.
+        let runs_python_file = parse
+            .modules
+            .iter()
+            .any(|module| module.path == script.path && module.runs_python_file);
+        if !runs_python_file {
+            candidates.extend(unused_in_script(script, &used, strict));
+        }
     }
     candidates
 }
@@ -288,6 +298,7 @@ mod tests {
             &resolution,
             &reachable,
             &[],
+            &ParseSummary::default(),
             &import_map(),
             false,
         )
@@ -308,6 +319,41 @@ mod tests {
     }
 
     #[test]
+    fn scripts_running_another_python_file_report_no_unused() {
+        let script = InlineScript {
+            path: "scripts/tool.py".to_owned(),
+            dependencies: vec![dependency("httpx", 3)],
+            requires_python: None,
+            target_version: None,
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![import("yaml", "pyyaml", 8)],
+            ..ResolutionIndex::default()
+        };
+        let parse = ParseSummary {
+            modules: vec![crate::parser::ParsedModule {
+                path: "scripts/tool.py".to_owned(),
+                runs_python_file: true,
+                ..crate::parser::ParsedModule::default()
+            }],
+        };
+        let reachable = HashSet::from(["scripts/tool.py"]);
+        let found: Vec<_> = detect_script_dependency_issues(
+            &[script],
+            &resolution,
+            &reachable,
+            &[],
+            &parse,
+            &import_map(),
+            false,
+        )
+        .into_iter()
+        .map(|candidate| candidate.rule)
+        .collect();
+        assert_eq!(found, [RuleId::Chk003]);
+    }
+
+    #[test]
     fn unreachable_scripts_are_not_checked() {
         let script = InlineScript {
             path: "scripts/tool.py".to_owned(),
@@ -320,6 +366,7 @@ mod tests {
             &ResolutionIndex::default(),
             &HashSet::new(),
             &[],
+            &ParseSummary::default(),
             &import_map(),
             false,
         );
@@ -361,6 +408,7 @@ mod tests {
             &resolution,
             &reachable,
             &files,
+            &ParseSummary::default(),
             &import_map(),
             false,
         )
@@ -435,6 +483,7 @@ mod tests {
             &resolution,
             &reachable,
             &files,
+            &ParseSummary::default(),
             &import_map(),
             false,
         )
