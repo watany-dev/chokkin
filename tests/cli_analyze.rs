@@ -377,3 +377,54 @@ fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> io:
     }
     Ok(())
 }
+
+/// Written at test time: a checked-in root `tests/__init__.py` would sit under
+/// the repository's own `tests/` and not be a project root package.
+fn root_tests_package_project() -> tempfile::TempDir {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/core.py", "def run() -> int:\n    return 1\n"),
+        ("tests/__init__.py", ""),
+        (
+            "tests/helpers.py",
+            "def make_client() -> int:\n    return 1\n",
+        ),
+        ("tests/_support/__init__.py", ""),
+        ("tests/_support/client.py", "class Gateway:\n    pass\n"),
+        ("tests/orphan.py", "def orphan() -> int:\n    return 1\n"),
+        (
+            "tests/test_a.py",
+            "from acme.core import run\nfrom tests._support.client import Gateway\nfrom tests.helpers import make_client\n\n\ndef test_a() -> None:\n    assert Gateway\n    assert make_client() == run()\n",
+        ),
+    ];
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create dir");
+        }
+        fs::write(path, text).expect("write fixture");
+    }
+    temp
+}
+
+#[test]
+fn binary_root_tests_package_imports_resolve_first_party() {
+    let project = root_tests_package_project();
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    assert!(keys.iter().all(|(code, _)| code != "CHK010"), "{keys:?}");
+    // Helpers are reached through `tests.*` imports, and test functions are
+    // not reported as unused exports.
+    let flagged: Vec<_> = keys
+        .iter()
+        .filter(|(code, target)| {
+            code == "CHK001" || (code == "CHK006" && target.starts_with("tests/"))
+        })
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(flagged, ["tests/orphan.py"], "{keys:?}");
+}

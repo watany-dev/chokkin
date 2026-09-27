@@ -520,6 +520,8 @@ scripts/**                                                  -> dev (設定で変
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
 ```
 
+root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。
+
 判定例。
 
 ```text
