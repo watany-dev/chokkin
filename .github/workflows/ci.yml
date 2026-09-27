@@ -222,6 +222,31 @@ jobs:
         run: bash <(curl -Ls https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash) 1.7.11
       - run: ./actionlint -color
 
+  action:
+    name: Action smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create clean fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/demo/src/demo"
+          printf '[project]\nname = "demo"\nversion = "0.0.0"\n' > "$RUNNER_TEMP/demo/pyproject.toml"
+          echo 'VALUE = 1' > "$RUNNER_TEMP/demo/src/demo/__init__.py"
+      - id: chokkin
+        uses: ./
+        with:
+          # The default pins the next release, which may not be on PyPI yet.
+          version: latest
+          working-directory: ${{ runner.temp }}/demo
+          sarif-file: out/chokkin.sarif
+      - name: Check SARIF output
+        env:
+          SARIF: ${{ steps.chokkin.outputs.sarif-file }}
+        run: jq -e '.version == "2.1.0"' "$SARIF"
+
   zizmor:
     name: Zizmor
     runs-on: ubuntu-24.04
