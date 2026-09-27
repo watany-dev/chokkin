@@ -60,26 +60,39 @@ jobs:
       - name: Report
         env:
           LC_ALL: C
+        # The log gets the compact part only; the full scorecard (every
+        # finding) goes to the job summary and the artifact.
         run: |
+          base=target/oss-metrics-baseline
+          head=target/oss-metrics
           {
             echo "# Before/after (${BASELINE_REV} vs HEAD)"
             echo ""
             echo "| Project | CHK002 base | CHK002 head | CHK003 base | CHK003 head |"
             echo "|---|---:|---:|---:|---:|"
             join -t $'\t' \
-              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' target/oss-metrics-baseline/summary.tsv | sort) \
-              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' target/oss-metrics/summary.tsv | sort) |
+              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' "$base/summary.tsv" | sort) \
+              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' "$head/summary.tsv" | sort) |
               awk -F'\t' '{printf "| %s | %s | %s | %s | %s |\n",$1,$2,$4,$3,$5}'
             echo ""
-            echo "## Unclassified findings on HEAD (CHK002 / CHK003)"
+            echo "## CHK003 on HEAD only (slug, target)"
+            echo ""
+            echo '```tsv'
+            comm -13 \
+              <(awk -F'\t' 'NR>1 && $2=="CHK003" {print $1"\t"$3}' "$base/findings.tsv" | sort -u) \
+              <(awk -F'\t' 'NR>1 && $2=="CHK003" {print $1"\t"$3}' "$head/findings.tsv" | sort -u)
+            echo '```'
+            echo ""
+            echo "## Unclassified CHK002 / CHK003 on HEAD"
             echo ""
             echo '```tsv'
             awk -F'\t' 'NR>1 && ($2=="CHK002" || $2=="CHK003") && ($4=="unknown" || $4=="deferred")' \
-              target/oss-metrics/findings.tsv
+              "$head/findings.tsv"
             echo '```'
             echo ""
-            cat target/oss-metrics/report.md
+            sed -n '/## Exit criteria/,/## Per-rule/p' "$head/report.md" | sed '$d'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$head/report.md" >>"$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
