@@ -294,21 +294,6 @@
       "target": "tests/fixtures/parse/broken/invalid_syntax.py"
     },
     {
-      "fingerprint": "CHK001:tests/fixtures/parse/dynamic/dunder_import.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/parse/dynamic/dunder_import.py"
-    },
-    {
-      "fingerprint": "CHK001:tests/fixtures/parse/dynamic/importlib_literal.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/parse/dynamic/importlib_literal.py"
-    },
-    {
-      "fingerprint": "CHK001:tests/fixtures/parse/dynamic/importlib_opaque.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/parse/dynamic/importlib_opaque.py"
-    },
-    {
       "fingerprint": "CHK001:tests/fixtures/parse/exports/all_list.py",
       "code": "CHK001",
       "target": "tests/fixtures/parse/exports/all_list.py"

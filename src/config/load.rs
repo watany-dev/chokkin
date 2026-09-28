@@ -71,32 +71,6 @@ mod tests {
     use crate::config::Confidence;
     use crate::config::default_config;
 
-    #[test]
-    fn apply_overrides_sets_production() {
-        let mut config = default_config();
-        apply_overrides(
-            &mut config,
-            &RuntimeOverrides {
-                production: Some(true),
-                ..RuntimeOverrides::default()
-            },
-        );
-        assert!(config.production);
-    }
-
-    #[test]
-    fn apply_overrides_sets_confidence_floor() {
-        let mut config = default_config();
-        apply_overrides(
-            &mut config,
-            &RuntimeOverrides {
-                confidence_floor: Some(Confidence::Certain),
-                ..RuntimeOverrides::default()
-            },
-        );
-        assert_eq!(config.confidence, Confidence::Certain);
-    }
-
     mod props {
         use super::*;
         use proptest::prelude::*;

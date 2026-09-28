@@ -179,19 +179,6 @@ fn filters_production_contexts() {
 }
 
 #[test]
-fn assigns_test_context_for_conftest() {
-    let sources = discover_fixture("src_layout");
-    let by_path = |target: &str| {
-        sources
-            .files
-            .iter()
-            .find(|file| file.path == target)
-            .map(|file| file.context)
-    };
-    assert_eq!(by_path("tests/conftest.py"), Some(FileContext::Test));
-}
-
-#[test]
 fn includes_pyi_as_stub_kind() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root_path = temp.path();

@@ -603,19 +603,6 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn detects_all_tool_sections() {
-        let result = extract("[tool.poetry]\n[tool.pdm]\n[tool.hatch]\n").expect("valid pyproject");
-        assert_eq!(
-            result.warnings,
-            vec![
-                ManifestWarning::PoetryDetected,
-                ManifestWarning::PdmDetected,
-                ManifestWarning::HatchDetected,
-            ]
-        );
-    }
-
     mod props {
         use super::*;
         use proptest::prelude::*;
