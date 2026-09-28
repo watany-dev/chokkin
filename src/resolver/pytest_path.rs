@@ -14,7 +14,6 @@ use crate::sources::{DiscoveredSources, FileContext, FileKind};
 /// Extra import directories that apply to test-context files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PytestImportPaths {
-    /// Discovered `.py` / `.pyi` paths.
     files: HashSet<String>,
     /// Every directory holding a discovered file, at any depth.
     dirs: HashSet<String>,
@@ -24,13 +23,11 @@ pub struct PytestImportPaths {
 }
 
 impl PytestImportPaths {
-    /// Build from discovered sources and the pytest config under their root.
     #[must_use]
     pub fn build(sources: &DiscoveredSources) -> Self {
         Self::with_settings(sources, &pytest_import_settings(&sources.root.path))
     }
 
-    /// Build from discovered sources and already-read pytest settings.
     #[must_use]
     pub fn with_settings(sources: &DiscoveredSources, settings: &PytestImportSettings) -> Self {
         let mut files = HashSet::new();
@@ -104,7 +101,6 @@ impl PytestImportPaths {
         })
     }
 
-    /// The `.py` file `module` names when imported from `file`, if any.
     #[must_use]
     pub fn resolve(&self, file: &str, module: &str) -> Option<&str> {
         let relative = module.replace('.', "/");
