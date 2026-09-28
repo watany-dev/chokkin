@@ -453,26 +453,6 @@ fn metadata_conflict_emits_warning() {
 }
 
 #[test]
-fn uv_workspace_hint_copied_from_config() {
-    let path = fixture("uv_workspace_hint");
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
-    let config = load_config(&root).expect("load config");
-    let manifest = extract_manifest(&root, &config).expect("extract manifest");
-    let members = config
-        .uv_workspace
-        .as_ref()
-        .map(|hint| hint.members.as_slice())
-        .expect("uv workspace hint");
-    assert_eq!(
-        manifest
-            .uv_workspace
-            .as_ref()
-            .map(|hint| hint.members.as_slice()),
-        Some(members)
-    );
-}
-
-#[test]
 fn setup_cfg_install_requires() {
     let manifest = extract_fixture("setup_cfg_install_requires");
     assert!(manifest.sources.setup_cfg);

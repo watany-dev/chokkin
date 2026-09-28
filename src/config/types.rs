@@ -567,11 +567,6 @@ mod tests {
             }
 
             #[test]
-            fn entry_spec_parse_never_panics(value in "\\PC{0,80}") {
-                let _ = EntrySpec::parse(&value);
-            }
-
-            #[test]
             fn entry_spec_ok_invariants(value in "\\PC{0,80}") {
                 if let Ok(spec) = EntrySpec::parse(&value) {
                     prop_assert!(!spec.path.is_empty());

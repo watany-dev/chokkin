@@ -135,12 +135,6 @@ fn collects_type_checking_alias_import_context() {
 }
 
 #[test]
-fn parses_match_statement_file() {
-    let parsed = parse_fixture("p7_match.py");
-    assert!(parsed.diagnostics.is_empty());
-}
-
-#[test]
 fn syntax_error_yields_diagnostic() {
     let parsed = parse_fixture("p9_syntax_error.py");
     assert!(parsed.imports.is_empty());

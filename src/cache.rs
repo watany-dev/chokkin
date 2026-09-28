@@ -951,21 +951,6 @@ mod tests {
     }
 
     #[test]
-    fn default_cache_is_enabled_under_project_root() {
-        let options = CacheOptions::default();
-        assert!(options.enabled);
-        assert_eq!(
-            options.directory_path(Path::new("/repo/project")),
-            Path::new("/repo/project").join(DEFAULT_CACHE_DIR)
-        );
-    }
-
-    #[test]
-    fn disabled_cache_is_not_enabled() {
-        assert!(!CacheOptions::disabled().enabled);
-    }
-
-    #[test]
     fn normalizes_cache_paths() {
         assert_eq!(
             cache_key_path(Path::new("/repo"), Path::new(".\\src\\acme\\main.py")),

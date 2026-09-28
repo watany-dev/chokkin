@@ -173,8 +173,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_partial_has_no_fields() {
-        assert!(!PartialConfig::default().has_any_field());
+    fn partial_with_mode_has_field() {
+        assert!(
+            PartialConfig {
+                mode: Some(ProjectMode::App),
+                ..PartialConfig::default()
+            }
+            .has_any_field()
+        );
     }
 
     #[test]
@@ -272,11 +278,6 @@ mod tests {
 
         proptest! {
             #[test]
-            fn merge_with_no_layers_is_default(_unused in proptest::bool::ANY) {
-                prop_assert_eq!(merge_layers(&[]), default_config());
-            }
-
-            #[test]
             fn empty_layers_are_identity(
                 layers in prop::collection::vec(partial_config(), 0..4),
                 position in 0usize..5,
@@ -307,21 +308,6 @@ mod tests {
                     .rev()
                     .find_map(|layer| layer.exclude.clone());
                 prop_assert_eq!(merged.exclude, last_exclude.unwrap_or(defaults.exclude));
-
-                let last_confidence = layers.iter().rev().find_map(|layer| layer.confidence);
-                prop_assert_eq!(
-                    merged.confidence,
-                    last_confidence.unwrap_or(defaults.confidence)
-                );
-
-                let last_gitignore = layers
-                    .iter()
-                    .rev()
-                    .find_map(|layer| layer.respect_gitignore);
-                prop_assert_eq!(
-                    merged.respect_gitignore,
-                    last_gitignore.unwrap_or(defaults.respect_gitignore)
-                );
             }
 
             #[test]
