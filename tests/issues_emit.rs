@@ -28,6 +28,13 @@ struct EmitInputs {
 }
 
 fn load_emit(path: &Path) -> EmitInputs {
+    load_emit_with_strict_deps(path, false)
+}
+
+/// `strict_deps` only affects dependency reconciliation, so step 12 can still
+/// apply the configured confidence floor to candidates that non-strict step 10
+/// would never produce (e.g. marker-guarded dependencies).
+fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
@@ -81,7 +88,7 @@ fn load_emit(path: &Path) -> EmitInputs {
         &parse,
         &graph,
         &[],
-        false,
+        strict_deps,
     );
     let symbols = analyze_symbols(
         &parse,
@@ -155,25 +162,23 @@ fn config_ignore_suppresses_matching_issue() {
 
 #[test]
 fn likely_unused_dependency_hidden_when_confidence_is_certain() {
-    let inputs = load_emit(&fixture("marker_pywin32"));
+    let inputs = load_emit_with_strict_deps(&fixture("marker_pywin32"), true);
+    let is_likely_pywin32 = |issue: &chokkin::Issue| {
+        issue.rule == RuleId::Chk002
+            && issue.confidence == Confidence::Likely
+            && matches!(
+                &issue.subject,
+                chokkin::IssueSubject::Distribution { name } if name == "pywin32"
+            )
+    };
+
+    let baseline = emit_with_config(&inputs, &inputs.config);
+    assert!(baseline.issues.iter().any(is_likely_pywin32));
+
     let mut config = inputs.config.clone();
     config.confidence = Confidence::Certain;
-    let report = emit_issues(
-        &inputs.reachability,
-        &inputs.deps,
-        &inputs.symbols,
-        &inputs.parse,
-        &config,
-        &RuntimeOverrides::default(),
-        &inputs.entry.mode,
-        &ResolutionIndex::default(),
-    );
-    assert!(
-        report
-            .issues
-            .iter()
-            .all(|issue| issue.rule != RuleId::Chk002)
-    );
+    let report = emit_with_config(&inputs, &config);
+    assert!(!report.issues.iter().any(is_likely_pywin32));
 }
 
 fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> chokkin::IssueReport {
