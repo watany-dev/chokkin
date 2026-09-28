@@ -43,6 +43,24 @@ jobs:
           - runner: ubuntu-24.04
             target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
+          - runner: ubuntu-24.04
+            target: i686-unknown-linux-gnu
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: armv7-unknown-linux-gnueabihf
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: powerpc64le-unknown-linux-gnu
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: s390x-unknown-linux-gnu
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: i686-unknown-linux-musl
+            manylinux: musllinux_1_2
+          - runner: ubuntu-24.04
+            target: armv7-unknown-linux-musleabihf
+            manylinux: musllinux_1_2
           - runner: macos-14
             target: x86_64-apple-darwin
             manylinux: ""
@@ -52,11 +70,21 @@ jobs:
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             manylinux: ""
+          - runner: windows-latest
+            target: i686-pc-windows-msvc
+            manylinux: ""
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            manylinux: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          # psm (via ruff_python_parser -> stacker) assembles `lay`, which the
+          # manylinux2014 s390x cross gcc rejects at its default -march.
+          CFLAGS_s390x_unknown_linux_gnu: -march=z10
         with:
           target: ${{ matrix.platform.target }}
           rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
