@@ -383,8 +383,8 @@ mod tests {
         assert!(candidates.is_empty());
     }
 
-    /// boto3 and requests each provide a module in the graph; `resolution`
-    /// holds one import resolved to each distribution.
+    /// requests is a decoy: its graph module and import must not leak into
+    /// boto3's evidence.
     fn boto3_explain_details(build_requires: &[DeclaredDependency]) -> Vec<String> {
         let mut graph = ProjectGraph::new(graph_root());
         for (distribution, module) in [("boto3", "boto3.session"), ("requests", "requests")] {
