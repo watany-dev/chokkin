@@ -257,6 +257,52 @@ fn dotted_map_entry_overrides_a_first_party_root_without_the_module() {
 }
 
 #[test]
+fn ambiguous_namespace_import_warns_once() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[tool.chokkin.package_module_map]\n\"acme-a\" = [\"acme.shared\"]\n\"acme-b\" = [\"acme.shared\"]\n",
+        ),
+        ("app/__init__.py", ""),
+        ("app/one.py", "import acme.shared.x\n"),
+        ("app/two.py", "import acme.shared.y\n"),
+    ]);
+    let index = resolve_path(temp.path());
+    let ambiguous = index
+        .warnings
+        .iter()
+        .filter(|warning| matches!(warning, chokkin::ResolveWarning::AmbiguousImport { .. }))
+        .count();
+    assert_eq!(ambiguous, 1, "{:?}", index.warnings);
+}
+
+#[test]
+fn nested_fixture_does_not_count_as_the_local_namespace_module() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"poetry\"\nversion = \"0.1.0\"\ndependencies = [\"poetry-core>=2.0\"]\n",
+        ),
+        ("src/poetry/__init__.py", ""),
+        (
+            "src/poetry/app.py",
+            "from poetry.core.version import Version\n",
+        ),
+        ("tests/fixtures/vendor/poetry/core/__init__.py", ""),
+    ]);
+    let index = resolve_path(temp.path());
+    let resolved = index
+        .imports
+        .iter()
+        .find(|resolved| resolved.full_module == "poetry.core.version")
+        .expect("import");
+    assert_eq!(
+        (resolved.origin, resolved.distribution.as_deref()),
+        (ModuleOrigin::ThirdParty, Some("poetry-core"))
+    );
+}
+
+#[test]
 fn local_module_keeps_a_first_party_namespace_root() {
     let temp = temp_project(&[
         (
