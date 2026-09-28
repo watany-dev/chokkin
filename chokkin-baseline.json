@@ -719,24 +719,9 @@
       "target": "tests/fixtures/sources/gitignore_disabled/acme/visible.py"
     },
     {
-      "fingerprint": "CHK001:tests/fixtures/sources/gitignore_respected/acme/visible.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/sources/gitignore_respected/acme/visible.py"
-    },
-    {
       "fingerprint": "CHK001:tests/fixtures/sources/missing_entry/src/acme/module.py",
       "code": "CHK001",
       "target": "tests/fixtures/sources/missing_entry/src/acme/module.py"
-    },
-    {
-      "fingerprint": "CHK001:tests/fixtures/sources/nested_ignored/build/fake/ignored.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/sources/nested_ignored/build/fake/ignored.py"
-    },
-    {
-      "fingerprint": "CHK001:tests/fixtures/sources/nested_ignored/src/acme/module.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/sources/nested_ignored/src/acme/module.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/sources/production_mode/src/acme/module.py",
