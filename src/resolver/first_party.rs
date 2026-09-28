@@ -183,4 +183,65 @@ mod tests {
             &default_config()
         ));
     }
+
+    #[test]
+    fn resolved_workspace_member_matches_basename_when_id_differs() {
+        let member = ResolvedWorkspaceMember {
+            id: "api-service".to_owned(),
+            path: "services/api".to_owned(),
+            pyproject_toml: None,
+        };
+        assert!(is_workspace_import(
+            "api",
+            &[member],
+            None,
+            &default_config()
+        ));
+    }
+
+    #[test]
+    fn workspace_override_matches_only_its_basename() {
+        let mut config = default_config();
+        config.workspaces.insert(
+            "billing".to_owned(),
+            crate::config::WorkspaceOverride {
+                path: "libs/billing".to_owned(),
+                entry: None,
+                project: None,
+                mode: None,
+            },
+        );
+        assert!(is_workspace_import("billing", &[], None, &config));
+        assert!(!is_workspace_import("shipping", &[], None, &config));
+    }
+
+    #[test]
+    fn path_source_picks_the_flat_package_named_after_the_distribution() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        for package in ["aaa_helpers", "my_lib"] {
+            let package_dir = dir.path().join("vendor").join(package);
+            std::fs::create_dir_all(&package_dir).expect("mkdir");
+            std::fs::write(package_dir.join("__init__.py"), "").expect("write");
+        }
+        let uv = UvToolSettings {
+            sources: vec![crate::manifest::UvSource {
+                name: "my-lib".to_owned(),
+                kind: UvSourceKind::Path {
+                    path: "vendor".to_owned(),
+                    editable: false,
+                },
+                origin: crate::manifest::DependencyOrigin {
+                    file: "pyproject.toml".to_owned(),
+                    line: None,
+                    label: "tool.uv.sources.my-lib".to_owned(),
+                },
+            }],
+            default_groups: None,
+        };
+        let map = path_source_imports(dir.path(), &uv);
+        assert_eq!(
+            map,
+            BTreeMap::from([("my_lib".to_owned(), vec!["my-lib".to_owned()])])
+        );
+    }
 }
