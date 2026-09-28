@@ -359,12 +359,10 @@ mod tests {
 
         let first = extract_plugin_hints_with_parse(&request).expect("first extract");
         let key = config_scan_cache_key(&loaded, &manifest).expect("cache key");
-        let cached: ConfigScanCachePayload = cache
+        let mut cached: ConfigScanCachePayload = cache
             .read_scan_payload(root_path, &key)
             .expect("read payload")
             .expect("payload hit");
-        let second = extract_plugin_hints_with_parse(&request).expect("second extract");
-
         assert!(
             first
                 .config_binary_usages
@@ -372,7 +370,24 @@ mod tests {
                 .any(|usage| usage.binary == "mypy")
         );
         assert_eq!(cached.scan.binary_usages, first.config_binary_usages);
-        assert_eq!(second.config_binary_usages, first.config_binary_usages);
+
+        // A rescan would report `mypy` again, so seeing the planted binary
+        // proves the second run was served from the cache entry.
+        for usage in &mut cached.scan.binary_usages {
+            usage.binary = "planted-by-test".to_owned();
+        }
+        cache
+            .write_scan_payload(root_path, key, &cached)
+            .expect("write tampered payload");
+        let second = extract_plugin_hints_with_parse(&request).expect("second extract");
+
+        assert_eq!(second.config_binary_usages, cached.scan.binary_usages);
+        assert!(
+            second
+                .config_binary_usages
+                .iter()
+                .all(|usage| usage.binary == "planted-by-test")
+        );
     }
 
     #[test]

@@ -166,8 +166,17 @@ mod tests {
 
     #[test]
     fn root_marker_display_matches_as_str() {
-        assert_eq!(RootMarker::PyProjectToml.to_string(), "pyproject.toml");
-        assert_eq!(RootMarker::Git.as_str(), ".git");
+        for (marker, file_name) in [
+            (RootMarker::PyProjectToml, "pyproject.toml"),
+            (RootMarker::UvLock, "uv.lock"),
+            (RootMarker::SetupCfg, "setup.cfg"),
+            (RootMarker::SetupPy, "setup.py"),
+            (RootMarker::RequirementsTxt, "requirements.txt"),
+            (RootMarker::Git, ".git"),
+        ] {
+            assert_eq!(marker.as_str(), file_name);
+            assert_eq!(marker.to_string(), file_name);
+        }
     }
 
     #[test]

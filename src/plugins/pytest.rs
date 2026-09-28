@@ -196,6 +196,13 @@ mod tests {
     #[test]
     fn pytest_test_globs_use_defaults() {
         let globs = pytest_test_globs(&[], &[]);
-        assert!(globs.contains(&"tests/**/test_*.py".to_owned()));
+        // pytest's defaults: `testpaths` unset → `tests`, `python_files` → `test_*.py *_test.py`.
+        assert_eq!(
+            globs,
+            vec![
+                "tests/**/test_*.py".to_owned(),
+                "tests/**/*_test.py".to_owned(),
+            ]
+        );
     }
 }
