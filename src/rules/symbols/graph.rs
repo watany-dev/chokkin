@@ -108,10 +108,17 @@ impl ReferenceIndex {
                 }
                 match import.kind {
                     ImportKind::ImportFrom => {
-                        let Some(name) = import.name.as_ref() else {
-                            continue;
+                        let target = match &import.name {
+                            Some(name) => SymbolId::new(import.module.clone(), name.clone()),
+                            // `from . import x` carries no `name`: the parser folds `x` into `module`.
+                            // In the package's own `__init__` it defines a re-export, not a use.
+                            None => match import.module.rsplit_once('.') {
+                                Some((package, name)) if package != importer.as_str() => {
+                                    SymbolId::new(package, name)
+                                },
+                                _ => continue,
+                            },
                         };
-                        let target = SymbolId::new(import.module.clone(), name.clone());
                         index.record(importer, target);
                     },
                     ImportKind::Import => {
