@@ -148,13 +148,12 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn missing_path_source_tree_falls_back_to_distribution_name() {
-        let uv = UvToolSettings {
+    fn my_lib_path_source(path: &str) -> UvToolSettings {
+        UvToolSettings {
             sources: vec![crate::manifest::UvSource {
                 name: "my-lib".to_owned(),
                 kind: UvSourceKind::Path {
-                    path: "does/not/exist".to_owned(),
+                    path: path.to_owned(),
                     editable: false,
                 },
                 origin: crate::manifest::DependencyOrigin {
@@ -164,7 +163,12 @@ mod tests {
                 },
             }],
             default_groups: None,
-        };
+        }
+    }
+
+    #[test]
+    fn missing_path_source_tree_falls_back_to_distribution_name() {
+        let uv = my_lib_path_source("does/not/exist");
         let map = path_source_imports(&std::env::temp_dir().join("chokkin-no-such-root"), &uv);
         assert_eq!(map.get("my_lib"), Some(&vec!["my-lib".to_owned()]));
     }
@@ -223,21 +227,7 @@ mod tests {
             std::fs::create_dir_all(&package_dir).expect("mkdir");
             std::fs::write(package_dir.join("__init__.py"), "").expect("write");
         }
-        let uv = UvToolSettings {
-            sources: vec![crate::manifest::UvSource {
-                name: "my-lib".to_owned(),
-                kind: UvSourceKind::Path {
-                    path: "vendor".to_owned(),
-                    editable: false,
-                },
-                origin: crate::manifest::DependencyOrigin {
-                    file: "pyproject.toml".to_owned(),
-                    line: None,
-                    label: "tool.uv.sources.my-lib".to_owned(),
-                },
-            }],
-            default_groups: None,
-        };
+        let uv = my_lib_path_source("vendor");
         let map = path_source_imports(dir.path(), &uv);
         assert_eq!(
             map,
