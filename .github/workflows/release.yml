@@ -17,6 +17,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned so a release is not built by whatever stable shipped that day.
+  # Bump deliberately (see CONTRIBUTING.md "Release flow"); keep >= rust-version.
+  RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
   # ── Build wheels ──────────────────────────────────────────────────────────────
@@ -56,6 +59,7 @@ jobs:
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
           # Pass manylinux only for Linux targets; empty string disables it for macOS/Windows.
           manylinux: ${{ matrix.platform.manylinux }}
           # Use the fat-LTO `dist` profile (Cargo.toml [profile.dist]) for the

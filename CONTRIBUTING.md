@@ -79,6 +79,11 @@ for all platforms and publishes to PyPI via Trusted Publishing:
 4. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 5. GitHub Actions builds wheels, creates a GitHub Release, and publishes to PyPI.
 
+Wheels are built with the toolchain pinned by `RUST_TOOLCHAIN` in
+`.github/workflows/release.yml`, not the latest stable. To move it, bump it in
+its own `ci:` PR (the release workflow builds every wheel on pull requests)
+before tagging, not in the release commit.
+
 Before publishing the first release, a PyPI Trusted Publisher must be
 registered at pypi.org (repo: `watany-dev/chokkin`, workflow: `release.yml`,
 environment: `pypi-chokkin`). See `docs/dev/ci-porting-notes.md` for the full setup
