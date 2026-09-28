@@ -805,9 +805,9 @@ mod tests {
                 },
             );
             assert_eq!(
-                matcher.matches_candidate(&candidate(rule, subject.clone(), Vec::new())),
+                matcher.matches_candidate(&candidate(rule, subject, Vec::new())),
                 Some(SuppressReason::FileLevel),
-                "{subject:?}"
+                "{rule:?}"
             );
         }
     }
