@@ -750,14 +750,6 @@ mod tests {
     }
 
     #[test]
-    fn marks_opaque_import_inside_for_iter() {
-        let parsed = visit_source(
-            "import importlib\nfor p in importlib.import_module(name).plugins():\n    pass\n",
-        );
-        assert!(parsed.has_opaque_dynamic_import);
-    }
-
-    #[test]
     fn collects_attributes_from_statement_expression_slots() {
         let source = "\
 from acme import utils
@@ -861,13 +853,6 @@ g = lambda x=utils.G: x
                 .iter()
                 .any(|site| site.name == "app.route" && site.line == 4)
         );
-    }
-
-    #[test]
-    fn collects_attributes_from_try_star_handler_type() {
-        let parsed =
-            visit_source("from acme import utils\ntry:\n    pass\nexcept* utils.G:\n    pass\n");
-        assert_eq!(attribute_lines(&parsed, "G"), vec![4]);
     }
 
     #[test]

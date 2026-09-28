@@ -100,11 +100,31 @@ fn pytest_discovers_test_files() {
 
 #[test]
 fn pytest_respects_testpaths() {
-    let hints = extract_fixture("pytest_pyproject");
-    let contrib = pytest_contrib(&hints);
-    let paths = entry_paths(contrib);
-    assert!(paths.contains(&"tests/test_sample.py"));
-    assert!(!paths.iter().any(|path| path.starts_with("src/")));
+    // A non-default `testpaths` so dropping it (falling back to `tests`) or
+    // ignoring it (matching `test_*.py` everywhere) both change the result.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests/unit\"]\n",
+    )
+    .expect("write pyproject");
+    for rel in [
+        "src/acme/__init__.py",
+        "src/acme/test_in_src.py",
+        "tests/test_top.py",
+        "tests/unit/test_unit.py",
+    ] {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, "").expect("write file");
+    }
+
+    let hints = extract_at(root);
+    let paths = entry_paths(pytest_contrib(&hints));
+    assert!(paths.contains(&"tests/unit/test_unit.py"));
+    assert!(!paths.contains(&"tests/test_top.py"));
+    assert!(!paths.contains(&"src/acme/test_in_src.py"));
 }
 
 #[test]

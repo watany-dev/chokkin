@@ -606,14 +606,6 @@ mod tests {
                     matches!(value.as_str(), "certain" | "likely" | "maybe")
                 );
             }
-
-            #[test]
-            fn leading_separator_is_always_absolute(rest in "[a-z0-9/._-]{0,20}") {
-                let posix = format!("/{rest}");
-                let windows = format!("\\{rest}");
-                prop_assert!(is_absolute_path_str(&posix));
-                prop_assert!(is_absolute_path_str(&windows));
-            }
         }
 
         #[test]

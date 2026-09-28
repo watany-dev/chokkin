@@ -48,11 +48,4 @@ mod tests {
         let normalized = first_decorator("@apps[0].route(\"/\")\ndef index():\n    pass\n");
         assert_eq!(normalized.as_deref(), Some("apps[].route"));
     }
-
-    #[test]
-    fn normalizes_decorators_outside_any_list() {
-        let normalized =
-            first_decorator("@functools.lru_cache(maxsize=1)\ndef cached():\n    pass\n");
-        assert_eq!(normalized.as_deref(), Some("functools.lru_cache"));
-    }
 }

@@ -860,8 +860,10 @@ musllinux aarch64
 macOS x86_64
 macOS arm64
 Windows x86_64
-Windows arm64  # 可能なら
+Windows arm64
 ```
+
+上記に加え、sdist からの Rust build を避けるため次の target も配布する: manylinux i686 / armv7 / ppc64le / s390x、musllinux i686 / armv7、Windows i686。
 
 releaseはGitHub Actions + PyPI Trusted Publishingに寄せる。
 

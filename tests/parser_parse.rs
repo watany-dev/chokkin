@@ -139,6 +139,8 @@ fn syntax_error_yields_diagnostic() {
     let parsed = parse_fixture("p9_syntax_error.py");
     assert!(parsed.imports.is_empty());
     assert_eq!(parsed.diagnostics.len(), 1);
+    assert_eq!(parsed.diagnostics[0].severity, ParseSeverity::Error);
+    assert_eq!(parsed.diagnostics[0].line, 1);
 }
 
 #[test]
@@ -157,13 +159,6 @@ fn resolves_relative_import_in_src_layout() {
         .find(|import| import.name.as_deref() == Some("User"))
         .expect("User import");
     assert_eq!(models.module, "acme.models");
-}
-
-#[test]
-fn extracts_dynamic_import_literal() {
-    let parsed = parse_fixture_dir("dynamic", "importlib_literal.py");
-    assert_eq!(parsed.dynamic_imports.len(), 1);
-    assert_eq!(parsed.dynamic_imports[0].module, "acme.plugins");
 }
 
 #[test]

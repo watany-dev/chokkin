@@ -267,10 +267,46 @@ mod tests {
     }
 
     #[test]
-    fn empty_project_produces_no_candidates() {
-        let manifest = minimal_manifest(Vec::new());
-        let resolution = ResolutionIndex::default();
-        let reachability = ReachabilityReport::default();
+    fn declared_and_imported_dependency_produces_no_candidates() {
+        let dep = DeclaredDependency {
+            name: "requests".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(5),
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        };
+        let manifest = minimal_manifest(vec![dep]);
+        let (sources, parse, mut graph) = reconcile_inputs(&manifest);
+        let file_id = graph
+            .intern_file(crate::graph::FileNode {
+                path: "src/app.py".to_owned(),
+                context: crate::sources::FileContext::Runtime,
+                kind: crate::sources::FileKind::Python,
+            })
+            .expect("file id");
+        let mut reachability = ReachabilityReport::default();
+        reachability.reachable.insert(file_id);
+        let mut resolution = ResolutionIndex::default();
+        resolution.imports.push(crate::resolver::ResolvedImport {
+            import_root: "requests".to_owned(),
+            full_module: "requests".to_owned(),
+            file: "src/app.py".to_owned(),
+            workspace_member: None,
+            line: 1,
+            context: crate::parser::ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            origin: crate::graph::ModuleOrigin::ThirdParty,
+            distribution: Some("requests".to_owned()),
+            confidence: crate::resolver::ResolveConfidence::Certain,
+        });
         let plugins = PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
@@ -279,7 +315,6 @@ mod tests {
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
-        let (sources, parse, graph) = reconcile_inputs(&manifest);
         let report = reconcile_dependencies(
             &manifest,
             &resolution,
@@ -292,7 +327,11 @@ mod tests {
             &[],
             false,
         );
-        assert!(report.candidates.is_empty());
+        assert!(report.candidates.is_empty(), "{:?}", report.candidates);
+        assert_eq!(
+            report.used_distributions.iter().collect::<Vec<_>>(),
+            ["requests"]
+        );
     }
 
     #[test]

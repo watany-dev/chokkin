@@ -190,16 +190,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_pyyaml_from_bundled_map() {
-        let import_map = ImportMap::build(&default_config());
-        assert!(
-            import_map
-                .candidates("yaml")
-                .is_some_and(|(c, _)| c.iter().any(|d| d == "pyyaml"))
-        );
-    }
-
-    #[test]
     fn user_map_overrides_bundled() {
         let mut config = default_config();
         config

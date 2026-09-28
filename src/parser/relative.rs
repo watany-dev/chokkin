@@ -186,12 +186,17 @@ mod tests {
 
     #[test]
     fn unresolved_without_package_context() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-        };
-        assert!(resolve_relative_import("routes.py", &layout, 1, None, Some("sibling")).is_none());
+        // `src/routes.py` maps to the top-level module `routes`, which has no
+        // containing package: CPython raises "attempted relative import with
+        // no known parent package".
+        let layout = src_layout();
+        assert_eq!(
+            resolve_relative_import("src/routes.py", &layout, 1, None, Some("sibling")),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("src/routes.py", &layout, 1, Some("models"), None),
+            None
+        );
     }
 }

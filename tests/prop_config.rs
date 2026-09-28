@@ -57,6 +57,60 @@ fn confidence_value() -> impl Strategy<Value = &'static str> {
     prop_oneof![Just("certain"), Just("likely"), Just("maybe")]
 }
 
+/// `.chokkin.toml` contents that always load: a random subset of scalar
+/// keys plus `[plugins]` and `[ignore]` tables, so maps exercise ordering.
+fn valid_config() -> impl Strategy<Value = String> {
+    (
+        proptest::option::of(mode_value()),
+        proptest::option::of(confidence_value()),
+        proptest::option::of(proptest::bool::ANY),
+        proptest::option::of(prop::collection::vec("[a-z][a-z0-9_/*.]{0,15}", 0..4)),
+        prop::collection::btree_map(0..PLUGIN_KEYS.len(), proptest::bool::ANY, 0..6),
+        prop::collection::btree_map(
+            0..IGNORE_RULES.len(),
+            prop::collection::vec("[a-z][a-z0-9_/*.]{0,15}", 0..3),
+            0..4,
+        ),
+    )
+        .prop_map(|(mode, confidence, production, exclude, plugins, ignore)| {
+            let quoted = |items: &[String]| {
+                items
+                    .iter()
+                    .map(|item| format!("\"{item}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let mut contents = String::new();
+            if let Some(mode) = mode {
+                writeln!(contents, "mode = \"{mode}\"").expect("write to string");
+            }
+            if let Some(confidence) = confidence {
+                writeln!(contents, "confidence = \"{confidence}\"").expect("write to string");
+            }
+            if let Some(production) = production {
+                writeln!(contents, "production = {production}").expect("write to string");
+            }
+            if let Some(exclude) = exclude {
+                writeln!(contents, "exclude = [{}]", quoted(&exclude)).expect("write to string");
+            }
+            contents.push_str("[plugins]\n");
+            for (index, enabled) in plugins {
+                writeln!(contents, "{} = {enabled}", PLUGIN_KEYS[index]).expect("write to string");
+            }
+            contents.push_str("[ignore]\n");
+            for (index, patterns) in ignore {
+                writeln!(
+                    contents,
+                    "{} = [{}]",
+                    IGNORE_RULES[index],
+                    quoted(&patterns)
+                )
+                .expect("write to string");
+            }
+            contents
+        })
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -322,15 +376,13 @@ proptest! {
     }
 
     #[test]
-    fn load_config_is_deterministic(contents in "\\PC{0,200}") {
+    fn load_config_is_deterministic(contents in valid_config()) {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(&temp.path().join(".chokkin.toml"), &contents);
         let root = project_root_at(temp.path());
 
-        match (load_config(&root), load_config(&root)) {
-            (Ok(left), Ok(right)) => prop_assert_eq!(left, right),
-            (Err(_), Err(_)) => {},
-            _ => prop_assert!(false, "determinism violated: Ok vs Err"),
-        }
+        let first = load_config(&root).expect("valid config");
+        let second = load_config(&root).expect("valid config");
+        prop_assert_eq!(first, second);
     }
 }

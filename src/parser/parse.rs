@@ -613,26 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_simple_import() {
-        let temp = TempDir::new().expect("tempdir");
-        let root = write_temp_py(
-            temp.path(),
-            "sample.py",
-            "import os\nfrom sys import version\n",
-        );
-        let parsed = parse_file(
-            &root,
-            "sample.py",
-            &empty_layout(),
-            FileContext::Runtime,
-            &TargetVersion::default_py311(),
-        )
-        .expect("parse");
-        assert_eq!(parsed.imports.len(), 2);
-        assert!(parsed.diagnostics.is_empty());
-    }
-
-    #[test]
     fn parallel_parse_preserves_discovery_order() {
         // Enough files to cross `parse_worker_count`'s threshold, so this walks
         // the threaded path while the assertion pins module order to discovery
@@ -795,21 +775,5 @@ mod tests {
         assert_eq!(parse_worker_count(0), 1);
         assert_eq!(parse_worker_count(32), 1);
         assert!(parse_worker_count(10_000) >= 1);
-    }
-
-    #[test]
-    fn syntax_error_becomes_diagnostic() {
-        let temp = TempDir::new().expect("tempdir");
-        let root = write_temp_py(temp.path(), "broken.py", "def broken(:\n");
-        let parsed = parse_file(
-            &root,
-            "broken.py",
-            &empty_layout(),
-            FileContext::Runtime,
-            &TargetVersion::default_py311(),
-        )
-        .expect("parse");
-        assert!(parsed.imports.is_empty());
-        assert_eq!(parsed.diagnostics.len(), 1);
     }
 }

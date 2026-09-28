@@ -476,7 +476,16 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
         let actions = plan_fixes(&report, &manifest, &[], FixOptions::default()).expect("plan");
-        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions,
+            vec![FixAction::RemoveDependency {
+                rule: RuleId::Chk002,
+                name: "boto3".to_owned(),
+                file: "pyproject.toml".to_owned(),
+                label: "project.dependencies[0]".to_owned(),
+                line: None,
+            }]
+        );
     }
 
     #[test]

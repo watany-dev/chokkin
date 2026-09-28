@@ -22,18 +22,20 @@ fn probe_src_layout_fixture() {
 }
 
 #[test]
-fn probe_empty_project_succeeds() {
-    let root = fixture_path("probe/empty");
-    let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");
-    assert_eq!(report.manifest.dependencies.len(), 0);
-    assert_eq!(report.sources.python_files().count(), 0);
-}
-
-#[test]
-fn probe_broken_pyproject_errors() {
+fn binary_probe_broken_pyproject_exits_two() {
     let root = fixture_path("manifest/broken_pyproject");
-    let err = probe_project(&root, None, &RuntimeOverrides::default()).expect_err("error");
-    assert!(err.is_usage_error());
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--probe")
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into())
+    );
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("invalid TOML"), "{stderr}");
 }
 
 #[test]

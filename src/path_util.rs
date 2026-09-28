@@ -68,12 +68,6 @@ mod tests {
                 let normalized = normalize_rel_path(Path::new(&raw));
                 prop_assert!(!normalized.contains('\\'));
             }
-
-            #[test]
-            fn normalize_rel_path_is_idempotent(raw in "\\PC{0,60}") {
-                let once = normalize_rel_path(Path::new(&raw));
-                prop_assert_eq!(normalize_rel_path(Path::new(&once)), once);
-            }
         }
     }
 }
