@@ -3,9 +3,9 @@
 #![allow(clippy::expect_used)]
 
 use chokkin::{
-    Confidence, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
-    ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId, Severity,
-    SuppressReason, SuppressedIssue, render_issues,
+    Confidence, DependencyOrigin, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject,
+    IssueSummary, ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId,
+    Severity, SuppressReason, SuppressedIssue, render_issues,
 };
 
 fn context() -> RenderContext {
@@ -242,4 +242,176 @@ fn reporters_render_pep723_script_subject() {
 
     let github = render_issues(ReporterId::Github, &script_report(), &context());
     assert!(github.contains("title=CHK003 script%3A"));
+}
+
+fn empty_report() -> IssueReport {
+    IssueReport {
+        issues: Vec::new(),
+        suppressed: Vec::new(),
+        summary: IssueSummary {
+            total: 0,
+            by_rule: std::collections::BTreeMap::new(),
+        },
+        exit_status: ExitStatus::Success,
+    }
+}
+
+fn unused_dependency(
+    name: &str,
+    severity: Severity,
+    manifest: DependencyOrigin,
+    message: &str,
+) -> Issue {
+    Issue {
+        rule: RuleId::Chk002,
+        severity,
+        confidence: Confidence::Certain,
+        message: message.to_owned(),
+        workspace_member: None,
+        location: IssueLocation {
+            file: None,
+            line: None,
+            manifest: Some(manifest),
+        },
+        subject: IssueSubject::Distribution {
+            name: name.to_owned(),
+        },
+        explain: None,
+    }
+}
+
+/// Issues are out of rule order so grouped reporters must reorder while compact keeps input order.
+fn mixed_report() -> IssueReport {
+    let mut report = report();
+    report.issues.push(unused_dependency(
+        "boto3",
+        Severity::Error,
+        DependencyOrigin {
+            file: "pyproject.toml".to_owned(),
+            line: Some(18),
+            label: "project.dependencies[0]".to_owned(),
+        },
+        "Unused dependency `boto3`",
+    ));
+    report.issues.push(unused_dependency(
+        "python-dotenv",
+        Severity::Warning,
+        DependencyOrigin {
+            file: "requirements.txt".to_owned(),
+            line: None,
+            label: "requirements.txt".to_owned(),
+        },
+        "Unused dependency `python-dotenv` | dev only",
+    ));
+    report.summary.total = 3;
+    report.summary.by_rule.insert(RuleId::Chk002, 2);
+    report
+}
+
+#[test]
+fn default_reporter_renders_empty_report_exactly() {
+    let rendered = render_issues(ReporterId::Default, &empty_report(), &context());
+    assert_eq!(
+        rendered,
+        concat!(
+            "chokkin 0.2.0-test\n",
+            "\n",
+            "Project: demo\n",
+            "Config : pyproject.toml [tool.chokkin]\n",
+            "Mode   : app, production=false\n",
+            "\n",
+            "Summary: 0 issues\n",
+        )
+    );
+}
+
+#[test]
+fn default_reporter_groups_mixed_rules_in_rule_order_exactly() {
+    let rendered = render_issues(ReporterId::Default, &mixed_report(), &context());
+    assert_eq!(
+        rendered,
+        concat!(
+            "chokkin 0.2.0-test\n",
+            "\n",
+            "Project: demo\n",
+            "Config : pyproject.toml [tool.chokkin]\n",
+            "Mode   : app, production=false\n",
+            "\n",
+            "Unused dependencies  2\n",
+            "  boto3                    pyproject.toml:18      Unused dependency `boto3`\n",
+            "  python-dotenv            requirements.txt       Unused dependency `python-dotenv` | dev only\n",
+            "\n",
+            "Missing dependencies  1\n",
+            "  api:src/acme/app.py:7 requests src/acme/app.py:7      Missing dependency `requests`\n",
+            "\n",
+            "Summary: 3 issues (1 baseline-suppressed)\n",
+        )
+    );
+}
+
+#[test]
+fn compact_reporter_renders_empty_report_exactly() {
+    let rendered = render_issues(ReporterId::Compact, &empty_report(), &context());
+    assert_eq!(rendered, "chokkin 0.2.0-test \u{2014} no issues (app)\n");
+}
+
+#[test]
+fn compact_reporter_renders_one_line_per_issue_in_input_order_exactly() {
+    let rendered = render_issues(ReporterId::Compact, &mixed_report(), &context());
+    assert_eq!(
+        rendered,
+        concat!(
+            "CHK003 error likely api:src/acme/app.py:7 requests src/acme/app.py:7\n",
+            "CHK002 error certain boto3 pyproject.toml:18\n",
+            "CHK002 warning certain python-dotenv requirements.txt\n",
+            "baseline suppressed 1\n",
+        )
+    );
+}
+
+#[test]
+fn markdown_reporter_renders_empty_report_exactly() {
+    let rendered = render_issues(ReporterId::Markdown, &empty_report(), &context());
+    assert_eq!(
+        rendered,
+        concat!(
+            "# chokkin report \u{2014} demo\n",
+            "\n",
+            "- Version: `0.2.0-test`\n",
+            "- Mode: `app` (production=false)\n",
+            "- Issues: **0**\n",
+            "\n",
+            "_No issues found._\n",
+        )
+    );
+}
+
+#[test]
+fn markdown_reporter_renders_rule_tables_and_escapes_pipes_exactly() {
+    let rendered = render_issues(ReporterId::Markdown, &mixed_report(), &context());
+    assert_eq!(
+        rendered,
+        concat!(
+            "# chokkin report \u{2014} demo\n",
+            "\n",
+            "- Version: `0.2.0-test`\n",
+            "- Mode: `app` (production=false)\n",
+            "- Issues: **3**\n",
+            "- Baseline suppressed: **1**\n",
+            "\n",
+            "## Unused dependencies  2\n",
+            "\n",
+            "| Code | Subject | Location | Message |\n",
+            "| --- | --- | --- | --- |\n",
+            "| CHK002 | `boto3` | `pyproject.toml:18` | Unused dependency `boto3` |\n",
+            "| CHK002 | `python-dotenv` | `requirements.txt` | Unused dependency `python-dotenv` \\| dev only |\n",
+            "\n",
+            "## Missing dependencies  1\n",
+            "\n",
+            "| Code | Subject | Location | Message |\n",
+            "| --- | --- | --- | --- |\n",
+            "| CHK003 | `api:src/acme/app.py:7 requests` | `src/acme/app.py:7` | Missing dependency `requests` |\n",
+            "\n",
+        )
+    );
 }
