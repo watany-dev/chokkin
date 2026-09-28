@@ -101,8 +101,13 @@ fn analyze_fixture(name: &str) -> chokkin::SymbolReport {
     )
 }
 
-fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, name: &str) -> bool {
-    report.candidates.iter().any(|candidate| {
+fn find_symbol<'a>(
+    report: &'a chokkin::SymbolReport,
+    rule: RuleId,
+    module: &str,
+    name: &str,
+) -> Option<&'a chokkin::IssueCandidate> {
+    report.candidates.iter().find(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
@@ -110,6 +115,10 @@ fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, n
                     if m == module && n == name
             )
     })
+}
+
+fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, name: &str) -> bool {
+    find_symbol(report, rule, module, name).is_some()
 }
 
 #[test]
@@ -461,26 +470,6 @@ fn from_imported_submodule_attribute_access_counts_as_external_reference() {
     ));
 }
 
-fn symbol_candidate<'a>(
-    report: &'a chokkin::SymbolReport,
-    rule: RuleId,
-    module: &str,
-    name: &str,
-) -> &'a chokkin::IssueCandidate {
-    report
-        .candidates
-        .iter()
-        .find(|candidate| {
-            candidate.rule == rule
-                && matches!(
-                    &candidate.subject,
-                    chokkin::IssueSubject::Symbol { module: m, name: n }
-                        if m == module && n == name
-                )
-        })
-        .unwrap_or_else(|| panic!("{rule:?} candidate for {module}.{name}"))
-}
-
 #[test]
 fn private_and_type_checking_symbols_are_not_registered() {
     let report = analyze_generated(&[
@@ -498,7 +487,12 @@ fn private_and_type_checking_symbols_are_not_registered() {
             "{name}"
         );
     }
-    assert!(has_symbol_rule(&report, RuleId::Chk006, "app.api", "dead_api"));
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.api",
+        "dead_api"
+    ));
 }
 
 #[test]
@@ -512,8 +506,11 @@ fn unused_export_listed_in_all_is_certain() {
         ),
         ("app/main.py", "import app.api\n\ndef main():\n    pass\n"),
     ]);
-    let confidence =
-        |name: &str| symbol_candidate(&report, RuleId::Chk006, "app.api", name).confidence;
+    let confidence = |name: &str| {
+        find_symbol(&report, RuleId::Chk006, "app.api", name)
+            .expect("CHK006 candidate")
+            .confidence
+    };
     assert_eq!(confidence("listed"), Confidence::Certain);
     assert_eq!(confidence("unlisted"), Confidence::Likely);
 }
