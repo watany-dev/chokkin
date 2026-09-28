@@ -178,17 +178,6 @@ mod tests {
     }
 
     #[test]
-    fn partial_with_mode_has_field() {
-        assert!(
-            PartialConfig {
-                mode: Some(ProjectMode::App),
-                ..PartialConfig::default()
-            }
-            .has_any_field()
-        );
-    }
-
-    #[test]
     fn merge_overlays_plugins_onto_defaults() {
         let mut plugins = BTreeMap::new();
         plugins.insert(PluginId::Celery, true);

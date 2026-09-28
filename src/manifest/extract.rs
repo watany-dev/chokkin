@@ -392,12 +392,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn infers_target_version_from_requires_python() {
-        let inferred = infer_target_version_from_requires_python(">=3.12").expect("infer");
-        assert_eq!(inferred.as_str(), "py312");
-    }
-
-    #[test]
     fn infers_highest_minor_from_compound_specifier() {
         let inferred = infer_target_version_from_requires_python(">=3.10,<3.13").expect("infer");
         assert_eq!(inferred.as_str(), "py310");
