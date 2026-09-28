@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Prebuilt wheels for Windows arm64 / i686, manylinux i686 / armv7 / ppc64le /
+  s390x, and musllinux i686 / armv7, so these platforms no longer build from
+  the sdist (which needs a Rust toolchain).
 - Composite GitHub Action (`action.yml`): `uses: watany-dev/chokkin@vX.Y.Z`
   runs chokkin from PyPI via `uv`, with `version`, `working-directory`,
   `baseline`, `reporter`, `sarif-file`, and `args` inputs. The SARIF report is

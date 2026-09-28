@@ -40,6 +40,24 @@ jobs:
           - runner: ubuntu-24.04
             target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
+          - runner: ubuntu-24.04
+            target: i686-unknown-linux-gnu
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: armv7-unknown-linux-gnueabihf
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: powerpc64le-unknown-linux-gnu
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: s390x-unknown-linux-gnu
+            manylinux: auto
+          - runner: ubuntu-24.04
+            target: i686-unknown-linux-musl
+            manylinux: musllinux_1_2
+          - runner: ubuntu-24.04
+            target: armv7-unknown-linux-musleabihf
+            manylinux: musllinux_1_2
           - runner: macos-14
             target: x86_64-apple-darwin
             manylinux: ""
@@ -48,6 +66,12 @@ jobs:
             manylinux: ""
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
+            manylinux: ""
+          - runner: windows-latest
+            target: i686-pc-windows-msvc
+            manylinux: ""
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
             manylinux: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
