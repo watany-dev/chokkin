@@ -78,6 +78,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          # psm (via ruff_python_parser -> stacker) assembles `lay`, which the
+          # manylinux2014 s390x cross gcc rejects at its default -march.
+          CFLAGS_s390x_unknown_linux_gnu: -march=z10
         with:
           target: ${{ matrix.platform.target }}
           # Pass manylinux only for Linux targets; empty string disables it for macOS/Windows.
