@@ -303,7 +303,10 @@ pub fn requires_python_max_minor(specifier: &str) -> Option<u32> {
             let has_patch = release.iter().skip(2).any(|part| *part > 0);
             match spec.operator {
                 Operator::LessThan if has_patch => Some(minor),
-                Operator::LessThan => Some(minor.saturating_sub(1)),
+                // `<3` / `<3.0` excludes every 3.x, so it caps no 3.x minor.
+                Operator::LessThan => minor.checked_sub(1),
+                // `==3.*` pins only the major.
+                Operator::EqualStar if release.len() < 2 => None,
                 Operator::LessThanEqual
                 | Operator::Equal
                 | Operator::EqualStar
@@ -421,6 +424,11 @@ mod tests {
         assert_eq!(requires_python_max_minor("~=3.11"), None);
         assert_eq!(requires_python_max_minor(">=3.10,<4"), None);
         assert_eq!(requires_python_max_minor(">=3.10"), None);
+        assert_eq!(requires_python_max_minor("<3"), None);
+        assert_eq!(requires_python_max_minor("<3.0"), None);
+        assert_eq!(requires_python_max_minor(">=2.7,<3"), None);
+        assert_eq!(requires_python_max_minor("<3.0.1"), Some(0));
+        assert_eq!(requires_python_max_minor("==3.*"), None);
         assert_eq!(requires_python_max_minor("not a specifier"), None);
     }
 
