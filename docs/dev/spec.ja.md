@@ -1066,13 +1066,12 @@ exit   : CHK002誤検知率 5%未満 (未分類0)、recall sentinel全件検出 
 exit   : 10k files級monorepoでwarm 2s以内、baseline運用でCI導入事例を作る
 ```
 
-### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.4.1 リリース済み
+### Phase 3: v0.3〜v0.x 安定化(継続) — ✅ v0.4.0 リリース済み
 
 ```text
 目標   : v1.0で凍結する契約の準備
 v0.3   : Contract Stabilization
 v0.4   : CHK003 Reliability + Contract Formalization
-v0.4.1 : bug-fix / performance (並列 parse・stat ベース warm cache・cache 整合性修正)
 成果物 :
   - JSON reporterに schema_version を追加し、JSON Schemaを公開する ✅
   - baseline fileに schema_version を追加し、v0.2 draft baseline reader互換を維持する ✅
@@ -1098,7 +1097,7 @@ exit   :
   - v1.0条件「2 minor version連続でbreaking changeなし」の起点をv0.3にする
 ```
 
-### Phase 4: v0.5 モダン packaging 追従(+6〜8週)
+### Phase 4: v0.5 モダン packaging 追従(+6〜8週) — ✅ v0.5.0 リリース済み
 
 ```text
 目標   : 2026年の典型的な uv project (dependency-groups / inline script / lockfile) で
@@ -1121,9 +1120,10 @@ exit   :
          (gap analysis §4)、recall sentinel に R-01〜R-05 の fixture を足す
 exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall sentinel 全件検出、
          crash 0、cold 実行 medium 2s 維持、CHK003 件数 (tp label を除く) が
-         v0.4.1 比で増えない
+         Phase 4 着手前 (commit `573ff37`) 比で増えない
 状態   : exit 達成 (PR #367、docs/dev/oss-validation-report.md)。CHK002 誤検知率
          3.7% (1/27、未分類0)、recall 48/48、crash 0、CHK003 288 → 283
+         v0.5.0 で再測定し合格 (docs/dev/v0.5-release-validation.md、CHK003 288 → 170)
 ```
 
 ### Phase 5: v0.6 Knip 相当の運用性(+6〜8週)

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-28
+
 ### Added
 - Prebuilt wheels for Windows arm64 / i686, manylinux i686 / armv7 / ppc64le /
   s390x, and musllinux i686 / armv7, so these platforms no longer build from
@@ -98,6 +100,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symbol, and attribute references in the alias value and in type parameter
   bounds / defaults (`def f[T: m.A = m.B]`, `class C[T: m.A]`) now count as
   uses (#352). Parse cache unit bumped to `parse-v9`.
+- Performance: files are parsed across worker threads, warm-run parse cache
+  keys come from file stat `(size, mtime)` instead of hashing contents, and
+  parse results are stored in one bundle per cache context.
+- The module-index scan cache was removed; it could never beat a rebuild.
+- JSON and SARIF reporters are rendered with `serde_json`. Field order and
+  values are unchanged, but whitespace of the pretty-printed output may differ.
+- Parse and manifest cache unit versions are now `parse-v10` and
+  `manifest-extract-v3`, so existing `.chokkin/cache` entries from v0.4.0 are
+  rebuilt on the first run after upgrading.
 
 ### Fixed
 - The bundled package map no longer maps distributions to import names they
@@ -163,10 +174,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   locked distribution (including the importing file's PEP 723 block or
   workspace member manifest) has the same normalized name (`import foo_bar`
   with `Foo_Bar` declared); otherwise it is CHK010 (#361).
-
-## [0.4.1] - Unreleased
-
-### Fixed
 - `try` / `except*` blocks and every expression slot in statements are now
   walked, so imports, attribute accesses, and dynamic imports inside them are
   collected.
@@ -191,17 +198,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     project is moved or copied;
   - parse cache racy-mtime checks use the filesystem clock, guard against key
     collisions, and report the first failing file in discovery order.
-
-### Changed
-- Performance: files are parsed across worker threads, warm-run parse cache
-  keys come from file stat `(size, mtime)` instead of hashing contents, and
-  parse results are stored in one bundle per cache context.
-- The module-index scan cache was removed; it could never beat a rebuild.
-- JSON and SARIF reporters are rendered with `serde_json`. Field order and
-  values are unchanged, but whitespace of the pretty-printed output may differ.
-- Parse and manifest cache unit versions were bumped (`parse-v5`,
-  `manifest-extract-v2`), so existing `.chokkin/cache` entries are rebuilt on
-  the first run after upgrading.
 
 ## [0.4.0] - 2026-08-17
 
