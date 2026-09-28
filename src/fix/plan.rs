@@ -35,6 +35,8 @@ pub(super) enum FixAction {
     },
     /// Add a missing runtime dependency declaration.
     AddMissingDependency {
+        /// Rule that triggered the insertion (CHK003 or CHK004).
+        rule: RuleId,
         /// Distribution name.
         name: String,
         /// Manifest file path.
@@ -51,15 +53,12 @@ impl FixAction {
     /// Rule and issue subject this action resolves.
     pub(super) fn rule_subject(&self) -> (RuleId, IssueSubject) {
         match self {
-            Self::RemoveDependency { rule, name, .. } => {
+            Self::RemoveDependency { rule, name, .. }
+            | Self::AddMissingDependency { rule, name, .. } => {
                 (*rule, IssueSubject::Distribution { name: name.clone() })
             },
             Self::MoveToRuntime { name, .. } => (
                 RuleId::Chk005,
-                IssueSubject::Distribution { name: name.clone() },
-            ),
-            Self::AddMissingDependency { name, .. } => (
-                RuleId::Chk003,
                 IssueSubject::Distribution { name: name.clone() },
             ),
             Self::RemoveFile { path } => {
@@ -100,7 +99,7 @@ pub(super) fn plan_fixes(
 }
 
 fn is_duplicate_add_missing(actions: &[FixAction], action: &FixAction) -> bool {
-    let FixAction::AddMissingDependency { name, file } = action else {
+    let FixAction::AddMissingDependency { name, file, .. } = action else {
         return false;
     };
     actions.iter().any(|existing| {
@@ -109,6 +108,7 @@ fn is_duplicate_add_missing(actions: &[FixAction], action: &FixAction) -> bool {
             FixAction::AddMissingDependency {
                 name: existing_name,
                 file: existing_file,
+                ..
             } if existing_name == name && existing_file == file
         )
     })
@@ -130,15 +130,17 @@ fn plan_issue_fix(
             plan_remove_duplicate(issue, manifest)
         },
         RuleId::Chk005 if issue.confidence == Confidence::Certain => {
-            plan_move_to_runtime(issue, manifest)
+            plan_move_to_runtime(issue, manifest, workspace_manifests)
         },
-        RuleId::Chk003 if options.add_missing && issue.confidence == Confidence::Certain => {
+        RuleId::Chk003 | RuleId::Chk004
+            if options.add_missing && issue.confidence == Confidence::Certain =>
+        {
             plan_add_missing_dependency(issue, manifest, workspace_manifests)
         },
-        RuleId::Chk003 if options.add_missing => Err(skipped(
+        RuleId::Chk003 | RuleId::Chk004 if options.add_missing => Err(skipped(
             issue,
             SkippedReason::NotFixable,
-            "only Certain-confidence missing dependencies can be added automatically",
+            "only Certain-confidence undeclared dependencies can be added automatically",
         )),
         RuleId::Chk002 | RuleId::Chk005 | RuleId::Chk009 => Err(skipped(
             issue,
@@ -177,21 +179,29 @@ fn plan_add_missing_workspace_dependency(
     member: &str,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
 ) -> Result<Option<FixAction>, SkippedFix> {
-    let Some(workspace) = workspace_manifests
-        .iter()
-        .find(|workspace| workspace.id == member)
-    else {
-        return Err(skipped(
-            issue,
-            SkippedReason::UnsupportedTarget,
-            &format!("workspace member `{member}` was not inventoried"),
-        ));
-    };
+    let workspace = find_workspace_manifest(issue, member, workspace_manifests)?;
     let file = workspace.pyproject_toml.map_or_else(
         || format!("{}/pyproject.toml", workspace.path),
         ToOwned::to_owned,
     );
     plan_add_missing_to_manifest(issue, workspace.manifest, file)
+}
+
+fn find_workspace_manifest<'w, 'a>(
+    issue: &Issue,
+    member: &str,
+    workspace_manifests: &'w [WorkspaceFixManifest<'a>],
+) -> Result<&'w WorkspaceFixManifest<'a>, SkippedFix> {
+    workspace_manifests
+        .iter()
+        .find(|workspace| workspace.id == member)
+        .ok_or_else(|| {
+            skipped(
+                issue,
+                SkippedReason::UnsupportedTarget,
+                &format!("workspace member `{member}` was not inventoried"),
+            )
+        })
 }
 
 fn plan_add_missing_to_manifest(
@@ -227,7 +237,11 @@ fn plan_add_missing_to_manifest(
         )
     })?;
 
-    Ok(Some(FixAction::AddMissingDependency { name, file }))
+    Ok(Some(FixAction::AddMissingDependency {
+        rule: issue.rule,
+        name,
+        file,
+    }))
 }
 
 fn missing_distribution_name(issue: &Issue) -> Option<String> {
@@ -285,11 +299,7 @@ fn plan_remove_duplicate(
     let IssueSubject::Distribution { name } = &issue.subject else {
         return Ok(None);
     };
-    let declarations: Vec<&DeclaredDependency> = manifest
-        .dependencies
-        .iter()
-        .filter(|dep| dep.name == *name && !dep.opaque)
-        .collect();
+    let declarations = declarations_of(manifest, name);
     if declarations.len() < 2 {
         return Err(skipped(
             issue,
@@ -316,15 +326,25 @@ fn plan_remove_duplicate(
 fn plan_move_to_runtime(
     issue: &Issue,
     manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
 ) -> Result<Option<FixAction>, SkippedFix> {
     let IssueSubject::Distribution { name } = &issue.subject else {
         return Ok(None);
     };
-    let declarations: Vec<&DeclaredDependency> = manifest
-        .dependencies
-        .iter()
-        .filter(|dep| dep.name == *name && !dep.opaque)
-        .collect();
+    // Mirrors the detector's lookup: the member's own declaration governs, and
+    // the root manifest is used only when the member does not declare it.
+    let mut member_path = None;
+    let mut declarations = Vec::new();
+    if let Some(member) = &issue.workspace_member {
+        let workspace = find_workspace_manifest(issue, member, workspace_manifests)?;
+        declarations = declarations_of(workspace.manifest, name);
+        if !declarations.is_empty() {
+            member_path = Some(workspace.path);
+        }
+    }
+    if declarations.is_empty() {
+        declarations = declarations_of(manifest, name);
+    }
 
     let has_runtime = declarations.iter().any(|dep| {
         matches!(
@@ -356,12 +376,25 @@ fn plan_move_to_runtime(
     let source = dev_only[0];
     let raw = rebuild_requirement_string(source);
 
+    let file = member_path.map_or_else(
+        || source.origin.file.clone(),
+        |path| format!("{path}/{}", source.origin.file),
+    );
+
     Ok(Some(FixAction::MoveToRuntime {
         name: name.clone(),
-        file: source.origin.file.clone(),
+        file,
         from_label: source.origin.label.clone(),
         raw,
     }))
+}
+
+fn declarations_of<'a>(manifest: &'a LoadedManifest, name: &str) -> Vec<&'a DeclaredDependency> {
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.name == name && !dep.opaque)
+        .collect()
 }
 
 fn removal_priority(context: &crate::manifest::DependencyContext) -> u8 {
@@ -535,10 +568,63 @@ mod tests {
         assert_eq!(
             actions,
             vec![FixAction::AddMissingDependency {
+                rule: RuleId::Chk003,
                 name: "pyyaml".to_owned(),
                 file: "pyproject.toml".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn plans_chk004_add_missing_only_for_certain_transitive_edge() {
+        let mut manifest = manifest_with(Vec::new());
+        manifest.sources.pyproject_toml = true;
+        let transitive = |confidence| Issue {
+            rule: RuleId::Chk004,
+            severity: Severity::Error,
+            confidence,
+            message: "transitive".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: Some("src/app.py".to_owned()),
+                line: Some(1),
+                manifest: None,
+            },
+            subject: IssueSubject::Import {
+                module: "idna".to_owned(),
+                file: "src/app.py".to_owned(),
+                line: 1,
+                distribution: Some("idna".to_owned()),
+            },
+            explain: None,
+        };
+        let report = IssueReport {
+            issues: vec![
+                transitive(Confidence::Certain),
+                transitive(Confidence::Likely),
+            ],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let add_missing = FixOptions {
+            add_missing: true,
+            ..FixOptions::default()
+        };
+
+        let actions = plan_fixes(&report, &manifest, &[], add_missing).expect("plan");
+        assert_eq!(
+            actions,
+            vec![FixAction::AddMissingDependency {
+                rule: RuleId::Chk004,
+                name: "idna".to_owned(),
+                file: "pyproject.toml".to_owned(),
+            }]
+        );
+        assert_eq!(actions[0].rule_subject().0, RuleId::Chk004);
+
+        let actions = plan_fixes(&report, &manifest, &[], FixOptions::default()).expect("plan");
+        assert!(actions.is_empty(), "CHK004 needs --add-missing");
     }
 
     #[test]
@@ -703,6 +789,117 @@ mod tests {
         )
         .expect("plain CHK003 is not a fix target");
         assert!(actions.is_empty());
+    }
+
+    fn dev_group_dependency(name: &str) -> DeclaredDependency {
+        DeclaredDependency {
+            name: name.to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Group("dev".to_owned()),
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "dependency-groups.dev[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        }
+    }
+
+    fn misplaced_issue(name: &str, workspace_member: Option<&str>) -> IssueReport {
+        IssueReport {
+            issues: vec![Issue {
+                rule: RuleId::Chk005,
+                severity: Severity::Warning,
+                confidence: Confidence::Certain,
+                message: "misplaced".to_owned(),
+                workspace_member: workspace_member.map(str::to_owned),
+                location: IssueLocation {
+                    file: None,
+                    line: None,
+                    manifest: None,
+                },
+                subject: IssueSubject::Distribution {
+                    name: name.to_owned(),
+                },
+                explain: None,
+            }],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        }
+    }
+
+    #[test]
+    fn chk005_workspace_member_moves_member_declaration() {
+        let root = manifest_with(vec![dev_group_dependency("requests")]);
+        let member = manifest_with(vec![dev_group_dependency("requests")]);
+        let workspace = [WorkspaceFixManifest {
+            id: "api",
+            path: "services/api",
+            pyproject_toml: Some("services/api/pyproject.toml"),
+            manifest: &member,
+        }];
+
+        let actions = plan_fixes(
+            &misplaced_issue("requests", Some("api")),
+            &root,
+            &workspace,
+            FixOptions::default(),
+        )
+        .expect("plan");
+
+        assert_eq!(
+            actions,
+            vec![FixAction::MoveToRuntime {
+                name: "requests".to_owned(),
+                file: "services/api/pyproject.toml".to_owned(),
+                from_label: "dependency-groups.dev[0]".to_owned(),
+                raw: "requests".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn chk005_workspace_member_without_declaration_uses_root() {
+        let root = manifest_with(vec![dev_group_dependency("requests")]);
+        let member = manifest_with(Vec::new());
+        let workspace = [WorkspaceFixManifest {
+            id: "api",
+            path: "services/api",
+            pyproject_toml: Some("services/api/pyproject.toml"),
+            manifest: &member,
+        }];
+
+        let actions = plan_fixes(
+            &misplaced_issue("requests", Some("api")),
+            &root,
+            &workspace,
+            FixOptions::default(),
+        )
+        .expect("plan");
+
+        assert!(matches!(
+            actions.as_slice(),
+            [FixAction::MoveToRuntime { file, .. }] if file == "pyproject.toml"
+        ));
+    }
+
+    #[test]
+    fn chk005_uninventoried_workspace_member_is_skipped() {
+        let root = manifest_with(vec![dev_group_dependency("requests")]);
+
+        let skipped = plan_fixes(
+            &misplaced_issue("requests", Some("api")),
+            &root,
+            &[],
+            FixOptions::default(),
+        )
+        .expect_err("uninventoried member is skipped");
+
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
     }
 
     #[test]

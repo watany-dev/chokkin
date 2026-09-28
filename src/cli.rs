@@ -76,7 +76,8 @@ pub struct CliArgs {
     #[arg(long, requires = "fix")]
     pub allow_remove_files: bool,
 
-    /// Allow `--fix` to add missing dependency declarations when unambiguous.
+    /// Allow `--fix` to add missing (CHK003) or transitive-only (CHK004)
+    /// dependency declarations when unambiguous.
     #[arg(long, requires = "fix")]
     pub add_missing: bool,
 

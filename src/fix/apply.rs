@@ -124,7 +124,7 @@ fn perform<'a>(root: &Path, action: &'a FixAction) -> Result<(&'a str, String), 
                 move_group_to_runtime(&path, from_label, raw)?,
             ))
         },
-        FixAction::AddMissingDependency { name, file } => {
+        FixAction::AddMissingDependency { name, file, .. } => {
             let path = resolve_contained_path(root, file)?;
             Ok((file.as_str(), add_runtime_dependency(&path, name)?))
         },
@@ -149,7 +149,7 @@ fn preview(action: &FixAction) -> (&str, String) {
             file.as_str(),
             format!("would move `{name}` to runtime in {file}"),
         ),
-        FixAction::AddMissingDependency { name, file } => {
+        FixAction::AddMissingDependency { name, file, .. } => {
             (file.as_str(), format!("would add `{name}` to {file}"))
         },
         FixAction::RemoveFile { path } => (

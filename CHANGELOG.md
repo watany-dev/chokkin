@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--fix --add-missing` also declares Certain CHK004 findings (a direct import
+  of a distribution reached only through a lockfile transitive edge), using the
+  same `[project].dependencies` insertion as CHK003. Lockfile-only (Likely)
+  CHK004 findings are reported as skipped fixes.
+
+### Fixed
+- `--fix` for a workspace member's CHK005 now moves the member's own dev-group
+  declaration in the member `pyproject.toml`, instead of editing (or skipping on)
+  the root manifest. The root declaration is used only when the member does not
+  declare the distribution, matching the detector's lookup.
+
 ## [0.5.0] - 2026-09-28
 
 ### Added

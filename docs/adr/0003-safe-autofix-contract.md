@@ -19,15 +19,17 @@ reviewable before it writes.
 - `--dry-run` runs the same plan without writing or deleting anything.
 - `--allow-remove-files` is required before a `Certain` CHK001 file can be
   deleted.
-- `--add-missing` is required before a `Certain` CHK003 dependency can be added.
+- `--add-missing` is required before a `Certain` CHK003 dependency, or a
+  `Certain` CHK004 dependency (lockfile transitive edge), can be added.
 - CHK002, CHK005, and CHK009 dependency edits are eligible only at `Certain`
   confidence. Other rules and lower-confidence findings are not auto-fixed.
 
-CHK003 insertion supports non-Poetry `pyproject.toml` manifests with static
+CHK003/CHK004 insertion supports non-Poetry `pyproject.toml` manifests with static
 `project.dependencies`. A workspace finding is written only when that member's
 manifest was inventoried. Dynamic dependencies, unsupported manifest shapes,
 ambiguous declarations, and missing origins produce a `SkippedFix`; they do not
-fall back to a guess.
+fall back to a guess. A workspace CHK005 move edits the member manifest when the
+member declares the distribution, and the root manifest only when it does not.
 
 ### Filesystem safety
 
@@ -49,7 +51,7 @@ execute analyzed project code.
 
 ### Idempotency
 
-Duplicate CHK003 actions for the same distribution and manifest collapse to
+Duplicate CHK003/CHK004 actions for the same distribution and manifest collapse to
 one action. Adding a dependency already present in `project.dependencies` is a
 successful no-op rather than a duplicate entry. A fresh analysis after any
 other successful fix is the source of truth for whether another action remains.
@@ -72,6 +74,8 @@ The contract is covered by existing tests:
 - `fix::pyproject::tests::add_runtime_dependency_is_idempotent`
 - `fix::plan::tests::deduplicates_chk003_add_missing_actions`
 - `fix::plan::tests::add_missing_workspace_member_skip_names_member`
+- `fix::plan::tests::plans_chk004_add_missing_only_for_certain_transitive_edge`
+- `fix::plan::tests::chk005_workspace_member_moves_member_declaration`
 
 ## References
 

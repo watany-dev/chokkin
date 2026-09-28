@@ -755,12 +755,14 @@ missing dependency追加は別フラグにする。
 uvx chokkin --fix --add-missing
 ```
 
-v0.2初期実装では Certain CHK003 で distribution が一意に解決済み、かつ対象 manifest の
+v0.2初期実装では Certain CHK003 (lockfile の推移 edge で確認済みの Certain CHK004 も同じ扱い) で distribution が一意に解決済み、かつ対象 manifest の
 non-Poetry `pyproject.toml` が `project.dependencies` を dynamic にしていない場合だけ、
 `[project].dependencies` に正規化済みdistribution名を追加する。workspace member finding は
 `ProbeReport.workspace_inputs` で member manifest が inventory 済みなら member 側
 `pyproject.toml` に追加する。Poetry形式、requirements系、optional try-import、候補が複数ある場合は
-skipped fix として報告し、suggestion/手動修正に留める。
+skipped fix として報告し、suggestion/手動修正に留める。lockfile にあるだけで宣言依存から届かない Likely CHK004 も同様に skip する。
+
+CHK005 の dev group→runtime 移動は、workspace member の finding なら検出側と同じ lookup を使う。member manifest に宣言があればそれを member `pyproject.toml` 内で移動し、member が宣言していない場合だけ root manifest の宣言を移動する。member が inventory されていなければ skip する。
 
 manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、commentsと順序を極力維持する。requirements系はline-based編集で、hash付きrequirementsやconstraintsは原則自動編集しない。
 
