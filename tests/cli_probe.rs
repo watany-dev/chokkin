@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use chokkin::{
-    ExitStatus, PluginId, RuntimeOverrides, probe_project, write_probe_report, write_probe_warnings,
+    ExitStatus, PluginId, ProjectLayout, RuntimeOverrides, probe_project, write_probe_report,
+    write_probe_warnings,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -18,7 +19,24 @@ fn probe_src_layout_fixture() {
     let root = fixture_path("sources/src_layout");
     let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");
     assert_eq!(report.manifest.metadata.name.as_deref(), Some("acme"));
-    assert!(report.sources.python_files().count() > 0);
+    assert_eq!(report.sources.layout.layout, ProjectLayout::Src);
+    assert_eq!(report.sources.layout.packages, ["acme"]);
+    // Src layout globs cover `src/`, `tests/` and `scripts/`, so `docs/conf.py` is not discovered.
+    let files: Vec<_> = report
+        .sources
+        .python_files()
+        .map(|file| file.path.as_str())
+        .collect();
+    assert_eq!(
+        files,
+        [
+            "scripts/run.py",
+            "src/acme/__init__.py",
+            "src/acme/module.py",
+            "tests/conftest.py",
+            "tests/test_module.py",
+        ]
+    );
 }
 
 #[test]

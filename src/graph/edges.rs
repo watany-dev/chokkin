@@ -60,11 +60,11 @@ fn push_module_import_edges<'a>(
 mod tests {
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::parser::{ImportContext, ImportKind, ImportRef, ParsedModule};
+    use crate::parser::{DynamicImport, ImportContext, ImportKind, ImportRef, ParsedModule};
     use crate::sources::{FileContext, FileKind};
 
     #[test]
-    fn adds_import_edge() {
+    fn adds_import_edges_for_static_and_dynamic_imports() {
         let mut graph = ProjectGraph::new(ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
@@ -79,18 +79,25 @@ mod tests {
             .expect("file");
         let parsed = ParsedModule {
             path: "app.py".to_owned(),
-            imports: vec![ImportRef {
-                module: "os".to_owned(),
-                name: None,
-                alias: None,
-                line: 1,
-                kind: ImportKind::Import,
-                context: ImportContext::Runtime,
-                optional: false,
-                platform_guarded: false,
-                relative_level: 0,
-            }],
-            dynamic_imports: Vec::new(),
+            imports: vec![
+                import_ref("os", 1),
+                import_ref("", 2),
+                import_ref("json", 3),
+            ],
+            dynamic_imports: vec![
+                DynamicImport {
+                    module: "plugins.a".to_owned(),
+                    line: 5,
+                },
+                DynamicImport {
+                    module: String::new(),
+                    line: 6,
+                },
+                DynamicImport {
+                    module: "os".to_owned(),
+                    line: 7,
+                },
+            ],
             dynamic_import_prefixes: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
@@ -103,7 +110,47 @@ mod tests {
             diagnostics: Vec::new(),
         };
         add_parsed_imports(&mut graph, file_id, &parsed).expect("edges");
-        assert_eq!(graph.edges().len(), 1);
-        assert_eq!(graph.module_count(), 1);
+
+        let names = ["os", "json", "plugins.a"];
+        let ids: Vec<_> = names
+            .iter()
+            .map(|name| graph.module_id(name).expect("module interned"))
+            .collect();
+        let edge = |module, line| GraphEdge::FileImportsModule {
+            file: file_id,
+            module,
+            line,
+        };
+        assert_eq!(
+            graph.edges(),
+            [
+                edge(ids[0], 1),
+                edge(ids[1], 3),
+                edge(ids[2], 5),
+                edge(ids[0], 7),
+            ]
+        );
+        assert_eq!(graph.module_count(), names.len());
+        assert!(graph.module_id("").is_none());
+        for id in ids {
+            assert_eq!(
+                graph.module(id).map(|node| node.origin),
+                Some(ModuleOrigin::Unknown)
+            );
+        }
+    }
+
+    fn import_ref(module: &str, line: u32) -> ImportRef {
+        ImportRef {
+            module: module.to_owned(),
+            name: None,
+            alias: None,
+            line,
+            kind: ImportKind::Import,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            relative_level: 0,
+        }
     }
 }

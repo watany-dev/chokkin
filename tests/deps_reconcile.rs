@@ -5,11 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, GraphEdge, ProjectRoot, RootMarker, RuleId, RuntimeOverrides, Severity,
-    WorkspaceDependencyBoundary, add_parsed_imports, analyze_reachability, apply_entry_plan,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    probe_project, reconcile_dependencies, resolve_imports, resolve_target_version,
+    Confidence, GraphEdge, ModuleOrigin, ProjectRoot, RootMarker, RuleId, RuntimeOverrides,
+    Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports, analyze_reachability,
+    apply_entry_plan, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
+    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints, load_config,
+    parse_project_sources, probe_project, reconcile_dependencies, resolve_imports,
+    resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -52,7 +53,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(reference.module.clone(), ModuleOrigin::Unknown);
     }
     let resolution = resolve_imports(
         &loaded.effective,
@@ -371,12 +372,31 @@ fn used_distributions_tracks_runtime_imports() {
 #[test]
 fn reachable_import_graph_is_consistent() {
     let inputs = load_deps(&fixture("unused_boto3"), false);
-    assert!(
-        inputs
-            .graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::FileImportsModule { .. }))
+    let graph = &inputs.graph;
+    let imports: Vec<_> = graph
+        .edges()
+        .iter()
+        .filter_map(|edge| match edge {
+            GraphEdge::FileImportsModule { file, module, line } => Some((*file, *module, *line)),
+            _ => None,
+        })
+        .collect();
+    let main = graph.file_id("src/acme/main.py").expect("main.py");
+    let requests = graph.module_id("requests").expect("requests module");
+    assert_eq!(imports, [(main, requests, 1)]);
+
+    // The entry point `acme.main:main` makes the importing file reachable, and
+    // the same import reaches Step 10 as a third-party used module.
+    assert!(inputs.reachability.reachable.contains(&main));
+    assert_eq!(
+        inputs.reachability.used_modules,
+        [UsedModule {
+            full_module: "requests".to_owned(),
+            import_root: "requests".to_owned(),
+            origin: ModuleOrigin::ThirdParty,
+            file: "src/acme/main.py".to_owned(),
+            line: 1,
+        }]
     );
 }
 

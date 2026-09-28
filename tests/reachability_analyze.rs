@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, GraphEdge, ProjectMode, ProjectRoot, PublicSurface, RootMarker, add_parsed_imports,
-    analyze_reachability, apply_entry_plan, apply_public_surface, apply_resolution_to_graph,
-    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
-    extract_manifest, extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
-    resolve_target_version, trace_to_file,
+    Confidence, GraphEdge, ProjectMode, ProjectRoot, PublicSurface, RootMarker, TracePath,
+    TraceStep, add_parsed_imports, analyze_reachability, apply_entry_plan, apply_public_surface,
+    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
+    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
+    resolve_imports, resolve_target_version, trace_to_file,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -304,9 +304,31 @@ fn trace_to_file_returns_import_chain() {
     .expect("reachability");
 
     let target = inputs.graph.file_id("src/acme/b.py").expect("target file");
+    let main = inputs
+        .graph
+        .file_id("src/acme/main.py")
+        .expect("entry file");
     let trace = trace_to_file(&report, target).expect("trace");
-    assert_eq!(trace.target, target);
-    assert!(!trace.steps.is_empty());
+    assert_eq!(
+        trace,
+        TracePath {
+            target,
+            steps: vec![
+                TraceStep::File {
+                    file: main,
+                    path: "src/acme/main.py".to_owned(),
+                },
+                TraceStep::Import {
+                    module: "acme.a".to_owned(),
+                    line: 1,
+                },
+                TraceStep::Import {
+                    module: "acme.b".to_owned(),
+                    line: 1,
+                },
+            ],
+        }
+    );
 }
 
 mod golden {
