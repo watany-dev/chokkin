@@ -266,7 +266,7 @@ fn resolve_import_site(
             // (`poetry` and `poetry.core`); the local tree wins when it has the
             // module itself.
             (ModuleOrigin::FirstParty, Some((module, ..)))
-                if has_local_module(module, &sources.files) =>
+                if has_local_module(module, &sources.files, workspace_members) =>
             {
                 core
             },
@@ -411,19 +411,32 @@ fn scoped_declaration(
         })
 }
 
-/// Whether any discovered file is `module` or lies under it, whatever the
-/// layout or workspace member it belongs to.
-fn has_local_module(module: &str, files: &[DiscoveredFile]) -> bool {
+/// Whether any discovered file is `module` or lies under it, from the project
+/// root or a workspace member, in flat or `src/` layout. Deeper matches such as
+/// `tests/fixtures/vendor/poetry/core/` are not importable as `poetry.core`.
+fn has_local_module(
+    module: &str,
+    files: &[DiscoveredFile],
+    workspace_members: &[ResolvedWorkspaceMember],
+) -> bool {
     let path = module.replace('.', "/");
+    let roots: Vec<String> = ["", "src/"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(
+            workspace_members
+                .iter()
+                .flat_map(|member| [format!("{}/", member.path), format!("{}/src/", member.path)]),
+        )
+        .collect();
     files.iter().any(|file| {
         let file = file.path.replace('\\', "/");
-        [
-            format!("{path}.py"),
-            format!("{path}.pyi"),
-            format!("{path}/"),
-        ]
-        .iter()
-        .any(|suffix| file.starts_with(suffix.as_str()) || file.contains(&format!("/{suffix}")))
+        roots.iter().any(|root| {
+            file.strip_prefix(root.as_str()).is_some_and(|rest| {
+                rest.strip_prefix(path.as_str())
+                    .is_some_and(|tail| matches!(tail, ".py" | ".pyi") || tail.starts_with('/'))
+            })
+        })
     })
 }
 
@@ -448,10 +461,14 @@ fn root_resolution_from_candidates(
     warnings: &mut Vec<ResolveWarning>,
 ) -> RootResolution {
     if candidates.len() > 1 {
-        warnings.push(ResolveWarning::AmbiguousImport {
+        // Namespace matches bypass the root cache and repeat per import site.
+        let warning = ResolveWarning::AmbiguousImport {
             import: root_name.to_owned(),
             candidates: candidates.to_vec(),
-        });
+        };
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
     }
     let confidence = match confidence_override {
         Some(value) => value,
