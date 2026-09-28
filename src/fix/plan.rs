@@ -376,7 +376,16 @@ fn removal_priority(context: &crate::manifest::DependencyContext) -> u8 {
 
 fn rebuild_requirement_string(dep: &DeclaredDependency) -> String {
     let mut raw = dep.name.clone();
+    if !dep.extras.is_empty() {
+        raw.push('[');
+        raw.push_str(&dep.extras.join(","));
+        raw.push(']');
+    }
     if let Some(spec) = &dep.specifier {
+        if !spec.starts_with(['<', '>', '=', '!', '~']) {
+            // Direct reference (PEP 508 URL or pip `#egg=` URL).
+            raw.push_str(" @ ");
+        }
         raw.push_str(spec);
     }
     if let Some(marker) = &dep.marker {
@@ -685,5 +694,40 @@ mod tests {
         )
         .expect("plain CHK003 is not a fix target");
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn rebuilt_requirement_keeps_extras_and_direct_reference() {
+        let dep =
+            |extras: &[&str], specifier: Option<&str>, marker: Option<&str>| DeclaredDependency {
+                name: "pytest".to_owned(),
+                extras: extras.iter().map(|extra| (*extra).to_owned()).collect(),
+                marker: marker.map(str::to_owned),
+                specifier: specifier.map(str::to_owned),
+                context: DependencyContext::Group("dev".to_owned()),
+                origin: DependencyOrigin {
+                    file: "pyproject.toml".to_owned(),
+                    line: None,
+                    label: "dependency-groups.dev[0]".to_owned(),
+                },
+                opaque: false,
+                included_via: Vec::new(),
+            };
+        assert_eq!(
+            rebuild_requirement_string(&dep(&["testing"], Some(">=8, <9"), None)),
+            "pytest[testing]>=8, <9"
+        );
+        assert_eq!(
+            rebuild_requirement_string(&dep(
+                &["a", "b"],
+                Some("https://example.com/pytest-8.0-py3-none-any.whl"),
+                Some("python_version >= '3.8'"),
+            )),
+            "pytest[a,b] @ https://example.com/pytest-8.0-py3-none-any.whl ; python_version >= '3.8'"
+        );
+        assert_eq!(
+            rebuild_requirement_string(&dep(&[], Some("~=8.0"), None)),
+            "pytest~=8.0"
+        );
     }
 }

@@ -311,6 +311,9 @@ const MARKER_VARIABLES: &[&str] = &[
     "implementation_name",
     "implementation_version",
     "extra",
+    // PEP 751 (lock files); `packaging` accepts them in any marker.
+    "extras",
+    "dependency_groups",
     // Legacy PEP 345 spellings still accepted by pip.
     "os.name",
     "sys.platform",
@@ -546,6 +549,31 @@ mod tests {
     }
 
     #[test]
+    fn invalid_extra_names_are_rejected_without_panicking() {
+        // Regression: pep508_rs 0.9 panics on these.
+        for input in ["pkg[a-]", "1[1-", "pkg[a-]>=1", "pkg[-a]"] {
+            assert_eq!(parse(input), None, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn marker_is_kept_verbatim_even_when_always_true() {
+        // A written marker counts as conditional, so CHK002 stays conservative.
+        let requirement = parse("pkg ; python_version >= '0'").expect("valid");
+        assert_eq!(requirement.marker.as_deref(), Some("python_version >= '0'"));
+    }
+
+    #[test]
+    fn accepts_pep751_marker_variables() {
+        for input in [
+            "pkg ; 'dev' in dependency_groups",
+            "pkg ; 'cli' not in extras and python_version >= '3.9'",
+        ] {
+            assert!(parse(input).is_some(), "{input:?}");
+        }
+    }
+
+    #[test]
     fn marker_nesting_is_capped() {
         let deep = format!(
             "pkg ; {}python_version == '3'{}",
@@ -582,5 +610,36 @@ mod tests {
         );
         assert_eq!(parse_version_specifiers(""), None);
         assert_eq!(parse_version_specifiers(">=3.8,"), None);
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn split_url_is_a_partition(input in "[a;# \t\r\n\u{3000}é]{0,12}") {
+                let (url, rest) = split_url(&input);
+                prop_assert_eq!(format!("{url}{rest}"), input.clone());
+                prop_assert!(rest.is_empty() || rest.starts_with(char::is_whitespace));
+            }
+
+            #[test]
+            fn url_with_trailing_whitespace_is_never_accepted(
+                input in "a[a;# \t\r\n\u{3000}é]{0,12}",
+            ) {
+                let (url, rest) = split_url(&input);
+                let tail = rest.trim_start();
+                prop_assert!(
+                    !url.ends_with(char::is_whitespace)
+                        || !(tail.is_empty() || tail.starts_with(';'))
+                );
+            }
+
+            #[test]
+            fn parse_requirement_never_panics(input in "\\PC{0,80}") {
+                let _ = parse_requirement(&input);
+            }
+        }
     }
 }
