@@ -119,7 +119,8 @@ fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::Dependenc
     )
 }
 
-fn has_rule(report: &chokkin::DependencyReport, rule: RuleId, name: &str) -> bool {
+/// Matches `IssueSubject::Distribution` only; CHK003/CHK004 carry `Import` subjects.
+fn has_dist_rule(report: &chokkin::DependencyReport, rule: RuleId, name: &str) -> bool {
     report.candidates.iter().any(|candidate| {
         candidate.rule == rule
             && matches!(
@@ -164,7 +165,7 @@ fn unused_boto3_emits_chk002() {
     let boto3 = candidate_for_distribution(&report, RuleId::Chk002, "boto3").expect("boto3 unused");
     assert_eq!(boto3.severity, Severity::Error);
     assert_eq!(boto3.confidence, Confidence::Certain);
-    assert!(!has_rule(&report, RuleId::Chk002, "requests"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
 
 #[test]
@@ -357,7 +358,7 @@ fn marker_pywin32_emits_chk002_likely_in_strict_mode() {
 #[test]
 fn marker_pywin32_suppressed_by_default() {
     let report = reconcile_fixture("marker_pywin32");
-    assert!(!has_rule(&report, RuleId::Chk002, "pywin32"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "pywin32"));
 }
 
 #[test]
@@ -382,22 +383,22 @@ fn reachable_import_graph_is_consistent() {
 #[test]
 fn map_alias_import_resolves_to_python_multipart() {
     let report = reconcile_fixture("map_alias");
-    assert!(!has_rule(&report, RuleId::Chk002, "python-multipart"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
     assert!(report.used_distributions.contains("python-multipart"));
 }
 
 #[test]
 fn self_extra_dependency_is_not_unused() {
     let report = reconcile_fixture("self_extra");
-    assert!(!has_rule(&report, RuleId::Chk002, "self-extra"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "self-extra"));
     assert!(report.used_distributions.contains("self-extra"));
 }
 
 #[test]
 fn binary_tool_pyproject_marks_dev_tools_used() {
     let report = reconcile_fixture("binary_tool_pyproject");
-    assert!(!has_rule(&report, RuleId::Chk002, "mypy"));
-    assert!(!has_rule(&report, RuleId::Chk002, "ruff"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "mypy"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "ruff"));
     assert!(report.used_distributions.contains("mypy"));
     assert!(report.used_distributions.contains("ruff"));
 }
@@ -405,8 +406,8 @@ fn binary_tool_pyproject_marks_dev_tools_used() {
 #[test]
 fn binary_mkdocs_theme_marks_material_used() {
     let report = reconcile_fixture("binary_mkdocs_theme");
-    assert!(!has_rule(&report, RuleId::Chk002, "mkdocs"));
-    assert!(!has_rule(&report, RuleId::Chk002, "mkdocs-material"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "mkdocs"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "mkdocs-material"));
     assert!(report.used_distributions.contains("mkdocs"));
     assert!(report.used_distributions.contains("mkdocs-material"));
 }
@@ -414,32 +415,35 @@ fn binary_mkdocs_theme_marks_material_used() {
 #[test]
 fn dev_group_only_suppresses_chk002_for_pytest() {
     let report = reconcile_fixture("dev_group_only");
-    assert!(!has_rule(&report, RuleId::Chk002, "pytest"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "pytest"));
 }
 
 #[test]
 fn pdm_dev_dependencies_suppress_chk002() {
     let report = reconcile_fixture("pdm_dev_deps");
-    assert!(!has_rule(&report, RuleId::Chk002, "pytest"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "pytest"));
 }
 
 #[test]
 fn optional_try_import_marks_brotli_used() {
     let report = reconcile_fixture("optional_try_import");
-    assert!(!has_rule(&report, RuleId::Chk002, "brotli"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "brotli"));
     assert!(report.used_distributions.contains("brotli"));
 }
 
 #[test]
 fn platform_guard_import_marks_tzdata_used() {
     let report = reconcile_fixture("platform_guard_import");
-    assert!(!has_rule(&report, RuleId::Chk002, "tzdata"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "tzdata"));
     assert!(report.used_distributions.contains("tzdata"));
 }
 
 fn assert_used(report: &chokkin::DependencyReport, names: &[&str]) {
     for name in names {
-        assert!(!has_rule(report, RuleId::Chk002, name), "{name} flagged");
+        assert!(
+            !has_dist_rule(report, RuleId::Chk002, name),
+            "{name} flagged"
+        );
         assert!(report.used_distributions.contains(*name), "{name} unused");
     }
 }
@@ -454,15 +458,15 @@ fn pdm_scripts_mark_commands_and_call_modules_used() {
 fn makefile_recipes_mark_binaries_used_without_following_variables() {
     let report = reconcile_fixture("binary_makefile");
     assert_used(&report, &["alembic", "celery"]);
-    assert!(has_rule(&report, RuleId::Chk002, "coverage"));
-    assert!(has_rule(&report, RuleId::Chk002, "gunicorn"));
+    assert!(has_dist_rule(&report, RuleId::Chk002, "coverage"));
+    assert!(has_dist_rule(&report, RuleId::Chk002, "gunicorn"));
 }
 
 #[test]
 fn justfile_recipes_mark_binaries_used_skipping_script_recipes() {
     let report = reconcile_fixture("binary_justfile");
     assert_used(&report, &["alembic", "celery"]);
-    assert!(has_rule(&report, RuleId::Chk002, "gunicorn"));
+    assert!(has_dist_rule(&report, RuleId::Chk002, "gunicorn"));
 }
 
 #[test]
@@ -517,9 +521,9 @@ fn mypy_plugins_and_type_checker_configs_mark_tools_used() {
 fn uv_constraints_are_not_declarations() {
     let report = reconcile_fixture("uv_tool_constraints");
     for name in ["urllib3", "idna", "requests"] {
-        assert!(!has_rule(&report, RuleId::Chk002, name), "{name}");
+        assert!(!has_dist_rule(&report, RuleId::Chk002, name), "{name}");
     }
-    assert!(!has_rule(&report, RuleId::Chk009, "requests"));
+    assert!(!has_dist_rule(&report, RuleId::Chk009, "requests"));
 }
 
 #[test]
@@ -531,14 +535,14 @@ fn uv_path_source_resolves_without_venv() {
     )));
     let report = reconcile_fixture("uv_path_source");
     assert!(rules_mentioning(&report, "mylib").is_empty());
-    assert!(!has_rule(&report, RuleId::Chk002, "my-lib"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "my-lib"));
     assert!(report.used_distributions.contains("my-lib"));
 }
 
 #[test]
 fn uv_workspace_source_dependency_is_used() {
     let report = reconcile_fixture("uv_workspace_source");
-    assert!(!has_rule(&report, RuleId::Chk002, "billing"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "billing"));
     assert!(rules_mentioning(&report, "billing").is_empty());
 }
 
@@ -556,9 +560,9 @@ fn build_plugin_declared_as_runtime_dep_notes_build_requires() {
         "details: {:?}",
         unused.explain.details
     );
-    assert!(!has_rule(&report, RuleId::Chk002, "hatchling"));
-    assert!(!has_rule(&report, RuleId::Chk003, "hatchling"));
-    assert!(!has_rule(&report, RuleId::Chk002, "requests"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "hatchling"));
+    assert!(rules_mentioning(&report, "hatchling").is_empty());
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
 
 #[test]
@@ -578,8 +582,8 @@ fn include_group_is_checked_once_under_its_declaring_group() {
 
     let report = reconcile_fixture("include_group");
     // httpx is only declared in a group, but `server` pulls it into runtime.
-    assert!(!has_rule(&report, RuleId::Chk005, "httpx"));
-    assert!(!has_rule(&report, RuleId::Chk002, "pytest"));
+    assert!(!has_dist_rule(&report, RuleId::Chk005, "httpx"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "pytest"));
     assert!(
         report
             .candidates
