@@ -460,3 +460,39 @@ fn from_imported_submodule_attribute_access_counts_as_external_reference() {
         "Dead"
     ));
 }
+
+#[test]
+fn chk006_message_names_the_symbol_kind() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/dead.py",
+            "LIMIT = 3\n\ndef dead_fn():\n    pass\n\nclass DeadClass:\n    pass\n",
+        ),
+        ("app/main.py", "import app.dead\n\ndef main():\n    pass\n"),
+    ]);
+    for (name, kind) in [
+        ("dead_fn", "function"),
+        ("DeadClass", "class"),
+        ("LIMIT", "constant"),
+    ] {
+        let candidate = report
+            .candidates
+            .iter()
+            .find(|candidate| {
+                candidate.rule == RuleId::Chk006
+                    && matches!(
+                        &candidate.subject,
+                        chokkin::IssueSubject::Symbol { name: n, .. } if n == name
+                    )
+            })
+            .unwrap_or_else(|| panic!("{name} candidate"));
+        assert_eq!(
+            candidate.message,
+            format!(
+                "public {kind} `{name}` in `app.dead` is not referenced from outside the module"
+            )
+        );
+    }
+}

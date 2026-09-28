@@ -369,4 +369,172 @@ mod tests {
         let text = explain_issue(&report, "CHK002:boto3").expect("explain");
         assert!(text.contains("boto3 is declared but not used"));
     }
+
+    fn bare_candidate(rule: RuleId, subject: IssueSubject, summary: &str) -> IssueCandidate {
+        IssueCandidate {
+            rule,
+            subject,
+            severity: Severity::Warning,
+            confidence: Confidence::Certain,
+            message: String::new(),
+            workspace_member: None,
+            origins: Vec::new(),
+            explain: ExplainData {
+                summary: summary.to_owned(),
+                details: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn explain_issue_selects_by_rule_and_every_subject_key_form() {
+        // The script issue precedes the plain CHK002 one, so a selector that
+        // ignored the subject key would pick the wrong issue.
+        let issues = [
+            bare_candidate(
+                RuleId::Chk006,
+                IssueSubject::Symbol {
+                    module: "acme.utils".to_owned(),
+                    name: "dead_api".to_owned(),
+                },
+                "symbol",
+            ),
+            bare_candidate(
+                RuleId::Chk010,
+                IssueSubject::Import {
+                    module: "requets".to_owned(),
+                    file: "src/app.py".to_owned(),
+                    line: 3,
+                    distribution: None,
+                },
+                "import",
+            ),
+            bare_candidate(
+                RuleId::Chk002,
+                IssueSubject::ScriptDistribution {
+                    script: "scripts/tool.py".to_owned(),
+                    name: "rich".to_owned(),
+                },
+                "script",
+            ),
+            bare_candidate(
+                RuleId::Chk002,
+                IssueSubject::Distribution {
+                    name: "boto3".to_owned(),
+                },
+                "distribution",
+            ),
+            bare_candidate(
+                RuleId::Chk008,
+                IssueSubject::Binary {
+                    name: "ruff".to_owned(),
+                },
+                "binary",
+            ),
+            bare_candidate(
+                RuleId::Chk001,
+                IssueSubject::File {
+                    path: "src/legacy.py".to_owned(),
+                },
+                "file",
+            ),
+        ]
+        .map(candidate_to_issue)
+        .to_vec();
+        let report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: ExitStatus::IssuesFound,
+        };
+
+        for (selector, expected) in [
+            ("CHK006:acme.utils:dead_api", Some("symbol")),
+            ("CHK006:dead_api", Some("symbol")),
+            ("CHK010:src/app.py:3:requets", Some("import")),
+            ("CHK010:requets", Some("import")),
+            ("CHK002:script:scripts/tool.py:rich", Some("script")),
+            ("CHK002:rich", Some("script")),
+            ("CHK002:boto3", Some("distribution")),
+            ("CHK008:ruff", Some("binary")),
+            ("CHK001:src/legacy.py", Some("file")),
+            ("CHK003:boto3", None),
+            ("CHK002:missing", None),
+            ("CHK006:acme.utils:other", None),
+        ] {
+            assert_eq!(
+                explain_issue(&report, selector).as_deref(),
+                expected,
+                "{selector}"
+            );
+        }
+    }
+
+    #[test]
+    fn candidate_explain_is_dropped_only_when_summary_and_details_are_both_empty() {
+        let subject = || IssueSubject::Distribution {
+            name: "boto3".to_owned(),
+        };
+        let summary_only = bare_candidate(RuleId::Chk002, subject(), "summary");
+        let mut details_only = bare_candidate(RuleId::Chk002, subject(), "");
+        details_only.explain.details = vec!["detail".to_owned()];
+        let neither = bare_candidate(RuleId::Chk002, subject(), "");
+
+        assert!(candidate_to_issue(summary_only).explain.is_some());
+        assert!(candidate_to_issue(details_only).explain.is_some());
+        assert!(candidate_to_issue(neither).explain.is_none());
+    }
+
+    #[test]
+    fn location_falls_back_to_subject_when_no_origin_names_a_file() {
+        let file = bare_candidate(
+            RuleId::Chk001,
+            IssueSubject::File {
+                path: "src/legacy.py".to_owned(),
+            },
+            "",
+        );
+        let import = bare_candidate(
+            RuleId::Chk010,
+            IssueSubject::Import {
+                module: "requets".to_owned(),
+                file: "src/app.py".to_owned(),
+                line: 3,
+                distribution: None,
+            },
+            "",
+        );
+        let manifest = DependencyOrigin {
+            file: "scripts/tool.py".to_owned(),
+            line: Some(4),
+            label: "script dependencies[0]".to_owned(),
+        };
+        let mut script = bare_candidate(
+            RuleId::Chk002,
+            IssueSubject::ScriptDistribution {
+                script: "scripts/tool.py".to_owned(),
+                name: "rich".to_owned(),
+            },
+            "",
+        );
+        script.origins = vec![Origin::Manifest(manifest.clone())];
+
+        let location = |file: Option<&str>, line: Option<u32>, manifest| IssueLocation {
+            file: file.map(str::to_owned),
+            line,
+            manifest,
+        };
+        assert_eq!(
+            location_from_candidate(&file),
+            location(Some("src/legacy.py"), None, None)
+        );
+        assert_eq!(
+            location_from_candidate(&import),
+            location(Some("src/app.py"), Some(3), None)
+        );
+        assert_eq!(
+            location_from_candidate(&script),
+            location(Some("scripts/tool.py"), Some(4), Some(manifest))
+        );
+    }
 }
