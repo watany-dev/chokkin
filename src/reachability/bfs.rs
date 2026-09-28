@@ -222,8 +222,12 @@ fn enqueue_import(
     } else {
         FileReachVia::Import
     };
+    let from_path = state
+        .graph
+        .file(from_file)
+        .map_or("", |node| node.path.as_str());
     for name in module_and_parents(module) {
-        let Some(target) = state.module_index.resolve(name) else {
+        let Some(target) = state.module_index.resolve_from(from_path, name) else {
             continue;
         };
         enqueue_resolved_module(state, target, from_file, via, || {
@@ -290,7 +294,7 @@ fn build_submodule_imports(
                 continue;
             }
             let submodule = format!("{}.{name}", import.module);
-            if let Some(target) = module_index.resolve(&submodule) {
+            if let Some(target) = module_index.resolve_from(&module.path, &submodule) {
                 sites
                     .entry(file_id)
                     .or_default()

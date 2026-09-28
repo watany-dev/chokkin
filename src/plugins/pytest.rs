@@ -2,6 +2,8 @@
 
 #![allow(clippy::too_many_lines)]
 
+use std::path::Path;
+
 use crate::config::PluginId;
 use crate::sources::FileContext;
 
@@ -163,6 +165,78 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     }
 
     (contrib, warnings)
+}
+
+/// The `sys.path` settings pytest applies while importing tests.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PytestImportSettings {
+    /// `pythonpath` entries, relative to the project root.
+    pub pythonpath: Vec<String>,
+    /// `--import-mode=importlib` in `addopts`: test and conftest directories
+    /// are not put on `sys.path`.
+    pub importlib: bool,
+}
+
+/// Read [`PytestImportSettings`] from the first pytest config file found:
+/// `pyproject.toml`, `pytest.ini`, then `setup.cfg`.
+#[must_use]
+pub fn import_settings(root: &Path) -> PytestImportSettings {
+    let pyproject = root.join("pyproject.toml");
+    if pyproject.is_file()
+        && let Ok(table) = read_pyproject_table(&pyproject)
+        && let Some(options) = pytest_ini_options_from_pyproject(&table)
+    {
+        let addopts = options
+            .get("addopts")
+            .map_or_else(Vec::new, |value| match value {
+                toml::Value::String(text) => split_words(text),
+                toml::Value::Array(items) => items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect(),
+                _ => Vec::new(),
+            });
+        let pythonpath = match options.get("pythonpath") {
+            Some(toml::Value::String(text)) => split_words(text),
+            _ => str_list(options, "pythonpath"),
+        };
+        return PytestImportSettings {
+            pythonpath,
+            importlib: has_importlib_mode(&addopts),
+        };
+    }
+    for (file, section_name) in [("pytest.ini", "pytest"), ("setup.cfg", "tool:pytest")] {
+        let path = root.join(file);
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(section) = read_ini_section(&path, section_name) else {
+            continue;
+        };
+        if section.is_empty() {
+            continue;
+        }
+        let words = |key: &str| section.get(key).map_or_else(Vec::new, |v| split_words(v));
+        return PytestImportSettings {
+            pythonpath: words("pythonpath"),
+            importlib: has_importlib_mode(&words("addopts")),
+        };
+    }
+    PytestImportSettings::default()
+}
+
+fn split_words(text: &str) -> Vec<String> {
+    text.split_whitespace().map(str::to_owned).collect()
+}
+
+fn has_importlib_mode(addopts: &[String]) -> bool {
+    addopts.iter().enumerate().any(|(index, word)| {
+        word == "--import-mode=importlib"
+            || (word == "--import-mode"
+                && addopts
+                    .get(index + 1)
+                    .is_some_and(|next| next == "importlib"))
+    })
 }
 
 /// Read a pytest option given either as a comma/newline-separated string or as

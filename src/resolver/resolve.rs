@@ -11,6 +11,7 @@ use crate::sources::{DiscoveredFile, DiscoveredSources};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
+use super::pytest_path::PytestImportPaths;
 use super::stdlib::StdlibRange;
 use super::types::{
     ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
@@ -105,6 +106,7 @@ pub fn resolve_imports_for_analysis(
     let binary_resolutions = build_binary_map(config, &venv_index);
     let mut imports = Vec::new();
     let mut root_cache: RootCache = BTreeMap::new();
+    let pytest_paths = PytestImportPaths::build(sources);
 
     for module in &parse.modules {
         let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
@@ -132,6 +134,7 @@ pub fn resolve_imports_for_analysis(
                 &import_map,
                 &venv_index.imports,
                 scoped,
+                &pytest_paths,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -153,6 +156,7 @@ pub fn resolve_imports_for_analysis(
                 &import_map,
                 &venv_index.imports,
                 scoped,
+                &pytest_paths,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -176,6 +180,7 @@ pub fn resolve_imports_for_analysis(
             &import_map,
             &venv_index.imports,
             scoped,
+            &pytest_paths,
             &mut warnings,
             &mut root_cache,
         ));
@@ -224,39 +229,34 @@ fn resolve_import_site(
     import_map: &ImportMap,
     venv_imports: &BTreeMap<String, Vec<String>>,
     scoped: &ScopedDeclarations,
+    pytest_paths: &PytestImportPaths,
     warnings: &mut Vec<ResolveWarning>,
     root_cache: &mut RootCache,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
-    let core = root_cache
-        .entry((stdlib, root_name.clone()))
-        .or_insert_with(|| {
-            resolve_import_root(
-                &root_name,
-                stdlib,
-                sources,
-                manifest,
-                config,
-                workspace_members,
-                import_map,
-                venv_imports,
-                warnings,
-            )
-        })
-        .clone();
-    let core = match (core.origin, import_map.namespace_candidates(imported)) {
-        (ModuleOrigin::Stdlib, _) | (_, None) => core,
-        // A first-party root may share its namespace with a distribution
-        // (`poetry` and `poetry.core`); the local tree wins when it has the
-        // module itself.
-        (ModuleOrigin::FirstParty, Some((module, ..)))
-            if has_local_module(module, &sources.files) =>
-        {
-            core
-        },
-        (_, Some((_, distributions, confidence))) => {
-            root_resolution_from_candidates(&root_name, &distributions, Some(confidence), warnings)
-        },
+    // pytest puts the test's basedir on `sys.path` ahead of site-packages, so
+    // a local module there shadows any distribution of the same name.
+    let pytest_local = !stdlib.contains(&root_name) && pytest_paths.provides_root(file, &root_name);
+    let core = if pytest_local {
+        RootResolution {
+            origin: ModuleOrigin::FirstParty,
+            distribution: None,
+            confidence: ResolveConfidence::Certain,
+        }
+    } else {
+        resolve_cached_root(
+            &root_name,
+            imported,
+            stdlib,
+            sources,
+            manifest,
+            config,
+            workspace_members,
+            import_map,
+            venv_imports,
+            warnings,
+            root_cache,
+        )
     };
 
     let workspace_member = workspace_member_for_file(file, workspace_members);
@@ -286,6 +286,54 @@ fn resolve_import_site(
         origin: core.origin,
         distribution: core.distribution,
         confidence: core.confidence,
+    }
+}
+
+/// The root's resolution from the per-range cache, then narrowed by the
+/// namespace-package map for the full `imported` name.
+#[allow(clippy::too_many_arguments)]
+fn resolve_cached_root(
+    root_name: &str,
+    imported: &str,
+    stdlib: StdlibRange,
+    sources: &DiscoveredSources,
+    manifest: &LoadedManifest,
+    config: &ChokkinConfig,
+    workspace_members: &[ResolvedWorkspaceMember],
+    import_map: &ImportMap,
+    venv_imports: &BTreeMap<String, Vec<String>>,
+    warnings: &mut Vec<ResolveWarning>,
+    root_cache: &mut RootCache,
+) -> RootResolution {
+    let core = root_cache
+        .entry((stdlib, root_name.to_owned()))
+        .or_insert_with(|| {
+            resolve_import_root(
+                root_name,
+                stdlib,
+                sources,
+                manifest,
+                config,
+                workspace_members,
+                import_map,
+                venv_imports,
+                warnings,
+            )
+        })
+        .clone();
+    match (core.origin, import_map.namespace_candidates(imported)) {
+        (ModuleOrigin::Stdlib, _) | (_, None) => core,
+        // A first-party root may share its namespace with a distribution
+        // (`poetry` and `poetry.core`); the local tree wins when it has the
+        // module itself.
+        (ModuleOrigin::FirstParty, Some((module, ..)))
+            if has_local_module(module, &sources.files) =>
+        {
+            core
+        },
+        (_, Some((_, distributions, confidence))) => {
+            root_resolution_from_candidates(root_name, &distributions, Some(confidence), warnings)
+        },
     }
 }
 

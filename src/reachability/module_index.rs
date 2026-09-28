@@ -3,12 +3,15 @@
 use std::collections::HashMap;
 
 use crate::graph::{FileId, ProjectGraph};
+use crate::resolver::PytestImportPaths;
 use crate::sources::{DiscoveredSources, path_to_module};
 
 /// Maps dotted module names to project files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleIndex {
     module_to_file: HashMap<String, FileId>,
+    path_to_file: HashMap<String, FileId>,
+    pytest: PytestImportPaths,
 }
 
 impl ModuleIndex {
@@ -16,18 +19,35 @@ impl ModuleIndex {
     #[must_use]
     pub fn build(graph: &ProjectGraph, sources: &DiscoveredSources) -> Self {
         let mut module_to_file = HashMap::new();
+        let mut path_to_file = HashMap::new();
         for (file_id, file) in graph.files() {
             if let Some(module) = path_to_module(&file.path, &sources.layout) {
                 module_to_file.entry(module).or_insert(file_id);
             }
+            path_to_file.insert(file.path.clone(), file_id);
         }
-        Self { module_to_file }
+        Self {
+            module_to_file,
+            path_to_file,
+            pytest: PytestImportPaths::build(sources),
+        }
     }
 
     /// Resolve a dotted module name to a first-party file id.
     #[must_use]
     pub fn resolve(&self, module: &str) -> Option<FileId> {
         self.module_to_file.get(module).copied()
+    }
+
+    /// Resolve `module` as imported from the file at `from_path`: pytest's
+    /// `sys.path` entries for a test file come first, as prepend mode puts
+    /// them ahead of everything else.
+    #[must_use]
+    pub fn resolve_from(&self, from_path: &str, module: &str) -> Option<FileId> {
+        self.pytest
+            .resolve(from_path, module)
+            .and_then(|path| self.path_to_file.get(path).copied())
+            .or_else(|| self.resolve(module))
     }
 
     /// Modules strictly inside package `prefix`, sorted by name.

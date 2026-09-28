@@ -146,12 +146,12 @@ fn collect_incoming_imports(
         let Some(module_node) = graph.module(*module) else {
             continue;
         };
-        if module_index.resolve(&module_node.name) != Some(target) {
-            continue;
-        }
         let Some(file_node) = graph.file(*file) else {
             continue;
         };
+        if module_index.resolve_from(&file_node.path, &module_node.name) != Some(target) {
+            continue;
+        }
         importers.push((file_node.path.clone(), *line, module_node.name.clone()));
     }
 
