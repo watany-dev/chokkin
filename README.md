@@ -35,25 +35,25 @@ chokkin 0.4.1
 
 Project: acme-api
 Config : pyproject.toml
-Mode   : auto, production=false
-
-Unused dependencies  3
-  boto3          pyproject.toml:18  declared in [project.dependencies], no reachable import found
-  rich           pyproject.toml:25  only used by scripts/dev.py; move to dependency-groups.dev
-  python-dotenv  pyproject.toml:29  no import/config/binary usage found
-
-Missing dependencies  1
-  yaml -> PyYAML  src/acme/config.py:3  imported but not declared
+Mode   : app, production=false
 
 Unused files  2
-  src/acme/legacy.py        no path from any entry point
-  src/acme/old_handlers.py  no path from any entry point
+  src/acme/legacy.py       src/acme/legacy.py     file `src/acme/legacy.py` is not reachable from any entry root
+  src/acme/old_handlers.py src/acme/old_handlers.py file `src/acme/old_handlers.py` is not reachable from any entry root
 
-Unused exports  4
-  src/acme/utils.py:12  function legacy_slugify
-  src/acme/auth.py:44   class OldTokenBackend
+Unused dependencies  3
+  boto3                    pyproject.toml         declared in project.dependencies[1], no reachable import, config, or binary usage found
+  python-dotenv            pyproject.toml         declared in project.dependencies[3], no reachable import, config, or binary usage found
+  rich                     pyproject.toml         declared in project.dependencies[2], no reachable import, config, or binary usage found
 
-Summary: 10 issues
+Missing dependencies  1
+  src/acme/config.py:3 yaml src/acme/config.py:3   imported pyyaml in src/acme/config.py:3 (no lockfile — transitive check skipped) but not declared in matching dependency context
+
+Unused exports  2
+  acme.auth:OldTokenBackend src/acme/auth.py:5     public class `OldTokenBackend` in `acme.auth` is not referenced from outside the module
+  acme.utils:legacy_slugify src/acme/utils.py:5    public function `legacy_slugify` in `acme.utils` is not referenced from outside the module
+
+Summary: 8 issues
 ```
 
 ## What it checks
