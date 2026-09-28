@@ -493,3 +493,66 @@ fn binary_root_tests_package_imports_resolve_first_party() {
         .collect();
     assert_eq!(flagged, ["tests/orphan.py"], "{keys:?}");
 }
+
+fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create dir");
+        }
+        fs::write(path, text).expect("write fixture");
+    }
+    temp
+}
+
+/// litellm's `tests/e2e`: a conftest without `__init__.py` puts its directory
+/// on `sys.path`, so tests below import siblings by top-level name (#360).
+fn pytest_prepend_project(pytest_options: &str) -> tempfile::TempDir {
+    let pyproject = format!(
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.pytest.ini_options]\n{pytest_options}"
+    );
+    write_project(&[
+        ("pyproject.toml", pyproject.as_str()),
+        ("acme/__init__.py", ""),
+        (
+            "tests/e2e/conftest.py",
+            "from lifecycle import ResourceManager\n",
+        ),
+        (
+            "tests/e2e/lifecycle.py",
+            "class ResourceManager:\n    pass\n",
+        ),
+        (
+            "tests/e2e/models/__init__.py",
+            "from models.user import User\n",
+        ),
+        ("tests/e2e/models/user.py", "class User:\n    pass\n"),
+        (
+            "tests/e2e/access/test_access.py",
+            "from lifecycle import ResourceManager\nfrom models import User\n\n\ndef test_access() -> None:\n    assert ResourceManager\n    assert User\n",
+        ),
+    ])
+}
+
+#[test]
+fn binary_pytest_prepend_mode_resolves_test_local_imports() {
+    let project = pytest_prepend_project("");
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    assert!(
+        keys.iter().all(|(code, target)| code != "CHK010"
+            && !(code == "CHK001" && target.starts_with("tests/"))),
+        "{keys:?}"
+    );
+}
+
+#[test]
+fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
+    let project = pytest_prepend_project("addopts = \"--import-mode=importlib\"\n");
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    assert!(
+        keys.iter()
+            .any(|(code, target)| code == "CHK010" && target.ends_with("lifecycle")),
+        "{keys:?}"
+    );
+}
