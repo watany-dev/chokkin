@@ -329,6 +329,83 @@ mod tests {
         );
     }
 
+    fn detect(
+        dependencies: Vec<DeclaredDependency>,
+        imports: Vec<ResolvedImport>,
+        strict: bool,
+    ) -> Vec<(RuleId, Severity, Confidence, String)> {
+        let script = InlineScript {
+            path: "scripts/tool.py".to_owned(),
+            dependencies,
+            requires_python: None,
+            target_version: None,
+        };
+        let resolution = ResolutionIndex {
+            imports,
+            ..ResolutionIndex::default()
+        };
+        detect_script_dependency_issues(
+            &[script],
+            &resolution,
+            &HashSet::from(["scripts/tool.py"]),
+            &[],
+            &ParseSummary::default(),
+            &import_map(),
+            strict,
+        )
+        .into_iter()
+        .map(|candidate| {
+            let IssueSubject::ScriptDistribution { name, .. } = candidate.subject else {
+                panic!("unexpected subject {:?}", candidate.subject);
+            };
+            (candidate.rule, candidate.severity, candidate.confidence, name)
+        })
+        .collect()
+    }
+
+    /// Only third-party imports with a known distribution can be missing;
+    /// optional or platform-guarded ones are never reported.
+    #[test]
+    fn only_unconditional_third_party_imports_are_missing() {
+        let imports = vec![
+            ResolvedImport {
+                origin: ModuleOrigin::FirstParty,
+                ..import("airflow", "apache-airflow", 2)
+            },
+            ResolvedImport {
+                optional: true,
+                ..import("yaml", "pyyaml", 3)
+            },
+            ResolvedImport {
+                platform_guarded: true,
+                ..import("winreg_ext", "winreg-ext", 4)
+            },
+        ];
+        assert_eq!(detect(Vec::new(), imports, false), []);
+    }
+
+    #[test]
+    fn marker_dependencies_are_unused_only_in_strict_mode() {
+        let marked = || DeclaredDependency {
+            marker: Some("sys_platform == 'win32'".to_owned()),
+            ..dependency("pywin32", 3)
+        };
+        let opaque = || DeclaredDependency {
+            opaque: true,
+            ..dependency("git-dep", 4)
+        };
+        assert_eq!(detect(vec![marked(), opaque()], Vec::new(), false), []);
+        assert_eq!(
+            detect(vec![marked(), opaque()], Vec::new(), true),
+            [(
+                RuleId::Chk002,
+                Severity::Error,
+                Confidence::Likely,
+                "pywin32".to_owned()
+            )]
+        );
+    }
+
     #[test]
     fn scripts_running_another_python_file_report_no_unused() {
         let script = InlineScript {

@@ -463,10 +463,26 @@ mod tests {
         distribution: &str,
         transitive: TransitiveIndex,
     ) -> Vec<IssueCandidate> {
+        detect_with(
+            declared,
+            runtime_import(distribution),
+            transitive,
+            false,
+            &[],
+        )
+    }
+
+    fn detect_with(
+        declared: &DeclaredIndex<'_>,
+        import: ResolvedImport,
+        transitive: TransitiveIndex,
+        strict: bool,
+        workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+    ) -> Vec<IssueCandidate> {
         let config = default_config();
         let sources = sources();
         let resolution = ResolutionIndex {
-            imports: vec![runtime_import(distribution)],
+            imports: vec![import],
             warnings: Vec::new(),
             transitive,
             binary_resolutions: BTreeMap::new(),
@@ -484,11 +500,11 @@ mod tests {
                     parse: &ParseSummary::default(),
                 },
                 config: &config,
-                strict: false,
+                strict,
             },
             &HashSet::from([FILE]),
             true,
-            &[],
+            workspace_declared,
         )
     }
 
@@ -569,5 +585,54 @@ mod tests {
             edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),
         };
         assert!(detect(&index, "pytest", transitive).is_empty());
+    }
+
+    #[test]
+    fn workspace_member_import_accepts_member_or_root_declaration() {
+        let requests = declared_dep("requests");
+        let with_requests = || BTreeMap::from([("requests".to_owned(), vec![&requests])]);
+        let member_import = || ResolvedImport {
+            workspace_member: Some("api".to_owned()),
+            ..runtime_import("requests")
+        };
+        let member_only = [WorkspaceDeclaredIndex {
+            member_id: "api",
+            declared: with_requests(),
+        }];
+        let no_member = [WorkspaceDeclaredIndex {
+            member_id: "api",
+            declared: BTreeMap::new(),
+        }];
+
+        for strict in [false, true] {
+            let found = detect_with(
+                &BTreeMap::new(),
+                member_import(),
+                TransitiveIndex::default(),
+                strict,
+                &member_only,
+            );
+            assert!(found.is_empty(), "strict={strict}: {found:?}");
+        }
+
+        let root_only = detect_with(
+            &with_requests(),
+            member_import(),
+            TransitiveIndex::default(),
+            false,
+            &no_member,
+        );
+        assert!(root_only.is_empty(), "{root_only:?}");
+
+        let strict_root_only = detect_with(
+            &with_requests(),
+            member_import(),
+            TransitiveIndex::default(),
+            true,
+            &no_member,
+        );
+        assert_eq!(strict_root_only.len(), 1);
+        assert_eq!(strict_root_only[0].rule, RuleId::Chk003);
+        assert_eq!(strict_root_only[0].workspace_member.as_deref(), Some("api"));
     }
 }
