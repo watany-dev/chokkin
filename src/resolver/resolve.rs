@@ -244,19 +244,39 @@ fn resolve_import_site(
             confidence: ResolveConfidence::Certain,
         }
     } else {
-        resolve_cached_root(
-            &root_name,
-            imported,
-            stdlib,
-            sources,
-            manifest,
-            config,
-            workspace_members,
-            import_map,
-            venv_imports,
-            warnings,
-            root_cache,
-        )
+        let core = root_cache
+            .entry((stdlib, root_name.clone()))
+            .or_insert_with(|| {
+                resolve_import_root(
+                    &root_name,
+                    stdlib,
+                    sources,
+                    manifest,
+                    config,
+                    workspace_members,
+                    import_map,
+                    venv_imports,
+                    warnings,
+                )
+            })
+            .clone();
+        match (core.origin, import_map.namespace_candidates(imported)) {
+            (ModuleOrigin::Stdlib, _) | (_, None) => core,
+            // A first-party root may share its namespace with a distribution
+            // (`poetry` and `poetry.core`); the local tree wins when it has the
+            // module itself.
+            (ModuleOrigin::FirstParty, Some((module, ..)))
+                if has_local_module(module, &sources.files) =>
+            {
+                core
+            },
+            (_, Some((_, distributions, confidence))) => root_resolution_from_candidates(
+                &root_name,
+                &distributions,
+                Some(confidence),
+                warnings,
+            ),
+        }
     };
 
     let workspace_member = workspace_member_for_file(file, workspace_members);
@@ -286,54 +306,6 @@ fn resolve_import_site(
         origin: core.origin,
         distribution: core.distribution,
         confidence: core.confidence,
-    }
-}
-
-/// The root's resolution from the per-range cache, then narrowed by the
-/// namespace-package map for the full `imported` name.
-#[allow(clippy::too_many_arguments)]
-fn resolve_cached_root(
-    root_name: &str,
-    imported: &str,
-    stdlib: StdlibRange,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    config: &ChokkinConfig,
-    workspace_members: &[ResolvedWorkspaceMember],
-    import_map: &ImportMap,
-    venv_imports: &BTreeMap<String, Vec<String>>,
-    warnings: &mut Vec<ResolveWarning>,
-    root_cache: &mut RootCache,
-) -> RootResolution {
-    let core = root_cache
-        .entry((stdlib, root_name.to_owned()))
-        .or_insert_with(|| {
-            resolve_import_root(
-                root_name,
-                stdlib,
-                sources,
-                manifest,
-                config,
-                workspace_members,
-                import_map,
-                venv_imports,
-                warnings,
-            )
-        })
-        .clone();
-    match (core.origin, import_map.namespace_candidates(imported)) {
-        (ModuleOrigin::Stdlib, _) | (_, None) => core,
-        // A first-party root may share its namespace with a distribution
-        // (`poetry` and `poetry.core`); the local tree wins when it has the
-        // module itself.
-        (ModuleOrigin::FirstParty, Some((module, ..)))
-            if has_local_module(module, &sources.files) =>
-        {
-            core
-        },
-        (_, Some((_, distributions, confidence))) => {
-            root_resolution_from_candidates(root_name, &distributions, Some(confidence), warnings)
-        },
     }
 }
 
