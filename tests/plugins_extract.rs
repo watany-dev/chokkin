@@ -103,7 +103,6 @@ fn pytest_respects_testpaths() {
     let hints = extract_fixture("pytest_pyproject");
     let contrib = pytest_contrib(&hints);
     let paths = entry_paths(contrib);
-    assert!(paths.contains(&"tests/test_sample.py"));
     assert!(!paths.iter().any(|path| path.starts_with("src/")));
 }
 

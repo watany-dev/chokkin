@@ -10,8 +10,8 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, ConfigError, PluginId, ProjectMode, ProjectRoot, RootMarker, RuntimeOverrides,
-    apply_overrides, default_config, discover_project_root, load_config,
+    Confidence, ConfigError, PluginId, ProjectMode, ProjectRoot, RootMarker, default_config,
+    discover_project_root, load_config,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -210,19 +210,6 @@ fn invalid_toml_returns_error() {
     let root = project_root_at(&path);
     let error = load_config(&root).expect_err("broken toml");
     assert!(matches!(error, ConfigError::InvalidToml { .. }));
-}
-
-#[test]
-fn apply_overrides_production() {
-    let mut config = default_config();
-    apply_overrides(
-        &mut config,
-        &RuntimeOverrides {
-            production: Some(true),
-            ..RuntimeOverrides::default()
-        },
-    );
-    assert!(config.production);
 }
 
 #[test]

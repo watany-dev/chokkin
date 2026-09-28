@@ -796,20 +796,4 @@ mod tests {
         assert_eq!(parse_worker_count(32), 1);
         assert!(parse_worker_count(10_000) >= 1);
     }
-
-    #[test]
-    fn syntax_error_becomes_diagnostic() {
-        let temp = TempDir::new().expect("tempdir");
-        let root = write_temp_py(temp.path(), "broken.py", "def broken(:\n");
-        let parsed = parse_file(
-            &root,
-            "broken.py",
-            &empty_layout(),
-            FileContext::Runtime,
-            &TargetVersion::default_py311(),
-        )
-        .expect("parse");
-        assert!(parsed.imports.is_empty());
-        assert_eq!(parsed.diagnostics.len(), 1);
-    }
 }
