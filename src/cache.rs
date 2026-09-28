@@ -1481,10 +1481,13 @@ mod tests {
 
         let path = CacheOptions::default().scan_entry_path(Path::new("/repo"), &key);
 
-        assert!(path.starts_with("/repo/.chokkin/cache/scan"));
+        // FNV-1a over the length-prefixed key fields, computed outside this
+        // crate. A change here orphans every existing scan cache entry.
         assert_eq!(
-            path.extension().and_then(std::ffi::OsStr::to_str),
-            Some("json")
+            path,
+            Path::new("/repo")
+                .join(".chokkin/cache/scan/scan-v1")
+                .join("256794da36bcfcbe.json")
         );
     }
 

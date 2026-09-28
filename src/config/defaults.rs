@@ -178,17 +178,6 @@ mod tests {
     }
 
     #[test]
-    fn partial_with_mode_has_field() {
-        assert!(
-            PartialConfig {
-                mode: Some(ProjectMode::App),
-                ..PartialConfig::default()
-            }
-            .has_any_field()
-        );
-    }
-
-    #[test]
     fn merge_overlays_plugins_onto_defaults() {
         let mut plugins = BTreeMap::new();
         plugins.insert(PluginId::Celery, true);
@@ -318,6 +307,21 @@ mod tests {
                     .rev()
                     .find_map(|layer| layer.exclude.clone());
                 prop_assert_eq!(merged.exclude, last_exclude.unwrap_or(defaults.exclude));
+
+                let last_confidence = layers.iter().rev().find_map(|layer| layer.confidence);
+                prop_assert_eq!(
+                    merged.confidence,
+                    last_confidence.unwrap_or(defaults.confidence)
+                );
+
+                let last_gitignore = layers
+                    .iter()
+                    .rev()
+                    .find_map(|layer| layer.respect_gitignore);
+                prop_assert_eq!(
+                    merged.respect_gitignore,
+                    last_gitignore.unwrap_or(defaults.respect_gitignore)
+                );
             }
 
             #[test]

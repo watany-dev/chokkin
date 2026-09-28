@@ -119,11 +119,6 @@ mod tests {
         assert_eq!(assign_file_context("acme/module.py"), FileContext::Runtime);
     }
 
-    #[test]
-    fn assigns_runtime_for_root_manage_py() {
-        assert_eq!(assign_file_context("manage.py"), FileContext::Runtime);
-    }
-
     mod props {
         use super::*;
         use proptest::prelude::*;

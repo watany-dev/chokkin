@@ -446,17 +446,11 @@ mod tests {
         use super::*;
         use proptest::prelude::*;
 
-        /// True when `line` still contains a pip comment start (`#` at line
-        /// start or after whitespace).
-        fn has_comment_start(line: &str) -> bool {
-            let mut prev_is_space = true;
-            for ch in line.chars() {
-                if ch == '#' && prev_is_space {
-                    return true;
-                }
-                prev_is_space = ch.is_whitespace();
-            }
-            false
+        /// Words that never start a comment: `#` may appear only after a
+        /// non-space character (`pkg#egg=x`), so `strip_comment` must keep them.
+        fn comment_free_body() -> impl Strategy<Value = String> {
+            prop::collection::vec("[^#\\s\\p{C}][^\\s\\p{C}]{0,10}", 0..6)
+                .prop_map(|words| words.join(" "))
         }
 
         proptest! {
@@ -473,8 +467,20 @@ mod tests {
             }
 
             #[test]
-            fn strip_comment_removes_all_comment_starts(line in "\\PC{0,120}") {
-                prop_assert!(!has_comment_start(strip_comment(&line)));
+            fn strip_comment_keeps_comment_free_line(body in comment_free_body()) {
+                prop_assert_eq!(strip_comment(&body), body.as_str());
+            }
+
+            #[test]
+            fn strip_comment_cuts_at_first_comment_start(
+                body in comment_free_body(),
+                sep in "[ \t]{1,3}",
+                comment in "\\PC{0,40}",
+            ) {
+                let line = format!("{body}{sep}#{comment}");
+                prop_assert_eq!(strip_comment(&line), format!("{body}{sep}"));
+                let bare = format!("#{comment}");
+                prop_assert_eq!(strip_comment(&bare), "");
             }
 
             #[test]

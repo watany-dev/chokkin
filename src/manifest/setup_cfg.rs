@@ -157,8 +157,11 @@ install_requires =
         let sections = parse_ini_sections(contents);
         let options = sections.get("options").expect("options section");
         let requires = options.get("install_requires").expect("install_requires");
-        assert!(requires.contains("requests"), "requires={requires:?}");
-        assert!(requires.contains("flask>=1.0"), "requires={requires:?}");
+        assert_eq!(requires, "requests\nflask>=1.0");
+        assert_eq!(
+            split_requirement_lines(requires).collect::<Vec<_>>(),
+            ["requests", "flask>=1.0"]
+        );
     }
 
     #[test]

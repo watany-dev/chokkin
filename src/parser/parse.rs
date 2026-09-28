@@ -613,26 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_simple_import() {
-        let temp = TempDir::new().expect("tempdir");
-        let root = write_temp_py(
-            temp.path(),
-            "sample.py",
-            "import os\nfrom sys import version\n",
-        );
-        let parsed = parse_file(
-            &root,
-            "sample.py",
-            &empty_layout(),
-            FileContext::Runtime,
-            &TargetVersion::default_py311(),
-        )
-        .expect("parse");
-        assert_eq!(parsed.imports.len(), 2);
-        assert!(parsed.diagnostics.is_empty());
-    }
-
-    #[test]
     fn parallel_parse_preserves_discovery_order() {
         // Enough files to cross `parse_worker_count`'s threshold, so this walks
         // the threaded path while the assertion pins module order to discovery

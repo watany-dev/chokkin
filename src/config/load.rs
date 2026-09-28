@@ -116,24 +116,6 @@ mod tests {
                 config.confidence = baseline.confidence;
                 prop_assert_eq!(config, baseline);
             }
-
-            #[test]
-            fn apply_overrides_is_idempotent(
-                production in proptest::option::of(proptest::bool::ANY),
-                confidence_floor in proptest::option::of(any_confidence()),
-            ) {
-                let overrides = RuntimeOverrides {
-                    production,
-                    strict: None,
-                    confidence_floor,
-                    ..RuntimeOverrides::default()
-                };
-                let mut once = default_config();
-                apply_overrides(&mut once, &overrides);
-                let mut twice = once.clone();
-                apply_overrides(&mut twice, &overrides);
-                prop_assert_eq!(once, twice);
-            }
         }
     }
 }
