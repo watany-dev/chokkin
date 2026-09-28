@@ -520,7 +520,7 @@ scripts/**                                                  -> dev (設定で変
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
 ```
 
-root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。
+root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。ただし参照元としては数えるため、tests/ からだけ import される symbol は CHK006 にしない (`__init__.py` の有無によらない、#410)。
 
 判定例。
 
@@ -695,7 +695,8 @@ import acme.utils; acme.utils.helper() # likely（attribute access）
 ```
 
 `import module; module.name` 形式は parser が同一 file 内の attribute access を収集し、
-symbol usage analysis が `module.name` を外部参照として扱う。chain access や動的 attribute
+symbol usage analysis が `module.name` を外部参照として扱う。`from pkg import module` (alias、
+`from . import module` を含む) で既知の first-party submodule を束縛した場合も同様に扱う (#411)。chain access や動的 attribute
 は v0.2 では追跡しない。
 
 ただし、以下はused扱いにする。

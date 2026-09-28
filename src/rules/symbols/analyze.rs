@@ -66,21 +66,24 @@ pub fn analyze_with_context(
         parse,
     } = *context;
     let reachable = reachable_file_paths(graph, reachability);
-    // Root `tests/`-style packages are importable but not an API surface:
-    // pytest calls their functions, so their symbols would all read as unused.
     let reachable_modules: Vec<_> = parse
         .modules
         .iter()
-        .filter(|module| {
-            reachable.contains(module.path.as_str())
-                && !sources.layout.in_local_package(&module.path)
-        })
+        .filter(|module| reachable.contains(module.path.as_str()))
         .collect();
     let module_names = build_module_names(&reachable_modules, sources);
+    // Root `tests/`-style packages are importable but not an API surface:
+    // pytest calls their functions, so their symbols would all read as unused.
+    // They still reference the symbols they import.
+    let surface_modules: Vec<_> = reachable_modules
+        .iter()
+        .copied()
+        .filter(|module| !sources.layout.in_local_package(&module.path))
+        .collect();
 
-    let registry = build_registry(&reachable_modules, &module_names);
+    let registry = build_registry(&surface_modules, &module_names);
     let reference_index = ReferenceIndex::build(&reachable_modules, &module_names);
-    let reexports = collect_reexports(&reachable_modules, &module_names, &sources.layout);
+    let reexports = collect_reexports(&surface_modules, &module_names, &sources.layout);
     let external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
 
@@ -183,7 +186,7 @@ fn detect_unused_exports(
                     entry.id.module, entry.id.name
                 ),
                 details: vec![
-                    "`from … import name` and `import module; module.name` references are tracked"
+                    "`from … import name` and `module.name` access on imported modules are tracked"
                         .to_owned(),
                     "decorated handlers, fixtures, and entry targets are excluded".to_owned(),
                 ],

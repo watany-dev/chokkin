@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- CHK006 no longer reports symbols referenced only from `tests/` (a v0.5.0
+  regression), with or without `tests/__init__.py` (#410).
+- CHK006 tracks `from pkg import module; module.name` references, including
+  aliases and `from . import module` (#411).
+
 ## [0.5.0] - 2026-09-28
 
 ### Added

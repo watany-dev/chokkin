@@ -1,6 +1,6 @@
 //! Symbol identity and registry for usage analysis.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::parser::{ImportKind, ParsedModule, SymbolDef};
 
@@ -94,48 +94,72 @@ pub(super) struct ReferenceIndex {
 
 impl ReferenceIndex {
     /// Collect symbol references from `from … import name` statements and
-    /// `import module; module.name` attribute access (v0.1 conservative).
+    /// attribute access on module bindings (`import module; module.name`,
+    /// `from package import module; module.name`).
+    ///
+    /// Modules without a module name (e.g. `tests/` without `__init__.py`)
+    /// still count as importers: their path never equals a module name, so
+    /// every reference they make is external.
     pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
         let mut index = Self::default();
+        let known_modules: HashSet<&str> = module_names.values().map(String::as_str).collect();
 
         for module in modules {
-            let Some(importer) = module_names.get(module.path.as_str()) else {
-                continue;
-            };
+            let importer = module_names
+                .get(module.path.as_str())
+                .map_or(module.path.as_str(), String::as_str);
             for import in &module.imports {
                 if import.module.is_empty() {
                     continue;
                 }
                 match import.kind {
                     ImportKind::ImportFrom => {
-                        let target = match &import.name {
-                            Some(name) => SymbolId::new(import.module.clone(), name.clone()),
+                        let (package, name) = match &import.name {
+                            Some(name) => (import.module.as_str(), name.as_str()),
                             // `from . import x` carries no `name`: the parser folds `x` into `module`.
-                            // In the package's own `__init__` it defines a re-export, not a use.
                             None => match import.module.rsplit_once('.') {
-                                Some((package, name)) if package != importer.as_str() => {
-                                    SymbolId::new(package, name)
-                                },
-                                _ => continue,
+                                Some(parts) => parts,
+                                None => continue,
                             },
                         };
-                        index.record(importer, target);
+                        // `from . import x` in the package's own `__init__` defines a re-export, not a use.
+                        if import.name.is_some() || package != importer {
+                            index.record(importer, SymbolId::new(package, name));
+                        }
+                        let submodule = format!("{package}.{name}");
+                        if known_modules.contains(submodule.as_str()) {
+                            let binding = import.alias.as_deref().unwrap_or(name);
+                            index.record_accesses(importer, module, &submodule, &[binding]);
+                        }
                     },
                     ImportKind::Import => {
                         let binding = import.alias.as_deref().unwrap_or(&import.module);
-                        for access in &module.attribute_accesses {
-                            if access.receiver != import.module && access.receiver != binding {
-                                continue;
-                            }
-                            let target = SymbolId::new(import.module.clone(), access.name.clone());
-                            index.record(importer, target);
-                        }
+                        index.record_accesses(
+                            importer,
+                            module,
+                            &import.module,
+                            &[import.module.as_str(), binding],
+                        );
                     },
                 }
             }
         }
 
         index
+    }
+
+    fn record_accesses(
+        &mut self,
+        importer: &str,
+        module: &ParsedModule,
+        target_module: &str,
+        receivers: &[&str],
+    ) {
+        for access in &module.attribute_accesses {
+            if receivers.contains(&access.receiver.as_str()) {
+                self.record(importer, SymbolId::new(target_module, access.name.clone()));
+            }
+        }
     }
 
     fn record(&mut self, importer: &str, target: SymbolId) {
