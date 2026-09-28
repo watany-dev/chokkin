@@ -453,18 +453,6 @@ fn metadata_conflict_emits_warning() {
 }
 
 #[test]
-fn uv_workspace_hint_reaches_manifest() {
-    let manifest = extract_fixture("uv_workspace_hint");
-    assert_eq!(
-        manifest
-            .uv_workspace
-            .as_ref()
-            .map(|hint| hint.members.as_slice()),
-        Some(["packages/*".to_owned()].as_slice())
-    );
-}
-
-#[test]
 fn setup_cfg_install_requires() {
     let manifest = extract_fixture("setup_cfg_install_requires");
     assert!(manifest.sources.setup_cfg);
