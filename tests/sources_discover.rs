@@ -37,6 +37,22 @@ fn discover_fixture(name: &str) -> DiscoveredSources {
     discover_sources(&root, &config, &manifest).expect("discover sources")
 }
 
+/// For fixtures that git itself would ignore, so they could never be committed.
+fn discover_tree(files: &[(&str, &str)]) -> DiscoveredSources {
+    let temp = tempfile::tempdir().expect("tempdir");
+    for (rel, contents) in files {
+        let path = temp.path().join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent");
+        }
+        std::fs::write(path, contents).expect("write file");
+    }
+    let root = discover_project_root(temp.path()).expect("discover root");
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract manifest");
+    discover_sources(&root, &config, &manifest).expect("discover sources")
+}
+
 fn paths(sources: &DiscoveredSources) -> Vec<&str> {
     sources
         .files
@@ -100,10 +116,21 @@ fn applies_exclude() {
 
 #[test]
 fn respects_gitignore() {
-    let sources = discover_fixture("gitignore_respected");
+    // The ignored file sits inside the inferred `src/**` project glob, so only
+    // the gitignore filter can drop it.
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        (".gitignore", "src/acme/local/\n"),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/visible.py", ""),
+        ("src/acme/local/hidden.py", ""),
+    ]);
     let discovered = paths(&sources);
-    assert!(discovered.contains(&"acme/visible.py"));
-    assert!(!discovered.contains(&"local/hidden.py"));
+    assert!(discovered.contains(&"src/acme/visible.py"));
+    assert!(!discovered.contains(&"src/acme/local/hidden.py"));
 }
 
 #[test]
@@ -125,26 +152,21 @@ fn warns_entry_path_is_directory() {
 
 #[test]
 fn applies_mandatory_exclude_when_config_replaced() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root_path = temp.path();
-    std::fs::create_dir_all(root_path.join("src/acme")).expect("create package");
-    std::fs::write(root_path.join("src/acme/__init__.py"), "").expect("write init");
-    std::fs::write(root_path.join("src/acme/module.py"), "").expect("write py");
-    std::fs::create_dir_all(root_path.join(".venv/lib")).expect("create venv");
-    std::fs::write(root_path.join(".venv/lib/site.py"), "").expect("write venv py");
-    std::fs::write(
-        root_path.join("pyproject.toml"),
-        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nexclude = [\"custom/**\"]\n",
-    )
-    .expect("write pyproject");
-
-    let root = discover_project_root(root_path).expect("discover root");
-    let config = load_config(&root).expect("load config");
-    let manifest = extract_manifest(&root, &config).expect("extract manifest");
-    let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-
+    // `project = ["**/*.py"]` puts `.venv/` inside the project glob, so only the
+    // mandatory exclude can drop it once `exclude` is replaced.
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nproject = [\"**/*.py\"]\nexclude = [\"custom/**\"]\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/module.py", ""),
+        ("custom/extra.py", ""),
+        (".venv/lib/site.py", ""),
+    ]);
     let discovered = paths(&sources);
     assert!(discovered.contains(&"src/acme/module.py"));
+    assert!(!discovered.contains(&"custom/extra.py"));
     assert!(!discovered.contains(&".venv/lib/site.py"));
 }
 
@@ -247,11 +269,28 @@ fn warns_ambiguous_flat_layout_without_metadata_match() {
 
 #[test]
 fn excludes_nested_cache_and_venv_paths() {
-    let sources = discover_fixture("nested_ignored");
+    // `project = ["**/*.py"]` so every ignored path is inside the project glob
+    // and only the default/mandatory excludes can drop it.
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nproject = [\"**/*.py\"]\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/module.py", ""),
+        ("src/acme/__pycache__/module.py", ""),
+        ("src/acme/sub/__pycache__/deep.py", ""),
+        (".venv/fake/ignored.py", ""),
+        ("build/fake/ignored.py", ""),
+        ("dist/fake/ignored.py", ""),
+    ]);
     let discovered = paths(&sources);
     assert!(discovered.contains(&"src/acme/module.py"));
+    assert!(!discovered.contains(&"src/acme/__pycache__/module.py"));
+    assert!(!discovered.contains(&"src/acme/sub/__pycache__/deep.py"));
     assert!(!discovered.contains(&".venv/fake/ignored.py"));
     assert!(!discovered.contains(&"build/fake/ignored.py"));
+    assert!(!discovered.contains(&"dist/fake/ignored.py"));
 }
 
 #[test]

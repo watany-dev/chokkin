@@ -301,6 +301,7 @@ mod tests {
         write_file(&root.join("src/acme/module.py"), "");
         write_file(&root.join("tests/test_module.py"), "");
         write_file(&root.join("local/extra.py"), "");
+        write_file(&root.join("src/acme/generated/models.py"), "");
 
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
@@ -312,7 +313,7 @@ mod tests {
             ],
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
-        let exclude_patterns = effective_exclude(&[]);
+        let exclude_patterns = effective_exclude(&["src/acme/generated/**".to_owned()]);
         let exclude = build_glob_set(&exclude_patterns).expect("exclude globs");
 
         let options = CollectOptions {
@@ -329,6 +330,7 @@ mod tests {
         assert!(paths.contains(&"src/acme/module.py"));
         assert!(paths.contains(&"tests/test_module.py"));
         assert!(!paths.contains(&"local/extra.py"));
+        assert!(!paths.contains(&"src/acme/generated/models.py"));
     }
 
     #[test]
