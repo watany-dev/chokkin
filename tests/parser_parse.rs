@@ -179,47 +179,41 @@ fn extracts_all_exports() {
 }
 
 #[test]
-fn spike_success_rate_meets_phase0_bar() {
+fn spike_fixtures_report_errors_only_for_syntax_error() {
     let fixtures = [
-        "p1_empty_init.py",
-        "p2_basic_imports.py",
-        "p3_relative_import.py",
-        "p4_type_checking.py",
-        "p5_try_import.py",
-        "p6_fstring.py",
-        "p7_match.py",
-        "p8_ignore_comment.py",
-        "p9_syntax_error.py",
+        ("p1_empty_init.py", 0),
+        ("p2_basic_imports.py", 0),
+        ("p3_relative_import.py", 0),
+        ("p4_type_checking.py", 0),
+        ("p5_try_import.py", 0),
+        ("p6_fstring.py", 0),
+        ("p7_match.py", 0),
+        ("p8_ignore_comment.py", 0),
+        ("p9_syntax_error.py", 1),
     ];
-    let mut successes = 0_u32;
-    for name in fixtures {
+    for (name, expected_errors) in fixtures {
         let parsed = parse_fixture(name);
-        let ok = !parsed
+        let errors = parsed
             .diagnostics
             .iter()
-            .any(|diag| diag.severity == ParseSeverity::Error)
-            || name == "p9_syntax_error.py";
-        if ok {
-            successes += 1;
-        }
+            .filter(|diag| diag.severity == ParseSeverity::Error)
+            .count();
+        assert_eq!(errors, expected_errors, "{name}: {:?}", parsed.diagnostics);
     }
-    let rate = f64::from(successes) / f64::from(u32::try_from(fixtures.len()).expect("fits"));
-    assert!(
-        rate >= 0.95,
-        "parser spike success rate {rate} below 95% bar"
-    );
 }
 
 #[test]
 fn parse_project_sources_fixture_suite() {
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parse");
+    // Root at `imports/` so `src/acme/...` maps to `acme...` and relative imports resolve.
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parse/imports");
     let root = ProjectRoot {
         path: base.clone(),
         marker: RootMarker::PyProjectToml,
         start: base.clone(),
     };
     let mut files = Vec::new();
-    collect_py_files(&base.join("imports"), &base, &mut files);
+    collect_py_files(&base, &base, &mut files);
+    files.sort_by(|a, b| a.path.cmp(&b.path));
     let sources = chokkin::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
@@ -235,7 +229,55 @@ fn parse_project_sources_fixture_suite() {
 
     let summary =
         parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
-    assert!(summary.modules.len() >= 3);
+    let actual: Vec<_> = summary
+        .modules
+        .iter()
+        .map(|module| {
+            assert!(
+                module.diagnostics.is_empty(),
+                "{}: {:?}",
+                module.path,
+                module.diagnostics
+            );
+            let imports: Vec<_> = module
+                .imports
+                .iter()
+                .map(|import| (import.module.as_str(), import.name.as_deref(), import.line))
+                .collect();
+            (module.path.as_str(), imports)
+        })
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            ("absolute_import.py", vec![("acme", Some("util"), 1)]),
+            (
+                "src/acme/__init__.py",
+                vec![("os", None, 1), ("json", None, 2)]
+            ),
+            // Relative `from . import util` is normalized to the submodule itself.
+            ("src/acme/api/__init__.py", vec![("acme.api.util", None, 1)]),
+            (
+                "src/acme/api/routes.py",
+                vec![("acme.models", Some("User"), 1)]
+            ),
+            ("src/acme/api/util.py", vec![]),
+            ("src/acme/models.py", vec![]),
+            (
+                "try_optional_import.py",
+                vec![("ujson", None, 2), ("json", None, 4)]
+            ),
+            (
+                "type_checking_block.py",
+                vec![
+                    ("typing", Some("TYPE_CHECKING"), 1),
+                    ("typing", None, 2),
+                    ("httpx", None, 5),
+                    ("boto3", None, 8),
+                ]
+            ),
+        ]
+    );
 }
 
 #[test]

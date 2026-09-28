@@ -428,20 +428,35 @@ fn alembic_plugin_records_env_entry() {
 #[test]
 fn full_pipeline_step5() {
     let hints = extract_fixture("django_manage");
-    assert_eq!(hints.contributions.len(), 3);
-    assert!(
-        pytest_contrib(&hints)
-            .entries
-            .iter()
-            .any(|entry| { entry.spec.path.contains("test") })
-            || hints.warnings.iter().any(|warning| {
-                matches!(
-                    warning,
-                    PluginsWarning::PluginNoOp {
-                        plugin: PluginId::Pytest
-                    }
-                )
-            })
+    let plugins: Vec<_> = hints
+        .contributions
+        .iter()
+        .map(|contrib| contrib.plugin)
+        .collect();
+    assert_eq!(
+        plugins,
+        [PluginId::Pytest, PluginId::Django, PluginId::Fastapi]
+    );
+
+    // The fixture has no tests and no FastAPI app, so only Django contributes.
+    assert!(entry_paths(pytest_contrib(&hints)).is_empty());
+    assert!(entry_paths(fastapi_contrib(&hints)).is_empty());
+    let mut django_entries = entry_paths(django_contrib(&hints));
+    django_entries.sort_unstable();
+    assert_eq!(
+        django_entries,
+        ["manage.py", "mysite/settings.py", "mysite/urls.py"]
+    );
+    assert_eq!(
+        hints.warnings,
+        [
+            PluginsWarning::PluginNoOp {
+                plugin: PluginId::Pytest
+            },
+            PluginsWarning::PluginNoOp {
+                plugin: PluginId::Fastapi
+            },
+        ]
     );
 }
 

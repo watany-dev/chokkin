@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use chokkin::{
-    GraphEdge, ProjectRoot, RootMarker, build_graph_skeleton, discover_project_root,
-    discover_sources, extract_manifest, load_config,
+    FileContext, FileKind, GraphEdge, ModuleOrigin, ProjectRoot, RootMarker, build_graph_skeleton,
+    discover_project_root, discover_sources, extract_manifest, load_config,
 };
 
 fn sources_fixture(name: &str) -> PathBuf {
@@ -32,14 +32,61 @@ fn pipeline_inputs(name: &str) -> (chokkin::LoadedManifest, chokkin::DiscoveredS
 fn build_graph_registers_files_and_dependencies() {
     let (manifest, sources) = pipeline_inputs("src_layout");
     let graph = build_graph_skeleton(&manifest, &sources).expect("graph");
-    assert!(graph.file_count() > 0);
-    assert!(graph.distribution_count() > 0);
-    assert!(
-        graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::ManifestDeclaresDistribution { .. }))
+
+    // Src layout globs cover `src/`, `tests/` and `scripts/`, so `docs/conf.py` is not a node.
+    let files: Vec<_> = graph
+        .files()
+        .map(|(_, node)| (node.path.as_str(), node.context, node.kind))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("scripts/run.py", FileContext::Dev, FileKind::Python),
+            (
+                "src/acme/__init__.py",
+                FileContext::Runtime,
+                FileKind::Python
+            ),
+            ("src/acme/module.py", FileContext::Runtime, FileKind::Python),
+            ("tests/conftest.py", FileContext::Test, FileKind::Python),
+            ("tests/test_module.py", FileContext::Test, FileKind::Python),
+        ]
     );
+
+    assert_eq!(graph.module_count(), 1);
+    let acme = graph.module_id("acme").expect("first-party package module");
+    assert_eq!(
+        graph.module(acme).map(|node| node.origin),
+        Some(ModuleOrigin::FirstParty)
+    );
+
+    assert_eq!(graph.distribution_count(), 1);
+    let requests = graph.distribution_id("requests").expect("requests");
+    let [
+        GraphEdge::ManifestDeclaresDistribution {
+            distribution,
+            source,
+        },
+    ] = graph.edges()
+    else {
+        panic!("expected one manifest edge, got {:?}", graph.edges());
+    };
+    assert_eq!(*distribution, requests);
+    assert_eq!(source.file, "pyproject.toml");
+}
+
+#[test]
+fn build_graph_skips_opaque_dependencies() {
+    let (mut manifest, sources) = pipeline_inputs("src_layout");
+    let mut opaque = manifest.dependencies[0].clone();
+    opaque.name = "localpkg".to_owned();
+    opaque.opaque = true;
+    manifest.dependencies.push(opaque);
+
+    let graph = build_graph_skeleton(&manifest, &sources).expect("graph");
+    assert_eq!(graph.distribution_count(), 1);
+    assert!(graph.distribution_id("localpkg").is_none());
+    assert_eq!(graph.edges().len(), 1);
 }
 
 #[test]

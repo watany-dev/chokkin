@@ -10,15 +10,16 @@ use chokkin::{
     resolve_target_version,
 };
 
-fn sources_fixture(name: &str) -> PathBuf {
+fn deps_fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sources")
+        .join("tests/fixtures/deps")
         .join(name)
 }
 
 #[test]
 fn pipeline_phase0_spike() -> Result<(), Box<dyn std::error::Error>> {
-    let path = sources_fixture("src_layout");
+    // `sources/src_layout` has only empty files, so it cannot exercise import edges.
+    let path = deps_fixture("unused_boto3");
     let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
         marker: RootMarker::PyProjectToml,
@@ -38,9 +39,28 @@ fn pipeline_phase0_spike() -> Result<(), Box<dyn std::error::Error>> {
         add_parsed_imports(&mut graph, file_id, &parsed)?;
     }
 
-    assert!(graph.edges().iter().any(|edge| {
-        matches!(edge, GraphEdge::FileImportsModule { .. })
-            || matches!(edge, GraphEdge::ManifestDeclaresDistribution { .. })
-    }));
+    let mut imports = Vec::new();
+    let mut distributions = Vec::new();
+    for edge in graph.edges() {
+        match edge {
+            GraphEdge::FileImportsModule { file, module, line } => imports.push((
+                graph.file(*file).map(|node| node.path.as_str()),
+                graph.module(*module).map(|node| node.name.as_str()),
+                *line,
+            )),
+            GraphEdge::ManifestDeclaresDistribution { distribution, .. } => {
+                distributions.push(*distribution);
+            },
+            other => panic!("unexpected Phase 0 edge: {other:?}"),
+        }
+    }
+    assert_eq!(imports, [(Some("src/acme/main.py"), Some("requests"), 1)]);
+    assert_eq!(
+        distributions,
+        [
+            graph.distribution_id("boto3").ok_or("boto3")?,
+            graph.distribution_id("requests").ok_or("requests")?,
+        ]
+    );
     Ok(())
 }
