@@ -446,8 +446,7 @@ fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> io:
 /// Written at test time: a checked-in root `tests/__init__.py` would sit under
 /// the repository's own `tests/` and not be a project root package.
 fn root_tests_package_project() -> tempfile::TempDir {
-    let temp = tempfile::TempDir::new().expect("tempdir");
-    let files = [
+    write_project(&[
         (
             "pyproject.toml",
             "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
@@ -466,15 +465,7 @@ fn root_tests_package_project() -> tempfile::TempDir {
             "tests/test_a.py",
             "from acme.core import run\nfrom tests._support.client import Gateway\nfrom tests.helpers import make_client\n\n\ndef test_a() -> None:\n    assert Gateway\n    assert make_client() == run()\n",
         ),
-    ];
-    for (file, text) in files {
-        let path = temp.path().join(file);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("create dir");
-        }
-        fs::write(path, text).expect("write fixture");
-    }
-    temp
+    ])
 }
 
 #[test]
