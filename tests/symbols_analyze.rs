@@ -460,3 +460,113 @@ fn from_imported_submodule_attribute_access_counts_as_external_reference() {
         "Dead"
     ));
 }
+
+fn symbol_candidate<'a>(
+    report: &'a chokkin::SymbolReport,
+    rule: RuleId,
+    module: &str,
+    name: &str,
+) -> &'a chokkin::IssueCandidate {
+    report
+        .candidates
+        .iter()
+        .find(|candidate| {
+            candidate.rule == rule
+                && matches!(
+                    &candidate.subject,
+                    chokkin::IssueSubject::Symbol { module: m, name: n }
+                        if m == module && n == name
+                )
+        })
+        .unwrap_or_else(|| panic!("{rule:?} candidate for {module}.{name}"))
+}
+
+#[test]
+fn private_and_type_checking_symbols_are_not_registered() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/api.py",
+            "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    Hint = int\n\ndef _private():\n    pass\n\ndef dead_api():\n    pass\n",
+        ),
+        ("app/main.py", "import app.api\n\ndef main():\n    pass\n"),
+    ]);
+    for name in ["_private", "Hint"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "app.api", name),
+            "{name}"
+        );
+    }
+    assert!(has_symbol_rule(&report, RuleId::Chk006, "app.api", "dead_api"));
+}
+
+#[test]
+fn unused_export_listed_in_all_is_certain() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/api.py",
+            "__all__ = [\"listed\"]\n\ndef listed():\n    pass\n\ndef unlisted():\n    pass\n",
+        ),
+        ("app/main.py", "import app.api\n\ndef main():\n    pass\n"),
+    ]);
+    let confidence =
+        |name: &str| symbol_candidate(&report, RuleId::Chk006, "app.api", name).confidence;
+    assert_eq!(confidence("listed"), Confidence::Certain);
+    assert_eq!(confidence("unlisted"), Confidence::Likely);
+}
+
+#[test]
+fn same_module_reference_after_external_one_keeps_symbol_used() {
+    // `app/main.py` is scanned before `app/zeta.py`, so the external reference
+    // is recorded first and the self-import must not clear it.
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "from app.zeta import shared\n\ndef main():\n    shared()\n",
+        ),
+        (
+            "app/zeta.py",
+            "from app.zeta import shared\n\ndef shared():\n    pass\n",
+        ),
+    ]);
+    assert!(!has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.zeta",
+        "shared"
+    ));
+}
+
+#[test]
+fn reexport_collection_honours_relative_imports_and_all() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/pkg/__init__.py",
+            "from .impl import public_unused, _listed, _private\nfrom app.pkg.impl import absolute\n\n__all__ = [\"_listed\"]\n",
+        ),
+        (
+            "app/pkg/impl.py",
+            "def public_unused():\n    pass\n\ndef _listed():\n    pass\n\ndef _private():\n    pass\n\ndef absolute():\n    pass\n",
+        ),
+        ("app/main.py", "import app.pkg\n\ndef main():\n    pass\n"),
+    ]);
+    for name in ["public_unused", "_listed"] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk007, "app.pkg", name),
+            "{name}"
+        );
+    }
+    for name in ["_private", "absolute"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk007, "app.pkg", name),
+            "{name}"
+        );
+    }
+}
