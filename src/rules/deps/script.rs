@@ -358,13 +358,18 @@ mod tests {
             let IssueSubject::ScriptDistribution { name, .. } = candidate.subject else {
                 panic!("unexpected subject {:?}", candidate.subject);
             };
-            (candidate.rule, candidate.severity, candidate.confidence, name)
+            (
+                candidate.rule,
+                candidate.severity,
+                candidate.confidence,
+                name,
+            )
         })
         .collect()
     }
 
-    /// Only third-party imports with a known distribution can be missing;
-    /// optional or platform-guarded ones are never reported.
+    /// A first-party import can still carry a distribution (`airflow` maps to
+    /// `apache-airflow`); it is not a script dependency.
     #[test]
     fn only_unconditional_third_party_imports_are_missing() {
         let imports = vec![

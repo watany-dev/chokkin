@@ -596,18 +596,11 @@ mod tests {
                 inferred_globs: Vec::new(),
             },
             effective_globs: Vec::new(),
-            files: [
-                "src/app.py",
-                "scripts/old.py",
-                "core/src/corepkg/__init__.py",
-                "core/src/corepkg/models.py",
-                "sdk/src/sdkpkg/__init__.py",
-                "extra/src/extrapkg/__init__.py",
-                "stray/src/straypkg/__init__.py",
-                "plain/src/plainpkg/__init__.py",
-            ]
-            .map(file)
-            .into(),
+            files: members
+                .iter()
+                .map(|(name, _)| file(&format!("{name}/src/{name}pkg/__init__.py")))
+                .chain([file("core/src/corepkg/models.py")])
+                .collect(),
             warnings: Vec::new(),
         };
         let graph = ProjectGraph::new(manifest.root.clone());

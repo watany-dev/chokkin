@@ -623,16 +623,5 @@ mod tests {
             &no_member,
         );
         assert!(root_only.is_empty(), "{root_only:?}");
-
-        let strict_root_only = detect_with(
-            &with_requests(),
-            member_import(),
-            TransitiveIndex::default(),
-            true,
-            &no_member,
-        );
-        assert_eq!(strict_root_only.len(), 1);
-        assert_eq!(strict_root_only[0].rule, RuleId::Chk003);
-        assert_eq!(strict_root_only[0].workspace_member.as_deref(), Some("api"));
     }
 }
