@@ -1123,6 +1123,7 @@ exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall se
          Phase 4 着手前 (commit `573ff37`) 比で増えない
 状態   : exit 達成 (PR #367、docs/dev/oss-validation-report.md)。CHK002 誤検知率
          3.7% (1/27、未分類0)、recall 48/48、crash 0、CHK003 288 → 283
+         v0.5.0 で再測定し合格 (docs/dev/v0.5-release-validation.md、CHK003 288 → 170)
 ```
 
 ### Phase 5: v0.6 Knip 相当の運用性(+6〜8週)
