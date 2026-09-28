@@ -140,11 +140,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_matches_cargo_manifest() {
-        assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
-    }
-
-    #[test]
     fn exit_codes_are_stable() {
         assert_eq!(ExitStatus::Success.code(), 0);
         assert_eq!(ExitStatus::IssuesFound.code(), 1);

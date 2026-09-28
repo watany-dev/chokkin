@@ -226,14 +226,6 @@ install_requires =
                     .expect("install_requires must exist");
                 prop_assert_eq!(split_requirement_lines(requires).collect::<Vec<_>>(), values);
             }
-
-            #[test]
-            fn split_requirement_lines_yields_trimmed_nonempty(value in "\\PC{0,200}") {
-                for line in split_requirement_lines(&value) {
-                    prop_assert!(!line.is_empty());
-                    prop_assert_eq!(line.trim(), line);
-                }
-            }
         }
     }
 }

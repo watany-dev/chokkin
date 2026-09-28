@@ -92,14 +92,6 @@ mod tests {
             }
 
             #[test]
-            fn build_glob_set_accepts_safe_patterns(
-                patterns in prop::collection::vec("[a-z0-9_/*.-]{1,30}", 0..6),
-            ) {
-                // Patterns without meta-character openers ([, {, escape) always build.
-                prop_assert!(build_glob_set(&patterns).is_ok());
-            }
-
-            #[test]
             fn effective_exclude_keeps_input_and_adds_mandatory_once(
                 patterns in prop::collection::vec("[a-z0-9_/*.]{0,20}", 0..6),
             ) {

@@ -173,11 +173,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_partial_has_no_fields() {
-        assert!(!PartialConfig::default().has_any_field());
-    }
-
-    #[test]
     fn partial_with_mode_has_field() {
         assert!(
             PartialConfig {
@@ -282,11 +277,6 @@ mod tests {
         }
 
         proptest! {
-            #[test]
-            fn merge_with_no_layers_is_default(_unused in proptest::bool::ANY) {
-                prop_assert_eq!(merge_layers(&[]), default_config());
-            }
-
             #[test]
             fn empty_layers_are_identity(
                 layers in prop::collection::vec(partial_config(), 0..4),

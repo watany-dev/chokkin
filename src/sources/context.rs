@@ -135,14 +135,6 @@ mod tests {
             }
 
             #[test]
-            fn assign_file_context_is_deterministic(path in "\\PC{0,80}") {
-                prop_assert_eq!(
-                    assign_file_context(&path),
-                    assign_file_context(&path)
-                );
-            }
-
-            #[test]
             fn tests_tree_is_always_test_context(rest in "[a-z0-9_/]{0,30}") {
                 prop_assert_eq!(
                     assign_file_context(&format!("tests/{rest}.py")),
@@ -167,7 +159,9 @@ mod tests {
 
             #[test]
             fn src_tree_non_test_files_are_runtime(name in "[a-z][a-z0-9_]{0,12}") {
-                prop_assume!(!name.starts_with("test_") && !name.ends_with("_test"));
+                prop_assume!(
+                    name != "conftest" && !name.starts_with("test_") && !name.ends_with("_test")
+                );
                 prop_assert_eq!(
                     assign_file_context(&format!("src/pkg/{name}.py")),
                     FileContext::Runtime

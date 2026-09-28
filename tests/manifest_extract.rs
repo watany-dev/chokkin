@@ -453,22 +453,14 @@ fn metadata_conflict_emits_warning() {
 }
 
 #[test]
-fn uv_workspace_hint_copied_from_config() {
-    let path = fixture("uv_workspace_hint");
-    let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
-    let config = load_config(&root).expect("load config");
-    let manifest = extract_manifest(&root, &config).expect("extract manifest");
-    let members = config
-        .uv_workspace
-        .as_ref()
-        .map(|hint| hint.members.as_slice())
-        .expect("uv workspace hint");
+fn uv_workspace_hint_reaches_manifest() {
+    let manifest = extract_fixture("uv_workspace_hint");
     assert_eq!(
         manifest
             .uv_workspace
             .as_ref()
             .map(|hint| hint.members.as_slice()),
-        Some(members)
+        Some(["packages/*".to_owned()].as_slice())
     );
 }
 
