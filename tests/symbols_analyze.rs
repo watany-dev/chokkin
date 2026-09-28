@@ -361,3 +361,102 @@ fn relative_package_import_counts_as_external_reference() {
         "dead_api"
     ));
 }
+
+fn analyze_generated(files: &[(&str, &str)]) -> chokkin::SymbolReport {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, text).expect("write fixture");
+    }
+    let inputs = load_symbols(temp.path(), false);
+    analyze_symbols(
+        &inputs.parse,
+        &inputs.resolution,
+        &inputs.reachability,
+        &inputs.entry,
+        &inputs.plugins,
+        &inputs.entry.mode,
+        &inputs.graph,
+        &inputs.sources,
+        &inputs.manifest,
+    )
+}
+
+const APP_PYPROJECT: &str = "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.main:main\"\n";
+
+#[test]
+fn symbol_referenced_only_from_tests_is_not_reported() {
+    for tests_init in [false, true] {
+        let mut files = vec![
+            ("pyproject.toml", APP_PYPROJECT),
+            ("app/__init__.py", ""),
+            ("app/sub/__init__.py", ""),
+            (
+                "app/sub/exceptions.py",
+                "class UsedOnlyInTests(Exception):\n    pass\n\nclass Dead(Exception):\n    pass\n",
+            ),
+            ("app/main.py", "def main():\n    pass\n"),
+            (
+                "tests/test_x.py",
+                "from app.sub.exceptions import UsedOnlyInTests\n\ndef test_x():\n    assert UsedOnlyInTests\n",
+            ),
+        ];
+        if tests_init {
+            files.push(("tests/__init__.py", ""));
+        }
+        let report = analyze_generated(&files);
+        assert!(
+            !has_symbol_rule(
+                &report,
+                RuleId::Chk006,
+                "app.sub.exceptions",
+                "UsedOnlyInTests"
+            ),
+            "tests/__init__.py: {tests_init}"
+        );
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, "app.sub.exceptions", "Dead"),
+            "tests/__init__.py: {tests_init}"
+        );
+        assert!(!has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "tests.test_x",
+            "test_x"
+        ));
+    }
+}
+
+#[test]
+fn from_imported_submodule_attribute_access_counts_as_external_reference() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        ("app/sub/__init__.py", ""),
+        (
+            "app/sub/exceptions.py",
+            "class ViaAttr(Exception):\n    pass\n\nclass ViaAlias(Exception):\n    pass\n\nclass ViaRelative(Exception):\n    pass\n\nclass Dead(Exception):\n    pass\n",
+        ),
+        (
+            "app/sub/runner.py",
+            "from . import exceptions\n\ndef run():\n    raise exceptions.ViaRelative()\n",
+        ),
+        (
+            "app/main.py",
+            "from app.sub import exceptions\nfrom app.sub import exceptions as exc\nfrom app.sub.runner import run\n\ndef main():\n    run()\n    if exc.ViaAlias:\n        raise exceptions.ViaAttr()\n",
+        ),
+    ]);
+    for name in ["ViaAttr", "ViaAlias", "ViaRelative"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "app.sub.exceptions", name),
+            "{name}"
+        );
+    }
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.sub.exceptions",
+        "Dead"
+    ));
+}
