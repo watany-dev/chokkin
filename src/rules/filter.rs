@@ -110,4 +110,16 @@ mod tests {
         };
         assert!(!passes_rule_filter(&issue, &overrides));
     }
+
+    #[test]
+    fn exclude_filter_drops_only_listed_rules() {
+        let overrides = RuntimeOverrides {
+            exclude_rules: Some(vec!["CHK002".to_owned()]),
+            ..RuntimeOverrides::default()
+        };
+        let excluded = sample_issue(RuleId::Chk002, Confidence::Certain, Severity::Error);
+        let kept = sample_issue(RuleId::Chk003, Confidence::Certain, Severity::Error);
+        assert!(!passes_rule_filter(&excluded, &overrides));
+        assert!(passes_rule_filter(&kept, &overrides));
+    }
 }

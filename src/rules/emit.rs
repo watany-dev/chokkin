@@ -268,6 +268,36 @@ mod tests {
     }
 
     #[test]
+    fn summary_counts_issues_per_rule() {
+        let issue = |rule| Issue {
+            rule,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: String::new(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: None,
+                line: None,
+                manifest: None,
+            },
+            subject: IssueSubject::File {
+                path: "a.py".to_owned(),
+            },
+            explain: None,
+        };
+        let summary = build_summary(&[
+            issue(RuleId::Chk001),
+            issue(RuleId::Chk002),
+            issue(RuleId::Chk002),
+        ]);
+        assert_eq!(summary.total, 3);
+        assert_eq!(
+            summary.by_rule,
+            BTreeMap::from([(RuleId::Chk001, 1), (RuleId::Chk002, 2)])
+        );
+    }
+
+    #[test]
     fn no_exit_code_returns_success() {
         let mut report = ReachabilityReport::default();
         report.unreachable.push(UnreachableFile {
