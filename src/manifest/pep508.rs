@@ -244,7 +244,14 @@ fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
         (_, Some(_)) => return None,
         (_, None) => (operator, version),
     };
-    let captures = version_re().captures(body)?;
+    // `===` compares strings, so it accepts versions PEP 440 cannot parse.
+    let Some(captures) = version_re().captures(body) else {
+        return (operator == Operator::ExactEqual).then(|| VersionSpecifier {
+            operator,
+            release: Vec::new(),
+            text: format!("{op_text}{version}"),
+        });
+    };
     let has_suffix = ["pre", "post", "dev"]
         .iter()
         .any(|group| captures.name(group).is_some());
@@ -538,6 +545,8 @@ mod tests {
         for input in [
             "pkg[]",
             "pkg ===1.0",
+            "legacy===2013b-custom",
+            "pkg ===foobar",
             "pkg ==1.0+local",
             "pkg ~=1.0.post1",
             "pkg !=2.0.*",
