@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plugin's reason (`default`, `config`, `enabled-by: ...`, `disabled-by: config`).
 
 ### Changed
+- Release wheels are built with a pinned Rust toolchain (`RUST_TOOLCHAIN` in
+  `release.yml`, currently 1.98.1) instead of the latest stable of the day.
 - Fewer string clones in the reachability BFS and the dependency rules'
   reachable-file sets (#136). Findings are unchanged.
 - CHK004 now separates a transitive edge from a declared dependency (Certain)
