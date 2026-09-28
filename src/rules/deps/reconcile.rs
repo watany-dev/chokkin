@@ -18,7 +18,7 @@ use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::detect_misplaced_dependencies;
 use super::missing::detect_missing_dependencies;
 use super::script::{detect_script_dependency_issues, is_script_third_party};
-use super::unused::{UnusedEvidenceContext, detect_unused_dependencies, is_types_stub};
+use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
     mark_pytest_plugin_distributions, mark_self_referential_distribution,
@@ -144,8 +144,7 @@ fn reconcile_project(
 
     // types-* stubs are considered used when their runtime package is used.
     for name in declared.keys() {
-        if is_types_stub(name)
-            && let Some(runtime) = runtime_for_stub(name)
+        if let Some(runtime) = runtime_for_stub(name)
             && used.contains(&normalize_distribution_name(runtime))
         {
             used.insert(name.clone());
