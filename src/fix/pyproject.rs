@@ -2,7 +2,7 @@
 
 use toml_edit::{DocumentMut, Item, Value};
 
-use crate::manifest::normalize_distribution_name;
+use crate::manifest::{normalize_distribution_name, pep508_distribution_name};
 
 use super::error::FixError;
 use super::write::{atomic_write, read_manifest};
@@ -18,11 +18,15 @@ fn load_doc(path: &std::path::Path) -> Result<(&str, DocumentMut), FixError> {
     Ok((rel, doc))
 }
 
-/// Remove a dependency entry identified by a manifest label.
-pub fn remove_by_label(path: &std::path::Path, label: &str) -> Result<String, FixError> {
+/// Remove the entry for `distribution` at a manifest label.
+pub fn remove_by_label(
+    path: &std::path::Path,
+    label: &str,
+    distribution: &str,
+) -> Result<String, FixError> {
     let (rel, mut doc) = load_doc(path)?;
 
-    let removed = remove_label_in_document(&mut doc, label)?;
+    let removed = remove_label_in_document(&mut doc, label, distribution)?;
     if !removed {
         return Err(FixError::Unsupported {
             detail: format!("could not find `{label}` in {rel}"),
@@ -40,11 +44,12 @@ pub fn remove_by_label(path: &std::path::Path, label: &str) -> Result<String, Fi
 pub fn move_group_to_runtime(
     path: &std::path::Path,
     from_label: &str,
+    distribution: &str,
     raw: &str,
 ) -> Result<String, FixError> {
     let (rel, mut doc) = load_doc(path)?;
 
-    let removed = remove_label_in_document(&mut doc, from_label)?;
+    let removed = remove_label_in_document(&mut doc, from_label, distribution)?;
     if !removed {
         return Err(FixError::Unsupported {
             detail: format!("could not remove source entry `{from_label}`"),
@@ -83,7 +88,7 @@ fn push_runtime_dependency(doc: &mut DocumentMut, raw: &str) -> Result<bool, Fix
     if deps.iter().any(|value| {
         value
             .as_str()
-            .and_then(requirement_distribution_name)
+            .and_then(pep508_distribution_name)
             .is_some_and(|name| name == normalized)
     }) {
         return Ok(false);
@@ -109,34 +114,31 @@ fn project_dependencies_array(doc: &mut DocumentMut) -> Result<&mut toml_edit::A
         })
 }
 
-fn requirement_distribution_name(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    let end = trimmed
-        .find(['[', ';', '<', '>', '=', '!', '~', ' '])
-        .unwrap_or(trimmed.len());
-    let name = trimmed.get(..end)?.trim();
-    if name.is_empty() {
-        None
-    } else {
-        Some(normalize_distribution_name(name))
-    }
-}
-
-fn remove_label_in_document(doc: &mut DocumentMut, label: &str) -> Result<bool, FixError> {
+fn remove_label_in_document(
+    doc: &mut DocumentMut,
+    label: &str,
+    distribution: &str,
+) -> Result<bool, FixError> {
     if let Some(index) = parse_indexed_label(label, "project.dependencies") {
-        return remove_array_index(doc, &["project", "dependencies"], index);
+        return remove_array_index(doc, &["project", "dependencies"], index, distribution);
     }
     if let Some((extra, index)) = parse_group_label(label, "project.optional-dependencies.") {
         return remove_array_index(
             doc,
             &["project", "optional-dependencies", extra.as_str()],
             index,
+            distribution,
         );
     }
     if let Some((group, index)) = parse_group_label(label, "dependency-groups.") {
-        return remove_array_index(doc, &["dependency-groups", group.as_str()], index);
+        return remove_array_index(
+            doc,
+            &["dependency-groups", group.as_str()],
+            index,
+            distribution,
+        );
     }
-    if let Some(result) = remove_tool_label(doc, label) {
+    if let Some(result) = remove_tool_label(doc, label, distribution) {
         return result;
     }
     Err(FixError::Unsupported {
@@ -145,12 +147,17 @@ fn remove_label_in_document(doc: &mut DocumentMut, label: &str) -> Result<bool, 
 }
 
 /// Labels under `[tool.*]`; `None` when the label is not a tool label.
-fn remove_tool_label(doc: &mut DocumentMut, label: &str) -> Option<Result<bool, FixError>> {
+fn remove_tool_label(
+    doc: &mut DocumentMut,
+    label: &str,
+    distribution: &str,
+) -> Option<Result<bool, FixError>> {
     if let Some(index) = parse_indexed_label(label, "tool.uv.dev-dependencies") {
         return Some(remove_array_index(
             doc,
             &["tool", "uv", "dev-dependencies"],
             index,
+            distribution,
         ));
     }
     if let Some(name) = label.strip_prefix("tool.poetry.dependencies.") {
@@ -179,6 +186,7 @@ fn remove_tool_label(doc: &mut DocumentMut, label: &str) -> Option<Result<bool, 
             doc,
             &["tool", "pdm", "dev-dependencies", group.as_str()],
             index,
+            distribution,
         ));
     }
     if let Some((extra, index)) = parse_group_label(label, "tool.pdm.optional-dependencies.") {
@@ -186,6 +194,7 @@ fn remove_tool_label(doc: &mut DocumentMut, label: &str) -> Option<Result<bool, 
             doc,
             &["tool", "pdm", "optional-dependencies", extra.as_str()],
             index,
+            distribution,
         ));
     }
     if let Some((env, index)) = parse_hatch_env_dependency_label(label) {
@@ -193,6 +202,7 @@ fn remove_tool_label(doc: &mut DocumentMut, label: &str) -> Option<Result<bool, 
             doc,
             &["tool", "hatch", "envs", env.as_str(), "dependencies"],
             index,
+            distribution,
         ));
     }
     None
@@ -251,17 +261,26 @@ fn remove_table_key(doc: &mut DocumentMut, path: &[&str], key: &str) -> Result<b
     Ok(table.remove(key).is_some())
 }
 
+/// Refuses when the entry at `index` no longer names `distribution`, so a stale index never
+/// removes a different dependency.
 fn remove_array_index(
     doc: &mut DocumentMut,
     path: &[&str],
     index: usize,
+    distribution: &str,
 ) -> Result<bool, FixError> {
     let array = item_at_mut(doc, path)?
         .as_array_mut()
         .ok_or_else(|| FixError::Unsupported {
             detail: format!("`{}` is not an array", path.join(".")),
         })?;
-    if index >= array.len() {
+    let target = normalize_distribution_name(distribution);
+    let names_target = array
+        .get(index)
+        .and_then(Value::as_str)
+        .and_then(pep508_distribution_name)
+        .is_some_and(|name| name == target);
+    if !names_target {
         return Ok(false);
     }
     array.remove(index);
@@ -287,7 +306,7 @@ dependencies = ["boto3>=1.0", "requests>=2.0"]
         )
         .expect("write");
 
-        remove_by_label(&path, "project.dependencies[0]").expect("remove");
+        remove_by_label(&path, "project.dependencies[0]", "boto3").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("boto3"));
         assert!(updated.contains("requests"));
@@ -308,7 +327,7 @@ requests = "^2.32"
         )
         .expect("write");
 
-        remove_by_label(&path, "tool.poetry.dependencies.boto3").expect("remove");
+        remove_by_label(&path, "tool.poetry.dependencies.boto3", "boto3").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("boto3"));
         assert!(updated.contains("requests"));
@@ -329,7 +348,8 @@ ruff = "^0.6"
         )
         .expect("write");
 
-        remove_by_label(&path, "tool.poetry.group.dev.dependencies.pytest").expect("remove");
+        remove_by_label(&path, "tool.poetry.group.dev.dependencies.pytest", "pytest")
+            .expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("ruff"));
@@ -348,7 +368,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
         )
         .expect("write");
 
-        remove_by_label(&path, "tool.pdm.dev-dependencies.dev[0]").expect("remove");
+        remove_by_label(&path, "tool.pdm.dev-dependencies.dev[0]", "pytest").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("ruff"));
@@ -367,7 +387,7 @@ dev-dependencies = ["pytest>=8", "ruff>=0.6"]
         )
         .expect("write");
 
-        remove_by_label(&path, "tool.uv.dev-dependencies[0]").expect("remove");
+        remove_by_label(&path, "tool.uv.dev-dependencies[0]", "pytest").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("ruff"));
@@ -386,10 +406,21 @@ dependencies = ["pytest>=8", "coverage>=7"]
         )
         .expect("write");
 
-        remove_by_label(&path, "tool.hatch.envs.test.dependencies[0]").expect("remove");
+        remove_by_label(&path, "tool.hatch.envs.test.dependencies[0]", "pytest").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("coverage"));
+    }
+
+    #[test]
+    fn stale_index_does_not_remove_another_dependency() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        let contents = "[project]\nname = \"demo\"\ndependencies = [\"bravo\", \"charlie\"]\n";
+        std::fs::write(&path, contents).expect("write");
+
+        remove_by_label(&path, "project.dependencies[0]", "alpha").expect_err("index 0 is bravo");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), contents);
     }
 
     #[test]
@@ -409,7 +440,7 @@ dev = ["pyyaml"]
         )
         .expect("write");
 
-        move_group_to_runtime(&path, "dependency-groups.dev[0]", "pyyaml").expect("move");
+        move_group_to_runtime(&path, "dependency-groups.dev[0]", "pyyaml", "pyyaml").expect("move");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert_eq!(updated.matches("PyYAML").count(), 1);
         assert!(!updated.contains("\"pyyaml\""));

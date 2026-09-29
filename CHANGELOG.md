@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is reported as an error instead (#438).
 - `--fix` keeps CRLF line endings and a missing final newline when removing a
   requirements line, and leaves an empty file when removing the only line (#437).
+- `--fix` applies several `pyproject.toml` array removals bottom-up per array
+  and removes an entry only when it names the target distribution. It no longer
+  deletes a used dependency after an earlier removal shifts array indices; a
+  stale index is reported as an error instead (#436).
 
 ## [0.5.1] - 2026-09-29
 
