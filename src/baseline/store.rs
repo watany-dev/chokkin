@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::VERSION;
 use crate::config::RuntimeOverrides;
 use crate::fix::atomic_write;
-use crate::path_util::normalize_rel_path;
+use crate::path_util::rel_to_root;
 use crate::rules::emit::{build_summary, compute_exit_status};
 use crate::rules::{
     IssueReport, SuppressReason, SuppressedIssue, issue_fingerprint, issue_stable_target,
@@ -34,7 +34,7 @@ pub fn apply_baseline(
     let path = resolve_baseline_path(root, baseline_path)?;
     if !path.exists() {
         return Ok(BaselineReport {
-            path: Some(display_path(root, &path)),
+            path: Some(rel_to_root(root, &path)),
             ..BaselineReport::default()
         });
     }
@@ -69,7 +69,7 @@ pub fn apply_baseline(
         compute_exit_status(&report.issues, overrides, overrides.strict.unwrap_or(false));
 
     Ok(BaselineReport {
-        path: Some(display_path(root, &path)),
+        path: Some(rel_to_root(root, &path)),
         suppressed: suppressed_count,
         written: 0,
     })
@@ -106,7 +106,7 @@ pub fn write_baseline(
         issues,
     };
     let contents = serde_json::to_string_pretty(&file).map_err(|source| BaselineError::Json {
-        path: display_path(root, &path),
+        path: rel_to_root(root, &path),
         detail: source.to_string(),
     })?;
     atomic_write(&path, format!("{contents}\n").as_bytes(), true).map_err(|source| {
@@ -116,7 +116,7 @@ pub fn write_baseline(
         }
     })?;
     Ok(BaselineReport {
-        path: Some(display_path(root, &path)),
+        path: Some(rel_to_root(root, &path)),
         suppressed: 0,
         written,
     })
@@ -202,10 +202,6 @@ fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineE
             path: parent.display().to_string(),
         })
     }
-}
-
-fn display_path(root: &Path, path: &Path) -> String {
-    normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
 fn generated_at() -> String {

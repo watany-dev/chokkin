@@ -8,8 +8,9 @@ use std::path::Path;
 
 use toml::Value;
 
+use crate::path_util::rel_to_root;
+
 use super::types::ReferenceOrigin;
-use super::util::relative_path;
 
 /// `pyproject.toml` read once and shared by the scanners that need both the
 /// parsed table and the raw text (for line numbers).
@@ -57,7 +58,7 @@ pub(super) fn toml_words(value: &Value) -> Option<String> {
 pub(super) fn read_root_file(root: &Path, name: &str) -> Option<(String, String)> {
     let path = root.join(name);
     let contents = std::fs::read_to_string(&path).ok()?;
-    Some((relative_path(root, &path), contents))
+    Some((rel_to_root(root, &path), contents))
 }
 
 /// 1-based line of `key = …` inside `[table]`, or of a `[table.key]` header.

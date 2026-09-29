@@ -4,12 +4,13 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use crate::config::PluginId;
+use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
 
 use super::config_text::{is_yaml_block_scalar, leading_spaces, yaml_block_body};
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
-use super::util::{origin_for_file, push_binary, read_pyproject_table, relative_path};
+use super::util::{origin_for_file, push_binary, read_pyproject_table};
 use super::warnings::PluginsWarning;
 
 /// Extract static dev-tool config hints.
@@ -111,7 +112,7 @@ fn extract_github_actions(ctx: &PluginContext<'_>, contrib: &mut PluginContribut
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let rel = relative_path(root, &path);
+        let rel = rel_to_root(root, &path);
         for (line_index, command) in workflow_run_commands(&contents) {
             for binary in command_known_binaries(&command, &binary_map) {
                 let key = (rel.clone(), line_index, binary.clone());

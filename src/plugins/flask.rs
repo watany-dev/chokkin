@@ -3,12 +3,12 @@
 use std::path::Path;
 
 use crate::config::PluginId;
+use crate::path_util::rel_to_root;
 
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
 use super::util::{
-    decorator_suffix, manifest_has_dependency, push_binary, push_decorated_modules,
-    push_symbol_ref, relative_path,
+    decorator_suffix, manifest_has_dependency, push_binary, push_decorated_modules, push_symbol_ref,
 };
 use super::warnings::PluginsWarning;
 
@@ -47,7 +47,7 @@ fn extract_flaskenv(root: &Path, contrib: &mut PluginContribution, found: &mut b
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let rel = relative_path(root, &path);
+        let rel = rel_to_root(root, &path);
         for (line_index, line) in contents.lines().enumerate() {
             let Some(value) = env_assignment(line, "FLASK_APP") else {
                 continue;
@@ -92,7 +92,7 @@ fn extract_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bo
             let Ok(contents) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let rel = relative_path(root, &path);
+            let rel = rel_to_root(root, &path);
             for (line_index, line) in contents.lines().enumerate() {
                 let Some(target) = flask_app_arg(line) else {
                     continue;

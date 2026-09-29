@@ -10,10 +10,9 @@ use toml::Value;
 
 use crate::manifest::ManifestError;
 use crate::manifest::literals::LiteralScan;
-use crate::manifest::util::{
-    path_is_within_root, read_to_string, relative_path as manifest_relative_path,
-};
+use crate::manifest::util::{path_is_within_root, read_to_string};
 use crate::parser::{ParseSeverity, ParsedModule};
+use crate::path_util::rel_to_root;
 use crate::sources::path_to_module;
 
 use super::context::PluginContext;
@@ -244,7 +243,7 @@ fn manifest_io_error(error: ManifestError) -> PluginsError {
 pub fn read_pyproject_table(path: &Path) -> Result<toml::Table, PluginsError> {
     let contents = read_to_string(path).map_err(manifest_io_error)?;
     toml::from_str(&contents).map_err(|source| PluginsError::InvalidConfig {
-        path: relative_path(path.parent().unwrap_or(path), path),
+        path: rel_to_root(path.parent().unwrap_or(path), path),
         detail: source.to_string(),
     })
 }
@@ -418,15 +417,10 @@ pub fn manifest_has_dependency(manifest: &crate::manifest::LoadedManifest, name:
     manifest.dependencies.iter().any(|dep| dep.name == needle)
 }
 
-/// Root-relative path using `/` separators.
-pub fn relative_path(root: &Path, path: &Path) -> String {
-    manifest_relative_path(root, path)
-}
-
 /// Build a reference origin for a config file.
 pub fn origin_for_file(root: &Path, path: &Path, label: impl Into<String>) -> ReferenceOrigin {
     ReferenceOrigin {
-        file: relative_path(root, path),
+        file: rel_to_root(root, path),
         line: None,
         label: label.into(),
     }
@@ -473,7 +467,7 @@ fn collect_settings_files(root: &Path, current: &Path, depth: usize, out: &mut V
             }
             collect_settings_files(root, &path, depth + 1, out);
         } else if file_name == "settings.py" && path_is_within_root(root, &path) {
-            out.push(relative_path(root, &path));
+            out.push(rel_to_root(root, &path));
         }
     }
 }

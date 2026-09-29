@@ -4,13 +4,15 @@ use std::path::Path;
 
 use toml::Value;
 
+use crate::path_util::rel_to_root;
+
 use super::dependency_groups::extract_dependency_groups;
 use super::error::ManifestError;
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ProjectMetadata,
     UvToolSettings,
 };
-use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
+use super::util::{DependencyPush, push_dependency, read_to_string};
 use super::uv_tool::extract_uv_tool;
 use super::warnings::ManifestWarning;
 use super::wheel::parse_wheel_targets;
@@ -44,7 +46,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
             source,
         })?;
 
-    let rel = relative_path(root, path);
+    let rel = rel_to_root(root, path);
     let mut result = PyprojectExtraction::default();
 
     result.poetry_detected = detect_tool_sections(&table, &mut result.warnings);
