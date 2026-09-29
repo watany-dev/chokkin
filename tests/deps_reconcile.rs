@@ -65,16 +65,9 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     apply_entry_plan(&mut graph, &entry);
-    let reachability = analyze_reachability(
-        &mut graph,
-        &sources,
-        &entry,
-        &plugins,
-        &parse,
-        &entry.mode,
-        production,
-    )
-    .expect("reachability");
+    let reachability =
+        analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, production)
+            .expect("reachability");
     let workspace_inputs = probe_project(path, None, &RuntimeOverrides::default())
         .expect("probe")
         .workspace_inputs;

@@ -26,9 +26,9 @@ pub fn analyze_reachability(
     entry: &EntryPlan,
     plugins: &PluginHints,
     parse: &ParseSummary,
-    mode: &ResolvedMode,
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
+    let mode = &entry.mode;
     let module_index = ModuleIndex::build(graph, sources);
     let framework = apply_framework_globs(graph, sources, plugins)?;
     let bfs = run_reachability_bfs(
@@ -90,13 +90,9 @@ pub fn analyze_reachability(
 /// Library mode caps orphans at `Maybe` because an outside caller may import
 /// them; a file outside the distributed packages has no such caller, so it is
 /// scored as in app mode.
-///
-/// `_parse` is no longer read (the report already knows whether reachable code
-/// has an opaque dynamic import); it stays so the public signature is unchanged.
 pub fn apply_public_surface(
     report: &mut ReachabilityReport,
     surface: &PublicSurface,
-    _parse: &ParseSummary,
     mode: &ResolvedMode,
 ) {
     if mode.mode != ProjectMode::Library {
@@ -357,16 +353,8 @@ mod tests {
         let sources = flat_sources(root, &paths);
         let mut graph = graph_for(&sources, parse, origins);
         let entry = app_entry(roots);
-        let report = analyze_reachability(
-            &mut graph,
-            &sources,
-            &entry,
-            plugins,
-            parse,
-            &entry.mode,
-            false,
-        )
-        .expect("reachability");
+        let report = analyze_reachability(&mut graph, &sources, &entry, plugins, parse, false)
+            .expect("reachability");
         (graph, report)
     }
 

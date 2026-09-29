@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::RuntimeOverrides;
-use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
+use crate::entry::{EntryPlan, apply_entry_plan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
@@ -36,8 +36,6 @@ pub struct AnalysisReport {
     pub reachability: ReachabilityReport,
     /// Entry root plan used for reachability (step 8).
     pub entry: EntryPlan,
-    /// Resolved project mode from entry construction (step 8).
-    pub entry_mode: ResolvedMode,
     /// Final issue report (step 12).
     pub issues: IssueReport,
     /// Fix report when `--fix` was requested (step 13).
@@ -110,7 +108,6 @@ pub fn analyze_project(
         graph: core.graph,
         reachability: core.reachability,
         entry: core.entry,
-        entry_mode: core.entry_mode,
         issues: core.issues,
         fix,
         baseline,
@@ -137,7 +134,6 @@ struct AnalysisCore {
     graph: ProjectGraph,
     reachability: ReachabilityReport,
     entry: EntryPlan,
-    entry_mode: ResolvedMode,
     issues: IssueReport,
     warnings: Vec<ProbeWarning>,
 }
@@ -227,14 +223,13 @@ fn run_analysis_core(
         &entry,
         &plugins,
         &parse,
-        &entry.mode,
         production,
     )?;
     if let Some(surface) = PublicSurface::resolve(
         probe.manifest.metadata.wheel_targets.as_ref(),
         &probe.sources.files,
     ) {
-        apply_public_surface(&mut reachability, &surface, &parse, &entry.mode);
+        apply_public_surface(&mut reachability, &surface, &entry.mode);
     }
 
     let workspace_boundaries = probe
@@ -284,13 +279,10 @@ fn run_analysis_core(
         &resolution,
     );
 
-    let entry_mode = entry.mode.clone();
-
     Ok(AnalysisCore {
         graph,
         reachability,
         entry,
-        entry_mode,
         issues,
         warnings,
     })

@@ -46,7 +46,6 @@ fn bench_reachability(c: &mut Criterion) {
                         &report.entry,
                         &plugins,
                         &parse,
-                        &report.entry_mode,
                         false,
                     )
                     .expect("reachability")
