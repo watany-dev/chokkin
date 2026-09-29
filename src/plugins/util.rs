@@ -57,22 +57,18 @@ fn decorator_line(
 }
 
 /// Push a module reference for each Python source with a matching decorator.
-///
-/// Returns whether any reference was pushed.
 pub fn push_decorated_modules(
     ctx: &PluginContext<'_>,
     contrib: &mut PluginContribution,
     is_decorator: fn(&str, bool) -> bool,
     label: &str,
-) -> bool {
-    let mut found = false;
+) {
     for module in &ctx.parse.modules {
         let Some(line) = decorator_line(&ctx.root.path, module, is_decorator) else {
             continue;
         };
-        found |= push_decorated_module(ctx, contrib, &module.path, line, label);
+        push_decorated_module(ctx, contrib, &module.path, line, label);
     }
-    found
 }
 
 fn push_decorated_module(
@@ -81,9 +77,9 @@ fn push_decorated_module(
     file: &str,
     line: u32,
     label: &str,
-) -> bool {
+) {
     let Some(module) = path_to_module(file, &ctx.sources.layout) else {
-        return false;
+        return;
     };
     contrib.module_refs.push(ModuleReference {
         module,
@@ -93,7 +89,6 @@ fn push_decorated_module(
             label: label.to_owned(),
         },
     });
-    true
 }
 
 /// Push a symbol reference when `value` parses as `module:symbol`.

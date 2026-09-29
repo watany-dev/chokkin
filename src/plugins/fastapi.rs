@@ -10,8 +10,8 @@ use super::types::{
     BinaryUsage, PluginContribution, PluginEntry, ReferenceOrigin, SymbolReference,
 };
 use super::util::{
-    manifest_has_dependency, origin_for_file, parse_module_symbol, parse_uvicorn_script_target,
-    read_pyproject_table, uvicorn_tool_from_pyproject,
+    origin_for_file, parse_module_symbol, parse_uvicorn_script_target, read_pyproject_table,
+    uvicorn_tool_from_pyproject,
 };
 use super::warnings::PluginsWarning;
 
@@ -28,15 +28,10 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     let root = ctx.root.path.as_path();
     let pyproject_path = root.join("pyproject.toml");
 
-    let has_fastapi = manifest_has_dependency(ctx.manifest, "fastapi");
-    let has_uvicorn = manifest_has_dependency(ctx.manifest, "uvicorn");
-    let mut found = has_fastapi || has_uvicorn;
-
     if pyproject_path.is_file() {
         match read_pyproject_table(&pyproject_path) {
             Ok(table) => {
                 if let Some(uvicorn) = uvicorn_tool_from_pyproject(&table) {
-                    found = true;
                     let origin = origin_for_file(root, &pyproject_path, "tool.uvicorn");
                     if let Some(app) = uvicorn.get("app").and_then(|v| v.as_str())
                         && let Some((module, symbol)) = parse_module_symbol(app)
@@ -63,7 +58,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
                         if let Some(target_str) = target.as_str()
                             && let Some((module, symbol)) = parse_uvicorn_script_target(target_str)
                         {
-                            found = true;
                             contrib.symbol_refs.push(SymbolReference {
                                 module,
                                 symbol,
@@ -97,7 +91,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
 
     for &candidate in SRC_APP_ENTRY_CANDIDATES {
         if ctx.sources.files.iter().any(|file| file.path == candidate) {
-            found = true;
             contrib.entries.push(PluginEntry {
                 spec: crate::config::EntrySpec {
                     path: candidate.to_owned(),
@@ -111,12 +104,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
                 },
             });
         }
-    }
-
-    if !found {
-        warnings.push(PluginsWarning::PluginNoOp {
-            plugin: PluginId::Fastapi,
-        });
     }
 
     (contrib, warnings)

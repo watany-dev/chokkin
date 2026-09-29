@@ -23,7 +23,7 @@ use crate::sources::PublicSurface;
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project_with_cache};
-use super::warnings::{ProbeWarning, actionable_plugin_warnings};
+use super::warnings::ProbeWarning;
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,7 +185,12 @@ fn run_analysis_core(
         parse: &parse,
         cache: Some(&options.cache),
     })?;
-    let warnings = actionable_plugin_warnings(&plugins);
+    let warnings: Vec<ProbeWarning> = plugins
+        .warnings
+        .iter()
+        .cloned()
+        .map(ProbeWarning::Plugin)
+        .collect();
 
     let mut entry = build_entry_roots(
         &probe.effective_config,
