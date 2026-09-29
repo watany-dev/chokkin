@@ -50,8 +50,7 @@ pub use config::{
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
 pub use entry::{
-    EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
-    build_entry_roots,
+    EntryOrigin, EntryPlan, EntryRoot, EntryWarning, apply_entry_plan, build_entry_roots,
 };
 pub use fix::{AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason};
 pub use graph::{

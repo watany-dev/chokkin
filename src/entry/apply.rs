@@ -25,9 +25,8 @@ mod tests {
     use crate::graph::{FileNode, GraphEdge, ProjectGraph};
     use crate::sources::{FileContext, FileKind};
 
-    use super::super::types::{EntryOrigin, EntryPlan, EntryRoot, ResolvedMode};
+    use super::super::types::{EntryOrigin, EntryPlan, EntryRoot};
     use crate::config::ProjectMode;
-    use crate::resolver::ResolveConfidence;
 
     #[test]
     fn apply_adds_entry_reaches_file_edges() {
@@ -45,10 +44,7 @@ mod tests {
             .expect("file");
 
         let plan = EntryPlan {
-            mode: ResolvedMode {
-                mode: ProjectMode::App,
-                confidence: ResolveConfidence::Certain,
-            },
+            mode: ProjectMode::App,
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "manage.py".to_owned(),

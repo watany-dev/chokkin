@@ -69,13 +69,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
-        &mut graph,
-        &sources,
-        &entry,
-        &plugins,
-        &parse,
-        &entry.mode,
-        false,
+        &mut graph, &sources, &entry, &plugins, &parse, entry.mode, false,
     )
     .expect("reachability");
     let deps = reconcile_dependencies(
@@ -96,7 +90,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &reachability,
         &entry,
         &plugins,
-        &entry.mode,
+        entry.mode,
         &graph,
         &sources,
         &manifest,
@@ -122,7 +116,7 @@ fn emit_reports_unused_dependency() {
         &inputs.parse,
         &inputs.config,
         &RuntimeOverrides::default(),
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &ResolutionIndex::default(),
     );
     assert!(
@@ -148,7 +142,7 @@ fn config_ignore_suppresses_matching_issue() {
         &inputs.parse,
         &config,
         &RuntimeOverrides::default(),
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &ResolutionIndex::default(),
     );
     assert!(
@@ -189,7 +183,7 @@ fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> cho
         &inputs.parse,
         config,
         &RuntimeOverrides::default(),
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &ResolutionIndex::default(),
     )
 }
@@ -206,7 +200,7 @@ fn emit_with_config_and_overrides(
         &inputs.parse,
         config,
         overrides,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &ResolutionIndex::default(),
     )
 }

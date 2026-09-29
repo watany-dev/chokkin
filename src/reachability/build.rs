@@ -3,7 +3,7 @@
 use indexmap::IndexSet;
 
 use crate::config::{Confidence, ProjectMode};
-use crate::entry::{EntryPlan, ResolvedMode};
+use crate::entry::EntryPlan;
 use crate::graph::ProjectGraph;
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
@@ -26,7 +26,7 @@ pub fn analyze_reachability(
     entry: &EntryPlan,
     plugins: &PluginHints,
     parse: &ParseSummary,
-    mode: &ResolvedMode,
+    mode: ProjectMode,
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
     let module_index = ModuleIndex::build(graph, sources);
@@ -46,7 +46,7 @@ pub fn analyze_reachability(
                 .file_id(&module.path)
                 .is_some_and(|file_id| reachable.contains(&file_id))
     });
-    let confidence = confidence_for_unreachable(mode.mode, reached_opaque_dynamic_import);
+    let confidence = confidence_for_unreachable(mode, reached_opaque_dynamic_import);
 
     let mut unreachable = Vec::new();
     for file in &sources.files {
@@ -97,9 +97,9 @@ pub fn apply_public_surface(
     report: &mut ReachabilityReport,
     surface: &PublicSurface,
     _parse: &ParseSummary,
-    mode: &ResolvedMode,
+    mode: ProjectMode,
 ) {
-    if mode.mode != ProjectMode::Library {
+    if mode != ProjectMode::Library {
         return;
     }
     let confidence =
@@ -187,9 +187,9 @@ fn apply_framework_globs(
     })
 }
 
-fn is_excluded(file: &crate::sources::DiscoveredFile, mode: &ResolvedMode) -> bool {
+fn is_excluded(file: &crate::sources::DiscoveredFile, mode: ProjectMode) -> bool {
     file.path.ends_with("__init__.py")
-        || (file.context == FileContext::Test && mode.mode == ProjectMode::Library)
+        || (file.context == FileContext::Test && mode == ProjectMode::Library)
 }
 
 /// An opaque `import_module(name)` in code that runs may load any orphan, so
@@ -214,7 +214,6 @@ mod tests {
     use crate::parser::{ImportContext, ImportKind, ImportRef, ParsedModule};
     use crate::plugins::{FrameworkUsedGlob, PluginContribution, ReferenceOrigin};
     use crate::reachability::trace_to_file;
-    use crate::resolver::ResolveConfidence;
     use crate::sources::{DiscoveredFile, LayoutInfo, ProjectLayout};
 
     const MIGRATION: &str = "acme/migrations/0001_initial.py";
@@ -269,10 +268,7 @@ mod tests {
 
     fn app_entry(roots: &[&str]) -> EntryPlan {
         EntryPlan {
-            mode: ResolvedMode {
-                mode: ProjectMode::App,
-                confidence: ResolveConfidence::Certain,
-            },
+            mode: ProjectMode::App,
             roots: roots
                 .iter()
                 .map(|path| EntryRoot {
@@ -358,13 +354,7 @@ mod tests {
         let mut graph = graph_for(&sources, parse, origins);
         let entry = app_entry(roots);
         let report = analyze_reachability(
-            &mut graph,
-            &sources,
-            &entry,
-            plugins,
-            parse,
-            &entry.mode,
-            false,
+            &mut graph, &sources, &entry, plugins, parse, entry.mode, false,
         )
         .expect("reachability");
         (graph, report)

@@ -1,17 +1,7 @@
 //! Entry root construction types (pipeline step 8).
 
 use crate::config::{EntrySpec, PluginId, ProjectMode};
-use crate::resolver::ResolveConfidence;
 use crate::sources::FileContext;
-
-/// Resolved project analysis mode after `mode = auto` inference (§8).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedMode {
-    /// Effective app / library mode.
-    pub mode: ProjectMode,
-    /// Confidence in the mode resolution.
-    pub confidence: ResolveConfidence,
-}
 
 /// Where an entry root was discovered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,8 +54,8 @@ pub struct EntryRoot {
 /// Outcome of entry root construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryPlan {
-    /// Resolved project mode.
-    pub mode: ResolvedMode,
+    /// Project mode after `mode = auto` inference (§8); never `Auto`.
+    pub mode: ProjectMode,
     /// Merged entry roots sorted by path.
     pub roots: Vec<EntryRoot>,
     /// Non-fatal conditions.

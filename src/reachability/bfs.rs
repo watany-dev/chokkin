@@ -360,10 +360,9 @@ mod tests {
     use super::*;
     use crate::config::{EntrySpec, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::entry::{EntryRoot, ResolvedMode};
+    use crate::entry::EntryRoot;
     use crate::graph::{FileNode, add_parsed_imports};
     use crate::parser::{DynamicImport, ImportContext, ImportKind, ImportRef, ParsedModule};
-    use crate::resolver::ResolveConfidence;
     use crate::sources::{
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
     };
@@ -431,10 +430,7 @@ mod tests {
 
     fn entry_plan() -> EntryPlan {
         EntryPlan {
-            mode: ResolvedMode {
-                mode: ProjectMode::App,
-                confidence: ResolveConfidence::Certain,
-            },
+            mode: ProjectMode::App,
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "src/acme/main.py".to_owned(),

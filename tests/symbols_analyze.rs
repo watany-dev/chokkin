@@ -64,13 +64,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
-        &mut graph,
-        &sources,
-        &entry,
-        &plugins,
-        &parse,
-        &entry.mode,
-        production,
+        &mut graph, &sources, &entry, &plugins, &parse, entry.mode, production,
     )
     .expect("reachability");
 
@@ -94,7 +88,7 @@ fn analyze_fixture(name: &str) -> chokkin::SymbolReport {
         &inputs.reachability,
         &inputs.entry,
         &inputs.plugins,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &inputs.graph,
         &inputs.sources,
         &inputs.manifest,
@@ -215,7 +209,7 @@ fn reexport_imported_from_package_is_not_chk007() {
         &inputs.reachability,
         &inputs.entry,
         &inputs.plugins,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &inputs.graph,
         &inputs.sources,
         &inputs.manifest,
@@ -347,7 +341,7 @@ fn star_import_in_init_is_not_a_reexport() {
         &inputs.reachability,
         &inputs.entry,
         &inputs.plugins,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &inputs.graph,
         &inputs.sources,
         &inputs.manifest,
@@ -384,7 +378,7 @@ fn relative_package_import_counts_as_external_reference() {
         &inputs.reachability,
         &inputs.entry,
         &inputs.plugins,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &inputs.graph,
         &inputs.sources,
         &inputs.manifest,
@@ -417,7 +411,7 @@ fn analyze_generated(files: &[(&str, &str)]) -> chokkin::SymbolReport {
         &inputs.reachability,
         &inputs.entry,
         &inputs.plugins,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         &inputs.graph,
         &inputs.sources,
         &inputs.manifest,

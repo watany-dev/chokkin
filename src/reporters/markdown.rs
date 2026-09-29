@@ -18,7 +18,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     let _ = writeln!(
         out,
         "- Mode: `{}` (production={})",
-        context.mode.mode, context.production
+        context.mode, context.production
     );
     let _ = writeln!(out, "- Issues: **{}**", report.summary.total);
     let suppressed = baseline_suppressed_count(report);
