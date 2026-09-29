@@ -288,4 +288,33 @@ mod tests {
         assert_eq!(import_map.candidates("DefinitelyNotInBundledMap"), None);
         assert_eq!(import_map.candidates("e2e_config"), None);
     }
+
+    #[test]
+    fn single_bundled_namespace_candidate_is_certain() {
+        let import_map = ImportMap::build(&default_config());
+        assert_eq!(
+            import_map
+                .namespace_candidates("google.protobuf.message")
+                .map(|(_, _, confidence)| confidence),
+            Some(ResolveConfidence::Certain)
+        );
+    }
+
+    #[test]
+    fn user_map_candidates_are_normalized_sorted_and_deduplicated() {
+        let mut config = default_config();
+        for distribution in ["Zeta-Lib", "alpha", "Alpha"] {
+            config.package_module_map.insert(
+                distribution.to_owned(),
+                vec!["shared".to_owned(), "shared".to_owned()],
+            );
+        }
+        assert_eq!(
+            ImportMap::build(&config).candidates("shared"),
+            Some((
+                vec!["alpha".to_owned(), "zeta-lib".to_owned()],
+                ResolveConfidence::Likely
+            ))
+        );
+    }
 }

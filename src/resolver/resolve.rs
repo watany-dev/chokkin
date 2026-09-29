@@ -486,3 +486,31 @@ fn root_resolution_from_candidates(
         confidence,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resolve(candidates: &[&str]) -> (RootResolution, Vec<ResolveWarning>) {
+        let candidates: Vec<String> = candidates.iter().map(|c| (*c).to_owned()).collect();
+        let mut warnings = Vec::new();
+        let resolution = root_resolution_from_candidates("yaml", &candidates, None, &mut warnings);
+        (resolution, warnings)
+    }
+
+    #[test]
+    fn single_candidate_is_certain_and_not_ambiguous() {
+        let (resolution, warnings) = resolve(&["pyyaml"]);
+        assert_eq!(resolution.distribution.as_deref(), Some("pyyaml"));
+        assert_eq!(resolution.confidence, ResolveConfidence::Certain);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn several_candidates_are_maybe_and_ambiguous() {
+        let (resolution, warnings) = resolve(&["pyyaml", "ruamel-yaml"]);
+        assert_eq!(resolution.distribution.as_deref(), Some("pyyaml"));
+        assert_eq!(resolution.confidence, ResolveConfidence::Maybe);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+}

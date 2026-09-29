@@ -196,15 +196,7 @@ fn top_level_import_from_record_path(path: &str) -> Option<String> {
         return None;
     }
     let first = path.split('/').next()?;
-    if let Some(stem) = first.strip_suffix(".py") {
-        if stem.contains('/') {
-            None
-        } else {
-            Some(stem.to_owned())
-        }
-    } else {
-        Some(first.to_owned())
-    }
+    Some(first.strip_suffix(".py").unwrap_or(first).to_owned())
 }
 
 fn entry_point_names(contents: &str, group: &str) -> Vec<String> {
@@ -272,6 +264,47 @@ mod tests {
         assert_eq!(
             entry_point_names(contents, "pytest11"),
             vec!["django".to_owned()]
+        );
+    }
+
+    #[test]
+    fn top_level_txt_skips_blank_and_private_names() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let dist_info = dir.path().join("demo-1.0.dist-info");
+        std::fs::create_dir(&dist_info).expect("mkdir");
+        std::fs::write(dist_info.join("METADATA"), "Name: demo\n").expect("write");
+        std::fs::write(
+            dist_info.join("top_level.txt"),
+            "demo_pkg\n\n_demo_native\n",
+        )
+        .expect("write");
+        let mut index = VenvIndex::default();
+        merge_dist_info(&dist_info, &mut index);
+        assert_eq!(
+            index.imports,
+            BTreeMap::from([("demo_pkg".to_owned(), vec!["demo".to_owned()])])
+        );
+    }
+
+    #[test]
+    fn record_skips_dist_info_and_parent_relative_paths() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let record = dir.path().join("RECORD");
+        std::fs::write(
+            &record,
+            "demo-1.0.dist-info/METADATA,,\n../../bin/demo,,\n./demo.py,,\n",
+        )
+        .expect("write");
+        assert_eq!(imports_from_record(&record), vec!["demo".to_owned()]);
+    }
+
+    #[test]
+    fn entry_points_skip_comments_and_other_groups() {
+        let contents =
+            "[console_scripts]\n# old = demo:old\nnew = demo:main\n[gui_scripts]\ngui = demo:gui\n";
+        assert_eq!(
+            entry_point_names(contents, "console_scripts"),
+            vec!["new".to_owned()]
         );
     }
 }
