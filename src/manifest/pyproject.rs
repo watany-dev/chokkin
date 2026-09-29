@@ -30,7 +30,7 @@ pub struct PyprojectExtraction {
     pub poetry_detected: bool,
     /// `[tool.uv]` constraint / override entries.
     pub constraints: Vec<DeclaredDependency>,
-    /// `[tool.uv]` sources and default groups.
+    /// `[tool.uv]` sources.
     pub uv: UvToolSettings,
 }
 

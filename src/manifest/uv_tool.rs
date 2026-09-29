@@ -16,7 +16,7 @@ pub struct UvToolExtraction {
     pub dependencies: Vec<DeclaredDependency>,
     /// `constraint-dependencies` and `override-dependencies`.
     pub constraints: Vec<DeclaredDependency>,
-    /// Sources and default groups.
+    /// Sources.
     pub settings: UvToolSettings,
 }
 

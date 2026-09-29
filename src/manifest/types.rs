@@ -251,7 +251,7 @@ pub struct LoadedManifest {
     /// Version constraints from `-c` requirements files and `[tool.uv]`
     /// `constraint-dependencies` / `override-dependencies`; never declarations.
     pub constraints: Vec<DeclaredDependency>,
-    /// `[tool.uv]` sources and default groups.
+    /// `[tool.uv]` sources.
     pub uv: UvToolSettings,
     /// Raw `[tool.uv.workspace]` members copied from config load (hash input).
     pub uv_workspace: Option<UvWorkspaceHint>,
