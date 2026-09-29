@@ -162,7 +162,6 @@ mod tests {
                     label: "tool.uv.sources.my-lib".to_owned(),
                 },
             }],
-            default_groups: None,
         }
     }
 

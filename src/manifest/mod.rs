@@ -35,6 +35,6 @@ pub use script::{
 pub use types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
     LockfileGraph, LockfileKind, LockfileSource, ManifestSources, PackageFind, ProjectMetadata,
-    UvDefaultGroups, UvSource, UvSourceKind, UvToolSettings, WheelTargets,
+    UvSource, UvSourceKind, UvToolSettings, WheelTargets,
 };
 pub use warnings::ManifestWarning;

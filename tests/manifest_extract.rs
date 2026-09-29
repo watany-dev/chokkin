@@ -547,11 +547,4 @@ fn uv_dev_dependencies_join_dev_group_in_every_format() {
     let mut names = dev_group_names(&both);
     names.sort_unstable();
     assert_eq!(names, vec!["pytest", "ruff"]);
-    assert_eq!(
-        both.uv.default_groups,
-        Some(chokkin::UvDefaultGroups::Groups(vec![
-            "dev".to_owned(),
-            "lint".to_owned()
-        ]))
-    );
 }

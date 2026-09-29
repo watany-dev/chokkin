@@ -515,7 +515,6 @@ mod tests {
                         origin: origin.clone(),
                     })
                     .collect(),
-                default_groups: None,
             },
             uv_workspace: None,
             entry_points: Vec::new(),
