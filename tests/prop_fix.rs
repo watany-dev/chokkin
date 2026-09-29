@@ -74,7 +74,6 @@ proptest! {
     /// `[project].dependencies`, however many are unused in the same array,
     /// and keeps the used ones in their original order.
     #[test]
-    #[ignore = "bug #436"]
     fn fix_removes_exactly_the_unused_dependencies(
         names in prop::collection::btree_set("zz[a-z]{3,6}", 1..6),
         used_mask in prop::collection::vec(any::<bool>(), 6),
@@ -94,7 +93,6 @@ proptest! {
 
     /// The fix is idempotent: running `--fix` twice equals running it once.
     #[test]
-    #[ignore = "bug #436"]
     fn fix_is_idempotent(names in prop::collection::btree_set("zz[a-z]{3,6}", 1..5)) {
         let deps: Vec<String> = names.into_iter().collect();
         let dir = project(&deps, &BTreeSet::new(), "\n");

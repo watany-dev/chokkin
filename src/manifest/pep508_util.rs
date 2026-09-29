@@ -130,6 +130,19 @@ pub fn parse_pep508_requirement(
     parse_requirement(raw, context, origin)
 }
 
+/// Distribution name of a manifest-field requirement, read the way
+/// [`parse_pep508_requirement`] reads it; `None` for opaque or invalid entries.
+#[must_use]
+pub fn pep508_distribution_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if leading_name_token(trimmed) == trimmed && is_strict_pep508_name(trimmed) {
+        return Some(normalize_distribution_name(trimmed));
+    }
+    super::pep508::parse_requirement(trimmed)
+        .map(|requirement| normalize_distribution_name(&requirement.name))
+        .or_else(|| extract_egg_name(trimmed))
+}
+
 /// Leading run of PEP 508 name characters (`[A-Za-z0-9._-]`).
 #[must_use]
 pub(super) fn leading_name_token(spec: &str) -> &str {
