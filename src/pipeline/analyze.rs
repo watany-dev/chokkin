@@ -164,13 +164,10 @@ fn run_analysis_core(
         .clone()
         .unwrap_or_else(crate::config::TargetVersion::default_py311);
 
-    // No in-memory store: a single run parses each source once, so it would
-    // only add a copy of every module next to the disk bundle.
     let parse = parse_project_sources_with_cache(
         &probe.root,
         &probe.sources,
         &target,
-        None,
         Some(&options.cache),
     )?;
 

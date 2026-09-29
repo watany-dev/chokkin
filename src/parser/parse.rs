@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::VERSION;
 use crate::cache::{
     CacheKeyContext, CacheOptions, ParseCacheBundle, ParseCacheBundleRef, ParseCacheKey,
-    ParseCacheStore, SourceFingerprint, stable_list_hash,
+    SourceFingerprint, stable_list_hash,
 };
 use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
@@ -177,10 +177,10 @@ pub fn parse_project_sources(
     sources: &DiscoveredSources,
     target: &TargetVersion,
 ) -> Result<ParseSummary, ParseError> {
-    parse_project_sources_with_cache(root, sources, target, None, None)
+    parse_project_sources_with_cache(root, sources, target, None)
 }
 
-/// Parse all `.py` files in `sources`, optionally reusing parse results from cache.
+/// Parse all `.py` files in `sources`, optionally reusing results from the disk cache.
 ///
 /// IO failures abort the whole operation. Syntax errors are recorded per file.
 ///
@@ -191,16 +191,21 @@ pub fn parse_project_sources_with_cache(
     root: &ProjectRoot,
     sources: &DiscoveredSources,
     target: &TargetVersion,
-    mut cache: Option<&mut ParseCacheStore>,
     disk_cache: Option<&CacheOptions>,
 ) -> Result<ParseSummary, ParseError> {
     let layout = &sources.layout;
     let context = provisional_parse_cache_context(sources, target);
     let disk_cache = disk_cache.filter(|options| options.enabled);
-    if let Some(cache_store) = cache.as_deref_mut() {
-        cache_store.reserve(sources.files.len());
-    }
-    let clock = parse_cache_clock(cache.is_some(), disk_cache, &root.path);
+    // Racy mtimes are judged against the filesystem's own clock so a lagging
+    // network mount cannot make a just-written source look settled. The local
+    // clock is the fallback when the cache directory is read-only: a warm
+    // bundle is still usable there, and failing the run over the probe would
+    // be a regression.
+    let clock = disk_cache.map(|cache| {
+        cache
+            .filesystem_now(&root.path)
+            .unwrap_or_else(|_| SystemTime::now())
+    });
 
     // The bundle is read once up front and written once at the end. Keeping
     // only the entries this run touched prunes results for sources that have
@@ -212,7 +217,7 @@ pub fn parse_project_sources_with_cache(
     let pending = collect_pending(root, sources, &context, clock)?;
 
     let mut slots: Vec<Option<ParsedModule>> = vec![None; pending.len()];
-    drain_caches(&pending, &mut stored, cache.as_deref_mut(), &mut slots);
+    drain_cache(&pending, &mut stored, &mut slots);
     drop(stored);
 
     let outstanding: Vec<usize> = slots
@@ -230,18 +235,13 @@ pub fn parse_project_sources_with_cache(
     let mut parsed_any = false;
     for (index, parsed) in run_parse_job(&job)? {
         parsed_any = true;
-        if let Some(store) = cache.as_deref_mut()
-            && let Some(key) = &pending[index].key
-        {
-            store.insert(key.clone(), parsed.clone());
-        }
         slots[index] = Some(parsed);
     }
 
     if disk_cache.is_some() {
         let retained = retained_entries(&pending, &slots);
-        // Compare entry ids rather than counts: a store carried over from an
-        // earlier run can serve a different set of the same size.
+        // Without a parse, the retained ids can only be a subset of the stored
+        // ones; any difference means vanished sources to prune.
         if parsed_any || retained.entry_ids().ne(stored_ids.iter()) {
             write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
         }
@@ -264,27 +264,6 @@ fn retained_entries<'a>(
         }
     }
     retained
-}
-
-/// The clock racy mtimes are judged against, or `None` when no cache is in use.
-///
-/// Prefers the filesystem's own clock so a lagging network mount cannot make a
-/// just-written source look settled. The local clock is the fallback when there
-/// is no cache directory to probe, or it is read-only: a warm bundle is still
-/// usable there, and failing the run over the probe would be a regression.
-fn parse_cache_clock(
-    memory_cache: bool,
-    disk_cache: Option<&CacheOptions>,
-    project_root: &std::path::Path,
-) -> Option<SystemTime> {
-    if !memory_cache && disk_cache.is_none() {
-        return None;
-    }
-    Some(
-        disk_cache
-            .and_then(|cache| cache.filesystem_now(project_root).ok())
-            .unwrap_or_else(SystemTime::now),
-    )
 }
 
 /// Collect the sources this run has to parse, each with its cache key.
@@ -310,26 +289,19 @@ fn collect_pending<'a>(
     Ok(pending)
 }
 
-/// Fill `slots` from the in-memory store and the on-disk bundle.
+/// Fill `slots` from the on-disk bundle.
 ///
-/// Both caches need `&mut` on the store, so they are drained here rather than
-/// from the workers. Probing exactly once per file also keeps the hit/miss
-/// counters identical to the sequential implementation. Disk hits are moved
-/// out of `stored` rather than cloned: the bundle is not used afterwards.
-fn drain_caches(
+/// Hits are moved out of `stored` rather than cloned: the bundle is not used
+/// afterwards.
+fn drain_cache(
     pending: &[PendingFile<'_>],
     stored: &mut ParseCacheBundle,
-    mut cache: Option<&mut ParseCacheStore>,
     slots: &mut [Option<ParsedModule>],
 ) {
     for (slot, entry) in slots.iter_mut().zip(pending) {
-        let Some(key) = &entry.key else {
-            continue;
-        };
-        *slot = match cache.as_deref_mut() {
-            Some(store) => store.get_or_take(key, stored),
-            None => stored.take(key),
-        };
+        if let Some(key) = &entry.key {
+            *slot = stored.take(key);
+        }
     }
 }
 
@@ -355,7 +327,7 @@ impl ParseJob<'_> {
 
 /// Parse every outstanding file, spread over threads.
 ///
-/// Both caches are drained by the caller, so a worker only ever parses.
+/// The cache is drained by the caller, so a worker only ever parses.
 ///
 /// Results carry their slot index because workers finish out of order; the
 /// caller reassembles them in discovery order.
@@ -716,7 +688,6 @@ mod tests {
             &root,
             &sources,
             &TargetVersion::default_py311(),
-            None,
             Some(&CacheOptions::disabled()),
         )
         .expect("parse");
@@ -725,49 +696,38 @@ mod tests {
     }
 
     #[test]
-    fn bundle_is_rewritten_when_a_carried_store_serves_a_different_set() {
+    fn warm_run_serves_modules_from_the_disk_bundle() {
         let temp = TempDir::new().expect("tempdir");
-        // Settled mtimes keep the keys stat-only, so they stay equal across
-        // runs however slowly the test executes.
+        let path = temp.path().join("app.py");
         let settled = SystemTime::now() - std::time::Duration::from_mins(1);
-        for name in ["aaa.py", "bbb.py"] {
-            let path = temp.path().join(name);
-            fs::write(&path, "import os\n").expect("write");
+        let write_settled = |contents: &str| {
+            fs::write(&path, contents).expect("write");
             fs::File::options()
                 .write(true)
                 .open(&path)
                 .expect("open")
                 .set_times(fs::FileTimes::new().set_modified(settled))
                 .expect("backdate mtime");
-        }
+        };
+        let (root, sources) = python_sources(temp.path(), &["app.py"]);
         let target = TargetVersion::default_py311();
         let disk = CacheOptions::default();
-        let mut store = ParseCacheStore::new();
-        let mut run = |names: &[&str]| {
-            let (root, sources) = python_sources(temp.path(), names);
-            parse_project_sources_with_cache(
-                &root,
-                &sources,
-                &target,
-                Some(&mut store),
-                Some(&disk),
-            )
-            .expect("parse");
-            let context = provisional_parse_cache_context(&sources, &target);
-            fs::read_to_string(disk.parse_bundle_path(temp.path(), &context)).expect("bundle")
+        let imports = || {
+            parse_project_sources_with_cache(&root, &sources, &target, Some(&disk))
+                .expect("parse")
+                .modules[0]
+                .imports
+                .iter()
+                .map(|import| import.module.clone())
+                .collect::<Vec<_>>()
         };
 
-        run(&["aaa.py", "bbb.py"]);
-        run(&["aaa.py"]);
-        // Same entry count as the bundle on disk, but served from memory
-        // without parsing: only a content check notices the swap.
-        let bundle = run(&["bbb.py"]);
-
-        assert!(
-            bundle.contains("bbb.py"),
-            "bundle kept the stale set: {bundle}"
-        );
-        assert!(!bundle.contains("aaa.py"));
+        write_settled("import aaa\n");
+        assert_eq!(imports(), ["aaa"]);
+        // Same size and mtime keep the stat-only key, so only a bundle hit
+        // can still report the old import.
+        write_settled("import bbb\n");
+        assert_eq!(imports(), ["aaa"]);
     }
 
     #[test]

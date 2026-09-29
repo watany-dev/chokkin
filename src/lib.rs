@@ -39,8 +39,8 @@ pub use baseline::{
 };
 pub use cache::{
     CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheBundle, ParseCacheKey,
-    ParseCacheStats, ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
-    ScanInputFingerprints, SourceFingerprint,
+    SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord, ScanInputFingerprints,
+    SourceFingerprint,
 };
 pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
