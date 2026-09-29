@@ -2,16 +2,11 @@
 
 use std::collections::HashSet;
 
-use crate::config::ChokkinConfig;
-use crate::graph::ProjectGraph;
 use crate::manifest::{InlineScript, LoadedManifest, normalize_distribution_name};
-use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
-use crate::reachability::ReachabilityReport;
-use crate::resolver::{ImportMap, ResolutionIndex};
+use crate::resolver::ImportMap;
 use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, sort_candidates};
 use crate::rules::{DependencyRuleContext, RuleContext};
-use crate::sources::DiscoveredSources;
 
 use super::binary::detect_unlisted_binaries;
 use super::duplicate::detect_duplicate_dependencies;
@@ -26,40 +21,9 @@ use super::used::{
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
+///
+/// The project manifest and each PEP 723 script block are reconciled separately.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn reconcile_dependencies(
-    manifest: &LoadedManifest,
-    resolution: &ResolutionIndex,
-    reachability: &ReachabilityReport,
-    plugins: &PluginHints,
-    config: &ChokkinConfig,
-    sources: &DiscoveredSources,
-    parse: &ParseSummary,
-    graph: &ProjectGraph,
-    workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
-    strict: bool,
-) -> DependencyReport {
-    reconcile_with_context(
-        &DependencyRuleContext {
-            rules: &RuleContext {
-                resolution,
-                reachability,
-                graph,
-                sources,
-                parse,
-            },
-            config,
-            strict,
-        },
-        manifest,
-        plugins,
-        workspace_boundaries,
-        &[],
-    )
-}
-
-/// Reconcile the project manifest and, separately, each PEP 723 script block.
 pub fn reconcile_with_context(
     dependency: &DependencyRuleContext<'_>,
     manifest: &LoadedManifest,
@@ -314,17 +278,22 @@ mod tests {
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
-        let report = reconcile_dependencies(
+        let report = reconcile_with_context(
+            &DependencyRuleContext {
+                rules: &RuleContext {
+                    resolution: &resolution,
+                    reachability: &reachability,
+                    graph: &graph,
+                    sources: &sources,
+                    parse: &parse,
+                },
+                config: &config,
+                strict: false,
+            },
             &manifest,
-            &resolution,
-            &reachability,
             &plugins,
-            &config,
-            &sources,
-            &parse,
-            &graph,
             &[],
-            false,
+            &[],
         );
         assert!(report.candidates.is_empty(), "{:?}", report.candidates);
         assert_eq!(
@@ -361,17 +330,22 @@ mod tests {
         };
         let config = crate::config::default_config();
         let (sources, parse, graph) = reconcile_inputs(&manifest);
-        let report = reconcile_dependencies(
+        let report = reconcile_with_context(
+            &DependencyRuleContext {
+                rules: &RuleContext {
+                    resolution: &resolution,
+                    reachability: &reachability,
+                    graph: &graph,
+                    sources: &sources,
+                    parse: &parse,
+                },
+                config: &config,
+                strict: false,
+            },
             &manifest,
-            &resolution,
-            &reachability,
             &plugins,
-            &config,
-            &sources,
-            &parse,
-            &graph,
             &[],
-            false,
+            &[],
         );
         assert_eq!(report.candidates.len(), 1);
         assert_eq!(
@@ -429,17 +403,22 @@ mod tests {
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
-        let report = reconcile_dependencies(
+        let report = reconcile_with_context(
+            &DependencyRuleContext {
+                rules: &RuleContext {
+                    resolution: &resolution,
+                    reachability: &reachability,
+                    graph: &graph,
+                    sources: &sources,
+                    parse: &parse,
+                },
+                config: &config,
+                strict: false,
+            },
             &manifest,
-            &resolution,
-            &reachability,
             &plugins,
-            &config,
-            &sources,
-            &parse,
-            &graph,
             &[],
-            false,
+            &[],
         );
         assert!(report.used_distributions.contains("types-PyYAML"));
         assert!(

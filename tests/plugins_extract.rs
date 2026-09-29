@@ -10,9 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    FileContext, PluginId, PluginsWarning, ProjectRoot, RootMarker, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    resolve_target_version,
+    FileContext, PluginExtractRequest, PluginId, PluginsWarning, ProjectRoot, RootMarker,
+    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
+    load_config, parse_project_sources_with_cache, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -40,8 +40,17 @@ fn extract_at(path: &Path) -> chokkin::PluginHints {
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
     let target = resolve_target_version(&config.effective, &manifest);
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse sources");
-    extract_plugin_hints(&root, &config, &sources, &manifest, &parse).expect("extract plugin hints")
+    let parse = parse_project_sources_with_cache(&root, &sources, &target, None, None)
+        .expect("parse sources");
+    extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &config,
+        sources: &sources,
+        manifest: &manifest,
+        parse: &parse,
+        cache: None,
+    })
+    .expect("extract plugin hints")
 }
 
 fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {

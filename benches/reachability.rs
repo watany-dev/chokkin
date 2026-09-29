@@ -1,7 +1,7 @@
 //! Reachability analysis over a realistic synthetic project.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod support;
-use chokkin::plugins::extract_plugin_hints;
+use chokkin::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use chokkin::reachability::analyze_reachability;
 use chokkin::{
     AnalyzeOptions, CacheOptions, RuntimeOverrides, analyze_project,
@@ -34,8 +34,15 @@ fn bench_reachability(c: &mut Criterion) {
             Some(&CacheOptions::default()),
         )
         .expect("parse");
-        let plugins = extract_plugin_hints(&report.probe.root, &config, sources, manifest, &parse)
-            .expect("plugins");
+        let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &report.probe.root,
+            config: &config,
+            sources,
+            manifest,
+            parse: &parse,
+            cache: None,
+        })
+        .expect("plugins");
         group.bench_function(BenchmarkId::new("analyze", n), |b| {
             b.iter_batched_ref(
                 || report.graph.clone(),

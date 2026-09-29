@@ -4,13 +4,15 @@
 
 use std::path::{Path, PathBuf};
 
+use chokkin::rules::deps::reconcile_with_context;
+use chokkin::rules::{DependencyRuleContext, RuleContext};
 use chokkin::{
-    Confidence, GraphEdge, ModuleOrigin, ProjectRoot, RootMarker, RuleId, RuntimeOverrides,
-    Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports, analyze_reachability,
-    apply_entry_plan, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
-    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints, load_config,
-    parse_project_sources, probe_project, reconcile_dependencies, resolve_imports,
-    resolve_target_version,
+    Confidence, GraphEdge, ModuleOrigin, PluginExtractRequest, ProjectRoot, RootMarker, RuleId,
+    RuntimeOverrides, Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports,
+    analyze_reachability, apply_entry_plan, apply_resolution_to_graph, build_entry_roots,
+    build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
+    extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache, probe_project,
+    resolve_imports, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -41,9 +43,17 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let plugins =
-        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
+    let parse =
+        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &loaded,
+        sources: &sources,
+        manifest: &manifest,
+        parse: &parse,
+        cache: None,
+    })
+    .expect("plugin hints");
     let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
@@ -106,17 +116,22 @@ fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::Dependenc
             manifest: &input.manifest,
         })
         .collect::<Vec<_>>();
-    reconcile_dependencies(
+    reconcile_with_context(
+        &DependencyRuleContext {
+            rules: &RuleContext {
+                resolution: &inputs.resolution,
+                reachability: &inputs.reachability,
+                graph: &inputs.graph,
+                sources: &inputs.sources,
+                parse: &inputs.parse,
+            },
+            config: &inputs.config,
+            strict,
+        },
         &inputs.manifest,
-        &inputs.resolution,
-        &inputs.reachability,
         &inputs.plugins,
-        &inputs.config,
-        &inputs.sources,
-        &inputs.parse,
-        &inputs.graph,
         &workspace_boundaries,
-        strict,
+        &[],
     )
 }
 

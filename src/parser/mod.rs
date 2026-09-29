@@ -16,7 +16,7 @@ mod visit;
 
 pub use error::ParseError;
 pub use ignores::extract_ignores;
-pub use parse::{parse_file, parse_project_sources, parse_project_sources_with_cache};
+pub use parse::{parse_file, parse_project_sources_with_cache};
 pub use relative::resolve_relative_import;
 pub use types::{
     AttributeAccess, DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind,

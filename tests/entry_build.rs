@@ -5,10 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    EntryOrigin, EntryWarning, GraphEdge, ProjectMode, ProjectRoot, RootMarker, apply_entry_plan,
-    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
-    extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    resolve_target_version,
+    EntryOrigin, EntryWarning, GraphEdge, PluginExtractRequest, ProjectMode, ProjectRoot,
+    RootMarker, apply_entry_plan, build_entry_roots, build_graph_skeleton, discover_project_root,
+    discover_sources, extract_manifest, extract_plugin_hints_with_parse, load_config,
+    parse_project_sources_with_cache, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -51,9 +51,17 @@ fn load_pipeline(path: &Path) -> PipelineInputs {
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let plugins =
-        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
+    let parse =
+        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &loaded,
+        sources: &sources,
+        manifest: &manifest,
+        parse: &parse,
+        cache: None,
+    })
+    .expect("plugin hints");
     let config = loaded.effective;
     PipelineInputs {
         config,

@@ -165,21 +165,6 @@ fn push_notebook_cell_source(source: &Value, extracted: &mut String) {
     }
 }
 
-/// Parse all `.py` files in `sources`.
-///
-/// IO failures abort the whole operation. Syntax errors are recorded per file.
-///
-/// # Errors
-///
-/// Returns [`ParseError::Io`] when a source file cannot be read.
-pub fn parse_project_sources(
-    root: &ProjectRoot,
-    sources: &DiscoveredSources,
-    target: &TargetVersion,
-) -> Result<ParseSummary, ParseError> {
-    parse_project_sources_with_cache(root, sources, target, None, None)
-}
-
 /// Parse all `.py` files in `sources`, optionally reusing parse results from cache.
 ///
 /// IO failures abort the whole operation. Syntax errors are recorded per file.
@@ -647,8 +632,14 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let summary =
-            parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
+        let summary = parse_project_sources_with_cache(
+            &root,
+            &sources,
+            &TargetVersion::default_py311(),
+            None,
+            None,
+        )
+        .expect("parse");
 
         assert_eq!(summary.modules.len(), count);
         let actual: Vec<String> = summary
@@ -699,8 +690,14 @@ mod tests {
         let (root, sources) = python_sources(temp.path(), &borrowed);
 
         for _ in 0..10 {
-            let error = parse_project_sources(&root, &sources, &TargetVersion::default_py311())
-                .expect_err("unreadable sources must fail the parse");
+            let error = parse_project_sources_with_cache(
+                &root,
+                &sources,
+                &TargetVersion::default_py311(),
+                None,
+                None,
+            )
+            .expect_err("unreadable sources must fail the parse");
             let ParseError::Io { path, .. } = error;
             assert!(path.ends_with("mod_0060.py"), "reported {}", path.display());
         }

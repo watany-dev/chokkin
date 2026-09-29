@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use chokkin::resolver::StdlibRange;
 use chokkin::{
-    ModuleOrigin, ProjectRoot, ResolveConfidence, RootMarker, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    resolve_imports, resolve_target_version,
+    ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolveConfidence, RootMarker,
+    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
+    load_config, parse_project_sources_with_cache, resolve_imports, resolve_target_version,
 };
 
 fn resolver_fixture(name: &str) -> PathBuf {
@@ -32,9 +32,17 @@ fn resolve_path(path: &Path) -> chokkin::ResolutionIndex {
     let manifest = extract_manifest(&root, &loaded).expect("manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let plugins =
-        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugins");
+    let parse =
+        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &loaded,
+        sources: &sources,
+        manifest: &manifest,
+        parse: &parse,
+        cache: None,
+    })
+    .expect("plugins");
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     resolve_imports(
         &loaded.effective,
@@ -150,7 +158,8 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
     assert_eq!(target.as_str(), "py310");
     loaded.effective.target_version = Some(target.clone());
     let sources = discover_sources(&root, &loaded, &manifest).expect("sources");
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
+    let parse =
+        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
     let (scripts, warnings) = chokkin::discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),
@@ -164,7 +173,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
             Some((script.path.clone(), range))
         })
         .collect();
-    let index = chokkin::resolver::resolve_imports_with_script_targets(
+    let index = chokkin::resolver::resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
         &sources,
@@ -172,6 +181,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
         &[],
         &loaded.workspace_members,
         &script_targets,
+        &chokkin::resolver::ScopedDeclarations::default(),
     );
     let tomllib_in = |file: &str| {
         index

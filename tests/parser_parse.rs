@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use chokkin::{
     FileContext, ImportContext, ImportKind, LayoutInfo, ParseCacheStore, ParseSeverity,
-    ProjectLayout, ProjectRoot, RootMarker, TargetVersion, parse_file, parse_project_sources,
+    ProjectLayout, ProjectRoot, RootMarker, TargetVersion, parse_file,
     parse_project_sources_with_cache,
 };
 
@@ -216,8 +216,14 @@ fn parse_project_sources_fixture_suite() {
         warnings: Vec::new(),
     };
 
-    let summary =
-        parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
+    let summary = parse_project_sources_with_cache(
+        &root,
+        &sources,
+        &TargetVersion::default_py311(),
+        None,
+        None,
+    )
+    .expect("parse");
     let actual: Vec<_> = summary
         .modules
         .iter()
@@ -466,8 +472,14 @@ fn parse_project_sources_extracts_notebook_code_cells() {
         warnings: Vec::new(),
     };
 
-    let summary =
-        parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
+    let summary = parse_project_sources_with_cache(
+        &root,
+        &sources,
+        &TargetVersion::default_py311(),
+        None,
+        None,
+    )
+    .expect("parse");
     assert_eq!(summary.modules.len(), 1);
     let module = summary.modules.first().expect("module");
     assert_eq!(module.path, "analysis.ipynb");
@@ -512,8 +524,14 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
         warnings: Vec::new(),
     };
 
-    let summary =
-        parse_project_sources(&root, &sources, &TargetVersion::default_py311()).expect("parse");
+    let summary = parse_project_sources_with_cache(
+        &root,
+        &sources,
+        &TargetVersion::default_py311(),
+        None,
+        None,
+    )
+    .expect("parse");
     assert_eq!(summary.modules.len(), 1);
     let module = summary.modules.first().expect("module");
     assert!(

@@ -27,24 +27,6 @@ use super::flask;
 use super::pytest;
 use super::types::PluginHints;
 
-/// Extract framework hints from tool configuration (§6 step 5).
-pub fn extract_plugin_hints(
-    root: &ProjectRoot,
-    config: &LoadedConfig,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    parse: &ParseSummary,
-) -> Result<PluginHints, PluginsError> {
-    extract_plugin_hints_with_parse(&PluginExtractRequest {
-        root,
-        config,
-        sources,
-        manifest,
-        parse,
-        cache: None,
-    })
-}
-
 /// Inputs for [`extract_plugin_hints_with_parse`].
 #[derive(Clone, Copy)]
 pub struct PluginExtractRequest<'a> {
@@ -261,13 +243,14 @@ mod tests {
             sources: crate::manifest::ManifestSources::default(),
             warnings: Vec::new(),
         };
-        let hints = extract_plugin_hints(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            &ParseSummary::default(),
-        )
+        let hints = extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &ParseSummary::default(),
+            cache: None,
+        })
         .expect("extract hints");
         assert!(hints.contributions.is_empty());
     }

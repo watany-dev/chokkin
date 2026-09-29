@@ -4,12 +4,15 @@
 
 use std::path::{Path, PathBuf};
 
+use chokkin::rules::deps::reconcile_with_context;
+use chokkin::rules::symbols::analyze_with_context;
+use chokkin::rules::{DependencyRuleContext, RuleContext};
 use chokkin::{
-    Confidence, ExitStatus, ProjectRoot, ResolutionIndex, RootMarker, RuleId, RuntimeOverrides,
-    SeverityLevel, add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
+    Confidence, ExitStatus, PluginExtractRequest, ProjectRoot, ResolutionIndex, RootMarker, RuleId,
+    RuntimeOverrides, SeverityLevel, add_parsed_imports, analyze_reachability, apply_entry_plan,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, emit_issues, extract_manifest, extract_plugin_hints, load_config,
-    parse_project_sources, reconcile_dependencies, resolve_imports, resolve_target_version,
+    discover_sources, emit_issues, extract_manifest, extract_plugin_hints_with_parse, load_config,
+    parse_project_sources_with_cache, resolve_imports, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -44,9 +47,17 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let plugins =
-        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
+    let parse =
+        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &loaded,
+        sources: &sources,
+        manifest: &manifest,
+        parse: &parse,
+        cache: None,
+    })
+    .expect("plugin hints");
     let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
@@ -78,29 +89,25 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         false,
     )
     .expect("reachability");
-    let deps = reconcile_dependencies(
+    let context = RuleContext {
+        resolution: &resolution,
+        reachability: &reachability,
+        graph: &graph,
+        sources: &sources,
+        parse: &parse,
+    };
+    let deps = reconcile_with_context(
+        &DependencyRuleContext {
+            rules: &context,
+            config: &loaded.effective,
+            strict: strict_deps,
+        },
         &manifest,
-        &resolution,
-        &reachability,
         &plugins,
-        &loaded.effective,
-        &sources,
-        &parse,
-        &graph,
         &[],
-        strict_deps,
+        &[],
     );
-    let symbols = analyze_symbols(
-        &parse,
-        &resolution,
-        &reachability,
-        &entry,
-        &plugins,
-        &entry.mode,
-        &graph,
-        &sources,
-        &manifest,
-    );
+    let symbols = analyze_with_context(&context, &entry, &plugins, &entry.mode, &manifest);
 
     EmitInputs {
         config: loaded.effective,
