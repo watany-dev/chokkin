@@ -7,13 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
-- **Breaking (Rust API):** the unused in-memory parse cache. `ParseCacheStore`,
-  `ParseCacheStats` and `ParseCacheBundle::get` are gone, and
-  `parse_project_sources_with_cache` drops its `cache` argument; parse results
-  are reused only from the on-disk bundle. CLI output is unchanged. The next
-  release must be 0.6.0 (#446).
-
 ### Fixed
 - `--fix` removes a requirements line only when it names the target
   distribution, reading names the way the manifest parser does, and applies
