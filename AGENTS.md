@@ -133,9 +133,9 @@ Install tools once with `make tools`.
 
 Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy
 extraction, `sources` for the file-discovery walk, `cache` for warm parse-cache
-reuse, `reachability` for reachability analysis, `resolver` for bundled map
-construction, `pipeline` for full analysis plus cold/disk-warm parse,
-reachability, and discovery after cache population) with synthetic
+reuse, `resolver` for bundled map construction, `pipeline` for full analysis
+plus cold/disk-warm parse, reachability, and discovery after cache population)
+with synthetic
 fixtures generated in `benches/support/mod.rs`. They are not part of `make check`;
 run them when touching hot paths. `pipeline` defaults to 1k ~2 KiB modules;
 set `CHOKKIN_BENCH_LARGE=1` for 5k/10k as well:

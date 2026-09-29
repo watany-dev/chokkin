@@ -166,10 +166,6 @@ strip = "none"
 opt-level = 1
 
 [[bench]]
-name = "reachability"
-harness = false
-
-[[bench]]
 name = "resolver"
 harness = false
 
