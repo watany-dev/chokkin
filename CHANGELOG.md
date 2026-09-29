@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   several removals in one file bottom-up. It no longer deletes a used
   dependency after an earlier removal shifts line numbers; a stale line number
   is reported as an error instead (#438).
+- `--fix` keeps CRLF line endings and a missing final newline when removing a
+  requirements line, and leaves an empty file when removing the only line (#437).
 
 ## [0.5.1] - 2026-09-29
 

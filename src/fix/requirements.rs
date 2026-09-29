@@ -22,15 +22,15 @@ pub fn remove_dependency_line(
 
     let target = normalize_distribution_name(distribution);
     let mut removed = false;
-    let mut output = Vec::new();
+    let mut updated = String::with_capacity(contents.len());
 
-    for (index, raw_line) in contents.lines().enumerate() {
+    for (index, raw_line) in contents.split_inclusive('\n').enumerate() {
         let line_no = u32::try_from(index + 1).unwrap_or(u32::MAX);
         if line.is_none_or(|expected| expected == line_no) && line_name_matches(raw_line, &target) {
             removed = true;
             continue;
         }
-        output.push(raw_line);
+        updated.push_str(raw_line);
     }
 
     if !removed {
@@ -39,9 +39,12 @@ pub fn remove_dependency_line(
         });
     }
 
-    let mut updated = output.join("\n");
-    if contents.ends_with('\n') {
-        updated.push('\n');
+    // Dropping an unterminated last line must not leave the new last line terminated.
+    if !contents.ends_with('\n') && updated.ends_with('\n') {
+        updated.pop();
+        if updated.ends_with('\r') {
+            updated.pop();
+        }
     }
 
     atomic_write(path, updated.as_bytes(), true).map_err(|source| FixError::Io {
@@ -69,6 +72,16 @@ mod tests {
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("boto3"));
         assert!(updated.contains("requests"));
+    }
+
+    #[test]
+    fn removing_unterminated_last_line_keeps_file_unterminated() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("requirements.txt");
+        std::fs::write(&path, "boto3\r\nrequests").expect("write");
+        remove_dependency_line(&path, "requests", None).expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated, "boto3");
     }
 
     #[test]
@@ -209,7 +222,6 @@ mod tests {
 
             /// CRLF files keep CRLF endings for the untouched lines.
             #[test]
-            #[ignore = "bug #437"]
             fn removal_preserves_crlf(
                 lines in prop::collection::vec(name(), 2..6),
             ) {
@@ -225,7 +237,6 @@ mod tests {
 
             /// A removal that empties the file must not leave a stray blank line.
             #[test]
-            #[ignore = "bug #437"]
             fn removing_the_only_line_leaves_empty_file(n in name()) {
                 let (result, updated) = run(&format!("{n}\n"), &n, None);
                 prop_assert!(result.is_ok());
