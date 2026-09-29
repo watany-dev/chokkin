@@ -1,5 +1,6 @@
 //! Apply optional manifest fixes (pipeline step 13).
 
+use std::cmp::Reverse;
 use std::path::Path;
 
 use crate::discovery::ProjectRoot;
@@ -34,7 +35,7 @@ pub fn apply_fixes_with_workspace(
         },
     };
 
-    for action in actions {
+    for action in bottom_up_line_removals(actions) {
         match apply_action(root.path.as_path(), &action, options) {
             Ok(applied) => report_out.applied.push(applied),
             Err(error) => {
@@ -54,6 +55,20 @@ pub fn apply_fixes_with_workspace(
     }
 
     report_out
+}
+
+/// Removing a line shifts every later line number in the same file, so apply line-addressed
+/// removals from the bottom of each file up.
+fn bottom_up_line_removals(mut actions: Vec<FixAction>) -> Vec<FixAction> {
+    actions.sort_by_key(|action| match action {
+        FixAction::RemoveDependency {
+            file,
+            line: Some(line),
+            ..
+        } => Some((file.clone(), Reverse(*line))),
+        _ => None,
+    });
+    actions
 }
 
 /// chokkin never edits lockfiles (§13), so point at the tool that owns it.
