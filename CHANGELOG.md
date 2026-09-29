@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-29
+
 ### Fixed
+- Resolver counts only importable local modules and dedupes ambiguity warnings.
+- Manifest parsing accepts arbitrary version strings after `===`.
+- pytest import settings follow pytest's config file precedence.
+- Resolver models pytest `prepend` import mode for test-local imports (#360).
 - CHK006 no longer reports symbols referenced only from `tests/` (a v0.5.0
   regression), with or without `tests/__init__.py` (#410).
 - CHK006 tracks `from pkg import module; module.name` references, including
