@@ -247,6 +247,21 @@ fn push_editable_dependency(
     });
 }
 
+/// Distribution a requirements-file line declares, read the way [`extract_requirements_file`]
+/// reads it; `None` for blank, option, and opaque (nameless) lines.
+pub fn requirements_line_distribution(line: &str) -> Option<String> {
+    let trimmed = strip_comment(line).trim();
+    if let Some(editable) = editable_flag_value(trimmed) {
+        return extract_egg_name(editable);
+    }
+    if trimmed.is_empty() || trimmed.starts_with('-') {
+        return None;
+    }
+    super::pep508::parse_requirement(trimmed)
+        .map(|requirement| normalize_distribution_name(&requirement.name))
+        .or_else(|| extract_egg_name(trimmed))
+}
+
 /// pip-compatible: only `#` preceded by whitespace (or at line start) starts a comment.
 #[must_use]
 fn strip_comment(line: &str) -> &str {
