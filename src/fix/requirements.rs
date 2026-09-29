@@ -1,11 +1,12 @@
 //! `requirements*.txt` line-based edits.
 
-use crate::manifest::normalize_distribution_name;
+use crate::manifest::{normalize_distribution_name, requirements_line_distribution};
 
 use super::error::FixError;
 use super::write::{atomic_write, read_manifest};
 
-/// Remove a dependency line from a requirements file by line number or name match.
+/// Remove the dependency line at `line` if it names `distribution`, or every line naming it
+/// when no line number is known.
 pub fn remove_dependency_line(
     path: &std::path::Path,
     distribution: &str,
@@ -25,8 +26,7 @@ pub fn remove_dependency_line(
 
     for (index, raw_line) in contents.lines().enumerate() {
         let line_no = u32::try_from(index + 1).unwrap_or(u32::MAX);
-        if line.is_some_and(|expected| expected == line_no) || line_name_matches(raw_line, &target)
-        {
+        if line.is_none_or(|expected| expected == line_no) && line_name_matches(raw_line, &target) {
             removed = true;
             continue;
         }
@@ -52,24 +52,7 @@ pub fn remove_dependency_line(
 }
 
 fn line_name_matches(line: &str, distribution: &str) -> bool {
-    let trimmed = strip_comment(line).trim();
-    if trimmed.is_empty() || trimmed.starts_with('-') {
-        return false;
-    }
-    let name = trimmed
-        .split(['[', ';', '#', ' '])
-        .next()
-        .unwrap_or(trimmed);
-    let normalized = normalize_distribution_name(
-        name.split(['=', '<', '>', '!', '~', '['])
-            .next()
-            .unwrap_or(name),
-    );
-    normalized == distribution
-}
-
-fn strip_comment(line: &str) -> &str {
-    line.split_once('#').map_or(line, |(before, _)| before)
+    requirements_line_distribution(line).is_some_and(|name| name == distribution)
 }
 
 #[cfg(test)]
@@ -86,6 +69,47 @@ mod tests {
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("boto3"));
         assert!(updated.contains("requests"));
+    }
+
+    #[test]
+    fn line_number_pointing_at_another_dependency_is_rejected() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("requirements.txt");
+        std::fs::write(&path, "boto3\nrequests\n").expect("write");
+        remove_dependency_line(&path, "boto3", Some(2)).expect_err("line 2 is requests");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated, "boto3\nrequests\n");
+    }
+
+    #[test]
+    fn removes_lines_the_manifest_parser_names() {
+        for line in [
+            "foo@https://example.com/foo-1.0.tar.gz",
+            "foo(>=1.0)",
+            "git+https://example.com/foo.git#egg=foo",
+            "foo\t>=1.0 # pinned",
+        ] {
+            let dir = TempDir::new().expect("tempdir");
+            let path = dir.path().join("requirements.txt");
+            std::fs::write(&path, format!("{line}\nrequests\n")).expect("write");
+            remove_dependency_line(&path, "foo", Some(1)).expect(line);
+            let updated = std::fs::read_to_string(&path).expect("read");
+            assert_eq!(updated, "requests\n", "{line}");
+        }
+    }
+
+    #[test]
+    fn removes_editable_line_by_egg_name() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("requirements.txt");
+        std::fs::write(
+            &path,
+            "-e git+https://example.com/foo.git#egg=foo\nrequests\n",
+        )
+        .expect("write");
+        remove_dependency_line(&path, "foo", Some(1)).expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated, "requests\n");
     }
 
     mod props {
@@ -165,7 +189,6 @@ mod tests {
             /// Whitespace between name and specifier (tab or space) still names
             /// the distribution.
             #[test]
-            #[ignore = "bug #438"]
             fn tab_or_space_separated_specifier_is_matched(
                 n in name(),
                 sep in prop::sample::select(vec![" ", "\t", "  "]),
@@ -177,7 +200,6 @@ mod tests {
             /// Removing by line number must not also drop other lines that
             /// merely name the same distribution (e.g. marker variants).
             #[test]
-            #[ignore = "bug #438"]
             fn removal_by_line_number_touches_only_that_line(n in name()) {
                 let contents = format!("{n}>=1 ; python_version < \"3.9\"\n{n}>=2 ; python_version >= \"3.9\"\n");
                 let (result, updated) = run(&contents, &n, Some(1));
@@ -210,8 +232,7 @@ mod tests {
                 prop_assert_eq!(updated, "");
             }
 
-            /// Removal by line number removes exactly that line when no other
-            /// line names the same distribution.
+            /// Removal by line number removes exactly that line.
             #[test]
             fn removal_by_line_number_removes_that_line(
                 lines in prop::collection::vec(name(), 2..8),
@@ -222,7 +243,7 @@ mod tests {
                 unique.dedup();
                 prop_assume!(unique.len() == lines.len());
                 let idx = pick.index(lines.len());
-                let (result, updated) = run(&(lines.join("\n") + "\n"), "does-not-matter", Some(u32::try_from(idx + 1).unwrap_or(1)));
+                let (result, updated) = run(&(lines.join("\n") + "\n"), &lines[idx], Some(u32::try_from(idx + 1).unwrap_or(1)));
                 prop_assert!(result.is_ok());
                 let mut expected = lines;
                 expected.remove(idx);
