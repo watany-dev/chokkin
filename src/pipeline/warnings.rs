@@ -22,8 +22,8 @@ impl fmt::Display for ProbeWarning {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
-            Self::Sources(warning) => write_sources_warning(formatter, warning),
-            Self::Plugin(warning) => write_plugin_warning(formatter, warning),
+            Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
+            Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
         }
     }
 }
@@ -102,65 +102,6 @@ fn write_manifest_warning(
     }
 }
 
-fn write_plugin_warning(
-    formatter: &mut fmt::Formatter<'_>,
-    warning: &PluginsWarning,
-) -> fmt::Result {
-    match warning {
-        PluginsWarning::PluginNoOp { plugin } => {
-            write!(formatter, "plugin: `{}` produced no hints", plugin.as_key())
-        },
-        PluginsWarning::PartialSettingsParse { path, fields } => write!(
-            formatter,
-            "plugin: partial Django settings parse at `{path}` (fields: {})",
-            fields.join(", ")
-        ),
-        PluginsWarning::PytestConfigUnreadable { path } => {
-            write!(formatter, "plugin: unreadable pytest config `{path}`")
-        },
-        PluginsWarning::AmbiguousSettings { chosen, candidates } => write!(
-            formatter,
-            "plugin: ambiguous Django settings; chose `{chosen}` from {candidates:?}"
-        ),
-        PluginsWarning::PluginExtractFailed { plugin, detail } => write!(
-            formatter,
-            "plugin: `{}` extraction failed: {detail}",
-            plugin.as_key()
-        ),
-    }
-}
-
-fn write_sources_warning(
-    formatter: &mut fmt::Formatter<'_>,
-    warning: &SourcesWarning,
-) -> fmt::Result {
-    match warning {
-        SourcesWarning::MissingEntryPath { path } => {
-            write!(formatter, "sources: missing entry path `{path}`")
-        },
-        SourcesWarning::EntryPathIsDirectory { path } => {
-            write!(formatter, "sources: entry path is a directory `{path}`")
-        },
-        SourcesWarning::AmbiguousFlatLayout { candidates, chosen } => write!(
-            formatter,
-            "sources: ambiguous flat layout ({candidates:?}); chose `{chosen}`"
-        ),
-        SourcesWarning::GitignoreUnreadable { path } => {
-            write!(
-                formatter,
-                "sources: could not read `.gitignore` at `{path}`"
-            )
-        },
-        SourcesWarning::LargeProject { file_count } => write!(
-            formatter,
-            "sources: large project ({file_count} files discovered)"
-        ),
-        SourcesWarning::PathUnreadable { path, reason } => {
-            write!(formatter, "sources: could not read `{path}`: {reason}")
-        },
-    }
-}
-
 /// Write pipeline warnings to `err`, one per line.
 pub fn write_probe_warnings(warnings: &[ProbeWarning], err: &mut impl Write) -> io::Result<()> {
     for warning in warnings {
@@ -201,6 +142,7 @@ pub(super) fn actionable_plugin_warnings(
 mod tests {
     use crate::config::PluginId;
     use crate::plugins::{PluginHints, PluginsWarning};
+    use crate::sources::SourcesWarning;
 
     use super::{ProbeWarning, actionable_plugin_warnings, write_probe_warnings};
 
@@ -238,5 +180,84 @@ mod tests {
         assert!(stderr.contains("plugin: partial Django settings parse"));
         assert!(stderr.contains("fields: INSTALLED_APPS"));
         assert!(!stderr.contains("produced no hints"));
+    }
+
+    #[test]
+    fn plugin_and_sources_warnings_render_exact_text() {
+        let cases = [
+            (
+                ProbeWarning::Plugin(PluginsWarning::PluginNoOp {
+                    plugin: PluginId::Pytest,
+                }),
+                "plugin: `pytest` produced no hints",
+            ),
+            (
+                ProbeWarning::Plugin(PluginsWarning::PartialSettingsParse {
+                    path: "s.py".to_owned(),
+                    fields: vec!["A".to_owned(), "B".to_owned()],
+                }),
+                "plugin: partial Django settings parse at `s.py` (fields: A, B)",
+            ),
+            (
+                ProbeWarning::Plugin(PluginsWarning::PytestConfigUnreadable {
+                    path: "pytest.ini".to_owned(),
+                }),
+                "plugin: unreadable pytest config `pytest.ini`",
+            ),
+            (
+                ProbeWarning::Plugin(PluginsWarning::AmbiguousSettings {
+                    chosen: "a.py".to_owned(),
+                    candidates: vec!["a.py".to_owned(), "b.py".to_owned()],
+                }),
+                r#"plugin: ambiguous Django settings; chose `a.py` from ["a.py", "b.py"]"#,
+            ),
+            (
+                ProbeWarning::Plugin(PluginsWarning::PluginExtractFailed {
+                    plugin: PluginId::Django,
+                    detail: "boom".to_owned(),
+                }),
+                "plugin: `django` extraction failed: boom",
+            ),
+            (
+                ProbeWarning::Sources(SourcesWarning::MissingEntryPath {
+                    path: "x.py".to_owned(),
+                }),
+                "sources: missing entry path `x.py`",
+            ),
+            (
+                ProbeWarning::Sources(SourcesWarning::EntryPathIsDirectory {
+                    path: "pkg".to_owned(),
+                }),
+                "sources: entry path is a directory `pkg`",
+            ),
+            (
+                ProbeWarning::Sources(SourcesWarning::AmbiguousFlatLayout {
+                    candidates: vec!["a".to_owned(), "b".to_owned()],
+                    chosen: "a".to_owned(),
+                }),
+                r#"sources: ambiguous flat layout (["a", "b"]); chose `a`"#,
+            ),
+            (
+                ProbeWarning::Sources(SourcesWarning::GitignoreUnreadable {
+                    path: ".gitignore".to_owned(),
+                }),
+                "sources: could not read `.gitignore` at `.gitignore`",
+            ),
+            (
+                ProbeWarning::Sources(SourcesWarning::LargeProject { file_count: 12 }),
+                "sources: large project (12 files discovered)",
+            ),
+            (
+                ProbeWarning::Sources(SourcesWarning::PathUnreadable {
+                    path: "d".to_owned(),
+                    reason: "denied".to_owned(),
+                }),
+                "sources: could not read `d`: denied",
+            ),
+        ];
+
+        for (warning, expected) in cases {
+            assert_eq!(warning.to_string(), expected);
+        }
     }
 }
