@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `--fix` removes a requirements line only when it names the target
+  distribution, reading names the way the manifest parser does, and applies
+  several removals in one file bottom-up. It no longer deletes a used
+  dependency after an earlier removal shifts line numbers; a stale line number
+  is reported as an error instead (#438).
+- `--fix` applies several `pyproject.toml` array removals bottom-up per array
+  and removes an entry only when it names the target distribution. It no longer
+  deletes a used dependency after an earlier removal shifts array indices; a
+  stale index is reported as an error instead (#436).
+
 ## [0.5.1] - 2026-09-29
 
 ### Fixed
