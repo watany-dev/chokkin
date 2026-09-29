@@ -50,7 +50,7 @@ pub struct ModuleNode {
     pub origin: ModuleOrigin,
 }
 
-/// Graph edges accumulated during pipeline steps 3–9.
+/// Graph edges added by import parsing (step 6) and resolution (step 7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphEdge {
     /// A file imports a module at the given 1-based line.
