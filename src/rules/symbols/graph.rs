@@ -33,26 +33,13 @@ pub(super) struct RegistryEntry {
     pub in_all: bool,
 }
 
-/// Registry of public symbols in reachable modules.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(super) struct SymbolRegistry {
-    entries: Vec<RegistryEntry>,
-    by_id: HashMap<SymbolId, usize>,
-}
-
-impl SymbolRegistry {
-    /// Returns all registered symbols.
-    pub(super) fn entries(&self) -> &[RegistryEntry] {
-        &self.entries
-    }
-}
-
-/// Build a symbol registry from reachable parsed modules.
+/// Build the list of public symbols in reachable modules, first definition wins.
 pub(super) fn build_registry(
     modules: &[&ParsedModule],
     module_names: &HashMap<&str, String>,
-) -> SymbolRegistry {
-    let mut registry = SymbolRegistry::default();
+) -> Vec<RegistryEntry> {
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
 
     for module in modules {
         let Some(owner) = module_names.get(module.path.as_str()) else {
@@ -63,22 +50,20 @@ pub(super) fn build_registry(
                 continue;
             }
             let id = SymbolId::new(owner.clone(), symbol.name.clone());
-            if registry.by_id.contains_key(&id) {
+            if !seen.insert(id.clone()) {
                 continue;
             }
             let in_all = module.exports.iter().any(|export| export == &symbol.name);
-            let index = registry.entries.len();
-            registry.entries.push(RegistryEntry {
-                id: id.clone(),
+            entries.push(RegistryEntry {
+                id,
                 path: module.path.clone(),
                 def: symbol.clone(),
                 in_all,
             });
-            registry.by_id.insert(id, index);
         }
     }
 
-    registry
+    entries
 }
 
 /// Precomputed lookup of symbol references collected from import statements.

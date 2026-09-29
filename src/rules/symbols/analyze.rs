@@ -19,7 +19,7 @@ use crate::sources::{DiscoveredSources, PublicSurface, path_to_module};
 
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
-use super::graph::{ReferenceIndex, SymbolId, SymbolRegistry, build_registry};
+use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
 use super::types::SymbolReport;
 
 /// Analyze public symbol usage and unresolved imports (§12).
@@ -106,7 +106,7 @@ pub fn analyze_with_context(
 
     sort_candidates(&mut candidates);
 
-    let symbol_count = u32::try_from(registry.entries().len()).unwrap_or(u32::MAX);
+    let symbol_count = u32::try_from(registry.len()).unwrap_or(u32::MAX);
 
     SymbolReport {
         candidates,
@@ -140,7 +140,7 @@ fn build_module_names<'a>(
 }
 
 fn detect_unused_exports(
-    registry: &SymbolRegistry,
+    registry: &[RegistryEntry],
     references: &ReferenceIndex,
     external_symbols: &indexmap::IndexSet<SymbolId>,
     mode: ProjectMode,
@@ -148,7 +148,7 @@ fn detect_unused_exports(
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
-    for entry in registry.entries() {
+    for entry in registry {
         if external_symbols.contains(&entry.id) {
             continue;
         }
