@@ -569,24 +569,29 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
     );
 
     let bundle = entries[0].path();
-    let backdated = std::time::SystemTime::now() - std::time::Duration::from_mins(1);
+    let settled = std::time::SystemTime::now() - std::time::Duration::from_mins(1);
     std::fs::File::options()
         .write(true)
         .open(&bundle)
         .expect("open bundle")
-        .set_times(std::fs::FileTimes::new().set_modified(backdated))
+        .set_times(std::fs::FileTimes::new().set_modified(settled))
         .expect("backdate bundle");
+    // Read back rather than compare with `settled`: the filesystem may round it.
+    let mtime = || {
+        std::fs::metadata(&bundle)
+            .and_then(|meta| meta.modified())
+            .expect("bundle mtime")
+    };
+    let backdated = mtime();
 
     let warm = parse_project_sources_with_cache(&root, &sources, &target, Some(&cache_options))
         .expect("warm parse");
 
     assert_eq!(cold, warm);
     // Any miss would parse and rewrite the bundle.
-    let modified = std::fs::metadata(&bundle)
-        .and_then(|meta| meta.modified())
-        .expect("bundle mtime");
     assert_eq!(
-        modified, backdated,
+        mtime(),
+        backdated,
         "warm run must be served from the bundle"
     );
 }
