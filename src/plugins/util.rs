@@ -1,10 +1,9 @@
 //! Shared helpers for plugin extractors.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::CharIndices;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use toml::Value;
 
@@ -14,7 +13,7 @@ use crate::manifest::util::{
     path_is_within_root, read_to_string, relative_path as manifest_relative_path,
 };
 use crate::parser::{ParseSeverity, ParsedModule};
-use crate::sources::path_to_module;
+use crate::sources::{build_glob_set, path_to_module};
 
 use super::context::PluginContext;
 use super::error::PluginsError;
@@ -354,14 +353,6 @@ pub fn match_paths_against_globs(paths: &[String], patterns: &[String]) -> Vec<S
     hits
 }
 
-fn build_glob_set(patterns: &[String]) -> Result<GlobSet, globset::Error> {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        builder.add(Glob::new(pattern)?);
-    }
-    builder.build()
-}
-
 /// Convert a dotted module path to a root-relative `.py` file path.
 pub fn module_to_py_path(module: &str) -> String {
     format!("{}.py", module.replace('.', "/"))
@@ -506,11 +497,6 @@ pub fn choose_settings_path(
     }
 
     (Some(candidates[0].clone()), true)
-}
-
-/// Resolve a file path under the project root.
-pub fn root_join(root: &Path, rel: &str) -> PathBuf {
-    root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
 #[cfg(test)]
