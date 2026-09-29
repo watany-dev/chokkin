@@ -20,7 +20,6 @@ fn pipeline_inputs(name: &str) -> (chokkin::LoadedManifest, chokkin::DiscoveredS
     let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
         marker: RootMarker::PyProjectToml,
-        start: path,
     });
     let config = load_config(&root).expect("config");
     let manifest = extract_manifest(&root, &config).expect("manifest");

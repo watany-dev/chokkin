@@ -491,7 +491,6 @@ mod tests {
         ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         }
     }
 
@@ -529,7 +528,6 @@ mod tests {
         let root = ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         };
         let modules = vec![
             parsed("src/acme/main.py", &[("acme.a", 1)], &[("acme.b", 2)]),
@@ -575,7 +573,6 @@ mod tests {
         let root = ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         };
         let modules = vec![ParsedModule {
             path: "src/acme/main.py".to_owned(),
@@ -620,7 +617,6 @@ mod tests {
         let root = ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         };
         // `import acme.a; importlib.import_module("acme.a")` on one line.
         let modules = vec![parsed(
@@ -659,7 +655,6 @@ mod tests {
         let root = ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         };
         let from_import = |name: &str, line: u32| ImportRef {
             module: "acme".to_owned(),

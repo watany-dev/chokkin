@@ -34,7 +34,6 @@ mod tests {
         let mut graph = ProjectGraph::new(ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         });
         graph
             .intern_file(FileNode {

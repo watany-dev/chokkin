@@ -38,7 +38,6 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");

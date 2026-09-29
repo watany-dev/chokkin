@@ -218,9 +218,8 @@ mod tests {
         let root_path = std::env::temp_dir().join("chokkin-plugins-empty");
         let _ = std::fs::create_dir_all(&root_path);
         let root = ProjectRoot {
-            path: root_path.clone(),
+            path: root_path,
             marker: crate::discovery::RootMarker::PyProjectToml,
-            start: root_path,
         };
         let mut config = crate::default_config();
         config.plugins.insert(PluginId::Pytest, false);
@@ -276,7 +275,6 @@ mod tests {
         let root = ProjectRoot {
             path: root_path.to_path_buf(),
             marker: crate::discovery::RootMarker::PyProjectToml,
-            start: root_path.to_path_buf(),
         };
         let loaded = LoadedConfig {
             root: root.clone(),

@@ -23,7 +23,6 @@ fn pipeline_phase0_spike() -> Result<(), Box<dyn std::error::Error>> {
     let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
         marker: RootMarker::PyProjectToml,
-        start: path,
     });
     let loaded = load_config(&root)?;
     let manifest = extract_manifest(&root, &loaded)?;

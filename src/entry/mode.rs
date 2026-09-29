@@ -125,7 +125,6 @@ mod tests {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             metadata: ProjectMetadata::default(),
             dependencies: Vec::new(),
@@ -144,7 +143,6 @@ mod tests {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             layout: LayoutInfo {
                 layout: ProjectLayout::Src,

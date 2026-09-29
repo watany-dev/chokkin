@@ -21,7 +21,6 @@ fn parse_fixture(name: &str) -> chokkin::ParsedModule {
     let root = ProjectRoot {
         path: path.parent().expect("parent").to_path_buf(),
         marker: RootMarker::PyProjectToml,
-        start: path.parent().expect("parent").to_path_buf(),
     };
     let layout = LayoutInfo {
         layout: ProjectLayout::Unknown,
@@ -44,9 +43,8 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
         .join("tests/fixtures/parse")
         .join(dir);
     let root = ProjectRoot {
-        path: base.clone(),
+        path: base,
         marker: RootMarker::PyProjectToml,
-        start: base,
     };
     let layout = match dir {
         "imports" => LayoutInfo {
@@ -198,7 +196,6 @@ fn parse_project_sources_fixture_suite() {
     let root = ProjectRoot {
         path: base.clone(),
         marker: RootMarker::PyProjectToml,
-        start: base.clone(),
     };
     let mut files = Vec::new();
     collect_py_files(&base, &base, &mut files);
@@ -273,9 +270,8 @@ fn parse_project_sources_fixture_suite() {
 fn parse_project_sources_reuses_cache_when_inputs_match() {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parse");
     let root = ProjectRoot {
-        path: base.clone(),
+        path: base,
         marker: RootMarker::PyProjectToml,
-        start: base,
     };
     let sources = chokkin::DiscoveredSources {
         root: root.clone(),
@@ -316,7 +312,6 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
     let root = ProjectRoot {
         path: temp.path().to_path_buf(),
         marker: RootMarker::PyProjectToml,
-        start: temp.path().to_path_buf(),
     };
     let sources = chokkin::DiscoveredSources {
         root: root.clone(),
@@ -373,7 +368,6 @@ fn parse_cache_follows_pep723_block_edits() {
     let root = ProjectRoot {
         path: temp.path().to_path_buf(),
         marker: RootMarker::PyProjectToml,
-        start: temp.path().to_path_buf(),
     };
     let sources = chokkin::DiscoveredSources {
         root: root.clone(),
@@ -447,7 +441,6 @@ fn parse_project_sources_extracts_notebook_code_cells() {
     let root = ProjectRoot {
         path: root_path.to_path_buf(),
         marker: RootMarker::PyProjectToml,
-        start: root_path.to_path_buf(),
     };
     let sources = chokkin::DiscoveredSources {
         root: root.clone(),
@@ -493,7 +486,6 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
     let root = ProjectRoot {
         path: root_path.to_path_buf(),
         marker: RootMarker::PyProjectToml,
-        start: root_path.to_path_buf(),
     };
     let sources = chokkin::DiscoveredSources {
         root: root.clone(),
@@ -563,7 +555,6 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
     let root = ProjectRoot {
         path: temp.path().to_path_buf(),
         marker: RootMarker::PyProjectToml,
-        start: temp.path().to_path_buf(),
     };
     let mut files = Vec::new();
     for index in 0..8 {
@@ -628,7 +619,6 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
     let root = ProjectRoot {
         path: temp.path().to_path_buf(),
         marker: RootMarker::PyProjectToml,
-        start: temp.path().to_path_buf(),
     };
     let layout = LayoutInfo {
         layout: ProjectLayout::Src,
