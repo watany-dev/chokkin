@@ -101,8 +101,13 @@ fn analyze_fixture(name: &str) -> chokkin::SymbolReport {
     )
 }
 
-fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, name: &str) -> bool {
-    report.candidates.iter().any(|candidate| {
+fn find_symbol<'a>(
+    report: &'a chokkin::SymbolReport,
+    rule: RuleId,
+    module: &str,
+    name: &str,
+) -> Option<&'a chokkin::IssueCandidate> {
+    report.candidates.iter().find(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
@@ -110,6 +115,10 @@ fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, n
                     if m == module && n == name
             )
     })
+}
+
+fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, name: &str) -> bool {
+    find_symbol(report, rule, module, name).is_some()
 }
 
 #[test]
@@ -181,6 +190,38 @@ fn unused_reexport_emits_chk007() {
     let report = analyze_fixture("unused_reexport");
     assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));
     assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "helpers"));
+}
+
+#[test]
+fn reexport_imported_from_package_is_not_chk007() {
+    // Generated at test time for the same reason as the star-import fixture.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src/acme")).expect("package dir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"used-reexport\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"src/acme/main.py\"]\n",
+        ),
+        ("src/acme/__init__.py", "from .sub import bar, foo\n"),
+        ("src/acme/main.py", "from acme import foo\n\nprint(foo)\n"),
+        ("src/acme/sub.py", "foo = 1\nbar = 2\n"),
+    ] {
+        std::fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let inputs = load_symbols(temp.path(), false);
+    let report = analyze_symbols(
+        &inputs.parse,
+        &inputs.resolution,
+        &inputs.reachability,
+        &inputs.entry,
+        &inputs.plugins,
+        &inputs.entry.mode,
+        &inputs.graph,
+        &inputs.sources,
+        &inputs.manifest,
+    );
+    assert!(!has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));
+    assert!(has_symbol_rule(&report, RuleId::Chk007, "acme", "bar"));
 }
 
 #[test]
@@ -493,6 +534,104 @@ fn chk006_message_names_the_symbol_kind() {
             format!(
                 "public {kind} `{name}` in `app.dead` is not referenced from outside the module"
             )
+        );
+    }
+}
+
+#[test]
+fn private_and_type_checking_symbols_are_not_registered() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/api.py",
+            "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    Hint = int\n\ndef _private():\n    pass\n\ndef dead_api():\n    pass\n",
+        ),
+        ("app/main.py", "import app.api\n\ndef main():\n    pass\n"),
+    ]);
+    for name in ["_private", "Hint"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "app.api", name),
+            "{name}"
+        );
+    }
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.api",
+        "dead_api"
+    ));
+}
+
+#[test]
+fn unused_export_listed_in_all_is_certain() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/api.py",
+            "__all__ = [\"listed\"]\n\ndef listed():\n    pass\n\ndef unlisted():\n    pass\n",
+        ),
+        ("app/main.py", "import app.api\n\ndef main():\n    pass\n"),
+    ]);
+    let confidence = |name: &str| {
+        find_symbol(&report, RuleId::Chk006, "app.api", name)
+            .expect("CHK006 candidate")
+            .confidence
+    };
+    assert_eq!(confidence("listed"), Confidence::Certain);
+    assert_eq!(confidence("unlisted"), Confidence::Likely);
+}
+
+#[test]
+fn same_module_reference_after_external_one_keeps_symbol_used() {
+    // `app/main.py` is scanned before `app/zeta.py`, so the external reference
+    // is recorded first and the self-import must not clear it.
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "from app.zeta import shared\n\ndef main():\n    shared()\n",
+        ),
+        (
+            "app/zeta.py",
+            "from app.zeta import shared\n\ndef shared():\n    pass\n",
+        ),
+    ]);
+    assert!(!has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.zeta",
+        "shared"
+    ));
+}
+
+#[test]
+fn reexport_collection_honours_relative_imports_and_all() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/pkg/__init__.py",
+            "from .impl import public_unused, _listed, _private\nfrom app.pkg.impl import absolute\n\n__all__ = [\"_listed\"]\n",
+        ),
+        (
+            "app/pkg/impl.py",
+            "def public_unused():\n    pass\n\ndef _listed():\n    pass\n\ndef _private():\n    pass\n\ndef absolute():\n    pass\n",
+        ),
+        ("app/main.py", "import app.pkg\n\ndef main():\n    pass\n"),
+    ]);
+    for name in ["public_unused", "_listed"] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk007, "app.pkg", name),
+            "{name}"
+        );
+    }
+    for name in ["_private", "absolute"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk007, "app.pkg", name),
+            "{name}"
         );
     }
 }

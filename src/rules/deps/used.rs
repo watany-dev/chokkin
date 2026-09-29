@@ -421,6 +421,7 @@ mod tests {
         assert!(!modules.contains("utils"));
         assert!(!modules.contains("models"));
         assert!(!modules.contains("airflow.sdk"));
+        assert!(!modules.contains(""));
     }
 
     #[test]
@@ -468,5 +469,157 @@ mod tests {
         };
         let modules: Vec<&str> = member_imports(&resolution, "airflow-core").collect();
         assert_eq!(modules, ["airflow.sdk", "airflow.sdk.definitions.dag"]);
+    }
+
+    fn manifest_at(
+        path: std::path::PathBuf,
+        name: &str,
+        dependencies: &[&str],
+        workspace_sources: &[&str],
+    ) -> LoadedManifest {
+        let origin = crate::manifest::DependencyOrigin {
+            file: "pyproject.toml".to_owned(),
+            line: Some(1),
+            label: "project.dependencies[0]".to_owned(),
+        };
+        LoadedManifest {
+            root: ProjectRoot {
+                path: path.clone(),
+                marker: RootMarker::PyProjectToml,
+                start: path,
+            },
+            metadata: ProjectMetadata {
+                name: Some(name.to_owned()),
+                ..ProjectMetadata::default()
+            },
+            dependencies: dependencies
+                .iter()
+                .map(|dep| crate::manifest::DeclaredDependency {
+                    name: (*dep).to_owned(),
+                    extras: Vec::new(),
+                    marker: None,
+                    specifier: None,
+                    context: crate::manifest::DependencyContext::Runtime,
+                    origin: origin.clone(),
+                    opaque: false,
+                    included_via: Vec::new(),
+                })
+                .collect(),
+            constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings {
+                sources: workspace_sources
+                    .iter()
+                    .map(|source| crate::manifest::UvSource {
+                        name: (*source).to_owned(),
+                        kind: crate::manifest::UvSourceKind::Workspace,
+                        origin: origin.clone(),
+                    })
+                    .collect(),
+                default_groups: None,
+            },
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: LockfileGraph::default(),
+            sources: ManifestSources::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn no_lockfile_and_no_transitive_edges_disables_lock_checks() {
+        let manifest = manifest_at(std::env::temp_dir(), "app", &[], &[]);
+        assert!(!has_lockfile(&manifest, &ResolutionIndex::default()));
+        let resolution = ResolutionIndex {
+            transitive: TransitiveIndex {
+                edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
+            },
+            ..ResolutionIndex::default()
+        };
+        assert!(has_lockfile(&manifest, &resolution));
+    }
+
+    /// `core` is used through its module tree, `sdk` only through an import
+    /// inside `core`. `extra` is imported only by an unreachable file, `stray`
+    /// is not declared, and `plain` has no workspace source.
+    #[test]
+    fn workspace_sources_are_used_through_member_trees() {
+        let root = std::env::temp_dir().join("ws");
+        let manifest = manifest_at(
+            root.clone(),
+            "root",
+            &["core", "sdk", "extra", "plain"],
+            &["core", "sdk", "extra", "stray"],
+        );
+        let members = ["core", "sdk", "extra", "stray", "plain"]
+            .map(|name| (name, manifest_at(root.join(name), name, &[], &[])));
+        let boundaries: Vec<WorkspaceDependencyBoundary<'_>> = members
+            .iter()
+            .map(|(name, member)| WorkspaceDependencyBoundary {
+                member_id: name,
+                manifest: member,
+            })
+            .collect();
+        let import = |file: &str, module: &str| ResolvedImport {
+            import_root: import_root(module).to_owned(),
+            full_module: module.to_owned(),
+            file: file.to_owned(),
+            workspace_member: None,
+            line: 1,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            origin: ModuleOrigin::FirstParty,
+            distribution: None,
+            confidence: ResolveConfidence::Certain,
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![
+                import("src/app.py", "corepkg.models"),
+                import("src/app.py", "straypkg"),
+                import("src/app.py", "plainpkg"),
+                import("scripts/old.py", "extrapkg"),
+                import("core/src/corepkg/models.py", "sdkpkg"),
+            ],
+            ..ResolutionIndex::default()
+        };
+        let file = |path: &str| DiscoveredFile {
+            path: path.to_owned(),
+            kind: crate::sources::FileKind::Python,
+            context: crate::sources::FileContext::Runtime,
+        };
+        let sources = crate::sources::DiscoveredSources {
+            root: manifest.root.clone(),
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Src,
+                packages: Vec::new(),
+                local_packages: Vec::new(),
+                inferred_globs: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: members
+                .iter()
+                .map(|(name, _)| file(&format!("{name}/src/{name}pkg/__init__.py")))
+                .chain([file("core/src/corepkg/models.py")])
+                .collect(),
+            warnings: Vec::new(),
+        };
+        let graph = ProjectGraph::new(manifest.root.clone());
+        let mut used = IndexSet::new();
+        mark_workspace_source_distributions(
+            &manifest,
+            &RuleContext {
+                resolution: &resolution,
+                reachability: &ReachabilityReport::default(),
+                graph: &graph,
+                sources: &sources,
+                parse: &crate::parser::ParseSummary::default(),
+            },
+            &HashSet::from(["src/app.py"]),
+            &boundaries,
+            &mut used,
+        );
+        let mut used: Vec<String> = used.into_iter().collect();
+        used.sort();
+        assert_eq!(used, ["core", "sdk"]);
     }
 }

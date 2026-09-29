@@ -164,16 +164,17 @@ fn config_pattern_matches(
                 || glob_match(pattern, &format!("script:{script}:{name}")));
     }
     if let Some((path_pattern, symbol_pattern)) = pattern.split_once(':') {
-        return symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject, file);
+        return symbol_pattern_matches(path_pattern, symbol_pattern, subject, file);
     }
 
     match subject {
-        IssueSubject::File { path } if is_file_rule(rule) => glob_match(pattern, path),
-        IssueSubject::Distribution { name } if is_distribution_rule(rule) => {
-            glob_match(pattern, name)
-        },
+        // Each subject kind is only ever emitted by its own rules (File: CHK001,
+        // Distribution: dependency rules, Binary: CHK008, Symbol: CHK006/007),
+        // so the subject alone decides; only `Import` is shared across rules.
+        IssueSubject::File { path } => glob_match(pattern, path),
+        IssueSubject::Distribution { name } => glob_match(pattern, name),
         // The binary name itself stays accepted for backward compatibility.
-        IssueSubject::Binary { name } if rule == RuleId::Chk008 => {
+        IssueSubject::Binary { name } => {
             glob_match(pattern, name) || distribution.is_some_and(|dist| glob_match(pattern, dist))
         },
         // §18 matches dependency rules on the distribution name even when the
@@ -184,30 +185,17 @@ fn config_pattern_matches(
         IssueSubject::Import { module, file, .. } => {
             glob_match(pattern, file) || glob_match(pattern, module)
         },
-        IssueSubject::Symbol { module, name } if is_symbol_rule(rule) => symbol_pattern_matches(
-            rule,
-            pattern,
-            "*",
-            &IssueSubject::Symbol {
-                module: module.clone(),
-                name: name.clone(),
-            },
-            file,
-        ),
-        _ => false,
+        IssueSubject::Symbol { .. } => symbol_pattern_matches(pattern, "*", subject, file),
+        IssueSubject::ScriptDistribution { .. } => false,
     }
 }
 
 fn symbol_pattern_matches(
-    rule: RuleId,
     path_pattern: &str,
     symbol_pattern: &str,
     subject: &IssueSubject,
     file: Option<&str>,
 ) -> bool {
-    if !is_symbol_rule(rule) {
-        return false;
-    }
     let IssueSubject::Symbol { module, name } = subject else {
         return false;
     };
@@ -215,10 +203,6 @@ fn symbol_pattern_matches(
     let path_matches = file.is_some_and(|path| glob_match(path_pattern, path))
         || glob_match(path_pattern, &module_path);
     path_matches && glob_match(symbol_pattern, name)
-}
-
-fn is_file_rule(rule: RuleId) -> bool {
-    matches!(rule, RuleId::Chk001 | RuleId::Chk010)
 }
 
 fn is_distribution_rule(rule: RuleId) -> bool {
@@ -231,10 +215,6 @@ fn is_distribution_rule(rule: RuleId) -> bool {
             | RuleId::Chk008
             | RuleId::Chk009
     )
-}
-
-fn is_symbol_rule(rule: RuleId) -> bool {
-    matches!(rule, RuleId::Chk006 | RuleId::Chk007)
 }
 
 fn glob_match(pattern: &str, value: &str) -> bool {
@@ -567,5 +547,248 @@ mod tests {
             matcher.matches_candidate(&candidate),
             Some(SuppressReason::Config)
         );
+    }
+
+    const SCRIPT: &str = "scripts/tool.py";
+
+    fn candidate(rule: RuleId, subject: IssueSubject, origins: Vec<Origin>) -> IssueCandidate {
+        IssueCandidate {
+            rule,
+            subject,
+            severity: Severity::Error,
+            confidence: crate::config::Confidence::Certain,
+            message: "issue".to_owned(),
+            workspace_member: None,
+            origins,
+            explain: ExplainData::default(),
+        }
+    }
+
+    fn config_matcher(rule: RuleId, patterns: &[&str]) -> IgnoreMatcher {
+        let mut config = default_config();
+        config.ignore.insert(
+            rule.as_code().to_owned(),
+            patterns.iter().map(|p| (*p).to_owned()).collect(),
+        );
+        IgnoreMatcher::build(
+            &config,
+            &ParseSummary::default(),
+            &ResolutionIndex::default(),
+        )
+    }
+
+    fn directive_matcher(path: &str, directive: IgnoreDirective) -> IgnoreMatcher {
+        let mut parse = ParseSummary::default();
+        parse.modules.push(crate::parser::ParsedModule {
+            path: path.to_owned(),
+            imports: Vec::new(),
+            dynamic_imports: Vec::new(),
+            dynamic_import_prefixes: Vec::new(),
+            attribute_accesses: Vec::new(),
+            symbols: Vec::new(),
+            exports: Vec::new(),
+            ignores: vec![directive],
+            has_opaque_dynamic_import: false,
+            runs_python_file: false,
+            shell_commands: Vec::new(),
+            decorator_sites: Vec::new(),
+            diagnostics: Vec::new(),
+        });
+        IgnoreMatcher::build(&default_config(), &parse, &ResolutionIndex::default())
+    }
+
+    fn file_subject(path: &str) -> IssueSubject {
+        IssueSubject::File {
+            path: path.to_owned(),
+        }
+    }
+
+    fn unresolved_import(module: &str) -> IssueSubject {
+        IssueSubject::Import {
+            module: module.to_owned(),
+            file: APP.to_owned(),
+            line: 7,
+            distribution: None,
+        }
+    }
+
+    fn script_dependency(name: &str) -> IssueSubject {
+        IssueSubject::ScriptDistribution {
+            script: SCRIPT.to_owned(),
+            name: name.to_owned(),
+        }
+    }
+
+    fn dead_api() -> IssueSubject {
+        IssueSubject::Symbol {
+            module: "acme.api".to_owned(),
+            name: "dead_api".to_owned(),
+        }
+    }
+
+    fn api_origin() -> Vec<Origin> {
+        vec![Origin::Import {
+            file: "src/acme/api.py".to_owned(),
+            line: 12,
+            module: "acme.api".to_owned(),
+        }]
+    }
+
+    fn manifest_origin(line: u32) -> Vec<Origin> {
+        vec![Origin::Manifest(crate::manifest::DependencyOrigin {
+            file: SCRIPT.to_owned(),
+            line: Some(line),
+            label: "script dependencies".to_owned(),
+        })]
+    }
+
+    fn suppressed_by_config(matcher: &IgnoreMatcher, candidate: &IssueCandidate) -> bool {
+        matcher.matches_candidate(candidate) == Some(SuppressReason::Config)
+    }
+
+    /// §18: file rules take a path glob.
+    #[test]
+    fn config_ignore_matches_chk001_path_glob() {
+        let matcher = config_matcher(RuleId::Chk001, &["src/acme/migrations/**/*.py"]);
+        let migration = candidate(
+            RuleId::Chk001,
+            file_subject("src/acme/migrations/v1/0001_init.py"),
+            Vec::new(),
+        );
+        let app = candidate(RuleId::Chk001, file_subject(APP), Vec::new());
+
+        assert!(suppressed_by_config(&matcher, &migration));
+        assert!(!suppressed_by_config(&matcher, &app));
+    }
+
+    /// CHK010 has no distribution, so its import-site path or module is the
+    /// ignore target, and either one alone is enough.
+    #[test]
+    fn config_ignore_matches_chk010_by_path_or_module() {
+        let unresolved = candidate(RuleId::Chk010, unresolved_import("legacy.api"), Vec::new());
+
+        for pattern in ["src/acme/*.py", "legacy.*"] {
+            let matcher = config_matcher(RuleId::Chk010, &[pattern]);
+            assert!(suppressed_by_config(&matcher, &unresolved), "{pattern}");
+        }
+        for pattern in ["tests/**/*.py", "other.*"] {
+            let matcher = config_matcher(RuleId::Chk010, &[pattern]);
+            assert!(!suppressed_by_config(&matcher, &unresolved), "{pattern}");
+        }
+    }
+
+    /// PEP 723 script dependencies match on the distribution name or the
+    /// `script:<path>:<name>` target, and nothing else.
+    #[test]
+    fn config_ignore_matches_script_dependency_name_or_target() {
+        let unused = candidate(
+            RuleId::Chk002,
+            script_dependency("requests"),
+            manifest_origin(3),
+        );
+
+        for pattern in ["requests", "script:scripts/tool.py:requests"] {
+            let matcher = config_matcher(RuleId::Chk002, &[pattern]);
+            assert!(suppressed_by_config(&matcher, &unused), "{pattern}");
+        }
+        for pattern in ["boto3", "script:scripts/other.py:requests"] {
+            let matcher = config_matcher(RuleId::Chk002, &[pattern]);
+            assert!(!suppressed_by_config(&matcher, &unused), "{pattern}");
+        }
+    }
+
+    /// A symbol-rule pattern without `:` is a path glob covering every symbol.
+    #[test]
+    fn config_ignore_matches_symbol_path_without_symbol_glob() {
+        let matcher = config_matcher(RuleId::Chk006, &["src/acme/api.py"]);
+        let unused = candidate(RuleId::Chk006, dead_api(), api_origin());
+
+        assert!(suppressed_by_config(&matcher, &unused));
+    }
+
+    /// `path:symbol` needs both halves to match.
+    #[test]
+    fn config_ignore_rejects_symbol_when_name_or_path_differs() {
+        let unused = candidate(RuleId::Chk006, dead_api(), api_origin());
+
+        for pattern in ["src/acme/api.py:public_*", "src/acme/other.py:dead_*"] {
+            let matcher = config_matcher(RuleId::Chk006, &[pattern]);
+            assert!(!suppressed_by_config(&matcher, &unused), "{pattern}");
+        }
+    }
+
+    /// Without an import origin, the inline line comes from the import subject.
+    #[test]
+    fn inline_ignore_uses_import_subject_line_without_origins() {
+        let matcher = directive_matcher(
+            APP,
+            IgnoreDirective {
+                file_level: false,
+                codes: vec!["CHK010".to_owned()],
+                line: 7,
+            },
+        );
+        let unresolved = candidate(RuleId::Chk010, unresolved_import("legacy"), Vec::new());
+
+        assert_eq!(
+            matcher.matches_candidate(&unresolved),
+            Some(SuppressReason::Inline)
+        );
+    }
+
+    /// An unused script dependency is silenced on its declaration line inside
+    /// the `# /// script` block.
+    #[test]
+    fn inline_ignore_uses_script_dependency_manifest_line() {
+        let matcher = directive_matcher(
+            SCRIPT,
+            IgnoreDirective {
+                file_level: false,
+                codes: vec!["CHK002".to_owned()],
+                line: 3,
+            },
+        );
+        let on_line = candidate(
+            RuleId::Chk002,
+            script_dependency("requests"),
+            manifest_origin(3),
+        );
+        let other_line = candidate(
+            RuleId::Chk002,
+            script_dependency("requests"),
+            manifest_origin(4),
+        );
+
+        assert_eq!(
+            matcher.matches_candidate(&on_line),
+            Some(SuppressReason::Inline)
+        );
+        assert_eq!(matcher.matches_candidate(&other_line), None);
+    }
+
+    /// Without origins, the file-level directive is looked up in the file the
+    /// subject itself names.
+    #[test]
+    fn file_level_ignore_uses_subject_file_without_origins() {
+        let cases = [
+            (RuleId::Chk001, file_subject(APP), APP),
+            (RuleId::Chk010, unresolved_import("legacy"), APP),
+            (RuleId::Chk002, script_dependency("requests"), SCRIPT),
+        ];
+        for (rule, subject, path) in cases {
+            let matcher = directive_matcher(
+                path,
+                IgnoreDirective {
+                    file_level: true,
+                    codes: vec![rule.as_code().to_owned()],
+                    line: 1,
+                },
+            );
+            assert_eq!(
+                matcher.matches_candidate(&candidate(rule, subject, Vec::new())),
+                Some(SuppressReason::FileLevel),
+                "{rule:?}"
+            );
+        }
     }
 }
