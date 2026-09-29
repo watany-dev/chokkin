@@ -164,16 +164,17 @@ fn config_pattern_matches(
                 || glob_match(pattern, &format!("script:{script}:{name}")));
     }
     if let Some((path_pattern, symbol_pattern)) = pattern.split_once(':') {
-        return symbol_pattern_matches(rule, path_pattern, symbol_pattern, subject, file);
+        return symbol_pattern_matches(path_pattern, symbol_pattern, subject, file);
     }
 
     match subject {
-        IssueSubject::File { path } if is_file_rule(rule) => glob_match(pattern, path),
-        IssueSubject::Distribution { name } if is_distribution_rule(rule) => {
-            glob_match(pattern, name)
-        },
+        // Each subject kind is only ever emitted by its own rules (File: CHK001,
+        // Distribution: dependency rules, Binary: CHK008, Symbol: CHK006/007),
+        // so the subject alone decides; only `Import` is shared across rules.
+        IssueSubject::File { path } => glob_match(pattern, path),
+        IssueSubject::Distribution { name } => glob_match(pattern, name),
         // The binary name itself stays accepted for backward compatibility.
-        IssueSubject::Binary { name } if rule == RuleId::Chk008 => {
+        IssueSubject::Binary { name } => {
             glob_match(pattern, name) || distribution.is_some_and(|dist| glob_match(pattern, dist))
         },
         // §18 matches dependency rules on the distribution name even when the
@@ -184,30 +185,17 @@ fn config_pattern_matches(
         IssueSubject::Import { module, file, .. } => {
             glob_match(pattern, file) || glob_match(pattern, module)
         },
-        IssueSubject::Symbol { module, name } if is_symbol_rule(rule) => symbol_pattern_matches(
-            rule,
-            pattern,
-            "*",
-            &IssueSubject::Symbol {
-                module: module.clone(),
-                name: name.clone(),
-            },
-            file,
-        ),
-        _ => false,
+        IssueSubject::Symbol { .. } => symbol_pattern_matches(pattern, "*", subject, file),
+        IssueSubject::ScriptDistribution { .. } => false,
     }
 }
 
 fn symbol_pattern_matches(
-    rule: RuleId,
     path_pattern: &str,
     symbol_pattern: &str,
     subject: &IssueSubject,
     file: Option<&str>,
 ) -> bool {
-    if !is_symbol_rule(rule) {
-        return false;
-    }
     let IssueSubject::Symbol { module, name } = subject else {
         return false;
     };
@@ -215,10 +203,6 @@ fn symbol_pattern_matches(
     let path_matches = file.is_some_and(|path| glob_match(path_pattern, path))
         || glob_match(path_pattern, &module_path);
     path_matches && glob_match(symbol_pattern, name)
-}
-
-fn is_file_rule(rule: RuleId) -> bool {
-    matches!(rule, RuleId::Chk001 | RuleId::Chk010)
 }
 
 fn is_distribution_rule(rule: RuleId) -> bool {
@@ -231,10 +215,6 @@ fn is_distribution_rule(rule: RuleId) -> bool {
             | RuleId::Chk008
             | RuleId::Chk009
     )
-}
-
-fn is_symbol_rule(rule: RuleId) -> bool {
-    matches!(rule, RuleId::Chk006 | RuleId::Chk007)
 }
 
 fn glob_match(pattern: &str, value: &str) -> bool {

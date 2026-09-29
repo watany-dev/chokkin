@@ -236,13 +236,6 @@ fn unused_confidence(dep: &DeclaredDependency, strict: bool) -> (Confidence, Sev
     (Confidence::Certain, Severity::Error)
 }
 
-/// Whether a `types-*` stub name looks like a types stub package.
-#[must_use]
-pub(super) fn is_types_stub(name: &str) -> bool {
-    let normalized = normalize_distribution_name(name);
-    normalized.starts_with("types-") || normalized.ends_with("-stubs")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
