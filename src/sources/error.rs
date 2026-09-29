@@ -1,7 +1,5 @@
 //! Source file discovery errors.
 
-use std::path::PathBuf;
-
 /// Fatal errors during source file discovery.
 #[derive(Debug, thiserror::Error)]
 pub enum SourcesError {
@@ -12,15 +10,5 @@ pub enum SourcesError {
         pattern: String,
         /// Compiler error message.
         reason: String,
-    },
-
-    /// Filesystem failure while walking the project tree.
-    #[error("failed to read project root `{path}`")]
-    Io {
-        /// Project root path.
-        path: PathBuf,
-        /// Underlying I/O error.
-        #[source]
-        source: std::io::Error,
     },
 }

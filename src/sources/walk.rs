@@ -188,13 +188,9 @@ pub fn collect_files(
             _ => continue,
         };
 
-        let rel = path.strip_prefix(&root).map_err(|_| SourcesError::Io {
-            path: root.clone(),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "failed to strip project root prefix",
-            ),
-        })?;
+        let Ok(rel) = path.strip_prefix(&root) else {
+            continue;
+        };
         let rel_str = normalize_rel_path(rel);
 
         if !project_matcher.is_match(&rel_str) || exclude_matcher.is_match(&rel_str) {
