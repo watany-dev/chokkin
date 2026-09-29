@@ -315,6 +315,8 @@ Entry reaches File
 File reaches File
 ```
 
+実装（`src/graph/`）が edge として保持するのは `File imports Module` と `Distribution provides Module` だけで、entry/plugin/file からの到達は step 9 の BFS がその場で計算する（`ReachPredecessor` に最短経路を残す）。
+
 処理順は固定する。
 
 ```text
@@ -325,7 +327,7 @@ File reaches File
 5. config/plugin extraction  # 実装済み: src/plugins/ (`extract_plugin_hints`)
 6. Python parse              # 実装済み: src/parser/ (`parse_file`, `parse_project_sources`, attribute access)
 7. import resolution         # 実装済み: src/resolver/ (`resolve_imports`, bundled maps)
-8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`, `apply_entry_plan`)
+8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`)
 9. reachability analysis     # 実装済み: src/reachability/ (`analyze_reachability`, `trace_to_file`)
 10. dependency reconciliation # 実装済み: src/rules/deps/ (`reconcile_dependencies`, CHK002–CHK009)
 11. symbol usage analysis    # 実装済み: src/rules/symbols/ (`analyze_symbols`, CHK006–CHK007, CHK010)
@@ -808,7 +810,7 @@ chokkin/
     graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
     parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`; cold parse は `std::thread::scope` でファイル単位並列、出力は discovery 順)
     resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps, venv RECORD/entry_points, versioned stdlib)
-    entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
+    entry/       # 実装済み: pipeline step 8 (`build_entry_roots`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
     rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_dependencies`, CHK002–CHK009);
                  #           step 11 `rules/symbols/` (`analyze_symbols`, CHK006–CHK007, CHK010);

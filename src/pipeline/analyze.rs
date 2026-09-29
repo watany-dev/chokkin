@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::RuntimeOverrides;
-use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
+use crate::entry::{EntryPlan, ResolvedMode, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
@@ -219,7 +219,6 @@ fn run_analysis_core(
         &scoped_declarations(probe),
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
-    apply_entry_plan(&mut graph, &entry);
 
     let mut reachability = analyze_reachability(
         &mut graph,
