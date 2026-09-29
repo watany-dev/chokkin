@@ -376,6 +376,76 @@ mod tests {
         assert!(candidates.is_empty());
     }
 
+    /// requests is a decoy: its graph module and import must not leak into
+    /// boto3's evidence.
+    fn boto3_explain_details(build_requires: &[DeclaredDependency]) -> Vec<String> {
+        let mut graph = ProjectGraph::new(graph_root());
+        for (distribution, module) in [("boto3", "boto3.session"), ("requests", "requests")] {
+            let distribution = graph.intern_distribution(distribution);
+            let module = graph.intern_module(module.to_owned(), ModuleOrigin::ThirdParty);
+            graph.push_edge(GraphEdge::DistributionProvidesModule {
+                distribution,
+                module,
+            });
+        }
+
+        let mut resolution = ResolutionIndex::default();
+        resolution.imports.push(legacy_boto3_import());
+        resolution.imports.push(ResolvedImport {
+            import_root: "requests".to_owned(),
+            full_module: "requests".to_owned(),
+            file: "src/acme/main.py".to_owned(),
+            distribution: Some("requests".to_owned()),
+            ..legacy_boto3_import()
+        });
+
+        let reachability = ReachabilityReport::default();
+        let reachable = HashSet::from(["src/acme/main.py"]);
+        let sources = empty_sources();
+        let parse = crate::parser::ParseSummary::default();
+        let rules = RuleContext {
+            resolution: &resolution,
+            reachability: &reachability,
+            graph: &graph,
+            sources: &sources,
+            parse: &parse,
+        };
+        let evidence = UnusedEvidenceContext {
+            rules: &rules,
+            reachable: &reachable,
+            build_requires,
+        };
+
+        let candidates = detect_unused_dependencies(
+            &[&boto3_dep()],
+            &indexmap::IndexSet::new(),
+            &default_config(),
+            false,
+            Some(&evidence),
+        );
+        candidates[0].explain.details.clone()
+    }
+
+    #[test]
+    fn explain_top_level_modules_come_only_from_the_reported_distribution() {
+        let details = boto3_explain_details(&[]);
+        assert!(
+            details.contains(&"top-level modules: boto3".to_owned()),
+            "{details:?}"
+        );
+    }
+
+    #[test]
+    fn explain_notes_build_system_requires_only_for_the_same_distribution() {
+        const NOTE: &str = "also in build-system.requires (build context; not needed at runtime)";
+        let mut build = boto3_dep();
+
+        assert!(boto3_explain_details(std::slice::from_ref(&build)).contains(&NOTE.to_owned()));
+
+        build.name = "setuptools".to_owned();
+        assert!(!boto3_explain_details(&[build]).contains(&NOTE.to_owned()));
+    }
+
     fn graph_root() -> ProjectRoot {
         ProjectRoot {
             path: std::env::temp_dir(),
