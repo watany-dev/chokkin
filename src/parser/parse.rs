@@ -212,7 +212,7 @@ pub fn parse_project_sources_with_cache(
     // since changed or disappeared, so the file tracks the project instead of
     // growing with every edit.
     let mut stored = read_disk_parse_bundle(disk_cache, &root.path, &context)?;
-    let stored_ids: Vec<String> = stored.entries.keys().cloned().collect();
+    let stored_len = stored.entries.len();
 
     let pending = collect_pending(root, sources, &context, clock)?;
 
@@ -240,9 +240,9 @@ pub fn parse_project_sources_with_cache(
 
     if disk_cache.is_some() {
         let retained = retained_entries(&pending, &slots);
-        // Without a parse, the retained ids can only be a subset of the stored
-        // ones; any difference means vanished sources to prune.
-        if parsed_any || retained.entry_ids().ne(stored_ids.iter()) {
+        // Without a parse, every retained entry came out of the stored bundle,
+        // so a smaller count means vanished sources to prune.
+        if parsed_any || retained.entry_ids().count() != stored_len {
             write_disk_parse_bundle(disk_cache, &root.path, &context, &retained)?;
         }
     }
@@ -693,41 +693,6 @@ mod tests {
         .expect("parse");
 
         assert!(!temp.path().join(".chokkin").exists());
-    }
-
-    #[test]
-    fn warm_run_serves_modules_from_the_disk_bundle() {
-        let temp = TempDir::new().expect("tempdir");
-        let path = temp.path().join("app.py");
-        let settled = SystemTime::now() - std::time::Duration::from_mins(1);
-        let write_settled = |contents: &str| {
-            fs::write(&path, contents).expect("write");
-            fs::File::options()
-                .write(true)
-                .open(&path)
-                .expect("open")
-                .set_times(fs::FileTimes::new().set_modified(settled))
-                .expect("backdate mtime");
-        };
-        let (root, sources) = python_sources(temp.path(), &["app.py"]);
-        let target = TargetVersion::default_py311();
-        let disk = CacheOptions::default();
-        let imports = || {
-            parse_project_sources_with_cache(&root, &sources, &target, Some(&disk))
-                .expect("parse")
-                .modules[0]
-                .imports
-                .iter()
-                .map(|import| import.module.clone())
-                .collect::<Vec<_>>()
-        };
-
-        write_settled("import aaa\n");
-        assert_eq!(imports(), ["aaa"]);
-        // Same size and mtime keep the stat-only key, so only a bundle hit
-        // can still report the old import.
-        write_settled("import bbb\n");
-        assert_eq!(imports(), ["aaa"]);
     }
 
     #[test]

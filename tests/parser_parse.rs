@@ -299,12 +299,19 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
     let cache = chokkin::CacheOptions::default();
 
     parse_project_sources_with_cache(&root, &sources, &target, Some(&cache)).expect("first parse");
-    std::fs::write(&source_path, "import yaml\n").expect("write second source");
+    // Same size as the first source, so a matching mtime leaves only the
+    // content hash to notice the edit.
+    std::fs::write(&source_path, "import pydantic\n").expect("write second source");
     let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&cache))
         .expect("second parse");
 
     let module = second.modules.first().expect("parsed module");
-    assert!(module.imports.iter().any(|import| import.module == "yaml"));
+    assert!(
+        module
+            .imports
+            .iter()
+            .any(|import| import.module == "pydantic")
+    );
     assert!(
         !module
             .imports
@@ -561,10 +568,27 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
         "8 sources must share one bundle, found {entries:?}"
     );
 
+    let bundle = entries[0].path();
+    let backdated = std::time::SystemTime::now() - std::time::Duration::from_mins(1);
+    std::fs::File::options()
+        .write(true)
+        .open(&bundle)
+        .expect("open bundle")
+        .set_times(std::fs::FileTimes::new().set_modified(backdated))
+        .expect("backdate bundle");
+
     let warm = parse_project_sources_with_cache(&root, &sources, &target, Some(&cache_options))
         .expect("warm parse");
 
     assert_eq!(cold, warm);
+    // Any miss would parse and rewrite the bundle.
+    let modified = std::fs::metadata(&bundle)
+        .and_then(|meta| meta.modified())
+        .expect("bundle mtime");
+    assert_eq!(
+        modified, backdated,
+        "warm run must be served from the bundle"
+    );
 }
 
 #[test]
