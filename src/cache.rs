@@ -104,30 +104,11 @@ impl CacheOptions {
     /// # Errors
     ///
     /// Returns an IO error when the cache directory or bundle cannot be written.
-    pub fn write_parse_bundle(
-        &self,
-        project_root: &Path,
-        context: &CacheKeyContext,
-        bundle: &ParseCacheBundle,
-    ) -> io::Result<()> {
-        self.write_parse_json(project_root, context, bundle)
-    }
-
-    /// [`Self::write_parse_bundle`] for a bundle that borrows its modules.
     pub(crate) fn write_parse_bundle_ref(
         &self,
         project_root: &Path,
         context: &CacheKeyContext,
         bundle: &ParseCacheBundleRef<'_>,
-    ) -> io::Result<()> {
-        self.write_parse_json(project_root, context, bundle)
-    }
-
-    fn write_parse_json<T: Serialize>(
-        &self,
-        project_root: &Path,
-        context: &CacheKeyContext,
-        bundle: &T,
     ) -> io::Result<()> {
         if !self.enabled {
             return Ok(());
@@ -318,16 +299,6 @@ pub struct SourceFingerprint {
 const RACY_MTIME_WINDOW: Duration = Duration::from_secs(2);
 
 impl SourceFingerprint {
-    /// Build a conservative file fingerprint.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when metadata or file contents cannot be read.
-    pub fn from_root_relative(root: &Path, path: &str) -> io::Result<Self> {
-        let absolute = root.join(path);
-        Self::from_absolute(root, &absolute)
-    }
-
     /// Build a conservative file fingerprint from an absolute or root-relative path.
     ///
     /// # Errors
@@ -416,15 +387,6 @@ impl SourceFingerprint {
             modified_ns: None,
             content_hash: "absent".to_owned(),
         }
-    }
-
-    /// Root-relative variant of [`Self::from_absolute_stat`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error when metadata or file contents cannot be read.
-    pub fn from_root_relative_stat(root: &Path, path: &str) -> io::Result<Self> {
-        Self::from_root_relative_stat_at(root, path, SystemTime::now())
     }
 
     /// Root-relative variant of [`Self::from_absolute_stat_at`].
@@ -926,11 +888,6 @@ impl CacheKeyHasher {
         }
     }
 
-    /// Hash one boolean field.
-    pub fn field_bool(&mut self, value: bool) -> &mut Self {
-        self.write(&[u8::from(value)])
-    }
-
     /// Render the current state as lowercase hex.
     #[must_use]
     pub fn finish(&self) -> String {
@@ -969,12 +926,10 @@ mod tests {
         let root = temp_cache_test_dir("content");
         let path = root.join("src/app.py");
         std::fs::write(&path, "import requests\n").expect("write first source");
-        let first =
-            SourceFingerprint::from_root_relative(&root, "src/app.py").expect("first fingerprint");
+        let first = SourceFingerprint::from_absolute(&root, &path).expect("first fingerprint");
 
         std::fs::write(&path, "import yaml\n").expect("write second source");
-        let second =
-            SourceFingerprint::from_root_relative(&root, "src/app.py").expect("second fingerprint");
+        let second = SourceFingerprint::from_absolute(&root, &path).expect("second fingerprint");
 
         assert_eq!(first.path, "src/app.py");
         assert_eq!(second.path, "src/app.py");
@@ -999,10 +954,8 @@ mod tests {
             .expect("backdate mtime");
         drop(handle);
 
-        let stat = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
-            .expect("stat fingerprint");
-        let full =
-            SourceFingerprint::from_root_relative(&root, "src/app.py").expect("full fingerprint");
+        let stat = SourceFingerprint::from_absolute_stat(&root, &path).expect("stat fingerprint");
+        let full = SourceFingerprint::from_absolute(&root, &path).expect("full fingerprint");
 
         assert_eq!(stat.path, "src/app.py");
         assert!(stat.content_hash.is_empty());
@@ -1017,8 +970,8 @@ mod tests {
         let path = root.join("src/app.py");
         std::fs::write(&path, "import requests\n").expect("write source");
 
-        let fingerprint = SourceFingerprint::from_root_relative_stat(&root, "src/app.py")
-            .expect("stat fingerprint");
+        let fingerprint =
+            SourceFingerprint::from_absolute_stat(&root, &path).expect("stat fingerprint");
 
         assert!(
             !fingerprint.content_hash.is_empty(),
@@ -1245,14 +1198,14 @@ mod tests {
         let old = test_context("parse-v0");
         let current = test_context("parse-v1");
         options
-            .write_parse_bundle(&root, &old, &ParseCacheBundle::default())
+            .write_parse_bundle_ref(&root, &old, &ParseCacheBundleRef::default())
             .expect("write old bundle");
         let parse_dir = options.directory_path(&root).join("parse");
         // Stands in for another run's in-flight atomic write.
         std::fs::write(parse_dir.join(".chokkin-inflight"), b"").expect("write temp file");
 
         options
-            .write_parse_bundle(&root, &current, &ParseCacheBundle::default())
+            .write_parse_bundle_ref(&root, &current, &ParseCacheBundleRef::default())
             .expect("write current bundle");
 
         let current_path = options.parse_bundle_path(&root, &current);
