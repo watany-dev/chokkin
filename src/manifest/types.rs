@@ -125,21 +125,10 @@ pub struct PackageFind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UvSourceKind {
     /// `{ path = "..." }` as written, so cached manifests carry no absolute root.
-    Path {
-        /// Path string from the manifest.
-        path: String,
-        /// `editable = true`.
-        editable: bool,
-    },
+    Path(String),
     /// `{ workspace = true }`.
     Workspace,
-    /// `{ git = "..." }`.
-    Git(String),
-    /// `{ url = "..." }`.
-    Url(String),
-    /// `{ index = "..." }`.
-    Index(String),
-    /// Any other shape.
+    /// Any other shape (`git`, `url`, `index`, ...).
     Other,
 }
 
@@ -150,8 +139,6 @@ pub struct UvSource {
     pub name: String,
     /// Source kind.
     pub kind: UvSourceKind,
-    /// Source location.
-    pub origin: DependencyOrigin,
 }
 
 /// `[tool.uv] default-groups`.

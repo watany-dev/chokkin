@@ -512,7 +512,6 @@ mod tests {
                     .map(|source| crate::manifest::UvSource {
                         name: (*source).to_owned(),
                         kind: crate::manifest::UvSourceKind::Workspace,
-                        origin: origin.clone(),
                     })
                     .collect(),
                 default_groups: None,
