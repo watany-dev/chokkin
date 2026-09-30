@@ -8,7 +8,6 @@ use crate::entry::ResolvedMode;
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::symbols::SymbolReport;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
     Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject, IssueSummary, Origin,
@@ -32,7 +31,7 @@ use super::types::RuleId;
 pub fn emit_issues(
     unreachable: &ReachabilityReport,
     deps: &DependencyReport,
-    symbols: &SymbolReport,
+    symbols: &[IssueCandidate],
     parse: &ParseSummary,
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
@@ -45,7 +44,7 @@ pub fn emit_issues(
 
     let mut candidates = chk001_candidates(&unreachable.unreachable, mode);
     candidates.extend(deps.candidates.clone());
-    candidates.extend(symbols.candidates.clone());
+    candidates.extend_from_slice(symbols);
 
     sort_candidates(&mut candidates);
 
@@ -226,7 +225,6 @@ mod tests {
     use crate::manifest::DependencyOrigin;
     use crate::reachability::{ReachabilityReport, UnreachableFile};
     use crate::resolver::ResolveConfidence;
-    use crate::rules::symbols::SymbolReport;
     use crate::rules::types::{
         DependencyReport, ExplainData, IssueCandidate, IssueSubject, Severity,
     };
@@ -248,14 +246,13 @@ mod tests {
         });
 
         let deps = DependencyReport::default();
-        let symbols = SymbolReport::default();
         let parse = ParseSummary::default();
         let config = default_config();
 
         let issues = emit_issues(
             &report,
             &deps,
-            &symbols,
+            &[],
             &parse,
             &config,
             &RuntimeOverrides::default(),
@@ -309,7 +306,7 @@ mod tests {
         let issues = emit_issues(
             &report,
             &DependencyReport::default(),
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides {
@@ -351,7 +348,7 @@ mod tests {
         let report = emit_issues(
             &ReachabilityReport::default(),
             &deps,
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &config,
             &RuntimeOverrides::default(),
@@ -389,7 +386,7 @@ mod tests {
         let report = emit_issues(
             &ReachabilityReport::default(),
             &deps,
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides::default(),

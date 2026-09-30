@@ -23,7 +23,7 @@ struct EmitInputs {
     parse: chokkin::ParseSummary,
     reachability: chokkin::ReachabilityReport,
     deps: chokkin::DependencyReport,
-    symbols: chokkin::SymbolReport,
+    symbols: Vec<chokkin::IssueCandidate>,
     entry: chokkin::EntryPlan,
 }
 
