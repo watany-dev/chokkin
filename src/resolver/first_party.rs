@@ -154,7 +154,6 @@ mod tests {
                 name: "my-lib".to_owned(),
                 kind: UvSourceKind::Path(path.to_owned()),
             }],
-            default_groups: None,
         }
     }
 

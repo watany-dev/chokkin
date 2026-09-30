@@ -3,9 +3,7 @@
 use toml::Value;
 
 use super::pep508_util::normalize_distribution_name;
-use super::types::{
-    DeclaredDependency, DependencyContext, UvDefaultGroups, UvSource, UvSourceKind, UvToolSettings,
-};
+use super::types::{DeclaredDependency, DependencyContext, UvSource, UvSourceKind, UvToolSettings};
 use super::util::{DependencyPush, push_dependency};
 use super::warnings::ManifestWarning;
 
@@ -16,7 +14,7 @@ pub struct UvToolExtraction {
     pub dependencies: Vec<DeclaredDependency>,
     /// `constraint-dependencies` and `override-dependencies`.
     pub constraints: Vec<DeclaredDependency>,
-    /// Sources and default groups.
+    /// Sources.
     pub settings: UvToolSettings,
 }
 
@@ -68,25 +66,10 @@ pub fn extract_uv_tool(
         }
     }
 
-    result.settings.default_groups = uv.get("default-groups").and_then(parse_default_groups);
     if let Some(sources) = uv.get("sources").and_then(Value::as_table) {
         result.settings.sources = parse_sources(sources);
     }
     result
-}
-
-fn parse_default_groups(value: &Value) -> Option<UvDefaultGroups> {
-    match value {
-        Value::String(all) if all == "all" => Some(UvDefaultGroups::All),
-        Value::Array(items) => Some(UvDefaultGroups::Groups(
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect(),
-        )),
-        _ => None,
-    }
 }
 
 /// A source may be one table or an array of marker-scoped tables.
@@ -162,22 +145,6 @@ mod tests {
                 ("idna", "tool.uv.override-dependencies[0]"),
             ]
         );
-    }
-
-    #[test]
-    fn default_groups_accepts_list_and_all() {
-        let list = extract("[tool.uv]\ndefault-groups = [\"dev\", \"lint\"]\n");
-        assert_eq!(
-            list.settings.default_groups,
-            Some(UvDefaultGroups::Groups(vec![
-                "dev".to_owned(),
-                "lint".to_owned()
-            ]))
-        );
-        let all = extract("[tool.uv]\ndefault-groups = \"all\"\n");
-        assert_eq!(all.settings.default_groups, Some(UvDefaultGroups::All));
-        let invalid = extract("[tool.uv]\ndefault-groups = \"dev\"\n");
-        assert_eq!(invalid.settings.default_groups, None);
     }
 
     #[test]

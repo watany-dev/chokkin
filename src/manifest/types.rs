@@ -141,22 +141,11 @@ pub struct UvSource {
     pub kind: UvSourceKind,
 }
 
-/// `[tool.uv] default-groups`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UvDefaultGroups {
-    /// `default-groups = "all"`.
-    All,
-    /// Explicit group list.
-    Groups(Vec<String>),
-}
-
 /// `[tool.uv]` settings that are not dependency declarations.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UvToolSettings {
     /// `[tool.uv.sources]` entries.
     pub sources: Vec<UvSource>,
-    /// `default-groups`. Install-time default only; `--production` does not read it.
-    pub default_groups: Option<UvDefaultGroups>,
 }
 
 impl UvToolSettings {
@@ -249,7 +238,7 @@ pub struct LoadedManifest {
     /// Version constraints from `-c` requirements files and `[tool.uv]`
     /// `constraint-dependencies` / `override-dependencies`; never declarations.
     pub constraints: Vec<DeclaredDependency>,
-    /// `[tool.uv]` sources and default groups.
+    /// `[tool.uv]` sources.
     pub uv: UvToolSettings,
     /// Raw `[tool.uv.workspace]` members copied from config load (hash input).
     pub uv_workspace: Option<UvWorkspaceHint>,

@@ -510,7 +510,6 @@ mod tests {
                         kind: crate::manifest::UvSourceKind::Workspace,
                     })
                     .collect(),
-                default_groups: None,
             },
             uv_workspace: None,
             entry_points: Vec::new(),
