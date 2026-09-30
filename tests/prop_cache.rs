@@ -70,12 +70,12 @@ proptest! {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("m.py");
         std::fs::write(&path, &first).expect("write");
-        let before = SourceFingerprint::from_root_relative(dir.path(), "m.py").expect("fp");
+        let before = SourceFingerprint::from_absolute(dir.path(), &path).expect("fp");
         let mut second = first;
         let i = flip.index(second.len());
         second[i] ^= 0xff;
         std::fs::write(&path, &second).expect("write");
-        let after = SourceFingerprint::from_root_relative(dir.path(), "m.py").expect("fp");
+        let after = SourceFingerprint::from_absolute(dir.path(), &path).expect("fp");
         prop_assert_ne!(before, after);
     }
 
@@ -89,8 +89,8 @@ proptest! {
         std::fs::create_dir_all(dir.path().join(&dir_name)).expect("mkdir");
         std::fs::write(dir.path().join(&dir_name).join("m.py"), &bytes).expect("write");
         let rel = format!("{dir_name}/m.py");
-        let a = SourceFingerprint::from_root_relative(dir.path(), &rel).expect("fp");
-        let b = SourceFingerprint::from_root_relative(dir.path(), &rel).expect("fp");
+        let a = SourceFingerprint::from_absolute(dir.path(), &dir.path().join(&rel)).expect("fp");
+        let b = SourceFingerprint::from_absolute(dir.path(), &dir.path().join(&rel)).expect("fp");
         prop_assert_eq!(&a, &b);
         prop_assert_eq!(a.path, rel);
         prop_assert_eq!(a.size, bytes.len() as u64);
