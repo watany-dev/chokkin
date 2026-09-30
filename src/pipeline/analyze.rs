@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
-use crate::config::RuntimeOverrides;
-use crate::entry::{EntryPlan, ResolvedMode, build_entry_roots};
+use crate::config::{ProjectMode, RuntimeOverrides};
+use crate::entry::{EntryPlan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
@@ -37,7 +37,7 @@ pub struct AnalysisReport {
     /// Entry root plan used for reachability (step 8).
     pub entry: EntryPlan,
     /// Resolved project mode from entry construction (step 8).
-    pub entry_mode: ResolvedMode,
+    pub entry_mode: ProjectMode,
     /// Final issue report (step 12).
     pub issues: IssueReport,
     /// Fix report when `--fix` was requested (step 13).
@@ -137,7 +137,7 @@ struct AnalysisCore {
     graph: ProjectGraph,
     reachability: ReachabilityReport,
     entry: EntryPlan,
-    entry_mode: ResolvedMode,
+    entry_mode: ProjectMode,
     issues: IssueReport,
     warnings: Vec<ProbeWarning>,
 }
@@ -228,14 +228,14 @@ fn run_analysis_core(
         &entry,
         &plugins,
         &parse,
-        &entry.mode,
+        entry.mode,
         production,
     )?;
     if let Some(surface) = PublicSurface::resolve(
         probe.manifest.metadata.wheel_targets.as_ref(),
         &probe.sources.files,
     ) {
-        apply_public_surface(&mut reachability, &surface, &parse, &entry.mode);
+        apply_public_surface(&mut reachability, &surface, &parse, entry.mode);
     }
 
     let workspace_boundaries = probe
@@ -270,7 +270,7 @@ fn run_analysis_core(
         &context,
         &entry,
         &plugins,
-        &entry.mode,
+        entry.mode,
         &probe.manifest,
     );
 
@@ -281,11 +281,11 @@ fn run_analysis_core(
         &parse,
         &probe.effective_config,
         overrides,
-        &entry.mode,
+        entry.mode,
         &resolution,
     );
 
-    let entry_mode = entry.mode.clone();
+    let entry_mode = entry.mode;
 
     Ok(AnalysisCore {
         graph,

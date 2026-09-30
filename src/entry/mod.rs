@@ -10,4 +10,4 @@ mod types;
 
 pub use build::build_entry_roots;
 pub use script::add_script_roots;
-pub use types::{EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode};
+pub use types::{EntryOrigin, EntryPlan, EntryRoot, EntryWarning};

@@ -165,11 +165,10 @@ mod tests {
     use crate::config::EntrySpec;
     use crate::config::{Confidence, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::entry::{EntryPlan, EntryRoot, ResolvedMode};
+    use crate::entry::{EntryPlan, EntryRoot};
     use crate::graph::{FileNode, ModuleOrigin, add_parsed_imports};
     use crate::parser::ParsedModule;
     use crate::reachability::UnreachableFile;
-    use crate::resolver::ResolveConfidence;
     use crate::sources::{
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
     };
@@ -281,10 +280,7 @@ mod tests {
         ];
 
         let entry = EntryPlan {
-            mode: ResolvedMode {
-                mode: ProjectMode::App,
-                confidence: ResolveConfidence::Certain,
-            },
+            mode: ProjectMode::App,
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "src/acme/cli.py".to_owned(),

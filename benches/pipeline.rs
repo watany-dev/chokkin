@@ -128,7 +128,7 @@ fn bench_pipeline(c: &mut Criterion) {
                         &report.entry,
                         &plugins,
                         &parse,
-                        &report.entry_mode,
+                        report.entry_mode,
                         false,
                     )
                     .expect("reachability")

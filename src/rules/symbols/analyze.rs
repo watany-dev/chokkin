@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{Confidence, ProjectMode};
-use crate::entry::{EntryPlan, ResolvedMode};
+use crate::entry::EntryPlan;
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
 use crate::parser::{ParseSummary, ParsedModule};
@@ -30,7 +30,7 @@ pub fn analyze_symbols(
     reachability: &ReachabilityReport,
     entry: &EntryPlan,
     plugins: &PluginHints,
-    mode: &ResolvedMode,
+    mode: ProjectMode,
     graph: &ProjectGraph,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
@@ -54,7 +54,7 @@ pub fn analyze_with_context(
     context: &RuleContext<'_>,
     entry: &EntryPlan,
     plugins: &PluginHints,
-    mode: &ResolvedMode,
+    mode: ProjectMode,
     manifest: &LoadedManifest,
 ) -> Vec<IssueCandidate> {
     let RuleContext {
@@ -91,14 +91,10 @@ pub fn analyze_with_context(
         &registry,
         &reference_index,
         &external_symbols,
-        mode.mode,
+        mode,
         surface.as_ref(),
     );
-    candidates.extend(detect_unused_reexports(
-        &reexports,
-        &reference_index,
-        mode.mode,
-    ));
+    candidates.extend(detect_unused_reexports(&reexports, &reference_index, mode));
     candidates.extend(detect_unresolved_imports(
         resolution, &reachable, manifest, sources,
     ));

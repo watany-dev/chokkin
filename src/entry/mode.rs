@@ -2,10 +2,9 @@
 
 use crate::config::{ChokkinConfig, ProjectMode};
 use crate::manifest::LoadedManifest;
-use crate::resolver::ResolveConfidence;
 use crate::sources::DiscoveredSources;
 
-use super::types::{EntryCandidate, EntryWarning, ResolvedMode};
+use super::types::{EntryCandidate, EntryWarning};
 
 const APP_ENTRY_FILE_NAMES: &[&str] = &["manage.py", "asgi.py", "wsgi.py", "app.py"];
 
@@ -17,42 +16,27 @@ pub fn resolve_project_mode(
     sources: &DiscoveredSources,
     candidates: &[EntryCandidate],
     warnings: &mut Vec<EntryWarning>,
-) -> ResolvedMode {
+) -> ProjectMode {
     if config.mode != ProjectMode::Auto {
-        return ResolvedMode {
-            mode: config.mode,
-            confidence: ResolveConfidence::Certain,
-        };
+        return config.mode;
     }
 
     if let Some(member_count) = workspace_member_count(config, manifest)
         && member_count > 1
     {
         warnings.push(EntryWarning::WorkspaceMode { member_count });
-        return ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Likely,
-        };
+        return ProjectMode::App;
     }
 
     if has_clear_app_signals(manifest, candidates) {
-        return ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Certain,
-        };
+        return ProjectMode::App;
     }
 
     if is_library_project(manifest, sources) {
-        return ResolvedMode {
-            mode: ProjectMode::Library,
-            confidence: ResolveConfidence::Certain,
-        };
+        return ProjectMode::Library;
     }
 
-    ResolvedMode {
-        mode: ProjectMode::App,
-        confidence: ResolveConfidence::Likely,
-    }
+    ProjectMode::App
 }
 
 fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> Option<usize> {
@@ -172,8 +156,7 @@ mod tests {
             &[],
             &mut warnings,
         );
-        assert_eq!(mode.mode, ProjectMode::Library);
-        assert_eq!(mode.confidence, ResolveConfidence::Certain);
+        assert_eq!(mode, ProjectMode::Library);
         assert!(warnings.is_empty());
     }
 
@@ -185,7 +168,7 @@ mod tests {
         config.mode = ProjectMode::Auto;
         let mut warnings = Vec::new();
         let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[], &mut warnings);
-        assert_eq!(mode.mode, ProjectMode::Library);
+        assert_eq!(mode, ProjectMode::Library);
     }
 
     #[test]
@@ -205,12 +188,11 @@ mod tests {
         config.mode = ProjectMode::Auto;
         let mut warnings = Vec::new();
         let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[], &mut warnings);
-        assert_eq!(mode.mode, ProjectMode::App);
-        assert_eq!(mode.confidence, ResolveConfidence::Certain);
+        assert_eq!(mode, ProjectMode::App);
     }
 
     #[test]
-    fn fallback_app_mode_is_likely() {
+    fn fallback_is_app_mode() {
         let mut config = default_config();
         config.mode = ProjectMode::Auto;
         let mut warnings = Vec::new();
@@ -221,8 +203,7 @@ mod tests {
             &[],
             &mut warnings,
         );
-        assert_eq!(mode.mode, ProjectMode::App);
-        assert_eq!(mode.confidence, ResolveConfidence::Likely);
+        assert_eq!(mode, ProjectMode::App);
     }
 
     #[test]
@@ -249,6 +230,6 @@ mod tests {
             &candidates,
             &mut warnings,
         );
-        assert_eq!(mode.mode, ProjectMode::App);
+        assert_eq!(mode, ProjectMode::App);
     }
 }

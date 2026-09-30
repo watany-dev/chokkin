@@ -79,7 +79,7 @@ fn django_manage_is_entry_with_plugin_origins() {
         false,
     );
 
-    assert_eq!(plan.mode.mode, ProjectMode::App);
+    assert_eq!(plan.mode, ProjectMode::App);
     let manage = plan
         .roots
         .iter()
@@ -106,7 +106,7 @@ fn fastapi_asgi_is_auto_detected() {
 
     let paths = entry_paths(&plan);
     assert!(paths.iter().any(|path| path.contains("asgi.py")));
-    assert_eq!(plan.mode.mode, ProjectMode::App);
+    assert_eq!(plan.mode, ProjectMode::App);
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn library_only_resolves_library_mode() {
         false,
     );
 
-    assert_eq!(plan.mode.mode, ProjectMode::Library);
+    assert_eq!(plan.mode, ProjectMode::Library);
 }
 
 #[test]
