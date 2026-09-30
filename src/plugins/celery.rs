@@ -3,12 +3,12 @@
 use std::path::Path;
 
 use crate::config::PluginId;
+use crate::path_util::rel_to_root;
 
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
 use super::util::{
     decorator_suffix, push_binary, push_decorated_modules, push_symbol_ref, read_pyproject_table,
-    relative_path,
 };
 
 /// Extract Celery app references from static command configuration.
@@ -78,7 +78,7 @@ fn extract_shell_scripts(root: &Path, contrib: &mut PluginContribution) {
             let Ok(contents) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let rel = relative_path(root, &path);
+            let rel = rel_to_root(root, &path);
             for (line_index, line) in contents.lines().enumerate() {
                 let Some(app) = celery_app_arg(line) else {
                     continue;

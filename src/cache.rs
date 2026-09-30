@@ -14,7 +14,7 @@ use crate::config::ConfigSources;
 use crate::fix::atomic_write;
 use crate::manifest::{ManifestSources, lockfile_candidates};
 use crate::parser::ParsedModule;
-use crate::path_util::normalize_rel_path;
+use crate::path_util::rel_to_root;
 
 /// Default cache directory name below the project root.
 pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -682,7 +682,7 @@ fn parse_bundle_relative_path(context: &CacheKeyContext) -> PathBuf {
 }
 
 fn cache_key_path(root: &Path, path: &Path) -> String {
-    let mut key = normalize_rel_path(path.strip_prefix(root).unwrap_or(path));
+    let mut key = rel_to_root(root, path);
     // Trim in place: this runs once per source file on the warm-cache path.
     let prefix_len = key.len() - key.trim_start_matches("./").len();
     key.replace_range(..prefix_len, "");

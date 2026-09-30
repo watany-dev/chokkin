@@ -4,11 +4,12 @@ use std::path::Path;
 
 use crate::config::{EntrySpec, PluginId};
 use crate::manifest::literals::{assigned_value, parse_module, string_list};
+use crate::path_util::rel_to_root;
 use crate::sources::FileContext;
 
 use super::context::PluginContext;
 use super::types::{ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin};
-use super::util::{origin_for_file, push_binary, relative_path};
+use super::util::{origin_for_file, push_binary};
 
 /// Extract static Sphinx, `MkDocs`, and Alembic hints.
 #[must_use]
@@ -37,7 +38,7 @@ fn extract_sphinx(root: &Path, contrib: &mut PluginContribution) {
             && let Some(stmts) = parse_module(&contents)
             && let Some(scan) = assigned_value(&stmts, "extensions").and_then(string_list)
         {
-            let file = relative_path(root, &conf);
+            let file = rel_to_root(root, &conf);
             for extension in scan.values {
                 contrib.module_refs.push(ModuleReference {
                     module: extension,
@@ -84,7 +85,7 @@ fn push_entry(
     context: FileContext,
     label: &str,
 ) {
-    let rel = relative_path(root, path);
+    let rel = rel_to_root(root, path);
     contrib.entries.push(PluginEntry {
         spec: EntrySpec {
             path: rel.clone(),
