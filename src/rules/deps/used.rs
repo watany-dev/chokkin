@@ -260,7 +260,7 @@ mod tests {
     use crate::manifest::{LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata};
     use crate::parser::ImportContext;
     use crate::reachability::ReachabilityReport;
-    use crate::resolver::{ResolveConfidence, ResolvedImport, TransitiveIndex};
+    use crate::resolver::{ResolveConfidence, ResolvedImport};
 
     #[test]
     fn detects_lockfile_from_manifest_sources() {
@@ -324,7 +324,7 @@ mod tests {
                 confidence: ResolveConfidence::Certain,
             }],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::default(),
+            transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
             pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
@@ -463,7 +463,7 @@ mod tests {
                 ),
             ],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::default(),
+            transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
             pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
@@ -512,7 +512,6 @@ mod tests {
                     .map(|source| crate::manifest::UvSource {
                         name: (*source).to_owned(),
                         kind: crate::manifest::UvSourceKind::Workspace,
-                        origin: origin.clone(),
                     })
                     .collect(),
                 default_groups: None,
@@ -530,7 +529,7 @@ mod tests {
         let manifest = manifest_at(std::env::temp_dir(), "app", &[], &[]);
         assert!(!has_lockfile(&manifest, &ResolutionIndex::default()));
         let resolution = ResolutionIndex {
-            transitive: TransitiveIndex {
+            transitive: LockfileGraph {
                 edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
             },
             ..ResolutionIndex::default()

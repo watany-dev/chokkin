@@ -161,7 +161,7 @@ proptest! {
         let root = project_root_at(temp.path());
 
         let loaded = load_config(&root).expect("valid config");
-        prop_assert_eq!(loaded.effective.mode, ProjectMode::parse(mode).expect("known mode"));
+        prop_assert_eq!(loaded.effective.mode.as_str(), mode);
         prop_assert_eq!(
             loaded.effective.confidence,
             Confidence::parse(confidence).expect("known confidence")
@@ -193,10 +193,7 @@ proptest! {
         let root = project_root_at(temp.path());
 
         let loaded = load_config(&root).expect("valid config layers");
-        prop_assert_eq!(
-            loaded.effective.mode,
-            ProjectMode::parse(pyproject_mode).expect("known mode")
-        );
+        prop_assert_eq!(loaded.effective.mode.as_str(), pyproject_mode);
         prop_assert!(loaded.sources.pyproject_tool_chokkin);
     }
 
@@ -267,8 +264,11 @@ proptest! {
 
         let loaded = load_config(&root).expect("valid plugins table");
         for (&index, enabled) in &flags {
-            let plugin = PluginId::from_key(PLUGIN_KEYS[index]).expect("known plugin key");
-            prop_assert_eq!(loaded.effective.plugins.get(&plugin), Some(enabled));
+            let plugin = PluginId::all()
+                .iter()
+                .find(|plugin| plugin.as_key() == PLUGIN_KEYS[index])
+                .expect("known plugin key");
+            prop_assert_eq!(loaded.effective.plugins.get(plugin), Some(enabled));
         }
     }
 
@@ -347,8 +347,7 @@ proptest! {
         let loaded = load_config(&root).expect("valid workspaces table");
         let workspace = loaded.effective.workspaces.get(&id).expect("workspace present");
         prop_assert_eq!(workspace.path.as_str(), member_path.as_str());
-        let expected_mode = mode.map(|value| ProjectMode::parse(value).expect("known mode"));
-        prop_assert_eq!(workspace.mode, expected_mode);
+        prop_assert_eq!(workspace.mode.map(ProjectMode::as_str), mode);
     }
 
     #[test]

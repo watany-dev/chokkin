@@ -39,8 +39,8 @@ pub use baseline::{
 };
 pub use cache::{
     CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheBundle, ParseCacheKey,
-    ParseCacheStats, ParseCacheStore, SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord,
-    ScanInputFingerprints, SourceFingerprint,
+    SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord, ScanInputFingerprints,
+    SourceFingerprint,
 };
 pub use cli::{CliArgs, parse_cli_args};
 pub use config::{
@@ -49,14 +49,11 @@ pub use config::{
     UvWorkspaceHint, WorkspaceOverride, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
-pub use entry::{
-    EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
-    build_entry_roots,
-};
+pub use entry::{EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, build_entry_roots};
 pub use fix::{AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason};
 pub use graph::{
-    DistributionId, EntryId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode,
-    ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+    DistributionId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode, ModuleOrigin,
+    ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
@@ -90,14 +87,14 @@ pub use reporters::{
     RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
 };
 pub use resolver::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
-    apply_resolution_to_graph, import_root, resolve_imports,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, apply_resolution_to_graph,
+    import_root, resolve_imports,
 };
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue, SymbolId,
-    SymbolReport, WorkspaceDependencyBoundary, analyze_symbols, emit_issues, explain_issue,
-    issue_fingerprint, issue_stable_target, reconcile_dependencies,
+    IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue,
+    WorkspaceDependencyBoundary, analyze_symbols, emit_issues, explain_issue, issue_fingerprint,
+    issue_stable_target, reconcile_dependencies,
 };
 pub use sources::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

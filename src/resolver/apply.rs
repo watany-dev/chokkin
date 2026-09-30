@@ -44,10 +44,9 @@ mod tests {
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::graph::ModuleOrigin;
     use crate::graph::{FileNode, GraphEdge};
+    use crate::manifest::LockfileGraph;
     use crate::parser::ImportContext;
-    use crate::resolver::types::{
-        ResolutionIndex, ResolveConfidence, ResolvedImport, TransitiveIndex,
-    };
+    use crate::resolver::types::{ResolutionIndex, ResolveConfidence, ResolvedImport};
     use crate::sources::{FileContext, FileKind};
 
     #[test]
@@ -81,7 +80,7 @@ mod tests {
                 confidence: ResolveConfidence::Certain,
             }],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::default(),
+            transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
             pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
@@ -142,7 +141,7 @@ mod tests {
                 },
             ],
             warnings: Vec::new(),
-            transitive: TransitiveIndex::default(),
+            transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
             pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
