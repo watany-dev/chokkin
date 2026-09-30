@@ -19,7 +19,7 @@ use super::types::{
 use super::util::{
     choose_settings_path, extract_django_settings_module, find_settings_candidates,
     manifest_has_dependency, module_to_py_path, origin_for_file, parse_module_symbol,
-    relative_path, root_join,
+    relative_path,
 };
 use super::warnings::PluginsWarning;
 
@@ -94,7 +94,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         return (contrib, warnings);
     };
 
-    let settings_path_abs = root_join(root, &settings_rel);
+    let settings_path_abs = root.join(settings_rel.replace('/', std::path::MAIN_SEPARATOR_STR));
     contrib.entries.push(PluginEntry {
         spec: crate::config::EntrySpec {
             path: settings_rel.clone(),
