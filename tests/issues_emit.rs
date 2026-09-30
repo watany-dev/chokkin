@@ -76,10 +76,8 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    let reachability = analyze_reachability(
-        &mut graph, &sources, &entry, &plugins, &parse, entry.mode, false,
-    )
-    .expect("reachability");
+    let reachability = analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, false)
+        .expect("reachability");
     let deps = reconcile_with_context(
         &DependencyRuleContext {
             rules: &RuleContext {

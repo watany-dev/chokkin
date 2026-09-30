@@ -92,7 +92,6 @@ fn chain_import_reaches_transitive_modules() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -130,7 +129,6 @@ fn orphan_file_is_unreachable_in_app_mode() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -152,7 +150,6 @@ fn library_mode_caps_orphan_confidence() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -175,7 +172,6 @@ fn library_mode_unshipped_orphan_keeps_certain_confidence() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -184,7 +180,7 @@ fn library_mode_unshipped_orphan_keeps_certain_confidence() {
         &inputs.sources.files,
     )
     .expect("wheel surface");
-    apply_public_surface(&mut report, &surface, &inputs.parse, inputs.entry.mode);
+    apply_public_surface(&mut report, &surface, inputs.entry.mode);
 
     let confidence_of = |path: &str| {
         report
@@ -209,7 +205,6 @@ fn plugin_module_reference_reaches_app_package() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -233,7 +228,6 @@ fn dynamic_literal_import_reaches_target_module() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -257,7 +251,6 @@ fn django_migrations_are_framework_used() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -289,7 +282,6 @@ fn trace_to_file_returns_import_chain() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -412,7 +404,6 @@ mod golden {
             &inputs.entry,
             &inputs.plugins,
             &inputs.parse,
-            inputs.entry.mode,
             production,
         )
         .expect("reachability");
@@ -490,7 +481,6 @@ mod golden {
             &inputs.entry,
             &inputs.plugins,
             &inputs.parse,
-            inputs.entry.mode,
             false,
         )
         .expect("reachability");
@@ -537,7 +527,6 @@ fn star_imports_reach_their_source_modules() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        inputs.entry.mode,
         false,
     )
     .expect("reachability");

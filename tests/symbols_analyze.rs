@@ -70,10 +70,9 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    let reachability = analyze_reachability(
-        &mut graph, &sources, &entry, &plugins, &parse, entry.mode, production,
-    )
-    .expect("reachability");
+    let reachability =
+        analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, production)
+            .expect("reachability");
 
     SymbolInputs {
         manifest,
