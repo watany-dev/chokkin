@@ -7,10 +7,9 @@ use std::path::{Path, PathBuf};
 use chokkin::{
     Confidence, GraphEdge, ModuleOrigin, ProjectRoot, RootMarker, RuleId, RuntimeOverrides,
     Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports, analyze_reachability,
-    apply_entry_plan, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
-    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints, load_config,
-    parse_project_sources, probe_project, reconcile_dependencies, resolve_imports,
-    resolve_target_version,
+    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
+    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
+    probe_project, reconcile_dependencies, resolve_imports, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -35,7 +34,6 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
@@ -64,15 +62,8 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
-        &mut graph,
-        &sources,
-        &entry,
-        &plugins,
-        &parse,
-        &entry.mode,
-        production,
+        &mut graph, &sources, &entry, &plugins, &parse, entry.mode, production,
     )
     .expect("reachability");
     let workspace_inputs = probe_project(path, None, &RuntimeOverrides::default())
@@ -378,7 +369,7 @@ fn reachable_import_graph_is_consistent() {
         .iter()
         .filter_map(|edge| match edge {
             GraphEdge::FileImportsModule { file, module, line } => Some((*file, *module, *line)),
-            _ => None,
+            GraphEdge::DistributionProvidesModule { .. } => None,
         })
         .collect();
     let main = graph.file_id("src/acme/main.py").expect("main.py");

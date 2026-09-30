@@ -4,10 +4,7 @@ mod analyze;
 mod exports;
 mod external;
 mod graph;
-mod types;
 
 pub use analyze::analyze_symbols;
-pub use graph::SymbolId;
-pub use types::SymbolReport;
 
 pub(crate) use analyze::analyze_with_context;

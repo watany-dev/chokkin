@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, GraphEdge, ProjectMode, ProjectRoot, PublicSurface, RootMarker, TracePath,
-    TraceStep, add_parsed_imports, analyze_reachability, apply_entry_plan, apply_public_surface,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    resolve_imports, resolve_target_version, trace_to_file,
+    Confidence, ProjectMode, ProjectRoot, PublicSurface, RootMarker, TracePath, TraceStep,
+    add_parsed_imports, analyze_reachability, apply_public_surface, apply_resolution_to_graph,
+    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
+    extract_manifest, extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
+    resolve_target_version, trace_to_file,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -37,7 +37,6 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
@@ -66,7 +65,6 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
 
     ReachabilityInputs {
         manifest,
@@ -87,12 +85,12 @@ fn chain_import_reaches_transitive_modules() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
 
-    assert_eq!(inputs.entry.mode.mode, ProjectMode::App);
+    assert_eq!(inputs.entry.mode, ProjectMode::App);
     assert!(
         report
             .reachable
@@ -114,13 +112,6 @@ fn chain_import_reaches_transitive_modules() {
             .iter()
             .any(|file| file.path == "src/acme/legacy.py")
     );
-    assert!(
-        inputs
-            .graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::FileReachesFile { .. }))
-    );
 }
 
 #[test]
@@ -132,7 +123,7 @@ fn orphan_file_is_unreachable_in_app_mode() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -154,12 +145,12 @@ fn library_mode_caps_orphan_confidence() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
 
-    assert_eq!(inputs.entry.mode.mode, ProjectMode::Library);
+    assert_eq!(inputs.entry.mode, ProjectMode::Library);
     let orphan = report
         .unreachable
         .iter()
@@ -177,7 +168,7 @@ fn library_mode_unshipped_orphan_keeps_certain_confidence() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -186,7 +177,7 @@ fn library_mode_unshipped_orphan_keeps_certain_confidence() {
         &inputs.sources.files,
     )
     .expect("wheel surface");
-    apply_public_surface(&mut report, &surface, &inputs.parse, &inputs.entry.mode);
+    apply_public_surface(&mut report, &surface, &inputs.parse, inputs.entry.mode);
 
     let confidence_of = |path: &str| {
         report
@@ -211,7 +202,7 @@ fn plugin_module_reference_reaches_app_package() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -224,13 +215,6 @@ fn plugin_module_reference_reaches_app_package() {
                 .expect("myapp init")
         )
     );
-    assert!(
-        inputs
-            .graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::ConfigReferenceUsesModule { .. }))
-    );
 }
 
 #[test]
@@ -242,7 +226,7 @@ fn dynamic_literal_import_reaches_target_module() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -266,7 +250,7 @@ fn django_migrations_are_framework_used() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -298,7 +282,7 @@ fn trace_to_file_returns_import_chain() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");
@@ -343,7 +327,6 @@ mod golden {
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
     struct ReachabilitySnapshot {
         mode: String,
-        mode_confidence: String,
         entry_roots: Vec<EntryRootSnapshot>,
         reachable: Vec<String>,
         unreachable: Vec<UnreachableSnapshot>,
@@ -404,8 +387,7 @@ mod golden {
         entry_roots.sort_by(|left, right| left.path.cmp(&right.path));
 
         ReachabilitySnapshot {
-            mode: format!("{:?}", inputs.entry.mode.mode).to_ascii_lowercase(),
-            mode_confidence: format!("{:?}", inputs.entry.mode.confidence).to_ascii_lowercase(),
+            mode: format!("{:?}", inputs.entry.mode).to_ascii_lowercase(),
             entry_roots,
             reachable,
             unreachable,
@@ -423,7 +405,7 @@ mod golden {
             &inputs.entry,
             &inputs.plugins,
             &inputs.parse,
-            &inputs.entry.mode,
+            inputs.entry.mode,
             production,
         )
         .expect("reachability");
@@ -501,7 +483,7 @@ mod golden {
             &inputs.entry,
             &inputs.plugins,
             &inputs.parse,
-            &inputs.entry.mode,
+            inputs.entry.mode,
             false,
         )
         .expect("reachability");
@@ -548,7 +530,7 @@ fn star_imports_reach_their_source_modules() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.parse,
-        &inputs.entry.mode,
+        inputs.entry.mode,
         false,
     )
     .expect("reachability");

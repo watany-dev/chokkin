@@ -5,12 +5,6 @@ use crate::config::PluginId;
 /// Non-fatal conditions during plugin hint extraction.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PluginsWarning {
-    /// Plugin enabled but no recognizable config found.
-    #[error("plugin: `{}` produced no hints", .plugin.as_key())]
-    PluginNoOp {
-        /// Plugin that produced no hints.
-        plugin: PluginId,
-    },
     /// `settings.py` found but list literals could not be parsed.
     #[error("plugin: partial Django settings parse at `{path}` (fields: {})", .fields.join(", "))]
     PartialSettingsParse {

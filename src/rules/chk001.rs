@@ -1,7 +1,6 @@
 //! CHK001 unused file candidate generation (pipeline step 12).
 
-use crate::config::Confidence;
-use crate::entry::ResolvedMode;
+use crate::config::{Confidence, ProjectMode};
 use crate::reachability::UnreachableFile;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Severity};
 
@@ -9,13 +8,13 @@ use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Sev
 #[must_use]
 pub fn chk001_candidates(
     unreachable: &[UnreachableFile],
-    mode: &ResolvedMode,
+    mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
     for file in unreachable {
         let confidence = file.max_confidence;
-        let severity = chk001_severity(mode.mode, confidence);
+        let severity = chk001_severity(mode, confidence);
 
         candidates.push(IssueCandidate {
             rule: RuleId::Chk001,

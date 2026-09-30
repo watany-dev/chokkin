@@ -98,13 +98,13 @@ pub fn extract_plugin_hints_with_parse(
             PluginId::Pytest => pytest::extract(&ctx),
             PluginId::Django => django::extract(&ctx),
             PluginId::Fastapi => fastapi::extract(&ctx),
-            PluginId::Flask => flask::extract(&ctx),
-            PluginId::Celery => celery::extract(&ctx),
+            PluginId::Flask => (flask::extract(&ctx), Vec::new()),
+            PluginId::Celery => (celery::extract(&ctx), Vec::new()),
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
-                devtools::extract(*plugin, &ctx)
+                (devtools::extract(*plugin, &ctx), Vec::new())
             },
             PluginId::Sphinx | PluginId::MkDocs | PluginId::Alembic => {
-                doctools::extract(*plugin, &ctx)
+                (doctools::extract(*plugin, &ctx), Vec::new())
             },
         };
         warnings.extend(plugin_warnings);
@@ -218,9 +218,8 @@ mod tests {
         let root_path = std::env::temp_dir().join("chokkin-plugins-empty");
         let _ = std::fs::create_dir_all(&root_path);
         let root = ProjectRoot {
-            path: root_path.clone(),
+            path: root_path,
             marker: crate::discovery::RootMarker::PyProjectToml,
-            start: root_path,
         };
         let mut config = crate::default_config();
         config.plugins.insert(PluginId::Pytest, false);
@@ -276,7 +275,6 @@ mod tests {
         let root = ProjectRoot {
             path: root_path.to_path_buf(),
             marker: crate::discovery::RootMarker::PyProjectToml,
-            start: root_path.to_path_buf(),
         };
         let loaded = LoadedConfig {
             root: root.clone(),

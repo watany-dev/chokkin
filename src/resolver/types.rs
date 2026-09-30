@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::graph::ModuleOrigin;
+use crate::manifest::LockfileGraph;
 use crate::parser::ImportContext;
 
 /// Confidence in a resolved import → distribution mapping.
@@ -72,13 +73,6 @@ pub enum ResolveWarning {
     },
 }
 
-/// Transitive dependency data from lockfiles (Step 10 input).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct TransitiveIndex {
-    /// Direct dependency edges: distribution → dependencies.
-    pub edges: BTreeMap<String, Vec<String>>,
-}
-
 /// Full resolution output for steps 8–12.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolutionIndex {
@@ -87,7 +81,7 @@ pub struct ResolutionIndex {
     /// Non-fatal warnings.
     pub warnings: Vec<ResolveWarning>,
     /// Lockfile transitive edges.
-    pub transitive: TransitiveIndex,
+    pub transitive: LockfileGraph,
     /// Merged binary name → distribution map.
     pub binary_resolutions: BTreeMap<String, String>,
     /// Installed distributions that pytest auto-loads through `pytest11` entry points.

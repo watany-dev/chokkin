@@ -2,6 +2,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use crate::path_util::resolve_under_root;
+
 use super::error::FixError;
 
 /// Resolve `file` under `root` and ensure the result stays inside the project root.
@@ -27,28 +29,13 @@ pub fn resolve_contained_path(root: &Path, file: &str) -> Result<PathBuf, FixErr
     }
 
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let joined = root.join(file);
-    let canonical_joined = if let Ok(path) = std::fs::canonicalize(&joined) {
-        path
-    } else {
-        let parent = joined.parent().ok_or_else(|| FixError::Unsupported {
-            detail: format!("fix target `{file}` has no parent directory"),
-        })?;
-        let canonical_parent =
-            std::fs::canonicalize(parent).map_err(|_| FixError::Unsupported {
-                detail: format!("fix target parent for `{file}` cannot be resolved"),
-            })?;
-        let name = joined.file_name().ok_or_else(|| FixError::Unsupported {
-            detail: format!("fix target `{file}` has no file name"),
-        })?;
-        canonical_parent.join(name)
-    };
-    if !canonical_joined.starts_with(&canonical_root) {
-        return Err(FixError::Unsupported {
+    resolve_under_root(&canonical_root, &root.join(file))
+        .map_err(|_| FixError::Unsupported {
+            detail: format!("fix target parent for `{file}` cannot be resolved"),
+        })?
+        .ok_or_else(|| FixError::Unsupported {
             detail: format!("fix target `{file}` resolves outside the project root"),
-        });
-    }
-    Ok(canonical_joined)
+        })
 }
 
 #[cfg(test)]

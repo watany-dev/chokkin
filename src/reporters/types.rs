@@ -1,6 +1,6 @@
 //! Reporter identifiers and render context (pipeline step 12 / Phase 1 CLI).
 
-use crate::entry::ResolvedMode;
+use crate::config::ProjectMode;
 
 /// Built-in reporter identifiers (§2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -54,7 +54,7 @@ pub struct RenderContext {
     /// Project name from manifest metadata when available.
     pub project_name: Option<String>,
     /// Resolved analysis mode.
-    pub mode: ResolvedMode,
+    pub mode: ProjectMode,
     /// Effective `production` flag for the run.
     pub production: bool,
     /// chokkin version string.

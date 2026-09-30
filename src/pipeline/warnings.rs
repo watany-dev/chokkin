@@ -126,52 +126,20 @@ pub(super) fn collect_warnings(
     warnings
 }
 
-pub(super) fn actionable_plugin_warnings(
-    plugins: &crate::plugins::PluginHints,
-) -> Vec<ProbeWarning> {
-    plugins
-        .warnings
-        .iter()
-        .filter(|warning| !matches!(warning, PluginsWarning::PluginNoOp { .. }))
-        .cloned()
-        .map(ProbeWarning::Plugin)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::config::PluginId;
-    use crate::plugins::{PluginHints, PluginsWarning};
+    use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
 
-    use super::{ProbeWarning, actionable_plugin_warnings, write_probe_warnings};
+    use super::{ProbeWarning, write_probe_warnings};
 
     #[test]
-    fn actionable_plugin_warnings_skip_noop_and_format_remaining() {
-        let hints = PluginHints {
-            contributions: Vec::new(),
-            config_binary_usages: Vec::new(),
-            config_used_distributions: Vec::new(),
-            config_module_refs: Vec::new(),
-            warnings: vec![
-                PluginsWarning::PluginNoOp {
-                    plugin: PluginId::Pytest,
-                },
-                PluginsWarning::PartialSettingsParse {
-                    path: "mysite/settings.py".to_owned(),
-                    fields: vec!["INSTALLED_APPS".to_owned()],
-                },
-            ],
-        };
-
-        let warnings = actionable_plugin_warnings(&hints);
-
-        assert_eq!(warnings.len(), 1);
-        assert!(matches!(
-            warnings.as_slice(),
-            [ProbeWarning::Plugin(PluginsWarning::PartialSettingsParse { path, fields })]
-                if path == "mysite/settings.py" && fields.as_slice() == ["INSTALLED_APPS"]
-        ));
+    fn plugin_warning_formats_partial_settings_parse() {
+        let warnings = [ProbeWarning::Plugin(PluginsWarning::PartialSettingsParse {
+            path: "mysite/settings.py".to_owned(),
+            fields: vec!["INSTALLED_APPS".to_owned()],
+        })];
 
         let mut output = Vec::new();
         write_probe_warnings(&warnings, &mut output).unwrap();
@@ -179,18 +147,11 @@ mod tests {
 
         assert!(stderr.contains("plugin: partial Django settings parse"));
         assert!(stderr.contains("fields: INSTALLED_APPS"));
-        assert!(!stderr.contains("produced no hints"));
     }
 
     #[test]
     fn plugin_and_sources_warnings_render_exact_text() {
         let cases = [
-            (
-                ProbeWarning::Plugin(PluginsWarning::PluginNoOp {
-                    plugin: PluginId::Pytest,
-                }),
-                "plugin: `pytest` produced no hints",
-            ),
             (
                 ProbeWarning::Plugin(PluginsWarning::PartialSettingsParse {
                     path: "s.py".to_owned(),
