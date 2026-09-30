@@ -57,7 +57,7 @@ pub fn is_workspace_import(
     false
 }
 
-/// Import roots provided by `[tool.uv.sources]` path / editable entries.
+/// Import roots provided by `[tool.uv.sources]` path entries.
 ///
 /// The local tree is read at resolve time (never cached) so it cannot go
 /// stale; a tree without packages falls back to the distribution name.
@@ -65,7 +65,7 @@ pub fn is_workspace_import(
 pub fn path_source_imports(root: &Path, uv: &UvToolSettings) -> BTreeMap<String, Vec<String>> {
     let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for source in &uv.sources {
-        let UvSourceKind::Path { path, .. } = &source.kind else {
+        let UvSourceKind::Path(path) = &source.kind else {
             continue;
         };
         let metadata = ProjectMetadata {
@@ -152,15 +152,7 @@ mod tests {
         UvToolSettings {
             sources: vec![crate::manifest::UvSource {
                 name: "my-lib".to_owned(),
-                kind: UvSourceKind::Path {
-                    path: path.to_owned(),
-                    editable: false,
-                },
-                origin: crate::manifest::DependencyOrigin {
-                    file: "pyproject.toml".to_owned(),
-                    line: None,
-                    label: "tool.uv.sources.my-lib".to_owned(),
-                },
+                kind: UvSourceKind::Path(path.to_owned()),
             }],
             default_groups: None,
         }

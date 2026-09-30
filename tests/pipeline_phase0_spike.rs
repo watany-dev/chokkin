@@ -39,27 +39,19 @@ fn pipeline_phase0_spike() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut imports = Vec::new();
-    let mut distributions = Vec::new();
     for edge in graph.edges() {
-        match edge {
-            GraphEdge::FileImportsModule { file, module, line } => imports.push((
-                graph.file(*file).map(|node| node.path.as_str()),
-                graph.module(*module).map(|node| node.name.as_str()),
-                *line,
-            )),
-            GraphEdge::ManifestDeclaresDistribution { distribution, .. } => {
-                distributions.push(*distribution);
-            },
-            other => panic!("unexpected Phase 0 edge: {other:?}"),
-        }
+        let GraphEdge::FileImportsModule { file, module, line } = edge else {
+            panic!("unexpected Phase 0 edge: {edge:?}");
+        };
+        imports.push((
+            graph.file(*file).map(|node| node.path.as_str()),
+            graph.module(*module).map(|node| node.name.as_str()),
+            *line,
+        ));
     }
     assert_eq!(imports, [(Some("src/acme/main.py"), Some("requests"), 1)]);
-    assert_eq!(
-        distributions,
-        [
-            graph.distribution_id("boto3").ok_or("boto3")?,
-            graph.distribution_id("requests").ok_or("requests")?,
-        ]
-    );
+    assert_eq!(graph.distribution_count(), 2);
+    graph.distribution_id("boto3").ok_or("boto3")?;
+    graph.distribution_id("requests").ok_or("requests")?;
     Ok(())
 }

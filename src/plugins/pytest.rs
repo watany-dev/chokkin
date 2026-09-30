@@ -159,12 +159,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         contrib.binary_usages.clear();
     }
 
-    if contrib.entries.is_empty() && contrib.binary_usages.is_empty() {
-        warnings.push(PluginsWarning::PluginNoOp {
-            plugin: PluginId::Pytest,
-        });
-    }
-
     (contrib, warnings)
 }
 

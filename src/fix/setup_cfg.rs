@@ -4,7 +4,7 @@ use crate::manifest::normalize_distribution_name;
 
 use super::error::FixError;
 use super::requirements::remove_dependency_line;
-use super::write::{atomic_write, read_manifest};
+use super::write::{read_manifest, write_manifest};
 
 /// Remove a dependency from `setup.cfg` `install_requires` or extras.
 #[allow(clippy::too_many_lines)]
@@ -96,10 +96,7 @@ pub fn remove_dependency(path: &std::path::Path, distribution: &str) -> Result<S
     if contents.ends_with('\n') {
         updated.push('\n');
     }
-    atomic_write(path, updated.as_bytes(), true).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    write_manifest(path, rel, updated.as_bytes())?;
     Ok(format!("removed `{distribution}` from {rel}"))
 }
 
