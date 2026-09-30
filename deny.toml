@@ -13,7 +13,7 @@ all-features = true
 [advisories]
 ignore = []
 yanked = "deny"
-unmaintained = "workspace"
+unmaintained = "all"
 
 [licenses]
 allow = [

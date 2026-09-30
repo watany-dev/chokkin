@@ -5,6 +5,8 @@
 //! malformed lines keep surfacing as warnings. Markers and URLs are kept
 //! verbatim instead of being normalized.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
 
 use super::pep508_util::{is_strict_pep508_name, leading_name_token, normalize_distribution_name};
@@ -245,7 +247,7 @@ fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
         (_, None) => (operator, version),
     };
     // `===` compares strings, so it accepts versions PEP 440 cannot parse.
-    let Some(captures) = version_re().captures(body) else {
+    let Some(captures) = VERSION_RE.captures(body) else {
         return (operator == Operator::ExactEqual).then(|| VersionSpecifier {
             operator,
             release: Vec::new(),
@@ -287,23 +289,20 @@ fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
 
 /// PEP 440 version (the `packaging` reference pattern, anchored).
 #[allow(clippy::expect_used)]
-fn version_re() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(
-            r"(?ix)^
-            v?
-            (?:[0-9]+!)?
-            (?P<release>[0-9]+(?:\.[0-9]+)*)
-            (?P<pre>[-_.]?(?:alpha|beta|preview|pre|rc|a|b|c)[-_.]?[0-9]*)?
-            (?P<post>-[0-9]+|[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?
-            (?P<dev>[-_.]?dev[-_.]?[0-9]*)?
-            (?P<local>\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?
-            $",
-        )
-        .expect("valid PEP 440 regex")
-    })
-}
+static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ix)^
+        v?
+        (?:[0-9]+!)?
+        (?P<release>[0-9]+(?:\.[0-9]+)*)
+        (?P<pre>[-_.]?(?:alpha|beta|preview|pre|rc|a|b|c)[-_.]?[0-9]*)?
+        (?P<post>-[0-9]+|[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?
+        (?P<dev>[-_.]?dev[-_.]?[0-9]*)?
+        (?P<local>\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?
+        $",
+    )
+    .expect("valid PEP 440 regex")
+});
 
 const MARKER_VARIABLES: &[&str] = &[
     "python_version",

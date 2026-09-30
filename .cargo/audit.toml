@@ -1,4 +1,0 @@
-# cargo-audit configuration — keep in sync with deny.toml [advisories].ignore
-
-[advisories]
-ignore = []

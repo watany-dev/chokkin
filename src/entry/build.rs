@@ -52,7 +52,6 @@ pub fn build_entry_roots(
 
     let mode = resolve_project_mode(config, manifest, sources, &candidates, &mut warnings);
     let mut roots = merge_entry_candidates(candidates);
-    roots.sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
 
     EntryPlan {

@@ -18,8 +18,5 @@ pub(crate) use pytest_path::PytestImportPaths;
 pub(crate) use resolve::{ScopedDeclarations, resolve_imports_for_analysis};
 pub use resolve::{resolve_imports, resolve_imports_with_script_targets};
 pub use stdlib::StdlibRange;
-pub use types::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
-    import_root,
-};
+pub use types::{ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, import_root};
 pub use venv::VenvIndex;

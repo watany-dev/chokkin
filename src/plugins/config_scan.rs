@@ -650,9 +650,8 @@ mod tests {
         .expect("write pyproject");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let config = crate::default_config();
         let sources = DiscoveredSources {
@@ -698,9 +697,8 @@ mod tests {
         .expect("write mkdocs");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let config = crate::default_config();
         let sources = DiscoveredSources {
@@ -760,9 +758,8 @@ mod tests {
         .expect("write tox");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let mut manifest = empty_manifest(root.clone());
         manifest
@@ -829,9 +826,8 @@ mod tests {
         .expect("write tox");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let mut manifest = empty_manifest(root.clone());
         manifest

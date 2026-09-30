@@ -19,7 +19,7 @@ resolver tags member-owned imports, treats cross-member imports as first-party, 
 requires member-local direct dependency declarations, and reporters expose member ids on
 workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `--no-cache`
 (`.chokkin/cache`), and parse cache key primitives exist (`CacheKeyContext`,
-`SourceFingerprint`, `ParseCacheKey`) with in-memory `ParseCacheStore` reuse (not used by the CLI) and one disk
+`SourceFingerprint`, `ParseCacheKey`) with one disk
 `ParseCacheBundle` per context under `.chokkin/cache/parse/`; writing a bundle or
 scan record sweeps the superseded ones. Config/manifest scan input
 fingerprints and record metadata exist via `ScanInputFingerprints` / `ScanCacheKey` /
@@ -47,8 +47,9 @@ is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
 budget. PyPI **v0.1.0** through **v0.5.1** have been released.
-`src/graph/` provides skeleton nodes, import edges, distribution → module links,
-entry → file edges, and file → file reachability edges.
+`src/graph/` provides skeleton nodes, import edges, and distribution → module
+links; entry and file → file reachability is computed by the step 9 BFS, not
+stored as graph edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md` §17. Phase 4
 (v0.5, modern packaging: PEP 735 `include-group`, PEP 723 inline scripts,
 `pylock.toml` / `poetry.lock` / `pdm.lock`, `[tool.uv]`, build context, plugin
@@ -133,9 +134,9 @@ Install tools once with `make tools`.
 
 Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy
 extraction, `sources` for the file-discovery walk, `cache` for warm parse-cache
-reuse, `reachability` for reachability analysis, `resolver` for bundled map
-construction, `pipeline` for full analysis plus cold/disk-warm parse,
-reachability, and discovery after cache population) with synthetic
+reuse, `resolver` for bundled map construction, `pipeline` for full analysis
+plus cold/disk-warm parse, reachability, and discovery after cache population)
+with synthetic
 fixtures generated in `benches/support/mod.rs`. They are not part of `make check`;
 run them when touching hot paths. `pipeline` defaults to 1k ~2 KiB modules;
 set `CHOKKIN_BENCH_LARGE=1` for 5k/10k as well:

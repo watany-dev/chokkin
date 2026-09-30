@@ -27,9 +27,6 @@ pub enum ProbeError {
     /// Source file discovery failed.
     #[error(transparent)]
     Sources(#[from] SourcesError),
-    /// Invalid CLI invocation.
-    #[error("invalid CLI: {0}")]
-    Usage(String),
     /// Start path could not be canonicalized.
     #[error("failed to resolve start path: {0}")]
     StartPath(#[source] io::Error),
@@ -41,11 +38,7 @@ impl ProbeError {
     pub const fn is_usage_error(&self) -> bool {
         matches!(
             self,
-            Self::Discovery(_)
-                | Self::Config(_)
-                | Self::Manifest(_)
-                | Self::Sources(_)
-                | Self::Usage(_)
+            Self::Discovery(_) | Self::Config(_) | Self::Manifest(_) | Self::Sources(_)
         )
     }
 }
