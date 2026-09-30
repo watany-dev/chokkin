@@ -10,8 +10,8 @@
 use chokkin::config::ProjectMode;
 use chokkin::{
     Confidence, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject, RenderContext,
-    ReporterId, ResolveConfidence, ResolvedMode, RuleId, RuntimeOverrides, Severity,
-    apply_baseline, issue_fingerprint, render_issues, write_baseline,
+    ReporterId, RuleId, RuntimeOverrides, Severity, apply_baseline, issue_fingerprint,
+    render_issues, write_baseline,
 };
 use proptest::prelude::*;
 use tempfile::TempDir;
@@ -75,10 +75,7 @@ fn issue() -> impl Strategy<Value = Issue> {
 fn context() -> RenderContext {
     RenderContext {
         project_name: Some("proj \"x\"".to_owned()),
-        mode: ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Certain,
-        },
+        mode: ProjectMode::App,
         production: false,
         version: "0.0.0",
         config_label: None,

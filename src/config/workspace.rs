@@ -147,7 +147,6 @@ mod tests {
         ProjectRoot {
             path: path.to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: path.to_path_buf(),
         }
     }
 

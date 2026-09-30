@@ -1,7 +1,7 @@
 //! Realistic source sizes and disk-cache paths; setup and cleanup are untimed.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod support;
-use chokkin::plugins::extract_plugin_hints;
+use chokkin::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use chokkin::reachability::analyze_reachability;
 use chokkin::{
     AnalyzeOptions, CacheOptions, RuntimeOverrides, analyze_project,
@@ -53,16 +53,18 @@ fn bench_pipeline(c: &mut Criterion) {
         let target = resolve_target_version(&config.effective, manifest);
         let cache = CacheOptions::default();
         let disabled = CacheOptions::disabled();
-        let parse = parse_project_sources_with_cache(
-            &report.probe.root,
+        let parse =
+            parse_project_sources_with_cache(&report.probe.root, sources, &target, Some(&cache))
+                .expect("parse");
+        let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &report.probe.root,
+            config: &config,
             sources,
-            &target,
-            None,
-            Some(&cache),
-        )
-        .expect("parse");
-        let plugins = extract_plugin_hints(&report.probe.root, &config, sources, manifest, &parse)
-            .expect("plugins");
+            manifest,
+            parse: &parse,
+            cache: None,
+        })
+        .expect("plugins");
         for warm in [false, true] {
             let name = if warm { "analyze_warm" } else { "analyze_cold" };
             if warm {
@@ -99,7 +101,6 @@ fn bench_pipeline(c: &mut Criterion) {
                     &report.probe.root,
                     sources,
                     &target,
-                    None,
                     Some(&cache),
                 )
                 .expect("populate");
@@ -116,7 +117,6 @@ fn bench_pipeline(c: &mut Criterion) {
                             black_box(&report.probe.root),
                             sources,
                             &target,
-                            None,
                             Some(options),
                         )
                         .expect("parse")

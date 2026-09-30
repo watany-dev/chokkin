@@ -27,24 +27,6 @@ use super::flask;
 use super::pytest;
 use super::types::PluginHints;
 
-/// Extract framework hints from tool configuration (§6 step 5).
-pub fn extract_plugin_hints(
-    root: &ProjectRoot,
-    config: &LoadedConfig,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    parse: &ParseSummary,
-) -> Result<PluginHints, PluginsError> {
-    extract_plugin_hints_with_parse(&PluginExtractRequest {
-        root,
-        config,
-        sources,
-        manifest,
-        parse,
-        cache: None,
-    })
-}
-
 /// Inputs for [`extract_plugin_hints_with_parse`].
 #[derive(Clone, Copy)]
 pub struct PluginExtractRequest<'a> {
@@ -98,13 +80,13 @@ pub fn extract_plugin_hints_with_parse(
             PluginId::Pytest => pytest::extract(&ctx),
             PluginId::Django => django::extract(&ctx),
             PluginId::Fastapi => fastapi::extract(&ctx),
-            PluginId::Flask => flask::extract(&ctx),
-            PluginId::Celery => celery::extract(&ctx),
+            PluginId::Flask => (flask::extract(&ctx), Vec::new()),
+            PluginId::Celery => (celery::extract(&ctx), Vec::new()),
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
-                devtools::extract(*plugin, &ctx)
+                (devtools::extract(*plugin, &ctx), Vec::new())
             },
             PluginId::Sphinx | PluginId::MkDocs | PluginId::Alembic => {
-                doctools::extract(*plugin, &ctx)
+                (doctools::extract(*plugin, &ctx), Vec::new())
             },
         };
         warnings.extend(plugin_warnings);
@@ -218,9 +200,8 @@ mod tests {
         let root_path = std::env::temp_dir().join("chokkin-plugins-empty");
         let _ = std::fs::create_dir_all(&root_path);
         let root = ProjectRoot {
-            path: root_path.clone(),
+            path: root_path,
             marker: crate::discovery::RootMarker::PyProjectToml,
-            start: root_path,
         };
         let mut config = crate::default_config();
         config.plugins.insert(PluginId::Pytest, false);
@@ -261,13 +242,14 @@ mod tests {
             sources: crate::manifest::ManifestSources::default(),
             warnings: Vec::new(),
         };
-        let hints = extract_plugin_hints(
-            &loaded.root,
-            &loaded,
-            &sources,
-            &manifest,
-            &ParseSummary::default(),
-        )
+        let hints = extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &loaded.root,
+            config: &loaded,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &ParseSummary::default(),
+            cache: None,
+        })
         .expect("extract hints");
         assert!(hints.contributions.is_empty());
     }
@@ -276,7 +258,6 @@ mod tests {
         let root = ProjectRoot {
             path: root_path.to_path_buf(),
             marker: crate::discovery::RootMarker::PyProjectToml,
-            start: root_path.to_path_buf(),
         };
         let loaded = LoadedConfig {
             root: root.clone(),

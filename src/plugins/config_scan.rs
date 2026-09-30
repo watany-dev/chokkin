@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::manifest::{DependencyContext, normalize_distribution_name};
+use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
 
 use super::commands::SourceHits;
 use super::config_text::{PyprojectDoc, leading_spaces};
 use super::context::PluginContext;
 use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin};
-use super::util::relative_path;
 use super::{task_files, tool_plugins};
 
 /// Output from config scanning.
@@ -147,7 +147,7 @@ fn scan_mkdocs_config(
         if !path.is_file() {
             continue;
         }
-        let rel = relative_path(root, &path);
+        let rel = rel_to_root(root, &path);
         push_binary(
             result,
             seen,
@@ -281,7 +281,7 @@ fn scan_pre_commit_config(
     if !path.is_file() {
         return;
     }
-    let rel = relative_path(root, &path);
+    let rel = rel_to_root(root, &path);
     let origin = ReferenceOrigin {
         file: rel,
         line: None,
@@ -317,7 +317,7 @@ fn scan_tox_config(
     if !path.is_file() {
         return;
     }
-    let rel = relative_path(root, &path);
+    let rel = rel_to_root(root, &path);
     let origin = ReferenceOrigin {
         file: rel,
         line: None,
@@ -470,7 +470,7 @@ fn scan_shell_scripts(
     seen: &mut HashSet<(String, String)>,
 ) {
     for path in shell_script_paths(root) {
-        let rel = relative_path(root, &path);
+        let rel = rel_to_root(root, &path);
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -629,7 +629,7 @@ mod tests {
 
         let paths: Vec<_> = scan_input_paths(root)
             .iter()
-            .map(|path| relative_path(root, path))
+            .map(|path| rel_to_root(root, path))
             .collect();
 
         assert_eq!(
@@ -650,9 +650,8 @@ mod tests {
         .expect("write pyproject");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let config = crate::default_config();
         let sources = DiscoveredSources {
@@ -698,9 +697,8 @@ mod tests {
         .expect("write mkdocs");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let config = crate::default_config();
         let sources = DiscoveredSources {
@@ -760,9 +758,8 @@ mod tests {
         .expect("write tox");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let mut manifest = empty_manifest(root.clone());
         manifest
@@ -829,9 +826,8 @@ mod tests {
         .expect("write tox");
 
         let root = ProjectRoot {
-            path: dir.clone(),
+            path: dir,
             marker: RootMarker::PyProjectToml,
-            start: dir,
         };
         let mut manifest = empty_manifest(root.clone());
         manifest

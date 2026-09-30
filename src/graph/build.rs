@@ -4,7 +4,7 @@ use crate::manifest::LoadedManifest;
 use crate::sources::DiscoveredSources;
 
 use super::error::GraphError;
-use super::types::{FileNode, GraphEdge, ModuleOrigin, ProjectGraph};
+use super::types::{FileNode, ModuleOrigin, ProjectGraph};
 
 /// Initialize graph file and distribution nodes from pipeline steps 3–4.
 ///
@@ -33,11 +33,7 @@ pub fn build_graph_skeleton(
         if dependency.opaque {
             continue;
         }
-        let distribution_id = graph.intern_distribution(&dependency.name);
-        graph.push_edge(GraphEdge::ManifestDeclaresDistribution {
-            distribution: distribution_id,
-            source: dependency.origin.clone(),
-        });
+        graph.intern_distribution(&dependency.name);
     }
 
     Ok(graph)

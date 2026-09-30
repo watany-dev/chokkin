@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, GraphEdge, ProjectMode, ProjectRoot, PublicSurface, RootMarker, TracePath,
-    TraceStep, add_parsed_imports, analyze_reachability, apply_entry_plan, apply_public_surface,
+    Confidence, PluginExtractRequest, ProjectMode, ProjectRoot, PublicSurface, RootMarker,
+    TracePath, TraceStep, add_parsed_imports, analyze_reachability, apply_public_surface,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    resolve_imports, resolve_target_version, trace_to_file,
+    discover_sources, extract_manifest, extract_plugin_hints_with_parse, load_config,
+    parse_project_sources_with_cache, resolve_imports, resolve_target_version, trace_to_file,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -37,15 +37,21 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let plugins =
-        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
+    let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &loaded,
+        sources: &sources,
+        manifest: &manifest,
+        parse: &parse,
+        cache: None,
+    })
+    .expect("plugin hints");
     let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
@@ -66,7 +72,6 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
 
     ReachabilityInputs {
         manifest,
@@ -91,7 +96,7 @@ fn chain_import_reaches_transitive_modules() {
     )
     .expect("reachability");
 
-    assert_eq!(inputs.entry.mode.mode, ProjectMode::App);
+    assert_eq!(inputs.entry.mode, ProjectMode::App);
     assert!(
         report
             .reachable
@@ -112,13 +117,6 @@ fn chain_import_reaches_transitive_modules() {
             .unreachable
             .iter()
             .any(|file| file.path == "src/acme/legacy.py")
-    );
-    assert!(
-        inputs
-            .graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::FileReachesFile { .. }))
     );
 }
 
@@ -156,7 +154,7 @@ fn library_mode_caps_orphan_confidence() {
     )
     .expect("reachability");
 
-    assert_eq!(inputs.entry.mode.mode, ProjectMode::Library);
+    assert_eq!(inputs.entry.mode, ProjectMode::Library);
     let orphan = report
         .unreachable
         .iter()
@@ -182,7 +180,7 @@ fn library_mode_unshipped_orphan_keeps_certain_confidence() {
         &inputs.sources.files,
     )
     .expect("wheel surface");
-    apply_public_surface(&mut report, &surface, &inputs.entry.mode);
+    apply_public_surface(&mut report, &surface, inputs.entry.mode);
 
     let confidence_of = |path: &str| {
         report
@@ -218,13 +216,6 @@ fn plugin_module_reference_reaches_app_package() {
                 .file_id("myapp/__init__.py")
                 .expect("myapp init")
         )
-    );
-    assert!(
-        inputs
-            .graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::ConfigReferenceUsesModule { .. }))
     );
 }
 
@@ -335,7 +326,6 @@ mod golden {
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
     struct ReachabilitySnapshot {
         mode: String,
-        mode_confidence: String,
         entry_roots: Vec<EntryRootSnapshot>,
         reachable: Vec<String>,
         unreachable: Vec<UnreachableSnapshot>,
@@ -396,8 +386,7 @@ mod golden {
         entry_roots.sort_by(|left, right| left.path.cmp(&right.path));
 
         ReachabilitySnapshot {
-            mode: format!("{:?}", inputs.entry.mode.mode).to_ascii_lowercase(),
-            mode_confidence: format!("{:?}", inputs.entry.mode.confidence).to_ascii_lowercase(),
+            mode: format!("{:?}", inputs.entry.mode).to_ascii_lowercase(),
             entry_roots,
             reachable,
             unreachable,

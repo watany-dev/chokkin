@@ -125,21 +125,10 @@ pub struct PackageFind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UvSourceKind {
     /// `{ path = "..." }` as written, so cached manifests carry no absolute root.
-    Path {
-        /// Path string from the manifest.
-        path: String,
-        /// `editable = true`.
-        editable: bool,
-    },
+    Path(String),
     /// `{ workspace = true }`.
     Workspace,
-    /// `{ git = "..." }`.
-    Git(String),
-    /// `{ url = "..." }`.
-    Url(String),
-    /// `{ index = "..." }`.
-    Index(String),
-    /// Any other shape.
+    /// Any other shape (`git`, `url`, `index`, ...).
     Other,
 }
 
@@ -150,17 +139,6 @@ pub struct UvSource {
     pub name: String,
     /// Source kind.
     pub kind: UvSourceKind,
-    /// Source location.
-    pub origin: DependencyOrigin,
-}
-
-/// `[tool.uv] default-groups`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UvDefaultGroups {
-    /// `default-groups = "all"`.
-    All,
-    /// Explicit group list.
-    Groups(Vec<String>),
 }
 
 /// `[tool.uv]` settings that are not dependency declarations.
@@ -168,8 +146,6 @@ pub enum UvDefaultGroups {
 pub struct UvToolSettings {
     /// `[tool.uv.sources]` entries.
     pub sources: Vec<UvSource>,
-    /// `default-groups`. Install-time default only; `--production` does not read it.
-    pub default_groups: Option<UvDefaultGroups>,
 }
 
 impl UvToolSettings {
@@ -262,7 +238,7 @@ pub struct LoadedManifest {
     /// Version constraints from `-c` requirements files and `[tool.uv]`
     /// `constraint-dependencies` / `override-dependencies`; never declarations.
     pub constraints: Vec<DeclaredDependency>,
-    /// `[tool.uv]` sources and default groups.
+    /// `[tool.uv]` sources.
     pub uv: UvToolSettings,
     /// Raw `[tool.uv.workspace]` members copied from config load (hash input).
     pub uv_workspace: Option<UvWorkspaceHint>,

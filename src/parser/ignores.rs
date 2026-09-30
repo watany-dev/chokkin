@@ -1,17 +1,16 @@
 //! `# chokkin: ignore[…]` directive extraction from source text.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
 
 use super::types::IgnoreDirective;
 
 #[allow(clippy::expect_used)]
-fn ignore_re() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"#\s*chokkin:\s*(file-)?ignore\[([A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*)\]")
-            .expect("valid ignore regex")
-    })
-}
+static IGNORE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"#\s*chokkin:\s*(file-)?ignore\[([A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*)\]")
+        .expect("valid ignore regex")
+});
 
 /// Extract chokkin ignore directives from raw source.
 #[must_use]
@@ -19,7 +18,7 @@ pub fn extract_ignores(source: &str) -> Vec<IgnoreDirective> {
     let mut directives = Vec::new();
     let first_stmt_offset = first_statement_offset(source);
 
-    for caps in ignore_re().captures_iter(source) {
+    for caps in IGNORE_RE.captures_iter(source) {
         let Some(full) = caps.get(0) else {
             continue;
         };

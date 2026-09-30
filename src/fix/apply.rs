@@ -223,7 +223,6 @@ mod tests {
         ProjectRoot {
             path: path.to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: path.to_path_buf(),
         }
     }
 
@@ -371,7 +370,6 @@ mod tests {
         let root = ProjectRoot {
             path: dir.path().to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: dir.path().to_path_buf(),
         };
         let manifest = LoadedManifest {
             root: root.clone(),
@@ -635,7 +633,6 @@ mod tests {
         let member_root = ProjectRoot {
             path: member_dir,
             marker: RootMarker::PyProjectToml,
-            start: dir.path().to_path_buf(),
         };
         let mut member_manifest = empty_manifest(&member_root);
         member_manifest.sources.pyproject_toml = true;

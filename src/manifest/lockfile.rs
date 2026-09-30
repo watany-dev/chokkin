@@ -5,13 +5,15 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
+use crate::path_util::rel_to_root;
+
 use super::error::ManifestError;
 use super::pdm_lock::extract_pdm_lock;
 use super::pep508_util::normalize_distribution_name;
 use super::poetry_lock::extract_poetry_lock;
 use super::pylock::extract_pylock;
 use super::types::{LockfileGraph, LockfileKind, LockfileSource};
-use super::util::{read_to_string, relative_path};
+use super::util::read_to_string;
 use super::uv_lock::extract_uv_lock;
 
 /// Existing lockfiles directly under `root`, highest priority first
@@ -45,7 +47,7 @@ pub(super) fn extract_lockfile(
     };
     let source = LockfileSource {
         kind,
-        path: relative_path(root, &path),
+        path: rel_to_root(root, &path),
     };
     Ok(Some((source, graph)))
 }

@@ -2,12 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::path_util::rel_to_root;
+
 use super::error::ManifestError;
 use super::pep508_util::{
-    extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement,
+    extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement, requirement_name,
 };
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
-use super::util::{DependencyPush, path_is_within_root, push_dependency, relative_path};
+use super::util::{DependencyPush, path_is_within_root, push_dependency};
 use super::warnings::ManifestWarning;
 
 /// Result of parsing one or more requirements files.
@@ -73,13 +75,13 @@ fn parse_requirements_file_path(
             .include_stack
             .iter()
             .chain(std::iter::once(&canonical))
-            .map(|p| relative_path(ctx.root, p))
+            .map(|p| rel_to_root(ctx.root, p))
             .collect::<Vec<_>>()
             .join(" -> ");
         return Err(ManifestError::RequirementsCircularInclude { cycle });
     }
 
-    let rel = relative_path(ctx.root, ctx.path);
+    let rel = rel_to_root(ctx.root, ctx.path);
     ctx.result.files_read.push(rel.clone());
     ctx.include_stack.push(canonical);
 
@@ -257,9 +259,7 @@ pub fn requirements_line_distribution(line: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed.starts_with('-') {
         return None;
     }
-    super::pep508::parse_requirement(trimmed)
-        .map(|requirement| normalize_distribution_name(&requirement.name))
-        .or_else(|| extract_egg_name(trimmed))
+    requirement_name(trimmed)
 }
 
 /// pip-compatible: only `#` preceded by whitespace (or at line start) starts a comment.
@@ -346,7 +346,7 @@ fn resolve_requirements_include(
 
     for candidate in candidates.into_iter().flatten() {
         if !candidate.is_file() {
-            missing.push(relative_path(root, &candidate));
+            missing.push(rel_to_root(root, &candidate));
             continue;
         }
         if path_is_within_root(root, &candidate) {
