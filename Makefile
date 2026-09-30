@@ -92,7 +92,7 @@ coverage:
 
 ## ─── Semver ───────────────────────────────────────────────────────────────────
 semver:
-	cargo semver-checks --baseline-rev origin/main
+	cargo semver-checks --baseline-rev "$$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
 
 ## ─── Python / maturin distribution ───────────────────────────────────────────
 wheel:
