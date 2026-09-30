@@ -3,9 +3,7 @@
 use toml::Value;
 
 use super::pep508_util::normalize_distribution_name;
-use super::types::{
-    DeclaredDependency, DependencyContext, UvSource, UvSourceKind, UvToolSettings,
-};
+use super::types::{DeclaredDependency, DependencyContext, UvSource, UvSourceKind, UvToolSettings};
 use super::util::{DependencyPush, push_dependency};
 use super::warnings::ManifestWarning;
 
