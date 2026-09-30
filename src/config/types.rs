@@ -10,7 +10,7 @@ use crate::discovery::ProjectRoot;
 
 /// Project analysis mode (§5, §8). `Auto` is resolved in a later pipeline step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(try_from = "String")]
+#[serde(rename_all = "lowercase")]
 pub enum ProjectMode {
     /// Infer app vs library from manifests and layout.
     #[default]
@@ -30,24 +30,6 @@ impl ProjectMode {
             Self::App => "app",
             Self::Library => "library",
         }
-    }
-
-    /// Parse a `[tool.chokkin].mode` value.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "auto" => Some(Self::Auto),
-            "app" => Some(Self::App),
-            "library" => Some(Self::Library),
-            _ => None,
-        }
-    }
-}
-
-impl TryFrom<String> for ProjectMode {
-    type Error = String;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::parse(&value).ok_or_else(|| format!("expected auto, app, or library; got {value}"))
     }
 }
 
@@ -109,7 +91,7 @@ impl fmt::Display for Confidence {
 
 /// Per-rule severity override level (Phase 3 / v0.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "String")]
+#[serde(rename_all = "lowercase")]
 pub enum SeverityLevel {
     /// Disable the rule entirely.
     Off,
@@ -121,42 +103,9 @@ pub enum SeverityLevel {
     Error,
 }
 
-impl SeverityLevel {
-    /// Parse a `[tool.chokkin.severity]` value.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "off" => Some(Self::Off),
-            "info" => Some(Self::Info),
-            "warning" => Some(Self::Warning),
-            "error" => Some(Self::Error),
-            _ => None,
-        }
-    }
-
-    /// Stable identifier for config and reporters.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Info => "info",
-            Self::Warning => "warning",
-            Self::Error => "error",
-        }
-    }
-}
-
-impl TryFrom<String> for SeverityLevel {
-    type Error = String;
-
-    fn try_from(value: String) -> Result<Self, String> {
-        Self::parse(&value)
-            .ok_or_else(|| format!("expected one of off, info, warning, error; got {value}"))
-    }
-}
-
 /// Known chokkin plugins (§5, §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
-#[serde(try_from = "String")]
+#[serde(rename_all = "snake_case")]
 pub enum PluginId {
     /// pytest test discovery and fixtures.
     Pytest,
@@ -179,6 +128,7 @@ pub enum PluginId {
     /// Sphinx documentation configuration.
     Sphinx,
     /// `MkDocs` documentation configuration.
+    #[serde(rename = "mkdocs")]
     MkDocs,
     /// Alembic migration environment.
     Alembic,
@@ -204,25 +154,6 @@ impl PluginId {
         }
     }
 
-    /// Parse a plugin table key.
-    pub fn from_key(key: &str) -> Option<Self> {
-        match key {
-            "pytest" => Some(Self::Pytest),
-            "django" => Some(Self::Django),
-            "fastapi" => Some(Self::Fastapi),
-            "flask" => Some(Self::Flask),
-            "celery" => Some(Self::Celery),
-            "tox" => Some(Self::Tox),
-            "nox" => Some(Self::Nox),
-            "pre_commit" => Some(Self::PreCommit),
-            "github_actions" => Some(Self::GithubActions),
-            "sphinx" => Some(Self::Sphinx),
-            "mkdocs" => Some(Self::MkDocs),
-            "alembic" => Some(Self::Alembic),
-            _ => None,
-        }
-    }
-
     /// All known plugins in stable order.
     #[must_use]
     pub fn all() -> &'static [Self] {
@@ -240,14 +171,6 @@ impl PluginId {
             Self::MkDocs,
             Self::Alembic,
         ]
-    }
-}
-
-impl TryFrom<String> for PluginId {
-    type Error = String;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::from_key(&value).ok_or_else(|| format!("unknown plugin {value}"))
     }
 }
 
@@ -539,6 +462,24 @@ mod tests {
         assert!(TargetVersion::parse("python3.11").is_none());
     }
 
+    /// Deserialize a config enum from a bare string, as a TOML value would.
+    fn from_str<'de, T: Deserialize<'de>>(value: &'de str) -> Option<T> {
+        T::deserialize(
+            serde::de::IntoDeserializer::<serde::de::value::Error>::into_deserializer(value),
+        )
+        .ok()
+    }
+
+    #[test]
+    fn severity_level_accepts_only_lowercase_names() {
+        assert_eq!(from_str("off"), Some(SeverityLevel::Off));
+        assert_eq!(from_str("info"), Some(SeverityLevel::Info));
+        assert_eq!(from_str("warning"), Some(SeverityLevel::Warning));
+        assert_eq!(from_str("error"), Some(SeverityLevel::Error));
+        assert_eq!(from_str::<SeverityLevel>("Warning"), None);
+        assert_eq!(from_str::<SeverityLevel>("warn"), None);
+    }
+
     mod props {
         use super::*;
         use proptest::prelude::*;
@@ -598,7 +539,7 @@ mod tests {
             #[test]
             fn mode_and_confidence_parse_only_known_values(value in "\\PC{0,12}") {
                 prop_assert_eq!(
-                    ProjectMode::parse(&value).is_some(),
+                    from_str::<ProjectMode>(&value).is_some(),
                     matches!(value.as_str(), "auto" | "app" | "library")
                 );
                 prop_assert_eq!(
@@ -611,14 +552,14 @@ mod tests {
         #[test]
         fn plugin_id_keys_roundtrip() {
             for plugin in PluginId::all() {
-                assert_eq!(PluginId::from_key(plugin.as_key()), Some(*plugin));
+                assert_eq!(from_str(plugin.as_key()), Some(*plugin));
             }
         }
 
         #[test]
         fn mode_and_confidence_as_str_roundtrip() {
             for mode in [ProjectMode::Auto, ProjectMode::App, ProjectMode::Library] {
-                assert_eq!(ProjectMode::parse(mode.as_str()), Some(mode));
+                assert_eq!(from_str(mode.as_str()), Some(mode));
             }
             for confidence in [Confidence::Certain, Confidence::Likely, Confidence::Maybe] {
                 assert_eq!(Confidence::parse(confidence.as_str()), Some(confidence));
