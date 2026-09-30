@@ -324,13 +324,13 @@ File reaches File
 2. config load             # 実装済み: src/config/ (`load_config`)
 3. manifest extraction     # 実装済み: src/manifest/ (`extract_manifest`)
 4. source file discovery     # 実装済み: src/sources/ (`discover_sources`)
-5. config/plugin extraction  # 実装済み: src/plugins/ (`extract_plugin_hints`)
-6. Python parse              # 実装済み: src/parser/ (`parse_file`, `parse_project_sources`, attribute access)
+5. config/plugin extraction  # 実装済み: src/plugins/ (`extract_plugin_hints_with_parse`)
+6. Python parse              # 実装済み: src/parser/ (`parse_file`, `parse_project_sources_with_cache`, attribute access)
 7. import resolution         # 実装済み: src/resolver/ (`resolve_imports`, bundled maps)
 8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`)
 9. reachability analysis     # 実装済み: src/reachability/ (`analyze_reachability`, `trace_to_file`)
-10. dependency reconciliation # 実装済み: src/rules/deps/ (`reconcile_dependencies`, CHK002–CHK009)
-11. symbol usage analysis    # 実装済み: src/rules/symbols/ (`analyze_symbols`, CHK006–CHK007, CHK010)
+10. dependency reconciliation # 実装済み: src/rules/deps/ (`reconcile_with_context`, CHK002–CHK009)
+11. symbol usage analysis    # 実装済み: src/rules/symbols/ (`analyze_with_context`, CHK006–CHK007, CHK010)
 12. issue emission
 13. optional fix
 ```
@@ -808,12 +808,12 @@ chokkin/
     sources/     # 実装済み: pipeline step 4 (source file discovery)
     plugins/     # 実装済み: pipeline step 5 (config/plugin extraction)
     graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
-    parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources`; cold parse は `std::thread::scope` でファイル単位並列、出力は discovery 順)
+    parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources_with_cache`; cold parse は `std::thread::scope` でファイル単位並列、出力は discovery 順)
     resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps, venv RECORD/entry_points, versioned stdlib)
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
-    rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_dependencies`, CHK002–CHK009);
-                 #           step 11 `rules/symbols/` (`analyze_symbols`, CHK006–CHK007, CHK010);
+    rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_with_context`, CHK002–CHK009);
+                 #           step 11 `rules/symbols/` (`analyze_with_context`, CHK006–CHK007, CHK010);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
     reporters/   # 実装済み: default / compact / json / markdown reporter
     fix/         # 実装済み: step 13 (`apply_fixes_with_workspace` — pyproject/requirements/setup.cfg; atomic write, root containment)
@@ -1306,8 +1306,8 @@ step 11 symbol usage analysis (`src/rules/symbols/`) は、CHK006/CHK007 の参�
 
 step 10/11 は借用 `RuleContext` で resolution / reachability / graph / sources /
 parse を共有する。設定と strict は依存ルール固有の `DependencyRuleContext` にまとめる。
-公開 `reconcile_dependencies` / `analyze_symbols` のシグネチャは互換 wrapper として維持し、
-pipeline は context を直接渡す。候補の安定 sort（rule code → subject）は
+pipeline もライブラリ利用者も公開 `reconcile_with_context` / `analyze_with_context` に
+context を直接渡す（位置引数を並べる互換 wrapper は持たない）。候補の安定 sort（rule code → subject）は
 step 10/11/12 で同じ helper を使い、同一キーの入力順を保持する。
 
 ### bundled resolver map の再利用

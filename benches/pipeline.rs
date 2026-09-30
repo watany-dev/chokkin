@@ -1,7 +1,7 @@
 //! Realistic source sizes and disk-cache paths; setup and cleanup are untimed.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod support;
-use chokkin::plugins::extract_plugin_hints;
+use chokkin::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use chokkin::reachability::analyze_reachability;
 use chokkin::{
     AnalyzeOptions, CacheOptions, RuntimeOverrides, analyze_project,
@@ -56,8 +56,15 @@ fn bench_pipeline(c: &mut Criterion) {
         let parse =
             parse_project_sources_with_cache(&report.probe.root, sources, &target, Some(&cache))
                 .expect("parse");
-        let plugins = extract_plugin_hints(&report.probe.root, &config, sources, manifest, &parse)
-            .expect("plugins");
+        let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+            root: &report.probe.root,
+            config: &config,
+            sources,
+            manifest,
+            parse: &parse,
+            cache: None,
+        })
+        .expect("plugins");
         for warm in [false, true] {
             let name = if warm { "analyze_warm" } else { "analyze_cold" };
             if warm {

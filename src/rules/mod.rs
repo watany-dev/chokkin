@@ -2,7 +2,7 @@
 
 mod chk001;
 mod context;
-pub(crate) use context::{DependencyRuleContext, RuleContext};
+pub use context::{DependencyRuleContext, RuleContext};
 pub mod deps;
 pub mod emit;
 mod filter;
@@ -12,10 +12,8 @@ mod severity;
 pub mod symbols;
 mod types;
 
-pub use deps::reconcile_dependencies;
 pub use emit::{emit_issues, explain_issue};
 pub use metadata::{default_rule_severity, rule_help_text, rule_help_uri, rule_title};
-pub use symbols::analyze_symbols;
 pub use types::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
     IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue,

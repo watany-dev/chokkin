@@ -6,7 +6,7 @@ use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
-use crate::parser::{ParseSummary, ParsedModule};
+use crate::parser::ParsedModule;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
@@ -23,33 +23,6 @@ use super::graph::{ReferenceIndex, SymbolId, SymbolRegistry, build_registry};
 
 /// Analyze public symbol usage and unresolved imports (§12).
 #[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn analyze_symbols(
-    parse: &ParseSummary,
-    resolution: &ResolutionIndex,
-    reachability: &ReachabilityReport,
-    entry: &EntryPlan,
-    plugins: &PluginHints,
-    mode: ProjectMode,
-    graph: &ProjectGraph,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-) -> Vec<IssueCandidate> {
-    analyze_with_context(
-        &RuleContext {
-            resolution,
-            reachability,
-            graph,
-            sources,
-            parse,
-        },
-        entry,
-        plugins,
-        mode,
-        manifest,
-    )
-}
-
 pub fn analyze_with_context(
     context: &RuleContext<'_>,
     entry: &EntryPlan,

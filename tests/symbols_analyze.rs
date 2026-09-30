@@ -4,12 +4,14 @@
 
 use std::path::{Path, PathBuf};
 
+use chokkin::rules::RuleContext;
+use chokkin::rules::symbols::analyze_with_context;
 use chokkin::{
-    Confidence, ProjectRoot, RootMarker, RuleId, Severity, add_parsed_imports,
-    analyze_reachability, analyze_symbols, apply_resolution_to_graph, build_entry_roots,
+    Confidence, PluginExtractRequest, ProjectRoot, RootMarker, RuleId, Severity,
+    add_parsed_imports, analyze_reachability, apply_resolution_to_graph, build_entry_roots,
     build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
-    extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
-    resolve_target_version,
+    extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
+    resolve_imports, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -38,9 +40,16 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse = parse_project_sources(&root, &sources, &target).expect("parse");
-    let plugins =
-        extract_plugin_hints(&root, &loaded, &sources, &manifest, &parse).expect("plugin hints");
+    let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
+    let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
+        root: &root,
+        config: &loaded,
+        sources: &sources,
+        manifest: &manifest,
+        parse: &parse,
+        cache: None,
+    })
+    .expect("plugin hints");
     let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
@@ -80,15 +89,17 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
 
 fn analyze_fixture(name: &str) -> Vec<chokkin::IssueCandidate> {
     let inputs = load_symbols(&fixture(name), false);
-    analyze_symbols(
-        &inputs.parse,
-        &inputs.resolution,
-        &inputs.reachability,
+    analyze_with_context(
+        &RuleContext {
+            resolution: &inputs.resolution,
+            reachability: &inputs.reachability,
+            graph: &inputs.graph,
+            sources: &inputs.sources,
+            parse: &inputs.parse,
+        },
         &inputs.entry,
         &inputs.plugins,
         inputs.entry.mode,
-        &inputs.graph,
-        &inputs.sources,
         &inputs.manifest,
     )
 }
@@ -199,15 +210,17 @@ fn reexport_imported_from_package_is_not_chk007() {
         std::fs::write(temp.path().join(file), text).expect("write fixture");
     }
     let inputs = load_symbols(temp.path(), false);
-    let report = analyze_symbols(
-        &inputs.parse,
-        &inputs.resolution,
-        &inputs.reachability,
+    let report = analyze_with_context(
+        &RuleContext {
+            resolution: &inputs.resolution,
+            reachability: &inputs.reachability,
+            graph: &inputs.graph,
+            sources: &inputs.sources,
+            parse: &inputs.parse,
+        },
         &inputs.entry,
         &inputs.plugins,
         inputs.entry.mode,
-        &inputs.graph,
-        &inputs.sources,
         &inputs.manifest,
     );
     assert!(!has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));
@@ -328,15 +341,17 @@ fn star_import_in_init_is_not_a_reexport() {
         std::fs::write(temp.path().join(file), text).expect("write fixture");
     }
     let inputs = load_symbols(temp.path(), false);
-    let report = analyze_symbols(
-        &inputs.parse,
-        &inputs.resolution,
-        &inputs.reachability,
+    let report = analyze_with_context(
+        &RuleContext {
+            resolution: &inputs.resolution,
+            reachability: &inputs.reachability,
+            graph: &inputs.graph,
+            sources: &inputs.sources,
+            parse: &inputs.parse,
+        },
         &inputs.entry,
         &inputs.plugins,
         inputs.entry.mode,
-        &inputs.graph,
-        &inputs.sources,
         &inputs.manifest,
     );
     assert!(!has_symbol_rule(&report, RuleId::Chk007, "acme", "*"));
@@ -365,15 +380,17 @@ fn relative_package_import_counts_as_external_reference() {
         std::fs::write(temp.path().join(file), text).expect("write fixture");
     }
     let inputs = load_symbols(temp.path(), false);
-    let report = analyze_symbols(
-        &inputs.parse,
-        &inputs.resolution,
-        &inputs.reachability,
+    let report = analyze_with_context(
+        &RuleContext {
+            resolution: &inputs.resolution,
+            reachability: &inputs.reachability,
+            graph: &inputs.graph,
+            sources: &inputs.sources,
+            parse: &inputs.parse,
+        },
         &inputs.entry,
         &inputs.plugins,
         inputs.entry.mode,
-        &inputs.graph,
-        &inputs.sources,
         &inputs.manifest,
     );
     for name in ["util", "other"] {
@@ -398,15 +415,17 @@ fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::IssueCandidate> {
         std::fs::write(path, text).expect("write fixture");
     }
     let inputs = load_symbols(temp.path(), false);
-    analyze_symbols(
-        &inputs.parse,
-        &inputs.resolution,
-        &inputs.reachability,
+    analyze_with_context(
+        &RuleContext {
+            resolution: &inputs.resolution,
+            reachability: &inputs.reachability,
+            graph: &inputs.graph,
+            sources: &inputs.sources,
+            parse: &inputs.parse,
+        },
         &inputs.entry,
         &inputs.plugins,
         inputs.entry.mode,
-        &inputs.graph,
-        &inputs.sources,
         &inputs.manifest,
     )
 }

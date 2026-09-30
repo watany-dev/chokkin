@@ -5,6 +5,4 @@ mod exports;
 mod external;
 mod graph;
 
-pub use analyze::analyze_symbols;
-
-pub(crate) use analyze::analyze_with_context;
+pub use analyze::analyze_with_context;
