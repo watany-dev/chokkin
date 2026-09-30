@@ -5,10 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    EntryOrigin, EntryWarning, GraphEdge, ProjectMode, ProjectRoot, RootMarker, apply_entry_plan,
-    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
-    extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    resolve_target_version,
+    EntryOrigin, EntryWarning, ProjectMode, ProjectRoot, RootMarker, build_entry_roots,
+    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints, load_config,
+    parse_project_sources, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -34,7 +33,6 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     ProjectRoot {
         path: canonical,
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     }
 }
 
@@ -184,29 +182,6 @@ fn production_excludes_test_context_entries() {
         plan.roots
             .iter()
             .all(|root| root.context.is_included_in_production())
-    );
-}
-
-#[test]
-fn apply_entry_plan_adds_graph_edges() {
-    let inputs = load_pipeline(&plugins_fixture("django_manage"));
-    let plan = build_entry_roots(
-        &inputs.config,
-        &inputs.manifest,
-        &inputs.sources,
-        &inputs.plugins,
-        false,
-    );
-    let mut graph =
-        build_graph_skeleton(&inputs.manifest, &inputs.sources).expect("graph skeleton");
-    apply_entry_plan(&mut graph, &plan);
-
-    assert!(graph.entry_count() > 0);
-    assert!(
-        graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::EntryReachesFile { .. }))
     );
 }
 

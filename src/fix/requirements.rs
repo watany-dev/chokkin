@@ -3,7 +3,7 @@
 use crate::manifest::{normalize_distribution_name, requirements_line_distribution};
 
 use super::error::FixError;
-use super::write::{atomic_write, read_manifest};
+use super::write::{read_manifest, write_manifest};
 
 /// Remove the dependency line at `line` if it names `distribution`, or every line naming it
 /// when no line number is known.
@@ -47,10 +47,7 @@ pub fn remove_dependency_line(
         }
     }
 
-    atomic_write(path, updated.as_bytes(), true).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    write_manifest(path, rel, updated.as_bytes())?;
     Ok(format!("removed `{distribution}` from {rel}"))
 }
 

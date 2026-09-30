@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    Confidence, GraphEdge, ProjectMode, ProjectRoot, PublicSurface, RootMarker, TracePath,
-    TraceStep, add_parsed_imports, analyze_reachability, apply_entry_plan, apply_public_surface,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints, load_config, parse_project_sources,
-    resolve_imports, resolve_target_version, trace_to_file,
+    Confidence, ProjectMode, ProjectRoot, PublicSurface, RootMarker, TracePath, TraceStep,
+    add_parsed_imports, analyze_reachability, apply_public_surface, apply_resolution_to_graph,
+    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
+    extract_manifest, extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
+    resolve_target_version, trace_to_file,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -37,7 +37,6 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
@@ -66,7 +65,6 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
 
     ReachabilityInputs {
         manifest,
@@ -113,13 +111,6 @@ fn chain_import_reaches_transitive_modules() {
             .unreachable
             .iter()
             .any(|file| file.path == "src/acme/legacy.py")
-    );
-    assert!(
-        inputs
-            .graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::FileReachesFile { .. }))
     );
 }
 
@@ -223,13 +214,6 @@ fn plugin_module_reference_reaches_app_package() {
                 .file_id("myapp/__init__.py")
                 .expect("myapp init")
         )
-    );
-    assert!(
-        inputs
-            .graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::ConfigReferenceUsesModule { .. }))
     );
 }
 

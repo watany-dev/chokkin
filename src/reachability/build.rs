@@ -143,14 +143,11 @@ fn apply_framework_globs(
         });
     }
 
-    let set = build_glob_set(&patterns).map_err(|error| match error {
-        crate::sources::SourcesError::InvalidGlob { pattern, reason } => {
+    let set = build_glob_set(&patterns).map_err(
+        |crate::sources::SourcesError::InvalidGlob { pattern, reason }| {
             ReachabilityError::InvalidFrameworkGlob { pattern, reason }
         },
-        crate::sources::SourcesError::Io { .. } => ReachabilityError::Invariant {
-            detail: "unexpected I/O error while compiling framework globs".to_owned(),
-        },
-    })?;
+    )?;
 
     let mut files = IndexSet::new();
     let mut predecessors = Vec::new();
@@ -342,7 +339,6 @@ mod tests {
         let root = ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         };
         let paths: Vec<&str> = parse
             .modules

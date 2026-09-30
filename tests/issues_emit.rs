@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     Confidence, ExitStatus, ProjectRoot, ResolutionIndex, RootMarker, RuleId, RuntimeOverrides,
-    SeverityLevel, add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
+    SeverityLevel, add_parsed_imports, analyze_reachability, analyze_symbols,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
     discover_sources, emit_issues, extract_manifest, extract_plugin_hints, load_config,
     parse_project_sources, reconcile_dependencies, resolve_imports, resolve_target_version,
@@ -23,7 +23,7 @@ struct EmitInputs {
     parse: chokkin::ParseSummary,
     reachability: chokkin::ReachabilityReport,
     deps: chokkin::DependencyReport,
-    symbols: chokkin::SymbolReport,
+    symbols: Vec<chokkin::IssueCandidate>,
     entry: chokkin::EntryPlan,
 }
 
@@ -38,7 +38,6 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
@@ -67,7 +66,6 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph, &sources, &entry, &plugins, &parse, entry.mode, false,
     )

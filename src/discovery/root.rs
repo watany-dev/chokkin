@@ -53,8 +53,6 @@ pub struct ProjectRoot {
     pub path: PathBuf,
     /// Which marker caused this directory to be selected.
     pub marker: RootMarker,
-    /// Original `start` argument as passed by the caller (not canonicalized).
-    pub start: PathBuf,
 }
 
 const FILE_MARKERS: &[(&str, RootMarker)] = &[
@@ -71,11 +69,9 @@ const FILE_MARKERS: &[(&str, RootMarker)] = &[
 /// Returns [`DiscoveryError::NotFound`] if the filesystem root is reached
 /// without a match.
 pub fn discover_project_root(start: &Path) -> Result<ProjectRoot, DiscoveryError> {
-    let original_start = start.to_path_buf();
-
     if !is_directory(start)? {
         return Err(DiscoveryError::InvalidStart {
-            path: original_start,
+            path: start.to_path_buf(),
         });
     }
 
@@ -84,16 +80,12 @@ pub fn discover_project_root(start: &Path) -> Result<ProjectRoot, DiscoveryError
     loop {
         if let Some(marker) = probe_markers(&current)? {
             let path = fs::canonicalize(&current).unwrap_or(current);
-            return Ok(ProjectRoot {
-                path,
-                marker,
-                start: original_start,
-            });
+            return Ok(ProjectRoot { path, marker });
         }
 
         let Some(parent) = current.parent() else {
             return Err(DiscoveryError::NotFound {
-                start: original_start,
+                start: start.to_path_buf(),
             });
         };
 
@@ -259,7 +251,6 @@ mod tests {
                 let expected_root =
                     fs::canonicalize(temp.path()).unwrap_or_else(|_| temp.path().to_path_buf());
                 prop_assert_eq!(result.path, expected_root);
-                prop_assert_eq!(result.start, start);
                 let best = indices.iter().min().copied().expect("non-empty subset");
                 prop_assert_eq!(result.marker, FILE_MARKERS[best].1);
             }

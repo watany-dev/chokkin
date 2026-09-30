@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     Confidence, ProjectRoot, RootMarker, RuleId, Severity, add_parsed_imports,
-    analyze_reachability, analyze_symbols, apply_entry_plan, apply_resolution_to_graph,
-    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
-    extract_manifest, extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
+    analyze_reachability, analyze_symbols, apply_resolution_to_graph, build_entry_roots,
+    build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
+    extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
     resolve_target_version,
 };
 
@@ -33,7 +33,6 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
@@ -62,7 +61,6 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph, &sources, &entry, &plugins, &parse, entry.mode, production,
     )
@@ -80,7 +78,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     }
 }
 
-fn analyze_fixture(name: &str) -> chokkin::SymbolReport {
+fn analyze_fixture(name: &str) -> Vec<chokkin::IssueCandidate> {
     let inputs = load_symbols(&fixture(name), false);
     analyze_symbols(
         &inputs.parse,
@@ -96,12 +94,12 @@ fn analyze_fixture(name: &str) -> chokkin::SymbolReport {
 }
 
 fn find_symbol<'a>(
-    report: &'a chokkin::SymbolReport,
+    report: &'a [chokkin::IssueCandidate],
     rule: RuleId,
     module: &str,
     name: &str,
 ) -> Option<&'a chokkin::IssueCandidate> {
-    report.candidates.iter().find(|candidate| {
+    report.iter().find(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
@@ -111,7 +109,12 @@ fn find_symbol<'a>(
     })
 }
 
-fn has_symbol_rule(report: &chokkin::SymbolReport, rule: RuleId, module: &str, name: &str) -> bool {
+fn has_symbol_rule(
+    report: &[chokkin::IssueCandidate],
+    rule: RuleId,
+    module: &str,
+    name: &str,
+) -> bool {
     find_symbol(report, rule, module, name).is_some()
 }
 
@@ -131,7 +134,6 @@ fn unused_public_function_emits_chk006() {
         "helper"
     ));
     let dead = report
-        .candidates
         .iter()
         .find(|candidate| {
             candidate.rule == RuleId::Chk006
@@ -154,12 +156,6 @@ fn pytest_fixture_is_not_reported() {
         "acme.conftest",
         "sample_data"
     ));
-    assert!(
-        report
-            .external_symbols
-            .iter()
-            .any(|symbol| { symbol.module == "acme.conftest" && symbol.name == "sample_data" })
-    );
 }
 
 #[test]
@@ -223,7 +219,6 @@ fn reexport_source_module_is_resolved_once() {
     let report = analyze_fixture("unused_reexport");
     let source_module = |name: &str| {
         let candidate = report
-            .candidates
             .iter()
             .find(|candidate| {
                 candidate.rule == RuleId::Chk007
@@ -251,7 +246,7 @@ fn unresolved_import_emits_chk010() {
     // not turn it into a guessed third-party distribution (#361).
     for root in ["notarealpkg", "some_local_mod"] {
         assert!(
-            report.candidates.iter().any(|candidate| {
+            report.iter().any(|candidate| {
                 candidate.rule == RuleId::Chk010
                     && matches!(
                         &candidate.subject,
@@ -267,7 +262,6 @@ fn unresolved_import_emits_chk010() {
 fn library_mode_downgrades_chk006_to_info() {
     let report = analyze_fixture("library_mode");
     let unused = report
-        .candidates
         .iter()
         .find(|candidate| {
             candidate.rule == RuleId::Chk006
@@ -285,7 +279,6 @@ fn library_mode_unshipped_package_keeps_chk006_warning() {
     let report = analyze_fixture("library_wheel_targets");
     let severity_of = |symbol: &str| {
         report
-            .candidates
             .iter()
             .find(|candidate| {
                 candidate.rule == RuleId::Chk006
@@ -397,7 +390,7 @@ fn relative_package_import_counts_as_external_reference() {
     ));
 }
 
-fn analyze_generated(files: &[(&str, &str)]) -> chokkin::SymbolReport {
+fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::IssueCandidate> {
     let temp = tempfile::TempDir::new().expect("tempdir");
     for (file, text) in files {
         let path = temp.path().join(file);
@@ -513,7 +506,6 @@ fn chk006_message_names_the_symbol_kind() {
         ("LIMIT", "constant"),
     ] {
         let candidate = report
-            .candidates
             .iter()
             .find(|candidate| {
                 candidate.rule == RuleId::Chk006

@@ -188,7 +188,6 @@ mod tests {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             layout,
             effective_globs: Vec::new(),

@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
-use crate::entry::{EntryPlan, apply_entry_plan, build_entry_roots};
+use crate::entry::{EntryPlan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
@@ -23,7 +23,7 @@ use crate::sources::PublicSurface;
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project_with_cache};
-use super::warnings::{ProbeWarning, actionable_plugin_warnings};
+use super::warnings::ProbeWarning;
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,13 +164,10 @@ fn run_analysis_core(
         .clone()
         .unwrap_or_else(crate::config::TargetVersion::default_py311);
 
-    // No in-memory store: a single run parses each source once, so it would
-    // only add a copy of every module next to the disk bundle.
     let parse = parse_project_sources_with_cache(
         &probe.root,
         &probe.sources,
         &target,
-        None,
         Some(&options.cache),
     )?;
 
@@ -185,7 +182,12 @@ fn run_analysis_core(
         parse: &parse,
         cache: Some(&options.cache),
     })?;
-    let warnings = actionable_plugin_warnings(&plugins);
+    let warnings: Vec<ProbeWarning> = plugins
+        .warnings
+        .iter()
+        .cloned()
+        .map(ProbeWarning::Plugin)
+        .collect();
 
     let mut entry = build_entry_roots(
         &probe.effective_config,
@@ -219,7 +221,6 @@ fn run_analysis_core(
         &scoped_declarations(probe),
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
-    apply_entry_plan(&mut graph, &entry);
 
     let mut reachability = analyze_reachability(
         &mut graph,

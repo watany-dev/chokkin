@@ -53,14 +53,9 @@ fn bench_pipeline(c: &mut Criterion) {
         let target = resolve_target_version(&config.effective, manifest);
         let cache = CacheOptions::default();
         let disabled = CacheOptions::disabled();
-        let parse = parse_project_sources_with_cache(
-            &report.probe.root,
-            sources,
-            &target,
-            None,
-            Some(&cache),
-        )
-        .expect("parse");
+        let parse =
+            parse_project_sources_with_cache(&report.probe.root, sources, &target, Some(&cache))
+                .expect("parse");
         let plugins = extract_plugin_hints(&report.probe.root, &config, sources, manifest, &parse)
             .expect("plugins");
         for warm in [false, true] {
@@ -99,7 +94,6 @@ fn bench_pipeline(c: &mut Criterion) {
                     &report.probe.root,
                     sources,
                     &target,
-                    None,
                     Some(&cache),
                 )
                 .expect("populate");
@@ -116,7 +110,6 @@ fn bench_pipeline(c: &mut Criterion) {
                             black_box(&report.probe.root),
                             sources,
                             &target,
-                            None,
                             Some(options),
                         )
                         .expect("parse")
