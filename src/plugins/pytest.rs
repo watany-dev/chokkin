@@ -5,6 +5,7 @@
 use std::path::Path;
 
 use crate::config::PluginId;
+use crate::path_util::rel_to_root;
 use crate::sources::FileContext;
 
 use super::context::PluginContext;
@@ -14,7 +15,6 @@ use super::types::{
 use super::util::{
     IniSection, match_paths_against_globs, origin_for_file, parse_path_list,
     pytest_ini_options_from_pyproject, pytest_test_globs, read_ini_section, read_pyproject_table,
-    relative_path,
 };
 use super::warnings::PluginsWarning;
 
@@ -73,7 +73,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
             Ok(section) if section.is_empty() => {
                 if warn_if_empty {
                     warnings.push(PluginsWarning::PytestConfigUnreadable {
-                        path: relative_path(root, &path),
+                        path: rel_to_root(root, &path),
                     });
                 }
             },
@@ -157,12 +157,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         && !super::util::manifest_has_dependency(ctx.manifest, "pytest")
     {
         contrib.binary_usages.clear();
-    }
-
-    if contrib.entries.is_empty() && contrib.binary_usages.is_empty() {
-        warnings.push(PluginsWarning::PluginNoOp {
-            plugin: PluginId::Pytest,
-        });
     }
 
     (contrib, warnings)

@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::RuntimeOverrides;
-use crate::entry::{EntryPlan, ResolvedMode, apply_entry_plan, build_entry_roots};
+use crate::entry::{EntryPlan, build_entry_roots};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
@@ -23,7 +23,7 @@ use crate::sources::PublicSurface;
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project_with_cache};
-use super::warnings::{ProbeWarning, actionable_plugin_warnings};
+use super::warnings::ProbeWarning;
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,8 +36,6 @@ pub struct AnalysisReport {
     pub reachability: ReachabilityReport,
     /// Entry root plan used for reachability (step 8).
     pub entry: EntryPlan,
-    /// Resolved project mode from entry construction (step 8).
-    pub entry_mode: ResolvedMode,
     /// Final issue report (step 12).
     pub issues: IssueReport,
     /// Fix report when `--fix` was requested (step 13).
@@ -110,7 +108,6 @@ pub fn analyze_project(
         graph: core.graph,
         reachability: core.reachability,
         entry: core.entry,
-        entry_mode: core.entry_mode,
         issues: core.issues,
         fix,
         baseline,
@@ -137,7 +134,6 @@ struct AnalysisCore {
     graph: ProjectGraph,
     reachability: ReachabilityReport,
     entry: EntryPlan,
-    entry_mode: ResolvedMode,
     issues: IssueReport,
     warnings: Vec<ProbeWarning>,
 }
@@ -164,13 +160,10 @@ fn run_analysis_core(
         .clone()
         .unwrap_or_else(crate::config::TargetVersion::default_py311);
 
-    // No in-memory store: a single run parses each source once, so it would
-    // only add a copy of every module next to the disk bundle.
     let parse = parse_project_sources_with_cache(
         &probe.root,
         &probe.sources,
         &target,
-        None,
         Some(&options.cache),
     )?;
 
@@ -185,7 +178,12 @@ fn run_analysis_core(
         parse: &parse,
         cache: Some(&options.cache),
     })?;
-    let warnings = actionable_plugin_warnings(&plugins);
+    let warnings: Vec<ProbeWarning> = plugins
+        .warnings
+        .iter()
+        .cloned()
+        .map(ProbeWarning::Plugin)
+        .collect();
 
     let mut entry = build_entry_roots(
         &probe.effective_config,
@@ -219,7 +217,6 @@ fn run_analysis_core(
         &scoped_declarations(probe),
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
-    apply_entry_plan(&mut graph, &entry);
 
     let mut reachability = analyze_reachability(
         &mut graph,
@@ -227,14 +224,13 @@ fn run_analysis_core(
         &entry,
         &plugins,
         &parse,
-        &entry.mode,
         production,
     )?;
     if let Some(surface) = PublicSurface::resolve(
         probe.manifest.metadata.wheel_targets.as_ref(),
         &probe.sources.files,
     ) {
-        apply_public_surface(&mut reachability, &surface, &parse, &entry.mode);
+        apply_public_surface(&mut reachability, &surface, entry.mode);
     }
 
     let workspace_boundaries = probe
@@ -269,7 +265,7 @@ fn run_analysis_core(
         &context,
         &entry,
         &plugins,
-        &entry.mode,
+        entry.mode,
         &probe.manifest,
     );
 
@@ -280,17 +276,14 @@ fn run_analysis_core(
         &parse,
         &probe.effective_config,
         overrides,
-        &entry.mode,
+        entry.mode,
         &resolution,
     );
-
-    let entry_mode = entry.mode.clone();
 
     Ok(AnalysisCore {
         graph,
         reachability,
         entry,
-        entry_mode,
         issues,
         warnings,
     })

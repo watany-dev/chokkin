@@ -2,9 +2,11 @@
 
 use std::path::Path;
 
+use crate::path_util::rel_to_root;
+
 use super::error::ManifestError;
 use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
-use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
+use super::util::{DependencyPush, push_dependency, read_to_string};
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.cfg`.
@@ -21,7 +23,7 @@ pub struct SetupCfgExtraction {
 /// Extract manifest data from `setup.cfg`.
 pub fn extract_setup_cfg(root: &Path, path: &Path) -> Result<SetupCfgExtraction, ManifestError> {
     let contents = read_to_string(path)?;
-    let rel = relative_path(root, path);
+    let rel = rel_to_root(root, path);
     let mut result = SetupCfgExtraction::default();
 
     let sections = parse_ini_sections(&contents);

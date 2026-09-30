@@ -85,7 +85,7 @@ fn main() -> ExitCode {
         &overrides,
         args.analyze_options(),
     ) {
-        Ok(report) => run_analysis(&args, report),
+        Ok(report) => run_analysis(&args, &report),
         Err(error) => fail(&error, error.is_usage_error()),
     }
 }
@@ -114,7 +114,7 @@ fn run_probe(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverr
     }
 }
 
-fn run_analysis(args: &CliArgs, report: AnalysisReport) -> ExitCode {
+fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
     if write_probe_warnings(&report.probe.warnings, &mut std::io::stderr()).is_err()
         || write_probe_warnings(&report.warnings, &mut std::io::stderr()).is_err()
     {
@@ -152,7 +152,7 @@ fn run_analysis(args: &CliArgs, report: AnalysisReport) -> ExitCode {
 
     let context = RenderContext {
         project_name: report.probe.manifest.metadata.name.clone(),
-        mode: report.entry_mode,
+        mode: report.entry.mode,
         production: report.probe.effective_config.production,
         version: VERSION,
         config_label: Some(config_label_from_sources(&report.probe.config_sources)),

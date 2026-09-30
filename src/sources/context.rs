@@ -17,10 +17,6 @@ pub fn assign_file_context(path: &str) -> FileContext {
     if path.starts_with("scripts/") || path == "noxfile.py" {
         return FileContext::Dev;
     }
-    if path.starts_with("src/") {
-        return FileContext::Runtime;
-    }
-
     FileContext::Runtime
 }
 
@@ -28,9 +24,7 @@ fn is_test_path(path: &str) -> bool {
     if path.starts_with("tests/") {
         return true;
     }
-    let Some(file_name) = path.rsplit('/').next() else {
-        return false;
-    };
+    let file_name = path.rsplit('/').next().unwrap_or(path);
     if file_name == "conftest.py" {
         return true;
     }

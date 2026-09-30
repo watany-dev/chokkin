@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{Confidence, ProjectMode};
-use crate::entry::{EntryPlan, ResolvedMode};
+use crate::entry::EntryPlan;
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
-use crate::parser::{ParseSummary, ParsedModule};
+use crate::parser::ParsedModule;
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
@@ -20,44 +20,16 @@ use crate::sources::{DiscoveredSources, PublicSurface, path_to_module};
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
-use super::types::SymbolReport;
 
 /// Analyze public symbol usage and unresolved imports (§12).
 #[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn analyze_symbols(
-    parse: &ParseSummary,
-    resolution: &ResolutionIndex,
-    reachability: &ReachabilityReport,
-    entry: &EntryPlan,
-    plugins: &PluginHints,
-    mode: &ResolvedMode,
-    graph: &ProjectGraph,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-) -> SymbolReport {
-    analyze_with_context(
-        &RuleContext {
-            resolution,
-            reachability,
-            graph,
-            sources,
-            parse,
-        },
-        entry,
-        plugins,
-        mode,
-        manifest,
-    )
-}
-
 pub fn analyze_with_context(
     context: &RuleContext<'_>,
     entry: &EntryPlan,
     plugins: &PluginHints,
-    mode: &ResolvedMode,
+    mode: ProjectMode,
     manifest: &LoadedManifest,
-) -> SymbolReport {
+) -> Vec<IssueCandidate> {
     let RuleContext {
         resolution,
         reachability,
@@ -92,27 +64,16 @@ pub fn analyze_with_context(
         &registry,
         &reference_index,
         &external_symbols,
-        mode.mode,
+        mode,
         surface.as_ref(),
     );
-    candidates.extend(detect_unused_reexports(
-        &reexports,
-        &reference_index,
-        mode.mode,
-    ));
+    candidates.extend(detect_unused_reexports(&reexports, &reference_index, mode));
     candidates.extend(detect_unresolved_imports(
         resolution, &reachable, manifest, sources,
     ));
 
     sort_candidates(&mut candidates);
-
-    let symbol_count = u32::try_from(registry.len()).unwrap_or(u32::MAX);
-
-    SymbolReport {
-        candidates,
-        symbol_count,
-        external_symbols,
-    }
+    candidates
 }
 
 fn reachable_file_paths<'g>(

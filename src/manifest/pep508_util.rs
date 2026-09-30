@@ -48,57 +48,41 @@ pub fn parse_requirement(
     origin: DependencyOrigin,
 ) -> Result<DeclaredDependency, ManifestWarning> {
     let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(ManifestWarning::InvalidRequirementLine {
-            file: origin.file.clone(),
-            line: origin.line.unwrap_or(0),
-            raw: raw.to_owned(),
-        });
-    }
-
-    if let Some(requirement) = super::pep508::parse_requirement(trimmed) {
-        return Ok(DeclaredDependency {
-            name: normalize_distribution_name(&requirement.name),
-            extras: requirement.extras,
-            marker: requirement.marker,
-            specifier: requirement.version_or_url,
-            context,
-            origin,
-            opaque: false,
-            included_via: Vec::new(),
-        });
-    }
-
-    if let Some(name) = extract_egg_name(trimmed) {
-        return Ok(DeclaredDependency {
-            name,
-            extras: Vec::new(),
-            marker: None,
-            specifier: Some(trimmed.to_owned()),
-            context,
-            origin,
-            opaque: false,
-            included_via: Vec::new(),
-        });
-    }
-
-    if is_url_like(trimmed) {
-        return Ok(DeclaredDependency {
-            name: String::new(),
-            extras: Vec::new(),
-            marker: None,
-            specifier: Some(trimmed.to_owned()),
-            context,
-            origin,
-            opaque: true,
-            included_via: Vec::new(),
-        });
-    }
-
-    Err(ManifestWarning::InvalidRequirementLine {
-        file: origin.file.clone(),
-        line: origin.line.unwrap_or(0),
-        raw: raw.to_owned(),
+    let (name, extras, marker, specifier, opaque) =
+        if let Some(requirement) = super::pep508::parse_requirement(trimmed) {
+            (
+                normalize_distribution_name(&requirement.name),
+                requirement.extras,
+                requirement.marker,
+                requirement.version_or_url,
+                false,
+            )
+        } else if let Some(name) = extract_egg_name(trimmed) {
+            (name, Vec::new(), None, Some(trimmed.to_owned()), false)
+        } else if is_url_like(trimmed) {
+            (
+                String::new(),
+                Vec::new(),
+                None,
+                Some(trimmed.to_owned()),
+                true,
+            )
+        } else {
+            return Err(ManifestWarning::InvalidRequirementLine {
+                file: origin.file.clone(),
+                line: origin.line.unwrap_or(0),
+                raw: raw.to_owned(),
+            });
+        };
+    Ok(DeclaredDependency {
+        name,
+        extras,
+        marker,
+        specifier,
+        context,
+        origin,
+        opaque,
+        included_via: Vec::new(),
     })
 }
 
@@ -138,6 +122,11 @@ pub fn pep508_distribution_name(raw: &str) -> Option<String> {
     if leading_name_token(trimmed) == trimmed && is_strict_pep508_name(trimmed) {
         return Some(normalize_distribution_name(trimmed));
     }
+    requirement_name(trimmed)
+}
+
+#[must_use]
+pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
     super::pep508::parse_requirement(trimmed)
         .map(|requirement| normalize_distribution_name(&requirement.name))
         .or_else(|| extract_egg_name(trimmed))
@@ -206,6 +195,29 @@ mod tests {
                 },
             );
             assert!(result.is_err(), "raw={raw:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_blank_requirement() {
+        for raw in ["", "   "] {
+            let result = parse_requirement(
+                raw,
+                DependencyContext::Runtime,
+                DependencyOrigin {
+                    file: "requirements.txt".to_owned(),
+                    line: Some(3),
+                    label: "requirements.txt".to_owned(),
+                },
+            );
+            assert_eq!(
+                result.err(),
+                Some(ManifestWarning::InvalidRequirementLine {
+                    file: "requirements.txt".to_owned(),
+                    line: 3,
+                    raw: raw.to_owned(),
+                })
+            );
         }
     }
 

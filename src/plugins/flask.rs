@@ -3,42 +3,30 @@
 use std::path::Path;
 
 use crate::config::PluginId;
+use crate::path_util::rel_to_root;
 
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
-use super::util::{
-    decorator_suffix, manifest_has_dependency, push_binary, push_decorated_modules,
-    push_symbol_ref, relative_path,
-};
-use super::warnings::PluginsWarning;
+use super::util::{decorator_suffix, push_binary, push_decorated_modules, push_symbol_ref};
 
 /// Extract Flask app references from static configuration.
-pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
+pub fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(PluginId::Flask);
     let root = ctx.root.path.as_path();
-    let mut found = manifest_has_dependency(ctx.manifest, "flask");
 
-    extract_flaskenv(root, &mut contrib, &mut found);
-    extract_scripts(root, &mut contrib, &mut found);
-    found |= push_decorated_modules(
+    extract_flaskenv(root, &mut contrib);
+    extract_scripts(root, &mut contrib);
+    push_decorated_modules(
         ctx,
         &mut contrib,
         is_route_decorator,
         "flask route decorator",
     );
 
-    let warnings = if found || !contrib.symbol_refs.is_empty() || !contrib.binary_usages.is_empty()
-    {
-        Vec::new()
-    } else {
-        vec![PluginsWarning::PluginNoOp {
-            plugin: PluginId::Flask,
-        }]
-    };
-    (contrib, warnings)
+    contrib
 }
 
-fn extract_flaskenv(root: &Path, contrib: &mut PluginContribution, found: &mut bool) {
+fn extract_flaskenv(root: &Path, contrib: &mut PluginContribution) {
     for file_name in [".flaskenv", ".env"] {
         let path = root.join(file_name);
         if !path.is_file() {
@@ -47,12 +35,11 @@ fn extract_flaskenv(root: &Path, contrib: &mut PluginContribution, found: &mut b
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let rel = relative_path(root, &path);
+        let rel = rel_to_root(root, &path);
         for (line_index, line) in contents.lines().enumerate() {
             let Some(value) = env_assignment(line, "FLASK_APP") else {
                 continue;
             };
-            *found = true;
             push_symbol_ref(
                 contrib,
                 value,
@@ -75,7 +62,7 @@ fn extract_flaskenv(root: &Path, contrib: &mut PluginContribution, found: &mut b
     }
 }
 
-fn extract_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bool) {
+fn extract_scripts(root: &Path, contrib: &mut PluginContribution) {
     for dir_name in ["scripts", "bin"] {
         let dir = root.join(dir_name);
         if !dir.is_dir() {
@@ -92,12 +79,11 @@ fn extract_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bo
             let Ok(contents) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let rel = relative_path(root, &path);
+            let rel = rel_to_root(root, &path);
             for (line_index, line) in contents.lines().enumerate() {
                 let Some(target) = flask_app_arg(line) else {
                     continue;
                 };
-                *found = true;
                 let origin = ReferenceOrigin {
                     file: rel.clone(),
                     line: u32::try_from(line_index + 1).ok(),
