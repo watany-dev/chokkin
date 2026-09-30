@@ -5,9 +5,8 @@
 use std::path::PathBuf;
 
 use chokkin::{
-    FileContext, ImportContext, ImportKind, LayoutInfo, ParseCacheStore, ParseSeverity,
-    ProjectLayout, ProjectRoot, RootMarker, TargetVersion, parse_file, parse_project_sources,
-    parse_project_sources_with_cache,
+    FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout, ProjectRoot,
+    RootMarker, TargetVersion, parse_file, parse_project_sources, parse_project_sources_with_cache,
 };
 
 fn spike_fixture(name: &str) -> PathBuf {
@@ -270,44 +269,6 @@ fn parse_project_sources_fixture_suite() {
 }
 
 #[test]
-fn parse_project_sources_reuses_cache_when_inputs_match() {
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parse");
-    let root = ProjectRoot {
-        path: base.clone(),
-        marker: RootMarker::PyProjectToml,
-        start: base,
-    };
-    let sources = chokkin::DiscoveredSources {
-        root: root.clone(),
-        layout: LayoutInfo {
-            layout: ProjectLayout::Src,
-            packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-        },
-        effective_globs: Vec::new(),
-        files: vec![chokkin::DiscoveredFile {
-            path: "imports/absolute_import.py".to_owned(),
-            kind: chokkin::FileKind::Python,
-            context: FileContext::Runtime,
-        }],
-        warnings: Vec::new(),
-    };
-    let target = TargetVersion::default_py311();
-    let mut cache = ParseCacheStore::new();
-
-    let first = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
-        .expect("parse");
-    let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
-        .expect("parse");
-
-    assert_eq!(first, second);
-    assert_eq!(cache.stats().misses, 1);
-    assert_eq!(cache.stats().stores, 1);
-    assert_eq!(cache.stats().hits, 1);
-}
-
-#[test]
 fn parse_project_sources_invalidates_cache_when_source_changes() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source_path = temp.path().join("src/app.py");
@@ -335,24 +296,28 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
         warnings: Vec::new(),
     };
     let target = TargetVersion::default_py311();
-    let mut cache = ParseCacheStore::new();
+    let cache = chokkin::CacheOptions::default();
 
-    parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
-        .expect("first parse");
-    std::fs::write(&source_path, "import yaml\n").expect("write second source");
-    let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
+    parse_project_sources_with_cache(&root, &sources, &target, Some(&cache)).expect("first parse");
+    // Same size as the first source, so a matching mtime leaves only the
+    // content hash to notice the edit.
+    std::fs::write(&source_path, "import pydantic\n").expect("write second source");
+    let second = parse_project_sources_with_cache(&root, &sources, &target, Some(&cache))
         .expect("second parse");
 
     let module = second.modules.first().expect("parsed module");
-    assert!(module.imports.iter().any(|import| import.module == "yaml"));
+    assert!(
+        module
+            .imports
+            .iter()
+            .any(|import| import.module == "pydantic")
+    );
     assert!(
         !module
             .imports
             .iter()
             .any(|import| import.module == "requests")
     );
-    assert_eq!(cache.stats().misses, 2);
-    assert_eq!(cache.stats().hits, 0);
 }
 
 fn warns_type_alias(summary: &chokkin::ParseSummary) -> bool {
@@ -392,14 +357,13 @@ fn parse_cache_follows_pep723_block_edits() {
         warnings: Vec::new(),
     };
     let target = TargetVersion::default_py311();
-    let mut cache = ParseCacheStore::new();
+    let cache = chokkin::CacheOptions::default();
     let body = "type Alias = int\n";
     let block =
         |requires: &str| format!("# /// script\n# requires-python = \"{requires}\"\n# ///\n{body}");
-    let mut parse_with = |contents: &str| {
+    let parse_with = |contents: &str| {
         std::fs::write(&source_path, contents).expect("write source");
-        parse_project_sources_with_cache(&root, &sources, &target, Some(&mut cache), None)
-            .expect("parse")
+        parse_project_sources_with_cache(&root, &sources, &target, Some(&cache)).expect("parse")
     };
 
     assert!(warns_type_alias(&parse_with(body)), "project target py311");
@@ -590,9 +554,8 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
     let target = TargetVersion::default_py311();
     let cache_options = chokkin::CacheOptions::default();
 
-    let cold =
-        parse_project_sources_with_cache(&root, &sources, &target, None, Some(&cache_options))
-            .expect("cold parse");
+    let cold = parse_project_sources_with_cache(&root, &sources, &target, Some(&cache_options))
+        .expect("cold parse");
 
     let parse_dir = temp.path().join(".chokkin/cache/parse");
     let entries: Vec<_> = std::fs::read_dir(&parse_dir)
@@ -605,20 +568,32 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
         "8 sources must share one bundle, found {entries:?}"
     );
 
-    let mut store = ParseCacheStore::new();
-    let warm = parse_project_sources_with_cache(
-        &root,
-        &sources,
-        &target,
-        Some(&mut store),
-        Some(&cache_options),
-    )
-    .expect("warm parse");
+    let bundle = entries[0].path();
+    let settled = std::time::SystemTime::now() - std::time::Duration::from_mins(1);
+    std::fs::File::options()
+        .write(true)
+        .open(&bundle)
+        .expect("open bundle")
+        .set_times(std::fs::FileTimes::new().set_modified(settled))
+        .expect("backdate bundle");
+    // Read back rather than compare with `settled`: the filesystem may round it.
+    let mtime = || {
+        std::fs::metadata(&bundle)
+            .and_then(|meta| meta.modified())
+            .expect("bundle mtime")
+    };
+    let backdated = mtime();
+
+    let warm = parse_project_sources_with_cache(&root, &sources, &target, Some(&cache_options))
+        .expect("warm parse");
 
     assert_eq!(cold, warm);
-    assert_eq!(store.stats().hits, 8, "every module came off the bundle");
-    assert_eq!(store.stats().misses, 0);
-    assert_eq!(store.stats().stores, 0);
+    // Any miss would parse and rewrite the bundle.
+    assert_eq!(
+        mtime(),
+        backdated,
+        "warm run must be served from the bundle"
+    );
 }
 
 #[test]
@@ -654,7 +629,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
         files: vec![discovered("src/kept.py"), discovered("src/gone.py")],
         warnings: Vec::new(),
     };
-    parse_project_sources_with_cache(&root, &both, &target, None, Some(&cache_options))
+    parse_project_sources_with_cache(&root, &both, &target, Some(&cache_options))
         .expect("first parse");
 
     let one = chokkin::DiscoveredSources {
@@ -662,7 +637,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
         ..both
     };
     std::fs::remove_file(temp.path().join("src/gone.py")).expect("remove source");
-    parse_project_sources_with_cache(&root, &one, &target, None, Some(&cache_options))
+    parse_project_sources_with_cache(&root, &one, &target, Some(&cache_options))
         .expect("second parse");
 
     let parse_dir = temp.path().join(".chokkin/cache/parse");

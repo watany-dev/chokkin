@@ -30,7 +30,6 @@ fn bench_reachability(c: &mut Criterion) {
             &report.probe.root,
             sources,
             &target,
-            None,
             Some(&CacheOptions::default()),
         )
         .expect("parse");

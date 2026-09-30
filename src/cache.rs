@@ -1,7 +1,7 @@
 //! Conservative cache policy types for Phase 2 warm-run support.
 
+use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -669,17 +669,6 @@ pub struct ParseCacheBundle {
 }
 
 impl ParseCacheBundle {
-    /// Return the cached parse result for `key`.
-    ///
-    /// Entries are keyed by a 64-bit hash only, so an entry whose module path
-    /// differs from the key's source path is a collision and reads as a miss.
-    #[must_use]
-    pub fn get(&self, key: &ParseCacheKey) -> Option<&ParsedModule> {
-        self.entries
-            .get(&key.entry_id())
-            .filter(|parsed| parsed.path == key.source.path)
-    }
-
     /// Store `parsed` under `key`.
     pub fn insert(&mut self, key: &ParseCacheKey, parsed: ParsedModule) {
         self.entries.insert(key.entry_id(), parsed);
@@ -687,7 +676,9 @@ impl ParseCacheBundle {
 
     /// Move the cached parse result for `key` out of the bundle.
     ///
-    /// Same collision guard as [`Self::get`]; a mismatched entry stays put.
+    /// Entries are keyed by a 64-bit hash only, so an entry whose module path
+    /// differs from the key's source path is a collision: it reads as a miss
+    /// and stays put.
     pub(crate) fn take(&mut self, key: &ParseCacheKey) -> Option<ParsedModule> {
         match self.entries.entry(key.entry_id()) {
             Entry::Occupied(entry) if entry.get().path == key.source.path => Some(entry.remove()),
@@ -726,101 +717,6 @@ fn parse_bundle_relative_path(context: &CacheKeyContext) -> PathBuf {
         context.unit_version
     );
     PathBuf::from("parse").join(format!("bundle-{}.json", stable_hex_hash(input.as_bytes())))
-}
-
-/// Parse cache hit/miss counters for observability and tests.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ParseCacheStats {
-    /// Number of cache hits.
-    pub hits: u32,
-    /// Number of cache misses.
-    pub misses: u32,
-    /// Number of values inserted into the cache.
-    pub stores: u32,
-}
-
-/// In-memory parse cache used as the first conservative cache backend.
-#[derive(Debug, Default)]
-pub struct ParseCacheStore {
-    entries: HashMap<ParseCacheKey, ParsedModule>,
-    stats: ParseCacheStats,
-}
-
-impl ParseCacheStore {
-    /// Create an empty parse cache store.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Reserve capacity for at least `additional` more entries.
-    ///
-    /// The parse loop knows the file count up front, so pre-sizing avoids the
-    /// repeated rehash-and-move that growing from zero costs on large projects.
-    pub fn reserve(&mut self, additional: usize) {
-        self.entries.reserve(additional);
-    }
-
-    /// Return cached parse output for `key` when available.
-    pub fn get(&mut self, key: &ParseCacheKey) -> Option<ParsedModule> {
-        self.get_or_promote(key, &ParseCacheBundle::default())
-    }
-
-    /// Return cached parse output for `key` from memory, then from `disk`.
-    ///
-    /// A disk hit is copied into memory and counted as a hit, not as a miss
-    /// plus a store.
-    pub fn get_or_promote(
-        &mut self,
-        key: &ParseCacheKey,
-        disk: &ParseCacheBundle,
-    ) -> Option<ParsedModule> {
-        if let Some(parsed) = self.entries.get(key) {
-            self.stats.hits = self.stats.hits.saturating_add(1);
-            return Some(parsed.clone());
-        }
-        let Some(parsed) = disk.get(key) else {
-            self.stats.misses = self.stats.misses.saturating_add(1);
-            return None;
-        };
-        self.entries.insert(key.clone(), parsed.clone());
-        self.stats.hits = self.stats.hits.saturating_add(1);
-        Some(parsed.clone())
-    }
-
-    /// [`Self::get_or_promote`] that moves a disk hit out of `disk`.
-    ///
-    /// The module is copied once, into memory, instead of once into memory
-    /// and once more for the caller.
-    pub(crate) fn get_or_take(
-        &mut self,
-        key: &ParseCacheKey,
-        disk: &mut ParseCacheBundle,
-    ) -> Option<ParsedModule> {
-        if let Some(parsed) = self.entries.get(key) {
-            self.stats.hits = self.stats.hits.saturating_add(1);
-            return Some(parsed.clone());
-        }
-        let Some(parsed) = disk.take(key) else {
-            self.stats.misses = self.stats.misses.saturating_add(1);
-            return None;
-        };
-        self.entries.insert(key.clone(), parsed.clone());
-        self.stats.hits = self.stats.hits.saturating_add(1);
-        Some(parsed)
-    }
-
-    /// Store parse output for `key`.
-    pub fn insert(&mut self, key: ParseCacheKey, parsed: ParsedModule) {
-        self.entries.insert(key, parsed);
-        self.stats.stores = self.stats.stores.saturating_add(1);
-    }
-
-    /// Current cache counters.
-    #[must_use]
-    pub const fn stats(&self) -> ParseCacheStats {
-        self.stats
-    }
 }
 
 fn cache_key_path(root: &Path, path: &Path) -> String {
@@ -1067,73 +963,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn parse_bundle_rejects_an_entry_for_another_path() {
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: String::new(),
-            },
-        };
-        let mut bundle = ParseCacheBundle::default();
-        // Stands in for a 64-bit entry-id collision with another source.
-        bundle.insert(
-            &key,
-            ParsedModule {
-                path: "src/other.py".to_owned(),
-                ..ParsedModule::default()
-            },
-        );
-
-        assert!(bundle.get(&key).is_none());
-    }
-
-    #[test]
-    fn disk_promotion_counts_as_a_hit() {
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: String::new(),
-            },
-        };
-        let parsed = ParsedModule {
-            path: "src/app.py".to_owned(),
-            ..ParsedModule::default()
-        };
-        let mut disk = ParseCacheBundle::default();
-        disk.insert(&key, parsed.clone());
-        let mut cache = ParseCacheStore::new();
-
-        assert_eq!(cache.get_or_promote(&key, &disk), Some(parsed.clone()));
-        assert_eq!(cache.get(&key), Some(parsed));
-        assert_eq!(
-            cache.stats(),
-            ParseCacheStats {
-                hits: 2,
-                misses: 0,
-                stores: 0,
-            }
-        );
-    }
-
     fn test_context(unit_version: &str) -> CacheKeyContext {
         CacheKeyContext {
             chokkin_version: "test".to_owned(),
@@ -1191,32 +1020,6 @@ mod tests {
         bundle.insert(&key, module("src/app.py"));
         assert_eq!(bundle.take(&key), Some(module("src/app.py")));
         assert!(bundle.entries.is_empty());
-    }
-
-    #[test]
-    fn get_or_take_promotes_a_disk_hit_once() {
-        let key = test_parse_key("src/app.py");
-        let mut disk = ParseCacheBundle::default();
-        disk.insert(&key, module("src/app.py"));
-        let mut cache = ParseCacheStore::new();
-
-        assert_eq!(
-            cache.get_or_take(&key, &mut disk),
-            Some(module("src/app.py"))
-        );
-        assert!(disk.entries.is_empty());
-        assert_eq!(
-            cache.get_or_take(&key, &mut disk),
-            Some(module("src/app.py"))
-        );
-        assert_eq!(
-            cache.stats(),
-            ParseCacheStats {
-                hits: 2,
-                misses: 0,
-                stores: 0,
-            }
-        );
     }
 
     #[test]
@@ -1385,39 +1188,6 @@ mod tests {
         assert_eq!(paths(&read), vec!["pylock.dev.toml"]);
         assert_eq!(paths(&candidates), vec!["poetry.lock", "pylock.dev.toml"]);
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn parse_cache_store_tracks_hits_and_misses() {
-        let key = ParseCacheKey {
-            context: CacheKeyContext {
-                chokkin_version: "test".to_owned(),
-                config_hash: "config".to_owned(),
-                manifest_hash: "manifest".to_owned(),
-                target_version: "py311".to_owned(),
-                unit_version: "parse-v1".to_owned(),
-            },
-            source: SourceFingerprint {
-                path: "src/app.py".to_owned(),
-                size: 1,
-                modified_ns: Some(1),
-                content_hash: "hash".to_owned(),
-            },
-        };
-        let parsed = ParsedModule {
-            path: "src/app.py".to_owned(),
-            ..ParsedModule::default()
-        };
-        let mut cache = ParseCacheStore::new();
-
-        assert!(cache.get(&key).is_none());
-        cache.insert(key.clone(), parsed.clone());
-        assert_eq!(cache.get(&key), Some(parsed));
-
-        let stats = cache.stats();
-        assert_eq!(stats.misses, 1);
-        assert_eq!(stats.stores, 1);
-        assert_eq!(stats.hits, 1);
     }
 
     #[test]
