@@ -87,8 +87,8 @@ pub use reporters::{
     RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
 };
 pub use resolver::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
-    apply_resolution_to_graph, import_root, resolve_imports,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, apply_resolution_to_graph,
+    import_root, resolve_imports,
 };
 pub use rules::{
     DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
