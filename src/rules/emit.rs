@@ -3,12 +3,10 @@
 use std::collections::BTreeMap;
 
 use crate::ExitStatus;
-use crate::config::{ChokkinConfig, RuntimeOverrides};
-use crate::entry::ResolvedMode;
+use crate::config::{ChokkinConfig, ProjectMode, RuntimeOverrides};
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::symbols::SymbolReport;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
     Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject, IssueSummary, Origin,
@@ -32,11 +30,11 @@ use super::types::RuleId;
 pub fn emit_issues(
     unreachable: &ReachabilityReport,
     deps: &DependencyReport,
-    symbols: &SymbolReport,
+    symbols: &[IssueCandidate],
     parse: &ParseSummary,
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
-    mode: &ResolvedMode,
+    mode: ProjectMode,
     resolution: &ResolutionIndex,
 ) -> IssueReport {
     let strict = overrides.strict.unwrap_or(false);
@@ -45,7 +43,7 @@ pub fn emit_issues(
 
     let mut candidates = chk001_candidates(&unreachable.unreachable, mode);
     candidates.extend(deps.candidates.clone());
-    candidates.extend(symbols.candidates.clone());
+    candidates.extend_from_slice(symbols);
 
     sort_candidates(&mut candidates);
 
@@ -221,22 +219,12 @@ pub(crate) fn compute_exit_status(
 mod tests {
     use super::*;
     use crate::config::{Confidence, ProjectMode, default_config};
-    use crate::entry::ResolvedMode;
     use crate::graph::FileId;
     use crate::manifest::DependencyOrigin;
     use crate::reachability::{ReachabilityReport, UnreachableFile};
-    use crate::resolver::ResolveConfidence;
-    use crate::rules::symbols::SymbolReport;
     use crate::rules::types::{
         DependencyReport, ExplainData, IssueCandidate, IssueSubject, Severity,
     };
-
-    fn resolved_app_mode() -> ResolvedMode {
-        ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Certain,
-        }
-    }
 
     #[test]
     fn emits_chk001_for_unreachable_file() {
@@ -248,18 +236,17 @@ mod tests {
         });
 
         let deps = DependencyReport::default();
-        let symbols = SymbolReport::default();
         let parse = ParseSummary::default();
         let config = default_config();
 
         let issues = emit_issues(
             &report,
             &deps,
-            &symbols,
+            &[],
             &parse,
             &config,
             &RuntimeOverrides::default(),
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert_eq!(issues.issues.len(), 1);
@@ -309,14 +296,14 @@ mod tests {
         let issues = emit_issues(
             &report,
             &DependencyReport::default(),
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides {
                 no_exit_code: Some(true),
                 ..RuntimeOverrides::default()
             },
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert_eq!(issues.exit_status, ExitStatus::Success);
@@ -351,11 +338,11 @@ mod tests {
         let report = emit_issues(
             &ReachabilityReport::default(),
             &deps,
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &config,
             &RuntimeOverrides::default(),
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert!(report.issues.is_empty());
@@ -389,11 +376,11 @@ mod tests {
         let report = emit_issues(
             &ReachabilityReport::default(),
             &deps,
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides::default(),
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         let text = explain_issue(&report, "CHK002:boto3").expect("explain");

@@ -3,10 +3,7 @@
 use toml::Value;
 
 use super::pep508_util::normalize_distribution_name;
-use super::types::{
-    DeclaredDependency, DependencyContext, DependencyOrigin, UvDefaultGroups, UvSource,
-    UvSourceKind, UvToolSettings,
-};
+use super::types::{DeclaredDependency, DependencyContext, UvSource, UvSourceKind, UvToolSettings};
 use super::util::{DependencyPush, push_dependency};
 use super::warnings::ManifestWarning;
 
@@ -17,7 +14,7 @@ pub struct UvToolExtraction {
     pub dependencies: Vec<DeclaredDependency>,
     /// `constraint-dependencies` and `override-dependencies`.
     pub constraints: Vec<DeclaredDependency>,
-    /// Sources and default groups.
+    /// Sources.
     pub settings: UvToolSettings,
 }
 
@@ -69,53 +66,26 @@ pub fn extract_uv_tool(
         }
     }
 
-    result.settings.default_groups = uv.get("default-groups").and_then(parse_default_groups);
     if let Some(sources) = uv.get("sources").and_then(Value::as_table) {
-        result.settings.sources = parse_sources(sources, rel);
+        result.settings.sources = parse_sources(sources);
     }
     result
 }
 
-fn parse_default_groups(value: &Value) -> Option<UvDefaultGroups> {
-    match value {
-        Value::String(all) if all == "all" => Some(UvDefaultGroups::All),
-        Value::Array(items) => Some(UvDefaultGroups::Groups(
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect(),
-        )),
-        _ => None,
-    }
-}
-
 /// A source may be one table or an array of marker-scoped tables.
-fn parse_sources(sources: &toml::Table, rel: &str) -> Vec<UvSource> {
+fn parse_sources(sources: &toml::Table) -> Vec<UvSource> {
     let mut parsed = Vec::new();
     for (name, value) in sources {
         let name_norm = normalize_distribution_name(name);
-        let entries: Vec<(&toml::Table, String)> = match value {
-            Value::Table(entry) => vec![(entry, format!("tool.uv.sources.{name}"))],
-            Value::Array(items) => items
-                .iter()
-                .enumerate()
-                .filter_map(|(index, item)| {
-                    item.as_table()
-                        .map(|entry| (entry, format!("tool.uv.sources.{name}[{index}]")))
-                })
-                .collect(),
+        let entries: Vec<&toml::Table> = match value {
+            Value::Table(entry) => vec![entry],
+            Value::Array(items) => items.iter().filter_map(Value::as_table).collect(),
             _ => Vec::new(),
         };
-        for (entry, label) in entries {
+        for entry in entries {
             parsed.push(UvSource {
                 name: name_norm.clone(),
                 kind: source_kind(entry),
-                origin: DependencyOrigin {
-                    file: rel.to_owned(),
-                    line: None,
-                    label,
-                },
             });
         }
     }
@@ -123,25 +93,11 @@ fn parse_sources(sources: &toml::Table, rel: &str) -> Vec<UvSource> {
 }
 
 fn source_kind(entry: &toml::Table) -> UvSourceKind {
-    let text = |key: &str| entry.get(key).and_then(Value::as_str).map(str::to_owned);
-    if let Some(path) = text("path") {
-        let editable = entry
-            .get("editable")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        return UvSourceKind::Path { path, editable };
+    if let Some(path) = entry.get("path").and_then(Value::as_str) {
+        return UvSourceKind::Path(path.to_owned());
     }
     if entry.get("workspace").and_then(Value::as_bool) == Some(true) {
         return UvSourceKind::Workspace;
-    }
-    if let Some(url) = text("git") {
-        return UvSourceKind::Git(url);
-    }
-    if let Some(url) = text("url") {
-        return UvSourceKind::Url(url);
-    }
-    if let Some(index) = text("index") {
-        return UvSourceKind::Index(index);
     }
     UvSourceKind::Other
 }
@@ -192,22 +148,6 @@ mod tests {
     }
 
     #[test]
-    fn default_groups_accepts_list_and_all() {
-        let list = extract("[tool.uv]\ndefault-groups = [\"dev\", \"lint\"]\n");
-        assert_eq!(
-            list.settings.default_groups,
-            Some(UvDefaultGroups::Groups(vec![
-                "dev".to_owned(),
-                "lint".to_owned()
-            ]))
-        );
-        let all = extract("[tool.uv]\ndefault-groups = \"all\"\n");
-        assert_eq!(all.settings.default_groups, Some(UvDefaultGroups::All));
-        let invalid = extract("[tool.uv]\ndefault-groups = \"dev\"\n");
-        assert_eq!(invalid.settings.default_groups, None);
-    }
-
-    #[test]
     fn unknown_source_shape_is_other() {
         let result = extract("[tool.uv.sources]\nfoo = { editable = true }\nbar = \"x\"\n");
         assert_eq!(result.settings.sources.len(), 1);
@@ -215,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn sources_keep_kind_and_label() {
+    fn sources_keep_kind() {
         let result = extract(concat!(
             "[tool.uv.sources]\n",
             "My_Lib = { path = \"libs/my-lib\", editable = true }\n",
@@ -230,45 +170,16 @@ mod tests {
             .settings
             .sources
             .iter()
-            .map(|source| {
-                (
-                    source.name.as_str(),
-                    source.kind.clone(),
-                    source.origin.label.as_str(),
-                )
-            })
+            .map(|source| (source.name.as_str(), source.kind.clone()))
             .collect();
         assert_eq!(
             kinds,
             vec![
-                (
-                    "my-lib",
-                    UvSourceKind::Path {
-                        path: "libs/my-lib".to_owned(),
-                        editable: true
-                    },
-                    "tool.uv.sources.My_Lib"
-                ),
-                (
-                    "billing",
-                    UvSourceKind::Workspace,
-                    "tool.uv.sources.billing"
-                ),
-                (
-                    "httpx",
-                    UvSourceKind::Git("https://github.com/encode/httpx".to_owned()),
-                    "tool.uv.sources.httpx"
-                ),
-                (
-                    "torch",
-                    UvSourceKind::Index("cpu".to_owned()),
-                    "tool.uv.sources.torch[0]"
-                ),
-                (
-                    "torch",
-                    UvSourceKind::Url("https://example.com/torch.whl".to_owned()),
-                    "tool.uv.sources.torch[1]"
-                ),
+                ("my-lib", UvSourceKind::Path("libs/my-lib".to_owned())),
+                ("billing", UvSourceKind::Workspace),
+                ("httpx", UvSourceKind::Other),
+                ("torch", UvSourceKind::Other),
+                ("torch", UvSourceKind::Other),
             ]
         );
         assert!(result.settings.is_workspace_source("billing"));

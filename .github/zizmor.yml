@@ -8,4 +8,3 @@ rules:
   stale-action-refs:
     ignore:
       - ci.yml
-      - audit.yml

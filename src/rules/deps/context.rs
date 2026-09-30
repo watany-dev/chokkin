@@ -192,7 +192,6 @@ mod tests {
             root: crate::discovery::ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: crate::discovery::RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             layout: LayoutInfo {
                 layout: ProjectLayout::Src,

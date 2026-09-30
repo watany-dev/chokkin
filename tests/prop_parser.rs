@@ -227,7 +227,6 @@ mod parse_file_props {
             let root = ProjectRoot {
                 path: fs::canonicalize(dir.path()).expect("canon"),
                 marker: RootMarker::PyProjectToml,
-                start: dir.path().to_path_buf(),
             };
             let layout = LayoutInfo {
                 layout: ProjectLayout::Src,
@@ -269,7 +268,6 @@ mod parse_file_props {
             let root = ProjectRoot {
                 path: fs::canonicalize(dir.path()).expect("canon"),
                 marker: RootMarker::PyProjectToml,
-                start: dir.path().to_path_buf(),
             };
             let layout = LayoutInfo {
                 layout: ProjectLayout::Flat,

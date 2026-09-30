@@ -8,7 +8,7 @@ development principles. This file covers Claude Code-specific notes.
 `.claude/settings.json` pre-approves:
 
 - `make *` — run any Makefile target
-- `cargo *` — build, test, clippy, fmt, doc, deny, audit, machete
+- `cargo *` — build, test, clippy, fmt, doc, deny, machete
 - `git *` — status, diff, add, commit, push, log
 - `uvx *` — maturin build/sdist, or other uv tool runs
 

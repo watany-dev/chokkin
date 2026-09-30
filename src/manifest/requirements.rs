@@ -6,7 +6,7 @@ use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
 use super::pep508_util::{
-    extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement,
+    extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement, requirement_name,
 };
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::util::{DependencyPush, path_is_within_root, push_dependency};
@@ -259,9 +259,7 @@ pub fn requirements_line_distribution(line: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed.starts_with('-') {
         return None;
     }
-    super::pep508::parse_requirement(trimmed)
-        .map(|requirement| normalize_distribution_name(&requirement.name))
-        .or_else(|| extract_egg_name(trimmed))
+    requirement_name(trimmed)
 }
 
 /// pip-compatible: only `#` preceded by whitespace (or at line start) starts a comment.

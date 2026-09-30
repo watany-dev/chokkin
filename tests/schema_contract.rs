@@ -7,8 +7,8 @@ use std::path::Path;
 
 use chokkin::{
     Confidence, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
-    ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId,
-    RuntimeOverrides, Severity, apply_baseline, render_issues, write_baseline,
+    ProjectMode, RenderContext, ReporterId, RuleId, RuntimeOverrides, Severity, apply_baseline,
+    render_issues, write_baseline,
 };
 use jsonschema::Validator;
 use serde_json::Value;
@@ -16,10 +16,7 @@ use serde_json::Value;
 fn context() -> RenderContext {
     RenderContext {
         project_name: Some("demo".to_owned()),
-        mode: ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Certain,
-        },
+        mode: ProjectMode::App,
         production: false,
         version: "0.3.0-test",
         config_label: Some("pyproject.toml [tool.chokkin]".to_owned()),

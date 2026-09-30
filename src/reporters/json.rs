@@ -67,7 +67,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         schema_version: JSON_REPORT_SCHEMA_VERSION,
         version: context.version,
         project: context.project_name.as_deref().unwrap_or("(unknown)"),
-        mode: context.mode.mode.as_str(),
+        mode: context.mode.as_str(),
         production: context.production,
         issues: report.issues.iter().map(json_issue).collect(),
         summary: JsonSummary {

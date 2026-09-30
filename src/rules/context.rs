@@ -4,17 +4,26 @@ use crate::{
     resolver::ResolutionIndex, sources::DiscoveredSources,
 };
 
+/// Earlier pipeline outputs read by dependency (step 10) and symbol (step 11) rules.
 pub struct RuleContext<'a> {
-    pub(crate) resolution: &'a ResolutionIndex,
-    pub(crate) reachability: &'a ReachabilityReport,
-    pub(crate) graph: &'a ProjectGraph,
-    pub(crate) sources: &'a DiscoveredSources,
-    pub(crate) parse: &'a ParseSummary,
+    /// Step 7 import resolution.
+    pub resolution: &'a ResolutionIndex,
+    /// Step 9 reachability.
+    pub reachability: &'a ReachabilityReport,
+    /// Project graph after resolution and entry wiring.
+    pub graph: &'a ProjectGraph,
+    /// Discovered source files.
+    pub sources: &'a DiscoveredSources,
+    /// Step 6 parse output.
+    pub parse: &'a ParseSummary,
 }
 
 /// Settings specific to dependency rules; symbol rules do not consume them.
 pub struct DependencyRuleContext<'a> {
-    pub(crate) rules: &'a RuleContext<'a>,
-    pub(crate) config: &'a crate::config::ChokkinConfig,
-    pub(crate) strict: bool,
+    /// Shared rule inputs.
+    pub rules: &'a RuleContext<'a>,
+    /// Effective chokkin configuration.
+    pub config: &'a crate::config::ChokkinConfig,
+    /// Strict mode (`--strict`).
+    pub strict: bool,
 }
