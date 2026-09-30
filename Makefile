@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
 
-.PHONY: check build test lint fmt fmt-check doc deny audit machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-oracle check-generated formal help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-oracle check-generated formal help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -63,9 +63,6 @@ oss-oracle:
 ## ─── Security & supply chain ──────────────────────────────────────────────────
 deny:
 	cargo deny check advisories licenses bans sources
-
-audit:
-	cargo audit --deny warnings
 
 machete:
 	cargo machete
