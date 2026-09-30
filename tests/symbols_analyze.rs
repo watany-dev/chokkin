@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     Confidence, ProjectRoot, RootMarker, RuleId, Severity, add_parsed_imports,
-    analyze_reachability, analyze_symbols, apply_entry_plan, apply_resolution_to_graph,
-    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
-    extract_manifest, extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
+    analyze_reachability, analyze_symbols, apply_resolution_to_graph, build_entry_roots,
+    build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
+    extract_plugin_hints, load_config, parse_project_sources, resolve_imports,
     resolve_target_version,
 };
 
@@ -62,7 +62,6 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph,
         &sources,

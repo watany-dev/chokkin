@@ -47,8 +47,9 @@ is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
 budget. PyPI **v0.1.0** through **v0.5.1** have been released.
-`src/graph/` provides skeleton nodes, import edges, distribution → module links,
-entry → file edges, and file → file reachability edges.
+`src/graph/` provides skeleton nodes, import edges, and distribution → module
+links; entry and file → file reachability is computed by the step 9 BFS, not
+stored as graph edges.
 Implementation follows the phased roadmap in `docs/dev/spec.ja.md` §17. Phase 4
 (v0.5, modern packaging: PEP 735 `include-group`, PEP 723 inline scripts,
 `pylock.toml` / `poetry.lock` / `pdm.lock`, `[tool.uv]`, build context, plugin

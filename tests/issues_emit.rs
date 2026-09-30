@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use chokkin::{
     Confidence, ExitStatus, ProjectRoot, ResolutionIndex, RootMarker, RuleId, RuntimeOverrides,
-    SeverityLevel, add_parsed_imports, analyze_reachability, analyze_symbols, apply_entry_plan,
+    SeverityLevel, add_parsed_imports, analyze_reachability, analyze_symbols,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
     discover_sources, emit_issues, extract_manifest, extract_plugin_hints, load_config,
     parse_project_sources, reconcile_dependencies, resolve_imports, resolve_target_version,
@@ -67,7 +67,6 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &loaded.workspace_members,
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
-    apply_entry_plan(&mut graph, &entry);
     let reachability = analyze_reachability(
         &mut graph,
         &sources,

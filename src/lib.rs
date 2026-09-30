@@ -49,14 +49,11 @@ pub use config::{
     UvWorkspaceHint, WorkspaceOverride, apply_overrides, default_config, load_config,
 };
 pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
-pub use entry::{
-    EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, apply_entry_plan,
-    build_entry_roots,
-};
+pub use entry::{EntryOrigin, EntryPlan, EntryRoot, EntryWarning, ResolvedMode, build_entry_roots};
 pub use fix::{AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason};
 pub use graph::{
-    DistributionId, EntryId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode,
-    ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+    DistributionId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode, ModuleOrigin,
+    ProjectGraph, add_parsed_imports, build_graph_skeleton,
 };
 pub use init::{InitError, InitReport, init_project};
 pub use manifest::{
