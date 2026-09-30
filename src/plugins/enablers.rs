@@ -201,7 +201,6 @@ mod tests {
         let root = ProjectRoot {
             path: dir.to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: dir.to_path_buf(),
         };
         LoadedManifest {
             root,

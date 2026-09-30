@@ -544,7 +544,6 @@ mod tests {
         ProjectRoot {
             path: dir.to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: dir.to_path_buf(),
         }
     }
 
@@ -609,7 +608,6 @@ mod tests {
         let root = ProjectRoot {
             path: temp.path().to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: temp.path().to_path_buf(),
         };
         let sources = DiscoveredSources {
             root: root.clone(),
@@ -635,7 +633,6 @@ mod tests {
         let root = ProjectRoot {
             path: dir.to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: dir.to_path_buf(),
         };
         let files = names
             .iter()

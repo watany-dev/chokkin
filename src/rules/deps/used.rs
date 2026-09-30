@@ -268,7 +268,6 @@ mod tests {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             metadata: ProjectMetadata::default(),
             dependencies: Vec::new(),
@@ -295,7 +294,6 @@ mod tests {
         let mut graph = ProjectGraph::new(ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         });
         let file_id = graph
             .intern_file(FileNode {
@@ -380,7 +378,6 @@ mod tests {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             metadata: ProjectMetadata {
                 name: Some("self-extra".to_owned()),
@@ -484,9 +481,8 @@ mod tests {
         };
         LoadedManifest {
             root: ProjectRoot {
-                path: path.clone(),
+                path,
                 marker: RootMarker::PyProjectToml,
-                start: path,
             },
             metadata: ProjectMetadata {
                 name: Some(name.to_owned()),

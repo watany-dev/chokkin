@@ -443,7 +443,6 @@ mod tests {
             root: crate::discovery::ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: crate::discovery::RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,

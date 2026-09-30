@@ -41,7 +41,6 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     ProjectRoot {
         path: canonical,
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     }
 }
 

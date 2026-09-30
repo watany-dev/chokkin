@@ -174,7 +174,6 @@ fn member_project_root(root: &ProjectRoot, member: &ResolvedWorkspaceMember) -> 
     ProjectRoot {
         path,
         marker: RootMarker::PyProjectToml,
-        start: root.start.clone(),
     }
 }
 
@@ -488,7 +487,6 @@ mod tests {
             root: crate::discovery::ProjectRoot {
                 path: Path::new("/tmp").to_path_buf(),
                 marker: RootMarker::PyProjectToml,
-                start: Path::new("/tmp").to_path_buf(),
             },
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Unknown,

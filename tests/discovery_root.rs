@@ -167,10 +167,7 @@ fn monorepo_subdir_uses_nearest_root() {
 }
 
 #[test]
-fn start_path_preserved_in_result() {
+fn relative_start_path_is_resolved() {
     let relative = Path::new("tests/fixtures/discovery/nested_src/src/pkg");
-
-    let result = discover_project_root(relative).expect("discover from relative path");
-    assert_eq!(result.start, relative);
-    assert_eq!(result.marker, RootMarker::PyProjectToml);
+    assert_discovered(relative, &fixture("nested_src"), RootMarker::PyProjectToml);
 }
