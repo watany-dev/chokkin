@@ -41,7 +41,6 @@ make sdist     # build source distribution
 make oss-fixtures  # run chokkin on OSS/regression fixture manifest (Phase 1 §17)
 make deny      # cargo-deny (license / advisory / supply-chain policy)
 make machete   # unused dependency detection
-make audit     # cargo-audit (run locally if you updated deps)
 ```
 
 ### Coverage threshold

@@ -3,8 +3,6 @@
 use std::collections::HashMap;
 
 use crate::discovery::ProjectRoot;
-use crate::manifest::DependencyOrigin;
-use crate::plugins::ReferenceOrigin;
 use crate::sources::{FileContext, FileKind};
 
 /// Stable identifier for a project file node.
@@ -18,10 +16,6 @@ pub struct ModuleId(pub u32);
 /// Stable identifier for a declared distribution node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DistributionId(pub u32);
-
-/// Stable identifier for an entry root node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EntryId(pub u32);
 
 /// How a module node was classified (refined in Step 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,18 +50,7 @@ pub struct ModuleNode {
     pub origin: ModuleOrigin,
 }
 
-/// How one project file reaches another during reachability analysis (step 9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileReachVia {
-    /// Static or resolved import edge.
-    Import,
-    /// Plugin configuration module reference.
-    PluginReference,
-    /// Literal dynamic import.
-    DynamicImport,
-}
-
-/// Graph edges accumulated during pipeline steps 3–9.
+/// Graph edges added by import parsing (step 6) and resolution (step 7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphEdge {
     /// A file imports a module at the given 1-based line.
@@ -79,41 +62,11 @@ pub enum GraphEdge {
         /// 1-based line number.
         line: u32,
     },
-    /// Manifest metadata declares a distribution.
-    ManifestDeclaresDistribution {
-        /// Declared distribution.
-        distribution: DistributionId,
-        /// Source location in a manifest file.
-        source: DependencyOrigin,
-    },
     /// A distribution provides an importable module (Step 7).
     DistributionProvidesModule {
         /// Declared distribution.
         distribution: DistributionId,
         /// Provided module.
-        module: ModuleId,
-    },
-    /// An entry root reaches a project file (Step 8).
-    EntryReachesFile {
-        /// Entry root node.
-        entry: EntryId,
-        /// Target file.
-        file: FileId,
-    },
-    /// A project file reaches another via import resolution (Step 9).
-    FileReachesFile {
-        /// Source file.
-        from: FileId,
-        /// Target file.
-        to: FileId,
-        /// How the reach was discovered.
-        via: FileReachVia,
-    },
-    /// Plugin configuration references a module (Step 9).
-    ConfigReferenceUsesModule {
-        /// Discovery origin.
-        origin: ReferenceOrigin,
-        /// Referenced module.
         module: ModuleId,
     },
 }
@@ -130,7 +83,6 @@ pub struct ProjectGraph {
     path_to_file: HashMap<String, FileId>,
     name_to_module: HashMap<String, ModuleId>,
     name_to_distribution: HashMap<String, DistributionId>,
-    entry_count: usize,
 }
 
 /// Next sequential id for a table holding `len` nodes.
@@ -150,7 +102,6 @@ impl ProjectGraph {
             path_to_file: HashMap::new(),
             name_to_module: HashMap::new(),
             name_to_distribution: HashMap::new(),
-            entry_count: 0,
         }
     }
 
@@ -196,12 +147,6 @@ impl ProjectGraph {
     #[must_use]
     pub fn distribution_count(&self) -> usize {
         self.name_to_distribution.len()
-    }
-
-    /// Returns the number of registered entry roots.
-    #[must_use]
-    pub fn entry_count(&self) -> usize {
-        self.entry_count
     }
 
     /// Looks up a file id by root-relative path.
@@ -275,13 +220,6 @@ impl ProjectGraph {
     pub fn push_edge(&mut self, edge: GraphEdge) {
         self.edges.push(edge);
     }
-
-    /// Registers an entry root, returning its stable id.
-    pub fn intern_entry(&mut self) -> EntryId {
-        let id = EntryId(next_id(self.entry_count));
-        self.entry_count = self.entry_count.saturating_add(1);
-        id
-    }
 }
 
 /// Merge two module origins, keeping the more specific classification.
@@ -335,7 +273,6 @@ mod tests {
         ProjectRoot {
             path: std::env::temp_dir(),
             marker: RootMarker::PyProjectToml,
-            start: std::env::temp_dir(),
         }
     }
 

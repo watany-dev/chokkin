@@ -26,7 +26,6 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     ProjectRoot {
         path: canonical,
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     }
 }
 
@@ -40,8 +39,8 @@ fn extract_at(path: &Path) -> chokkin::PluginHints {
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
     let target = resolve_target_version(&config.effective, &manifest);
-    let parse = parse_project_sources_with_cache(&root, &sources, &target, None, None)
-        .expect("parse sources");
+    let parse =
+        parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse sources");
     extract_plugin_hints_with_parse(&PluginExtractRequest {
         root: &root,
         config: &config,
@@ -256,14 +255,6 @@ fn tox_plugin_records_config_binary() {
             .iter()
             .any(|usage| usage.binary == "tox" && usage.origin.file == "tox.ini")
     );
-    assert!(!hints.warnings.iter().any(|warning| {
-        matches!(
-            warning,
-            PluginsWarning::PluginNoOp {
-                plugin: PluginId::Tox
-            }
-        )
-    }));
 }
 
 #[test]
@@ -476,17 +467,7 @@ fn full_pipeline_step5() {
         django_entries,
         ["manage.py", "mysite/settings.py", "mysite/urls.py"]
     );
-    assert_eq!(
-        hints.warnings,
-        [
-            PluginsWarning::PluginNoOp {
-                plugin: PluginId::Pytest
-            },
-            PluginsWarning::PluginNoOp {
-                plugin: PluginId::Fastapi
-            },
-        ]
-    );
+    assert!(hints.warnings.is_empty());
 }
 
 #[test]
@@ -530,14 +511,7 @@ fn no_django_no_panic() {
     let hints = extract_fixture("no_django");
     let django = django_contrib(&hints);
     assert!(django.entries.is_empty());
-    assert!(hints.warnings.iter().any(|warning| {
-        matches!(
-            warning,
-            PluginsWarning::PluginNoOp {
-                plugin: PluginId::Django
-            }
-        )
-    }));
+    assert!(hints.warnings.is_empty());
 }
 
 /// Flask and Celery module-ref lines for `pkg.mod` in a one-module project.

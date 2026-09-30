@@ -5,10 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::{
-    EntryOrigin, EntryWarning, GraphEdge, PluginExtractRequest, ProjectMode, ProjectRoot,
-    RootMarker, apply_entry_plan, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints_with_parse, load_config,
-    parse_project_sources_with_cache, resolve_target_version,
+    EntryOrigin, EntryWarning, PluginExtractRequest, ProjectMode, ProjectRoot, RootMarker,
+    build_entry_roots, discover_project_root, discover_sources, extract_manifest,
+    extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
+    resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -34,7 +34,6 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     ProjectRoot {
         path: canonical,
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     }
 }
 
@@ -51,8 +50,7 @@ fn load_pipeline(path: &Path) -> PipelineInputs {
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse =
-        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
+    let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
     let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
         root: &root,
         config: &loaded,
@@ -89,7 +87,7 @@ fn django_manage_is_entry_with_plugin_origins() {
         false,
     );
 
-    assert_eq!(plan.mode.mode, ProjectMode::App);
+    assert_eq!(plan.mode, ProjectMode::App);
     let manage = plan
         .roots
         .iter()
@@ -116,7 +114,7 @@ fn fastapi_asgi_is_auto_detected() {
 
     let paths = entry_paths(&plan);
     assert!(paths.iter().any(|path| path.contains("asgi.py")));
-    assert_eq!(plan.mode.mode, ProjectMode::App);
+    assert_eq!(plan.mode, ProjectMode::App);
 }
 
 #[test]
@@ -130,7 +128,7 @@ fn library_only_resolves_library_mode() {
         false,
     );
 
-    assert_eq!(plan.mode.mode, ProjectMode::Library);
+    assert_eq!(plan.mode, ProjectMode::Library);
 }
 
 #[test]
@@ -192,29 +190,6 @@ fn production_excludes_test_context_entries() {
         plan.roots
             .iter()
             .all(|root| root.context.is_included_in_production())
-    );
-}
-
-#[test]
-fn apply_entry_plan_adds_graph_edges() {
-    let inputs = load_pipeline(&plugins_fixture("django_manage"));
-    let plan = build_entry_roots(
-        &inputs.config,
-        &inputs.manifest,
-        &inputs.sources,
-        &inputs.plugins,
-        false,
-    );
-    let mut graph =
-        build_graph_skeleton(&inputs.manifest, &inputs.sources).expect("graph skeleton");
-    apply_entry_plan(&mut graph, &plan);
-
-    assert!(graph.entry_count() > 0);
-    assert!(
-        graph
-            .edges()
-            .iter()
-            .any(|edge| matches!(edge, GraphEdge::EntryReachesFile { .. }))
     );
 }
 

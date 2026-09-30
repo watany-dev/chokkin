@@ -188,7 +188,7 @@ requirements系filesのパース規則を定める。コメントはpip互換で
 
 `setup.py` は `ruff_python_parser` でASTにし、`setup()` 呼び出しのキーワード引数のみを静的に読む(構文エラー時は静的解析不可として扱う)。リストに文字列リテラル以外の要素が混ざる場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
 
-`[tool.uv]` のその他のキーは次のように読む（R-04）。legacy `dev-dependencies` は `[dependency-groups] dev` と同じ `Group("dev")` 宣言として合流させ、`--fix` は `tool.uv.dev-dependencies[i]` ラベルで配列要素を削除できる。`constraint-dependencies` / `override-dependencies` は `-c` と同様に `LoadedManifest.constraints` へ積み、origin ラベル（`tool.uv.constraint-dependencies[i]` 等）を保持するが、CHK002/CHK003/CHK009 の入力にはしない。`default-groups` は `LoadedManifest.uv.default_groups` に保持するのみで、`--production` は参照しない（production は runtime 以外の context を常に除外するため、インストール既定値に依存させない）。`[tool.uv.sources]` は path / editable / workspace / git / url / index の種別と記述どおりの相対pathを `LoadedManifest.uv.sources` に保持する（絶対pathはキャッシュに入れない）。path / editable source はStep 7でroot基準に解決したローカルtreeからlayout推論でimport名を導出し、そのdistributionへのCertainな対応としてvenvなしで解決する（キャッシュ外で毎回読むためstaleにならない。package未検出時はdistribution名の `-`→`_` をimport名とする）。`workspace = true` source は既存のworkspace member判定でfirst-partyとして解決し、到達可能なimportがあればそのdependencyをusedとして扱う。used になったmemberのtree内ファイルのimport（stdlib以外。`airflow` のようにdistributionへ解決されるものも含む）も同様に数え、他memberのtreeに届けばそのmemberもusedとする（`airflow-core` が `airflow.sdk` をimportすれば `apache-airflow-task-sdk` もused）。
+`[tool.uv]` のその他のキーは次のように読む（R-04）。legacy `dev-dependencies` は `[dependency-groups] dev` と同じ `Group("dev")` 宣言として合流させ、`--fix` は `tool.uv.dev-dependencies[i]` ラベルで配列要素を削除できる。`constraint-dependencies` / `override-dependencies` は `-c` と同様に `LoadedManifest.constraints` へ積み、origin ラベル（`tool.uv.constraint-dependencies[i]` 等）を保持するが、CHK002/CHK003/CHK009 の入力にはしない。`default-groups` は読まない（`--production` は runtime 以外の context を常に除外するため、インストール既定値に依存させない）。`[tool.uv.sources]` は distribution 名ごとに path / workspace / その他（git / url / index 等）の種別と、path source の記述どおりの相対pathを `LoadedManifest.uv.sources` に保持する（絶対pathはキャッシュに入れない）。path source（`editable = true` を含む）はStep 7でroot基準に解決したローカルtreeからlayout推論でimport名を導出し、そのdistributionへのCertainな対応としてvenvなしで解決する（キャッシュ外で毎回読むためstaleにならない。package未検出時はdistribution名の `-`→`_` をimport名とする）。`workspace = true` source は既存のworkspace member判定でfirst-partyとして解決し、到達可能なimportがあればそのdependencyをusedとして扱う。used になったmemberのtree内ファイルのimport（stdlib以外。`airflow` のようにdistributionへ解決されるものも含む）も同様に数え、他memberのtreeに届けばそのmemberもusedとする（`airflow-core` が `airflow.sdk` をimportすれば `apache-airflow-task-sdk` もused）。
 
 `setup.py` が静的に解析できない場合(動的な `install_requires` 構築など)は、warningを出してそのsourceをskipし、他のsourceで解析を継続する。`[project]` の `dynamic = ["dependencies"]` が指定されている場合は、setuptoolsの慣習に従い `requirements*.txt` 側を依存宣言の実体として読む。
 
@@ -315,6 +315,8 @@ Entry reaches File
 File reaches File
 ```
 
+実装（`src/graph/`）が edge として保持するのは `File imports Module` と `Distribution provides Module` だけで、entry/plugin/file からの到達は step 9 の BFS がその場で計算する（`ReachPredecessor` に最短経路を残す）。
+
 処理順は固定する。
 
 ```text
@@ -325,7 +327,7 @@ File reaches File
 5. config/plugin extraction  # 実装済み: src/plugins/ (`extract_plugin_hints_with_parse`)
 6. Python parse              # 実装済み: src/parser/ (`parse_file`, `parse_project_sources_with_cache`, attribute access)
 7. import resolution         # 実装済み: src/resolver/ (`resolve_imports`, bundled maps)
-8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`, `apply_entry_plan`)
+8. entry root construction    # 実装済み: src/entry/ (`build_entry_roots`)
 9. reachability analysis     # 実装済み: src/reachability/ (`analyze_reachability`, `trace_to_file`)
 10. dependency reconciliation # 実装済み: src/rules/deps/ (`reconcile_with_context`, CHK002–CHK009)
 11. symbol usage analysis    # 実装済み: src/rules/symbols/ (`analyze_with_context`, CHK006–CHK007, CHK010)
@@ -808,7 +810,7 @@ chokkin/
     graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
     parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources_with_cache`; cold parse は `std::thread::scope` でファイル単位並列、出力は discovery 順)
     resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps, venv RECORD/entry_points, versioned stdlib)
-    entry/       # 実装済み: pipeline step 8 (`build_entry_roots`, `apply_entry_plan`)
+    entry/       # 実装済み: pipeline step 8 (`build_entry_roots`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
     rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_with_context`, CHK002–CHK009);
                  #           step 11 `rules/symbols/` (`analyze_with_context`, CHK006–CHK007, CHK010);
@@ -1251,7 +1253,7 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。`ParseCacheStore` はプロセス内でstoreを持ち回る呼び出し側（benchなど）向けのin-memory reuseで、CLI（`analyze_project`）は1 runで各sourceを1回しかparseしないため渡さない。disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。disk bundleからのヒットは `ParseCacheStats::hits` に数える。bundleから読んだ `ParsedModule` はcloneせずmoveで取り出し、書き戻しは借用のまま（`ParseCacheBundleRef`）直列化するので、disk warm runでは `ParsedModule` のcloneが発生しない。bundleを書いた時点で `parse/` 内の他の `*.json`（別contextのbundleや旧形式）を削除する。削除はbest-effortで、失敗しても解析は失敗させない。拡張子のない一時fileは並行runのatomic write中のものなので残す。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
+cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。parse cache はdisk bundleだけで、in-memory storeは持たない（1 runで各sourceを1回しかparseしないため）。disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。bundleから読んだ `ParsedModule` はcloneせずmoveで取り出し、書き戻しは借用のまま（`ParseCacheBundleRef`）直列化するので、disk warm runでは `ParsedModule` のcloneが発生しない。bundleを書いた時点で `parse/` 内の他の `*.json`（別contextのbundleや旧形式）を削除する。削除はbest-effortで、失敗しても解析は失敗させない。拡張子のない一時fileは並行runのatomic write中のものなので残す。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
 
 parse cache keyは以下を使う（`CacheKeyContext` + `SourceFingerprint`）。
 
@@ -1279,10 +1281,9 @@ parallelize対象は、file discovery、parse、import extraction、symbol extra
 `discover_populated_cache` を測る。
 通常は 1k modules、`CHOKKIN_BENCH_LARGE=1 cargo bench --bench pipeline` で
 5k / 10k も追加する。cold は解析 cache が空の状態であり、OS page cache は消さない。
-fixture 作成・cache 削除・graph clone は計測外。warm parse は in-memory store を渡さず
-CLI と同じ disk reuse を測る。全群は `make bench-save` / `make bench-cmp` の対象になる。
+fixture 作成・cache 削除・graph clone は計測外。warm parse は CLI と同じ disk reuse を測る。全群は `make bench-save` / `make bench-cmp` の対象になる。
 
-warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm` を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `reachability` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
+warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm`（disk bundle からの warm parse、100 / 1k / 5k / 10k files）を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした（当時の値は in-memory store 経由。in-memory store 削除後の disk warm は 10k で約 61 ms）。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
 

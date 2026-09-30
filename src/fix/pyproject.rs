@@ -5,7 +5,7 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::manifest::{normalize_distribution_name, pep508_distribution_name};
 
 use super::error::FixError;
-use super::write::{atomic_write, read_manifest};
+use super::write::{read_manifest, write_manifest};
 
 fn load_doc(path: &std::path::Path) -> Result<(&str, DocumentMut), FixError> {
     let (rel, contents) = read_manifest(path, "pyproject.toml")?;
@@ -33,10 +33,7 @@ pub fn remove_by_label(
         });
     }
 
-    atomic_write(path, doc.to_string().as_bytes(), true).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    write_manifest(path, rel, doc.to_string().as_bytes())?;
     Ok(format!("removed `{label}` from {rel}"))
 }
 
@@ -58,10 +55,7 @@ pub fn move_group_to_runtime(
 
     let _ = push_runtime_dependency(&mut doc, raw)?;
 
-    atomic_write(path, doc.to_string().as_bytes(), true).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    write_manifest(path, rel, doc.to_string().as_bytes())?;
     Ok(format!("moved dependency to project.dependencies in {rel}"))
 }
 
@@ -75,10 +69,7 @@ pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<Strin
         ));
     }
 
-    atomic_write(path, doc.to_string().as_bytes(), true).map_err(|source| FixError::Io {
-        path: rel.to_owned(),
-        source,
-    })?;
+    write_manifest(path, rel, doc.to_string().as_bytes())?;
     Ok(format!("added `{raw}` to project.dependencies in {rel}"))
 }
 

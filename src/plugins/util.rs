@@ -1,10 +1,10 @@
 //! Shared helpers for plugin extractors.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::CharIndices;
+use std::sync::LazyLock;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use toml::Value;
 
@@ -14,7 +14,7 @@ use crate::manifest::util::{
     path_is_within_root, read_to_string, relative_path as manifest_relative_path,
 };
 use crate::parser::{ParseSeverity, ParsedModule};
-use crate::sources::path_to_module;
+use crate::sources::{build_glob_set, path_to_module};
 
 use super::context::PluginContext;
 use super::error::PluginsError;
@@ -57,22 +57,18 @@ fn decorator_line(
 }
 
 /// Push a module reference for each Python source with a matching decorator.
-///
-/// Returns whether any reference was pushed.
 pub fn push_decorated_modules(
     ctx: &PluginContext<'_>,
     contrib: &mut PluginContribution,
     is_decorator: fn(&str, bool) -> bool,
     label: &str,
-) -> bool {
-    let mut found = false;
+) {
     for module in &ctx.parse.modules {
         let Some(line) = decorator_line(&ctx.root.path, module, is_decorator) else {
             continue;
         };
-        found |= push_decorated_module(ctx, contrib, &module.path, line, label);
+        push_decorated_module(ctx, contrib, &module.path, line, label);
     }
-    found
 }
 
 fn push_decorated_module(
@@ -81,9 +77,9 @@ fn push_decorated_module(
     file: &str,
     line: u32,
     label: &str,
-) -> bool {
+) {
     let Some(module) = path_to_module(file, &ctx.sources.layout) else {
-        return false;
+        return;
     };
     contrib.module_refs.push(ModuleReference {
         module,
@@ -93,7 +89,6 @@ fn push_decorated_module(
             label: label.to_owned(),
         },
     });
-    true
 }
 
 /// Push a symbol reference when `value` parses as `module:symbol`.
@@ -354,14 +349,6 @@ pub fn match_paths_against_globs(paths: &[String], patterns: &[String]) -> Vec<S
     hits
 }
 
-fn build_glob_set(patterns: &[String]) -> Result<GlobSet, globset::Error> {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        builder.add(Glob::new(pattern)?);
-    }
-    builder.build()
-}
-
 /// Convert a dotted module path to a root-relative `.py` file path.
 pub fn module_to_py_path(module: &str) -> String {
     format!("{}.py", module.replace('.', "/"))
@@ -369,7 +356,7 @@ pub fn module_to_py_path(module: &str) -> String {
 
 /// Extract `DJANGO_SETTINGS_MODULE` from `manage.py`.
 pub fn extract_django_settings_module(contents: &str) -> Option<String> {
-    django_settings_re()
+    DJANGO_SETTINGS_RE
         .captures(contents)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_owned())
@@ -387,7 +374,7 @@ pub fn parse_module_symbol(value: &str) -> Option<(String, String)> {
 
 /// Parse `uvicorn pkg.module:app` from a script target string.
 pub fn parse_uvicorn_script_target(value: &str) -> Option<(String, String)> {
-    uvicorn_script_re().captures(value).and_then(|caps| {
+    UVICORN_SCRIPT_RE.captures(value).and_then(|caps| {
         let module = caps.get(1)?.as_str().to_owned();
         let symbol = caps.get(2)?.as_str().to_owned();
         Some((module, symbol))
@@ -395,22 +382,16 @@ pub fn parse_uvicorn_script_target(value: &str) -> Option<(String, String)> {
 }
 
 #[allow(clippy::expect_used)]
-fn django_settings_re() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r#"setdefault\s*\(\s*["']DJANGO_SETTINGS_MODULE["']\s*,\s*["']([^"']+)["']"#)
-            .expect("valid django settings regex")
-    })
-}
+static DJANGO_SETTINGS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"setdefault\s*\(\s*["']DJANGO_SETTINGS_MODULE["']\s*,\s*["']([^"']+)["']"#)
+        .expect("valid django settings regex")
+});
 
 #[allow(clippy::expect_used)]
-fn uvicorn_script_re() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"uvicorn\s+([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)")
-            .expect("valid uvicorn script regex")
-    })
-}
+static UVICORN_SCRIPT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"uvicorn\s+([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)")
+        .expect("valid uvicorn script regex")
+});
 
 /// Check whether a distribution name appears in manifest dependencies.
 pub fn manifest_has_dependency(manifest: &crate::manifest::LoadedManifest, name: &str) -> bool {
@@ -506,11 +487,6 @@ pub fn choose_settings_path(
     }
 
     (Some(candidates[0].clone()), true)
-}
-
-/// Resolve a file path under the project root.
-pub fn root_join(root: &Path, rel: &str) -> PathBuf {
-    root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
 #[cfg(test)]

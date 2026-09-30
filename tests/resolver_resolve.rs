@@ -26,14 +26,12 @@ fn resolve_path(path: &Path) -> chokkin::ResolutionIndex {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
-        start: path.to_path_buf(),
     });
     let loaded = load_config(&root).expect("config");
     let manifest = extract_manifest(&root, &loaded).expect("manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse =
-        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
+    let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
     let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
         root: &root,
         config: &loaded,
@@ -158,8 +156,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
     assert_eq!(target.as_str(), "py310");
     loaded.effective.target_version = Some(target.clone());
     let sources = discover_sources(&root, &loaded, &manifest).expect("sources");
-    let parse =
-        parse_project_sources_with_cache(&root, &sources, &target, None, None).expect("parse");
+    let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
     let (scripts, warnings) = chokkin::discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),

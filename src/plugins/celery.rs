@@ -7,38 +7,28 @@ use crate::config::PluginId;
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
 use super::util::{
-    decorator_suffix, manifest_has_dependency, push_binary, push_decorated_modules,
-    push_symbol_ref, read_pyproject_table, relative_path,
+    decorator_suffix, push_binary, push_decorated_modules, push_symbol_ref, read_pyproject_table,
+    relative_path,
 };
-use super::warnings::PluginsWarning;
 
 /// Extract Celery app references from static command configuration.
-pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
+pub fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(PluginId::Celery);
     let root = ctx.root.path.as_path();
-    let mut found = manifest_has_dependency(ctx.manifest, "celery");
 
-    extract_pyproject_scripts(root, &mut contrib, &mut found);
-    extract_shell_scripts(root, &mut contrib, &mut found);
-    found |= push_decorated_modules(
+    extract_pyproject_scripts(root, &mut contrib);
+    extract_shell_scripts(root, &mut contrib);
+    push_decorated_modules(
         ctx,
         &mut contrib,
         is_task_decorator,
         "celery task decorator",
     );
 
-    let warnings = if found || !contrib.symbol_refs.is_empty() || !contrib.binary_usages.is_empty()
-    {
-        Vec::new()
-    } else {
-        vec![PluginsWarning::PluginNoOp {
-            plugin: PluginId::Celery,
-        }]
-    };
-    (contrib, warnings)
+    contrib
 }
 
-fn extract_pyproject_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bool) {
+fn extract_pyproject_scripts(root: &Path, contrib: &mut PluginContribution) {
     let path = root.join("pyproject.toml");
     if !path.is_file() {
         return;
@@ -61,7 +51,6 @@ fn extract_pyproject_scripts(root: &Path, contrib: &mut PluginContribution, foun
         let Some(app) = celery_app_arg(command) else {
             continue;
         };
-        *found = true;
         let origin = ReferenceOrigin {
             file: "pyproject.toml".to_owned(),
             line: None,
@@ -72,7 +61,7 @@ fn extract_pyproject_scripts(root: &Path, contrib: &mut PluginContribution, foun
     }
 }
 
-fn extract_shell_scripts(root: &Path, contrib: &mut PluginContribution, found: &mut bool) {
+fn extract_shell_scripts(root: &Path, contrib: &mut PluginContribution) {
     for dir_name in ["scripts", "bin"] {
         let dir = root.join(dir_name);
         if !dir.is_dir() {
@@ -94,7 +83,6 @@ fn extract_shell_scripts(root: &Path, contrib: &mut PluginContribution, found: &
                 let Some(app) = celery_app_arg(line) else {
                     continue;
                 };
-                *found = true;
                 let origin = ReferenceOrigin {
                     file: rel.clone(),
                     line: u32::try_from(line_index + 1).ok(),

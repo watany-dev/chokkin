@@ -17,8 +17,5 @@ pub use maps::{ImportMap, build_binary_map};
 pub(crate) use pytest_path::PytestImportPaths;
 pub use resolve::{ScopedDeclarations, resolve_imports, resolve_imports_for_analysis};
 pub use stdlib::StdlibRange;
-pub use types::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
-    import_root,
-};
+pub use types::{ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, import_root};
 pub use venv::VenvIndex;

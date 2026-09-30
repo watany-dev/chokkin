@@ -4,17 +4,14 @@
 
 use chokkin::{
     Confidence, DependencyOrigin, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId,
-    Severity, SuppressReason, SuppressedIssue, render_issues,
+    IssueSummary, ProjectMode, RenderContext, ReporterId, RuleId, Severity, SuppressReason,
+    SuppressedIssue, render_issues,
 };
 
 fn context() -> RenderContext {
     RenderContext {
         project_name: Some("demo".to_owned()),
-        mode: ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Certain,
-        },
+        mode: ProjectMode::App,
         production: false,
         version: "0.2.0-test",
         config_label: Some("pyproject.toml [tool.chokkin]".to_owned()),

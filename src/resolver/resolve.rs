@@ -14,8 +14,7 @@ use super::maps::{ImportMap, build_binary_map};
 use super::pytest_path::PytestImportPaths;
 use super::stdlib::StdlibRange;
 use super::types::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
-    import_root,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, import_root,
 };
 use super::venv::load_venv_index;
 
@@ -168,15 +167,9 @@ pub fn resolve_imports_for_analysis(
     ResolutionIndex {
         imports,
         warnings,
-        transitive: transitive_index(manifest),
+        transitive: manifest.lockfile.clone(),
         binary_resolutions,
         pytest_plugin_distributions: venv_index.pytest_plugins,
-    }
-}
-
-fn transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
-    TransitiveIndex {
-        edges: manifest.lockfile.edges.clone(),
     }
 }
 

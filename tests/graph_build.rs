@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use chokkin::{
-    FileContext, FileKind, GraphEdge, ModuleOrigin, ProjectRoot, RootMarker, build_graph_skeleton,
+    FileContext, FileKind, ModuleOrigin, ProjectRoot, RootMarker, build_graph_skeleton,
     discover_project_root, discover_sources, extract_manifest, load_config,
 };
 
@@ -20,7 +20,6 @@ fn pipeline_inputs(name: &str) -> (chokkin::LoadedManifest, chokkin::DiscoveredS
     let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
         marker: RootMarker::PyProjectToml,
-        start: path,
     });
     let config = load_config(&root).expect("config");
     let manifest = extract_manifest(&root, &config).expect("manifest");
@@ -61,18 +60,8 @@ fn build_graph_registers_files_and_dependencies() {
     );
 
     assert_eq!(graph.distribution_count(), 1);
-    let requests = graph.distribution_id("requests").expect("requests");
-    let [
-        GraphEdge::ManifestDeclaresDistribution {
-            distribution,
-            source,
-        },
-    ] = graph.edges()
-    else {
-        panic!("expected one manifest edge, got {:?}", graph.edges());
-    };
-    assert_eq!(*distribution, requests);
-    assert_eq!(source.file, "pyproject.toml");
+    assert!(graph.distribution_id("requests").is_some());
+    assert!(graph.edges().is_empty());
 }
 
 #[test]
@@ -86,7 +75,6 @@ fn build_graph_skips_opaque_dependencies() {
     let graph = build_graph_skeleton(&manifest, &sources).expect("graph");
     assert_eq!(graph.distribution_count(), 1);
     assert!(graph.distribution_id("localpkg").is_none());
-    assert_eq!(graph.edges().len(), 1);
 }
 
 #[test]
