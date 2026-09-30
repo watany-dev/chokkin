@@ -219,7 +219,9 @@ jobs:
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-semver-checks@0.50.0
-      - run: cargo semver-checks --baseline-rev origin/main
+      # Compare against the last release tag, not main: breaking changes may
+      # accumulate on main while the bumped version is still unreleased.
+      - run: cargo semver-checks --baseline-rev "$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
 
   actionlint:
     name: Actionlint
