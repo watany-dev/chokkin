@@ -2,13 +2,13 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::VERSION;
 use crate::config::RuntimeOverrides;
 use crate::fix::atomic_write;
-use crate::path_util::normalize_rel_path;
+use crate::path_util::{normalize_rel_path, resolve_under_root};
 use crate::rules::emit::{build_summary, compute_exit_status};
 use crate::rules::{
     IssueReport, SuppressReason, SuppressedIssue, issue_fingerprint, issue_stable_target,
@@ -134,74 +134,35 @@ fn read_baseline(path: &Path) -> Result<BaselineFile, BaselineError> {
 }
 
 fn resolve_baseline_path(root: &Path, baseline_path: &Path) -> Result<PathBuf, BaselineError> {
-    let root = root.canonicalize().map_err(|source| BaselineError::Io {
-        path: root.display().to_string(),
-        source,
-    })?;
+    let root = canonical_root(root)?;
     let path = if baseline_path.is_absolute() {
         baseline_path.to_path_buf()
     } else {
         root.join(baseline_path)
     };
-    let resolved = resolve_through_existing_ancestor(&path)?;
-    if !resolved.starts_with(&root) {
-        return Err(BaselineError::OutsideRoot {
-            path: path.display().to_string(),
-        });
-    }
-    Ok(resolved)
-}
-
-fn resolve_through_existing_ancestor(path: &Path) -> Result<PathBuf, BaselineError> {
-    let mut ancestor = path;
-    let mut missing = Vec::new();
-    while !ancestor.exists() {
-        let Some(name) = ancestor.file_name() else {
-            break;
-        };
-        missing.push(name.to_owned());
-        let Some(parent) = ancestor.parent() else {
-            break;
-        };
-        ancestor = parent;
-    }
-
-    let mut resolved = ancestor
-        .canonicalize()
-        .map_err(|source| BaselineError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    for component in missing.iter().rev() {
-        if !matches!(
-            Path::new(component).components().next(),
-            Some(Component::Normal(_))
-        ) {
-            return Err(BaselineError::OutsideRoot {
-                path: path.display().to_string(),
-            });
-        }
-        resolved.push(component);
-    }
-    Ok(resolved)
+    contained(&root, &path)
 }
 
 fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineError> {
-    let root = root.canonicalize().map_err(|source| BaselineError::Io {
+    contained(&canonical_root(root)?, parent).map(drop)
+}
+
+fn canonical_root(root: &Path) -> Result<PathBuf, BaselineError> {
+    root.canonicalize().map_err(|source| BaselineError::Io {
         path: root.display().to_string(),
         source,
-    })?;
-    let parent = parent.canonicalize().map_err(|source| BaselineError::Io {
-        path: parent.display().to_string(),
-        source,
-    })?;
-    if parent.starts_with(&root) {
-        Ok(())
-    } else {
-        Err(BaselineError::OutsideRoot {
-            path: parent.display().to_string(),
+    })
+}
+
+fn contained(root: &Path, path: &Path) -> Result<PathBuf, BaselineError> {
+    resolve_under_root(root, path)
+        .map_err(|source| BaselineError::Io {
+            path: path.display().to_string(),
+            source,
+        })?
+        .ok_or_else(|| BaselineError::OutsideRoot {
+            path: path.display().to_string(),
         })
-    }
 }
 
 fn display_path(root: &Path, path: &Path) -> String {
