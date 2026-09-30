@@ -15,9 +15,8 @@ build:
 test:
 	cargo test --locked
 
-lint:
+lint: doc
 	cargo clippy --all-targets --locked -- -D warnings
-	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 
 fmt:
 	cargo fmt
