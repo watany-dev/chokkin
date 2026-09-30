@@ -14,6 +14,10 @@ cargo bench --bench reachability --locked -- --baseline issue129
 cargo bench --bench reachability --locked -- '10000$' --baseline issue129 --measurement-time 10
 ```
 
+`benches/reachability.rs` は #446 で削除した。同じ計測は
+`CHOKKIN_BENCH_LARGE=1 cargo bench --bench pipeline --locked -- 'pipeline_2kb/reachability'`
+で再現できる（グループ名は `pipeline_2kb`、サンプル数は 20）。
+
 他のビルド・テストと重ねない単独実行。30 samples の Criterion median。
 1k は通常実行、10k は最後の長時間測定の値。
 
