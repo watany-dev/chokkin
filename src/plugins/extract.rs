@@ -98,13 +98,13 @@ pub fn extract_plugin_hints_with_parse(
             PluginId::Pytest => pytest::extract(&ctx),
             PluginId::Django => django::extract(&ctx),
             PluginId::Fastapi => fastapi::extract(&ctx),
-            PluginId::Flask => flask::extract(&ctx),
-            PluginId::Celery => celery::extract(&ctx),
+            PluginId::Flask => (flask::extract(&ctx), Vec::new()),
+            PluginId::Celery => (celery::extract(&ctx), Vec::new()),
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
-                devtools::extract(*plugin, &ctx)
+                (devtools::extract(*plugin, &ctx), Vec::new())
             },
             PluginId::Sphinx | PluginId::MkDocs | PluginId::Alembic => {
-                doctools::extract(*plugin, &ctx)
+                (doctools::extract(*plugin, &ctx), Vec::new())
             },
         };
         warnings.extend(plugin_warnings);

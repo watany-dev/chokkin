@@ -68,9 +68,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
             }
         }
     } else if !manifest_has_dependency(ctx.manifest, "django") {
-        warnings.push(PluginsWarning::PluginNoOp {
-            plugin: PluginId::Django,
-        });
         return (contrib, warnings);
     }
 
@@ -94,11 +91,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     }
 
     let Some(settings_rel) = settings_path else {
-        if manage_py.is_file() {
-            warnings.push(PluginsWarning::PluginNoOp {
-                plugin: PluginId::Django,
-            });
-        }
         return (contrib, warnings);
     };
 
