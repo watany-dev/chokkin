@@ -292,7 +292,7 @@ fn empty_project_returns_empty_files() {
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    assert!(sources.files.is_empty());
+    assert_eq!(sources.files, []);
 }
 
 #[test]

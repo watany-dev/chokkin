@@ -63,6 +63,6 @@ mod tests {
         let mut diagnostics = Vec::new();
         let exports = extract_exports(parsed.suite(), &LineIndex::new(source), &mut diagnostics);
         assert_eq!(exports, vec!["foo".to_owned(), "bar".to_owned()]);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 }

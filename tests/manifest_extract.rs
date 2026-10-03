@@ -146,7 +146,7 @@ fn manifest_cache_notices_created_constraint_file() {
     let cache = CacheOptions::default();
     let first =
         extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
-    assert!(first.constraints.is_empty());
+    assert_eq!(first.constraints, []);
     assert!(
         first
             .warnings
@@ -301,7 +301,7 @@ fn opaque_url_not_unused_candidate() {
         .iter()
         .find(|dep| dep.opaque)
         .expect("opaque editable dependency");
-    assert!(editable.name.is_empty());
+    assert_eq!(editable.name, "");
     assert!(
         editable
             .specifier
@@ -407,7 +407,7 @@ fn requirements_url_without_egg_is_opaque() {
         .iter()
         .find(|dep| dep.opaque)
         .expect("opaque git dependency");
-    assert!(dep.name.is_empty());
+    assert_eq!(dep.name, "");
     assert!(
         dep.specifier
             .as_deref()

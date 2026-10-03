@@ -235,6 +235,6 @@ mod tests {
     fn command_ignores_unknown_python_modules() {
         let map = binary_map(&["pytest"]);
         let binaries = command_known_binaries("python -m unknown_module", &map);
-        assert!(binaries.is_empty());
+        assert_eq!(binaries, Vec::<String>::new());
     }
 }

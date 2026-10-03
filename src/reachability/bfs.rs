@@ -641,7 +641,7 @@ mod tests {
             "expected an import step via acme.a, got {step:?}"
         );
         assert_eq!(reached_from(&outcome, a_id), Some(main_id));
-        assert!(outcome.used_modules.is_empty());
+        assert_eq!(outcome.used_modules, []);
     }
 
     #[test]

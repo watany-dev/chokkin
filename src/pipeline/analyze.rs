@@ -384,7 +384,7 @@ mod tests {
             AnalyzeOptions::default(),
         )
         .expect("analyze");
-        assert!(report.issues.issues.is_empty());
+        assert_eq!(report.issues.issues, []);
     }
 
     #[test]

@@ -115,7 +115,7 @@ mod tests {
             updated.under("acme"),
             vec![("acme.bar", added), ("acme.foo", file_id)]
         );
-        assert!(updated.under("acme.foo").is_empty());
-        assert!(updated.under("acm").is_empty());
+        assert_eq!(updated.under("acme.foo"), []);
+        assert_eq!(updated.under("acm"), []);
     }
 }

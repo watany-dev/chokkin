@@ -567,7 +567,7 @@ mod tests {
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
-        assert!(detect(&index, "requests", LockfileGraph::default()).is_empty());
+        assert_eq!(detect(&index, "requests", LockfileGraph::default()), []);
     }
 
     /// §10: a dev-group-only dependency used at runtime is CHK005 territory,
@@ -578,12 +578,12 @@ mod tests {
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("pytest".to_owned(), vec![&pytest]);
 
-        assert!(detect(&index, "pytest", LockfileGraph::default()).is_empty());
+        assert_eq!(detect(&index, "pytest", LockfileGraph::default()), []);
 
         let transitive = LockfileGraph {
             edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),
         };
-        assert!(detect(&index, "pytest", transitive).is_empty());
+        assert_eq!(detect(&index, "pytest", transitive), []);
     }
 
     #[test]
