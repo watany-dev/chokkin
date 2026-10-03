@@ -345,7 +345,7 @@ mod tests {
             ProjectMode::App,
             &ResolutionIndex::default(),
         );
-        assert!(report.issues.is_empty());
+        assert_eq!(report.issues, []);
     }
 
     #[test]

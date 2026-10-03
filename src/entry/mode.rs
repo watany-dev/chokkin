@@ -157,7 +157,7 @@ mod tests {
             &mut warnings,
         );
         assert_eq!(mode, ProjectMode::Library);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     #[test]

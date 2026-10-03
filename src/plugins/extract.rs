@@ -251,7 +251,7 @@ mod tests {
             cache: None,
         })
         .expect("extract hints");
-        assert!(hints.contributions.is_empty());
+        assert_eq!(hints.contributions, []);
     }
 
     fn scan_cache_fixture(root_path: &Path) -> (LoadedConfig, DiscoveredSources, LoadedManifest) {

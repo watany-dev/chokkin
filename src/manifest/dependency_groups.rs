@@ -204,7 +204,7 @@ mod tests {
         let (deps, warnings) = extract(
             "[dependency-groups]\ntest = [\"pytest\"]\ndev = [{include-group = \"test\"}, \"ruff\"]\n",
         );
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
         assert_eq!(deps.len(), 2);
         let pytest = deps
             .iter()
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(pytest.included_via, vec![chain(&["dev", "test"])]);
         let ruff = deps.iter().find(|dep| dep.name == "ruff").expect("ruff");
         assert_eq!(ruff.origin.label, "dependency-groups.dev[1]");
-        assert!(ruff.included_via.is_empty());
+        assert_eq!(ruff.included_via, Vec::<Vec<String>>::new());
     }
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
         let (deps, warnings) = extract(
             "[dependency-groups]\nall = [{include-group = \"dev\"}]\ndev = [{include-group = \"test\"}]\ntest = [\"pytest\"]\n",
         );
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
         assert_eq!(
             via(&deps, "pytest"),
             [chain(&["all", "dev", "test"]), chain(&["dev", "test"])]
@@ -235,7 +235,7 @@ mod tests {
         let (deps, warnings) = extract(
             "[dependency-groups]\nDev_Tools = [\"ruff\"]\ndev = [{include-group = \"dev-tools\"}]\n",
         );
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
         assert_eq!(via(&deps, "ruff"), [chain(&["dev", "Dev_Tools"])]);
     }
 
@@ -281,7 +281,7 @@ mod tests {
                 groups: chain(&["dev", "dev"]),
             }]
         );
-        assert!(via(&deps, "pytest").is_empty());
+        assert_eq!(via(&deps, "pytest"), Vec::<Vec<String>>::new());
     }
 
     mod props {

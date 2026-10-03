@@ -164,7 +164,7 @@ fn config_ignore_suppresses_matching_issue() {
             .iter()
             .all(|issue| issue.rule != RuleId::Chk002)
     );
-    assert!(!report.suppressed.is_empty());
+    assert_ne!(report.suppressed, []);
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn severity_off_disables_rule_without_suppressed_entry() {
             .iter()
             .all(|issue| issue.rule != RuleId::Chk002)
     );
-    assert!(report.suppressed.is_empty());
+    assert_eq!(report.suppressed, []);
     assert_eq!(report.exit_status, ExitStatus::Success);
 }
 

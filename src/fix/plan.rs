@@ -701,7 +701,7 @@ mod tests {
             FixOptions::default(),
         )
         .expect("plain CHK003 is not a fix target");
-        assert!(actions.is_empty());
+        assert_eq!(actions, []);
     }
 
     #[test]
