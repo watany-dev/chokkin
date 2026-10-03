@@ -161,7 +161,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),
     );
-    assert!(warnings.is_empty());
+    assert_eq!(warnings, []);
     let script_targets: BTreeMap<_, _> = scripts
         .iter()
         .filter_map(|script| {

@@ -132,7 +132,7 @@ mod tests {
         let result = extract(
             "[tool.uv]\nconstraint-dependencies = [\"urllib3<2\"]\noverride-dependencies = [\"idna==3.7\"]\n",
         );
-        assert!(result.dependencies.is_empty());
+        assert_eq!(result.dependencies, []);
         let labels: Vec<_> = result
             .constraints
             .iter()

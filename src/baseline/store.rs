@@ -291,7 +291,7 @@ mod tests {
         )
         .expect("apply baseline");
         assert_eq!(result.suppressed, 1);
-        assert!(report.issues.is_empty());
+        assert_eq!(report.issues, []);
         assert_eq!(report.exit_status, crate::ExitStatus::Success);
         assert_eq!(report.suppressed[0].reason, SuppressReason::Baseline);
     }
@@ -425,7 +425,7 @@ mod tests {
         )
         .expect("apply baseline");
         assert_eq!(result.suppressed, 1);
-        assert!(report.issues.is_empty());
+        assert_eq!(report.issues, []);
     }
 
     #[test]

@@ -639,14 +639,14 @@ mod tests {
     #[test]
     fn marks_opaque_assignment_with_non_literal() {
         let parsed = visit_source("import importlib\nmod = importlib.import_module(name)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(parsed.has_opaque_dynamic_import);
     }
 
     #[test]
     fn records_command_words_only_with_subprocess() {
         let source = "cmd = \"ruff format --check\"\nrun(cmd, shell=True)\n";
-        assert!(visit_source(source).shell_commands.is_empty());
+        assert_eq!(visit_source(source).shell_commands, Vec::<String>::new());
         let parsed = visit_source(&format!("import subprocess\n{source}"));
         assert_eq!(parsed.shell_commands, vec!["ruff".to_owned()]);
     }
@@ -655,7 +655,7 @@ mod tests {
     fn records_prefix_of_built_module_name() {
         let parsed =
             visit_source("import importlib\nimportlib.import_module(\"acme.commands.\" + name)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         let prefixes: Vec<_> = parsed
             .dynamic_import_prefixes
             .iter()
@@ -682,7 +682,7 @@ mod tests {
     #[test]
     fn marks_opaque_aliased_import_module() {
         let parsed = visit_source("from importlib import import_module\nimport_module(name)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(parsed.has_opaque_dynamic_import);
     }
 
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn marks_opaque_non_literal_keyword() {
         let parsed = visit_source("import importlib\nimportlib.import_module(name=target)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(parsed.has_opaque_dynamic_import);
     }
 
@@ -719,7 +719,7 @@ mod tests {
         let parsed = visit_source(
             "from acme.loader import import_module\nimport_module(name)\nimport_module(\"acme.a\")\n",
         );
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(!parsed.has_opaque_dynamic_import);
     }
 

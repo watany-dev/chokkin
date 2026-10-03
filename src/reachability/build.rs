@@ -386,7 +386,7 @@ mod tests {
         let models = graph.file_id("acme/models.py").expect("models");
         assert!(report.reachable.contains(&models));
         assert!(!report.framework_used.contains(&models));
-        assert!(report.unreachable.is_empty());
+        assert_eq!(report.unreachable, []);
         assert!(
             report
                 .used_modules

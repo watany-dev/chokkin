@@ -854,7 +854,7 @@ mod tests {
         let full = SourceFingerprint::from_absolute(&root, &path).expect("full fingerprint");
 
         assert_eq!(stat.path, "src/app.py");
-        assert!(stat.content_hash.is_empty());
+        assert_eq!(stat.content_hash, "");
         assert_eq!(stat.size, full.size);
         assert_eq!(stat.modified_ns, full.modified_ns);
         let _ = std::fs::remove_dir_all(root);
@@ -1103,7 +1103,7 @@ mod tests {
         let fingerprints =
             ScanInputFingerprints::collect(&root, &config, &manifest).expect("fingerprints");
 
-        assert!(fingerprints.config.is_empty());
+        assert_eq!(fingerprints.config, []);
         assert_eq!(fingerprints.manifest.len(), 1);
         assert_eq!(fingerprints.manifest[0].path, "requirements.txt");
         let _ = std::fs::remove_dir_all(root);

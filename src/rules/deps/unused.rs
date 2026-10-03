@@ -293,7 +293,7 @@ mod tests {
             false,
             None,
         );
-        assert!(candidates.is_empty());
+        assert_eq!(candidates, []);
     }
 
     #[test]
@@ -359,7 +359,7 @@ mod tests {
             false,
             None,
         );
-        assert!(candidates.is_empty());
+        assert_eq!(candidates, []);
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod tests {
             false,
             None,
         );
-        assert!(candidates.is_empty());
+        assert_eq!(candidates, []);
     }
 
     /// requests is a decoy: its graph module and import must not leak into

@@ -30,14 +30,14 @@ fn file_ignore_must_precede_first_statement() {
 fn standalone_comment_before_code_is_not_inline_ignore() {
     let source = "# chokkin: ignore[CHK003]\nimport sys\n";
     let directives = extract_ignores(source);
-    assert!(directives.is_empty());
+    assert_eq!(directives, []);
 }
 
 #[test]
 fn file_ignore_after_code_is_ignored() {
     let source = "import os\n# chokkin: file-ignore[CHK001]\n";
     let directives = extract_ignores(source);
-    assert!(directives.is_empty());
+    assert_eq!(directives, []);
 }
 
 #[test]
@@ -51,5 +51,5 @@ fn unknown_rule_codes_are_still_parsed() {
 #[test]
 fn comma_separated_codes_must_not_include_spaces() {
     let source = "import sys  # chokkin: ignore[CHK003, CHK010]\n";
-    assert!(extract_ignores(source).is_empty());
+    assert_eq!(extract_ignores(source), []);
 }

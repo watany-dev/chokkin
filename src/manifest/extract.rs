@@ -468,7 +468,7 @@ mod tests {
             merged.dynamic,
             vec!["version".to_owned(), "dependencies".to_owned()]
         );
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     mod props {

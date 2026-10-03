@@ -130,6 +130,6 @@ fn baseline_v03_validates_and_reads_v02_without_schema_version() {
         &RuntimeOverrides::default(),
     )
     .expect("apply v0.2 baseline");
-    assert!(report.issues.is_empty());
+    assert_eq!(report.issues, []);
     assert_eq!(report.exit_status, ExitStatus::Success);
 }

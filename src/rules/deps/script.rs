@@ -500,7 +500,7 @@ mod tests {
             &import_map(),
             false,
         );
-        assert!(found.is_empty());
+        assert_eq!(found, []);
     }
 
     #[test]
