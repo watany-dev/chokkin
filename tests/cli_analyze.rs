@@ -366,7 +366,7 @@ fn binary_pep723_script_findings_follow_baseline_and_config_ignore() {
         temp.path(),
         &["--baseline", &baseline_arg, "--update-baseline"],
     );
-    assert!(!before.is_empty());
+    assert_ne!(before, Vec::<serde_json::Value>::new());
     let baseline_contents = fs::read_to_string(&baseline).expect("read baseline");
     assert!(baseline_contents.contains("script:scripts/tool.py:pyyaml"));
     let after = json_issues(temp.path(), &["--baseline", &baseline_arg]);
