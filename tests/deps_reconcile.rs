@@ -559,7 +559,7 @@ fn uv_path_source_resolves_without_venv() {
         chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "mylib"
     )));
     let report = reconcile_fixture("uv_path_source");
-    assert!(rules_mentioning(&report, "mylib").is_empty());
+    assert_eq!(rules_mentioning(&report, "mylib"), []);
     assert!(!has_dist_rule(&report, RuleId::Chk002, "my-lib"));
     assert!(report.used_distributions.contains("my-lib"));
 }
@@ -568,7 +568,7 @@ fn uv_path_source_resolves_without_venv() {
 fn uv_workspace_source_dependency_is_used() {
     let report = reconcile_fixture("uv_workspace_source");
     assert!(!has_dist_rule(&report, RuleId::Chk002, "billing"));
-    assert!(rules_mentioning(&report, "billing").is_empty());
+    assert_eq!(rules_mentioning(&report, "billing"), []);
 }
 
 #[test]
@@ -586,7 +586,7 @@ fn build_plugin_declared_as_runtime_dep_notes_build_requires() {
         unused.explain.details
     );
     assert!(!has_dist_rule(&report, RuleId::Chk002, "hatchling"));
-    assert!(rules_mentioning(&report, "hatchling").is_empty());
+    assert_eq!(rules_mentioning(&report, "hatchling"), []);
     assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
 

@@ -251,7 +251,7 @@ mod tests {
     fn parses_pep723_spec_example() {
         let (script, warnings) = parse(SPEC_EXAMPLE);
         let script = script.expect("script block");
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
         assert_eq!(script.requires_python.as_deref(), Some(">=3.11"));
         assert_eq!(
             script.target_version.as_ref().map(TargetVersion::as_str),
@@ -274,7 +274,7 @@ mod tests {
         let crlf = SPEC_EXAMPLE.replace('\n', "\r\n");
         let (lf_script, _) = parse(SPEC_EXAMPLE);
         let (crlf_script, warnings) = parse(&crlf);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
         assert_eq!(crlf_script, lf_script);
     }
 
@@ -304,7 +304,7 @@ mod tests {
     fn unclosed_block_is_not_a_script() {
         let (script, warnings) = parse("# /// script\n# dependencies = []\nimport os\n");
         assert!(script.is_none());
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     #[test]
@@ -312,7 +312,7 @@ mod tests {
         let text = format!("# /// pyproject\n# [tool.x]\n# ///\n\n{SPEC_EXAMPLE}");
         let (script, warnings) = parse(&text);
         assert!(script.is_some());
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     #[test]

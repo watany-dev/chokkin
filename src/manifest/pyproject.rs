@@ -485,7 +485,7 @@ mod tests {
         )
         .expect("valid pyproject");
 
-        assert!(result.dependencies.is_empty());
+        assert_eq!(result.dependencies, []);
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod tests {
         )
         .expect("valid pyproject");
 
-        assert!(result.dependencies.is_empty());
+        assert_eq!(result.dependencies, []);
         assert_eq!(
             result.metadata.build_backend.as_deref(),
             Some("hatchling.build")

@@ -215,17 +215,20 @@ mod tests {
 
     #[test]
     fn ignores_arguments_substitutions_and_environment_tools() {
-        assert!(binaries("echo pytest").is_empty());
-        assert!(binaries("$(COVERAGE) run -m pytest").is_empty());
-        assert!(binaries("echo $(shell pytest --version)").is_empty());
-        assert!(binaries("${PYTEST} tests").is_empty());
-        assert!(binaries("pip install celery").is_empty());
-        assert!(binaries("python manage.py migrate").is_empty());
+        assert_eq!(binaries("echo pytest"), Vec::<String>::new());
+        assert_eq!(binaries("$(COVERAGE) run -m pytest"), Vec::<String>::new());
+        assert_eq!(
+            binaries("echo $(shell pytest --version)"),
+            Vec::<String>::new()
+        );
+        assert_eq!(binaries("${PYTEST} tests"), Vec::<String>::new());
+        assert_eq!(binaries("pip install celery"), Vec::<String>::new());
+        assert_eq!(binaries("python manage.py migrate"), Vec::<String>::new());
     }
 
     #[test]
     fn backslash_continuations_stay_in_one_segment() {
-        assert!(binaries("echo start \\\n  pytest").is_empty());
+        assert_eq!(binaries("echo start \\\n  pytest"), Vec::<String>::new());
         assert_eq!(binaries("pytest \\\r\n  --cov"), ["pytest"]);
     }
 
