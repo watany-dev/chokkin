@@ -92,6 +92,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub no_cache: bool,
 
+    /// Do not treat nested `pyproject.toml` files as workspace members.
+    #[arg(long)]
+    pub no_auto_workspace: bool,
+
     /// Run probe mode (pipeline steps 1–4 only).
     #[arg(long)]
     pub probe: bool,
@@ -100,7 +104,7 @@ pub struct CliArgs {
     #[arg(long, conflicts_with_all = [
         "probe", "fix", "dry_run", "allow_remove_files", "add_missing", "production",
         "strict", "no_exit_code", "include", "exclude", "reporter", "confidence",
-        "baseline", "update_baseline", "no_cache", "explain", "trace",
+        "baseline", "update_baseline", "no_cache", "no_auto_workspace", "explain", "trace",
     ])]
     pub init: bool,
 
@@ -134,6 +138,7 @@ impl CliArgs {
             no_exit_code: self.no_exit_code.then_some(true),
             include_rules: self.include.clone(),
             exclude_rules: self.exclude.clone(),
+            no_auto_workspace: self.no_auto_workspace.then_some(true),
         }
     }
 
@@ -298,5 +303,13 @@ mod tests {
         let args = parse_cli_args(vec!["--no-cache".to_owned()]).expect("parse");
         assert!(args.no_cache);
         assert!(!args.analyze_options().cache.enabled);
+    }
+
+    #[test]
+    fn parses_no_auto_workspace() {
+        let args = parse_cli_args(vec!["--no-auto-workspace".to_owned()]).expect("parse");
+        assert_eq!(args.runtime_overrides().no_auto_workspace, Some(true));
+        let args = parse_cli_args(Vec::new()).expect("parse");
+        assert_eq!(args.runtime_overrides().no_auto_workspace, None);
     }
 }

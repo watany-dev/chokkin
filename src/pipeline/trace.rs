@@ -271,16 +271,19 @@ mod tests {
                 file: legacy_id,
                 path: "src/acme/legacy.py".to_owned(),
                 max_confidence: Confidence::Certain,
+                mode: ProjectMode::App,
             },
             UnreachableFile {
                 file: old_api_id,
                 path: "src/acme/old_api.py".to_owned(),
                 max_confidence: Confidence::Certain,
+                mode: ProjectMode::App,
             },
         ];
 
         let entry = EntryPlan {
             mode: ProjectMode::App,
+            library_members: Vec::new(),
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "src/acme/cli.py".to_owned(),

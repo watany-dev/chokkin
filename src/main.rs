@@ -42,6 +42,7 @@ Options:
       --baseline <PATH>   Suppress issues already recorded in a baseline file
       --update-baseline   Write current issues to --baseline
       --no-cache          Disable cache reads and writes
+      --no-auto-workspace Do not treat nested pyproject.toml as workspace members
       --probe             Run probe mode (pipeline steps 1-4 only)
       --init              Append starter [tool.chokkin] config to pyproject.toml
       --project-root PATH Override project root discovery start directory

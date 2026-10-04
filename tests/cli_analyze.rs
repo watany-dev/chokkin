@@ -547,3 +547,87 @@ fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
         "{keys:?}"
     );
 }
+
+/// `llama_index`: hundreds of member pyprojects and no workspace declaration
+/// (#488).
+fn undeclared_monorepo() -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"llama-index\"\nversion = \"0.1.0\"\ndependencies = [\"llama-index-core\"]\n",
+        ),
+        (
+            "llama-index-core/pyproject.toml",
+            "[project]\nname = \"llama-index-core\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        ),
+        (
+            "llama-index-core/llama_index/core/__init__.py",
+            "from llama_index.core.base import BaseLLM\n",
+        ),
+        (
+            "llama-index-core/llama_index/core/base.py",
+            "import requests\n\n\nclass BaseLLM:\n    session = requests\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/pyproject.toml",
+            "[project]\nname = \"llama-index-llms-openai\"\nversion = \"0.1.0\"\ndependencies = [\"openai\", \"llama-index-core\"]\n\n[dependency-groups]\ndev = [\"pytest\"]\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/__init__.py",
+            "from llama_index.llms.openai.base import OpenAI\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/base.py",
+            "import openai\nfrom llama_index.core import BaseLLM\n\n\nclass OpenAI(BaseLLM):\n    client = openai\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/tests/conftest.py",
+            "import openai\nimport pytest\n",
+        ),
+        // Tool-only pyproject: not a member.
+        ("docs/pyproject.toml", "[tool.ruff]\nline-length = 88\n"),
+    ])
+}
+
+fn certain_chk001(issues: &[serde_json::Value]) -> Vec<String> {
+    issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001" && issue["confidence"] == "certain")
+        .map(|issue| issue["target"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+#[test]
+fn binary_undeclared_monorepo_members_are_auto_detected() {
+    let project = undeclared_monorepo();
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(certain_chk001(&issues), Vec::<String>::new());
+    let keys = issue_keys(&issues);
+    assert!(
+        keys.iter().all(|(code, target)| !(matches!(
+            code.as_str(),
+            "CHK003" | "CHK004" | "CHK010"
+        ) && (target == "openai" || target == "requests"))),
+        "{keys:?}"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--probe")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stdout.contains("Workspace: 2 members"), "{stdout}");
+    assert!(
+        stderr.contains("treating 2 nested pyproject.toml as workspace members"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn binary_no_auto_workspace_keeps_single_project_analysis() {
+    let project = undeclared_monorepo();
+    let issues = json_issues(project.path(), &["--no-auto-workspace"]);
+    assert!(!certain_chk001(&issues).is_empty(), "{issues:?}");
+}

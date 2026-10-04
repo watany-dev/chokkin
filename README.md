@@ -108,6 +108,7 @@ Key flags:
 - `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files. `--add-missing` adds Certain CHK003 findings to non-Poetry `[project].dependencies` when the distribution is unambiguous; workspace findings are inserted into the member `pyproject.toml` when that member manifest was inventoried. Unsupported cases are reported as skipped fixes with details on stderr.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
 - `--no-cache` — disable Phase 2 cache reads/writes. Parse and manifest/config scan cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
+- `--no-auto-workspace` — do not treat nested `pyproject.toml` files with a `[project]` name as workspace members when the repository declares no uv or chokkin workspace (see workspace mode below).
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported and how reachability was judged. `CHK002` explain includes top-level modules and reachable/unreachable import evidence; `--trace` prints a positive path for reachable files and a negative trace (reason, entry roots, incoming import chain) for unreachable files. These are the intended path for investigating and reporting false positives.
@@ -185,7 +186,7 @@ The root `.chokkin/` directory is reserved for analyzer data and is always exclu
 
 - **app mode** — there's a clear entry (`console_scripts`, `manage.py`, `asgi.py`, `wsgi.py`, `app.py`). Unused files are reported aggressively.
 - **library mode** — a `[project] name` with a package and no clear entry. Public modules may be imported by external users, so unused files/exports are reported at low confidence (or as info). For serious unused-file detection in a library, declare `entry` explicitly.
-- **workspace mode** — multiple `pyproject.toml` files or `tool.uv.workspace.members`. Each member is analyzed separately (per-member `[tool.chokkin.workspaces.<name>]` config is supported), sharing the workspace lockfile.
+- **workspace mode** — multiple `pyproject.toml` files or `tool.uv.workspace.members`. Each member is analyzed separately (per-member `[tool.chokkin.workspaces.<name>]` config is supported), sharing the workspace lockfile. Without a workspace declaration (llama_index-style monorepos), nested `pyproject.toml` files up to four directories deep that declare a `[project]` name become members automatically; hidden, build, and test directories and `exclude` globs are skipped, a warning reports the member count, and `--no-auto-workspace` turns this off. A detected member that names a distribution and has no app entry is scored like a library: its unreachable files drop to `maybe` and its tests are not reported.
 
 ### Dependency contexts
 

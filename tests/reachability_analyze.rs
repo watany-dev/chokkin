@@ -180,7 +180,7 @@ fn library_mode_unshipped_orphan_keeps_certain_confidence() {
         &inputs.sources.files,
     )
     .expect("wheel surface");
-    apply_public_surface(&mut report, &surface, inputs.entry.mode);
+    apply_public_surface(&mut report, &surface, &inputs.entry);
 
     let confidence_of = |path: &str| {
         report

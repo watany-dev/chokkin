@@ -4,6 +4,7 @@ use crate::config::{ChokkinConfig, ProjectMode};
 use crate::manifest::LoadedManifest;
 use crate::sources::DiscoveredSources;
 
+use super::auto::detect_auto_entries;
 use super::types::{EntryCandidate, EntryWarning};
 
 const APP_ENTRY_FILE_NAMES: &[&str] = &["manage.py", "asgi.py", "wsgi.py", "app.py"];
@@ -37,6 +38,16 @@ pub fn resolve_project_mode(
     }
 
     ProjectMode::App
+}
+
+/// Whether a workspace member names a distribution and shows no app signal.
+///
+/// Namespace packages (`llama_index`) have no `__init__.py`, so unlike root
+/// mode resolution no package is required.
+#[must_use]
+pub fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
+    manifest.metadata.name.is_some()
+        && !has_clear_app_signals(manifest, &detect_auto_entries(sources))
 }
 
 fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> Option<usize> {
@@ -231,5 +242,17 @@ mod tests {
             &mut warnings,
         );
         assert_eq!(mode, ProjectMode::App);
+    }
+
+    #[test]
+    fn named_member_without_app_signals_is_a_library_even_without_init() {
+        let mut sources = library_sources();
+        sources.files[0].path = "llama_index/llms/openai/base.py".to_owned();
+        let mut manifest = empty_manifest();
+        assert!(!is_library_member(&manifest, &sources));
+        manifest.metadata.name = Some("llama-index-llms-openai".to_owned());
+        assert!(is_library_member(&manifest, &sources));
+        sources.files[0].path = "manage.py".to_owned();
+        assert!(!is_library_member(&manifest, &sources));
     }
 }

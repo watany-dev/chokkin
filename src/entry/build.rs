@@ -58,6 +58,7 @@ pub fn build_entry_roots(
         mode,
         roots,
         warnings,
+        library_members: Vec::new(),
     }
 }
 

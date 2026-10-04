@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use crate::VERSION;
 use crate::cache::CacheOptions;
 use crate::config::{
-    ChokkinConfig, ConfigSources, ResolvedWorkspaceMember, RuntimeOverrides, TargetVersion,
-    apply_overrides, load_config,
+    ChokkinConfig, ConfigSources, LoadedConfig, ResolvedWorkspaceMember, RuntimeOverrides,
+    TargetVersion, apply_overrides, detect_nested_members, load_config,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
@@ -17,7 +17,7 @@ use crate::manifest::{
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
-use crate::sources::{DiscoveredSources, FileContext, FileKind, discover_sources};
+use crate::sources::{DiscoveredSources, FileContext, FileKind, build_glob_set, discover_sources};
 
 use super::error::ProbeError;
 use super::warnings::{ProbeWarning, collect_warnings};
@@ -96,6 +96,7 @@ pub fn probe_project_with_cache(
     loaded.effective.target_version = Some(target_version);
 
     let sources = discover_sources(&root, &loaded, &manifest)?;
+    let auto_members = auto_detect_members(&mut loaded, overrides)?;
     let workspace_inputs =
         collect_workspace_inputs(&root, &loaded.workspace_members, overrides, cache)?;
     let (scripts, script_warnings) = discover_inline_scripts(
@@ -104,6 +105,11 @@ pub fn probe_project_with_cache(
     );
     let mut warnings = collect_warnings(&manifest, &sources);
     warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
+    if auto_members > 0 {
+        warnings.push(ProbeWarning::AutoWorkspace {
+            member_count: auto_members,
+        });
+    }
     let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
 
     Ok(ProbeReport {
@@ -119,6 +125,27 @@ pub fn probe_project_with_cache(
         plugin_activations,
         warnings,
     })
+}
+
+/// Fill `loaded.workspace_members` from nested `pyproject.toml` files when
+/// the project declares no workspace, returning how many were found (#488).
+///
+/// Runs here rather than in `load_config` so member roots, which are loaded
+/// with `load_config` too, do not scan their own subtrees again.
+fn auto_detect_members(
+    loaded: &mut LoadedConfig,
+    overrides: &RuntimeOverrides,
+) -> Result<usize, ProbeError> {
+    if overrides.no_auto_workspace == Some(true)
+        || loaded.uv_workspace.is_some()
+        || !loaded.workspace_members.is_empty()
+    {
+        return Ok(0);
+    }
+    let exclude = build_glob_set(&loaded.effective.exclude)?;
+    loaded.workspace_members =
+        detect_nested_members(&loaded.root, &exclude, loaded.effective.respect_gitignore)?;
+    Ok(loaded.workspace_members.len())
 }
 
 fn activate_plugins(

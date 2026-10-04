@@ -390,6 +390,7 @@ mod tests {
     fn entry_plan() -> EntryPlan {
         EntryPlan {
             mode: ProjectMode::App,
+            library_members: Vec::new(),
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "src/acme/main.py".to_owned(),

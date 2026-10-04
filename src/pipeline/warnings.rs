@@ -16,6 +16,11 @@ pub enum ProbeWarning {
     Sources(SourcesWarning),
     /// Warning from plugin hint extraction.
     Plugin(PluginsWarning),
+    /// Workspace members were inferred from nested `pyproject.toml` files.
+    AutoWorkspace {
+        /// Number of inferred members.
+        member_count: usize,
+    },
 }
 
 impl fmt::Display for ProbeWarning {
@@ -24,6 +29,10 @@ impl fmt::Display for ProbeWarning {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
             Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
             Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
+            Self::AutoWorkspace { member_count } => write!(
+                formatter,
+                "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
+            ),
         }
     }
 }

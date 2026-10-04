@@ -15,3 +15,4 @@ pub use types::{
     PluginId, ProjectMode, ResolvedWorkspaceMember, RuntimeOverrides, SeverityLevel, TargetVersion,
     UvWorkspaceHint, WorkspaceOverride,
 };
+pub use workspace::detect_nested_members;
