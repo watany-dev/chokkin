@@ -1,0 +1,117 @@
+name: Verification
+
+# Test-effectiveness checks (#418). Informational only: the PR job reports
+# missed mutants but never fails the PR, and kani runs on demand or weekly.
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      full-mutants:
+        description: "Run cargo-mutants over all of src/rules/ and src/resolver/ (~70 min)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  mutants-diff:
+    name: Mutants (PR diff, non-blocking)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: Mutate lines changed by this PR
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: make mutants-diff BASE="origin/${BASE_REF}"
+      - name: Summarize missed mutants
+        if: always()
+        run: |
+          {
+            echo "### cargo-mutants (PR diff)"
+            if [ -s mutants.out/missed.txt ]; then
+              echo "Missed mutants: a test should have failed for each of these."
+              echo '```'
+              cat mutants.out/missed.txt
+              echo '```'
+            else
+              echo "No missed mutants."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutants-diff
+          path: mutants.out
+          retention-days: 14
+
+  mutants-full:
+    name: Mutants (rules + resolver)
+    if: github.event_name == 'workflow_dispatch' && inputs.full-mutants
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+        with:
+          tool: cargo-mutants@27.1.0
+      - run: make mutants
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutants-full
+          path: mutants.out
+          retention-days: 30
+
+  kani:
+    name: Kani proofs
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+      - name: Install kani
+        run: |
+          cargo install --locked kani-verifier@0.68.0
+          cargo kani setup
+      - run: make kani

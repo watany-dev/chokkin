@@ -2,8 +2,10 @@
 CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
+CARGO_MUTANTS_VERSION       ?= 27.1.0
+KANI_VERSION                ?= 0.68.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-oracle check-generated formal help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-oracle check-generated formal mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -83,6 +85,28 @@ formal:
 		python3 docs/dev/formal/$$m.py || status=1; \
 	done; exit $$status
 
+## ─── Test effectiveness (#418) ────────────────────────────────────────────────
+# mutants:      cargo-mutants over src/rules/ and src/resolver/ (~70 min at -j 2
+#               on 4 vCPU; most of it is builds). Narrow with ARGS, e.g.
+#               ARGS="-f src/rules/emit.rs". Results: mutants.out/.
+# mutants-diff: only the mutants on lines changed since BASE (default origin/main).
+# kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
+#               kani-verifier@$(KANI_VERSION) && cargo kani setup`.
+#               Not part of `make check`. See docs/dev/formal/README.md.
+MUTANTS_ENV = CARGO_PROFILE_DEV_DEBUG=0
+BASE       ?= origin/main
+
+mutants:
+	$(MUTANTS_ENV) cargo mutants -j 2 -f 'src/rules/**' -f 'src/resolver/**' $(ARGS)
+
+mutants-diff:
+	mkdir -p target
+	git diff $(BASE)... > target/mutants.diff
+	$(MUTANTS_ENV) cargo mutants -j 2 --in-diff target/mutants.diff $(ARGS)
+
+kani:
+	cargo kani
+
 ## ─── Code coverage ────────────────────────────────────────────────────────────
 # NOTE: --fail-under is intentionally omitted until the analyzer is implemented.
 # Re-enable at 95% once Phase 1 (v0.1 MVP) coverage is established.
@@ -107,6 +131,7 @@ ifndef SKIP_TOOL_INSTALL
 	cargo install cargo-deny@$(CARGO_DENY_VERSION) --locked
 	cargo install cargo-tarpaulin@$(CARGO_TARPAULIN_VERSION) --locked
 	cargo install cargo-semver-checks@$(CARGO_SEMVER_CHECKS_VERSION) --locked
+	cargo install cargo-mutants@$(CARGO_MUTANTS_VERSION) --locked
 endif
 
 help:

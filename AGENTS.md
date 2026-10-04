@@ -131,6 +131,20 @@ This runs: `cargo fmt --check` → `cargo clippy -D warnings` + `cargo doc` →
 
 Install tools once with `make tools`.
 
+## Test effectiveness
+
+Not part of `make check` (#418). `.github/workflows/verification.yml` runs them
+in CI: `mutants-diff` on PRs (non-blocking), `kani` weekly / on manual dispatch.
+
+```bash
+make mutants-diff               # cargo-mutants on lines changed vs origin/main
+make mutants                    # full run over src/rules + src/resolver (~70 min)
+make kani                       # kani proofs under #[cfg(kani)] (needs cargo-kani)
+```
+
+Pure helpers in `rules/`, `resolver/`, `parser/relative.rs` and `path_util.rs`
+carry proptest `mod props` blocks checked against reference models.
+
 ## Benchmarks
 
 Criterion benchmarks live in `benches/` (`manifest` for parsing-heavy

@@ -199,4 +199,133 @@ mod tests {
             None
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// `importlib._bootstrap._resolve_name` plus PEP 366 `__package__`
+        /// derivation, written independently of the implementation:
+        /// `package.rsplit('.', level - 1)` must yield `level` parts.
+        fn cpython_resolve(
+            module: &[String],
+            is_init: bool,
+            level: u8,
+            suffix: Option<&str>,
+            name: Option<&str>,
+        ) -> Option<String> {
+            if level == 0 {
+                return suffix.map(str::to_owned);
+            }
+            let package_parts = if is_init {
+                module
+            } else {
+                &module[..module.len() - 1]
+            };
+            let level = usize::from(level);
+            if package_parts.len() < level {
+                return None;
+            }
+            let base = package_parts[..=package_parts.len() - level].join(".");
+            match (suffix.filter(|value| !value.is_empty()), name) {
+                (Some(suffix), _) => Some(format!("{base}.{suffix}")),
+                (None, Some("*")) => Some(base),
+                (None, Some(name)) => Some(format!("{base}.{name}")),
+                (None, None) => None,
+            }
+        }
+
+        fn segment() -> impl Strategy<Value = String> {
+            "[a-z][a-z0-9_]{0,3}"
+        }
+
+        fn module() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec(segment(), 1..5)
+        }
+
+        fn suffix() -> impl Strategy<Value = Option<String>> {
+            prop_oneof![
+                Just(None),
+                Just(Some(String::new())),
+                prop::collection::vec(segment(), 1..3).prop_map(|parts| Some(parts.join("."))),
+            ]
+        }
+
+        fn imported_name() -> impl Strategy<Value = Option<String>> {
+            prop_oneof![
+                Just(None),
+                Just(Some("*".to_owned())),
+                segment().prop_map(Some)
+            ]
+        }
+
+        fn file_path(prefix: &str, module: &[String], is_init: bool) -> String {
+            let stem = format!("{prefix}{}", module.join("/"));
+            if is_init {
+                format!("{stem}/__init__.py")
+            } else {
+                format!("{stem}.py")
+            }
+        }
+
+        fn flat_layout(packages: Vec<String>) -> LayoutInfo {
+            LayoutInfo {
+                layout: ProjectLayout::Flat,
+                packages,
+                local_packages: Vec::new(),
+                inferred_globs: Vec::new(),
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn src_layout_matches_cpython(
+                module in module(),
+                is_init in any::<bool>(),
+                level in 0u8..6,
+                suffix in suffix(),
+                name in imported_name(),
+            ) {
+                let path = file_path("src/", &module, is_init);
+                prop_assert_eq!(
+                    resolve_relative_import(&path, &src_layout(), level, suffix.as_deref(), name.as_deref()),
+                    cpython_resolve(&module, is_init, level, suffix.as_deref(), name.as_deref())
+                );
+            }
+
+            #[test]
+            fn flat_layout_matches_cpython(
+                module in module(),
+                is_init in any::<bool>(),
+                level in 0u8..6,
+                suffix in suffix(),
+                name in imported_name(),
+            ) {
+                let layout = flat_layout(vec![module[0].clone()]);
+                let path = file_path("", &module, is_init);
+                prop_assert_eq!(
+                    resolve_relative_import(&path, &layout, level, suffix.as_deref(), name.as_deref()),
+                    cpython_resolve(&module, is_init, level, suffix.as_deref(), name.as_deref())
+                );
+            }
+
+            #[test]
+            fn file_outside_every_package_is_unresolved(
+                module in module(),
+                is_init in any::<bool>(),
+                level in 1u8..6,
+                suffix in suffix(),
+                name in imported_name(),
+            ) {
+                // `tests/` is neither `src/` nor a listed package, so the file
+                // has no module name the index could hold.
+                let layout = flat_layout(vec!["acme".to_owned()]);
+                let path = file_path("tests/", &module, is_init);
+                prop_assert_eq!(
+                    resolve_relative_import(&path, &layout, level, suffix.as_deref(), name.as_deref()),
+                    None
+                );
+            }
+        }
+    }
 }

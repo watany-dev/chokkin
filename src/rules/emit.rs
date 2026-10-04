@@ -215,6 +215,119 @@ pub(crate) fn compute_exit_status(
     }
 }
 
+/// kani proofs of `docs/dev/formal/exit_status_z3.py` E1/E2, run against the
+/// implementation instead of a hand port (`make kani`).
+#[cfg(kani)]
+mod verification {
+    use super::*;
+    use crate::config::Confidence;
+    use crate::rules::types::Severity;
+
+    fn any_severity() -> Severity {
+        match kani::any::<u8>() % 3 {
+            0 => Severity::Error,
+            1 => Severity::Warning,
+            _ => Severity::Info,
+        }
+    }
+
+    fn any_confidence() -> Confidence {
+        match kani::any::<u8>() % 3 {
+            0 => Confidence::Maybe,
+            1 => Confidence::Likely,
+            _ => Confidence::Certain,
+        }
+    }
+
+    fn any_issue() -> Issue {
+        Issue {
+            rule: RuleId::Chk002,
+            severity: any_severity(),
+            confidence: any_confidence(),
+            message: String::new(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: None,
+                line: None,
+                manifest: None,
+            },
+            subject: IssueSubject::Distribution {
+                name: String::new(),
+            },
+            explain: None,
+        }
+    }
+
+    /// Spec §16 thresholds, independent of `counts_toward_exit`.
+    fn spec_counts(issue: &Issue, strict: bool) -> bool {
+        let severity_ok = match issue.severity {
+            Severity::Error => true,
+            Severity::Warning => strict,
+            Severity::Info => false,
+        };
+        let confidence_ok = strict || issue.confidence != Confidence::Maybe;
+        severity_ok && confidence_ok
+    }
+
+    fn any_overrides() -> RuntimeOverrides {
+        let no_exit_code = match kani::any::<u8>() % 3 {
+            0 => None,
+            1 => Some(false),
+            _ => Some(true),
+        };
+        RuntimeOverrides {
+            no_exit_code,
+            ..RuntimeOverrides::default()
+        }
+    }
+
+    /// Any subset a baseline can keep: with two issues every subset is a
+    /// contiguous slice, which spares kani from cloning `Issue`s.
+    fn any_subset(issues: &[Issue; 2]) -> &[Issue] {
+        let start = usize::from(kani::any::<u8>() % 3);
+        let end = usize::from(kani::any::<u8>() % 3);
+        kani::assume(start <= end);
+        &issues[start..end]
+    }
+
+    /// E1: the status over the issues a baseline keeps follows the spec
+    /// thresholds and `--no-exit-code`.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn exit_status_follows_spec_over_kept_issues() {
+        let issues = [any_issue(), any_issue()];
+        let kept = any_subset(&issues);
+        let overrides = any_overrides();
+        let strict: bool = kani::any();
+
+        let expected = overrides.no_exit_code != Some(true)
+            && kept.iter().any(|issue| spec_counts(issue, strict));
+        let status = compute_exit_status(kept, &overrides, strict);
+        assert_eq!(status == ExitStatus::IssuesFound, expected);
+        assert!(matches!(
+            status,
+            ExitStatus::Success | ExitStatus::IssuesFound
+        ));
+    }
+
+    /// E2: a baseline never turns a passing run into a failing one.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn baseline_never_fails_a_passing_run() {
+        let issues = [any_issue(), any_issue()];
+        let kept = any_subset(&issues);
+        let overrides = any_overrides();
+        let strict: bool = kani::any();
+
+        if compute_exit_status(kept, &overrides, strict) == ExitStatus::IssuesFound {
+            assert_eq!(
+                compute_exit_status(&issues, &overrides, strict),
+                ExitStatus::IssuesFound
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,5 +666,125 @@ mod tests {
             location_from_candidate(&script),
             location(Some("scripts/tool.py"), Some(4), Some(manifest))
         );
+    }
+
+    mod props {
+        use super::*;
+        use crate::config::Confidence;
+        use crate::rules::types::Severity;
+        use proptest::prelude::*;
+
+        fn severity() -> impl Strategy<Value = Severity> {
+            prop_oneof![
+                Just(Severity::Error),
+                Just(Severity::Warning),
+                Just(Severity::Info)
+            ]
+        }
+
+        fn confidence() -> impl Strategy<Value = Confidence> {
+            prop_oneof![
+                Just(Confidence::Maybe),
+                Just(Confidence::Likely),
+                Just(Confidence::Certain)
+            ]
+        }
+
+        fn issue(severity: Severity, confidence: Confidence) -> Issue {
+            Issue {
+                rule: RuleId::Chk002,
+                severity,
+                confidence,
+                message: String::new(),
+                workspace_member: None,
+                location: IssueLocation {
+                    file: None,
+                    line: None,
+                    manifest: None,
+                },
+                subject: IssueSubject::Distribution {
+                    name: "pkg".to_owned(),
+                },
+                explain: None,
+            }
+        }
+
+        fn issues() -> impl Strategy<Value = Vec<Issue>> {
+            prop::collection::vec(
+                (severity(), confidence()).prop_map(|(sev, conf)| issue(sev, conf)),
+                0..6,
+            )
+        }
+
+        /// Spec §16: `severity >= error && confidence >= likely`, or under
+        /// `--strict` `severity >= warning && confidence >= maybe`.
+        fn spec_counts(issue: &Issue, strict: bool) -> bool {
+            match issue.severity {
+                Severity::Error => strict || issue.confidence != Confidence::Maybe,
+                Severity::Warning => strict,
+                Severity::Info => false,
+            }
+        }
+
+        fn overrides(no_exit_code: Option<bool>) -> RuntimeOverrides {
+            RuntimeOverrides {
+                no_exit_code,
+                ..RuntimeOverrides::default()
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn exit_status_matches_spec_thresholds(
+                issues in issues(),
+                strict in any::<bool>(),
+                no_exit_code in prop::option::of(any::<bool>()),
+            ) {
+                let expected = if no_exit_code != Some(true)
+                    && issues.iter().any(|issue| spec_counts(issue, strict))
+                {
+                    ExitStatus::IssuesFound
+                } else {
+                    ExitStatus::Success
+                };
+                prop_assert_eq!(
+                    compute_exit_status(&issues, &overrides(no_exit_code), strict),
+                    expected
+                );
+            }
+
+            #[test]
+            fn strict_never_relaxes_exit_status(issues in issues()) {
+                let overrides = overrides(None);
+                if compute_exit_status(&issues, &overrides, false) == ExitStatus::IssuesFound {
+                    prop_assert_eq!(
+                        compute_exit_status(&issues, &overrides, true),
+                        ExitStatus::IssuesFound
+                    );
+                }
+            }
+
+            #[test]
+            fn dropping_issues_never_fails_a_passing_run(
+                issues in issues(),
+                kept_mask in prop::collection::vec(any::<bool>(), 6),
+                strict in any::<bool>(),
+            ) {
+                // What a baseline does: keep a subset, recompute (spec §24).
+                let kept: Vec<Issue> = issues
+                    .iter()
+                    .zip(&kept_mask)
+                    .filter(|(_, keep)| **keep)
+                    .map(|(issue, _)| issue.clone())
+                    .collect();
+                let overrides = overrides(None);
+                if compute_exit_status(&kept, &overrides, strict) == ExitStatus::IssuesFound {
+                    prop_assert_eq!(
+                        compute_exit_status(&issues, &overrides, strict),
+                        ExitStatus::IssuesFound
+                    );
+                }
+            }
+        }
     }
 }
