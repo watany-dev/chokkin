@@ -79,6 +79,7 @@ fn context() -> RenderContext {
         production: false,
         version: "0.0.0",
         config_label: None,
+        diagnostics: Vec::new(),
     }
 }
 

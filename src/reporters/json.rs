@@ -24,6 +24,12 @@ struct JsonReport<'a> {
     issues: Vec<JsonIssue<'a>>,
     summary: JsonSummary,
     suppressed: JsonSuppressed,
+    diagnostics: Vec<JsonDiagnostic<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonDiagnostic<'a> {
+    message: &'a str,
 }
 
 #[derive(Serialize)]
@@ -82,6 +88,11 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         suppressed: JsonSuppressed {
             baseline: baseline_suppressed_count(report),
         },
+        diagnostics: context
+            .diagnostics
+            .iter()
+            .map(|message| JsonDiagnostic { message })
+            .collect(),
     };
     serde_json::to_string_pretty(&json).unwrap_or_default()
 }

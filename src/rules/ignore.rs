@@ -408,6 +408,7 @@ mod tests {
             shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
+            skipped: false,
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -457,6 +458,7 @@ mod tests {
             shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
+            skipped: false,
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -593,6 +595,7 @@ mod tests {
             shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
+            skipped: false,
         });
         IgnoreMatcher::build(&default_config(), &parse, &ResolutionIndex::default())
     }

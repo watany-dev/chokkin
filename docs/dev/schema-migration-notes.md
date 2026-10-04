@@ -89,6 +89,7 @@ Top-level fields:
 | `summary.total` | integer | count of emitted issues |
 | `summary.by_code` | object | issue count keyed by rule code |
 | `suppressed.baseline` | integer | count suppressed by baseline fingerprint |
+| `diagnostics` | array | non-fatal warnings also printed to stderr, as `{"message": string}` (additive; e.g. a skipped undecodable source, #486) |
 
 Each issue currently contains:
 
