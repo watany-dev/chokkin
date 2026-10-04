@@ -76,6 +76,9 @@ pub struct DiscoveredFile {
 pub struct LayoutInfo {
     /// Detected layout kind.
     pub layout: ProjectLayout,
+    /// Root-relative directory holding `packages`: `""` for flat, `src` for
+    /// src layout, or a declared directory such as `lib`.
+    pub package_root: String,
     /// Package directory names (e.g. `acme` for `src/acme` or `acme/`).
     pub packages: Vec<String>,
     /// Root-level non-distribution packages (`tests/` with `__init__.py`)
@@ -86,6 +89,16 @@ pub struct LayoutInfo {
 }
 
 impl LayoutInfo {
+    /// Root-relative directory of `package` (`lib/sqlalchemy`, or `acme` flat).
+    #[must_use]
+    pub fn package_dir(&self, package: &str) -> String {
+        if self.package_root.is_empty() {
+            package.to_owned()
+        } else {
+            format!("{}/{package}", self.package_root)
+        }
+    }
+
     #[must_use]
     pub fn in_local_package(&self, path: &str) -> bool {
         self.local_packages.iter().any(|package| {
@@ -105,6 +118,7 @@ impl LayoutInfo {
     pub fn cache_key_hash(&self) -> String {
         let mut hasher = CacheKeyHasher::new();
         hasher.field_str(self.layout.as_str());
+        hasher.field_str(&self.package_root);
         hash_str_list(&mut hasher, &self.packages);
         hash_str_list(&mut hasher, &self.local_packages);
         hash_str_list(&mut hasher, &self.inferred_globs);

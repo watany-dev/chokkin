@@ -192,11 +192,19 @@ mod tests {
                 "sources: entry path is a directory `pkg`",
             ),
             (
-                ProbeWarning::Sources(SourcesWarning::AmbiguousFlatLayout {
+                ProbeWarning::Sources(SourcesWarning::AmbiguousPackageDir {
                     candidates: vec!["a".to_owned(), "b".to_owned()],
                     chosen: "a".to_owned(),
                 }),
-                r#"sources: ambiguous flat layout (["a", "b"]); chose `a`"#,
+                r#"sources: ambiguous package directory (["a", "b"]); chose `a`"#,
+            ),
+            (
+                ProbeWarning::Sources(SourcesWarning::GuessedPackageDir {
+                    project: "acme".to_owned(),
+                    chosen: "lib/other".to_owned(),
+                }),
+                "sources: no package directory matches project `acme`; guessed `lib/other` \
+                 (declare it in the build backend config or [tool.chokkin] project)",
             ),
             (
                 ProbeWarning::Sources(SourcesWarning::GitignoreUnreadable {

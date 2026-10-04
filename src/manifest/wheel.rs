@@ -32,7 +32,14 @@ pub(super) fn parse_wheel_targets(
 }
 
 /// First dotted component of each supported `build-backend`.
-const BACKENDS: [&str; 5] = ["hatchling", "setuptools", "pdm", "flit_core", "maturin"];
+const BACKENDS: [&str; 6] = [
+    "hatchling",
+    "setuptools",
+    "pdm",
+    "flit_core",
+    "maturin",
+    "poetry",
+];
 
 fn backend_targets(
     backend: &str,
@@ -45,6 +52,7 @@ fn backend_targets(
         "pdm" => pdm_targets(tool),
         "flit_core" => flit_targets(tool),
         "maturin" => maturin_targets(tool, project_name),
+        "poetry" => poetry_targets(tool),
         _ => None,
     }
 }
@@ -261,6 +269,27 @@ fn maturin_targets(tool: &toml::Table, project_name: Option<&str>) -> Option<Whe
     )
 }
 
+/// `packages = [{ include = "acme", from = "lib" }]`.
+fn poetry_targets(tool: &toml::Table) -> Option<WheelTargets> {
+    let packages = table_at(tool, &["poetry"])?
+        .get("packages")
+        .and_then(Value::as_array)?;
+    let paths = packages
+        .iter()
+        .filter_map(Value::as_table)
+        .filter_map(|package| {
+            let include = normalize_path(package.get("include").and_then(Value::as_str)?);
+            let from = package
+                .get("from")
+                .and_then(Value::as_str)
+                .map(normalize_path)
+                .unwrap_or_default();
+            (!include.is_empty()).then(|| join_rel(&from, &include))
+        })
+        .collect();
+    targets("tool.poetry.packages", paths, Vec::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +409,17 @@ mod tests {
         )
         .expect("targets");
         assert_eq!(targets.paths, vec!["python/acme_lib", "python/acme_lib.py"]);
+    }
+
+    #[test]
+    fn poetry_packages_join_from_dir() {
+        let targets = parse(
+            "[tool.poetry]\npackages = [{ include = \"acme\", from = \"lib\" }, { include = \"extra.py\" }]\n",
+            Some("poetry.core.masonry.api"),
+        )
+        .expect("targets");
+        assert_eq!(targets.source, "tool.poetry.packages");
+        assert_eq!(targets.paths, vec!["lib/acme", "extra.py"]);
     }
 
     #[test]

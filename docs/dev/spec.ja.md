@@ -524,6 +524,15 @@ plugin / [tool.chokkin] のcontext指定が上記を上書きする
 
 root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。ただし参照元としては数えるため、tests/ からだけ import される symbol は CHK006 にしない (`__init__.py` の有無によらない、#410)。
 
+本体 package のディレクトリ (`LayoutInfo::package_root`) は次の順で決める (#487)。build backend の宣言を読まずにディレクトリ名から推測すると、`lib/sqlalchemy` を持つ sqlalchemy で `examples/` を本体と取り違えるため。
+
+1. build backend の宣言: setuptools `packages` / `package-dir` / `packages.find.where`、hatch `packages`、flit・pdm・maturin の module 指定、poetry `packages` (`from` + `include`)。宣言 path は親に `__init__.py` が続く限り遡って top-level package にする。宣言が異なる root にまたがる場合は使わない
+2. `[tool.uv.sources]` の `path` source のうち、project 名 (`streamlit-dev` なら `streamlit_dev` / `streamlit`) と同名で root 配下にあるもの (`streamlit = { path = "lib" }`)。その tree に 3 を当てる
+3. heuristic: `src/` 配下の package、なければ root 直下と `lib/` 直下の package 候補。project 名と一致する候補を優先し、一致しなければ先頭候補を選んで `GuessedPackageDir` (候補 1 つ、`[project].name` あり) か `AmbiguousPackageDir` (候補複数) を warning に出す (`--probe` も同じ)
+4. 候補が無ければ layout 不明として `**/*.py` を走査する
+
+`tests` / `scripts` / `docs` / `build` / `dist` / `examples` / `benchmarks` / `e2e*` などは本体候補にしない。`package_root` が `src` 以外 (`lib` など) のときは `--probe` の Layout 行に `root: lib` を出し、module 名は `package_root` からの相対 path で決める。`path` source が本体を持つ場合、その package への import は first-party だが、CHK001 では `workspace = true` source と同じくその依存を used として数える。
+
 pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。
 
 判定例。

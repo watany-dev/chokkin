@@ -222,6 +222,7 @@ mod tests {
             root: root.clone(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
@@ -274,6 +275,7 @@ mod tests {
             root: root.clone(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),

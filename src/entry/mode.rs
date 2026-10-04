@@ -83,7 +83,7 @@ fn is_library_project(manifest: &LoadedManifest, sources: &DiscoveredSources) ->
 
     sources.files.iter().any(|file| {
         sources.layout.packages.iter().any(|package| {
-            file.path == format!("src/{package}/__init__.py")
+            file.path == format!("{}/__init__.py", sources.layout.package_dir(package))
                 || file.path == format!("{package}/__init__.py")
         })
     })
@@ -130,6 +130,7 @@ mod tests {
             },
             layout: LayoutInfo {
                 layout: ProjectLayout::Src,
+                package_root: "src".to_owned(),
                 packages: vec!["acme".to_owned()],
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
@@ -158,6 +159,20 @@ mod tests {
         );
         assert_eq!(mode, ProjectMode::Library);
         assert_eq!(warnings, []);
+    }
+
+    #[test]
+    fn library_mode_for_lib_package_root() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        let mut config = default_config();
+        config.mode = ProjectMode::Auto;
+        let mut sources = library_sources();
+        sources.layout.package_root = "lib".to_owned();
+        sources.files[0].path = "lib/acme/__init__.py".to_owned();
+        let mut warnings = Vec::new();
+        let mode = resolve_project_mode(&config, &manifest, &sources, &[], &mut warnings);
+        assert_eq!(mode, ProjectMode::Library);
     }
 
     #[test]

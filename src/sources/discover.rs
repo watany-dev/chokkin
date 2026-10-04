@@ -18,7 +18,7 @@ pub fn discover_sources(
     config: &LoadedConfig,
     manifest: &LoadedManifest,
 ) -> Result<DiscoveredSources, SourcesError> {
-    let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata);
+    let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
     let effective_globs = if config.effective.project.is_empty() {
         layout.inferred_globs.clone()
     } else {

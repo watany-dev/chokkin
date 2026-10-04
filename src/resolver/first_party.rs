@@ -72,7 +72,7 @@ pub fn path_source_imports(root: &Path, uv: &UvToolSettings) -> BTreeMap<String,
             name: Some(source.name.clone()),
             ..ProjectMetadata::default()
         };
-        let (layout, _) = infer_layout(&root.join(path), &metadata);
+        let (layout, _) = infer_layout(&root.join(path), &metadata, &UvToolSettings::default());
         let mut packages = layout.packages;
         if packages.is_empty() {
             packages.push(source.name.replace('-', "_"));
@@ -107,6 +107,7 @@ mod tests {
     fn layout_package_is_first_party() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: vec!["tests".to_owned()],
             inferred_globs: Vec::new(),
@@ -124,6 +125,7 @@ mod tests {
     fn metadata_name_matches_normalized_import_root() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
