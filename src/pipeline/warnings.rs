@@ -17,9 +17,7 @@ pub enum ProbeWarning {
     /// Warning from plugin hint extraction.
     Plugin(PluginsWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
-    AutoWorkspace {
-        member_count: usize,
-    },
+    AutoWorkspace { member_count: usize },
 }
 
 impl fmt::Display for ProbeWarning {
