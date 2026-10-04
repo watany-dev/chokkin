@@ -155,9 +155,6 @@ def has_pytest_config(proj: Path) -> bool:
     return False
 
 
-# ─── Findings ────────────────────────────────────────────────────────────────
-
-
 def findings(report: dict, rule: str) -> list[dict]:
     """One entry per finding: target (stable key), path, and for CHK006 the
     file / line / symbol name."""
@@ -180,9 +177,6 @@ def findings(report: dict, rule: str) -> list[dict]:
 
 def stable_rank(target: str) -> str:
     return hashlib.sha256(target.encode("utf-8")).hexdigest()
-
-
-# ─── CHK006 symbol removal ───────────────────────────────────────────────────
 
 
 def _defines(node: ast.stmt, name: str) -> bool:
@@ -281,9 +275,6 @@ def plan_symbol_removal(source: str, line: int, name: str) -> tuple[str, str]:
         indent = re.match(r"[ \t]*", lines[start - 1]).group(0)
         keep.append(f"{indent}pass\n")
     return "delete", "".join(keep + lines[end:])
-
-
-# ─── Measurement ─────────────────────────────────────────────────────────────
 
 
 class Project:
