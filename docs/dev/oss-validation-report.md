@@ -184,7 +184,15 @@ steps are in [`chk001-remove-and-test.md`](./chk001-remove-and-test.md)
 | Determinism: cold, warm and `--no-cache` byte-identical | `make oss-gate` | 30/30 (20 clones + 10 sentinels) | PASS |
 | JSON schema and summary consistency | `make oss-gate` | 30/30 | PASS |
 | Crash: no exit 3, no non-JSON output | `make oss-gate` | 0 | PASS |
-| Performance: no benchmark > 10% slower with its 95% CI above 0 | `make bench-gate` | pending | pending |
+| Performance: no benchmark > 10% slower with its 95% CI above 0, confirmed by a re-run | `make bench-gate` (A/A: this branch has no Rust change) | 0/27 regressed | PASS |
+
+The performance gate was calibrated with an A/A run on a shared VM:
+`make bench-save BASELINE=main` followed by `make bench-gate` on the same code.
+A single comparison flagged 4 of 27 benchmarks (+10.9% to +14.6%, CIs above 0),
+so sequential runs drift by more than the threshold. The gate now re-runs only
+the flagged benchmarks (`--confirm 1`) and fails only if they regress again. In
+the calibrated run, `parse_cache_warm/src/1000` went from +10.5% to -1.6% on
+re-run, and the gate passed. Use a dedicated runner for a tighter threshold.
 
 ### Precision by removal (#338, #339)
 

@@ -204,6 +204,8 @@ determinism gate gates their stability.
 compares the current tree with a criterion baseline saved on the base commit
 (`make bench-save BASELINE=main`), and fails when a benchmark's mean is more
 than 10% slower and its 95% confidence interval lies entirely above zero.
+Flagged benchmarks are re-run (`--confirm`, default 1), and only a
+regression that repeats fails the gate.
 Result for this branch: see [`oss-validation-report.md`](./oss-validation-report.md#346-corpus-measurements-338342).
 
 ## Reproducing
