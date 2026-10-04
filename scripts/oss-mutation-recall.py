@@ -139,10 +139,10 @@ def append(path: Path, code: str) -> None:
         fh.write(f"\n\n{code}\n")
 
 
-def pick_module(proj: Path, pkg: Path, baseline: dict) -> Path | None:
+def pick_module(proj: Path, pkg: Path, baseline: set) -> Path | None:
     """A non-__init__ module of the package that the baseline does not already
     report as unreachable, so a new function in it is reachable code."""
-    unreachable = {i.get("file") for i in baseline["issues"] if i["code"] == "CHK001"}
+    unreachable = {k for c, k in baseline if c == "CHK001"}
     mods = [
         p
         for p in sorted(pkg.rglob("*.py"))
@@ -177,41 +177,41 @@ def scan(bin_path: Path, proj: Path) -> dict[str, set]:
     }
 
 
-# Each mutation: (id, kind, rule, apply(work, pkg, pkg_name, target_module) -> keys or None)
+# Each mutation: (id, kind, rule, apply(work, pkg, target_module) -> keys or None)
 # The returned keys are what chokkin must report (injection) or must not (trap);
 # None means the mutation does not apply to this project.
 
 
-def m_orphan(work: Path, pkg: Path, name: str, mod: Path | None):
+def m_orphan(work: Path, pkg: Path, mod: Path | None):
     f = pkg / f"{PREFIX}_orphan.py"
     f.write_text("VALUE = 1\n", encoding="utf-8")
     return {("CHK001", f.relative_to(work).as_posix())}
 
 
-def m_unused_dep(work: Path, pkg: Path, name: str, mod: Path | None):
+def m_unused_dep(work: Path, pkg: Path, mod: Path | None):
     if not add_dependencies(work, ["chokkin-mut-unused>=1"]):
         return None
     return {("CHK002", "chokkin-mut-unused")}
 
 
-def m_undeclared(work: Path, pkg: Path, name: str, mod: Path | None):
+def m_undeclared(work: Path, pkg: Path, mod: Path | None):
     append(pkg / "__init__.py", "import xmltodict  # noqa")
     return {("CHK003", "xmltodict")}
 
 
-def m_unresolved(work: Path, pkg: Path, name: str, mod: Path | None):
+def m_unresolved(work: Path, pkg: Path, mod: Path | None):
     append(pkg / "__init__.py", f"import {PREFIX}_missing  # noqa")
     return {("CHK010", f"{PREFIX}_missing")}
 
 
-def m_unreferenced(work: Path, pkg: Path, name: str, mod: Path | None):
+def m_unreferenced(work: Path, pkg: Path, mod: Path | None):
     if mod is None:
         return None
     append(mod, f"def {PREFIX}_unreferenced():\n    return None")
     return {("CHK006", f"{PREFIX}_unreferenced")}
 
 
-def m_reexport(work: Path, pkg: Path, name: str, mod: Path | None):
+def m_reexport(work: Path, pkg: Path, mod: Path | None):
     (pkg / f"{PREFIX}_src.py").write_text(
         f"def {PREFIX}_reexported():\n    return None\n", encoding="utf-8"
     )
@@ -219,18 +219,18 @@ def m_reexport(work: Path, pkg: Path, name: str, mod: Path | None):
     return {("CHK007", f"{PREFIX}_reexported")}
 
 
-def t_dynamic(work: Path, pkg: Path, name: str, mod: Path | None):
+def t_dynamic(work: Path, pkg: Path, mod: Path | None):
     f = pkg / f"{PREFIX}_plugin.py"
     f.write_text("VALUE = 1\n", encoding="utf-8")
     append(
         pkg / "__init__.py",
         f"import importlib as _{PREFIX}_importlib\n"
-        f'_{PREFIX}_importlib.import_module("{name}.{PREFIX}_plugin")',
+        f'_{PREFIX}_importlib.import_module("{pkg.name}.{PREFIX}_plugin")',
     )
     return {("CHK001", f.relative_to(work).as_posix())}
 
 
-def t_dist_name(work: Path, pkg: Path, name: str, mod: Path | None):
+def t_dist_name(work: Path, pkg: Path, mod: Path | None):
     if not add_dependencies(work, ["PyYAML>=6", "Pillow>=10"]):
         return None
     append(pkg / "__init__.py", "import yaml  # noqa\nimport PIL  # noqa")
@@ -257,14 +257,12 @@ def run_project(slug: str, src: Path, work: Path, bin_path: Path) -> list[dict]:
         return [{"slug": slug, "mutation": m[0], "kind": m[1], "rule": m[2], "package": "",
                  "default": "n/a", "maybe": "n/a", "note": "no first-party package found"}
                 for m in MUTATIONS]
-    pkg_name = pkg.name
-    baseline = oc.chokkin_report(bin_path, work, "--no-cache")
     base = scan(bin_path, work)
-    mod = pick_module(work, pkg, baseline)
+    mod = pick_module(work, pkg, base["default"])
     rows = []
     for mid, kind, rule, apply in MUTATIONS:
         oc.reset_tree(work)
-        expected = apply(work, pkg, pkg_name, mod)
+        expected = apply(work, pkg, mod)
         row = {"slug": slug, "mutation": mid, "kind": kind, "rule": rule,
                "package": pkg.relative_to(work).as_posix(), "note": ""}
         if expected is None:
@@ -309,7 +307,7 @@ def pct(n: int, d: int) -> str:
 def main() -> int:
     args = parse_args()
     if args.build:
-        oc.build(args.bin)
+        oc.build()
     oc.require_bin(args.bin)
     only = {s for s in args.projects.split(",") if s}
     projects = [r["slug"] for r in oc.read_manifest(args.manifest, core_only=True)

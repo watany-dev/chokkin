@@ -46,7 +46,6 @@ Options:
                         present, fawltydeps maps imports through <DIR>/<slug>
                         (default: target/oss-envs)
   --projects a,b        Only these slugs
-  --examples N          Disagreement examples per cell in report.md (default: 8)
   --build               cargo build --release before running
   -h, --help            Show help
 
@@ -89,6 +88,7 @@ VULTURE_RE = re.compile(r"^(.+?):(\d+): unused (function|class|variable) '([^']+
 DEADCODE_RE = re.compile(r"^(.+?):(\d+):\d+: (DC0[123]) \w+ `([^`]+)` is never used")
 PYFLAKES_RE = re.compile(r"^(.+?):(\d+):\d+:? '([^']+)' imported but unused")
 RUFF_NAME_RE = re.compile(r"`([^`]+)` imported but unused")
+EXAMPLES = 8  # disagreement examples per cell in report.md
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,7 +99,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-b", "--bin", type=Path, default=oc.DEFAULT_BIN)
     p.add_argument("--envs", type=Path, default=oc.DEFAULT_ENVS)
     p.add_argument("--projects", default="")
-    p.add_argument("--examples", type=int, default=8)
     p.add_argument("--build", action="store_true")
     p.add_argument("-h", "--help", action="store_true")
     args = p.parse_args()
@@ -211,21 +210,13 @@ def other_keys(slug: str, proj: Path, raw: Path, envs: Path) -> dict[tuple[str, 
     keys: dict[tuple[str, str], set] = defaultdict(set)
     top = TopLevel(proj)
 
-    out = run_tool([*TOOLS["vulture"], "."], proj, raw / "vulture.txt")
-    for line in out.splitlines():
-        m = VULTURE_RE.match(line)
-        if m:
+    for tool, rx, extra in (("vulture", VULTURE_RE, []),
+                            ("deadcode", DEADCODE_RE, ["--no-color"])):
+        out = run_tool([*TOOLS[tool], ".", *extra], proj, raw / f"{tool}.txt")
+        for m in filter(None, map(rx.match, out.splitlines())):
             rel, name = rel_path(proj, m.group(1)), m.group(4)
             if in_scope(rel) and name in top.names(rel):
-                keys[("CHK006", "vulture")].add((rel, name))
-
-    out = run_tool([*TOOLS["deadcode"], ".", "--no-color"], proj, raw / "deadcode.txt")
-    for line in out.splitlines():
-        m = DEADCODE_RE.match(line)
-        if m:
-            rel, name = rel_path(proj, m.group(1)), m.group(4)
-            if in_scope(rel) and name in top.names(rel):
-                keys[("CHK006", "deadcode")].add((rel, name))
+                keys[("CHK006", tool)].add((rel, name))
 
     deptry_json = raw / "deptry.json"
     deptry_json.unlink(missing_ok=True)
@@ -291,7 +282,7 @@ def main() -> int:
         print("uvx is required (https://docs.astral.sh/uv/)", file=sys.stderr)
         return 2
     if args.build:
-        oc.build(args.bin)
+        oc.build()
     oc.require_bin(args.bin)
     only = {s for s in args.projects.split(",") if s}
     rows = [r for r in oc.read_manifest(args.manifest, core_only=True)
@@ -376,8 +367,8 @@ def main() -> int:
             if not items:
                 continue
             lines += ["", f"### {rule} vs {tool}: {side.replace('_', '-')} "
-                      f"({len(items)}, first {min(len(items), args.examples)})", ""]
-            lines += [f"- {slug}: `{fmt_key(k)}`" for slug, k in items[: args.examples]]
+                      f"({len(items)}, first {min(len(items), EXAMPLES)})", ""]
+            lines += [f"- {slug}: `{fmt_key(k)}`" for slug, k in items[: EXAMPLES]]
     (args.output / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines[: 12 + len(matrix) + 2]))
     return 0

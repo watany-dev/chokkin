@@ -26,7 +26,6 @@ Options:
   --python VERSION         interpreter for `uv venv` (default: 3.11)
   --projects a,b           only these slugs
   --force                  recreate existing venvs
-  --no-exclude-newer       resolve against today's PyPI instead
   -h, --help               show help
 
 Writes <output>/provision.tsv (slug, status, seconds, python) and per-project
@@ -54,7 +53,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--python", default="3.11")
     p.add_argument("--projects", default="")
     p.add_argument("--force", action="store_true")
-    p.add_argument("--no-exclude-newer", action="store_true")
     p.add_argument("-h", "--help", action="store_true")
     args = p.parse_args()
     if args.help:
@@ -93,7 +91,7 @@ def main() -> int:
             rows.append([slug, "exists", "0", ""])
             continue
         shutil.rmtree(venv, ignore_errors=True)
-        pin = [] if args.no_exclude_newer else ["--exclude-newer", commit_date(clone)]
+        pin = ["--exclude-newer", commit_date(clone)]
         print(f"==> {slug}: {' '.join(pin)} {env['install']}", flush=True)
         start = time.monotonic()
         with log.open("w", encoding="utf-8") as fh:
@@ -112,6 +110,8 @@ def main() -> int:
         # into the clone; drop those (git-ignored) outputs so later static runs
         # and the differential tools see the clone exactly as pinned.
         subprocess.run(["git", "-C", str(clone), "clean", "-q", "-fdX"], check=False)
+        if not ok:
+            shutil.rmtree(venv, ignore_errors=True)  # so the next run retries it
         secs = time.monotonic() - start
         status = "ok" if ok else "install-failed"
         py = subprocess.run([str(venv / "bin/python"), "--version"], capture_output=True,

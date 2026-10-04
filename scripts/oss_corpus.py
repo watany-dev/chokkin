@@ -91,14 +91,12 @@ def read_lock(clones: Path) -> dict[str, dict[str, str]]:
     return rows
 
 
-def build(bin_path: Path) -> None:
+def build() -> None:
     subprocess.run(
         ["cargo", "build", "--release", "--locked", "--bin", "chokkin"],
         cwd=ROOT,
         check=True,
     )
-    if not (bin_path.is_file() and os.access(bin_path, os.X_OK)):
-        raise SystemExit(f"chokkin binary not found after build: {bin_path}")
 
 
 def require_bin(bin_path: Path) -> None:

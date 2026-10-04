@@ -250,6 +250,13 @@ bindings as `import x as _chokkin_private_x`. The four projects whose sampled
 plans changed (requests, tenacity, structlog, werkzeug) were re-run, and those
 three breaks became passes.
 
+A later review found that the privatize rename also hit methods, parameters,
+keywords, and import paths that have the same name. The harness now skips
+such a symbol as `span-shadowed`. Re-planning the tested rows on the pinned
+sources changes only two of them, typer `convert_generics` and requests
+`chardet_version`. Both were already passes, and all 17 breaks plan the same
+way, so the numbers above stand.
+
 ## Limitations
 
 - **`pass` is a lower bound on harm.** It means the project's own suite does

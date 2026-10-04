@@ -28,8 +28,6 @@ Options:
   -c, --clones DIR      Clone root (default: target/oss-clones)
   -o, --output DIR      Report directory (default: target/oss-gate)
   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
-  --all                 Include the R-01..R-07 feature corpus (default: the
-                        pinned 20-project set only)
   --build               cargo build --release before running
   -h, --help            Show help
 
@@ -43,6 +41,7 @@ import argparse
 import json
 import shutil
 import sys
+from collections import Counter
 from pathlib import Path
 
 import oss_corpus as oc
@@ -58,7 +57,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-c", "--clones", type=Path, default=oc.DEFAULT_CLONES)
     p.add_argument("-o", "--output", type=Path, default=oc.ROOT / "target/oss-gate")
     p.add_argument("-b", "--bin", type=Path, default=oc.DEFAULT_BIN)
-    p.add_argument("--all", action="store_true")
     p.add_argument("--build", action="store_true")
     p.add_argument("-h", "--help", action="store_true")
     args = p.parse_args()
@@ -75,9 +73,7 @@ def contract_errors(report: dict) -> list[str]:
     errs = []
     if summary.get("total") != len(issues):
         errs.append(f"summary.total={summary.get('total')} but {len(issues)} issues")
-    by_code: dict[str, int] = {}
-    for i in issues:
-        by_code[i["code"]] = by_code.get(i["code"], 0) + 1
+    by_code = dict(Counter(i["code"] for i in issues))
     if summary.get("by_code") != by_code:
         errs.append(f"summary.by_code {summary.get('by_code')} != counted {by_code}")
     return errs
@@ -127,14 +123,14 @@ def main() -> int:
         print("the jsonschema package is required: pip install jsonschema", file=sys.stderr)
         return 2
     if args.build:
-        oc.build(args.bin)
+        oc.build()
     oc.require_bin(args.bin)
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
 
     targets: list[tuple[str, Path]] = []
     skipped = []
-    for row in oc.read_manifest(args.manifest, core_only=not args.all):
+    for row in oc.read_manifest(args.manifest, core_only=True):
         proj = args.clones / row["slug"]
         if proj.is_dir():
             targets.append((row["slug"], proj))

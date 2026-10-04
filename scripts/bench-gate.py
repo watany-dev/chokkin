@@ -16,8 +16,6 @@ Options:
   --confirm N         re-run only the regressed benchmarks up to N times and
                       fail only on those that regress every time (default: 1);
                       sequential runs on a shared machine drift by 10-15%
-  --no-run            do not run `cargo bench`; read the change estimates
-                      already under target/criterion (from `make bench-cmp`)
   -o, --output DIR    report directory (default: target/bench-gate)
   -h, --help          show help
 
@@ -48,7 +46,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--baseline", default="main")
     p.add_argument("--threshold", type=float, default=10.0)
     p.add_argument("--confirm", type=int, default=1)
-    p.add_argument("--no-run", action="store_true")
     p.add_argument("-o", "--output", type=Path, default=oc.ROOT / "target/bench-gate")
     p.add_argument("-h", "--help", action="store_true")
     args = p.parse_args()
@@ -90,12 +87,10 @@ def run_bench(baseline: str, only: list[str] | None = None) -> bool:
 
 def main() -> int:
     args = parse_args()
-    since = 0.0
-    if not args.no_run:
-        since = time.time()
-        if not run_bench(args.baseline):
-            print(f"cargo bench failed (missing baseline {args.baseline!r}?)", file=sys.stderr)
-            return 2
+    since = time.time()
+    if not run_bench(args.baseline):
+        print(f"cargo bench failed (missing baseline {args.baseline!r}?)", file=sys.stderr)
+        return 2
     rows = collect(since)
     if not rows:
         print(f"no change estimates under {CRITERION} — run `make bench-cmp`", file=sys.stderr)
@@ -104,7 +99,7 @@ def main() -> int:
         r["regressed"] = r["mean_pct"] > args.threshold and r["ci_low_pct"] > 0
         r["runs"] = [round(r["mean_pct"], 1)]
     regressed = [r for r in rows if r["regressed"]]
-    for _ in range(0 if args.no_run else args.confirm):
+    for _ in range(args.confirm):
         if not regressed:
             break
         since = time.time()

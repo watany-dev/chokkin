@@ -34,6 +34,10 @@
 #   anyio          tests/test_sockets.py resolves "localhost" via getaddrinfo,
 #                  which the sandbox resolver refuses inside the namespace
 #
+# urllib3's `src` cannot be imported from a clean clone: the build writes the
+# git-ignored `_version.py`, and provisioning cleans it away. urllib3 has no
+# CHK001/CHK006 findings today, so its tests never run.
+#
 # slug	pythonpath	install	test
 requests	src	. pytest pytest-mock pytest-httpbin==2.0.0 httpbin~=0.10.0 trustme PySocks	{python} -m pytest -q -x -k "not (test_connect_timeout or test_total_timeout_connect or test_different_connection_pool_for_mtls_settings)"
 urllib3	src	. -r dev-requirements.txt	{python} -m pytest -q -x -k "not (test_http2_probe_blocked_per_thread or test_recent_date or ipv6)"

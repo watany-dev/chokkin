@@ -91,6 +91,7 @@ import subprocess
 import sys
 import threading
 import tokenize
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -207,13 +208,9 @@ def _find_def(body: list[ast.stmt], name: str, line: int):
             continue
         if _defines(node, name):
             return node, body
-        for field in ("body", "orelse", "finalbody"):
-            found = _find_def(getattr(node, field, []) or [], name, line)
-            if found:
-                return found
-        for handler in getattr(node, "handlers", []) or []:
-            found = _find_def(handler.body, name, line)
-            if found:
+        for sub in [*(getattr(node, f, None) or [] for f in ("body", "orelse", "finalbody")),
+                    *(h.body for h in getattr(node, "handlers", None) or [])]:
+            if found := _find_def(sub, name, line):
                 return found
     return None
 
@@ -258,6 +255,17 @@ def plan_symbol_removal(source: str, line: int, name: str) -> tuple[str, str]:
                             if isinstance(n, ast.Name) and n.id == name)})
     refs = [(r, c) for r, c in refs if lines[r - 1][c:c + len(name)] == name]
     if any(not (start <= r <= end) for r, _ in refs):
+        # A token rename would also hit methods, parameters, keywords and module
+        # paths of the same name, which callers outside the module still use.
+        if any((isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and n.name == name and n is not node)
+               or (isinstance(n, ast.arg) and n.arg == name)
+               or (isinstance(n, ast.keyword) and n.arg == name)
+               or (isinstance(n, ast.ImportFrom) and name in (n.module or "").split("."))
+               or (isinstance(n, ast.Import)
+                   and any(name in a.name.split(".")[:-1] for a in n.names))
+               for n in ast.walk(tree)):
+            return "span-shadowed", ""
         new = f"_chokkin_private_{name}"
         # `import name` / `from m import name` must keep importing `name`.
         imported = {(a.lineno, a.col_offset) for n in ast.walk(tree)
@@ -515,10 +523,7 @@ def write_outputs(args, rows: list[dict], projects: dict, meta: dict) -> None:
              for k, v in sorted(summary["by_strategy"].items())],
             "lrrrr",
         )
-    not_run: dict[str, int] = {}
-    for r in rows:
-        if r["status"] == "not-run":
-            not_run[r["detail"]] = not_run.get(r["detail"], 0) + 1
+    not_run = Counter(r["detail"] for r in rows if r["status"] == "not-run")
     lines += ["", "## not-run reasons", ""]
     lines += oc.md_table(["Reason", "Count"], sorted(not_run.items()), "lr") if not_run else ["_None._"]
     breaks = [r for r in rows if r["status"] == "break"]
@@ -535,7 +540,7 @@ def write_outputs(args, rows: list[dict], projects: dict, meta: dict) -> None:
 def main() -> int:
     args = parse_args()
     if args.build:
-        oc.build(args.bin)
+        oc.build()
     oc.require_bin(args.bin)
     if not args.manifest.is_file():
         print(f"manifest not found: {args.manifest}", file=sys.stderr)
