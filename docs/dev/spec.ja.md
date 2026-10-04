@@ -528,7 +528,7 @@ root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `te
 
 1. build backend の宣言: setuptools `packages` / `package-dir` / `packages.find.where`、hatch `packages`、flit・pdm・maturin の module 指定、poetry `packages` (`from` + `include`)。宣言 path は親に `__init__.py` が続く限り遡って top-level package にする。宣言が異なる root にまたがる場合は使わない
 2. `[tool.uv.sources]` の `path` source のうち、project 名 (`streamlit-dev` なら `streamlit_dev` / `streamlit`) と同名で root 配下にあるもの (`streamlit = { path = "lib" }`)。その tree に 3 を当てる
-3. heuristic: `src/` 配下の package、なければ root 直下と `lib/` 直下の package 候補。project 名と一致する候補を優先し、一致しなければ先頭候補を選んで `GuessedPackageDir` (候補 1 つ、`[project].name` あり) か `AmbiguousPackageDir` (候補複数) を warning に出す (`--probe` も同じ)
+3. heuristic: `src/` 配下の package、なければ root 直下と `lib/` 直下の package 候補。project 名と一致する候補を優先し、一致しなければ先頭候補を選んで `GuessedPackageDir` (候補 1 つ、`[project].name` あり) か `AmbiguousFlatLayout` (候補複数) を warning に出す (`--probe` も同じ)
 4. 候補が無ければ layout 不明として `**/*.py` を走査する
 
 `tests` / `scripts` / `docs` / `build` / `dist` / `examples` / `benchmarks` / `e2e*` などは本体候補にしない。`package_root` が `src` 以外 (`lib` など) のときは `--probe` の Layout 行に `root: lib` を出し、module 名は `package_root` からの相対 path で決める。`path` source が本体を持つ場合、その package への import は first-party だが、CHK001 では `workspace = true` source と同じくその依存を used として数える。

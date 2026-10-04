@@ -18,20 +18,9 @@ pub enum SourcesWarning {
     },
     /// Several undeclared package directories; one was chosen.
     #[error("sources: ambiguous package directory ({candidates:?}); chose `{chosen}`")]
-    AmbiguousPackageDir {
+    AmbiguousFlatLayout {
         /// Root-relative candidate directories.
         candidates: Vec<String>,
-        /// Selected root-relative package directory.
-        chosen: String,
-    },
-    /// The only undeclared package directory is not named after the project.
-    #[error(
-        "sources: no package directory matches project `{project}`; guessed `{chosen}` \
-         (declare it in the build backend config or [tool.chokkin] project)"
-    )]
-    GuessedPackageDir {
-        /// `[project].name`.
-        project: String,
         /// Selected root-relative package directory.
         chosen: String,
     },
@@ -54,5 +43,16 @@ pub enum SourcesWarning {
         path: String,
         /// Human-readable error description.
         reason: String,
+    },
+    /// The only undeclared package directory is not named after the project.
+    #[error(
+        "sources: no package directory matches project `{project}`; guessed `{chosen}` \
+         (declare it in the build backend config or [tool.chokkin] project)"
+    )]
+    GuessedPackageDir {
+        /// `[project].name`.
+        project: String,
+        /// Selected root-relative package directory.
+        chosen: String,
     },
 }

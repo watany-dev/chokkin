@@ -192,7 +192,7 @@ mod tests {
                 "sources: entry path is a directory `pkg`",
             ),
             (
-                ProbeWarning::Sources(SourcesWarning::AmbiguousPackageDir {
+                ProbeWarning::Sources(SourcesWarning::AmbiguousFlatLayout {
                     candidates: vec!["a".to_owned(), "b".to_owned()],
                     chosen: "a".to_owned(),
                 }),

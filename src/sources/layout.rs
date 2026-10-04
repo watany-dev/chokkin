@@ -237,7 +237,7 @@ fn guess_package(
         .collect();
     let chosen = dirs.first().cloned().unwrap_or_default();
     let warning = if dirs.len() > 1 {
-        Some(SourcesWarning::AmbiguousPackageDir {
+        Some(SourcesWarning::AmbiguousFlatLayout {
             candidates: dirs,
             chosen,
         })
@@ -654,7 +654,7 @@ mod tests {
         assert_eq!(package, "alpha");
         assert_eq!(
             warning,
-            Some(SourcesWarning::AmbiguousPackageDir {
+            Some(SourcesWarning::AmbiguousFlatLayout {
                 candidates: vec!["alpha".to_owned(), "beta".to_owned()],
                 chosen: "alpha".to_owned(),
             })
@@ -700,7 +700,7 @@ mod tests {
                 prop_assert!(candidates.contains(&package));
                 if candidates.len() > 1 {
                     let is_ambiguous =
-                        matches!(warning, Some(SourcesWarning::AmbiguousPackageDir { .. }));
+                        matches!(warning, Some(SourcesWarning::AmbiguousFlatLayout { .. }));
                     prop_assert!(is_ambiguous);
                 }
             }

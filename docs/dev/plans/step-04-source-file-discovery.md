@@ -72,7 +72,7 @@ Step 3 (`extract_manifest`) の直後に位置し、解析対象となる **Pyth
 **`manifest.metadata.name` の利用:**
 
 - flat layout で package ディレクトリが複数候補のとき、`[project].name` を正規化
-  （`acme-api` → `acme_api` → `acme` の **完全一致優先**、なければ先頭候補 + `SourcesWarning::AmbiguousPackageDir`。build backend 宣言・uv path source・`lib/` を含む現行の推定順は spec の §10 を参照、#487）
+  （`acme-api` → `acme_api` → `acme` の **完全一致優先**、なければ先頭候補 + `SourcesWarning::AmbiguousFlatLayout`。build backend 宣言・uv path source・`lib/` を含む現行の推定順は spec の §10 を参照、#487）
 - src layout では `src/<name>/` の `<name>` を優先（metadata.name は補助）
 
 **自動生成される `project` globs（layout 別）:**
@@ -283,7 +283,7 @@ glob 構築失敗と走査時の致命的 IO のみ。個別ファイルの読�
 | --- | --- |
 | `MissingEntryPath { path }` | `config.entry` が存在しないファイルを指す |
 | `EntryPathIsDirectory { path }` | entry がディレクトリ |
-| `AmbiguousPackageDir { candidates, chosen }` | 複数 package 候補から先頭を選んだ |
+| `AmbiguousFlatLayout { candidates, chosen }` | 複数 package 候補から先頭を選んだ |
 | `GuessedPackageDir { project, chosen }` | project 名と一致しない唯一の候補を選んだ |
 | `GitignoreUnreadable { path }` | `.gitignore` 読み取り失敗 |
 | `LargeProject { file_count }` | 閾値超過（10_000） |

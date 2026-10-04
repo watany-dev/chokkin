@@ -239,7 +239,7 @@ fn resolves_ambiguous_flat_layout_with_metadata_name() {
         !sources
             .warnings
             .iter()
-            .any(|warning| matches!(warning, SourcesWarning::AmbiguousPackageDir { .. }))
+            .any(|warning| matches!(warning, SourcesWarning::AmbiguousFlatLayout { .. }))
     );
 }
 
@@ -249,7 +249,7 @@ fn warns_ambiguous_flat_layout_without_metadata_match() {
     assert_eq!(sources.layout.packages, vec!["acme".to_owned()]);
     assert!(sources.warnings.iter().any(|warning| matches!(
         warning,
-        SourcesWarning::AmbiguousPackageDir { chosen, .. } if chosen == "acme"
+        SourcesWarning::AmbiguousFlatLayout { chosen, .. } if chosen == "acme"
     )));
 }
 
