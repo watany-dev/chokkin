@@ -13,6 +13,9 @@ Usage:
 Options:
   --baseline NAME     criterion baseline to compare with (default: main)
   --threshold PCT     allowed mean slowdown in percent (default: 10)
+  --confirm N         re-run only the regressed benchmarks up to N times and
+                      fail only on those that regress every time (default: 1);
+                      sequential runs on a shared machine drift by 10-15%
   --no-run            do not run `cargo bench`; read the change estimates
                       already under target/criterion (from `make bench-cmp`)
   -o, --output DIR    report directory (default: target/bench-gate)
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -43,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--baseline", default="main")
     p.add_argument("--threshold", type=float, default=10.0)
+    p.add_argument("--confirm", type=int, default=1)
     p.add_argument("--no-run", action="store_true")
     p.add_argument("-o", "--output", type=Path, default=oc.ROOT / "target/bench-gate")
     p.add_argument("-h", "--help", action="store_true")
@@ -76,17 +81,19 @@ def collect(since: float) -> list[dict]:
     return rows
 
 
+def run_bench(baseline: str, only: list[str] | None = None) -> bool:
+    cmd = ["cargo", "bench", "--benches", "--locked", "--", "--baseline", baseline]
+    if only:
+        cmd.append("^(" + "|".join(re.escape(b) for b in only) + ")$")
+    return subprocess.run(cmd, cwd=oc.ROOT, check=False).returncode == 0
+
+
 def main() -> int:
     args = parse_args()
     since = 0.0
     if not args.no_run:
         since = time.time()
-        proc = subprocess.run(
-            ["cargo", "bench", "--benches", "--locked", "--", "--baseline", args.baseline],
-            cwd=oc.ROOT,
-            check=False,
-        )
-        if proc.returncode != 0:
+        if not run_bench(args.baseline):
             print(f"cargo bench failed (missing baseline {args.baseline!r}?)", file=sys.stderr)
             return 2
     rows = collect(since)
@@ -95,7 +102,23 @@ def main() -> int:
         return 2
     for r in rows:
         r["regressed"] = r["mean_pct"] > args.threshold and r["ci_low_pct"] > 0
+        r["runs"] = [round(r["mean_pct"], 1)]
     regressed = [r for r in rows if r["regressed"]]
+    for _ in range(0 if args.no_run else args.confirm):
+        if not regressed:
+            break
+        since = time.time()
+        if not run_bench(args.baseline, [r["bench"] for r in regressed]):
+            return 2
+        again = {r["bench"]: r for r in collect(since)}
+        for r in regressed:
+            new = again.get(r["bench"])
+            if new is None:
+                continue
+            r["runs"].append(round(new["mean_pct"], 1))
+            r.update({k: new[k] for k in ("mean_pct", "ci_low_pct", "ci_high_pct")})
+            r["regressed"] = r["mean_pct"] > args.threshold and r["ci_low_pct"] > 0
+        regressed = [r for r in regressed if r["regressed"]]
 
     args.output.mkdir(parents=True, exist_ok=True)
     summary = {
@@ -110,19 +133,21 @@ def main() -> int:
         "# Benchmark regression gate",
         "",
         f"- baseline: `{args.baseline}`",
-        f"- criterion: mean slowdown > {args.threshold:g}% with the 95% CI above 0",
+        f"- criterion: mean slowdown > {args.threshold:g}% with the 95% CI above 0, "
+        f"in the first run and in each of up to {args.confirm} confirmation re-run(s)",
         f"- result: **{'PASS' if not regressed else 'FAIL'}** "
         f"({len(regressed)} of {len(rows)} benchmarks regressed)",
         "",
         *oc.md_table(
-            ["Benchmark", "Mean change", "95% CI", "Regressed"],
+            ["Benchmark", "Mean change", "95% CI", "Runs", "Regressed"],
             [
                 [f"`{r['bench']}`", f"{r['mean_pct']:+.1f}%",
                  f"[{r['ci_low_pct']:+.1f}%, {r['ci_high_pct']:+.1f}%]",
+                 ", ".join(f"{x:+.1f}%" for x in r["runs"]),
                  "**yes**" if r["regressed"] else "no"]
                 for r in rows
             ],
-            "lrll",
+            "lrlll",
         ),
     ]
     (args.output / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
