@@ -67,10 +67,7 @@ pub(super) fn detect_missing_dependencies(
         let root_declared =
             root_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
 
-        if member_declared
-            || (!strict && root_declared)
-            || (root_declared && workspace_member.is_none())
-        {
+        if member_declared {
             continue;
         }
 

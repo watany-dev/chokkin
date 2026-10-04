@@ -25,14 +25,10 @@ pub fn apply_fixes_with_workspace(
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
 ) -> FixReport {
-    let mut report_out = FixReport::default();
-
-    let actions = match plan_fixes(report, manifest, workspace_manifests, options) {
-        Ok(actions) => actions,
-        Err(skipped) => {
-            report_out.skipped = skipped;
-            return report_out;
-        },
+    let (actions, skipped) = plan_fixes(report, manifest, workspace_manifests, options);
+    let mut report_out = FixReport {
+        skipped,
+        ..FixReport::default()
     };
 
     for action in bottom_up_positional_removals(actions) {
