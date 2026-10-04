@@ -270,15 +270,15 @@ mod verification {
     }
 
     fn any_overrides() -> RuntimeOverrides {
-        let no_exit_code = match kani::any::<u8>() % 3 {
+        // Field assignment instead of a struct literal: cargo-mutants'
+        // exclude_re does not reach struct-field mutants.
+        let mut overrides = RuntimeOverrides::default();
+        overrides.no_exit_code = match kani::any::<u8>() % 3 {
             0 => None,
             1 => Some(false),
             _ => Some(true),
         };
-        RuntimeOverrides {
-            no_exit_code,
-            ..RuntimeOverrides::default()
-        }
+        overrides
     }
 
     /// Any subset a baseline can keep: with two issues every subset is a
