@@ -16,6 +16,9 @@
 # <output>/clones.lock.tsv so a validation run is reproducible regardless of
 # upstream branch movement.
 #
+# Existing checkouts are reset to HEAD and stripped of untracked files
+# (`git clean -ffdx`), so no analysis cache survives between runs.
+#
 # Network is required. Clone failures are reported but do not abort the batch;
 # the exit code is non-zero if any clone failed so CI can gate on it.
 
@@ -27,7 +30,7 @@ OUTPUT="${OSS_CLONES_DIR:-$ROOT/target/oss-clones}"
 JOBS=4
 FORCE=0
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,6 +58,15 @@ clone_one() {
   local dest="$OUTPUT/$slug"
 
   if [[ "$FORCE" -eq 1 ]]; then
+    rm -rf "$dest"
+  fi
+
+  # Reused checkouts go back to a pristine HEAD: a CI cache restore brings
+  # back chokkin's .chokkin/ disk cache from the previous run, which turns
+  # every measurement into a warm, stale run. Re-clone if that fails.
+  if [[ -d "$dest/.git" ]] &&
+    ! { git -C "$dest" reset --quiet --hard HEAD && git -C "$dest" clean -ffdxq; } 2>/dev/null; then
+    echo "broken $slug (re-cloning)"
     rm -rf "$dest"
   fi
 

@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-oracle check-generated formal help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -38,6 +38,11 @@ bench-save:
 bench-cmp:
 	cargo bench --benches --locked -- --baseline $(BASELINE)
 
+# bench-gate: fail on a >10% mean slowdown vs BASELINE (default main) whose 95%
+#             CI excludes 0 (#342). Save the baseline on the base commit first.
+bench-gate:
+	scripts/bench-gate.py --baseline $(or $(BASELINE),main) $(ARGS)
+
 ## ─── OSS dogfooding (Phase 1 §17) ─────────────────────────────────────────────
 # oss-fixtures: in-repo regression skeleton (always available, no network).
 # oss-clones:   clone the 20-project §17 validation set into target/oss-clones/.
@@ -52,13 +57,33 @@ oss-clones:
 oss-metrics:
 	scripts/oss-metrics.sh --build $(ARGS)
 
-# oss-oracle: CHK001 remove-and-test oracle (#85 WS2). RUNS UNTRUSTED PROJECT
-#             TESTS in disposable copies of target/oss-clones/ — opt-in, local
-#             or isolated runner only, never release/default CI. Installs
-#             nothing; pass ARGS="--python /path/to/venv/bin/python" to use a
-#             pre-provisioned interpreter. See docs/dev/chk001-remove-and-test.md.
+# oss-gate:   determinism (cold/warm/--no-cache byte-identical), JSON schema
+#             and crash gates over the corpus + recall sentinels (#342).
+oss-gate:
+	scripts/oss-gate.py --build $(ARGS)
+
+# oss-envs:   per-project test venvs in target/oss-envs/ (#338). BUILDS
+#             UNTRUSTED PROJECTS and needs PyPI — throwaway runner only.
+oss-envs:
+	scripts/oss-provision-envs.py $(ARGS)
+
+# oss-oracle: remove-and-test oracle, CHK001 by default, ARGS="--rule CHK006"
+#             for symbols (#338/#339). RUNS UNTRUSTED PROJECT TESTS in
+#             disposable copies of target/oss-clones/ with the oss-envs venvs,
+#             network-isolated — opt-in, local or isolated runner only, never
+#             release/default CI. See docs/dev/chk001-remove-and-test.md.
 oss-oracle:
-	scripts/oss-remove-and-test.py --build --execute $(ARGS)
+	scripts/oss-remove-and-test.py --build --envs target/oss-envs --offline --execute $(ARGS)
+
+# oss-diff:   differential oracle vs vulture/deadcode/deptry/fawltydeps/ruff/
+#             pyflakes (#340); the tools run via uvx and only read the code.
+oss-diff:
+	scripts/oss-differential.py --build $(ARGS)
+
+# oss-mutation: inject known dead code / dependency issues into copies of the
+#             clones and measure recall per rule (#341). Executes nothing.
+oss-mutation:
+	scripts/oss-mutation-recall.py --build $(ARGS)
 
 ## ─── Security & supply chain ──────────────────────────────────────────────────
 deny:
