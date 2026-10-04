@@ -217,7 +217,6 @@ fn heuristic_layout(
     (layout_info(base, vec![package]), warning)
 }
 
-/// The candidate named after the project, if any.
 fn project_package(candidates: &[String], metadata: &ProjectMetadata) -> Option<String> {
     let name = metadata.name.as_deref()?;
     normalized_project_names(name)
