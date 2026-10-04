@@ -58,6 +58,13 @@ clone_one() {
     rm -rf "$dest"
   fi
 
+  # A checkout restored from a CI cache can keep .git but lose tracked files,
+  # so only an intact work tree counts as present.
+  if [[ -d "$dest/.git" ]] && ! git -C "$dest" diff --quiet HEAD 2>/dev/null; then
+    echo "stale $slug (tracked files differ from HEAD; re-cloning)"
+    rm -rf "$dest"
+  fi
+
   if [[ -d "$dest/.git" ]]; then
     echo "have $slug (skip; --force to refresh)"
   else
