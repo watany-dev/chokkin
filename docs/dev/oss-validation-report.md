@@ -194,13 +194,21 @@ suite is run offline in a per-project venv. Precision = pass / (pass + break).
 | Rule | Removal | Tested | pass | break | Precision |
 |---|---|---:|---:|---:|---:|
 | CHK001 | delete the file | 50 | 28 | 22 | 56.0% |
-| CHK006 | delete or privatize the symbol | pending | | | |
+| CHK006 | delete or privatize the symbol | 243 | 226 | 17 | 93.0% |
 
 All 22 CHK001 breaks are files the suite uses without importing them. Seven
 are fastapi modules judged in app mode, seven are black test data, and eight
 are werkzeug/uvicorn test modules loaded by path or import string. Django
 (988 CHK001) is not run: about 6 minutes per baseline, four environmental
 baseline failures and an expected yield dominated by string-loaded modules.
+
+CHK006 is sampled to 15 findings per project, giving 243 tests over 17 projects.
+Of the 17 breaks, 5 are chokkin false positives: names re-exported through
+`from m import *` (httpx's private modules into `httpx/__init__.py`, and
+`attrs.exceptions`). Another 5 are names referenced as strings (`dictConfig`,
+`monkeypatch.setattr`, `getattr`), 3 are framework hooks called by name
+(pytest plugin hooks and an IPython extension), and 4 are classes whose
+runtime name is observable once they are renamed.
 
 ### Mutation recall (#341)
 
@@ -243,7 +251,9 @@ disagreement:
 3. **String module references** (`import_module(f"...{lang}.formats")`,
    gunicorn `-k uvicorn.workers.UvicornWorker`, Django settings dotted paths):
    the plugin route of spec §9.
-4. **`setup.py` with a non-literal `install_requires`** is skipped, which
+4. **Star re-exports for CHK006.** A name pulled into a public module with
+   `from m import *` (and listed in its `__all__`) should count as used.
+5. **`setup.py` with a non-literal `install_requires`** is skipped, which
    produces requests' CHK003 false positives (labelled `deferred`).
 
 ## Phase 1.5 remediation summary
