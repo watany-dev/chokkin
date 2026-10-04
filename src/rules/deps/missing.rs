@@ -84,9 +84,9 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        // Declared, only in a bucket that does not match this usage context.
-        // §10 hands that case to CHK005 alone: it is neither missing (CHK003)
-        // nor transitive-only (CHK004).
+        // Declared in any bucket, including the root declaration a non-strict
+        // or non-member import relies on. A bucket that does not match this
+        // usage context is CHK005's alone (§10), not CHK003 or CHK004.
         if governing_declarations(
             declared,
             workspace_declared,
