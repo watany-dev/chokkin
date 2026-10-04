@@ -56,7 +56,6 @@ pub fn parse_file(
     ))
 }
 
-/// Read `path` and decode it; `None` when the bytes are not decodable.
 fn read_source(root: &ProjectRoot, path: &str) -> Result<Option<String>, ParseError> {
     let absolute = root.path.join(path);
     let bytes = std::fs::read(&absolute).map_err(|source| ParseError::Io {
