@@ -252,10 +252,20 @@ def plan_symbol_removal(source: str, line: int, name: str) -> tuple[str, str]:
     except (tokenize.TokenError, IndentationError, SyntaxError):
         return "span-untokenizable", ""
     lines = source.splitlines(keepends=True)
+    # Before 3.12 an f-string is one STRING token, so its uses are only in the AST.
+    # ast col_offset is in UTF-8 bytes; skip any position that does not hold the name.
+    refs = sorted({*refs, *((n.lineno, n.col_offset) for n in ast.walk(tree)
+                            if isinstance(n, ast.Name) and n.id == name)})
+    refs = [(r, c) for r, c in refs if lines[r - 1][c:c + len(name)] == name]
     if any(not (start <= r <= end) for r, _ in refs):
         new = f"_chokkin_private_{name}"
+        # `import name` / `from m import name` must keep importing `name`.
+        imported = {(a.lineno, a.col_offset) for n in ast.walk(tree)
+                    if isinstance(n, (ast.Import, ast.ImportFrom))
+                    for a in n.names if a.name == name and a.asname is None}
         for r, c in sorted(refs, reverse=True):
-            lines[r - 1] = lines[r - 1][:c] + new + lines[r - 1][c + len(name):]
+            repl = f"{name} as {new}" if (r, c) in imported else new
+            lines[r - 1] = lines[r - 1][:c] + repl + lines[r - 1][c + len(name):]
         return "privatize", "".join(lines)
     keep = lines[: start - 1]
     if len(body) == 1:
