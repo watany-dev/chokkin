@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""CHK001 remove-and-test oracle over the pinned OSS corpus (issue #114, #85 WS2).
+"""Remove-and-test oracle over the pinned OSS corpus (#114, #338, #339).
 
-For every CHK001 (unused file) finding in a disposable copy of each cloned
-project, delete the flagged file, run the project's configured test command,
-and compare against a baseline run on the untouched tree.
+For every CHK001 (unused file) or CHK006 (unused export) finding in a
+disposable copy of each cloned project, remove what chokkin flagged, run the
+project's test command, and compare against a baseline run on the untouched
+tree.
 
 THIS RUNS UNTRUSTED THIRD-PARTY TEST CODE. It is opt-in and never part of the
 chokkin CLI/library pipeline, release jobs, or default CI. Without --execute it
-is a dry run: chokkin analysis and test-command detection only, nothing from
-the analyzed projects is executed. See docs/dev/chk001-remove-and-test.md for
-the isolation this needs.
+is a dry run: chokkin analysis, test-command detection and (for CHK006) symbol
+span lookup only; nothing from the analyzed projects is executed. See
+docs/dev/chk001-remove-and-test.md for the isolation this needs.
 
 Usage:
   scripts/oss-remove-and-test.py [OPTIONS]
@@ -17,33 +18,58 @@ Usage:
 Options:
   -m, --manifest PATH   Clone list (default: scripts/oss-clones.manifest)
   -c, --clones DIR      Clone root (default: target/oss-clones)
-  -o, --output DIR      Output directory (default: target/oss-oracle)
+  -o, --output DIR      Output directory (default: target/oss-oracle/<rule>)
   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
-  --python PATH         Interpreter for test runs (default: python3). Point at a
-                        venv you provisioned yourself; nothing is installed here.
-  --wrap CMD            Prefix every test run (e.g. "unshare -rn" for no network)
+  --rule CODE           CHK001 (delete the file, default) or CHK006 (remove the
+                        symbol, see below)
+  --python PATH         Interpreter for test runs when --envs has no venv for a
+                        project (default: python3)
+  --envs DIR            Per-project venvs from scripts/oss-provision-envs.py
+                        (e.g. target/oss-envs). Projects listed in --env-manifest
+                        use <DIR>/<slug>/bin/python, that manifest's test
+                        command and PYTHONPATH.
+  --env-manifest PATH   default: scripts/oss-test-env.manifest
+  --offline             Run tests in a new user+network namespace with only
+                        loopback up (unshare -rn + scripts/oss_netns_exec.py)
+  --wrap CMD            Prefix every test run (applied outside --offline)
   --timeout SECS        Per test run timeout (default: 600)
-  --max-findings N      Cap delete-and-test runs per project; rest are not-run
+  --sample N            Per project, test only N findings chosen by a stable
+                        hash of their target; the rest are not-run (sampled-out)
+  --max-findings N      Per project, test only the first N findings (sorted);
+                        the rest are not-run (over-max-findings)
+  --jobs N              Parallel working copies per project (default: 1)
   --projects a,b        Only these slugs
   --build               cargo build --release before running
   --execute             Actually run project tests (otherwise dry run)
   -h, --help            Show help
 
-Test command detection (first match wins; otherwise `no-test-command`):
+Test command (first match wins; otherwise `no-test-command`):
+  the --env-manifest `test` column when --envs is given for that project, else
   pyproject.toml [tool.pytest.ini_options], pytest.ini, setup.cfg [tool:pytest],
-  tox.ini [pytest]  ->  <python> -m pytest -q -x -p no:cacheprovider
+  tox.ini [pytest]  ->  <python> -m pytest -q -x
 tox/nox are not used: they install dependencies.
 
+CHK006 removal (the source is parsed with Python's `ast`, never executed):
+  delete     the name is not used anywhere else in its module: remove the
+             top-level def/class/assignment span (decorators included); a
+             block left empty gets `pass`
+  privatize  the module still uses the name: rename the definition and its
+             in-module references to `_chokkin_private_<name>`, so only
+             references from outside the module break
+  Both test the CHK006 claim "nothing outside the module uses this name".
+  Findings whose span cannot be determined are not-run (span-*).
+
 Per-finding status:
-  pass           baseline passed and the suite still passes after deletion
-  break          baseline passed, suite fails after deletion, and a baseline
-                 re-run passes again (so the failure is attributed to deletion)
+  pass           baseline passed and the suite still passes after removal
+  break          baseline passed, suite fails after removal, and a baseline
+                 re-run passes again (so the failure is attributed to removal)
   baseline-fail  the untouched tree already fails (or times out), or the
-                 baseline re-run after a post-delete failure fails (flaky)
-  not-run        no-test-command, dry-run, or over --max-findings
+                 baseline re-run after a post-removal failure fails (flaky)
+  not-run        no-test-command, dry-run, sampled-out, over --max-findings,
+                 or no removable span (CHK006)
 
 Outputs (under --output):
-  results.tsv     one row per CHK001 finding
+  results.tsv     one row per finding
   summary.json    per-project and per-rule counts, corpus revisions, command
   report.md       human-readable summary
   logs/<slug>/    test run output
@@ -52,37 +78,44 @@ Outputs (under --output):
 from __future__ import annotations
 
 import argparse
+import ast
 import configparser
+import hashlib
+import io
 import json
 import os
+import re
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
-import tempfile
-import time
-from datetime import datetime, timezone
+import threading
+import tokenize
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-RULE = "CHK001"
+import oss_corpus as oc
+
+RULES = ("CHK001", "CHK006")
 STATUSES = ("pass", "break", "baseline-fail", "not-run")
-LOG_TAIL_BYTES = 20_000
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(add_help=False)
-    p.add_argument(
-        "-m", "--manifest", type=Path, default=ROOT / "scripts/oss-clones.manifest"
-    )
-    p.add_argument("-c", "--clones", type=Path, default=ROOT / "target/oss-clones")
-    p.add_argument("-o", "--output", type=Path, default=ROOT / "target/oss-oracle")
-    p.add_argument("-b", "--bin", type=Path, default=ROOT / "target/release/chokkin")
+    p.add_argument("-m", "--manifest", type=Path, default=oc.DEFAULT_MANIFEST)
+    p.add_argument("-c", "--clones", type=Path, default=oc.DEFAULT_CLONES)
+    p.add_argument("-o", "--output", type=Path, default=None)
+    p.add_argument("-b", "--bin", type=Path, default=oc.DEFAULT_BIN)
+    p.add_argument("--rule", default="CHK001", choices=RULES)
     p.add_argument("--python", default="python3")
+    p.add_argument("--envs", type=Path, default=None)
+    p.add_argument("--env-manifest", type=Path, default=oc.DEFAULT_ENV_MANIFEST)
     p.add_argument("--wrap", default="")
+    p.add_argument("--offline", action="store_true")
     p.add_argument("--timeout", type=int, default=600)
+    p.add_argument("--sample", type=int, default=0)
     p.add_argument("--max-findings", type=int, default=0)
+    p.add_argument("--jobs", type=int, default=1)
     p.add_argument("--projects", default="")
     p.add_argument("--build", action="store_true")
     p.add_argument("--execute", action="store_true")
@@ -91,28 +124,12 @@ def parse_args() -> argparse.Namespace:
     if args.help:
         print(__doc__)
         sys.exit(0)
+    if args.output is None:
+        args.output = oc.ROOT / "target/oss-oracle" / args.rule.lower()
+    if args.offline:
+        netns = shlex.quote(str(oc.ROOT / "scripts/oss_netns_exec.py"))
+        args.wrap = f"{args.wrap} unshare -rn python3 {netns}".strip()
     return args
-
-
-def read_manifest(path: Path) -> list[str]:
-    slugs = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        slug = line.split("\t", 1)[0].split("#", 1)[0].strip()
-        if slug:
-            slugs.append(slug)
-    return slugs
-
-
-def read_lock(clones: Path) -> dict[str, dict[str, str]]:
-    lock = clones / "clones.lock.tsv"
-    rows: dict[str, dict[str, str]] = {}
-    if not lock.is_file():
-        return rows
-    for line in lock.read_text(encoding="utf-8").splitlines()[1:]:
-        cols = line.split("\t")
-        if len(cols) == 4:
-            rows[cols[0]] = {"ref": cols[1], "url": cols[2], "sha": cols[3]}
-    return rows
 
 
 def has_pytest_config(proj: Path) -> bool:
@@ -137,165 +154,281 @@ def has_pytest_config(proj: Path) -> bool:
     return False
 
 
-def chk001_paths(bin_path: Path, proj: Path) -> list[str]:
-    out = subprocess.run(
-        [str(bin_path), "--reporter", "json", "--no-exit-code", str(proj)],
-        capture_output=True,
-        text=True,
-        check=False,
+# ─── Findings ────────────────────────────────────────────────────────────────
+
+
+def findings(report: dict, rule: str) -> list[dict]:
+    """One entry per finding: target (stable key), path, and for CHK006 the
+    file / line / symbol name."""
+    out = {}
+    for i in report.get("issues", []):
+        if i.get("code") != rule:
+            continue
+        if rule == "CHK001":
+            out[i["path"]] = {"target": i["path"], "path": i["path"]}
+        else:
+            name = (i.get("symbol") or "").rpartition(":")[2]
+            out[i["target"]] = {
+                "target": i["target"],
+                "path": i["file"],
+                "line": i["line"],
+                "name": name,
+            }
+    return [out[k] for k in sorted(out)]
+
+
+def stable_rank(target: str) -> str:
+    return hashlib.sha256(target.encode("utf-8")).hexdigest()
+
+
+# ─── CHK006 symbol removal ───────────────────────────────────────────────────
+
+
+def _defines(node: ast.stmt, name: str) -> bool:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, ast.Assign):
+        return len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and (
+            node.targets[0].id == name
+        )
+    if isinstance(node, ast.AnnAssign):
+        return isinstance(node.target, ast.Name) and node.target.id == name
+    if sys.version_info >= (3, 12) and isinstance(node, ast.TypeAlias):
+        return isinstance(node.name, ast.Name) and node.name.id == name
+    return False
+
+
+def _find_def(body: list[ast.stmt], name: str, line: int):
+    """(node, enclosing body) of the module-level definition of `name` at
+    `line`, looking into if/try blocks (TYPE_CHECKING, version guards)."""
+    for node in body:
+        start = min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
+        if not (start <= line <= (node.end_lineno or node.lineno)):
+            continue
+        if _defines(node, name):
+            return node, body
+        for field in ("body", "orelse", "finalbody"):
+            found = _find_def(getattr(node, field, []) or [], name, line)
+            if found:
+                return found
+        for handler in getattr(node, "handlers", []) or []:
+            found = _find_def(handler.body, name, line)
+            if found:
+                return found
+    return None
+
+
+def _name_tokens(source: str, name: str) -> list[tuple[int, int]]:
+    """(row, col) of NAME tokens equal to `name` that are not attribute
+    accesses (`x.name`); rows are 1-based."""
+    out = []
+    prev = None
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.NAME and tok.string == name and not (
+            prev is not None and prev.type == tokenize.OP and prev.string == "."
+        ):
+            out.append(tok.start)
+        if tok.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT,
+                            tokenize.INDENT, tokenize.DEDENT):
+            prev = tok
+    return out
+
+
+def plan_symbol_removal(source: str, line: int, name: str) -> tuple[str, str]:
+    """Return (strategy, new_source); strategy is delete | privatize, or a
+    span-* reason with new_source == ""."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return "span-unparsable", ""
+    found = _find_def(tree.body, name, line)
+    if not found:
+        return "span-not-found", ""
+    node, body = found
+    start = min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
+    end = node.end_lineno or node.lineno
+    try:
+        refs = _name_tokens(source, name)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return "span-untokenizable", ""
+    lines = source.splitlines(keepends=True)
+    if any(not (start <= r <= end) for r, _ in refs):
+        new = f"_chokkin_private_{name}"
+        for r, c in sorted(refs, reverse=True):
+            lines[r - 1] = lines[r - 1][:c] + new + lines[r - 1][c + len(name):]
+        return "privatize", "".join(lines)
+    keep = lines[: start - 1]
+    if len(body) == 1:
+        # The block would be left empty: keep it syntactically valid.
+        indent = re.match(r"[ \t]*", lines[start - 1]).group(0)
+        keep.append(f"{indent}pass\n")
+    return "delete", "".join(keep + lines[end:])
+
+
+# ─── Measurement ─────────────────────────────────────────────────────────────
+
+
+class Project:
+    def __init__(self, slug: str, args: argparse.Namespace, envs: dict):
+        self.slug = slug
+        self.args = args
+        self.logs = args.output / "logs" / slug
+        self.work_root = args.output / "work"
+        env = envs.get(slug) if args.envs else None
+        venv_python = args.envs / slug / "bin/python" if env else None
+        if env and venv_python.exists():
+            self.python = str(venv_python)
+            self.test_template = env["test"]
+            self.pythonpath = [p for p in env["pythonpath"].split(":") if p]
+            self.env_source = "envs"
+        else:
+            self.python = args.python
+            self.test_template = oc.DEFAULT_TEST_CMD
+            self.pythonpath = []
+            self.env_source = "host"
+
+    def work(self, k: int) -> Path:
+        return self.work_root / f"{self.slug}.{k}"
+
+    def command(self) -> list[str]:
+        tmpl = shlex.split(self.test_template)
+        return shlex.split(self.args.wrap) + [
+            self.python if t == "{python}" else t for t in tmpl
+        ]
+
+    def run(self, work: Path, log_name: str) -> tuple[str, int | None, float]:
+        extra = {}
+        if self.pythonpath:
+            extra["PYTHONPATH"] = os.pathsep.join(str(work / p) for p in self.pythonpath)
+        return oc.run_isolated(
+            self.command(), work, self.args.timeout, self.logs / log_name, extra
+        )
+
+
+def apply_removal(work: Path, f: dict, rule: str) -> str:
+    """Mutate the working copy for finding `f`; return the strategy used."""
+    target = work / f["path"]
+    if rule == "CHK001":
+        target.unlink(missing_ok=True)
+        return "delete-file"
+    strategy, new = plan_symbol_removal(
+        target.read_text(encoding="utf-8"), f["line"], f["name"]
     )
-    report = json.loads(out.stdout)
-    return sorted(
-        {i["path"] for i in report.get("issues", []) if i.get("code") == RULE}
-    )
+    if new:
+        target.write_text(new, encoding="utf-8")
+    return strategy
 
 
-def reset_tree(work: Path) -> None:
-    # Undo the deletion and anything the test run wrote (caches, artifacts).
-    subprocess.run(["git", "-C", str(work), "reset", "-q", "--hard"], check=True)
-    subprocess.run(["git", "-C", str(work), "clean", "-q", "-fdx"], check=True)
+def measure_project(slug: str, args, rows: list[dict], projects: dict, envs: dict) -> None:
+    proj = Project(slug, args, envs)
+    shutil.rmtree(proj.logs, ignore_errors=True)
+    proj.logs.mkdir(parents=True)
+    base = proj.work(0)
+    oc.fresh_copy(args.clones / slug, base)
 
-
-def run_tests(
-    cmd: list[str], work: Path, timeout: int, log: Path
-) -> tuple[str, int | None, float]:
-    """Return (outcome, exit_code, seconds); outcome is ok | fail | timeout."""
-    with tempfile.TemporaryDirectory(prefix="oracle-home-") as home:
-        # Minimal environment: no inherited tokens or credentials reach the tests.
-        env = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "HOME": home,
-            "TMPDIR": home,
-            "LANG": "C.UTF-8",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
-        start = time.monotonic()
-        with log.open("wb") as fh:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=work,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            try:
-                code = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
-                return "timeout", None, time.monotonic() - start
-        _truncate_head(log)
-        return ("ok" if code == 0 else "fail"), code, time.monotonic() - start
-
-
-def _truncate_head(log: Path) -> None:
-    data = log.read_bytes()
-    if len(data) > LOG_TAIL_BYTES:
-        log.write_bytes(b"[... truncated ...]\n" + data[-LOG_TAIL_BYTES:])
-
-
-def measure_project(
-    slug: str, args: argparse.Namespace, rows: list[dict], projects: dict
-) -> None:
-    src = args.clones / slug
-    work = args.output / "work" / slug
-    logs = args.output / "logs" / slug
-    shutil.rmtree(work, ignore_errors=True)
-    shutil.rmtree(logs, ignore_errors=True)
-    logs.mkdir(parents=True)
-    shutil.copytree(src, work, symlinks=True)
-
-    info: dict = {"findings": 0, "test_command": None, "baseline": None}
+    info: dict = {"findings": 0, "test_command": None, "baseline": None,
+                  "env": proj.env_source}
     projects[slug] = info
     try:
-        paths = chk001_paths(args.bin, work)
+        found = findings(oc.chokkin_report(args.bin, base), args.rule)
     except (json.JSONDecodeError, KeyError) as err:
         info["error"] = f"chokkin output unreadable: {err}"
         print(f"    {info['error']}", file=sys.stderr)
-        shutil.rmtree(work, ignore_errors=True)
         return
-    info["findings"] = len(paths)
-    print(f"==> {slug}: {len(paths)} {RULE} finding(s)", flush=True)
+    info["findings"] = len(found)
+    print(f"==> {slug}: {len(found)} {args.rule} finding(s)", flush=True)
 
-    def record(
-        path: str,
-        status: str,
-        detail: str,
-        post_exit: int | None = None,
-        secs: float = 0.0,
-    ) -> None:
-        rows.append(
-            {
-                "slug": slug,
-                "rule": RULE,
-                "path": path,
-                "status": status,
-                "detail": detail,
-                "post_exit": post_exit,
-                "seconds": round(secs, 2),
-            }
-        )
+    def record(f: dict, status: str, detail: str, strategy: str = "",
+               post_exit: int | None = None, secs: float = 0.0) -> None:
+        rows.append({"slug": slug, "rule": args.rule, "target": f["target"],
+                     "status": status, "strategy": strategy, "detail": detail,
+                     "post_exit": post_exit, "seconds": round(secs, 2)})
 
-    cmd = shlex.split(args.wrap) + [
-        args.python,
-        "-m",
-        "pytest",
-        "-q",
-        "-x",
-        "-p",
-        "no:cacheprovider",
-    ]
-    if has_pytest_config(work):
-        info["test_command"] = shlex.join(cmd)
-    if not paths:
-        shutil.rmtree(work, ignore_errors=True)
+    if proj.env_source == "envs" or has_pytest_config(base):
+        info["test_command"] = shlex.join(proj.command())
+    if not found:
         return
     if info["test_command"] is None:
-        for p in paths:
-            record(p, "not-run", "no-test-command")
-        shutil.rmtree(work, ignore_errors=True)
-        return
-    if not args.execute:
-        for p in paths:
-            record(p, "not-run", "dry-run")
-        shutil.rmtree(work, ignore_errors=True)
+        for f in found:
+            record(f, "not-run", "no-test-command")
         return
 
-    reset_tree(work)
-    outcome, code, secs = run_tests(cmd, work, args.timeout, logs / "baseline.log")
+    selected = found
+    if args.sample and len(found) > args.sample:
+        keep = {f["target"] for f in sorted(found, key=lambda f: stable_rank(f["target"]))[: args.sample]}
+        selected = [f for f in found if f["target"] in keep]
+        for f in found:
+            if f["target"] not in keep:
+                record(f, "not-run", "sampled-out")
+    if args.max_findings and len(selected) > args.max_findings:
+        for f in selected[args.max_findings:]:
+            record(f, "not-run", "over-max-findings")
+        selected = selected[: args.max_findings]
+
+    if args.rule == "CHK006":
+        # Plan every removal up front (parse only) so unsupported spans are
+        # reported even in a dry run.
+        runnable = []
+        for f in selected:
+            strategy, new = plan_symbol_removal(
+                (base / f["path"]).read_text(encoding="utf-8"), f["line"], f["name"]
+            )
+            if new:
+                runnable.append(f)
+            else:
+                record(f, "not-run", strategy, strategy)
+        selected = runnable
+
+    if not args.execute:
+        for f in selected:
+            record(f, "not-run", "dry-run")
+        return
+
+    oc.reset_tree(base)
+    outcome, code, secs = proj.run(base, "baseline.log")
     info["baseline"] = {"outcome": outcome, "exit": code, "seconds": round(secs, 2)}
     print(f"    baseline: {outcome} (exit {code}, {secs:.1f}s)", flush=True)
     if outcome != "ok":
         detail = "baseline-timeout" if outcome == "timeout" else f"baseline-exit-{code}"
-        for p in paths:
-            record(p, "baseline-fail", detail)
-        shutil.rmtree(work, ignore_errors=True)
+        for f in selected:
+            record(f, "baseline-fail", detail)
         return
 
-    for n, path in enumerate(paths):
-        if args.max_findings and n >= args.max_findings:
-            record(path, "not-run", "over-max-findings")
-            continue
-        reset_tree(work)
-        (work / path).unlink(missing_ok=True)
-        outcome, code, secs = run_tests(cmd, work, args.timeout, logs / f"{n:04d}.log")
-        if outcome == "ok":
-            record(path, "pass", "", code, secs)
-            continue
-        # Confirm the failure is caused by the deletion, not flakiness.
-        reset_tree(work)
-        again, _, _ = run_tests(
-            cmd, work, args.timeout, logs / f"{n:04d}.rebaseline.log"
-        )
-        detail = "post-timeout" if outcome == "timeout" else f"post-exit-{code}"
-        if again == "ok":
-            record(path, "break", detail, code, secs)
-        else:
-            record(path, "baseline-fail", f"flaky-baseline;{detail}", code, secs)
-        print(f"    {rows[-1]['status']}: {path} ({detail})", flush=True)
-    shutil.rmtree(work, ignore_errors=True)
+    jobs = max(1, min(args.jobs, len(selected)))
+    for k in range(1, jobs):
+        oc.fresh_copy(args.clones / slug, proj.work(k))
+    free = list(range(jobs))
+    lock = threading.Lock()
+
+    def one(n_f: tuple[int, dict]) -> None:
+        n, f = n_f
+        with lock:
+            k = free.pop()
+        work = proj.work(k)
+        try:
+            oc.reset_tree(work)
+            strategy = apply_removal(work, f, args.rule)
+            outcome, code, secs = proj.run(work, f"{n:04d}.log")
+            if outcome == "ok":
+                with lock:
+                    record(f, "pass", "", strategy, code, secs)
+                return
+            # Confirm the failure is caused by the removal, not flakiness.
+            oc.reset_tree(work)
+            again, _, _ = proj.run(work, f"{n:04d}.rebaseline.log")
+            detail = "post-timeout" if outcome == "timeout" else f"post-exit-{code}"
+            status = "break" if again == "ok" else "baseline-fail"
+            if status == "baseline-fail":
+                detail = f"flaky-baseline;{detail}"
+            with lock:
+                record(f, status, detail, strategy, code, secs)
+                print(f"    {status}: {f['target']} ({detail})", flush=True)
+        finally:
+            with lock:
+                free.append(k)
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        list(pool.map(one, enumerate(selected)))
 
 
 def counts(rows: list[dict]) -> dict[str, int]:
@@ -303,69 +436,87 @@ def counts(rows: list[dict]) -> dict[str, int]:
     for r in rows:
         c[r["status"]] += 1
     c["total"] = len(rows)
+    tested = c["pass"] + c["break"]
+    c["precision_pct"] = round(100 * c["pass"] / tested, 1) if tested else None
     return c
 
 
-def write_outputs(
-    args: argparse.Namespace, rows: list[dict], projects: dict, meta: dict
-) -> None:
+def write_outputs(args, rows: list[dict], projects: dict, meta: dict) -> None:
     out = args.output
+    rows.sort(key=lambda r: (r["slug"], r["target"]))
+    rule = args.rule
     with (out / "results.tsv").open("w", encoding="utf-8") as fh:
-        fh.write("slug\trule\tpath\tstatus\tdetail\tpost_exit\tseconds\n")
+        fh.write("slug\trule\ttarget\tstatus\tstrategy\tdetail\tpost_exit\tseconds\n")
         for r in rows:
-            fh.write(
-                f"{r['slug']}\t{r['rule']}\t{r['path']}\t"
-                f"{r['status']}\t{r['detail']}\t{'' if r['post_exit'] is None else r['post_exit']}\t"
-                f"{r['seconds']}\n"
-            )
+            post = "" if r["post_exit"] is None else r["post_exit"]
+            fh.write(f"{r['slug']}\t{r['rule']}\t{r['target']}\t{r['status']}\t"
+                     f"{r['strategy']}\t{r['detail']}\t{post}\t{r['seconds']}\n")
 
     for slug, info in projects.items():
         info["counts"] = counts([r for r in rows if r["slug"] == slug])
-    summary = {
-        **meta,
-        "rules": {RULE: counts(rows)},
-        "projects": projects,
-    }
-    (out / "summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
-    )
+    summary = {**meta, "rules": {rule: counts(rows)}, "projects": projects}
+    if rule == "CHK006":
+        by_strategy: dict[str, dict[str, int]] = {}
+        for r in rows:
+            if r["strategy"] in ("delete", "privatize"):
+                by_strategy.setdefault(r["strategy"], {s: 0 for s in STATUSES})[r["status"]] += 1
+        summary["by_strategy"] = by_strategy
+    (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
+    def pct(c: dict) -> str:
+        return "n/a" if c["precision_pct"] is None else f"{c['precision_pct']}%"
+
+    t = summary["rules"][rule]
     lines = [
-        f"# {RULE} remove-and-test oracle",
+        f"# {rule} remove-and-test oracle",
         "",
         f"- chokkin: `{meta['chokkin_version']}`",
-        f"- python: `{meta['python']}`",
         f"- generated: {meta['generated']}",
         f"- mode: {'execute' if meta['execute'] else 'dry-run'}",
         f"- command: `{meta['command']}`",
         "",
-        "| Rule | Total | pass | break | baseline-fail | not-run |",
-        "|---|---:|---:|---:|---:|---:|",
-    ]
-    t = summary["rules"][RULE]
-    lines.append(
-        f"| {RULE} | {t['total']} | {t['pass']} | {t['break']} | {t['baseline-fail']} | {t['not-run']} |"
-    )
-    lines += [
+        "Precision = pass / (pass + break) over findings that reached a post-removal run.",
         "",
-        "| Project | SHA | Test command | Baseline | Total | pass | break | baseline-fail | not-run |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|",
+        *oc.md_table(
+            ["Rule", "Total", "pass", "break", "baseline-fail", "not-run", "Precision"],
+            [[rule, t["total"], t["pass"], t["break"], t["baseline-fail"], t["not-run"], pct(t)]],
+            "lrrrrrr",
+        ),
+        "",
     ]
+    proj_rows = []
     for slug, info in projects.items():
         c = info["counts"]
-        base = info["baseline"]
-        base_s = "-" if base is None else f"{base['outcome']} (exit {base['exit']})"
+        b = info["baseline"]
+        base_s = "-" if b is None else f"{b['outcome']} ({b['seconds']}s)"
         sha = meta["corpus"].get(slug, {}).get("sha", "?")[:12]
-        cmd = "no-test-command" if info["test_command"] is None else "pytest"
-        lines.append(
-            f"| {slug} | `{sha}` | {cmd} | {base_s} | {c['total']} | {c['pass']} | "
-            f"{c['break']} | {c['baseline-fail']} | {c['not-run']} |"
+        proj_rows.append([slug, f"`{sha}`", info["env"], base_s, c["total"], c["pass"],
+                          c["break"], c["baseline-fail"], c["not-run"], pct(c)])
+    lines += oc.md_table(
+        ["Project", "SHA", "Env", "Baseline", "Total", "pass", "break",
+         "baseline-fail", "not-run", "Precision"],
+        proj_rows, "llllrrrrrr",
+    )
+    if rule == "CHK006":
+        lines += ["", "## By strategy", ""]
+        lines += oc.md_table(
+            ["Strategy", "pass", "break", "baseline-fail", "not-run"],
+            [[k, v["pass"], v["break"], v["baseline-fail"], v["not-run"]]
+             for k, v in sorted(summary["by_strategy"].items())],
+            "lrrrr",
         )
+    not_run: dict[str, int] = {}
+    for r in rows:
+        if r["status"] == "not-run":
+            not_run[r["detail"]] = not_run.get(r["detail"], 0) + 1
+    lines += ["", "## not-run reasons", ""]
+    lines += oc.md_table(["Reason", "Count"], sorted(not_run.items()), "lr") if not_run else ["_None._"]
     breaks = [r for r in rows if r["status"] == "break"]
     lines += ["", "## Breaks", ""]
     if breaks:
-        lines += ["| Project | Path | Detail |", "|---|---|---|"]
-        lines += [f"| {r['slug']} | `{r['path']}` | {r['detail']} |" for r in breaks]
+        lines += oc.md_table(["Project", "Target", "Strategy", "Detail"],
+                             [[r["slug"], f"`{r['target']}`", r["strategy"], r["detail"]]
+                              for r in breaks])
     else:
         lines.append("_None._")
     (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -374,66 +525,55 @@ def write_outputs(
 def main() -> int:
     args = parse_args()
     if args.build:
-        subprocess.run(
-            ["cargo", "build", "--release", "--locked", "--bin", "chokkin"],
-            cwd=ROOT,
-            check=True,
-        )
-    if not (args.bin.is_file() and os.access(args.bin, os.X_OK)):
-        print(f"chokkin binary not found: {args.bin} (use --build)", file=sys.stderr)
-        return 2
+        oc.build(args.bin)
+    oc.require_bin(args.bin)
     if not args.manifest.is_file():
         print(f"manifest not found: {args.manifest}", file=sys.stderr)
         return 2
     args.output = args.output.resolve()
+    if args.envs is not None:
+        args.envs = args.envs.resolve()
     if os.sep in args.python:
         # Tests run with cwd inside the working copy.
         args.python = str(Path(args.python).resolve())
     args.output.mkdir(parents=True, exist_ok=True)
+    envs = oc.read_env_manifest(args.env_manifest) if args.envs else {}
 
     only = {s for s in args.projects.split(",") if s}
-    lock = read_lock(args.clones)
     rows: list[dict] = []
     projects: dict = {}
     skipped: list[str] = []
-    for slug in read_manifest(args.manifest):
+    for row in oc.read_manifest(args.manifest, core_only=True):
+        slug = row["slug"]
         if only and slug not in only:
             continue
         if not (args.clones / slug).is_dir():
             print(f"skip (not cloned): {slug}", file=sys.stderr)
             skipped.append(slug)
             continue
-        measure_project(slug, args, rows, projects)
-    shutil.rmtree(args.output / "work", ignore_errors=True)
+        try:
+            measure_project(slug, args, rows, projects, envs)
+        finally:
+            shutil.rmtree(args.output / "work", ignore_errors=True)
 
     if not projects:
         print("no projects measured — run clone-oss-fixtures.sh first", file=sys.stderr)
         return 2
 
-    version = subprocess.run(
-        [str(args.bin), "--version"], capture_output=True, text=True, check=False
-    )
-    py = (
-        subprocess.run(
-            [args.python, "--version"], capture_output=True, text=True, check=False
-        )
-        if shutil.which(args.python)
-        else None
-    )
+    lock = oc.read_lock(args.clones)
     meta = {
-        "chokkin_version": version.stdout.strip(),
-        "python": (py.stdout or py.stderr).strip()
-        if py
-        else f"{args.python} (not found)",
-        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "rule": args.rule,
+        "chokkin_version": oc.chokkin_version(args.bin),
+        "generated": oc.utc_now(),
         "execute": args.execute,
         "command": shlex.join([Path(sys.argv[0]).name, *sys.argv[1:]]),
         "timeout_seconds": args.timeout,
+        "sample": args.sample,
         "corpus": {s: lock[s] for s in projects if s in lock},
         "skipped_not_cloned": skipped,
     }
     write_outputs(args, rows, projects, meta)
-    print(Path(args.output / "report.md").read_text(encoding="utf-8"))
+    print((args.output / "report.md").read_text(encoding="utf-8"))
     return 0
 
 

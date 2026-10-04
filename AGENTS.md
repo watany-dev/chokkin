@@ -180,10 +180,22 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `docs/dev/oss-validation-report.md` — committed §17 CHK002 scorecard.
   **Current status: CHK002 FP gate met** (0/0 after Phase 1.5). Per-rule label
   coverage stocktake: `docs/dev/v0.3-stocktake-coverage.md`.
-- `scripts/oss-remove-and-test.py` (`make oss-oracle`) — opt-in CHK001
-  remove-and-test oracle (#85 WS2). **Executes untrusted project tests** in
-  disposable copies; isolated runners only, never release/default CI. Report:
+- `scripts/oss-gate.py` (`make oss-gate`) — determinism (cold / warm /
+  `--no-cache` byte-identical JSON), JSON-schema and crash gates (#342).
+  `scripts/bench-gate.py` (`make bench-gate`) — perf regression pass/fail
+  against a saved criterion baseline.
+- `scripts/oss-provision-envs.py` (`make oss-envs`) + `scripts/oss-remove-and-test.py`
+  (`make oss-oracle`, `ARGS="--rule CHK006"` for symbols) — opt-in
+  remove-and-test oracle (#338/#339) with per-project venvs from
+  `scripts/oss-test-env.manifest`, run offline (`scripts/oss_netns_exec.py`).
+  **Builds and executes untrusted projects** in disposable copies; isolated
+  runners only, never release/default CI. Report:
   `docs/dev/chk001-remove-and-test.md`.
+- `scripts/oss-differential.py` (`make oss-diff`) — differential oracle vs
+  vulture / deadcode / deptry / fawltydeps / ruff F401 / pyflakes (#340);
+  `scripts/oss-mutation-recall.py` (`make oss-mutation`) — mutation-injection
+  recall (#341). Report: `docs/dev/oss-differential-and-recall.md`.
+  Shared helpers: `scripts/oss_corpus.py`.
 
 ## PR hygiene
 
