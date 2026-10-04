@@ -9,6 +9,7 @@ use crate::manifest::literals::{
     LiteralScan, assigned_value, parse_module, string_list, string_value,
 };
 use crate::manifest::util::read_to_string;
+use crate::path_util::rel_to_root;
 use crate::sources::FileContext;
 
 use super::context::PluginContext;
@@ -19,7 +20,6 @@ use super::types::{
 use super::util::{
     choose_settings_path, extract_django_settings_module, find_settings_candidates,
     manifest_has_dependency, module_to_py_path, origin_for_file, parse_module_symbol,
-    relative_path, root_join,
 };
 use super::warnings::PluginsWarning;
 
@@ -40,7 +40,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     let mut settings_module: Option<String> = None;
 
     if manage_py.is_file() {
-        let rel = relative_path(root, &manage_py);
+        let rel = rel_to_root(root, &manage_py);
         contrib.entries.push(PluginEntry {
             spec: crate::config::EntrySpec {
                 path: rel.clone(),
@@ -60,7 +60,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
                 contrib.module_refs.push(ModuleReference {
                     module: module.clone(),
                     origin: ReferenceOrigin {
-                        file: relative_path(root, &manage_py),
+                        file: rel_to_root(root, &manage_py),
                         line: None,
                         label: "DJANGO_SETTINGS_MODULE".to_owned(),
                     },
@@ -68,9 +68,6 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
             }
         }
     } else if !manifest_has_dependency(ctx.manifest, "django") {
-        warnings.push(PluginsWarning::PluginNoOp {
-            plugin: PluginId::Django,
-        });
         return (contrib, warnings);
     }
 
@@ -94,15 +91,10 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     }
 
     let Some(settings_rel) = settings_path else {
-        if manage_py.is_file() {
-            warnings.push(PluginsWarning::PluginNoOp {
-                plugin: PluginId::Django,
-            });
-        }
         return (contrib, warnings);
     };
 
-    let settings_path_abs = root_join(root, &settings_rel);
+    let settings_path_abs = root.join(settings_rel.replace('/', std::path::MAIN_SEPARATOR_STR));
     contrib.entries.push(PluginEntry {
         spec: crate::config::EntrySpec {
             path: settings_rel.clone(),

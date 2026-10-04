@@ -8,7 +8,7 @@ use crate::entry::EntryPlan;
 use crate::plugins::PluginHints;
 use crate::sources::{LayoutInfo, path_to_module};
 
-use super::graph::{SymbolId, SymbolRegistry};
+use super::graph::{RegistryEntry, SymbolId};
 
 /// Decorator suffixes that register the decorated symbol with a framework,
 /// which then calls it without an import reference (spec §14 "decorators").
@@ -38,7 +38,7 @@ const REGISTRATION_DECORATOR_SUFFIXES: &[&str] = &[
 
 /// Collect symbols that must be treated as used without import references.
 pub(super) fn collect_external_symbols(
-    registry: &SymbolRegistry,
+    registry: &[RegistryEntry],
     entry: &EntryPlan,
     plugins: &PluginHints,
     module_names: &HashMap<&str, String>,
@@ -66,7 +66,7 @@ pub(super) fn collect_external_symbols(
         ));
     }
 
-    for entry in registry.entries() {
+    for entry in registry {
         if entry
             .def
             .decorators

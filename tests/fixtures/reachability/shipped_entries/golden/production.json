@@ -1,6 +1,5 @@
 {
   "mode": "app",
-  "mode_confidence": "certain",
   "entry_roots": [
     {
       "path": "src/acme/__main__.py",

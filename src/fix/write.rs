@@ -27,6 +27,14 @@ pub(super) fn read_manifest<'a>(
     Ok((rel, contents))
 }
 
+/// Atomically write a manifest, reporting failures under its display name `rel`.
+pub(super) fn write_manifest(path: &Path, rel: &str, bytes: &[u8]) -> Result<(), FixError> {
+    atomic_write(path, bytes, true).map_err(|source| FixError::Io {
+        path: rel.to_owned(),
+        source,
+    })
+}
+
 /// Write `bytes` to `path` atomically via a same-directory temp file and rename,
 /// keeping the existing file's permissions. `sync` fsyncs before the rename.
 ///

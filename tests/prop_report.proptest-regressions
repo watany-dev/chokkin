@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6cbe7f4730c3742c66588542add40fd374e9b335b0fc7029cabf24e0c4c9f49d # shrinks to issues = [Issue { rule: Chk001, severity: Error, confidence: Certain, message: "", workspace_member: None, location: IssueLocation { file: None, line: None, manifest: None }, subject: Distribution { name: "\n\"\n" }, explain: None }]

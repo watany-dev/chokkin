@@ -9,6 +9,5 @@ pub use build::build_graph_skeleton;
 pub use edges::add_parsed_imports;
 pub use error::GraphError;
 pub use types::{
-    DistributionId, EntryId, FileId, FileNode, FileReachVia, GraphEdge, ModuleId, ModuleNode,
-    ModuleOrigin, ProjectGraph,
+    DistributionId, FileId, FileNode, GraphEdge, ModuleId, ModuleNode, ModuleOrigin, ProjectGraph,
 };

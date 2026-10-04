@@ -42,4 +42,10 @@ mod tests {
         assert_eq!(metadata.import_names, vec!["demo_pkg".to_owned()]);
         assert_eq!(metadata.import_namespaces, vec!["demo_ns".to_owned()]);
     }
+
+    #[test]
+    fn first_name_field_wins_over_later_name_lines() {
+        let body = "Name: demo\nVersion: 1.0\n\nName: not-the-distribution\n";
+        assert_eq!(parse_metadata(body).name.as_deref(), Some("demo"));
+    }
 }

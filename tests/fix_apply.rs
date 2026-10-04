@@ -128,6 +128,43 @@ fn fix_removes_included_group_dependency_only_from_declaring_group() {
     );
 }
 
+#[test]
+fn fix_removes_several_unused_lines_from_one_requirements_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    std::fs::create_dir_all(root.join("src/pkg")).expect("mkdir");
+    std::fs::write(root.join("src/pkg/__init__.py"), "").expect("init");
+    std::fs::write(
+        root.join("src/pkg/main.py"),
+        "import bravo\nimport delta\n\ndef main():\n    pass\n",
+    )
+    .expect("main");
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"pkg\"\nversion = \"0.1\"\n\n[project.scripts]\npkg = \"pkg.main:main\"\n",
+    )
+    .expect("pyproject");
+    let requirements = root.join("requirements.txt");
+    std::fs::write(&requirements, "alpha\nbravo\ncharlie\ndelta\n").expect("requirements");
+
+    let report = analyze_project(
+        root,
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+
+    assert_eq!(report.fix.expect("fix report").applied.len(), 2);
+    assert_eq!(
+        std::fs::read_to_string(&requirements).expect("read requirements"),
+        "bravo\ndelta\n"
+    );
+}
+
 fn copy_dir_recursive(source: &Path, dest: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(source)? {

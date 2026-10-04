@@ -4,17 +4,14 @@
 
 use chokkin::{
     Confidence, DependencyOrigin, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, ProjectMode, RenderContext, ReporterId, ResolveConfidence, ResolvedMode, RuleId,
-    Severity, SuppressReason, SuppressedIssue, render_issues,
+    IssueSummary, ProjectMode, RenderContext, ReporterId, RuleId, Severity, SuppressReason,
+    SuppressedIssue, render_issues,
 };
 
 fn context() -> RenderContext {
     RenderContext {
         project_name: Some("demo".to_owned()),
-        mode: ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Certain,
-        },
+        mode: ProjectMode::App,
         production: false,
         version: "0.2.0-test",
         config_label: Some("pyproject.toml [tool.chokkin]".to_owned()),
@@ -124,6 +121,7 @@ fn sarif_reporter_renders_rule_location_workspace_and_schema() {
     assert_eq!(parsed["version"], "2.1.0");
     let chk003 = &parsed["runs"][0]["tool"]["driver"]["rules"][2];
     assert_eq!(chk003["id"], "CHK003");
+    assert_eq!(chk003["shortDescription"]["text"], "missing dependency");
     assert!(
         chk003["fullDescription"]["text"]
             .as_str()

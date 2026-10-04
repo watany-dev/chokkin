@@ -3,12 +3,10 @@
 use std::collections::BTreeMap;
 
 use crate::ExitStatus;
-use crate::config::{ChokkinConfig, RuntimeOverrides};
-use crate::entry::ResolvedMode;
+use crate::config::{ChokkinConfig, ProjectMode, RuntimeOverrides};
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
-use crate::rules::symbols::SymbolReport;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
     Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject, IssueSummary, Origin,
@@ -32,11 +30,11 @@ use super::types::RuleId;
 pub fn emit_issues(
     unreachable: &ReachabilityReport,
     deps: &DependencyReport,
-    symbols: &SymbolReport,
+    symbols: &[IssueCandidate],
     parse: &ParseSummary,
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
-    mode: &ResolvedMode,
+    mode: ProjectMode,
     resolution: &ResolutionIndex,
 ) -> IssueReport {
     let strict = overrides.strict.unwrap_or(false);
@@ -45,7 +43,7 @@ pub fn emit_issues(
 
     let mut candidates = chk001_candidates(&unreachable.unreachable, mode);
     candidates.extend(deps.candidates.clone());
-    candidates.extend(symbols.candidates.clone());
+    candidates.extend_from_slice(symbols);
 
     sort_candidates(&mut candidates);
 
@@ -221,22 +219,12 @@ pub(crate) fn compute_exit_status(
 mod tests {
     use super::*;
     use crate::config::{Confidence, ProjectMode, default_config};
-    use crate::entry::ResolvedMode;
     use crate::graph::FileId;
     use crate::manifest::DependencyOrigin;
     use crate::reachability::{ReachabilityReport, UnreachableFile};
-    use crate::resolver::ResolveConfidence;
-    use crate::rules::symbols::SymbolReport;
     use crate::rules::types::{
         DependencyReport, ExplainData, IssueCandidate, IssueSubject, Severity,
     };
-
-    fn resolved_app_mode() -> ResolvedMode {
-        ResolvedMode {
-            mode: ProjectMode::App,
-            confidence: ResolveConfidence::Certain,
-        }
-    }
 
     #[test]
     fn emits_chk001_for_unreachable_file() {
@@ -248,23 +236,52 @@ mod tests {
         });
 
         let deps = DependencyReport::default();
-        let symbols = SymbolReport::default();
         let parse = ParseSummary::default();
         let config = default_config();
 
         let issues = emit_issues(
             &report,
             &deps,
-            &symbols,
+            &[],
             &parse,
             &config,
             &RuntimeOverrides::default(),
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert_eq!(issues.issues.len(), 1);
         assert_eq!(issues.issues[0].rule, RuleId::Chk001);
         assert_eq!(issues.exit_status, ExitStatus::IssuesFound);
+    }
+
+    #[test]
+    fn summary_counts_issues_per_rule() {
+        let issue = |rule| Issue {
+            rule,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: String::new(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: None,
+                line: None,
+                manifest: None,
+            },
+            subject: IssueSubject::File {
+                path: "a.py".to_owned(),
+            },
+            explain: None,
+        };
+        let summary = build_summary(&[
+            issue(RuleId::Chk001),
+            issue(RuleId::Chk002),
+            issue(RuleId::Chk002),
+        ]);
+        assert_eq!(summary.total, 3);
+        assert_eq!(
+            summary.by_rule,
+            BTreeMap::from([(RuleId::Chk001, 1), (RuleId::Chk002, 2)])
+        );
     }
 
     #[test]
@@ -279,14 +296,14 @@ mod tests {
         let issues = emit_issues(
             &report,
             &DependencyReport::default(),
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides {
                 no_exit_code: Some(true),
                 ..RuntimeOverrides::default()
             },
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert_eq!(issues.exit_status, ExitStatus::Success);
@@ -321,11 +338,11 @@ mod tests {
         let report = emit_issues(
             &ReachabilityReport::default(),
             &deps,
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &config,
             &RuntimeOverrides::default(),
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert!(report.issues.is_empty());
@@ -359,14 +376,182 @@ mod tests {
         let report = emit_issues(
             &ReachabilityReport::default(),
             &deps,
-            &SymbolReport::default(),
+            &[],
             &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides::default(),
-            &resolved_app_mode(),
+            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         let text = explain_issue(&report, "CHK002:boto3").expect("explain");
         assert!(text.contains("boto3 is declared but not used"));
+    }
+
+    fn bare_candidate(rule: RuleId, subject: IssueSubject, summary: &str) -> IssueCandidate {
+        IssueCandidate {
+            rule,
+            subject,
+            severity: Severity::Warning,
+            confidence: Confidence::Certain,
+            message: String::new(),
+            workspace_member: None,
+            origins: Vec::new(),
+            explain: ExplainData {
+                summary: summary.to_owned(),
+                details: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn explain_issue_selects_by_rule_and_every_subject_key_form() {
+        // The script issue precedes the plain CHK002 one, so a selector that
+        // ignored the subject key would pick the wrong issue.
+        let issues = [
+            bare_candidate(
+                RuleId::Chk006,
+                IssueSubject::Symbol {
+                    module: "acme.utils".to_owned(),
+                    name: "dead_api".to_owned(),
+                },
+                "symbol",
+            ),
+            bare_candidate(
+                RuleId::Chk010,
+                IssueSubject::Import {
+                    module: "requets".to_owned(),
+                    file: "src/app.py".to_owned(),
+                    line: 3,
+                    distribution: None,
+                },
+                "import",
+            ),
+            bare_candidate(
+                RuleId::Chk002,
+                IssueSubject::ScriptDistribution {
+                    script: "scripts/tool.py".to_owned(),
+                    name: "rich".to_owned(),
+                },
+                "script",
+            ),
+            bare_candidate(
+                RuleId::Chk002,
+                IssueSubject::Distribution {
+                    name: "boto3".to_owned(),
+                },
+                "distribution",
+            ),
+            bare_candidate(
+                RuleId::Chk008,
+                IssueSubject::Binary {
+                    name: "ruff".to_owned(),
+                },
+                "binary",
+            ),
+            bare_candidate(
+                RuleId::Chk001,
+                IssueSubject::File {
+                    path: "src/legacy.py".to_owned(),
+                },
+                "file",
+            ),
+        ]
+        .map(candidate_to_issue)
+        .to_vec();
+        let report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: ExitStatus::IssuesFound,
+        };
+
+        for (selector, expected) in [
+            ("CHK006:acme.utils:dead_api", Some("symbol")),
+            ("CHK006:dead_api", Some("symbol")),
+            ("CHK010:src/app.py:3:requets", Some("import")),
+            ("CHK010:requets", Some("import")),
+            ("CHK002:script:scripts/tool.py:rich", Some("script")),
+            ("CHK002:rich", Some("script")),
+            ("CHK002:boto3", Some("distribution")),
+            ("CHK008:ruff", Some("binary")),
+            ("CHK001:src/legacy.py", Some("file")),
+            ("CHK003:boto3", None),
+            ("CHK002:missing", None),
+            ("CHK006:acme.utils:other", None),
+        ] {
+            assert_eq!(
+                explain_issue(&report, selector).as_deref(),
+                expected,
+                "{selector}"
+            );
+        }
+    }
+
+    #[test]
+    fn candidate_explain_is_dropped_only_when_summary_and_details_are_both_empty() {
+        let subject = || IssueSubject::Distribution {
+            name: "boto3".to_owned(),
+        };
+        let summary_only = bare_candidate(RuleId::Chk002, subject(), "summary");
+        let mut details_only = bare_candidate(RuleId::Chk002, subject(), "");
+        details_only.explain.details = vec!["detail".to_owned()];
+        let neither = bare_candidate(RuleId::Chk002, subject(), "");
+
+        assert!(candidate_to_issue(summary_only).explain.is_some());
+        assert!(candidate_to_issue(details_only).explain.is_some());
+        assert!(candidate_to_issue(neither).explain.is_none());
+    }
+
+    #[test]
+    fn location_falls_back_to_subject_when_no_origin_names_a_file() {
+        let file = bare_candidate(
+            RuleId::Chk001,
+            IssueSubject::File {
+                path: "src/legacy.py".to_owned(),
+            },
+            "",
+        );
+        let import = bare_candidate(
+            RuleId::Chk010,
+            IssueSubject::Import {
+                module: "requets".to_owned(),
+                file: "src/app.py".to_owned(),
+                line: 3,
+                distribution: None,
+            },
+            "",
+        );
+        let manifest = DependencyOrigin {
+            file: "scripts/tool.py".to_owned(),
+            line: Some(4),
+            label: "script dependencies[0]".to_owned(),
+        };
+        let mut script = bare_candidate(
+            RuleId::Chk002,
+            IssueSubject::ScriptDistribution {
+                script: "scripts/tool.py".to_owned(),
+                name: "rich".to_owned(),
+            },
+            "",
+        );
+        script.origins = vec![Origin::Manifest(manifest.clone())];
+
+        let location = |file: Option<&str>, line: Option<u32>, manifest| IssueLocation {
+            file: file.map(str::to_owned),
+            line,
+            manifest,
+        };
+        assert_eq!(
+            location_from_candidate(&file),
+            location(Some("src/legacy.py"), None, None)
+        );
+        assert_eq!(
+            location_from_candidate(&import),
+            location(Some("src/app.py"), Some(3), None)
+        );
+        assert_eq!(
+            location_from_candidate(&script),
+            location(Some("scripts/tool.py"), Some(4), Some(manifest))
+        );
     }
 }

@@ -4,9 +4,9 @@ use std::collections::{HashSet, VecDeque};
 
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
-use crate::manifest::DeclaredDependency;
+use crate::manifest::{DeclaredDependency, LockfileGraph};
 use crate::parser::ParseSummary;
-use crate::resolver::{ResolvedImport, TransitiveIndex};
+use crate::resolver::ResolvedImport;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 use crate::rules::{DependencyRuleContext, RuleContext};
 
@@ -134,7 +134,7 @@ fn undeclared_candidate(
     import: &ResolvedImport,
     distribution: &str,
     declared: &DeclaredIndex<'_>,
-    transitive: &TransitiveIndex,
+    transitive: &LockfileGraph,
     has_lockfile: bool,
 ) -> IssueCandidate {
     if !has_lockfile {
@@ -346,7 +346,7 @@ fn missing_candidate(
 pub(super) fn is_transitive_only(
     distribution: &str,
     declared: &DeclaredIndex<'_>,
-    transitive: &TransitiveIndex,
+    transitive: &LockfileGraph,
 ) -> bool {
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
@@ -397,7 +397,7 @@ mod tests {
     use super::*;
     use crate::config::default_config;
     use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
-    use crate::resolver::{ResolutionIndex, TransitiveIndex};
+    use crate::resolver::ResolutionIndex;
 
     const FILE: &str = "src/app.py";
 
@@ -443,7 +443,6 @@ mod tests {
             root: crate::discovery::ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: crate::discovery::RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
@@ -461,12 +460,28 @@ mod tests {
     fn detect(
         declared: &DeclaredIndex<'_>,
         distribution: &str,
-        transitive: TransitiveIndex,
+        transitive: LockfileGraph,
+    ) -> Vec<IssueCandidate> {
+        detect_with(
+            declared,
+            runtime_import(distribution),
+            transitive,
+            false,
+            &[],
+        )
+    }
+
+    fn detect_with(
+        declared: &DeclaredIndex<'_>,
+        import: ResolvedImport,
+        transitive: LockfileGraph,
+        strict: bool,
+        workspace_declared: &[WorkspaceDeclaredIndex<'_>],
     ) -> Vec<IssueCandidate> {
         let config = default_config();
         let sources = sources();
         let resolution = ResolutionIndex {
-            imports: vec![runtime_import(distribution)],
+            imports: vec![import],
             warnings: Vec::new(),
             transitive,
             binary_resolutions: BTreeMap::new(),
@@ -484,11 +499,11 @@ mod tests {
                     parse: &ParseSummary::default(),
                 },
                 config: &config,
-                strict: false,
+                strict,
             },
             &HashSet::from([FILE]),
             true,
-            &[],
+            workspace_declared,
         )
     }
 
@@ -497,7 +512,7 @@ mod tests {
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
-        let transitive = TransitiveIndex {
+        let transitive = LockfileGraph {
             edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
         };
         assert!(is_transitive_only("urllib3", &index, &transitive));
@@ -509,7 +524,7 @@ mod tests {
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
-        let transitive = || TransitiveIndex {
+        let transitive = || LockfileGraph {
             edges: BTreeMap::from([
                 ("requests".to_owned(), vec!["urllib3".to_owned()]),
                 ("urllib3".to_owned(), Vec::new()),
@@ -543,7 +558,7 @@ mod tests {
         assert!(!is_transitive_only(
             "requests",
             &index,
-            &TransitiveIndex::default()
+            &LockfileGraph::default()
         ));
     }
 
@@ -552,7 +567,7 @@ mod tests {
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
-        assert!(detect(&index, "requests", TransitiveIndex::default()).is_empty());
+        assert!(detect(&index, "requests", LockfileGraph::default()).is_empty());
     }
 
     /// §10: a dev-group-only dependency used at runtime is CHK005 territory,
@@ -563,11 +578,49 @@ mod tests {
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("pytest".to_owned(), vec![&pytest]);
 
-        assert!(detect(&index, "pytest", TransitiveIndex::default()).is_empty());
+        assert!(detect(&index, "pytest", LockfileGraph::default()).is_empty());
 
-        let transitive = TransitiveIndex {
+        let transitive = LockfileGraph {
             edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),
         };
         assert!(detect(&index, "pytest", transitive).is_empty());
+    }
+
+    #[test]
+    fn workspace_member_import_accepts_member_or_root_declaration() {
+        let requests = declared_dep("requests");
+        let with_requests = || BTreeMap::from([("requests".to_owned(), vec![&requests])]);
+        let member_import = || ResolvedImport {
+            workspace_member: Some("api".to_owned()),
+            ..runtime_import("requests")
+        };
+        let member_only = [WorkspaceDeclaredIndex {
+            member_id: "api",
+            declared: with_requests(),
+        }];
+        let no_member = [WorkspaceDeclaredIndex {
+            member_id: "api",
+            declared: BTreeMap::new(),
+        }];
+
+        for strict in [false, true] {
+            let found = detect_with(
+                &BTreeMap::new(),
+                member_import(),
+                LockfileGraph::default(),
+                strict,
+                &member_only,
+            );
+            assert!(found.is_empty(), "strict={strict}: {found:?}");
+        }
+
+        let root_only = detect_with(
+            &with_requests(),
+            member_import(),
+            LockfileGraph::default(),
+            false,
+            &no_member,
+        );
+        assert!(root_only.is_empty(), "{root_only:?}");
     }
 }

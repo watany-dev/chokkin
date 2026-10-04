@@ -21,7 +21,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     let _ = writeln!(
         out,
         "Mode   : {}, production={}\n",
-        context.mode.mode, context.production
+        context.mode, context.production
     );
 
     for rule in RuleId::ALL {

@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `--fix` removes a requirements line only when it names the target
+  distribution, reading names the way the manifest parser does, and applies
+  several removals in one file bottom-up. It no longer deletes a used
+  dependency after an earlier removal shifts line numbers; a stale line number
+  is reported as an error instead (#438).
+- `--fix` keeps CRLF line endings and a missing final newline when removing a
+  requirements line, and leaves an empty file when removing the only line (#437).
+- `--fix` applies several `pyproject.toml` array removals bottom-up per array
+  and removes an entry only when it names the target distribution. It no longer
+  deletes a used dependency after an earlier removal shifts array indices; a
+  stale index is reported as an error instead (#436).
+
+## [0.5.1] - 2026-09-29
+
+### Fixed
+- Resolver counts only importable local modules and dedupes ambiguity warnings.
+- Manifest parsing accepts arbitrary version strings after `===`.
+- pytest import settings follow pytest's config file precedence.
+- Resolver models pytest `prepend` import mode for test-local imports (#360).
 - CHK006 no longer reports symbols referenced only from `tests/` (a v0.5.0
   regression), with or without `tests/__init__.py` (#410).
 - CHK006 tracks `from pkg import module; module.name` references, including

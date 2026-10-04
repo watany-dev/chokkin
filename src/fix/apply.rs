@@ -1,5 +1,6 @@
 //! Apply optional manifest fixes (pipeline step 13).
 
+use std::cmp::Reverse;
 use std::path::Path;
 
 use crate::discovery::ProjectRoot;
@@ -34,7 +35,7 @@ pub fn apply_fixes_with_workspace(
         },
     };
 
-    for action in actions {
+    for action in bottom_up_positional_removals(actions) {
         match apply_action(root.path.as_path(), &action, options) {
             Ok(applied) => report_out.applied.push(applied),
             Err(error) => {
@@ -54,6 +55,37 @@ pub fn apply_fixes_with_workspace(
     }
 
     report_out
+}
+
+/// Removing an entry shifts every later line number or array index in the same place, so apply
+/// positional removals bottom-up.
+fn bottom_up_positional_removals(mut actions: Vec<FixAction>) -> Vec<FixAction> {
+    actions.sort_by(|a, b| removal_position(a).cmp(&removal_position(b)));
+    actions
+}
+
+/// `(file, array, Reverse(position))` for removals addressed by requirements line or
+/// `label[index]`.
+fn removal_position(action: &FixAction) -> Option<(&str, &str, Reverse<usize>)> {
+    let (file, label) = match action {
+        FixAction::RemoveDependency {
+            file,
+            line: Some(line),
+            ..
+        } => {
+            let line = usize::try_from(*line).unwrap_or(usize::MAX);
+            return Some((file.as_str(), "", Reverse(line)));
+        },
+        FixAction::RemoveDependency { file, label, .. }
+        | FixAction::MoveToRuntime {
+            file,
+            from_label: label,
+            ..
+        } => (file, label),
+        FixAction::AddMissingDependency { .. } | FixAction::RemoveFile { .. } => return None,
+    };
+    let (array, index) = label.strip_suffix(']')?.rsplit_once('[')?;
+    Some((file.as_str(), array, Reverse(index.parse().ok()?)))
 }
 
 /// chokkin never edits lockfiles (§13), so point at the tool that owns it.
@@ -104,7 +136,7 @@ fn perform<'a>(root: &Path, action: &'a FixAction) -> Result<(&'a str, String), 
             let path = resolve_contained_path(root, file)?;
             let extension = Path::new(file).extension();
             let description = if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("toml")) {
-                remove_by_label(&path, label)?
+                remove_by_label(&path, label, name)?
             } else if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("cfg")) {
                 remove_setup_cfg_dependency(&path, name)?
             } else {
@@ -113,15 +145,15 @@ fn perform<'a>(root: &Path, action: &'a FixAction) -> Result<(&'a str, String), 
             Ok((file.as_str(), description))
         },
         FixAction::MoveToRuntime {
+            name,
             file,
             from_label,
             raw,
-            ..
         } => {
             let path = resolve_contained_path(root, file)?;
             Ok((
                 file.as_str(),
-                move_group_to_runtime(&path, from_label, raw)?,
+                move_group_to_runtime(&path, from_label, name, raw)?,
             ))
         },
         FixAction::AddMissingDependency { name, file } => {
@@ -191,7 +223,6 @@ mod tests {
         ProjectRoot {
             path: path.to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: path.to_path_buf(),
         }
     }
 
@@ -272,6 +303,61 @@ mod tests {
     }
 
     #[test]
+    fn positional_removals_run_bottom_up_per_array() {
+        let remove = |label: &str, line: Option<u32>| FixAction::RemoveDependency {
+            rule: RuleId::Chk002,
+            name: label.to_owned(),
+            file: if line.is_some() {
+                "requirements.txt"
+            } else {
+                "pyproject.toml"
+            }
+            .to_owned(),
+            label: label.to_owned(),
+            line,
+        };
+        let actions = vec![
+            remove("project.dependencies[0]", None),
+            FixAction::AddMissingDependency {
+                name: "yaml".to_owned(),
+                file: "pyproject.toml".to_owned(),
+            },
+            remove("dependency-groups.dev[0]", None),
+            remove("requirements.txt", Some(1)),
+            FixAction::MoveToRuntime {
+                name: "pytest".to_owned(),
+                file: "pyproject.toml".to_owned(),
+                from_label: "dependency-groups.dev[2]".to_owned(),
+                raw: "pytest".to_owned(),
+            },
+            remove("project.dependencies[3]", None),
+            remove("requirements.txt", Some(4)),
+        ];
+
+        let ordered: Vec<String> = bottom_up_positional_removals(actions)
+            .iter()
+            .map(|action| match action {
+                FixAction::RemoveDependency { label, line, .. } => format!("{label}:{line:?}"),
+                FixAction::MoveToRuntime { from_label, .. } => from_label.clone(),
+                FixAction::AddMissingDependency { name, .. } => name.clone(),
+                FixAction::RemoveFile { path } => path.clone(),
+            })
+            .collect();
+        assert_eq!(
+            ordered,
+            [
+                "yaml",
+                "dependency-groups.dev[2]",
+                "dependency-groups.dev[0]:None",
+                "project.dependencies[3]:None",
+                "project.dependencies[0]:None",
+                "requirements.txt:Some(4)",
+                "requirements.txt:Some(1)",
+            ]
+        );
+    }
+
+    #[test]
     fn dry_run_does_not_write_files() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let path = dir.path().join("pyproject.toml");
@@ -284,7 +370,6 @@ mod tests {
         let root = ProjectRoot {
             path: dir.path().to_path_buf(),
             marker: RootMarker::PyProjectToml,
-            start: dir.path().to_path_buf(),
         };
         let manifest = LoadedManifest {
             root: root.clone(),
@@ -548,7 +633,6 @@ mod tests {
         let member_root = ProjectRoot {
             path: member_dir,
             marker: RootMarker::PyProjectToml,
-            start: dir.path().to_path_buf(),
         };
         let mut member_manifest = empty_manifest(&member_root);
         member_manifest.sources.pyproject_toml = true;

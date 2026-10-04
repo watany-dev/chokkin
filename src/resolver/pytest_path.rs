@@ -181,7 +181,6 @@ mod tests {
             root: ProjectRoot {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
-                start: std::env::temp_dir(),
             },
             layout: LayoutInfo {
                 layout: ProjectLayout::Src,
@@ -270,6 +269,25 @@ mod tests {
         assert_eq!(
             paths.resolve("tests/e2e/access/test_access.py", "lifecycle"),
             None
+        );
+    }
+
+    #[test]
+    fn only_conftest_files_put_their_directory_on_the_path() {
+        let files = ["tests/helpers.py", "tests/unit/test_core.py"];
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default());
+        assert_eq!(paths.resolve("tests/unit/test_core.py", "helpers"), None);
+    }
+
+    #[test]
+    fn root_conftest_puts_the_root_on_the_path_of_every_test() {
+        let files = ["conftest.py", "rootmod.py", "tests/unit/test_core.py"];
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default());
+        assert_eq!(
+            paths.resolve("tests/unit/test_core.py", "rootmod"),
+            Some("rootmod.py")
         );
     }
 }

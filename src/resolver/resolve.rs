@@ -14,8 +14,7 @@ use super::maps::{ImportMap, build_binary_map};
 use super::pytest_path::PytestImportPaths;
 use super::stdlib::StdlibRange;
 use super::types::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, TransitiveIndex,
-    import_root,
+    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, import_root,
 };
 use super::venv::load_venv_index;
 
@@ -33,32 +32,6 @@ pub fn resolve_imports(
     plugin_refs: &[ModuleReference],
     workspace_members: &[ResolvedWorkspaceMember],
 ) -> ResolutionIndex {
-    resolve_imports_with_script_targets(
-        config,
-        manifest,
-        sources,
-        parse,
-        plugin_refs,
-        workspace_members,
-        &BTreeMap::new(),
-    )
-}
-
-/// [`resolve_imports`] with per-file stdlib ranges for PEP 723 scripts.
-///
-/// A script's `requires-python` decides which modules are stdlib for the
-/// imports in that file; every other file uses the project range.
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_imports_with_script_targets(
-    config: &ChokkinConfig,
-    manifest: &LoadedManifest,
-    sources: &DiscoveredSources,
-    parse: &ParseSummary,
-    plugin_refs: &[ModuleReference],
-    workspace_members: &[ResolvedWorkspaceMember],
-    script_targets: &BTreeMap<String, StdlibRange>,
-) -> ResolutionIndex {
     resolve_imports_for_analysis(
         config,
         manifest,
@@ -66,7 +39,7 @@ pub fn resolve_imports_with_script_targets(
         parse,
         plugin_refs,
         workspace_members,
-        script_targets,
+        &BTreeMap::new(),
         &ScopedDeclarations::default(),
     )
 }
@@ -80,8 +53,13 @@ pub struct ScopedDeclarations {
     pub members: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// [`resolve_imports_with_script_targets`] that also resolves an unmapped
-/// root through the script block or member manifest owning the file.
+/// [`resolve_imports`] with per-file stdlib ranges for PEP 723 scripts, also
+/// resolving an unmapped root through the script block or member manifest
+/// owning the file.
+///
+/// A script's `requires-python` decides which modules are stdlib for the
+/// imports in that file; every other file uses the project range.
+#[must_use]
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn resolve_imports_for_analysis(
     config: &ChokkinConfig,
@@ -189,15 +167,9 @@ pub fn resolve_imports_for_analysis(
     ResolutionIndex {
         imports,
         warnings,
-        transitive: transitive_index(manifest),
+        transitive: manifest.lockfile.clone(),
         binary_resolutions,
         pytest_plugin_distributions: venv_index.pytest_plugins,
-    }
-}
-
-fn transitive_index(manifest: &LoadedManifest) -> TransitiveIndex {
-    TransitiveIndex {
-        edges: manifest.lockfile.edges.clone(),
     }
 }
 
@@ -484,5 +456,33 @@ fn root_resolution_from_candidates(
         origin: ModuleOrigin::ThirdParty,
         distribution: candidates.first().cloned(),
         confidence,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resolve(candidates: &[&str]) -> (RootResolution, Vec<ResolveWarning>) {
+        let candidates: Vec<String> = candidates.iter().map(|c| (*c).to_owned()).collect();
+        let mut warnings = Vec::new();
+        let resolution = root_resolution_from_candidates("yaml", &candidates, None, &mut warnings);
+        (resolution, warnings)
+    }
+
+    #[test]
+    fn single_candidate_is_certain_and_not_ambiguous() {
+        let (resolution, warnings) = resolve(&["pyyaml"]);
+        assert_eq!(resolution.distribution.as_deref(), Some("pyyaml"));
+        assert_eq!(resolution.confidence, ResolveConfidence::Certain);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn several_candidates_are_maybe_and_ambiguous() {
+        let (resolution, warnings) = resolve(&["pyyaml", "ruamel-yaml"]);
+        assert_eq!(resolution.distribution.as_deref(), Some("pyyaml"));
+        assert_eq!(resolution.confidence, ResolveConfidence::Maybe);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 }

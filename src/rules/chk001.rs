@@ -1,7 +1,6 @@
 //! CHK001 unused file candidate generation (pipeline step 12).
 
-use crate::config::Confidence;
-use crate::entry::ResolvedMode;
+use crate::config::{Confidence, ProjectMode};
 use crate::reachability::UnreachableFile;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Severity};
 
@@ -9,13 +8,13 @@ use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Sev
 #[must_use]
 pub fn chk001_candidates(
     unreachable: &[UnreachableFile],
-    mode: &ResolvedMode,
+    mode: ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
     for file in unreachable {
         let confidence = file.max_confidence;
-        let severity = chk001_severity(mode.mode, confidence);
+        let severity = chk001_severity(mode, confidence);
 
         candidates.push(IssueCandidate {
             rule: RuleId::Chk001,
@@ -42,5 +41,30 @@ fn chk001_severity(mode: crate::config::ProjectMode, confidence: Confidence) -> 
         Severity::Warning
     } else {
         Severity::Error
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ProjectMode;
+
+    #[test]
+    fn only_library_maybe_is_downgraded_to_warning() {
+        let cases = [
+            (ProjectMode::App, Confidence::Certain, Severity::Error),
+            (ProjectMode::App, Confidence::Likely, Severity::Error),
+            (ProjectMode::App, Confidence::Maybe, Severity::Error),
+            (ProjectMode::Library, Confidence::Certain, Severity::Error),
+            (ProjectMode::Library, Confidence::Likely, Severity::Error),
+            (ProjectMode::Library, Confidence::Maybe, Severity::Warning),
+        ];
+        for (mode, confidence, expected) in cases {
+            assert_eq!(
+                chk001_severity(mode, confidence),
+                expected,
+                "{mode:?} x {confidence:?}"
+            );
+        }
     }
 }

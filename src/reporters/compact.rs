@@ -27,7 +27,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         let _ = writeln!(
             out,
             "chokkin {} — no issues ({})",
-            context.version, context.mode.mode
+            context.version, context.mode
         );
     }
     let suppressed = baseline_suppressed_count(report);

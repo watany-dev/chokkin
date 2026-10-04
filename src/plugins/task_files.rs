@@ -8,13 +8,14 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
+use crate::path_util::rel_to_root;
+
 use super::commands::{KnownBinary, SourceHits};
 use super::config_text::{
     PyprojectDoc, is_yaml_block_scalar, leading_spaces, logical_lines, origin_at, read_root_file,
     toml_words, yaml_block_body,
 };
 use super::types::ReferenceOrigin;
-use super::util::relative_path;
 
 /// Candidates in the order make / just search them; only the first found is read.
 const MAKEFILE_NAMES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
@@ -51,7 +52,7 @@ pub(super) fn scan(
     }
     for path in dockerfile_paths(root) {
         if let Ok(contents) = std::fs::read_to_string(&path) {
-            scan_dockerfile(&relative_path(root, &path), &contents, known, &mut hits);
+            scan_dockerfile(&rel_to_root(root, &path), &contents, known, &mut hits);
         }
     }
     if let Some((rel, contents)) = read_root_file(root, PROCFILE) {

@@ -4,9 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Daily: catch newly published RustSec advisories without a code change.
+    - cron: "0 6 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -18,6 +21,7 @@ env:
 jobs:
   fmt:
     name: Format
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -32,6 +36,7 @@ jobs:
 
   lint:
     name: Lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -48,6 +53,7 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -79,6 +85,7 @@ jobs:
 
   msrv:
     name: MSRV (1.96)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -93,6 +100,7 @@ jobs:
 
   chokkin-baseline:
     name: Chokkin baseline
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -117,6 +125,7 @@ jobs:
 
   coverage:
     name: Coverage
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -158,6 +167,7 @@ jobs:
 
   machete:
     name: Unused deps (cargo-machete)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -174,6 +184,7 @@ jobs:
 
   check-generated:
     name: Generated resolver maps
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -208,10 +219,13 @@ jobs:
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           tool: cargo-semver-checks@0.50.0
-      - run: cargo semver-checks --baseline-rev origin/main
+      # Compare against the last release tag, not main: breaking changes may
+      # accumulate on main while the bumped version is still unreleased.
+      - run: cargo semver-checks --baseline-rev "$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
 
   actionlint:
     name: Actionlint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -224,6 +238,7 @@ jobs:
 
   action:
     name: Action smoke test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -249,6 +264,7 @@ jobs:
 
   zizmor:
     name: Zizmor
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -266,6 +282,7 @@ jobs:
 
   semgrep:
     name: Semgrep
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

@@ -4,10 +4,12 @@ use std::path::Path;
 
 use ruff_python_ast::{Expr, Keyword, Stmt};
 
+use crate::path_util::rel_to_root;
+
 use super::error::ManifestError;
 use super::literals::{LiteralScan, parse_module, string_list, string_value};
 use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
-use super::util::{DependencyPush, push_dependency, read_to_string, relative_path};
+use super::util::{DependencyPush, push_dependency, read_to_string};
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.py`.
@@ -26,7 +28,7 @@ pub struct SetupPyExtraction {
 /// Extract manifest data from `setup.py` without executing Python.
 pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, ManifestError> {
     let contents = read_to_string(path)?;
-    let rel = relative_path(root, path);
+    let rel = rel_to_root(root, path);
     let mut result = SetupPyExtraction::default();
 
     let stmts = parse_module(&contents).unwrap_or_default();

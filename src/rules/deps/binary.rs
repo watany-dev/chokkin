@@ -55,3 +55,71 @@ pub(super) fn detect_unlisted_binaries(
 
     candidates
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::{BinaryUsage, ReferenceOrigin};
+
+    fn hints(binaries: &[&str]) -> PluginHints {
+        PluginHints {
+            contributions: Vec::new(),
+            config_binary_usages: binaries
+                .iter()
+                .map(|binary| BinaryUsage {
+                    binary: (*binary).to_owned(),
+                    origin: ReferenceOrigin {
+                        file: "Makefile".to_owned(),
+                        line: Some(1),
+                        label: "recipe".to_owned(),
+                    },
+                })
+                .collect(),
+            config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn resolution(pairs: &[(&str, &str)]) -> ResolutionIndex {
+        ResolutionIndex {
+            binary_resolutions: pairs
+                .iter()
+                .map(|(binary, distribution)| ((*binary).to_owned(), (*distribution).to_owned()))
+                .collect(),
+            ..ResolutionIndex::default()
+        }
+    }
+
+    fn binary_names(candidates: &[IssueCandidate]) -> Vec<&str> {
+        candidates
+            .iter()
+            .filter_map(|candidate| match &candidate.subject {
+                IssueSubject::Binary { name } if candidate.rule == RuleId::Chk008 => {
+                    Some(name.as_str())
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn undeclared_binary_emits_chk008() {
+        let candidates = detect_unlisted_binaries(
+            &DeclaredIndex::new(),
+            &resolution(&[("pytest", "pytest")]),
+            &hints(&["pytest"]),
+        );
+        assert_eq!(binary_names(&candidates), ["pytest"]);
+    }
+
+    #[test]
+    fn binaries_of_same_distribution_emit_one_chk008() {
+        let candidates = detect_unlisted_binaries(
+            &DeclaredIndex::new(),
+            &resolution(&[("pytest", "pytest"), ("py.test", "pytest")]),
+            &hints(&["pytest", "py.test", "pytest"]),
+        );
+        assert_eq!(binary_names(&candidates), ["pytest"]);
+    }
+}
