@@ -274,8 +274,21 @@ fn remove_array_index(
     if !names_target {
         return Ok(false);
     }
-    array.remove(index);
+    let removed = array.remove(index);
+    // `Array::remove` keeps the next element's own prefix, so removing the
+    // head of `["a", "b"]` would leave `[ "b"]`. Comments are left alone.
+    if index == 0
+        && let Some(head) = array.get_mut(0)
+        && let Some(old) = removed.decor().prefix().and_then(blank_prefix)
+        && head.decor().prefix().and_then(blank_prefix).is_some()
+    {
+        head.decor_mut().set_prefix(old.to_owned());
+    }
     Ok(true)
+}
+
+fn blank_prefix(raw: &toml_edit::RawString) -> Option<&str> {
+    raw.as_str().filter(|s| s.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -300,7 +313,22 @@ dependencies = ["boto3>=1.0", "requests>=2.0"]
         remove_by_label(&path, "project.dependencies[0]", "boto3").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("boto3"));
-        assert!(updated.contains("requests"));
+        assert!(updated.contains(r#"dependencies = ["requests>=2.0"]"#));
+    }
+
+    #[test]
+    fn removing_head_of_multiline_array_keeps_indentation() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\n    \"alpha\",\n    \"bravo\",\n]\n",
+        )
+        .expect("write");
+
+        remove_by_label(&path, "project.dependencies[0]", "alpha").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\n    \"bravo\",\n]"));
     }
 
     #[test]
