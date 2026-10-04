@@ -215,7 +215,6 @@ mod verification {
         }
     }
 
-    /// The group names the harness config classifies, with their §10 kind.
     const GROUPS: [(&str, Kind); 4] = [
         ("dev", Kind::Dev),
         ("typing", Kind::Type),
