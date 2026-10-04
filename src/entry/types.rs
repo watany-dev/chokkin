@@ -76,7 +76,6 @@ impl EntryPlan {
         }
     }
 
-    /// Whether `path` lies inside one of [`Self::library_members`].
     #[must_use]
     pub fn in_library_member(&self, path: &str) -> bool {
         self.library_members.iter().any(|member| {

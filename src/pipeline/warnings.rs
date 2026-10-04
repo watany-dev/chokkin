@@ -18,7 +18,6 @@ pub enum ProbeWarning {
     Plugin(PluginsWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
     AutoWorkspace {
-        /// Number of inferred members.
         member_count: usize,
     },
 }
