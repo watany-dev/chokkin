@@ -279,30 +279,19 @@ mod tests {
 
         proptest! {
             #[test]
-            fn src_layout_matches_cpython(
+            fn resolution_matches_cpython(
                 module in module(),
                 is_init in any::<bool>(),
                 level in 0u8..6,
                 suffix in suffix(),
                 name in imported_name(),
+                flat in any::<bool>(),
             ) {
-                let path = file_path("src/", &module, is_init);
-                prop_assert_eq!(
-                    resolve_relative_import(&path, &src_layout(), level, suffix.as_deref(), name.as_deref()),
-                    cpython_resolve(&module, is_init, level, suffix.as_deref(), name.as_deref())
-                );
-            }
-
-            #[test]
-            fn flat_layout_matches_cpython(
-                module in module(),
-                is_init in any::<bool>(),
-                level in 0u8..6,
-                suffix in suffix(),
-                name in imported_name(),
-            ) {
-                let layout = flat_layout(vec![module[0].clone()]);
-                let path = file_path("", &module, is_init);
+                let (layout, path) = if flat {
+                    (flat_layout(vec![module[0].clone()]), file_path("", &module, is_init))
+                } else {
+                    (src_layout(), file_path("src/", &module, is_init))
+                };
                 prop_assert_eq!(
                     resolve_relative_import(&path, &layout, level, suffix.as_deref(), name.as_deref()),
                     cpython_resolve(&module, is_init, level, suffix.as_deref(), name.as_deref())

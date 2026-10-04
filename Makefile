@@ -3,7 +3,6 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_TARPAULIN_VERSION     ?= 0.35.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
 CARGO_MUTANTS_VERSION       ?= 27.1.0
-KANI_VERSION                ?= 0.68.0
 
 .PHONY: check build test lint fmt fmt-check doc deny machete coverage semver wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-oracle check-generated formal mutants mutants-diff kani help
 
@@ -91,7 +90,7 @@ formal:
 #               ARGS="-f src/rules/emit.rs". Results: mutants.out/.
 # mutants-diff: only the mutants on lines changed since BASE (default origin/main).
 # kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
-#               kani-verifier@$(KANI_VERSION) && cargo kani setup`.
+#               kani-verifier@0.68.0 && cargo kani setup`.
 #               Not part of `make check`. See docs/dev/formal/README.md.
 MUTANTS_ENV = CARGO_PROFILE_DEV_DEBUG=0
 BASE       ?= origin/main
