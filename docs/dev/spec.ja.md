@@ -1039,8 +1039,6 @@ llama_index / transformers / openai-python / langchain、commit SHA pinned) は
 固定し、下限割れか rule 別件数が base + max(5, base/5) を超えると expectations gate が
 失敗する。exit 2 (CLI/config error) も gate で 0 件を要求する。この corpus の CHK002
 もラベル付けは必須だが、件数は expectations で固定するので FP 率の分母には入れない。
-既知の gap として、sqlalchemy は `lib/` 配下の package に entry root が見つからず
-`reachable_runtime` が 0 のため、下限は 0 にしてある。
 
 **現状 (v0.1.0): §17 exit criteria達成。** Phase 1.5 完了後の OSS 20 件検証で
 CHK002 誤検知率 **0.0% (0 FP / 2 reported)**、recall sentinel **2/2 検出**、
