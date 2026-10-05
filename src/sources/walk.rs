@@ -12,7 +12,7 @@ use crate::path_util::normalize_rel_path;
 
 use super::context::assign_file_context;
 use super::error::SourcesError;
-use super::types::{DiscoveredFile, FileKind};
+use super::types::{DiscoveredFile, FileContext, FileKind};
 use super::warnings::SourcesWarning;
 
 const LARGE_PROJECT_THRESHOLD: usize = 10_000;
@@ -26,6 +26,8 @@ pub struct CollectOptions<'a> {
     pub project_matcher: &'a GlobSet,
     /// Globs excluding files from analysis.
     pub exclude_matcher: &'a GlobSet,
+    /// pytest `testpaths` files, test context whatever their path says.
+    pub test_matcher: &'a GlobSet,
     /// Raw exclude patterns (for directory pruning via overrides).
     pub exclude_patterns: &'a [String],
     /// Whether to respect `.gitignore` files during the walk.
@@ -144,6 +146,7 @@ pub fn collect_files(
     let root = options.root.to_path_buf();
     let project_matcher = options.project_matcher;
     let exclude_matcher = options.exclude_matcher;
+    let test_matcher = options.test_matcher;
     let production = options.production;
     let gitignore = options.gitignore;
 
@@ -204,7 +207,11 @@ pub fn collect_files(
             }
         }
 
-        let context = assign_file_context(&rel_str);
+        let context = if test_matcher.is_match(&rel_str) {
+            FileContext::Test
+        } else {
+            assign_file_context(&rel_str)
+        };
         if production && !context.is_included_in_production() {
             continue;
         }
@@ -318,6 +325,7 @@ mod tests {
             root,
             project_matcher: &project,
             exclude_matcher: &exclude,
+            test_matcher: &GlobSet::empty(),
             exclude_patterns: &exclude_patterns,
             respect_gitignore: false,
             gitignore: None,
@@ -358,6 +366,7 @@ mod tests {
             root,
             project_matcher: &project,
             exclude_matcher: &exclude,
+            test_matcher: &GlobSet::empty(),
             exclude_patterns: &exclude_patterns,
             respect_gitignore: false,
             gitignore: None,
@@ -392,6 +401,7 @@ mod tests {
             root,
             project_matcher: &project,
             exclude_matcher: &exclude,
+            test_matcher: &GlobSet::empty(),
             exclude_patterns: &exclude_patterns,
             respect_gitignore: false,
             gitignore: None,
