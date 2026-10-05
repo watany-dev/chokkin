@@ -41,7 +41,7 @@
 # The FP-rate gate cannot pass while CHK002 unclassified findings remain.
 # Projects with an --expect row are known failure patterns: their CHK002
 # findings must still be labelled, but they are left out of the FP rate
-# because the expectations gate already pins their counts.
+# because the expectations gate already pins their counts (until #529).
 #
 # Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
 # separate recall gate measures in-repo sentinel fixtures (--recall manifest)

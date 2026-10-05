@@ -12,7 +12,7 @@
 # target/oss-metrics/expectations.tsv here once the new numbers are reviewed.
 #
 # sqlalchemy's floor is 0: its lib/ layout yields no entry root today, so no
-# runtime file is reachable. Raise the floor when that is fixed.
+# runtime file is reachable. Raise the floor when that is fixed (#528).
 #
 # slug	runtime_min	counts
 sqlalchemy	0	CHK002=1,CHK008=6,CHK009=8
