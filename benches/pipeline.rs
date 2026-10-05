@@ -151,5 +151,29 @@ fn bench_pipeline(c: &mut Criterion) {
     }
     group.finish();
 }
-criterion_group!(benches, bench_pipeline);
+
+fn bench_workspace(c: &mut Criterion) {
+    let mut group = c.benchmark_group("workspace_members");
+    group.sample_size(10);
+    let n = 200;
+    let project = support::synth_workspace_project(n);
+    let root = project.path();
+    let overrides = RuntimeOverrides::default();
+    let options = AnalyzeOptions {
+        cache: CacheOptions::disabled(),
+        ..AnalyzeOptions::default()
+    };
+    let report = analyze_project(root, None, &overrides, options.clone()).expect("setup");
+    assert!(
+        report.probe.workspace_members.len() >= usize::try_from(n).expect("member count"),
+        "every nested pyproject must be detected as a member"
+    );
+    group.bench_function(BenchmarkId::new("analyze_no_cache", n), |b| {
+        b.iter(|| {
+            analyze_project(black_box(root), None, &overrides, options.clone()).expect("analyze")
+        });
+    });
+    group.finish();
+}
+criterion_group!(benches, bench_pipeline, bench_workspace);
 criterion_main!(benches);

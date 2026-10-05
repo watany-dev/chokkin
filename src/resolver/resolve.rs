@@ -435,7 +435,9 @@ fn workspace_member_for_file(
     workspace_members
         .iter()
         .filter(|member| {
-            normalized == member.path || normalized.starts_with(&format!("{}/", member.path))
+            normalized
+                .strip_prefix(member.path.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
         })
         .max_by_key(|member| member.path.len())
         .map(|member| member.id.clone())

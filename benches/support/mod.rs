@@ -208,3 +208,51 @@ pub fn synth_realistic_project(n_files: u64) -> TempDir {
     write(project.path(), "src/bench_acme/__init__.py", &entries);
     project
 }
+
+/// A monorepo whose root holds `n_members` nested packages, each with its own
+/// `pyproject.toml` and a `uv.lock` carrying per-package `sdist`/`wheels`
+/// lines, the shape of `llama_index`'s integrations tree (#513).
+pub fn synth_workspace_project(n_members: u64) -> TempDir {
+    let temp = TempDir::new().expect("tempdir");
+    let root = temp.path();
+    write(
+        root,
+        "pyproject.toml",
+        "[project]\nname = \"bench-mono\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+    );
+    write(root, "src/bench_mono/__init__.py", "import requests\n");
+    let mut lock = String::from("version = 1\nrequires-python = \">=3.9\"\n");
+    for index in 0..40u64 {
+        writeln!(
+            lock,
+            "\n[[package]]\nname = \"pkg-{index}\"\nversion = \"1.0.{index}\"\nsource = {{ registry = \"https://pypi.org/simple\" }}\ndependencies = [\n    {{ name = \"requests\" }},\n]\nsdist = {{ url = \"https://files.example/pkg_{index}-1.0.{index}.tar.gz\", hash = \"sha256:{index:064}\", size = 12345 }}\nwheels = ["
+        )
+        .expect("write lock package");
+        for wheel in 0..20u64 {
+            writeln!(
+                lock,
+                "    {{ url = \"https://files.example/pkg_{index}-1.0.{index}-cp3{wheel}-manylinux_x86_64.whl\", hash = \"sha256:{wheel:064}\", size = 54321 }},"
+            )
+            .expect("write wheel");
+        }
+        lock.push_str("]\n");
+    }
+    for index in 0..n_members {
+        let dir = format!("integrations/member-{index}");
+        write(
+            root,
+            &format!("{dir}/pyproject.toml"),
+            &format!(
+                "[project]\nname = \"bench-member-{index}\"\nversion = \"0.1.0\"\ndependencies = [\"pkg-{}\"]\n",
+                index % 40
+            ),
+        );
+        write(root, &format!("{dir}/uv.lock"), &lock);
+        write(
+            root,
+            &format!("{dir}/bench_member_{index}/__init__.py"),
+            &format!("import pkg_{}\n", index % 40),
+        );
+    }
+    temp
+}
