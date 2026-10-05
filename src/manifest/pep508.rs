@@ -613,7 +613,7 @@ mod tests {
         let specifiers = parse_version_specifiers(">=3.99999999999999999999").expect("valid");
         assert_eq!(specifiers[0].release, [3, u64::MAX]);
         let specifiers = parse_version_specifiers("===3.11.*").expect("valid");
-        assert!(specifiers[0].release.is_empty());
+        assert_eq!(specifiers[0].release, Vec::<u64>::new());
     }
 
     mod props {
