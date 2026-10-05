@@ -611,6 +611,8 @@ except ImportError:
 
 この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
 
+ただし lockfile の edge で宣言依存から推移的に到達できる場合は、optional / platform-guarded でも CHK004（transitive edge、Certain）を優先する。`try:` で包むだけで「推移依存への直接 import」の指摘が消える抜け道を作らないため (#504)。lockfile に載っているだけで edge で到達できない場合は根拠が弱いので、conditional CHK003 のままにする。
+
 `[build-system].requires` / `build-backend` は build context (v0.5 R-05) として `ProjectMetadata.build_requires` / `build_backend` に inventory し、CHK002/CHK003 の宣言集合には入れない (build requires は runtime import を満たさず、未使用扱いにもならない)。hatch-vcs / setuptools-scm のような build plugin が project / dev 依存にも宣言されて未使用なら、CHK002 を出すかどうかは既存の context 方針のままにし、evidence に `also in build-system.requires` を添える。`--probe` の Manifest 欄に backend と requires を表示する。
 
 PEP 723 inline script metadata (v0.5, R-02) は script 単位の dependency scope として扱う。

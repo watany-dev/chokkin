@@ -99,18 +99,24 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        if optional_imports.contains(&(import.file.clone(), import.line)) {
-            candidates.push(optional_missing_candidate(import, distribution, strict));
-            continue;
-        }
-
-        candidates.push(undeclared_candidate(
-            import,
-            distribution,
-            declared,
-            &resolution.transitive,
-            has_lockfile,
-        ));
+        // A lock edge proves a transitive dependency, so wrapping the import in
+        // `try:` must not hide CHK004; a lock entry without an edge is too weak
+        // to override the optional relaxation (#504).
+        let transitive =
+            has_lockfile && is_transitive_only(distribution, declared, &resolution.transitive);
+        candidates.push(
+            if !transitive && optional_imports.contains(&(import.file.clone(), import.line)) {
+                optional_missing_candidate(import, distribution, strict)
+            } else {
+                undeclared_candidate(
+                    import,
+                    distribution,
+                    declared,
+                    &resolution.transitive,
+                    has_lockfile,
+                )
+            },
+        );
     }
 
     candidates
