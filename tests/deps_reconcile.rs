@@ -195,6 +195,18 @@ fn missing_yaml_emits_chk003() {
 }
 
 #[test]
+fn missing_is_low_confidence_when_runtime_dependencies_are_unknown() {
+    let report = reconcile_fixture("setup_py_unknown_runtime");
+    let yaml = report
+        .candidates
+        .iter()
+        .find(|candidate| candidate.rule == RuleId::Chk003 && candidate.message.contains("pyyaml"))
+        .expect("pyyaml missing");
+    assert_eq!(yaml.severity, Severity::Info);
+    assert_eq!(yaml.confidence, Confidence::Maybe);
+}
+
+#[test]
 fn non_runtime_missing_is_suppressed_by_default_and_reported_in_strict_mode() {
     let default = reconcile_fixture("dev_missing");
     assert!(!default.candidates.iter().any(|candidate| {

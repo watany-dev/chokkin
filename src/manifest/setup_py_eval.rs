@@ -5,7 +5,7 @@
 //! [`Value::Unknown`], which callers treat as "could not be read" (#491).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use ruff_python_ast::{Comprehension, Expr, ExprCall, Operator, Stmt, StmtFunctionDef, Suite};
 
@@ -16,6 +16,11 @@ use super::util::path_is_within_root;
 
 const MAX_CALL_DEPTH: usize = 16;
 const MAX_COMPREHENSION_ITEMS: usize = 10_000;
+/// Largest value kept, in nodes; `x = x + x` doubles without it.
+const MAX_VALUE_NODES: usize = 100_000;
+/// Total work allowed per file, so fan-out helpers and nested
+/// comprehensions end as `Unknown` instead of running away.
+const MAX_STEPS: usize = 5_000_000;
 
 /// Statically evaluated Python value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +33,24 @@ pub(super) enum Value {
     Unknown,
 }
 
+impl Value {
+    fn nodes(&self) -> usize {
+        match self {
+            Self::List(items) => 1 + items.iter().map(Self::nodes).sum::<usize>(),
+            Self::Dict(items) => 1 + items.iter().map(|(_, value)| value.nodes()).sum::<usize>(),
+            Self::Str(_) | Self::RequirementsFile(_) | Self::Unknown => 1,
+        }
+    }
+
+    /// Mark a value that code we cannot follow may have changed.
+    fn taint(&mut self) {
+        match self {
+            Self::List(items) => items.push(Self::Unknown),
+            _ => *self = Self::Unknown,
+        }
+    }
+}
+
 /// One flattened entry of a dependency list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DependencyItem {
@@ -36,16 +59,18 @@ pub(super) enum DependencyItem {
 }
 
 /// Flattened dependency list; `complete` is `false` when part of it was unreadable.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct DependencyItems {
     pub items: Vec<DependencyItem>,
     pub complete: bool,
 }
 
 /// Evaluated keyword arguments of the `setup(...)` call.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct SetupCall {
     pub keywords: Vec<(String, Value)>,
+    /// `setup(**kwargs)` / `setup(*args)`: unseen keywords may be passed.
+    pub unpacked: bool,
     /// Root-relative requirements file candidates probed but absent.
     pub probed_missing: Vec<String>,
 }
@@ -66,11 +91,20 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
         env: HashMap::new(),
         functions: HashMap::new(),
         depth: 0,
+        steps: 0,
         probed_missing: Vec::new(),
     };
-    let keywords = evaluator.exec_block(stmts)?;
+    let call = evaluator.exec_block(stmts)?;
+    let unpacked = call.arguments.keywords.iter().any(|kw| kw.arg.is_none())
+        || call
+            .arguments
+            .args
+            .iter()
+            .any(|arg| matches!(arg, Expr::Starred(_)));
+    let keywords = evaluator.setup_keywords(call);
     Some(SetupCall {
         keywords,
+        unpacked,
         probed_missing: evaluator.probed_missing,
     })
 }
@@ -116,19 +150,22 @@ struct Evaluator<'a> {
     env: HashMap<String, Value>,
     functions: HashMap<String, &'a StmtFunctionDef>,
     depth: usize,
+    steps: usize,
     probed_missing: Vec<String>,
 }
 
 impl<'a> Evaluator<'a> {
-    /// Run statements in order; every `if`/`try`/`with` branch is taken.
-    fn exec_block(&mut self, stmts: &'a [Stmt]) -> Option<Vec<(String, Value)>> {
+    /// Run statements in order up to the `setup(...)` call. Branches of an
+    /// `if` / `try` start from the same state and are merged afterwards.
+    fn exec_block(&mut self, stmts: &'a [Stmt]) -> Option<&'a ExprCall> {
         for stmt in stmts {
             match stmt {
                 Stmt::Expr(expr) => {
-                    if let Expr::Call(call) = &*expr.value
-                        && is_setup(&call.func)
-                    {
-                        return Some(self.setup_keywords(call));
+                    if let Expr::Call(call) = &*expr.value {
+                        if is_setup(&call.func) {
+                            return Some(call);
+                        }
+                        self.taint_mutation(call);
                     }
                 },
                 Stmt::Assign(assign) => {
@@ -145,7 +182,8 @@ impl<'a> Evaluator<'a> {
                 },
                 Stmt::AugAssign(assign) => {
                     let value = if assign.op == Operator::Add {
-                        add(self.eval(&assign.target), self.eval(&assign.value))
+                        let sum = add(self.eval(&assign.target), self.eval(&assign.value));
+                        self.checked(sum)
                     } else {
                         Value::Unknown
                     };
@@ -155,27 +193,28 @@ impl<'a> Evaluator<'a> {
                     self.functions.insert(def.name.id.to_string(), def);
                 },
                 Stmt::If(if_stmt) => {
-                    if let Some(found) = self.exec_block(&if_stmt.body) {
+                    let mut branches = vec![if_stmt.body.as_slice()];
+                    branches.extend(if_stmt.elif_else_clauses.iter().map(|c| c.body.as_slice()));
+                    let has_else = if_stmt
+                        .elif_else_clauses
+                        .last()
+                        .is_some_and(|clause| clause.test.is_none());
+                    if let Some(found) = self.exec_branches(&branches, !has_else) {
                         return Some(found);
-                    }
-                    for clause in &if_stmt.elif_else_clauses {
-                        if let Some(found) = self.exec_block(&clause.body) {
-                            return Some(found);
-                        }
                     }
                 },
                 Stmt::Try(try_stmt) => {
-                    let handlers = try_stmt.handlers.iter().map(|handler| {
+                    let mut branches = vec![try_stmt.body.as_slice()];
+                    branches.extend(try_stmt.handlers.iter().map(|handler| {
                         let ruff_python_ast::ExceptHandler::ExceptHandler(handler) = handler;
-                        &handler.body
-                    });
-                    let blocks = std::iter::once(&try_stmt.body)
-                        .chain(handlers)
-                        .chain([&try_stmt.orelse, &try_stmt.finalbody]);
-                    for block in blocks {
-                        if let Some(found) = self.exec_block(block) {
-                            return Some(found);
-                        }
+                        handler.body.as_slice()
+                    }));
+                    let found = self
+                        .exec_branches(&branches, false)
+                        .or_else(|| self.exec_block(&try_stmt.orelse))
+                        .or_else(|| self.exec_block(&try_stmt.finalbody));
+                    if found.is_some() {
+                        return found;
                     }
                 },
                 Stmt::With(with) => {
@@ -183,10 +222,128 @@ impl<'a> Evaluator<'a> {
                         return Some(found);
                     }
                 },
+                Stmt::For(ruff_python_ast::StmtFor { body, orelse, .. })
+                | Stmt::While(ruff_python_ast::StmtWhile { body, orelse, .. }) => {
+                    if let Stmt::For(for_stmt) = stmt {
+                        self.taint_target(&for_stmt.target);
+                    }
+                    self.taint_block(body);
+                    self.taint_block(orelse);
+                },
                 _ => {},
             }
         }
         None
+    }
+
+    /// Run each branch from the current state and keep the union of what
+    /// they assign; `fallthrough` adds the state where no branch ran.
+    fn exec_branches(
+        &mut self,
+        branches: &[&'a [Stmt]],
+        fallthrough: bool,
+    ) -> Option<&'a ExprCall> {
+        let saved = self.env.clone();
+        let mut merged: Option<HashMap<String, Value>> = fallthrough.then(|| saved.clone());
+        for branch in branches {
+            self.env.clone_from(&saved);
+            if let Some(found) = self.exec_block(branch) {
+                return Some(found);
+            }
+            let env = std::mem::take(&mut self.env);
+            merged = Some(match merged {
+                Some(merged) => merge_env(merged, env),
+                None => env,
+            });
+        }
+        self.env = merged.unwrap_or(saved);
+        None
+    }
+
+    /// `reqs.append(...)` and friends change a value we only track by assignment.
+    fn taint_mutation(&mut self, call: &ExprCall) {
+        if let Expr::Attribute(attribute) = &*call.func
+            && let Expr::Name(base) = &*attribute.value
+            && let Some(value) = self.env.get_mut(base.id.as_str())
+        {
+            value.taint();
+        }
+    }
+
+    fn taint_target(&mut self, target: &Expr) {
+        match target {
+            Expr::Name(name) => {
+                if let Some(value) = self.env.get_mut(name.id.as_str()) {
+                    value.taint();
+                }
+            },
+            Expr::Subscript(subscript) => self.taint_target(&subscript.value),
+            Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
+            | Expr::List(ruff_python_ast::ExprList { elts, .. }) => {
+                for elt in elts {
+                    self.taint_target(elt);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    /// Loop bodies are not run; everything they may change becomes partial.
+    fn taint_block(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Expr(expr) => {
+                    if let Expr::Call(call) = &*expr.value {
+                        self.taint_mutation(call);
+                    }
+                },
+                Stmt::Assign(assign) => {
+                    for target in &assign.targets {
+                        self.taint_target(target);
+                    }
+                },
+                Stmt::AnnAssign(ruff_python_ast::StmtAnnAssign { target, .. })
+                | Stmt::AugAssign(ruff_python_ast::StmtAugAssign { target, .. }) => {
+                    self.taint_target(target);
+                },
+                Stmt::For(for_stmt) => {
+                    self.taint_target(&for_stmt.target);
+                    self.taint_block(&for_stmt.body);
+                    self.taint_block(&for_stmt.orelse);
+                },
+                Stmt::While(while_stmt) => {
+                    self.taint_block(&while_stmt.body);
+                    self.taint_block(&while_stmt.orelse);
+                },
+                Stmt::If(if_stmt) => {
+                    self.taint_block(&if_stmt.body);
+                    for clause in &if_stmt.elif_else_clauses {
+                        self.taint_block(&clause.body);
+                    }
+                },
+                Stmt::Try(try_stmt) => {
+                    self.taint_block(&try_stmt.body);
+                    for handler in &try_stmt.handlers {
+                        let ruff_python_ast::ExceptHandler::ExceptHandler(handler) = handler;
+                        self.taint_block(&handler.body);
+                    }
+                    self.taint_block(&try_stmt.orelse);
+                    self.taint_block(&try_stmt.finalbody);
+                },
+                Stmt::With(with) => self.taint_block(&with.body),
+                _ => {},
+            }
+        }
+    }
+
+    /// Charge `cost` against the step budget; `false` once it is spent.
+    fn spend(&mut self, cost: usize) -> bool {
+        self.steps = self.steps.saturating_add(cost);
+        self.steps <= MAX_STEPS
+    }
+
+    fn env_nodes(&self) -> usize {
+        self.env.values().map(Value::nodes).sum()
     }
 
     fn setup_keywords(&mut self, call: &ExprCall) -> Vec<(String, Value)> {
@@ -237,6 +394,23 @@ impl<'a> Evaluator<'a> {
     }
 
     fn eval(&mut self, expr: &Expr) -> Value {
+        if !self.spend(1) {
+            return Value::Unknown;
+        }
+        let value = self.eval_uncharged(expr);
+        self.checked(value)
+    }
+
+    /// Drop values over the size cap and charge the rest by size.
+    fn checked(&mut self, value: Value) -> Value {
+        let nodes = value.nodes();
+        if nodes > MAX_VALUE_NODES || !self.spend(nodes) {
+            return Value::Unknown;
+        }
+        value
+    }
+
+    fn eval_uncharged(&mut self, expr: &Expr) -> Value {
         match expr {
             Expr::StringLiteral(literal) => Value::Str(literal.value.to_str().to_owned()),
             Expr::List(ruff_python_ast::ExprList { elts, .. })
@@ -277,7 +451,10 @@ impl<'a> Evaluator<'a> {
                         .into_iter()
                         .find(|(existing, _)| *existing == key)
                         .map_or(Value::Unknown, |(_, value)| value),
-                    Value::Unknown => self.requirement_table_lookup(&key),
+                    // Only a table this file assigned, not `os.environ[...]`.
+                    Value::Unknown if matches!(&*subscript.value, Expr::Name(name) if self.env.contains_key(name.id.as_str())) => {
+                        self.requirement_table_lookup(&key)
+                    },
                     _ => Value::Unknown,
                 }
             },
@@ -334,6 +511,7 @@ impl<'a> Evaluator<'a> {
         mut produce: impl FnMut(&mut Self) -> T,
     ) -> Option<Vec<T>> {
         let saved = self.env.clone();
+        let scope_cost = self.env_nodes().max(1);
         let mut scopes = vec![saved.clone()];
         for generator in generators {
             if !generator.ifs.is_empty() || generator.is_async {
@@ -348,7 +526,7 @@ impl<'a> Evaluator<'a> {
                     return None;
                 };
                 for item in items {
-                    if next.len() >= MAX_COMPREHENSION_ITEMS {
+                    if next.len() >= MAX_COMPREHENSION_ITEMS || !self.spend(scope_cost) {
                         self.env = saved;
                         return None;
                     }
@@ -381,19 +559,10 @@ impl<'a> Evaluator<'a> {
             return arg.clone();
         }
         let value = match self.functions.get(name).copied() {
-            Some(def) => {
-                let kwargs: Vec<(String, Value)> = call
-                    .arguments
-                    .keywords
-                    .iter()
-                    .filter_map(|keyword| {
-                        let name = keyword.arg.as_ref()?.to_string();
-                        Some((name, self.eval(&keyword.value)))
-                    })
-                    .collect();
-                self.call_function(def, args.clone(), &kwargs)
+            Some(def) if call.arguments.keywords.is_empty() => {
+                self.call_function(def, args.clone())
             },
-            None => Value::Unknown,
+            _ => Value::Unknown,
         };
         if value == Value::Unknown {
             self.requirements_file(&args)
@@ -403,13 +572,8 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Inline a helper whose body is an optional docstring plus one `return`.
-    fn call_function(
-        &mut self,
-        def: &'a StmtFunctionDef,
-        args: Vec<Value>,
-        kwargs: &[(String, Value)],
-    ) -> Value {
-        if self.depth >= MAX_CALL_DEPTH {
+    fn call_function(&mut self, def: &'a StmtFunctionDef, args: Vec<Value>) -> Value {
+        if self.depth >= MAX_CALL_DEPTH || !self.spend(self.env_nodes()) {
             return Value::Unknown;
         }
         let body = match def.body.as_slice() {
@@ -424,37 +588,21 @@ impl<'a> Evaluator<'a> {
         };
 
         let parameters = &def.parameters;
-        let mut locals: Vec<(String, Value)> = Vec::new();
         let mut positional = args.into_iter();
-        for param in parameters.posonlyargs.iter().chain(&parameters.args) {
-            let name = param.parameter.name.id.to_string();
-            let value = positional
-                .next()
-                .or_else(|| {
-                    kwargs
-                        .iter()
-                        .find(|(keyword, _)| *keyword == name)
-                        .map(|(_, value)| value.clone())
-                })
-                .or_else(|| param.default.as_deref().map(|default| self.eval(default)))
-                .unwrap_or(Value::Unknown);
-            locals.push((name, value));
-        }
+        let mut locals: Vec<(String, Value)> = parameters
+            .posonlyargs
+            .iter()
+            .chain(&parameters.args)
+            .map(|param| {
+                let value = positional.next().unwrap_or(Value::Unknown);
+                (param.parameter.name.id.to_string(), value)
+            })
+            .collect();
         if let Some(vararg) = &parameters.vararg {
             locals.push((
                 vararg.name.id.to_string(),
                 Value::List(positional.collect()),
             ));
-        }
-        for param in &parameters.kwonlyargs {
-            let name = param.parameter.name.id.to_string();
-            let value = kwargs
-                .iter()
-                .find(|(keyword, _)| *keyword == name)
-                .map(|(_, value)| value.clone())
-                .or_else(|| param.default.as_deref().map(|default| self.eval(default)))
-                .unwrap_or(Value::Unknown);
-            locals.push((name, value));
         }
 
         let saved = self.env.clone();
@@ -480,7 +628,10 @@ impl<'a> Evaluator<'a> {
         let is_requirements = relative
             .extension()
             .is_some_and(|ext| ext == "txt" || ext == "in");
-        if !is_requirements || relative.is_absolute() {
+        let stays_inside = relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+        if !is_requirements || !stays_inside {
             return Value::Unknown;
         }
         for base in [self.root.to_path_buf(), self.root.join("requirements")] {
@@ -550,7 +701,50 @@ fn add(left: Value, right: Value) -> Value {
     }
 }
 
-pub(super) fn is_setup(func: &Expr) -> bool {
+/// State after one of two branches ran: lists and dicts keep every entry
+/// either branch gave, so an optional dependency still counts as declared.
+fn merge_env(
+    mut left: HashMap<String, Value>,
+    right: HashMap<String, Value>,
+) -> HashMap<String, Value> {
+    for (name, value) in right {
+        let merged = match left.remove(&name) {
+            Some(existing) => merge(existing, value),
+            None => value,
+        };
+        left.insert(name, merged);
+    }
+    left
+}
+
+fn merge(left: Value, right: Value) -> Value {
+    match (left, right) {
+        (left, right) if left == right => left,
+        (Value::List(mut left), Value::List(right)) => {
+            for item in right {
+                if !left.contains(&item) {
+                    left.push(item);
+                }
+            }
+            Value::List(left)
+        },
+        (Value::Dict(mut left), Value::Dict(right)) => {
+            for (key, value) in right {
+                match left.iter().position(|(existing, _)| *existing == key) {
+                    Some(index) => {
+                        let (_, existing) = left.remove(index);
+                        left.insert(index, (key, merge(existing, value)));
+                    },
+                    None => left.push((key, value)),
+                }
+            }
+            Value::Dict(left)
+        },
+        _ => Value::Unknown,
+    }
+}
+
+fn is_setup(func: &Expr) -> bool {
     match func {
         Expr::Name(name) => name.id.as_str() == "setup",
         Expr::Attribute(attribute) => attribute.attr.as_str() == "setup",

@@ -337,6 +337,29 @@ fn setup_py_dynamic_warns_and_skips() {
 }
 
 #[test]
+fn setup_py_unreadable_install_requires_marks_runtime_unknown() {
+    let manifest = extract_fixture("setup_py_dynamic");
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert!(manifest.warnings.iter().any(|warning| matches!(
+        warning,
+        ManifestWarning::RuntimeDependenciesUnknown { file } if file == "setup.py"
+    )));
+}
+
+#[test]
+fn requirements_txt_read_by_setup_py_is_not_reread_as_dev() {
+    let manifest = extract_fixture("setup_py_reads_requirements");
+    let contexts: Vec<&DependencyContext> = manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.name == "requests")
+        .map(|dep| &dep.context)
+        .collect();
+    assert_eq!(contexts, vec![&DependencyContext::Runtime]);
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+}
+
+#[test]
 fn opaque_url_not_unused_candidate() {
     let manifest = extract_fixture("requirements_editable");
     let editable = manifest

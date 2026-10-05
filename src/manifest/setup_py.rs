@@ -56,15 +56,15 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
     result.metadata.version = string_keyword(&call, "version");
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
-    let extras_require: Vec<(String, Value)> = match call.keyword("extras_require") {
-        Some(Value::Dict(items)) => items.clone(),
-        _ => Vec::new(),
+    let extras_require: &[(String, Value)] = match call.keyword("extras_require") {
+        Some(Value::Dict(items)) => items,
+        _ => &[],
     };
     let nothing_read = install_requires
         .as_ref()
         .is_none_or(|items| items.items.is_empty() && !items.complete);
     if nothing_read && extras_require.is_empty() {
-        result.runtime_unknown = install_requires.is_some();
+        result.runtime_unknown = install_requires.is_some() || call.unpacked;
         result
             .warnings
             .push(ManifestWarning::SetupPyNotStatic { file: rel });
@@ -73,13 +73,13 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
 
     result.parsed = true;
 
-    if let Some(items) = install_requires {
-        result.runtime_unknown =
-            !push_items(root, &mut result, &rel, &items, &DependencyContext::Runtime);
-    }
+    result.runtime_unknown = match install_requires {
+        Some(items) => !push_items(root, &mut result, &rel, &items, &DependencyContext::Runtime),
+        None => call.unpacked,
+    };
 
     for (extra, value) in extras_require {
-        let items = dependency_items(&value);
+        let items = dependency_items(value);
         let _ = push_items(
             root,
             &mut result,
@@ -324,6 +324,70 @@ if __name__ == "__main__":
             names_in(&result, &DependencyContext::Runtime),
             vec!["requests"]
         );
+    }
+
+    #[test]
+    fn mutated_or_looped_lists_are_partial() {
+        for script in [
+            "reqs = ['requests']\nreqs.append('pyyaml')\nsetup(install_requires=reqs)\n",
+            "reqs = ['requests']\nfor r in extra:\n    reqs += [r]\nsetup(install_requires=reqs)\n",
+        ] {
+            let result = extract(script, &[]);
+            assert!(result.runtime_unknown, "{script}");
+            assert_eq!(
+                names_in(&result, &DependencyContext::Runtime),
+                vec!["requests"]
+            );
+        }
+    }
+
+    #[test]
+    fn if_else_branches_are_unioned() {
+        let result = extract(
+            "if win:\n    reqs = ['requests', 'pyyaml']\nelse:\n    reqs = []\nsetup(install_requires=reqs)\n",
+            &[],
+        );
+        assert!(!result.runtime_unknown);
+        assert_eq!(
+            names_in(&result, &DependencyContext::Runtime),
+            vec!["requests", "pyyaml"]
+        );
+    }
+
+    #[test]
+    fn unpacked_setup_kwargs_hide_install_requires() {
+        let result = extract("kw = load()\nsetup(name='acme', **kw)\n", &[]);
+        assert!(result.runtime_unknown);
+    }
+
+    #[test]
+    fn runaway_evaluation_ends_as_unknown() {
+        let doubling = format!(
+            "x = ['a']\n{}setup(install_requires=x)\n",
+            "x = x + x\n".repeat(40)
+        );
+        let fan_out =
+            "def f():\n    return [f(), f(), f(), f(), f(), f()]\nsetup(install_requires=f())\n";
+        for script in [doubling.as_str(), fan_out] {
+            assert!(extract(script, &[]).runtime_unknown);
+        }
+    }
+
+    #[test]
+    fn requirements_references_stay_inside_root() {
+        let result = extract("setup(install_requires=read('../outside.txt'))\n", &[]);
+        assert!(result.runtime_unknown);
+        assert!(result.files_missing.is_empty());
+    }
+
+    #[test]
+    fn unknown_non_name_subscript_is_not_a_requirement_table() {
+        let result = extract(
+            "import os\nreqs = ['requests']\nsetup(install_requires=[os.environ['requests']])\n",
+            &[],
+        );
+        assert!(result.runtime_unknown);
+        assert!(names_in(&result, &DependencyContext::Runtime).is_empty());
     }
 
     #[test]

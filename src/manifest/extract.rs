@@ -80,6 +80,7 @@ pub fn extract_manifest(
         .iter()
         .any(|dep| dep.context == DependencyContext::Runtime);
     let mut setup_py_runtime_unknown = false;
+    let mut setup_py_files_read: Vec<String> = Vec::new();
     let setup_py_path = root_path.join("setup.py");
     if setup_py_path.is_file() {
         let extracted = extract_setup_py(root_path, &setup_py_path)?;
@@ -101,6 +102,7 @@ pub fn extract_manifest(
             dependencies.extend(extracted.dependencies);
             sources.setup_py = true;
         }
+        setup_py_files_read.clone_from(&extracted.files_read);
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
         warnings.extend(extracted.warnings);
@@ -122,6 +124,11 @@ pub fn extract_manifest(
 
     let mut requirements_runtime_declared = false;
     for (filename, context) in requirements_specs {
+        // Already read as `install_requires`; reading it again as dev would
+        // report every entry as a duplicate.
+        if setup_py_files_read.iter().any(|read| read == filename) {
+            continue;
+        }
         let extracted = extract_requirements_file(root_path, filename, context)?;
         requirements_runtime_declared |= extracted
             .dependencies
