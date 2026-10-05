@@ -186,6 +186,42 @@ mod tests {
                 let normalized = normalize_rel_path(Path::new(&raw));
                 prop_assert!(!normalized.contains('\\'));
             }
+
+            #[test]
+            fn normalize_rel_path_only_rewrites_separators(raw in "[a-z/\\\\._-]{0,40}") {
+                let normalized = normalize_rel_path(Path::new(&raw));
+                prop_assert_eq!(&normalized, &raw.replace('\\', "/"));
+                prop_assert_eq!(normalize_rel_path(Path::new(&normalized)), normalized);
+            }
+
+            #[test]
+            fn join_rel_treats_empty_base_as_root(rel in "[a-z/._]{0,20}") {
+                prop_assert_eq!(join_rel("", &rel), rel);
+            }
+
+            #[test]
+            fn join_rel_concatenates_segments(
+                base in rel_segments(),
+                rel in rel_segments(),
+            ) {
+                let joined = join_rel(&base.join("/"), &rel.join("/"));
+                let expected: Vec<&str> = base.iter().chain(&rel).map(String::as_str).collect();
+                prop_assert_eq!(joined.split('/').collect::<Vec<_>>(), expected);
+            }
+
+            #[test]
+            fn join_rel_is_associative(
+                a in prop::option::of(rel_segments()),
+                b in rel_segments(),
+                c in rel_segments(),
+            ) {
+                let a = a.map(|segments| segments.join("/")).unwrap_or_default();
+                let (b, c) = (b.join("/"), c.join("/"));
+                prop_assert_eq!(
+                    join_rel(&join_rel(&a, &b), &c),
+                    join_rel(&a, &join_rel(&b, &c))
+                );
+            }
         }
     }
 }
