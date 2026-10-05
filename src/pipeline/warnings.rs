@@ -16,6 +16,11 @@ pub enum ProbeWarning {
     Sources(SourcesWarning),
     /// Warning from plugin hint extraction.
     Plugin(PluginsWarning),
+    /// A source that could not be decoded and was left out of the analysis.
+    SkippedSource {
+        /// Root-relative path of the source.
+        path: String,
+    },
 }
 
 impl fmt::Display for ProbeWarning {
@@ -24,6 +29,10 @@ impl fmt::Display for ProbeWarning {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
             Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
             Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
+            Self::SkippedSource { path } => write!(
+                formatter,
+                "parse: skipped `{path}`: not UTF-8 and no supported PEP 263 coding declaration"
+            ),
         }
     }
 }

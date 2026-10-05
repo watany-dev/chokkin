@@ -107,6 +107,7 @@ mod tests {
             shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
+            skipped: false,
         };
         add_parsed_imports(&mut graph, file_id, &parsed).expect("edges");
 
