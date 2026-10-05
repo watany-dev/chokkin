@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
 use crate::discovery::ProjectRoot;
@@ -84,7 +84,12 @@ fn resolve_uv_members(
     let mut builder = GlobSetBuilder::new();
     for pattern in &hint.members {
         let normalized = normalize_relative_path(pattern);
-        let glob = Glob::new(&normalized).map_err(|source| ConfigError::Validation {
+        // uv expands members one path component at a time: `packages/*`
+        // never reaches `packages/foo/tests/fixture/`.
+        let glob = GlobBuilder::new(&normalized)
+            .literal_separator(true)
+            .build()
+            .map_err(|source| ConfigError::Validation {
             path: root.join("pyproject.toml"),
             field: "tool.uv.workspace.members".to_owned(),
             message: source.to_string(),
@@ -289,6 +294,8 @@ fn normalize_relative_path(path: &str) -> String {
 mod tests {
     use std::fs;
 
+    use globset::Glob;
+
     use super::*;
     use crate::config::default_config;
     use crate::discovery::RootMarker;
@@ -357,6 +364,18 @@ mod tests {
         .into_iter()
         .map(|member| (member.id, member.path))
         .collect()
+    }
+
+    #[test]
+    fn uv_member_star_stays_within_one_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = "[project]\nname = \"pkg\"\n";
+        write(temp.path(), "packages/api/pyproject.toml", project);
+        write(temp.path(), "packages/api/tests/demo/pyproject.toml", project);
+        assert_eq!(
+            uv_members(temp.path(), &["packages/*"]),
+            [("api".to_owned(), "packages/api".to_owned())]
+        );
     }
 
     #[test]
