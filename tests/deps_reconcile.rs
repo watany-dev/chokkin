@@ -671,6 +671,17 @@ fn path_source_is_used_through_its_member_tree() {
     assert_eq!(report.issues.issues, []);
 }
 
+/// Issue #508: the marker-scoped array form reads the same tree as a member.
+#[test]
+fn marker_scoped_path_source_manifest_governs_its_tree() {
+    let inputs = load_deps(&fixture("uv_path_source_member_marker"), false);
+    assert_eq!(inputs.workspace_inputs.len(), 1);
+    let report = reconcile_fixture("uv_path_source_member_marker");
+    assert_eq!(rules_mentioning(&report, "requests"), []);
+    assert_eq!(rules_mentioning(&report, "numpy"), []);
+    assert_eq!(rules_mentioning(&report, "urllib3"), [RuleId::Chk004]);
+}
+
 #[test]
 fn uv_workspace_source_dependency_is_used() {
     let report = reconcile_fixture("uv_workspace_source");

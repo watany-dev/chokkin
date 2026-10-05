@@ -1,0 +1,19 @@
+version = 1
+requires-python = ">=3.11"
+
+[[package]]
+name = "numpy"
+version = "2.1.0"
+dependencies = []
+
+[[package]]
+name = "requests"
+version = "2.32.5"
+dependencies = [
+    { name = "urllib3" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.2.0"
+dependencies = []

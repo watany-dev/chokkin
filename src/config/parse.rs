@@ -55,8 +55,9 @@ pub fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError
 pub struct PyProjectConfig {
     pub partial: PartialConfig,
     pub uv_workspace: Option<UvWorkspaceHint>,
-    /// `[tool.uv.sources]` path entries as written, keyed by distribution name.
-    pub uv_path_sources: BTreeMap<String, String>,
+    /// `[tool.uv.sources]` path entries as written, keyed by distribution name;
+    /// a marker-scoped array contributes each distinct `path` in order.
+    pub uv_path_sources: BTreeMap<String, Vec<String>>,
 }
 
 /// Read `[tool.chokkin]` from `pyproject.toml` with its `[tool.uv]` member hints.
@@ -72,8 +73,8 @@ pub fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, ConfigErro
     let uv_path_sources = sources
         .into_iter()
         .filter_map(|(name, value)| {
-            let path = value.get("path")?.as_str()?.to_owned();
-            Some((name, path))
+            let paths = source_paths(&value);
+            (!paths.is_empty()).then_some((name, paths))
         })
         .collect();
     let uv_workspace = workspace
@@ -89,6 +90,24 @@ pub fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, ConfigErro
         uv_workspace,
         uv_path_sources,
     })
+}
+
+/// A source is one table or an array of marker-scoped tables (issue #508).
+fn source_paths(value: &toml::Value) -> Vec<String> {
+    let entries = match value {
+        toml::Value::Array(items) => items.as_slice(),
+        other => std::slice::from_ref(other),
+    };
+    let mut paths: Vec<String> = Vec::new();
+    for path in entries
+        .iter()
+        .filter_map(|entry| entry.get("path")?.as_str())
+    {
+        if !paths.iter().any(|seen| seen == path) {
+            paths.push(path.to_owned());
+        }
+    }
+    paths
 }
 
 fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {

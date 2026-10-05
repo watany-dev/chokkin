@@ -17,7 +17,7 @@ pub fn resolve_workspace_members(
     root: &ProjectRoot,
     config: &ChokkinConfig,
     uv_workspace: Option<&UvWorkspaceHint>,
-    uv_path_sources: &BTreeMap<String, String>,
+    uv_path_sources: &BTreeMap<String, Vec<String>>,
 ) -> Result<Vec<ResolvedWorkspaceMember>, ConfigError> {
     let mut members = BTreeMap::new();
 
@@ -51,23 +51,25 @@ pub fn resolve_workspace_members(
 
 /// Issue #499: a path source that is its own project inside the root (`lib/`
 /// in streamlit) declares the dependencies of the code under it, so it is read
-/// like a uv workspace member. Trees outside the root are not scanned.
+/// like a uv workspace member. Trees outside the root are not scanned. Of a
+/// marker-scoped array (#508) the first qualifying path wins, so member ids
+/// stay unique.
 fn path_source_members(
     root: &Path,
-    uv_path_sources: &BTreeMap<String, String>,
+    uv_path_sources: &BTreeMap<String, Vec<String>>,
 ) -> Vec<ResolvedWorkspaceMember> {
     let Ok(canonical_root) = root.canonicalize() else {
         return Vec::new();
     };
     uv_path_sources
         .iter()
-        .filter_map(|(name, path)| {
-            let dir = root.join(path).canonicalize().ok()?;
-            let rel = dir.strip_prefix(&canonical_root).ok()?;
-            if rel.as_os_str().is_empty() || !declares_project(&dir.join("pyproject.toml")) {
-                return None;
-            }
-            let rel = normalize_relative_path(rel.to_string_lossy().as_ref());
+        .filter_map(|(name, paths)| {
+            let rel = paths.iter().find_map(|path| {
+                let dir = root.join(path).canonicalize().ok()?;
+                let rel = dir.strip_prefix(&canonical_root).ok()?;
+                (!rel.as_os_str().is_empty() && declares_project(&dir.join("pyproject.toml")))
+                    .then(|| normalize_relative_path(rel.to_string_lossy().as_ref()))
+            })?;
             Some(ResolvedWorkspaceMember {
                 id: name.clone(),
                 pyproject_toml: Some(format!("{rel}/pyproject.toml")),
@@ -425,14 +427,19 @@ mod tests {
             fs::create_dir_all(temp.path().join(dir)).expect("mkdir");
             fs::write(temp.path().join(dir).join("pyproject.toml"), pyproject).expect("write");
         }
-        let sources: BTreeMap<String, String> = [
-            ("acme", "./lib"),
-            ("tools", "tools"),
-            ("outside", "../elsewhere"),
-            ("self", "."),
+        let sources: BTreeMap<String, Vec<String>> = [
+            ("acme", vec!["../elsewhere", "./lib", "lib"]),
+            ("tools", vec!["tools"]),
+            ("outside", vec!["../elsewhere"]),
+            ("self", vec!["."]),
         ]
         .into_iter()
-        .map(|(name, path)| (name.to_owned(), path.to_owned()))
+        .map(|(name, paths)| {
+            (
+                name.to_owned(),
+                paths.into_iter().map(str::to_owned).collect(),
+            )
+        })
         .collect();
         let members =
             resolve_workspace_members(&root(temp.path()), &default_config(), None, &sources)
