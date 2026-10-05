@@ -276,8 +276,13 @@ fn relative_path(root: &Path, path: &Path) -> Result<String, ConfigError> {
         })
 }
 
+/// `./packages/*/` and `packages\*` both become `packages/*`: a `.` or empty
+/// segment left in would never match a walked path.
 fn normalize_relative_path(path: &str) -> String {
-    path.trim_matches('/').trim_matches('\\').replace('\\', "/")
+    path.split(['/', '\\'])
+        .filter(|part| !matches!(*part, "" | "."))
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[cfg(test)]
@@ -337,6 +342,32 @@ mod tests {
         .expect("resolve");
         let paths: Vec<_> = members.iter().map(|member| member.path.as_str()).collect();
         assert_eq!(paths, [".hidden/pkg"]);
+    }
+
+    fn uv_members(root_path: &Path, patterns: &[&str]) -> Vec<(String, String)> {
+        resolve_workspace_members(
+            &root(root_path),
+            &default_config(),
+            Some(&UvWorkspaceHint {
+                members: patterns.iter().map(|p| (*p).to_owned()).collect(),
+            }),
+            &BTreeMap::new(),
+        )
+        .expect("resolve")
+        .into_iter()
+        .map(|member| (member.id, member.path))
+        .collect()
+    }
+
+    #[test]
+    fn uv_member_patterns_and_override_paths_drop_dot_segments() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write(temp.path(), "packages/api/pyproject.toml", "");
+        assert_eq!(
+            uv_members(temp.path(), &["./packages/*/"]),
+            [("api".to_owned(), "packages/api".to_owned())]
+        );
+        assert_eq!(normalize_relative_path("./lib/./x/"), "lib/x");
     }
 
     fn write(root: &Path, file: &str, text: &str) {
