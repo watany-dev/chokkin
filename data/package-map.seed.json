@@ -492,6 +492,38 @@
       "imports": [
         "ulid"
       ]
+    },
+    {
+      "distribution": "markdown-it-py",
+      "imports": [
+        "markdown_it"
+      ]
+    },
+    {
+      "distribution": "pytest",
+      "imports": [
+        "_pytest",
+        "pytest"
+      ]
+    },
+    {
+      "distribution": "odfpy",
+      "imports": [
+        "odf"
+      ]
+    },
+    {
+      "distribution": "matplotlib",
+      "imports": [
+        "matplotlib",
+        "mpl_toolkits"
+      ]
+    },
+    {
+      "distribution": "pydocket",
+      "imports": [
+        "docket"
+      ]
     }
   ],
   "auto_packages": [
@@ -508,6 +540,7 @@
     "autopep8",
     "backoff",
     "bcrypt",
+    "billiard",
     "bleach",
     "blinker",
     "bokeh",
@@ -547,6 +580,7 @@
     "h2",
     "hpack",
     "html5lib",
+    "huggingface-hub",
     "humanize",
     "hyperframe",
     "importlib-metadata",
@@ -628,6 +662,7 @@
     "threadpoolctl",
     "toml",
     "tomlkit",
+    "torch",
     "tornado",
     "traitlets",
     "trio",

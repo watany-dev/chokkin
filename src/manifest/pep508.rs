@@ -3,7 +3,8 @@
 //! Only the structure chokkin reads is recovered (name, extras, version
 //! specifier or URL, marker); input is still validated against the grammar so
 //! malformed lines keep surfacing as warnings. Markers and URLs are kept
-//! verbatim instead of being normalized.
+//! verbatim instead of being normalized. `packaging` is the reference for what
+//! is accepted; `tests/pep508_packaging_golden.rs` pins that.
 
 use std::sync::LazyLock;
 
@@ -40,7 +41,8 @@ pub enum Operator {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionSpecifier {
     pub operator: Operator,
-    /// Release segments (`3.10.1` -> `[3, 10, 1]`).
+    /// Release segments (`3.10.1` -> `[3, 10, 1]`), saturating at `u64::MAX`
+    /// since PEP 440 allows segments of any size.
     pub release: Vec<u64>,
     /// Operator and version as written, without inner whitespace.
     pub text: String,
@@ -63,7 +65,10 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
     }
 
     let (version_or_url, marker) = if let Some(after) = rest.strip_prefix('@') {
-        let (url, tail) = split_url(after.trim_start());
+        let after = after.trim_start();
+        let (url, tail) = after
+            .split_once([' ', '\t'])
+            .map_or((after, ""), |(url, _)| (url, &after[url.len()..]));
         if !has_url_scheme(url) {
             return None;
         }
@@ -102,11 +107,6 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
         (version, marker)
     };
 
-    // Follow pip: a bare `name.tar.gz` / `name.whl` is a file, not a project.
-    if version_or_url.is_none() && looks_like_archive(name) {
-        return None;
-    }
-
     let marker = match marker {
         Some(raw) => {
             let raw = raw.trim();
@@ -140,30 +140,8 @@ fn parse_extras(inner: &str) -> Option<Vec<String>> {
         .collect()
 }
 
-/// Split a direct URL from what follows it. The URL runs up to whitespace that
-/// precedes `;`, `#`, or the end (so local paths may contain spaces), or up to
-/// and including a `;`/`#` that is followed by whitespace.
-fn split_url(input: &str) -> (&str, &str) {
-    let mut chars = input.char_indices().peekable();
-    while let Some((index, ch)) = chars.next() {
-        if matches!(ch, '\r' | '\n') {
-            return (&input[..index], &input[index..]);
-        }
-        if ch.is_whitespace() {
-            let after = input[index..].trim_start();
-            if after.is_empty() || after.starts_with([';', '#']) {
-                return (&input[..index], &input[index..]);
-            }
-        }
-        if matches!(ch, ';' | '#') && chars.peek().is_some_and(|&(_, next)| next.is_whitespace()) {
-            let end = index + ch.len_utf8();
-            return (&input[..end], &input[end..]);
-        }
-    }
-    (input, "")
-}
-
-fn looks_like_archive(name: &str) -> bool {
+/// pip reads a bare name with an archive extension (`foo.whl`) as a file.
+pub(super) fn looks_like_archive(name: &str) -> bool {
     [
         ".whl",
         ".tbz",
@@ -182,37 +160,12 @@ fn looks_like_archive(name: &str) -> bool {
     .any(|extension| name.len() > extension.len() && name.ends_with(extension))
 }
 
-/// Schemes pip accepts for a direct reference.
+/// RFC 3986 scheme (`[A-Za-z][A-Za-z0-9+.-]*:`); `packaging` accepts any URL.
 fn has_url_scheme(url: &str) -> bool {
     url.split_once(':').is_some_and(|(scheme, _)| {
-        matches!(
-            scheme,
-            "file"
-                | "http"
-                | "https"
-                | "git+git"
-                | "git+http"
-                | "git+https"
-                | "git+ssh"
-                | "git+file"
-                | "hg+http"
-                | "hg+https"
-                | "hg+ssh"
-                | "hg+file"
-                | "hg+static-http"
-                | "svn+svn"
-                | "svn+http"
-                | "svn+https"
-                | "svn+ssh"
-                | "svn+file"
-                | "bzr+http"
-                | "bzr+https"
-                | "bzr+ssh"
-                | "bzr+sftp"
-                | "bzr+ftp"
-                | "bzr+lp"
-                | "bzr+file"
-        )
+        let mut chars = scheme.chars();
+        chars.next().is_some_and(|ch| ch.is_ascii_alphabetic())
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '-'))
     })
 }
 
@@ -236,39 +189,39 @@ fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
     .into_iter()
     .find(|(op, _)| input.starts_with(op))?;
     let version = input[op_text.len()..].trim();
-    if version.is_empty() || version.contains(char::is_whitespace) {
+    if version.contains(char::is_whitespace) {
         return None;
     }
-
+    // `===` compares strings, so it accepts versions PEP 440 cannot parse.
+    if operator == Operator::ExactEqual {
+        let release = VERSION_RE
+            .captures(version)
+            .and_then(|captures| captures.name("release"))
+            .map(|release| parse_release(release.as_str()))
+            .unwrap_or_default();
+        return Some(VersionSpecifier {
+            operator,
+            release,
+            text: format!("{op_text}{version}"),
+        });
+    }
     let (operator, body) = match (operator, version.strip_suffix(".*")) {
         (Operator::Equal, Some(prefix)) => (Operator::EqualStar, prefix),
         (Operator::NotEqual, Some(prefix)) => (Operator::NotEqualStar, prefix),
         (_, Some(_)) => return None,
         (_, None) => (operator, version),
     };
-    // `===` compares strings, so it accepts versions PEP 440 cannot parse.
-    let Some(captures) = VERSION_RE.captures(body) else {
-        return (operator == Operator::ExactEqual).then(|| VersionSpecifier {
-            operator,
-            release: Vec::new(),
-            text: format!("{op_text}{version}"),
-        });
-    };
+    let captures = VERSION_RE.captures(body)?;
     let has_suffix = ["pre", "post", "dev"]
         .iter()
         .any(|group| captures.name(group).is_some());
     let has_local = captures.name("local").is_some();
-    let release = captures
-        .name("release")?
-        .as_str()
-        .split('.')
-        .map(|segment| segment.parse::<u64>().ok())
-        .collect::<Option<Vec<_>>>()?;
+    let release = parse_release(captures.name("release")?.as_str());
 
     let valid = match operator {
         Operator::EqualStar | Operator::NotEqualStar => !has_suffix && !has_local,
         Operator::TildeEqual => release.len() >= 2 && !has_local,
-        Operator::Equal | Operator::NotEqual | Operator::ExactEqual => true,
+        Operator::Equal | Operator::NotEqual => true,
         _ => !has_local,
     };
     if !valid {
@@ -285,6 +238,15 @@ fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
         release,
         text: format!("{op_text}{version}"),
     })
+}
+
+/// Release segments matched by [`VERSION_RE`] (ASCII digits only), so the
+/// only parse failure is overflow.
+fn parse_release(release: &str) -> Vec<u64> {
+    release
+        .split('.')
+        .map(|segment| segment.parse::<u64>().unwrap_or(u64::MAX))
+        .collect()
 }
 
 /// PEP 440 version (the `packaging` reference pattern, anchored).
@@ -498,24 +460,44 @@ mod tests {
     }
 
     #[test]
-    fn url_may_contain_spaces_before_marker() {
-        let requirement = parse("pkg @ file:///tmp/my dir/x ; os_name == 'nt'").expect("valid");
+    fn url_ends_at_whitespace() {
+        let requirement = parse("pkg @ https://h/x\t; os_name == 'nt'").expect("valid");
+        assert_eq!(requirement.version_or_url.as_deref(), Some("https://h/x"));
+        assert_eq!(requirement.marker.as_deref(), Some("os_name == 'nt'"));
+        // Like `packaging`, a `;` with no whitespace before it stays in the URL.
+        let requirement = parse("pkg @ https://h/x;os_name=='nt'").expect("valid");
         assert_eq!(
             requirement.version_or_url.as_deref(),
-            Some("file:///tmp/my dir/x")
+            Some("https://h/x;os_name=='nt'")
         );
-        let requirement = parse("pkg @ https://h/x trailing").expect("valid");
-        assert_eq!(
-            requirement.version_or_url.as_deref(),
-            Some("https://h/x trailing")
-        );
+        assert_eq!(requirement.marker, None);
+        for input in [
+            "pkg @ https://h/a b.whl",
+            "pkg @ file:///tmp/my dir/x ; os_name == 'nt'",
+        ] {
+            assert_eq!(parse(input), None, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn url_scheme_follows_rfc3986_case_insensitively() {
+        for input in [
+            "pkg @ HTTPS://h/foo.whl",
+            // `packaging` ends a URL only at a space or tab.
+            "pkg @ https://h/x\u{a0}y",
+            "pkg @ Git+HTTPS://h/r.git",
+            "pkg @ ftp://h/foo.tar.gz",
+        ] {
+            assert!(parse(input).is_some(), "{input:?}");
+        }
+        for input in ["pkg @ ./local", "pkg @ 1http://h/x", "pkg @ :x"] {
+            assert_eq!(parse(input), None, "{input:?}");
+        }
     }
 
     #[test]
     fn rejects_malformed_requirements() {
         for input in [
-            "pkg @ ./local",
-            "pkg @ ftp://h/x",
             "pkg()",
             "pkg (>=1.0",
             "pkg[x",
@@ -531,9 +513,9 @@ mod tests {
             "pkg ; python_version << '3'",
             "pkg ; (python_version == '3'",
             "pkg ; python_version == '3",
-            "foo.tar.gz",
-            "foo.whl",
-            "foo.tar",
+            "pkg[tests,]",
+            "pkg[,tests]",
+            "pkg ==",
         ] {
             assert_eq!(parse(input), None, "{input:?}");
         }
@@ -546,11 +528,17 @@ mod tests {
             "pkg ===1.0",
             "legacy===2013b-custom",
             "pkg ===foobar",
+            "pkg ===1.*",
+            "pkg ===",
+            "pkg ==1.99999999999999999999",
             "pkg ==1.0+local",
             "pkg ~=1.0.post1",
             "pkg !=2.0.*",
             "pkg ; extra not in 'a' or (os.name == 'nt' and 'x' in sys_platform)",
             "foo.tar.bz3",
+            // pip reads these as files; that is applied in `pep508_util`.
+            "foo.tar.gz",
+            "foo.whl[tests]",
         ] {
             assert!(parse(input).is_some(), "{input:?}");
         }
@@ -620,28 +608,24 @@ mod tests {
         assert_eq!(parse_version_specifiers(">=3.8,"), None);
     }
 
+    #[test]
+    fn oversized_release_segment_saturates() {
+        let specifiers = parse_version_specifiers(">=3.99999999999999999999").expect("valid");
+        assert_eq!(specifiers[0].release, [3, u64::MAX]);
+        let specifiers = parse_version_specifiers("===3.11.*").expect("valid");
+        assert_eq!(specifiers[0].release, Vec::<u64>::new());
+    }
+
     mod props {
         use super::*;
         use proptest::prelude::*;
 
         proptest! {
             #[test]
-            fn split_url_is_a_partition(input in "[a;# \t\r\n\u{3000}é]{0,12}") {
-                let (url, rest) = split_url(&input);
-                prop_assert_eq!(format!("{url}{rest}"), input.clone());
-                prop_assert!(rest.is_empty() || rest.starts_with(char::is_whitespace));
-            }
-
-            #[test]
-            fn url_with_trailing_whitespace_is_never_accepted(
-                input in "a[a;# \t\r\n\u{3000}é]{0,12}",
-            ) {
-                let (url, rest) = split_url(&input);
-                let tail = rest.trim_start();
-                prop_assert!(
-                    !url.ends_with(char::is_whitespace)
-                        || !(tail.is_empty() || tail.starts_with(';'))
-                );
+            fn direct_url_never_contains_space_or_tab(input in "a @ [a:/;# \t\u{3000}é]{0,16}") {
+                if let Some(url) = parse_requirement(&input).and_then(|req| req.version_or_url) {
+                    prop_assert!(!url.contains([' ', '\t']));
+                }
             }
 
             #[test]

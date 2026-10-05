@@ -402,3 +402,50 @@ fn normalized_root_resolves_only_through_a_declared_or_locked_name() {
         chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "e2e_config"
     )));
 }
+
+#[test]
+fn affixed_declared_name_resolves_as_maybe() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"affix-demo\"\nversion = \"0.1.0\"\ndependencies = [\"widget-py\", \"pygadget\"]\n",
+        ),
+        (
+            "uv.lock",
+            "version = 1\n\n[[package]]\nname = \"widget-py\"\nversion = \"1.0\"\ndependencies = [{ name = \"python-doohickey\" }]\n\n[[package]]\nname = \"python-doohickey\"\nversion = \"1.0\"\n",
+        ),
+        (
+            "app.py",
+            "import widget\nimport gadget\nimport doohickey\nimport gizmo\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let root = |name: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == name)
+            .map_or_else(
+                || panic!("{name} import"),
+                |resolved| {
+                    (
+                        resolved.origin,
+                        resolved.distribution.clone(),
+                        resolved.confidence,
+                    )
+                },
+            )
+    };
+
+    assert_eq!(
+        root("widget"),
+        (
+            ModuleOrigin::ThirdParty,
+            Some("widget-py".to_owned()),
+            ResolveConfidence::Maybe
+        )
+    );
+    assert_eq!(root("gadget").1.as_deref(), Some("pygadget"));
+    assert_eq!(root("doohickey").1.as_deref(), Some("python-doohickey"));
+    assert_eq!(root("gizmo").0, ModuleOrigin::Unknown);
+}

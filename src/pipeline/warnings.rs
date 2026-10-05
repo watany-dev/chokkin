@@ -76,10 +76,18 @@ fn write_manifest_warning(
                 "manifest: Hatch sections detected (partial dependency extraction)"
             )
         },
-        ManifestWarning::InvalidRequirementLine { file, line, raw } => write!(
-            formatter,
-            "manifest: invalid requirement at `{file}:{line}`: {raw}"
-        ),
+        ManifestWarning::InvalidRequirementLine {
+            file,
+            line,
+            label,
+            raw,
+        } => {
+            let at = line.map_or_else(
+                || format!("`{file}` ({label})"),
+                |line| format!("`{file}:{line}`"),
+            );
+            write!(formatter, "manifest: invalid requirement at {at}: {raw}")
+        },
         ManifestWarning::SetupPyPartiallyStatic { file, argument } => write!(
             formatter,
             "manifest: partially static setup.py `{file}` (argument `{argument}`)"
@@ -148,6 +156,7 @@ pub(super) fn collect_warnings(
 #[cfg(test)]
 mod tests {
     use crate::config::PluginId;
+    use crate::manifest::ManifestWarning;
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
 
@@ -247,5 +256,26 @@ mod tests {
         for (warning, expected) in cases {
             assert_eq!(warning.to_string(), expected);
         }
+    }
+
+    #[test]
+    fn invalid_requirement_shows_line_or_label() {
+        let warning = |line| {
+            ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
+                file: "pyproject.toml".to_owned(),
+                line,
+                label: "project.dependencies[0]".to_owned(),
+                raw: "foo @".to_owned(),
+            })
+        };
+
+        assert_eq!(
+            warning(Some(3)).to_string(),
+            "manifest: invalid requirement at `pyproject.toml:3`: foo @"
+        );
+        assert_eq!(
+            warning(None).to_string(),
+            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @"
+        );
     }
 }

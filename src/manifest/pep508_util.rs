@@ -1,5 +1,6 @@
 //! PEP 508 parsing helpers.
 
+use super::pep508::{Requirement, looks_like_archive};
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::warnings::ManifestWarning;
 
@@ -41,39 +42,60 @@ pub fn extract_egg_name(spec: &str) -> Option<String> {
     None
 }
 
-/// Parse a PEP 508 requirement string into a declared dependency.
+/// Parse a requirements-file line into a declared dependency, the way pip reads it.
 pub fn parse_requirement(
     raw: &str,
     context: DependencyContext,
     origin: DependencyOrigin,
 ) -> Result<DeclaredDependency, ManifestWarning> {
+    parse_with(raw, context, origin, parse_pip_requirement)
+}
+
+/// Parse a requirement from a PEP 508 manifest field (`pyproject.toml`,
+/// `setup.cfg`, `setup.py`).
+///
+/// Unlike [`parse_requirement`], a name ending in an archive extension
+/// (`foo.tlz`, `foo.whl[x]`) is a distribution name here, as in `packaging`.
+pub fn parse_pep508_requirement(
+    raw: &str,
+    context: DependencyContext,
+    origin: DependencyOrigin,
+) -> Result<DeclaredDependency, ManifestWarning> {
+    parse_with(raw, context, origin, super::pep508::parse_requirement)
+}
+
+fn parse_with(
+    raw: &str,
+    context: DependencyContext,
+    origin: DependencyOrigin,
+    parse: fn(&str) -> Option<Requirement>,
+) -> Result<DeclaredDependency, ManifestWarning> {
     let trimmed = raw.trim();
-    let (name, extras, marker, specifier, opaque) =
-        if let Some(requirement) = super::pep508::parse_requirement(trimmed) {
-            (
-                normalize_distribution_name(&requirement.name),
-                requirement.extras,
-                requirement.marker,
-                requirement.version_or_url,
-                false,
-            )
-        } else if let Some(name) = extract_egg_name(trimmed) {
-            (name, Vec::new(), None, Some(trimmed.to_owned()), false)
-        } else if is_url_like(trimmed) {
-            (
-                String::new(),
-                Vec::new(),
-                None,
-                Some(trimmed.to_owned()),
-                true,
-            )
-        } else {
-            return Err(ManifestWarning::InvalidRequirementLine {
-                file: origin.file.clone(),
-                line: origin.line.unwrap_or(0),
-                raw: raw.to_owned(),
-            });
-        };
+    let (name, extras, marker, specifier, opaque) = if let Some(requirement) = parse(trimmed) {
+        (
+            normalize_distribution_name(&requirement.name),
+            requirement.extras,
+            requirement.marker,
+            requirement.version_or_url,
+            false,
+        )
+    } else if is_direct_reference(trimmed) {
+        // `name @ url` that failed the grammar (e.g. a space in the URL) is
+        // invalid, not an opaque URL line.
+        return Err(invalid(raw, origin));
+    } else if let Some(name) = extract_egg_name(trimmed) {
+        (name, Vec::new(), None, Some(trimmed.to_owned()), false)
+    } else if is_url_like(trimmed) {
+        (
+            String::new(),
+            Vec::new(),
+            None,
+            Some(trimmed.to_owned()),
+            true,
+        )
+    } else {
+        return Err(invalid(raw, origin));
+    };
     Ok(DeclaredDependency {
         name,
         extras,
@@ -86,32 +108,35 @@ pub fn parse_requirement(
     })
 }
 
-/// Parse a requirement from a PEP 508 manifest field (`pyproject.toml`,
-/// `setup.cfg`, `setup.py`).
-///
-/// [`parse_requirement`] follows pip and rejects a bare name ending in an archive
-/// extension (`foo.tlz`, `foo.whl`) as a file reference, but PEP 508 and
-/// `packaging` read it as a distribution name. requirements-file dependency
-/// lines keep pip's reading through [`parse_requirement`].
-pub fn parse_pep508_requirement(
-    raw: &str,
-    context: DependencyContext,
-    origin: DependencyOrigin,
-) -> Result<DeclaredDependency, ManifestWarning> {
-    let trimmed = raw.trim();
-    if leading_name_token(trimmed) == trimmed && is_strict_pep508_name(trimmed) {
-        return Ok(DeclaredDependency {
-            name: normalize_distribution_name(trimmed),
-            extras: Vec::new(),
-            marker: None,
-            specifier: None,
-            context,
-            origin,
-            opaque: false,
-            included_via: Vec::new(),
-        });
+fn invalid(raw: &str, origin: DependencyOrigin) -> ManifestWarning {
+    ManifestWarning::InvalidRequirementLine {
+        file: origin.file,
+        line: origin.line,
+        label: origin.label,
+        raw: raw.to_owned(),
     }
-    parse_requirement(raw, context, origin)
+}
+
+fn egg_name_fallback(trimmed: &str) -> Option<String> {
+    if is_direct_reference(trimmed) {
+        return None;
+    }
+    extract_egg_name(trimmed)
+}
+
+/// `name [extras] @ ...`, the PEP 508 direct-reference form.
+fn is_direct_reference(trimmed: &str) -> bool {
+    trimmed.split_once('@').is_some_and(|(head, _)| {
+        let name = head.split('[').next().unwrap_or(head).trim();
+        leading_name_token(name) == name && is_strict_pep508_name(name)
+    })
+}
+
+/// pip reads a bare `name.whl` / `name.tar.gz` (no version or URL) as a file.
+fn parse_pip_requirement(trimmed: &str) -> Option<Requirement> {
+    super::pep508::parse_requirement(trimmed).filter(|requirement| {
+        requirement.version_or_url.is_some() || !looks_like_archive(&requirement.name)
+    })
 }
 
 /// Distribution name of a manifest-field requirement, read the way
@@ -119,17 +144,18 @@ pub fn parse_pep508_requirement(
 #[must_use]
 pub fn pep508_distribution_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
-    if leading_name_token(trimmed) == trimmed && is_strict_pep508_name(trimmed) {
-        return Some(normalize_distribution_name(trimmed));
-    }
-    requirement_name(trimmed)
-}
-
-#[must_use]
-pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
     super::pep508::parse_requirement(trimmed)
         .map(|requirement| normalize_distribution_name(&requirement.name))
-        .or_else(|| extract_egg_name(trimmed))
+        .or_else(|| egg_name_fallback(trimmed))
+}
+
+/// Distribution name of a requirements-file line, read the way
+/// [`parse_requirement`] reads it.
+#[must_use]
+pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
+    parse_pip_requirement(trimmed)
+        .map(|requirement| normalize_distribution_name(&requirement.name))
+        .or_else(|| egg_name_fallback(trimmed))
 }
 
 /// Leading run of PEP 508 name characters (`[A-Za-z0-9._-]`).
@@ -154,10 +180,10 @@ pub(super) fn is_strict_pep508_name(name: &str) -> bool {
 #[must_use]
 pub(super) fn is_url_like(spec: &str) -> bool {
     spec.contains("://")
-        || spec.starts_with("git+")
-        || spec.starts_with("hg+")
-        || spec.starts_with("bzr+")
-        || spec.starts_with("svn+")
+        || ["git+", "hg+", "bzr+", "svn+"].iter().any(|prefix| {
+            spec.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
 }
 
 #[cfg(test)]
@@ -232,7 +258,8 @@ mod tests {
                 result.err(),
                 Some(ManifestWarning::InvalidRequirementLine {
                     file: "requirements.txt".to_owned(),
-                    line: 3,
+                    line: Some(3),
+                    label: "requirements.txt".to_owned(),
                     raw: raw.to_owned(),
                 })
             );
@@ -261,6 +288,85 @@ mod tests {
             assert!(!dep.opaque);
             assert_eq!(dep.specifier, None);
         }
+    }
+
+    #[test]
+    fn pip_reading_treats_archive_like_bare_name_as_file() {
+        let origin = DependencyOrigin {
+            file: "requirements.txt".to_owned(),
+            line: Some(1),
+            label: "requirements.txt".to_owned(),
+        };
+        for raw in ["foo.tar.gz", "foo.whl", "foo.whl[tests]"] {
+            assert!(
+                parse_requirement(raw, DependencyContext::Runtime, origin.clone()).is_err(),
+                "{raw:?}"
+            );
+            assert_eq!(requirement_name(raw), None, "{raw:?}");
+        }
+        let dep = parse_pep508_requirement("foo.whl[tests]", DependencyContext::Runtime, origin)
+            .expect("PEP 508 reads it as a name");
+        assert_eq!(dep.name, "foo-whl");
+        assert_eq!(dep.extras, ["tests"]);
+        assert_eq!(
+            pep508_distribution_name("foo.whl[tests]").as_deref(),
+            Some("foo-whl")
+        );
+    }
+
+    #[test]
+    fn invalid_manifest_field_keeps_its_label() {
+        let result = parse_pep508_requirement(
+            "pkg >=",
+            DependencyContext::Runtime,
+            DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[2]".to_owned(),
+            },
+        );
+        assert_eq!(
+            result.err(),
+            Some(ManifestWarning::InvalidRequirementLine {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[2]".to_owned(),
+                raw: "pkg >=".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_direct_reference_is_not_an_opaque_url() {
+        let origin = DependencyOrigin {
+            file: "requirements.txt".to_owned(),
+            line: Some(1),
+            label: "requirements.txt".to_owned(),
+        };
+        for raw in [
+            "foo @ https://h/a b.whl",
+            "foo[x] @ https://h/a b.whl#egg=foo",
+        ] {
+            assert!(
+                parse_requirement(raw, DependencyContext::Runtime, origin.clone()).is_err(),
+                "{raw:?}"
+            );
+        }
+        let dep = parse_requirement(
+            "git+https://h/r.git@v1#egg=foo",
+            DependencyContext::Runtime,
+            origin,
+        )
+        .expect("VCS URL with a ref keeps its egg name");
+        assert_eq!(dep.name, "foo");
+    }
+
+    #[test]
+    fn url_like_prefix_is_case_insensitive() {
+        assert!(is_url_like("Git+ssh@host/repo"));
+        assert!(is_url_like("HTTPS://h/x"));
+        assert!(!is_url_like("gi"));
+        assert!(!is_url_like("pkg>=1"));
     }
 
     #[test]
