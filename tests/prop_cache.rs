@@ -83,7 +83,9 @@ proptest! {
     #[test]
     fn fingerprint_is_stable_for_same_content(
         bytes in prop::collection::vec(any::<u8>(), 0..64),
-        dir_name in "[a-z]{1,5}",
+        dir_name in "[a-z]{1,5}".prop_filter("not a Windows reserved device name", |name| {
+            !matches!(name.as_str(), "aux" | "con" | "nul" | "prn")
+        }),
     ) {
         let dir = TempDir::new().expect("tempdir");
         std::fs::create_dir_all(dir.path().join(&dir_name)).expect("mkdir");

@@ -666,3 +666,21 @@ fn include_group_is_checked_once_under_its_declaring_group() {
             .any(|line| line == "included via dependency-groups: server -> Shared_Libs")
     );
 }
+
+#[test]
+fn dev_group_declaration_does_not_hide_unused_setup_py_runtime_declaration() {
+    for strict in [false, true] {
+        let report = reconcile_fixture_with_strict("setup_py_runtime_behind_dev_group", strict);
+        let httpx =
+            candidate_for_distribution(&report, RuleId::Chk002, "httpx").expect("httpx CHK002");
+        assert!(
+            matches!(
+                httpx.origins.as_slice(),
+                [chokkin::Origin::Manifest(origin)] if origin.file == "setup.py"
+            ),
+            "strict={strict}: {:?}",
+            httpx.origins
+        );
+        assert!(has_dist_rule(&report, RuleId::Chk002, "requests"));
+    }
+}

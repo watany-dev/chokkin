@@ -1,0 +1,7 @@
+[project]
+name = "acme"
+version = "0.1.0"
+dynamic = ["dependencies"]
+
+[dependency-groups]
+dev = ["httpx"]
