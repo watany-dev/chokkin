@@ -707,9 +707,9 @@ mod tests {
                 let hint = patterns.as_ref().map(|patterns| UvWorkspaceHint {
                     members: patterns.iter().map(|p| (*p).to_owned()).collect(),
                 });
-                let sources: BTreeMap<String, String> = sources
+                let sources: BTreeMap<String, Vec<String>> = sources
                     .into_iter()
-                    .map(|(name, path)| (name.to_owned(), path.to_owned()))
+                    .map(|(name, path)| (name.to_owned(), vec![path.to_owned()]))
                     .collect();
                 let members = resolve_workspace_members(
                     &root(temp.path()),
