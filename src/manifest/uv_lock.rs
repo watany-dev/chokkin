@@ -42,10 +42,14 @@ pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
         source,
     })?;
 
-    let lock: UvLock = toml::from_str(&contents).map_err(|error| ManifestError::InvalidUvLock {
-        path: path.to_path_buf(),
-        message: error.to_string(),
-    })?;
+    // A filtered lock that no longer parses means the strip guessed wrong, so
+    // the full text decides whether the file is really invalid.
+    let lock: UvLock = toml::from_str(&strip_artifacts(&contents))
+        .or_else(|_| toml::from_str(&contents))
+        .map_err(|error| ManifestError::InvalidUvLock {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
 
     let mut graph = LockfileGraph::default();
     for package in lock.package {
@@ -77,6 +81,25 @@ fn dependency_names(deps: &[UvDependency]) -> Vec<String> {
             UvDependency::Other(_) => None,
         })
         .collect()
+}
+
+/// Drop the `sdist` and `wheels` lines uv writes for every package: they are
+/// ~95% of a lock's bytes and TOML parsing them dominated the probe of a
+/// monorepo with hundreds of member lockfiles (#513).
+fn strip_artifacts(contents: &str) -> String {
+    let mut kept = String::with_capacity(contents.len() / 16);
+    let mut in_wheels = false;
+    for line in contents.lines() {
+        if in_wheels {
+            in_wheels = line != "]";
+        } else if line == "wheels = [" {
+            in_wheels = true;
+        } else if !line.starts_with("sdist = ") && !line.starts_with("wheels = [{") {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    kept
 }
 
 #[cfg(test)]
@@ -125,6 +148,40 @@ mod tests {
         assert_eq!(
             graph.edges.get("psycopg"),
             Some(&vec!["typing-extensions".to_owned()])
+        );
+    }
+
+    #[test]
+    fn skips_sdist_and_wheels() {
+        let graph = parse(
+            "[[package]]\nname = \"acme\"\n\
+             sdist = { url = \"https://x/acme.tar.gz\", hash = \"sha256:00\" }\n\
+             wheels = [\n    { url = \"https://x/acme.whl\", hash = \"sha256:00\" },\n]\n\
+             dependencies = [{ name = \"idna\" }]\n\n\
+             [[package]]\nname = \"idna\"\n\
+             wheels = [{ url = \"https://x/idna.whl\" }]\n",
+        )
+        .expect("valid uv.lock");
+
+        assert_eq!(graph.edges.get("acme"), Some(&vec!["idna".to_owned()]));
+        assert_eq!(graph.edges.get("idna"), Some(&Vec::new()));
+    }
+
+    // The full-text fallback hides a wrong strip from `parse`, so check the
+    // filtered text itself.
+    #[test]
+    fn strip_artifacts_keeps_only_graph_lines() {
+        let stripped = strip_artifacts(
+            "[[package]]\nname = \"acme\"\n\
+             sdist = { url = \"https://x/acme.tar.gz\" }\n\
+             wheels = [\n    { url = \"https://x/acme.whl\" },\n]\n\
+             dependencies = [{ name = \"idna\" }]\n\
+             wheels = [{ url = \"https://x/idna.whl\" }]\n",
+        );
+
+        assert_eq!(
+            stripped,
+            "[[package]]\nname = \"acme\"\ndependencies = [{ name = \"idna\" }]\n"
         );
     }
 

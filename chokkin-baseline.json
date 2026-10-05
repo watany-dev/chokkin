@@ -94,6 +94,26 @@
       "target": "tests/fixtures/deps/include_group/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/library_lib_package_root/examples/demo.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/library_lib_package_root/examples/demo.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/library_lib_package_root/lib/acme/core.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/library_lib_package_root/lib/acme/core.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/library_without_entry_roots/src/acme/client.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/library_without_entry_roots/src/acme/client.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/library_without_entry_roots/src/tools/gen.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/library_without_entry_roots/src/tools/gen.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/lock_unused_pdm/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/lock_unused_pdm/src/acme/main.py"
