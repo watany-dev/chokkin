@@ -770,7 +770,6 @@ mod tests {
         })
     }
 
-    /// `(binary, file, line)` triples of every recorded binary usage.
     fn usages(result: &ConfigScanResult) -> Vec<(String, String, Option<u32>)> {
         result
             .binary_usages

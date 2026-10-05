@@ -42,7 +42,6 @@ pub(super) fn detect_duplicate_dependencies(
         .collect()
 }
 
-/// The declarations of one distribution that take part in a duplicate pair.
 fn duplicate_declarations<'a>(
     declarations: &[&'a DeclaredDependency],
 ) -> Vec<&'a DeclaredDependency> {
