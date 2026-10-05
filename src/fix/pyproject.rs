@@ -275,20 +275,43 @@ fn remove_array_index(
         return Ok(false);
     }
     let removed = array.remove(index);
-    // `Array::remove` keeps the next element's own prefix, so removing the
-    // head of `["a", "b"]` would leave `[ "b"]`. Comments are left alone.
-    if index == 0
-        && let Some(head) = array.get_mut(0)
-        && let Some(old) = removed.decor().prefix().and_then(blank_prefix)
-        && head.decor().prefix().and_then(blank_prefix).is_some()
-    {
-        head.decor_mut().set_prefix(old.to_owned());
+    let removed_prefix = removed
+        .decor()
+        .prefix()
+        .and_then(toml_edit::RawString::as_str)
+        .unwrap_or_default();
+    // The text after an element's comma up to its successor (`prefix`, or the
+    // array's `trailing` for the last one) starts with the rest of that line,
+    // comment included. Keep the previous line's end, drop the removed line's
+    // (#480 kept `[ "b"]` from becoming `["b"]`; this also keeps `# why` on
+    // the entry it was written for).
+    if let Some(next) = array.get_mut(index) {
+        let next_prefix = next
+            .decor()
+            .prefix()
+            .and_then(toml_edit::RawString::as_str)
+            .unwrap_or_default();
+        let joined = if next_prefix.contains('\n') {
+            join_line_ends(removed_prefix, next_prefix)
+        } else {
+            removed_prefix.to_owned()
+        };
+        next.decor_mut().set_prefix(joined);
+    } else {
+        let trailing = array.trailing().as_str().unwrap_or_default();
+        let joined = join_line_ends(removed_prefix, trailing);
+        array.set_trailing(joined);
     }
     Ok(true)
 }
 
-fn blank_prefix(raw: &toml_edit::RawString) -> Option<&str> {
-    raw.as_str().filter(|s| s.trim().is_empty())
+/// `before`'s first line end followed by everything after `after`'s first
+/// line end; `after` unchanged when `before` does not end a line.
+fn join_line_ends(before: &str, after: &str) -> String {
+    match (before.split_once('\n'), after.split_once('\n')) {
+        (Some((line_end, _)), Some((_, rest))) => format!("{line_end}\n{rest}"),
+        _ => after.to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +352,48 @@ dependencies = ["boto3>=1.0", "requests>=2.0"]
         remove_by_label(&path, "project.dependencies[0]", "alpha").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(updated.contains("dependencies = [\n    \"bravo\",\n]"));
+    }
+
+    #[test]
+    fn removal_keeps_each_inline_comment_on_its_own_entry() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\n    \"alpha\",  # a\n    \"bravo\",  # b\n    \"charlie\",  # c\n    \"delta\",  # d\n]\n",
+        )
+        .expect("write");
+
+        remove_by_label(&path, "project.dependencies[3]", "delta").expect("remove last");
+        remove_by_label(&path, "project.dependencies[1]", "bravo").expect("remove middle");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            updated,
+            "[project]\nname = \"demo\"\ndependencies = [\n    \"alpha\",  # a\n    \"charlie\",  # c\n]\n"
+        );
+        for (index, name) in [(1, "charlie"), (0, "alpha")] {
+            remove_by_label(&path, &format!("project.dependencies[{index}]"), name)
+                .expect("remove");
+        }
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\n]"), "{updated}");
+    }
+
+    #[test]
+    fn single_line_removal_keeps_spacing() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\"a\", \"b\", \"c\", \"d\"]\n",
+        )
+        .expect("write");
+        for (index, name) in [(3, "d"), (1, "b"), (0, "a")] {
+            remove_by_label(&path, &format!("project.dependencies[{index}]"), name)
+                .expect("remove");
+        }
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\"c\"]\n"), "{updated}");
     }
 
     #[test]
