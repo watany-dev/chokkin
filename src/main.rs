@@ -164,6 +164,7 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
             .chain(&report.warnings)
             .map(ToString::to_string)
             .collect(),
+        files: Some(report.runtime_file_counts()),
     };
 
     let output = render_issues(args.reporter_id(), &report.issues, &context);

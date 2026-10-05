@@ -1,0 +1,23 @@
+# Regression floors for scripts/oss-metrics.sh --expect (#495).
+#
+# Tab-separated columns (lines starting with # are ignored):
+#   slug          project slug from scripts/oss-clones.manifest
+#   runtime_min   floor on summary.files.reachable_runtime (90% of the last
+#                 accepted run); a drop means a package root, entry point or
+#                 workspace member was missed
+#   counts        per-rule issue counts of the last accepted run; a rule may
+#                 grow by at most max(5, count/5)
+#
+# Refresh: run scripts/oss-metrics.sh and copy the rows of
+# target/oss-metrics/expectations.tsv here once the new numbers are reviewed.
+#
+# sqlalchemy's floor is 0: its lib/ layout yields no entry root today, so no
+# runtime file is reachable. Raise the floor when that is fixed (#528).
+#
+# slug	runtime_min	counts
+sqlalchemy	0	CHK002=1,CHK008=6,CHK009=8
+streamlit	238	CHK004=5,CHK005=3,CHK006=551,CHK008=2,CHK009=1,CHK010=16
+llama_index	528	CHK001=688,CHK002=4,CHK003=36,CHK004=62,CHK005=5,CHK006=806,CHK007=41,CHK008=3,CHK010=122
+transformers	2431	CHK003=581,CHK006=15688,CHK007=933,CHK008=3,CHK010=5923
+openai-python	1709	CHK004=2,CHK005=1,CHK006=2804,CHK007=2084,CHK008=2,CHK009=3,CHK010=3
+langchain	204	CHK001=9,CHK003=67,CHK006=308,CHK008=2,CHK010=9

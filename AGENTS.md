@@ -189,6 +189,11 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `scripts/oss-recall.manifest` — in-repo recall sentinels (CHK002 unused deps +
   CHK003 missing dep) measured alongside clones; every `tp` label must appear in
   findings or the recall gate fails.
+- `scripts/oss-expectations.tsv` — regression floors for the failure-pattern
+  corpus at the end of the manifest (#495): a floor on
+  `summary.files.reachable_runtime` and per-rule issue counts. A drop below the
+  floor or a rule growing past base + max(5, base/5) fails the gate; those
+  projects' CHK002 findings must be labelled but are left out of the FP rate.
 - `scripts/generate-chk003-labels.py` — heuristic CHK003 label generator (re-run
   after `make oss-metrics` when refreshing CHK003 triage).
 - `docs/dev/oss-validation-report.md` — committed §17 CHK002 scorecard.

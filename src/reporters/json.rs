@@ -36,6 +36,14 @@ struct JsonDiagnostic<'a> {
 struct JsonSummary {
     total: u32,
     by_code: BTreeMap<&'static str, u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    files: Option<JsonFiles>,
+}
+
+#[derive(Serialize)]
+struct JsonFiles {
+    runtime: usize,
+    reachable_runtime: usize,
 }
 
 #[derive(Serialize)]
@@ -84,6 +92,10 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
                 .iter()
                 .map(|(rule, count)| (rule.as_code(), *count))
                 .collect(),
+            files: context.files.map(|files| JsonFiles {
+                runtime: files.runtime,
+                reachable_runtime: files.reachable_runtime,
+            }),
         },
         suppressed: JsonSuppressed {
             baseline: baseline_suppressed_count(report),

@@ -80,6 +80,7 @@ fn context() -> RenderContext {
         version: "0.0.0",
         config_label: None,
         diagnostics: Vec::new(),
+        files: None,
     }
 }
 

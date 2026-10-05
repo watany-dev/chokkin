@@ -47,6 +47,16 @@
         "by_code": {
           "type": "object",
           "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "files": {
+          "type": "object",
+          "description": "runtime-context source files, and how many of them are reachable from an entry root",
+          "required": ["runtime", "reachable_runtime"],
+          "properties": {
+            "runtime": { "type": "integer", "minimum": 0 },
+            "reachable_runtime": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true

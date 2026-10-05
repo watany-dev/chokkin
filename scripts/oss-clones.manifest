@@ -50,3 +50,18 @@ virtualenv	cli	medium	21.12.1	https://github.com/pypa/virtualenv
 poetry	cli	medium	2.5.1	https://github.com/python-poetry/poetry
 pdm	cli	medium	2.29.2	https://github.com/pdm-project/pdm
 mitmproxy	app	large	v12.2.3	https://github.com/mitmproxy/mitmproxy
+# --- failure-pattern corpus (#495) ---
+# Each project reproduces a failure from the v0.4–v0.6 20-OSS comparison that
+# the corpus above missed. Pinned by commit SHA; the release tag and target:
+#   sqlalchemy    rel_2_1_3        package under lib/
+#   streamlit     1.65.0           pyproject under lib/
+#   llama_index   v0.14.25         monorepo, no workspace table
+#   transformers  v5.18.0          dynamic setup.py, lazy imports
+#   openai-python v3.24.0          library-mode public API
+#   langchain     langchain==1.4.3 non-UTF-8 fixtures, multi-package
+sqlalchemy	library	large	e6398ea7f263d851082ebd2edab7e76763602ce5	https://github.com/sqlalchemy/sqlalchemy
+streamlit	app	large	ff22743ac9b00f19f7416d6b2cf4be19b0fa37ea	https://github.com/streamlit/streamlit
+llama_index	library	large	f12d46acab73f5b2243ef49c2f00101617b38ce4	https://github.com/run-llama/llama_index
+transformers	library	large	a906d3c4b65095f2308b6a6a193e934d03b8eb5d	https://github.com/huggingface/transformers
+openai-python	library	large	637f1b8b2e9fdc3220fd4edbb8602cc89dc489c8	https://github.com/openai/openai-python
+langchain	framework	large	be854a130153e51346d83d3b06f959b80f6cbca6	https://github.com/langchain-ai/langchain

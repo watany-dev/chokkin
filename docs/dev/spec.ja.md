@@ -940,7 +940,7 @@ v0.2で入れるもの。
 - cache
 ```
 
-v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。 JSON reporter は stderr に出す非致命的な warning を top-level の `diagnostics` (`[{"message": …}]`) にも入れる (#486)。
+v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。 JSON reporter は stderr に出す非致命的な warning を top-level の `diagnostics` (`[{"message": …}]`) にも入れる (#486)。 `summary.files` には runtime context の source file 数 (`runtime`) と、そのうち entry root から到達できる数 (`reachable_runtime`) を入れる。package root や entry point の見落としは `reachable_runtime` の急減として現れる (#495)。
 
 v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap-gap-analysis.ja.md`)。
 
@@ -1031,6 +1031,16 @@ FP gateは「報告された CHK002」を分母にするため、**何も報告�
 (意図的に未使用依存を含む in-repo fixture) を OSS clone と一緒に計測し、`tp`
 ラベルが findings に現れなければ **recall gate を失敗**させる (`pass_recall`)。
 これが Phase 1.5 の誤検知是正が「全件抑制」へ退化していないことの保証になる。
+
+manifest 末尾の **failure-pattern corpus** (#495: sqlalchemy / streamlit /
+llama_index / transformers / openai-python / langchain、commit SHA pinned) は
+誤検知や見落としが起きやすい構造の回帰検知に使う。`scripts/oss-expectations.tsv`
+に project ごとの `reachable_runtime` の下限 (直近の実測の 90%) と rule 別 issue 数を
+固定し、下限割れか rule 別件数が base + max(5, base/5) を超えると expectations gate が
+失敗する。exit 2 (CLI/config error) も gate で 0 件を要求する。この corpus の CHK002
+もラベル付けは必須だが、件数は expectations で固定するので FP 率の分母には入れない。
+既知の gap として、sqlalchemy は `lib/` 配下の package に entry root が見つからず
+`reachable_runtime` が 0 のため、下限は 0 にしてある。
 
 **現状 (v0.1.0): §17 exit criteria達成。** Phase 1.5 完了後の OSS 20 件検証で
 CHK002 誤検知率 **0.0% (0 FP / 2 reported)**、recall sentinel **2/2 検出**、

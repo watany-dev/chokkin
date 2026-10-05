@@ -6,9 +6,9 @@ use std::fs;
 use std::path::Path;
 
 use chokkin::{
-    Confidence, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
-    ProjectMode, RenderContext, ReporterId, RuleId, RuntimeOverrides, Severity, apply_baseline,
-    render_issues, write_baseline,
+    Confidence, ExitStatus, FileCounts, Issue, IssueLocation, IssueReport, IssueSubject,
+    IssueSummary, ProjectMode, RenderContext, ReporterId, RuleId, RuntimeOverrides, Severity,
+    apply_baseline, render_issues, write_baseline,
 };
 use jsonschema::Validator;
 use serde_json::Value;
@@ -21,6 +21,10 @@ fn context() -> RenderContext {
         version: "0.3.0-test",
         config_label: Some("pyproject.toml [tool.chokkin]".to_owned()),
         diagnostics: Vec::new(),
+        files: Some(FileCounts {
+            runtime: 3,
+            reachable_runtime: 2,
+        }),
     }
 }
 
