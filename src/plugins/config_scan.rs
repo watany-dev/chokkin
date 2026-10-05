@@ -9,8 +9,8 @@ use crate::manifest::{DependencyContext, normalize_distribution_name};
 use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
 
-use super::commands::SourceHits;
-use super::config_text::{PyprojectDoc, leading_spaces};
+use super::commands::{KnownBinary, SourceHits, command_binaries};
+use super::config_text::{PyprojectDoc, leading_spaces, logical_lines, origin_at};
 use super::context::PluginContext;
 use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin};
 use super::{task_files, tool_plugins};
@@ -66,11 +66,10 @@ pub fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     };
 
     scan_pyproject_tools(pyproject.as_ref(), &mut result, &mut seen_binaries);
-    scan_manifest_entry_points(ctx, &mut result, &mut seen_binaries);
     scan_mkdocs_config(root, &mut result, &mut seen_binaries);
-    scan_pre_commit_config(root, &mut result, &mut seen_binaries);
-    scan_tox_config(root, ctx, &mut result, &mut seen_binaries);
-    scan_shell_scripts(root, &mut result, &mut seen_binaries);
+    scan_pre_commit_config(root, &mut result, &mut seen_binaries, &known);
+    scan_tox_config(root, ctx, &mut result, &mut seen_binaries, &known);
+    scan_shell_scripts(root, &mut result, &mut seen_binaries, &known);
     let hits = task_files::scan(root, pyproject.as_ref(), &known);
     merge_hits(&mut result, &mut seen_binaries, hits);
     let hits = tool_plugins::scan(root, pyproject.as_ref());
@@ -111,30 +110,6 @@ fn merge_hits(
         push_distribution(result, distribution);
     }
     result.module_refs.extend(hits.module_refs);
-}
-
-fn scan_manifest_entry_points(
-    ctx: &PluginContext<'_>,
-    result: &mut ConfigScanResult,
-    seen: &mut HashSet<(String, String)>,
-) {
-    for entry in &ctx.manifest.entry_points {
-        if entry.group != "console_scripts" && entry.group != "gui_scripts" {
-            continue;
-        }
-        if is_known_binary(&entry.name) {
-            push_binary(
-                result,
-                seen,
-                &entry.name,
-                ReferenceOrigin {
-                    file: entry.origin.file.clone(),
-                    line: entry.origin.line,
-                    label: format!("entry_points.{}", entry.name),
-                },
-            );
-        }
-    }
 }
 
 fn scan_mkdocs_config(
@@ -276,6 +251,7 @@ fn scan_pre_commit_config(
     root: &Path,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
+    known: KnownBinary<'_>,
 ) {
     let path = root.join(PRE_COMMIT_CONFIG);
     if !path.is_file() {
@@ -283,7 +259,7 @@ fn scan_pre_commit_config(
     }
     let rel = rel_to_root(root, &path);
     let origin = ReferenceOrigin {
-        file: rel,
+        file: rel.clone(),
         line: None,
         label: PRE_COMMIT_CONFIG.to_owned(),
     };
@@ -292,17 +268,30 @@ fn scan_pre_commit_config(
     let Ok(contents) = std::fs::read_to_string(&path) else {
         return;
     };
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        let Some(rest) = trimmed
-            .strip_prefix("- id:")
-            .or_else(|| trimmed.strip_prefix("id:"))
-        else {
+    // Only `repo: local` hooks run a command from the project's own
+    // environment; remote hooks install their tool into pre-commit's cache.
+    let mut local_repo = false;
+    for (index, line) in contents.lines().enumerate() {
+        let trimmed = strip_yaml_comment(line).trim();
+        let item = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim_start();
+        if let Some(repo) = item.strip_prefix("repo:") {
+            local_repo = unquote_yaml_scalar(repo) == "local";
             continue;
-        };
-        let hook_id = rest.trim().trim_matches(['"', '\'']);
-        if let Some(binary) = hook_id_to_binary(hook_id) {
-            push_binary(result, seen, binary, origin.clone());
+        }
+        if let Some(hook_id) = item.strip_prefix("id:") {
+            if let Some(binary) = hook_id_to_binary(unquote_yaml_scalar(hook_id)) {
+                push_binary(result, seen, binary, origin.clone());
+            }
+            continue;
+        }
+        if local_repo && let Some(entry) = item.strip_prefix("entry:") {
+            push_command(
+                result,
+                seen,
+                unquote_yaml_scalar(entry),
+                known,
+                &origin_at(&rel, index, "pre-commit entry"),
+            );
         }
     }
 }
@@ -312,6 +301,7 @@ fn scan_tox_config(
     ctx: &PluginContext<'_>,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
+    known: KnownBinary<'_>,
 ) {
     let path = root.join(TOX_CONFIG);
     if !path.is_file() {
@@ -319,17 +309,95 @@ fn scan_tox_config(
     }
     let rel = rel_to_root(root, &path);
     let origin = ReferenceOrigin {
-        file: rel,
+        file: rel.clone(),
         line: None,
         label: TOX_CONFIG.to_owned(),
     };
-    push_binary(result, seen, "tox", origin.clone());
+    push_binary(result, seen, "tox", origin);
 
     let Ok(contents) = std::fs::read_to_string(&path) else {
         return;
     };
     scan_tox_contents(ctx, &contents, result);
-    scan_lines_for_binaries(&contents, result, seen, &origin);
+    scan_tox_commands(&rel, &contents, result, seen, known);
+}
+
+const TOX_COMMAND_KEYS: [&str; 3] = ["commands", "commands_pre", "commands_post"];
+
+/// Binaries run by `commands` / `commands_pre` / `commands_post` in any
+/// section. Other keys (`deps`, `description`, `allowlist_externals`, ...)
+/// name tools without running them, so their words are not commands (#494).
+fn scan_tox_commands(
+    rel: &str,
+    contents: &str,
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    known: KnownBinary<'_>,
+) {
+    let mut in_commands = false;
+    for (index, line) in logical_lines(contents) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(['#', ';']) {
+            continue;
+        }
+        let continuation = line.starts_with([' ', '\t']) && !trimmed.starts_with('[');
+        let command = if continuation && in_commands {
+            trimmed
+        } else {
+            let key_value = trimmed.split_once(['=', ':']);
+            in_commands = key_value.is_some_and(|(key, _)| {
+                TOX_COMMAND_KEYS.contains(&key.trim().trim_end_matches('+').trim())
+            });
+            if !in_commands {
+                continue;
+            }
+            key_value.map_or("", |(_, value)| value.trim())
+        };
+        push_command(
+            result,
+            seen,
+            &expand_tox_substitutions(strip_tox_factors(command)),
+            known,
+            &origin_at(rel, index, "tox commands"),
+        );
+    }
+}
+
+/// The command after a factor condition (`py38,!pypy: pytest` → `pytest`).
+fn strip_tox_factors(command: &str) -> &str {
+    match command.split_once(':') {
+        Some((factors, rest))
+            if !factors.is_empty()
+                && factors.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric() || matches!(ch, ',' | '!' | '-' | '_' | '.')
+                }) =>
+        {
+            rest.trim_start()
+        },
+        _ => command,
+    }
+}
+
+/// `{envpython}` runs the env's interpreter and `{envbindir}/x` its scripts;
+/// every other `{...}` substitution (`{posargs}`, `{toxinidir}`, `{env:X}`)
+/// is dropped so it is never read as a command word.
+fn expand_tox_substitutions(command: &str) -> String {
+    let command = command
+        .replace("{envpython}", "python")
+        .replace("{env_python}", "python")
+        .replace("{envbindir}/", "")
+        .replace("{env_bin_dir}/", "");
+    let mut depth = 0usize;
+    let mut expanded = String::with_capacity(command.len());
+    for ch in command.chars() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => expanded.push(ch),
+            _ => {},
+        }
+    }
+    expanded
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -468,50 +536,81 @@ fn scan_shell_scripts(
     root: &Path,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
+    known: KnownBinary<'_>,
 ) {
     for path in shell_script_paths(root) {
         let rel = rel_to_root(root, &path);
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let origin = ReferenceOrigin {
-            file: rel,
-            line: None,
-            label: path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("script")
-                .to_owned(),
-        };
-        scan_lines_for_binaries(&contents, result, seen, &origin);
+        if !is_shell_script(&path, &contents) {
+            continue;
+        }
+        let label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("script")
+            .to_owned();
+        for (index, line) in logical_lines(&contents) {
+            push_command(
+                result,
+                seen,
+                strip_shell_comment(&line),
+                known,
+                &origin_at(&rel, index, &label),
+            );
+        }
     }
 }
 
-fn scan_lines_for_binaries(
-    contents: &str,
+/// Python and other non-shell files under `scripts/` / `bin/` are read by the
+/// parser or not at all; their words are not commands (#494).
+fn is_shell_script(path: &Path, contents: &str) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("sh" | "bash" | "zsh" | "ksh") => true,
+        Some(_) => false,
+        None => shebang_interpreter(contents).is_none_or(|interpreter| interpreter.ends_with("sh")),
+    }
+}
+
+/// Basename of the `#!` interpreter, past `env` and its flags
+/// (`#!/usr/bin/env -S bash -e` → `bash`, `#!/bin/sh -eu` → `sh`).
+fn shebang_interpreter(contents: &str) -> Option<&str> {
+    let shebang = contents.lines().next()?.strip_prefix("#!")?;
+    let mut words = shebang
+        .split_whitespace()
+        .map(|word| word.rsplit('/').next().unwrap_or(word));
+    match words.next()? {
+        "env" => words.find(|word| !word.starts_with('-')),
+        interpreter => Some(interpreter),
+    }
+}
+
+/// The line up to a `#` that starts a word (`$#` and `${#x}` are not comments).
+fn strip_shell_comment(line: &str) -> &str {
+    let mut end = line.len();
+    for (index, _) in line.match_indices('#') {
+        let previous = line.get(..index).and_then(|head| head.chars().last());
+        if previous.is_none_or(char::is_whitespace) {
+            end = index;
+            break;
+        }
+    }
+    line.get(..end).unwrap_or(line)
+}
+
+fn push_command(
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
+    command: &str,
+    known: KnownBinary<'_>,
     origin: &ReferenceOrigin,
 ) {
-    for (line_index, line) in contents.lines().enumerate() {
-        let mut line_origin = origin.clone();
-        line_origin.line = u32::try_from(line_index + 1).ok();
-        for token in line.split_whitespace() {
-            let token =
-                token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '.');
-            let token = token
-                .strip_prefix("${PREFIX}")
-                .or_else(|| token.strip_prefix("${prefix}"))
-                .unwrap_or(token);
-            let token = token.strip_prefix("venv/bin/").unwrap_or(token);
-            if is_known_binary(token) {
-                push_binary(result, seen, token, line_origin.clone());
-            }
-            if token == "sphinx-build" {
-                push_binary(result, seen, "sphinx-build", line_origin.clone());
-                push_distribution(result, "sphinx");
-            }
+    for binary in command_binaries(command, known) {
+        if binary == "sphinx-build" {
+            push_distribution(result, "sphinx");
         }
+        push_binary(result, seen, &binary, origin.clone());
     }
 }
 
@@ -577,17 +676,6 @@ fn hook_id_to_binary(hook_id: &str) -> Option<&'static str> {
     }
 }
 
-fn is_known_binary(name: &str) -> bool {
-    if tool_key_to_binary(name).is_some() || hook_id_to_binary(name).is_some() {
-        return true;
-    }
-    build_binary_map(
-        &crate::default_config(),
-        &crate::resolver::VenvIndex::default(),
-    )
-    .contains_key(name)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -613,6 +701,61 @@ mod tests {
             sources: ManifestSources::default(),
             warnings: Vec::new(),
         }
+    }
+
+    /// Scan a throwaway project made of `files` (relative path, contents).
+    fn scan_files(files: &[(&str, &str)]) -> ConfigScanResult {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().to_path_buf();
+        for (name, contents) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("create dir");
+            }
+            std::fs::write(path, contents).expect("write file");
+        }
+        let root = ProjectRoot {
+            path: dir,
+            marker: RootMarker::PyProjectToml,
+        };
+        let manifest = empty_manifest(root.clone());
+        let config = crate::default_config();
+        let sources = DiscoveredSources {
+            root: root.clone(),
+            layout: LayoutInfo {
+                layout: ProjectLayout::Unknown,
+                package_root: String::new(),
+                packages: Vec::new(),
+                local_packages: Vec::new(),
+                inferred_globs: Vec::new(),
+                members: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let parse = ParseSummary::default();
+        scan_config(&PluginContext {
+            root: &root,
+            config: &config,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &parse,
+        })
+    }
+
+    fn usages(result: &ConfigScanResult) -> Vec<(String, String, Option<u32>)> {
+        result
+            .binary_usages
+            .iter()
+            .map(|usage| {
+                (
+                    usage.binary.clone(),
+                    usage.origin.file.clone(),
+                    usage.origin.line,
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -879,5 +1022,101 @@ mod tests {
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
         assert!(result.used_distributions.contains(&"pytest".to_owned()));
         assert!(result.used_distributions.contains(&"requests".to_owned()));
+    }
+
+    #[test]
+    fn tox_reads_only_command_words_of_commands_keys() {
+        let result = scan_files(&[(
+            "tox.ini",
+            "[testenv]\ndescription = build a virtualenv and lint\ndeps = black\n    virtualenv\n\
+                 commands_pre = ruff check . # black is not run here\ncommands =\n    black --check . ; \
+                 pip install build\n    {envpython} -m pytest -q {posargs}\n    {toxinidir}/run.sh \\\n        \
+                 mypy src\n[testenv:docs]\nallowlist_externals = virtualenv\ncommands = sphinx-build -b html \
+                 docs docs/_build\ncommands_post =\n    py38,!pypy: coverage report\n",
+        )]);
+        let found = usages(&result);
+        assert_eq!(
+            found,
+            [
+                ("tox".to_owned(), "tox.ini".to_owned(), None),
+                ("ruff".to_owned(), "tox.ini".to_owned(), Some(5)),
+                ("black".to_owned(), "tox.ini".to_owned(), Some(7)),
+                ("pytest".to_owned(), "tox.ini".to_owned(), Some(8)),
+                ("sphinx-build".to_owned(), "tox.ini".to_owned(), Some(13)),
+                ("coverage".to_owned(), "tox.ini".to_owned(), Some(15)),
+            ]
+        );
+        assert!(result.used_distributions.contains(&"sphinx".to_owned()));
+    }
+
+    #[test]
+    fn tox_commands_keep_their_block_across_blank_lines_only() {
+        let result = scan_files(&[(
+            "tox.ini",
+            "[testenv]\ncommands =\n    ruff check .\n\n    pytest tests/test_a.py::test_x\n\
+                 commands_post = coverage report\n[testenv:lint]\ncommands = {env:RUNNER:} mypy src\n",
+        )]);
+        assert_eq!(
+            usages(&result),
+            [
+                ("tox".to_owned(), "tox.ini".to_owned(), None),
+                ("ruff".to_owned(), "tox.ini".to_owned(), Some(3)),
+                ("pytest".to_owned(), "tox.ini".to_owned(), Some(5)),
+                ("coverage".to_owned(), "tox.ini".to_owned(), Some(6)),
+                ("mypy".to_owned(), "tox.ini".to_owned(), Some(8)),
+            ]
+        );
+        assert!(!result.used_distributions.contains(&"sphinx".to_owned()));
+    }
+
+    #[test]
+    fn shell_scripts_and_local_hooks_read_command_words_only() {
+        let result = scan_files(&[
+            (
+                "scripts/run.sh",
+                "#!/usr/bin/env bash\n# pytest is only mentioned here\nuv run ruff check . # black\n\
+                     echo mypy\n",
+            ),
+            (
+                "scripts/gen.py",
+                "\"\"\"build the docs with sphinx-build\"\"\"\nimport build\n",
+            ),
+            (
+                "bin/release",
+                "#!/usr/bin/env python3\nblack = subprocess.run([\"black\", \".\"])\n",
+            ),
+            ("bin/lint", "#!/bin/sh -eu\nmypy src\n"),
+            ("bin/check", "#!/usr/bin/env -S bash -e\nruff check\n"),
+            (
+                ".pre-commit-config.yaml",
+                "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        entry: ruff check\n\
+                     - repo: https://github.com/psf/black\n    hooks:\n      - id: black\n        \
+                     entry: pytest\n",
+            ),
+        ]);
+        let found = usages(&result);
+        let scripts = |file: &str| -> Vec<(String, Option<u32>)> {
+            found
+                .iter()
+                .filter(|(_, path, _)| path == file)
+                .map(|(binary, _, line)| (binary.clone(), *line))
+                .collect()
+        };
+        assert_eq!(scripts("scripts/run.sh"), [("ruff".to_owned(), Some(3))]);
+        assert_eq!(
+            scripts("scripts/gen.py"),
+            Vec::<(String, Option<u32>)>::new()
+        );
+        assert_eq!(scripts("bin/release"), Vec::<(String, Option<u32>)>::new());
+        assert_eq!(scripts("bin/lint"), [("mypy".to_owned(), Some(2))]);
+        assert_eq!(scripts("bin/check"), [("ruff".to_owned(), Some(2))]);
+        assert_eq!(
+            scripts(".pre-commit-config.yaml"),
+            [
+                ("pre-commit".to_owned(), None),
+                ("ruff".to_owned(), Some(5)),
+                ("black".to_owned(), None),
+            ]
+        );
     }
 }

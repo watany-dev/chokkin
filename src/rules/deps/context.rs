@@ -22,7 +22,7 @@ pub(super) enum UsageContext {
     Dev,
 }
 
-/// Broad declaration bucket for duplicate detection.
+/// Broad declaration bucket for context matching (CHK005 / CHK010).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum DeclarationBucket {
     /// `[project.dependencies]` and runtime groups.
@@ -36,7 +36,7 @@ pub(super) enum DeclarationBucket {
 }
 
 impl DeclarationBucket {
-    /// Stable label for CHK009 messages.
+    /// Stable label for CHK005 messages.
     pub(super) fn label(&self) -> String {
         match self {
             Self::Runtime => "runtime".to_owned(),
