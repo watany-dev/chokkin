@@ -76,11 +76,14 @@ fn duplicates(
     b: &DeclaredDependency,
     runtime_extras: &BTreeSet<String>,
 ) -> bool {
+    // The same line reached twice (`requirements-dev.txt` including
+    // `requirements.txt`, which is also read on its own) is one declaration,
+    // even when the include gives it another context.
+    if a.origin == b.origin {
+        return false;
+    }
     if a.context == b.context {
-        // The same line reached twice (`requirements.txt` including
-        // `requirements-dev.txt`, which is also read on its own) is one
-        // declaration, not two.
-        return a.marker == b.marker && a.origin != b.origin;
+        return a.marker == b.marker;
     }
     let refinement = match (&a.context, &b.context) {
         (DependencyContext::Runtime, _) => b,
@@ -143,8 +146,10 @@ mod tests {
     use super::*;
     use crate::manifest::DependencyOrigin;
 
+    /// A declaration on its own line: one manifest per context.
     fn dep(name: &str, context: DependencyContext) -> DeclaredDependency {
-        at(name, context, "pyproject.toml", 1)
+        let file = context_label(&context);
+        at(name, context, &file, 1)
     }
 
     fn at(name: &str, context: DependencyContext, file: &str, line: u32) -> DeclaredDependency {
@@ -268,7 +273,7 @@ mod tests {
                     "python_version < '3.12'"
                 ),
                 with_marker(
-                    dep("numpy", DependencyContext::Runtime),
+                    at("numpy", DependencyContext::Runtime, "runtime", 2),
                     "python_version >= '3.12'"
                 ),
                 dep("requests", DependencyContext::Runtime),
@@ -285,12 +290,17 @@ mod tests {
 
     #[test]
     fn the_same_line_read_through_two_manifests_is_one_declaration() {
-        // `requirements.txt` includes `requirements-dev.txt`, which is also
-        // read directly: both reads land on the same origin.
         assert_eq!(
             messages(&[
                 at("pytest", group("dev"), "requirements-dev.txt", 9),
                 at("pytest", group("dev"), "requirements-dev.txt", 9),
+                at(
+                    "requests",
+                    DependencyContext::Runtime,
+                    "requirements.txt",
+                    1
+                ),
+                at("requests", group("dev"), "requirements.txt", 1),
             ]),
             Vec::<String>::new()
         );

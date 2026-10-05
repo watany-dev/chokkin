@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[tool.uv.sources]` path source; the group declaration refines the runtime
   one instead of duplicating it. Self-referential extras
   (`all = ["pkg[s3,sqs]"]`) are never duplicates (#507, #494).
+- CHK009 no longer reports a requirements line read twice, such as
+  `requirements.txt` read directly and through `-r requirements.txt` in
+  `requirements-dev.txt`, as a runtime and dev duplicate (#494).
 
 ## [0.6.0] - 2026-10-03
 

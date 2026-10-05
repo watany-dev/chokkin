@@ -629,8 +629,8 @@ extra 同士 (s3 と sqs の両方に boto3)、group 同士 (dev と test の両
 project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言、opaque な宣言
   -> 報告しない
 同じ origin (file:line) を別経路で 2 回読んだもの
-  (requirements.txt の -r requirements-dev.txt と、直接読む requirements-dev.txt)
-  -> 1 つの宣言なので報告しない
+  (requirements-dev.txt の -r requirements.txt と、直接読む requirements.txt)
+  -> include 側の context が違っても 1 つの宣言なので報告しない
 ```
 
 origin と `--explain` の details には重複に関与した宣言だけを出す。context の label は `runtime` / `group:<name>` / `optional:<extra>` / `build` で、setup.py の `extras_require` も `optional:` にそろえる。

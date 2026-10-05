@@ -382,10 +382,25 @@ fn scan_tox_commands(
         push_command(
             result,
             seen,
-            &expand_tox_substitutions(command),
+            &expand_tox_substitutions(strip_tox_factors(command)),
             known,
             &origin_at(rel, index, "tox commands"),
         );
+    }
+}
+
+/// The command after a factor condition (`py38,!pypy: pytest` → `pytest`).
+fn strip_tox_factors(command: &str) -> &str {
+    match command.split_once(':') {
+        Some((factors, rest))
+            if !factors.is_empty()
+                && factors.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric() || matches!(ch, ',' | '!' | '-' | '_' | '.')
+                }) =>
+        {
+            rest.trim_start()
+        },
+        _ => command,
     }
 }
 
@@ -584,11 +599,17 @@ fn is_shell_script(path: &Path, contents: &str) -> bool {
     }
 }
 
-/// Basename of the `#!` interpreter (`#!/usr/bin/env bash` → `bash`).
+/// Basename of the `#!` interpreter, past `env` and its flags
+/// (`#!/usr/bin/env -S bash -e` → `bash`, `#!/bin/sh -eu` → `sh`).
 fn shebang_interpreter(contents: &str) -> Option<&str> {
     let shebang = contents.lines().next()?.strip_prefix("#!")?;
-    let interpreter = shebang.split_whitespace().last()?;
-    interpreter.rsplit('/').next()
+    let mut words = shebang
+        .split_whitespace()
+        .map(|word| word.rsplit('/').next().unwrap_or(word));
+    match words.next()? {
+        "env" => words.find(|word| !word.starts_with('-')),
+        interpreter => Some(interpreter),
+    }
 }
 
 /// The line up to a `#` that starts a word (`$#` and `${#x}` are not comments).
@@ -709,9 +730,9 @@ mod tests {
     }
 
     /// Scan a throwaway project made of `files` (relative path, contents).
-    fn scan_files(dir_name: &str, files: &[(&str, &str)]) -> ConfigScanResult {
-        let dir = std::env::temp_dir().join(dir_name);
-        let _ = std::fs::remove_dir_all(&dir);
+    fn scan_files(files: &[(&str, &str)]) -> ConfigScanResult {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().to_path_buf();
         for (name, contents) in files {
             let path = dir.join(name);
             if let Some(parent) = path.parent() {
@@ -1032,17 +1053,14 @@ mod tests {
 
     #[test]
     fn tox_reads_only_command_words_of_commands_keys() {
-        let result = scan_files(
-            "chokkin-config-scan-tox-commands",
-            &[(
-                "tox.ini",
-                "[testenv]\ndescription = build a virtualenv and lint\ndeps = black\n    virtualenv\n\
+        let result = scan_files(&[(
+            "tox.ini",
+            "[testenv]\ndescription = build a virtualenv and lint\ndeps = black\n    virtualenv\n\
                  commands_pre = ruff check . # black is not run here\ncommands =\n    black --check . ; \
                  pip install build\n    {envpython} -m pytest -q {posargs}\n    {toxinidir}/run.sh \\\n        \
                  mypy src\n[testenv:docs]\nallowlist_externals = virtualenv\ncommands = sphinx-build -b html \
-                 docs docs/_build\n",
-            )],
-        );
+                 docs docs/_build\ncommands_post =\n    py38,!pypy: coverage report\n",
+        )]);
         let found = usages(&result);
         assert_eq!(
             found,
@@ -1052,6 +1070,7 @@ mod tests {
                 ("black".to_owned(), "tox.ini".to_owned(), Some(7)),
                 ("pytest".to_owned(), "tox.ini".to_owned(), Some(8)),
                 ("sphinx-build".to_owned(), "tox.ini".to_owned(), Some(13)),
+                ("coverage".to_owned(), "tox.ini".to_owned(), Some(15)),
             ]
         );
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
@@ -1059,31 +1078,28 @@ mod tests {
 
     #[test]
     fn shell_scripts_and_local_hooks_read_command_words_only() {
-        let result = scan_files(
-            "chokkin-config-scan-scripts",
-            &[
-                (
-                    "scripts/run.sh",
-                    "#!/usr/bin/env bash\n# pytest is only mentioned here\nuv run ruff check . # black\n\
+        let result = scan_files(&[
+            (
+                "scripts/run.sh",
+                "#!/usr/bin/env bash\n# pytest is only mentioned here\nuv run ruff check . # black\n\
                      echo mypy\n",
-                ),
-                (
-                    "scripts/gen.py",
-                    "\"\"\"build the docs with sphinx-build\"\"\"\nimport build\n",
-                ),
-                (
-                    "bin/release",
-                    "#!/usr/bin/env python3\nimport subprocess  # black\n",
-                ),
-                ("bin/lint", "#!/bin/sh\nmypy src\n"),
-                (
-                    ".pre-commit-config.yaml",
-                    "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        entry: ruff check\n\
+            ),
+            (
+                "scripts/gen.py",
+                "\"\"\"build the docs with sphinx-build\"\"\"\nimport build\n",
+            ),
+            (
+                "bin/release",
+                "#!/usr/bin/env python3\nimport subprocess  # black\n",
+            ),
+            ("bin/lint", "#!/bin/sh -eu\nmypy src\n"),
+            (
+                ".pre-commit-config.yaml",
+                "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        entry: ruff check\n\
                      - repo: https://github.com/psf/black\n    hooks:\n      - id: black\n        \
                      entry: pytest\n",
-                ),
-            ],
-        );
+            ),
+        ]);
         let found = usages(&result);
         let scripts = |file: &str| -> Vec<(String, Option<u32>)> {
             found
