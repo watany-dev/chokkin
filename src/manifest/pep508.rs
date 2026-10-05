@@ -89,6 +89,11 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
             Some(inner) => (inner.strip_suffix(')')?.trim(), true),
             None => (spec, false),
         };
+        // `packaging` allows one trailing comma after the last specifier.
+        let spec = match spec.strip_suffix(',').map(str::trim_end) {
+            Some(head) if !head.is_empty() && !head.ends_with(',') => head,
+            _ => spec,
+        };
         let version = if spec.is_empty() {
             if parenthesized {
                 return None;
@@ -541,6 +546,22 @@ mod tests {
             "foo.whl[tests]",
         ] {
             assert!(parse(input).is_some(), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn one_trailing_specifier_comma_is_accepted_like_packaging() {
+        for (input, spec) in [
+            ("pkg>=1,", ">=1"),
+            ("pkg >=1 , <2 ,", ">=1, <2"),
+            ("pkg (>=1 , )", ">=1"),
+            ("pkg>=1, ; os_name == 'nt'", ">=1"),
+        ] {
+            let requirement = parse(input).unwrap_or_else(|| panic!("{input:?} must parse"));
+            assert_eq!(requirement.version_or_url.as_deref(), Some(spec), "{input:?}");
+        }
+        for input in ["pkg ,", "pkg>=1,,", "pkg (,)"] {
+            assert_eq!(parse(input), None, "{input:?}");
         }
     }
 
