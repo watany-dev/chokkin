@@ -139,7 +139,7 @@ MVPでは以下のrule IDを固定する。
 |`CHK006`|`unused_export`        |module外から参照されない公開シンボル                             |warning                     |
 |`CHK007`|`unused_reexport`      |`__init__.py` などの再exportが内部から参照されない               |library: info / app: warning|
 |`CHK008`|`unlisted_binary`      |tox/nox/pre-commit/CI等で使うCLIが依存宣言されていない           |warning                     |
-|`CHK009`|`duplicate_dependency` |main/dev/optionalに重複宣言されている                       |warning                     |
+|`CHK009`|`duplicate_dependency` |同じcontext内、またはruntimeとgroup/extra/buildに重複宣言されている|warning                     |
 |`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |warning                     |
 
 PEP 723 script (`# /// script` block を持つ `.py`) の CHK002 / CHK003 は project manifest ではなく script block の `dependencies` に対して判定し、subject を `script:<root 相対 path>:<distribution>` とする (例: `CHK003:script:scripts/tool.py:pyyaml`)。JSON では `path` に script、`distribution` に distribution 名を入れ、`target` / baseline fingerprint / `[tool.chokkin.ignore]` / `--explain` は同じ `script:` 形式を受け付ける。詳細は §10。
@@ -514,8 +514,8 @@ CI/config pluginの例。
 
 ```text
 .github/workflows/*.yml の run: から python -m, uv run, pytest, mypy, ruff, alembic 等を拾う
-.pre-commit-config.yaml の hook id / entry を拾う
-tox.ini / pyproject [tool.tox] の deps と commands を拾う
+.pre-commit-config.yaml の hook id と、repo: local の hook の entry を拾う (remote hook は pre-commit が環境を用意する)
+tox.ini / pyproject [tool.tox] の commands / commands_pre / commands_post を拾う (deps / description / allowlist_externals は拾わない)
 noxfile.py の @nox.session をentry扱いにする
 ```
 
@@ -613,6 +613,27 @@ metapackage (wheel target が一致する file を持たない、または hatch
   -> project.dependencies / extras は CHK002 の対象外 (#529)
   -> dependency group は配布しないので従来どおり判定する
 ```
+
+CHK009 (duplicate_dependency) は、同じ distribution の宣言のうち片方が他方を冗長にする組だけを報告する (#494, #507)。
+
+```text
+同じ context に同じ marker で 2 回 (dependency-groups.test に pytest が 2 つ)
+  -> CHK009 "pytest is declared more than once in group:test"
+runtime 宣言と group / optional extra / build の宣言
+  -> CHK009 "requests is declared in multiple contexts: group:dev, runtime"
+  -> ただし group / extra 側が runtime 宣言に無い extras を足す場合
+     (runtime: streamlit、dev: streamlit[auth,charts]) は runtime 宣言の refinement なので報告しない
+     (extras は PEP 503 正規化で比較し、runtime 宣言すべての extras の和集合に含まれるかで見る)
+extra 同士 (s3 と sqs の両方に boto3)、group 同士 (dev と test の両方に pytest)、group と extra、build と group
+  -> 報告しない。extra は独立に install されるものなので両方に必要なら両方に書く
+project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言、opaque な宣言
+  -> 報告しない
+同じ origin (file:line) を別経路で 2 回読んだもの
+  (requirements.txt の -r requirements-dev.txt と、直接読む requirements-dev.txt)
+  -> 1 つの宣言なので報告しない
+```
+
+origin と `--explain` の details には重複に関与した宣言だけを出す。context の label は `runtime` / `group:<name>` / `optional:<extra>` / `build` で、setup.py の `extras_require` も `optional:` にそろえる。
 
 `TYPE_CHECKING` 配下のimportはtype contextにする。`import typing as t` や
 `from typing import TYPE_CHECKING as TC` の alias も静的に追跡し、runtime dependency
@@ -1350,11 +1371,12 @@ cache 無効で解析し、member 数に比例する probe / resolution の退�
 
 warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm`（disk bundle からの warm parse、100 / 1k / 5k / 10k files）を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした（当時の値は in-memory store 経由。in-memory store 削除後の disk warm は 10k で約 61 ms）。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
-tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` の command parse に対応し、`python -m <module>` は `<module>` が既知binaryなら利用として扱う。
+tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` を `src/plugins/commands.rs` の共通 command 解析に通す (`python -m <module>` は `<module>` が既知binaryなら利用として扱う)。
 
-R-06 で binary / plugin usage の情報源を拡充した。共通の command 解析 (`\` 継続の結合、`;` `|` `&` と改行での分割、`@` `-` / `exec` `env` などの wrapper、`uv run` / `poetry run` などの runner、`python -m` の剥がし、`$…` や `{{…}}` で始まる語は変数展開として追わない、pip / uv などの環境管理ツールは binary 扱いしない) は `src/plugins/commands.rs`、行番号付きで TOML / INI / YAML を読む補助は `src/plugins/config_text.rs` に置く。
+R-06 で binary / plugin usage の情報源を拡充した。共通の command 解析 (`\` 継続の結合、`;` `|` `&` と改行での分割、`@` `-` / `exec` `env` などの wrapper、`uv run` / `poetry run` などの runner、`python -m` の剥がし、`$…` や `{{…}}` で始まる語は変数展開として追わない、pip / uv などの環境管理ツールは binary 扱いしない、command 位置の先頭語だけを binary とみなし引数は読まない) は `src/plugins/commands.rs`、行番号付きで TOML / INI / YAML を読む補助は `src/plugins/config_text.rs` に置く。
 
 - `src/plugins/task_files.rs`: `[tool.pdm.scripts]` (文字列 / `cmd` 文字列・配列 / `shell` / `composite`、`call` は module reference、`_` は無視)、`GNUmakefile` / `makefile` / `Makefile` の tab 付き recipe 行、`justfile` / `Justfile` / `.justfile` の recipe 本体 (`sh` 以外の shebang recipe は除外)、`Dockerfile` / `Containerfile` / `*.Dockerfile` / `Dockerfile.*` の `RUN` / `CMD` / `ENTRYPOINT` (shell form と exec form)、`Procfile`、`.gitlab-ci.yml` の `script` / `before_script` / `after_script` (list・inline 配列・block scalar、`!reference` は無視)。Makefile / justfile の変数・include は追わない。
+- `src/plugins/config_scan.rs` (generic scanner): `tox.ini` / `[tool.tox]` は `commands*` キーの値だけを command として読み (`{envpython}` は python、`{envbindir}/x` は x、他の `{...}` 置換は落とす)、`deps` / `description` / `allowlist_externals` のような一覧の語は command ではないので拾わない。`.pre-commit-config.yaml` は hook `id` と `repo: local` の `entry` だけを読む。`scripts/` / `bin/` 配下は `.sh` 拡張子か sh 系 shebang を持つ file だけを shell script として command 解析し (`#` コメント以降は無視)、Python script は parser が読む。いずれも語が binary map にあるだけでは usage にしない (#494)。
 - `src/plugins/tool_plugins.rs`: pytest `addopts` (`[tool.pytest.ini_options]` / `pytest.ini` / `tox.ini [pytest]` / `setup.cfg [tool:pytest]`) の `-p mod` を module reference (`-p no:x` は無視)、`--cov` / `-n` / `--benchmark-*` などの plugin option を `src/plugins/plugin_map.rs` の表で distribution に対応づける。mypy `plugins` (`[tool.mypy]` / `mypy.ini` / `.mypy.ini` / `setup.cfg [mypy]`) は module reference (`mypy_django_plugin` → `django-stubs` などは表で対応づけ)、`[tool.ty]` / `ty.toml` / `[tool.pyright]` / `pyrightconfig.json` / `[tool.basedpyright]` は該当 type checker を used にする。
 - `.venv` の `pytest11` entry point を持つ distribution は pytest 自体が used のとき used とする (`ResolutionIndex.pytest_plugin_distributions`)。
 - 読むファイルはすべて config-scan cache key (`scan_input_paths`) に入り、`--explain` の evidence は `file:line` で origin を示す。

@@ -1,0 +1,13 @@
+[project]
+name = "acme-app"
+version = "0.1.0"
+dependencies = ["streamlit", "requests"]
+
+[project.scripts]
+acme = "acme.main:main"
+
+[dependency-groups]
+dev = ["streamlit[auth,charts]", "requests"]
+
+[tool.uv.sources]
+streamlit = { path = "lib", editable = true }

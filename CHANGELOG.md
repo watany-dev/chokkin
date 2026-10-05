@@ -47,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488).
 - Breaking change for the Rust library API: `ParsedModule` gains
   `used_import_bindings` (#489).
+- CHK009 no longer reports a distribution listed under two optional extras,
+  two dependency groups, or a group and an extra: extras and groups are
+  installed independently, so a tool needed by both belongs in both. It
+  reports a declaration repeated in one context (same marker), or a runtime
+  dependency repeated in a group, an extra or the build requirements (#494).
+- `pip` / `uv` / `pipx` and other environment managers invoked from `tox.ini`,
+  shell scripts and pre-commit hooks are no longer CHK008 binary usages, as
+  was already the case for GitHub Actions `run:` steps (#494).
 
 ### Fixed
 - A declared or locked distribution whose name differs from its import only
@@ -64,6 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public package's `__init__` (#489).
 - CHK007 skips an import its own `__init__` reads, and names a renamed
   re-export (`from .x import a as b`) by the name the package exposes (#489).
+- CHK008 reads only command words: `tox.ini` `deps` / `description` /
+  `allowlist_externals`, words inside Python files under `scripts/` / `bin/`,
+  shell comments, command arguments, and remote pre-commit hooks' `entry` no
+  longer count a tool as used or unlisted (#494).
+- CHK009 is no longer reported when a dependency group or extra re-declares a
+  runtime dependency with extras the runtime declaration lacks
+  (`streamlit` + `dev = ["streamlit[auth,charts]"]`), including with a
+  `[tool.uv.sources]` path source; the group declaration refines the runtime
+  one instead of duplicating it. Self-referential extras
+  (`all = ["pkg[s3,sqs]"]`) are never duplicates (#507, #494).
 
 ## [0.6.0] - 2026-10-03
 

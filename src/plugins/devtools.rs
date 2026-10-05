@@ -1,12 +1,13 @@
 //! Dev-tool plugin extractors for tox, nox, pre-commit, and GitHub Actions.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::PluginId;
 use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
 
+use super::commands::command_binaries;
 use super::config_text::{is_yaml_block_scalar, leading_spaces, yaml_block_body};
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
@@ -93,6 +94,7 @@ fn extract_github_actions(ctx: &PluginContext<'_>, contrib: &mut PluginContribut
         return;
     };
     let binary_map = build_binary_map(ctx.config, &VenvIndex::default());
+    let known = |name: &str| binary_map.contains_key(name);
     let mut seen = HashSet::new();
 
     for entry in entries.flatten() {
@@ -105,7 +107,7 @@ fn extract_github_actions(ctx: &PluginContext<'_>, contrib: &mut PluginContribut
         };
         let rel = rel_to_root(root, &path);
         for (line_index, command) in workflow_run_commands(&contents) {
-            for binary in command_known_binaries(&command, &binary_map) {
+            for binary in command_binaries(&command, &known) {
                 let key = (rel.clone(), line_index, binary.clone());
                 if !seen.insert(key) {
                     continue;
@@ -179,62 +181,21 @@ fn workflow_run_value(line: &str) -> Option<WorkflowRunValue<'_>> {
     Some(WorkflowRunValue { indent, command })
 }
 
-fn command_known_binaries(command: &str, binary_map: &BTreeMap<String, String>) -> Vec<String> {
-    let tokens = command
-        .split_whitespace()
-        .map(clean_command_token)
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
-    let mut binaries = Vec::new();
-    for (index, token) in tokens.iter().enumerate() {
-        if binary_map.contains_key(token.as_str()) {
-            binaries.push(token.clone());
-        }
-        if is_python_binary(token)
-            && tokens.get(index + 1).is_some_and(|next| next == "-m")
-            && let Some(module) = tokens.get(index + 2)
-            && binary_map.contains_key(module.as_str())
-        {
-            binaries.push(module.clone());
-        }
-    }
-    binaries
-}
-
-fn clean_command_token(token: &str) -> String {
-    token
-        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && !matches!(ch, '-' | '_' | '.'))
-        .to_owned()
-}
-
-fn is_python_binary(token: &str) -> bool {
-    token == "python" || token == "python3" || token == "py"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn binary_map(names: &[&str]) -> BTreeMap<String, String> {
-        names
-            .iter()
-            .map(|name| ((*name).to_owned(), (*name).to_owned()))
-            .collect()
-    }
-
     #[test]
-    fn command_detects_direct_and_wrapped_binaries() {
-        let map = binary_map(&["pytest", "ruff", "uv"]);
-        let binaries = command_known_binaries("uv run ruff format && python -m pytest", &map);
-        assert!(binaries.contains(&"uv".to_owned()));
-        assert!(binaries.contains(&"ruff".to_owned()));
-        assert!(binaries.contains(&"pytest".to_owned()));
-    }
-
-    #[test]
-    fn command_ignores_unknown_python_modules() {
-        let map = binary_map(&["pytest"]);
-        let binaries = command_known_binaries("python -m unknown_module", &map);
-        assert_eq!(binaries, Vec::<String>::new());
+    fn workflow_run_commands_keep_block_scalars_and_single_lines() {
+        let contents = "jobs:\n  t:\n    steps:\n      - run: ruff check .\n      - name: x\n        run: |\n          pytest\n          uv run ruff format\n      - run: mypy src\n";
+        let commands = workflow_run_commands(contents);
+        assert_eq!(
+            commands,
+            [
+                (3, "ruff check .".to_owned()),
+                (5, "pytest\nuv run ruff format".to_owned()),
+                (8, "mypy src".to_owned()),
+            ]
+        );
     }
 }
