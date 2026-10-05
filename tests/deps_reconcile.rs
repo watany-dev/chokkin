@@ -621,6 +621,25 @@ fn path_source_reached_only_from_an_entry_point_is_used() {
     assert!(report.used_distributions.contains("acme"));
 }
 
+/// Issue #553: `acme-core` from a path source ships `acme.core`, not
+/// `acme_core`, so only its member tree can tie the import back to it. Runs
+/// the full pipeline: `load_deps` leaves member layouts out, and `acme`
+/// would then resolve without going through the member tree.
+#[test]
+fn path_source_is_used_through_its_member_tree() {
+    let report = chokkin::analyze_project(
+        &fixture("uv_path_source_renamed_module"),
+        None,
+        &RuntimeOverrides::default(),
+        chokkin::AnalyzeOptions {
+            cache: chokkin::CacheOptions::disabled(),
+            ..chokkin::AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze");
+    assert_eq!(report.issues.issues, []);
+}
+
 #[test]
 fn uv_workspace_source_dependency_is_used() {
     let report = reconcile_fixture("uv_workspace_source");
