@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+v0.7 targets accuracy on real OSS projects (#485). Over the 24 targets
+measured in #485 (20 projects, langchain split into 5 libraries), the issue
+count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
+`schema_version` stays `"1"`: the JSON changes below are additive.
+
 ### Added
 - Monorepos without a workspace declaration now treat nested
   `pyproject.toml` files that declare `[project].name` (depth ≤ 4, honoring
@@ -14,39 +19,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest satisfy its imports and orphan files in library members are
   `maybe` CHK001 warnings instead of certain errors. `--no-auto-workspace`
   keeps the previous single-project analysis (#488).
-- Inside such members, `[project.scripts]` become entry points, the member's
-  own packages (`src/` or flat) and PEP 420 namespace packages
-  (`llama_index.core`) resolve to its files, and its packages are first-party
-  to every file, so a member importing itself no longer raises CHK003 and an
-  application member's modules are no longer certain CHK001 (#488).
+- Inside workspace members, declared or auto-detected, `[project.scripts]`
+  and entry points become entry roots, the member's own packages (`src/` or
+  flat) and PEP 420 namespace packages (`llama_index.core`) resolve to its
+  files, and its packages are first-party to every file, so a member
+  importing itself no longer raises CHK003 and an application member's
+  modules are no longer certain CHK001 (#488, #511).
+- In-tree `[tool.uv.sources]` path sources whose `pyproject.toml` has
+  `[project]` are read as workspace members, keyed by distribution name,
+  including the marker-scoped array form (the first `path` entry wins) and
+  `path = "lib/."`. Path sources outside the root and git / url sources are
+  ignored. A member's runtime declaration also satisfies CHK005 (#499, #508).
+- The package directory comes from build backend config before any guessing:
+  setuptools `packages` / `package-dir` / `packages.find.where`, hatch, flit,
+  pdm, maturin and poetry `packages`. Otherwise chokkin looks for a
+  project-named package under `src/`, the root or `lib/`, then an in-tree uv
+  path source named after the project; `examples/`, `benchmarks/` and
+  `e2e*/` are never picked. A guess raises the new `GuessedPackageDir`
+  warning, and `--probe` shows the result (`root: lib`). sqlalchemy is now
+  analyzed from `lib/` (previously `examples/`) and streamlit from `lib/`
+  (previously `e2e_playwright/`) (#487).
+- `setup.py` is evaluated statically (never executed): variables, `+`
+  concatenation, `*` / `**` unpacking, comprehensions, single-`return`
+  helpers, if / try branch merges, `deps["x"]` tables, `.append` and `del`. A
+  `.txt` / `.in` argument is read as a requirements file from the root or
+  `requirements/` (transformers, celery, botocore). When runtime dependencies
+  cannot be known (`setup(**kwargs)`, or `dynamic` with nothing found), a
+  `RuntimeDependenciesUnknown` warning is raised and CHK003 / CHK004 drop to
+  `info` / `maybe`, hidden by the default filter (#491).
+- `.ipynb` notebooks at any depth are entry roots (`auto:**/*.ipynb`), so they
+  are no longer CHK001 and modules imported only from notebooks are reachable
+  (#514).
+- In library mode, package `__init__.py` files are entry roots
+  (`auto:library package`), and imports from public library orphans count as
+  dependency usage, so a library with no other roots no longer reports every
+  runtime dependency as CHK002 (#501).
 - A new `vendored` setting (default `**/_vendor/**`, `**/vendored/**`,
   `**/externals/**`, `**/third_party/**`) marks vendored code: it is still
-  traced and counts as a referencer, but its issues are not reported. `vendored = []` turns it off (#490).
+  traced and counts as a referencer, but its issues are not reported.
+  `vendored = []` turns it off (#490).
 - The root `test/` directory (sqlalchemy, CPython style) is scanned by
   default, is a test context, and imports as the local `test.*` package
   (#490).
+- The root `conftest.py` is always discovered, and pytest `testpaths` from the
+  root config and the package-root config (streamlit `lib/`) are scanned as
+  test context, so symbols only tests use are no longer CHK006. Entries that
+  overlap the package or come from an explicit `project` glob are skipped
+  (#544).
+- The JSON report gains a top-level `diagnostics: [{"message": ...}]` array
+  holding non-fatal warnings, and `summary.files: {runtime,
+  reachable_runtime}` with the number of runtime-context files and how many
+  are reachable (#486, #495).
 
 ### Changed
 - `tests/` directories at any depth (`pandas/tests/`) are test context, and
   test-context files, including those a pytest config roots as tests, are no
-  longer reported by CHK006/CHK007 — they only count as referencers. Without
-  `testpaths`, pytest test files are collected from the whole project, as
-  pytest does, so tests inside packages and monorepo members are roots
-  (pandas CHK006 7946 → 469) (#490).
-- Breaking change for the Rust library API: `ChokkinConfig` / `PartialConfig`
-  gain `vendored` and `SuppressReason` gains `Vendored` (#490).
-- Breaking change for the Rust library API: `EntryPlan` gains
-  `library_members`, `UnreachableFile` gains `mode`, `RuntimeOverrides` gains
-  `no_auto_workspace`, `ProbeReport` gains `auto_workspace`, `ProbeWarning`
-  gains `AutoWorkspace`, `LayoutInfo` gains `members` (`MemberLayout`),
-  `emit_issues`
-  drops its mode argument, and `apply_public_surface` takes the `EntryPlan`
-  (#488).
-- `uv.lock` is parsed into only the fields the dependency graph reads, and
-  auto-detected members' inputs are collected in parallel; a monorepo with
-  ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488).
-- Breaking change for the Rust library API: `ParsedModule` gains
-  `used_import_bindings` (#489).
+  longer reported by CHK006 / CHK007 — they only count as referencers.
+  Without `testpaths`, pytest test files are collected from the whole
+  project, as pytest does, so tests inside packages and monorepo members are
+  roots (pandas CHK006 7946 → 469) (#490).
 - CHK009 no longer reports a distribution listed under two optional extras,
   two dependency groups, or a group and an extra: extras and groups are
   installed independently, so a tool needed by both belongs in both. It
@@ -55,15 +86,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pip` / `uv` / `pipx` and other environment managers invoked from `tox.ini`,
   shell scripts and pre-commit hooks are no longer CHK008 binary usages, as
   was already the case for GitHub Actions `run:` steps (#494).
-- Breaking change for the Rust library API: `SymbolDef` gains
-  `used_in_module` (#540).
+- `--production` never reports dev- or type-only dependencies, even with
+  `--strict` (#501).
+- A `try:`-wrapped or platform-guarded import of a transitive dependency
+  reports CHK004 when a lock edge proves it is transitive, instead of the
+  informational CHK003 (#504).
+- An internal graph-invariant failure exits 3 instead of 2 (#475).
+- `uv.lock` is parsed into only the fields the dependency graph reads
+  (`sdist` / `wheels` lines are skipped before TOML parsing), and
+  auto-detected members' inputs are collected in parallel; a monorepo with
+  ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488,
+  #513).
+- Breaking changes for the Rust library API (the CLI, config keys, and JSON /
+  SARIF output stay compatible):
+  - `ChokkinConfig` / `PartialConfig` gain `vendored`, and `SuppressReason`
+    gains `Vendored` (#490).
+  - `EntryPlan` gains `library_members`, `UnreachableFile` gains `mode`,
+    `RuntimeOverrides` / `CliArgs` gain `no_auto_workspace`, `ProbeReport`
+    gains `auto_workspace`, `ProbeWarning` gains `AutoWorkspace`,
+    `LayoutInfo` gains `members` (`MemberLayout`), `emit_issues` drops its
+    mode argument, and `apply_public_surface` takes the `EntryPlan` (#488).
+  - `ParsedModule` gains `used_import_bindings` (#489) and `skipped`,
+    `ProbeWarning` gains `SkippedSource`, and `RenderContext` gains
+    `diagnostics` (#486).
+  - `RenderContext` gains `files` (`FileCounts`, from
+    `AnalysisReport::runtime_file_counts`) (#495).
+  - `LayoutInfo` gains `package_root` (#487).
+  - `AnalyzeError::Usage` is removed (#475).
+  - `LockfileGraph` gains `extras` (#516).
+  - `ManifestSources` gains `runtime_dependencies_unknown` (#491).
+  - `ManifestWarning::InvalidRequirementLine.line` becomes `Option<u32>` and
+    the variant gains `label` (#503).
+  - `SymbolDef` gains `used_in_module` (#540).
+  - `plugins::PytestImportSettings` gains `testpaths` (#544).
 
 ### Fixed
-- A name read only inside a quoted annotation (`x: "list[T]"`,
-  `-> "Message[R]"`, `list["Foo"]`) now counts as read by its module, so
-  library mode no longer reports such TypeVars and imports-turned-aliases as
-  CHK006. `Literal[...]` strings, `Annotated[...]` metadata, `cast("T", x)` and `TypeVar(bound="Foo")`
-  are not parsed (#545).
+- A non-UTF-8 Python source no longer aborts the whole analysis with exit 2.
+  A file with a PEP 263 `latin-1` / `cp1252` declaration (CPython aliases
+  included) is decoded; any other file is skipped with a warning and is never
+  reported as CHK001. When a reachable file is skipped, CHK001 / CHK002 drop
+  to `likely`, so `--fix` leaves them alone (#486).
+- Undecodable `setup.py`, `setup.cfg` and requirements files are skipped with
+  a `FileUndecodable` warning instead of aborting the run (#552).
+- `importlib.import_module("")`, `"a..b"`, `"pkg."` and a relative name
+  without a package no longer crash with "graph invariant violated" (exit 3).
+  Relative names resolve against `package=` or `__package__` (#500).
+- Library mode no longer reports a library's declared public API as CHK006 /
+  CHK007: names in `__all__`, `from ._x import Foo as Foo` re-exports, names
+  reached through `from ._x import *` into a public module, and anything in a
+  public package's `__init__` (#489).
+- CHK007 skips an import its own `__init__` reads, and names a renamed
+  re-export (`from .x import a as b`) by the name the package exposes (#489).
 - Library mode no longer reports CHK006 for a symbol its own module reads
   (TypeVars, type aliases, classes reached only as an attribute's type,
   module-level helpers and loggers). openai-python CHK006 258 → 20,
@@ -72,21 +145,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__all__` lists it: without `export`, such a name is a plain declaration,
   which knip's `exports` does not report either. litellm CHK006 4572 → 737,
   prefect 1774 → 778 (#564).
+- A name read only inside a quoted annotation (`x: "list[T]"`,
+  `-> "Message[R]"`, `list["Foo"]`) counts as read by its module, so such
+  TypeVars and aliases are no longer CHK006. `Literal[...]` strings,
+  `Annotated[...]` metadata, `cast("T", x)` and `TypeVar(bound="Foo")` are
+  not parsed (#545).
+- CHK006 / CHK007 severity for symbols in library workspace members is judged
+  in library mode (prefect `src/integrations/*`) (#515).
+- Files under a directory that is not a valid identifier
+  (`src/integrations/prefect-aws/`) get no module name, so their relative
+  imports are no longer CHK010 (#512).
 - A declared or locked distribution whose name differs from its import only
   by a `python-` / `py-` / `py` prefix or `-python` / `-py` / `py` suffix
-  (`pydocket` for `docket`, `discord-py` for `discord`) now satisfies the
-  import as a `maybe` match, and the bundled map covers `markdown-it-py`,
-  `pytest` (`_pytest`), `odfpy`, `matplotlib` (`mpl_toolkits`), `billiard`,
+  (`pydocket` for `docket`, `discord-py` for `discord`) satisfies the import
+  as a `maybe` match, and the bundled map covers `markdown-it-py`, `pytest`
+  (`_pytest`), `odfpy`, `matplotlib` (`mpl_toolkits`), `billiard`,
   `huggingface-hub` and `torch`, so these no longer raise a CHK002 + CHK010
-  pair (#492).
+  pair. An exact declaration in a script or member wins over a root affixed
+  name (#492, #542, #561).
 - Python 3.14's standard library (`compression`, `annotationlib`, ...) and
   `__main__` are recognized as stdlib (#492).
-- Library mode no longer reports a library's declared public API as CHK006 /
-  CHK007: names in `__all__`, `from ._x import Foo as Foo` re-exports, names
-  reached through `from ._x import *` into a public module, and anything in a
-  public package's `__init__` (#489).
-- CHK007 skips an import its own `__init__` reads, and names a renamed
-  re-export (`from .x import a as b`) by the name the package exposes (#489).
+- CHK002 name deduplication checks runtime declarations first, so a
+  pyproject dev declaration no longer hides an unused `setup.py`
+  `install_requires` entry (sentry-python `certifi` / `urllib3`) (#502).
+- Metapackages (a declared wheel target that matches no files, or hatch
+  `bypass-selection = true`) keep `project.dependencies` and extras out of
+  CHK002; dependency groups are still checked. Hatch wheel `include` is read
+  for the public surface (#529).
+- An in-tree path source is no longer CHK002 when it is used only through a
+  `[project.scripts]` target inside it (#509), or when its module name differs
+  from its distribution name (`acme-core` providing `acme/core`) (#553).
+- Distributions that a declared extra pulls in according to `uv.lock`
+  (`psycopg[pool]` → `psycopg-pool`) count as declared in that context, so
+  they are no longer CHK003 / CHK004 (#516).
+- The requirements `-r` include context matches whole path words, so
+  `protests.txt` is no longer a tests file while `tests/requirements.txt`
+  still is (#505).
+- PEP 508 / 440 acceptance matches `packaging`: URL schemes are
+  case-insensitive and any RFC 3986 scheme is accepted, a URL ends at
+  whitespace, `===` takes any string, huge version numbers saturate instead of
+  dropping the requirement, a single trailing comma (`pkg>=1,`) is accepted,
+  `foo.whl` is a file path only in requirements files, and a malformed
+  `name @ url` is invalid. Without a line number, the invalid-requirement
+  warning shows a label (`project.dependencies[2]`) (#503).
 - CHK008 reads only command words: `tox.ini` `deps` / `description` /
   `allowlist_externals`, words inside Python files under `scripts/` / `bin/`,
   shell comments, command arguments, and remote pre-commit hooks' `entry` no
@@ -100,6 +201,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CHK009 no longer reports a requirements line read twice, such as
   `requirements.txt` read directly and through `-r requirements.txt` in
   `requirements-dev.txt`, as a runtime and dev duplicate (#494).
+- `--fix` reports applied and skipped fixes in plan order (#443), keeps
+  trailing comments attached to the right entries, and preserves CRLF (#561).
+- Fixes to behavior that predates v0.6 (#561): `pkg/foo.bar.py`, `.hidden/`
+  and `pkg/.py` get no module name (`pkg/foo.bar.py` used to overwrite
+  `pkg/foo/bar.py` and cause CHK001 false positives); `./packages/*` member
+  globs match; a uv workspace `*` no longer crosses `/`; uv members that share
+  a basename are keyed by their full path; ignore directives work in CRLF / CR
+  files and a BOM no longer blocks a line-1 file ignore; an annotated
+  `__all__: list[str] = [...]` is read.
 
 ## [0.6.0] - 2026-10-03
 
