@@ -155,7 +155,13 @@ pub(super) fn mark_workspace_source_distributions(
         })
         .map(|import| import.full_module.as_str())
         .collect();
-    for module in &first_party {
+    let entry_modules: Vec<&str> = manifest
+        .entry_points
+        .iter()
+        .filter_map(|entry| entry.target.split(':').next())
+        .map(str::trim)
+        .collect();
+    for module in first_party.iter().chain(&entry_modules) {
         let name = normalize_distribution_name(import_root(module));
         if manifest.uv.is_local_source(&name) {
             used.insert(name);
@@ -167,12 +173,7 @@ pub(super) fn mark_workspace_source_distributions(
         .iter()
         .map(|dep| normalize_distribution_name(&dep.name))
         .collect();
-    let entry_modules = manifest
-        .entry_points
-        .iter()
-        .filter_map(|entry| entry.target.split(':').next())
-        .map(str::trim);
-    let mut modules: HashSet<&str> = first_party.iter().copied().chain(entry_modules).collect();
+    let mut modules: HashSet<&str> = first_party.iter().chain(&entry_modules).copied().collect();
     let mut pending = Vec::new();
     for boundary in workspace_boundaries {
         let Some(name) = boundary.manifest.metadata.name.as_deref() else {
@@ -733,6 +734,64 @@ mod tests {
             &mut used,
         );
         assert!(used.contains("streamlit"));
+    }
+
+    /// Issue #509: a `project.scripts` target inside the path source uses it
+    /// with no import of it; an unreached path source stays unused.
+    #[test]
+    fn path_source_is_used_through_entry_points() {
+        let mut manifest = manifest_at(
+            std::env::temp_dir().join("dev"),
+            "acme-dev",
+            &["acme", "other"],
+            &[],
+        );
+        for name in ["acme", "other"] {
+            manifest.uv.sources.push(crate::manifest::UvSource {
+                name: name.to_owned(),
+                kind: crate::manifest::UvSourceKind::Path(format!("{name}-lib")),
+            });
+        }
+        manifest.entry_points.push(crate::manifest::EntryPointDecl {
+            name: "acme".to_owned(),
+            target: "acme.cli:main".to_owned(),
+            group: "console".to_owned(),
+            origin: crate::manifest::DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.scripts.acme".to_owned(),
+            },
+        });
+        let sources = crate::sources::DiscoveredSources {
+            root: manifest.root.clone(),
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Flat,
+                package_root: String::new(),
+                packages: Vec::new(),
+                local_packages: Vec::new(),
+                inferred_globs: Vec::new(),
+                members: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let graph = ProjectGraph::new(manifest.root.clone());
+        let mut used = IndexSet::new();
+        mark_workspace_source_distributions(
+            &manifest,
+            &RuleContext {
+                resolution: &ResolutionIndex::default(),
+                reachability: &ReachabilityReport::default(),
+                graph: &graph,
+                sources: &sources,
+                parse: &crate::parser::ParseSummary::default(),
+            },
+            &HashSet::new(),
+            &[],
+            &mut used,
+        );
+        assert_eq!(used.into_iter().collect::<Vec<_>>(), ["acme"]);
     }
 
     #[test]
