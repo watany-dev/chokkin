@@ -326,9 +326,16 @@ fn normalized_project_names(name: &str) -> Vec<String> {
 /// callers treat imports from it as unresolved rather than inventing a name.
 #[must_use]
 pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
-    // A directory such as `prefect-aws/` cannot be a package, so a name
-    // through it is never importable (#512).
-    layout_module_name(path, layout).filter(|module| module.split('.').all(is_identifier))
+    let module = layout_module_name(path, layout)?;
+    // A directory such as `prefect-aws/` cannot be a package, so only a
+    // `sys.path` entry at it makes the files below importable (#512).
+    let parts: Vec<&str> = module.split('.').collect();
+    let start = parts
+        .iter()
+        .rposition(|part| !is_identifier(part))
+        .map_or(0, |index| index + 1);
+    let importable = parts.get(start..).unwrap_or_default();
+    (!importable.is_empty()).then(|| importable.join("."))
 }
 
 fn layout_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
@@ -526,7 +533,15 @@ mod tests {
         };
         let init = "src/integrations/prefect-aws/prefect_aws/__init__.py";
         // Without the member, `prefect-aws/` is not a package directory.
-        assert_eq!(path_to_module(init, &layout), None);
+        assert_eq!(
+            path_to_module(init, &layout),
+            Some("prefect_aws".to_owned())
+        );
+        assert_eq!(
+            path_to_module("src/integrations/prefect-aws/conftest.py", &layout),
+            Some("conftest".to_owned())
+        );
+        assert_eq!(path_to_module("src/my-pkg/__init__.py", &layout), None);
         assert_eq!(
             path_to_module("src/prefect/flows.py", &layout),
             Some("prefect.flows".to_owned())
