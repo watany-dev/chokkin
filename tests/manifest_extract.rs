@@ -346,6 +346,92 @@ fn setup_py_unreadable_install_requires_marks_runtime_unknown() {
     )));
 }
 
+/// A `setup.py` that is neither UTF-8 nor declares its coding no longer
+/// aborts extraction; its runtime dependencies count as unknown (#552).
+#[test]
+fn undecodable_setup_py_is_skipped_and_marks_runtime_unknown() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        temp.path().join("pyproject.toml"),
+        "[build-system]\nrequires = [\"setuptools\"]\n",
+    )
+    .expect("write pyproject");
+    std::fs::write(
+        temp.path().join("setup.py"),
+        b"from setuptools import setup\nsetup(name='acme', author='Ren\xe9', install_requires=['requests'])\n",
+    )
+    .expect("write setup.py");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extraction completes");
+    assert_eq!(dependency_names(&manifest), Vec::<&str>::new());
+    assert!(!manifest.sources.setup_py);
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(
+        manifest.warnings,
+        [
+            ManifestWarning::FileUndecodable {
+                file: "setup.py".to_owned()
+            },
+            ManifestWarning::RuntimeDependenciesUnknown {
+                file: "setup.py".to_owned()
+            },
+        ]
+    );
+}
+
+/// A skipped `setup.cfg` is vouched for by a fully read `install_requires`.
+#[test]
+fn undecodable_setup_cfg_is_covered_by_static_setup_py() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        temp.path().join("setup.cfg"),
+        b"[metadata]\nauthor = Ren\xe9\n",
+    )
+    .expect("write setup.cfg");
+    std::fs::write(
+        temp.path().join("setup.py"),
+        "from setuptools import setup\nsetup(name='acme', install_requires=['requests'])\n",
+    )
+    .expect("write setup.py");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extraction completes");
+    assert_eq!(dependency_names(&manifest), ["requests"]);
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(
+        manifest.warnings,
+        [ManifestWarning::FileUndecodable {
+            file: "setup.cfg".to_owned()
+        }]
+    );
+}
+
+/// With no other runtime declaration, a skipped root `requirements.txt`
+/// leaves the runtime set unknown.
+#[test]
+fn undecodable_runtime_requirements_marks_runtime_unknown() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        temp.path().join("requirements.txt"),
+        b"# Ren\xe9\nrequests\n",
+    )
+    .expect("write requirements");
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extraction completes");
+    assert_eq!(dependency_names(&manifest), Vec::<&str>::new());
+    assert_eq!(manifest.sources.requirements_files, ["requirements.txt"]);
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert!(manifest.warnings.iter().any(|warning| matches!(
+        warning,
+        ManifestWarning::RuntimeDependenciesUnknown { file } if file == "requirements.txt"
+    )));
+}
+
 #[test]
 fn requirements_txt_read_by_setup_py_is_not_reread_as_dev() {
     let manifest = extract_fixture("setup_py_reads_requirements");

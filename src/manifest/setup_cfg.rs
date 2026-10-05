@@ -6,7 +6,7 @@ use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
 use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
-use super::util::{DependencyPush, push_dependency, read_to_string};
+use super::util::{DependencyPush, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.cfg`.
@@ -18,13 +18,21 @@ pub struct SetupCfgExtraction {
     pub dependencies: Vec<DeclaredDependency>,
     /// Non-fatal warnings.
     pub warnings: Vec<ManifestWarning>,
+    /// The file could not be decoded and was left out.
+    pub skipped: bool,
 }
 
 /// Extract manifest data from `setup.cfg`.
 pub fn extract_setup_cfg(root: &Path, path: &Path) -> Result<SetupCfgExtraction, ManifestError> {
-    let contents = read_to_string(path)?;
     let rel = rel_to_root(root, path);
     let mut result = SetupCfgExtraction::default();
+    let Some(contents) = read_text(path)? else {
+        result.skipped = true;
+        result
+            .warnings
+            .push(ManifestWarning::FileUndecodable { file: rel });
+        return Ok(result);
+    };
 
     let sections = parse_ini_sections(&contents);
     if let Some(metadata) = sections.get("metadata") {
@@ -163,6 +171,28 @@ install_requires =
         assert_eq!(
             split_requirement_lines(requires).collect::<Vec<_>>(),
             ["requests", "flask>=1.0"]
+        );
+    }
+
+    #[test]
+    fn undecodable_setup_cfg_is_skipped_with_a_warning() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("setup.cfg");
+        std::fs::write(
+            &path,
+            b"[metadata]\nname = acme\nauthor = Ren\xe9\n[options]\ninstall_requires = requests\n",
+        )
+        .expect("write setup.cfg");
+
+        let result = extract_setup_cfg(temp.path(), &path).expect("extract");
+        assert!(result.skipped);
+        assert_eq!(result.metadata.name, None);
+        assert_eq!(result.dependencies, []);
+        assert_eq!(
+            result.warnings,
+            [ManifestWarning::FileUndecodable {
+                file: "setup.cfg".to_owned()
+            }]
         );
     }
 

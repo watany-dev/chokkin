@@ -84,6 +84,12 @@ pub enum ManifestWarning {
         /// Groups along the cycle, starting and ending with the same group.
         groups: Vec<String>,
     },
+    /// A manifest file is neither UTF-8 nor declares a supported PEP 263
+    /// coding, so it was left out of extraction.
+    FileUndecodable {
+        /// Root-relative path to the skipped file.
+        file: String,
+    },
     /// A PEP 723 script block was ignored; the file stays a plain source.
     InlineScriptInvalid {
         /// Root-relative script path.
