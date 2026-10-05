@@ -1,5 +1,6 @@
 //! `uv.lock` graph extraction.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -22,6 +23,8 @@ struct UvPackage {
     name: Option<String>,
     #[serde(default)]
     dependencies: Vec<UvDependency>,
+    #[serde(default, rename = "optional-dependencies")]
+    optional_dependencies: BTreeMap<String, Vec<UvDependency>>,
 }
 
 #[derive(Deserialize)]
@@ -44,25 +47,36 @@ pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
         message: error.to_string(),
     })?;
 
-    let edges = lock
-        .package
-        .into_iter()
-        .filter_map(|package| {
-            let deps = package
-                .dependencies
+    let mut graph = LockfileGraph::default();
+    for package in lock.package {
+        let Some(name) = package.name.as_deref().map(normalize_distribution_name) else {
+            continue;
+        };
+        if !package.optional_dependencies.is_empty() {
+            let extras = package
+                .optional_dependencies
                 .iter()
-                .filter_map(|dep| match dep {
-                    UvDependency::Table { name } | UvDependency::Name(name) => {
-                        Some(normalize_distribution_name(name))
-                    },
-                    UvDependency::Other(_) => None,
-                })
+                .map(|(extra, deps)| (normalize_distribution_name(extra), dependency_names(deps)))
                 .collect();
-            Some((normalize_distribution_name(&package.name?), deps))
-        })
-        .collect();
+            graph.extras.insert(name.clone(), extras);
+        }
+        graph
+            .edges
+            .insert(name, dependency_names(&package.dependencies));
+    }
 
-    Ok(LockfileGraph { edges })
+    Ok(graph)
+}
+
+fn dependency_names(deps: &[UvDependency]) -> Vec<String> {
+    deps.iter()
+        .filter_map(|dep| match dep {
+            UvDependency::Table { name } | UvDependency::Name(name) => {
+                Some(normalize_distribution_name(name))
+            },
+            UvDependency::Other(_) => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -88,6 +102,29 @@ mod tests {
         assert_eq!(
             graph.edges.get("acme-lib"),
             Some(&vec!["requests".to_owned(), "pyyaml".to_owned()])
+        );
+    }
+
+    #[test]
+    fn extracts_optional_dependencies_per_extra() {
+        let graph = parse(
+            "[[package]]\nname = \"psycopg\"\n\
+             dependencies = [{ name = \"typing-extensions\" }]\n\n\
+             [package.optional-dependencies]\n\
+             pool = [{ name = \"Psycopg_Pool\" }]\n",
+        )
+        .expect("valid uv.lock");
+
+        assert_eq!(
+            graph
+                .extras
+                .get("psycopg")
+                .and_then(|extras| extras.get("pool")),
+            Some(&vec!["psycopg-pool".to_owned()])
+        );
+        assert_eq!(
+            graph.edges.get("psycopg"),
+            Some(&vec!["typing-extensions".to_owned()])
         );
     }
 

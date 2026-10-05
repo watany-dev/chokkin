@@ -173,6 +173,10 @@ impl UvToolSettings {
 pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
+    /// Package name to extra name to the distributions that extra adds.
+    /// Only `uv.lock` records extras.
+    #[serde(default)]
+    pub extras: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
 /// Lockfile formats read into [`LockfileGraph`].

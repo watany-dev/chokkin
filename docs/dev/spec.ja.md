@@ -182,7 +182,7 @@ setup.py  # static parseのみ。実行しない。
 uv.lock / pylock.toml / pylock.<name>.toml / poetry.lock / pdm.lock
 ```
 
-lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>.toml(名前順) > poetry.lock > pdm.lock とする。複数形式を合成しないのは、同一projectで形式が混在するのは移行途中であり、新しい側(uv/PEP 751)が実体に近いため。読んだlockfileの種類と相対pathは `ManifestSources.lockfile` に記録し、`--probe` に表示する。どの形式も package名と依存edgeだけを `LockfileGraph` に読み、同名packageのedgeは合流させる。pylock.tomlは `[[packages]].dependencies[].name`、poetry.lockは `[package.dependencies]` のkey(1.x / 2.x共通)、pdm.lockは `dependencies` のPEP 508文字列の先頭名を使う。pdm.lockの `groups` / `extras` は読まない。CHK004はimportが宣言依存から到達可能かだけを問い、group別の到達性はmanifest側のcontextで判定済みのため。候補lockfileはすべてcacheの入力fingerprintに入れる(優先順位が変わると読む対象が変わるため)。lockfileは読むだけで編集しない。
+lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>.toml(名前順) > poetry.lock > pdm.lock とする。複数形式を合成しないのは、同一projectで形式が混在するのは移行途中であり、新しい側(uv/PEP 751)が実体に近いため。読んだlockfileの種類と相対pathは `ManifestSources.lockfile` に記録し、`--probe` に表示する。どの形式も package名と依存edgeだけを `LockfileGraph` に読み、同名packageのedgeは合流させる。pylock.tomlは `[[packages]].dependencies[].name`、poetry.lockは `[package.dependencies]` のkey(1.x / 2.x共通)、pdm.lockは `dependencies` のPEP 508文字列の先頭名を使う。uv.lockだけは `[package.optional-dependencies]` も extra名→配布物名 として `LockfileGraph.extras` に読む(上記のextra指定の判定に使う。依存側の `extra = [...]` はmanifestの宣言から分かるので読まない)。pdm.lockの `groups` / `extras` は読まない。CHK004はimportが宣言依存から到達可能かだけを問い、group別の到達性はmanifest側のcontextで判定済みのため。候補lockfileはすべてcacheの入力fingerprintに入れる(優先順位が変わると読む対象が変わるため)。lockfileは読むだけで編集しない。
 
 requirements系filesのパース規則を定める。コメントはpip互換で「行頭または空白が先行する `#`」のみを除去し、URLフラグメント（`#sha256=` / `#egg=`）は保持する。`-r` / `--requirement`（`--requirement=other.txt` 含む）は再帰的に追跡する。`-c` / `--constraint` はversion制約の情報源としてのみ読み、`LoadedManifest.constraints` に積み、依存宣言とは合流させない（ファイル欠如はwarning）。`-e ./path` とlocal path指定はworkspace/first-party候補として扱い、distribution名は空のopaque依存として記録する。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
 
@@ -580,8 +580,11 @@ marker付き依存 (例: pywin32; sys_platform == "win32")
   -> 解析環境では未使用に見えても誤検知になりやすい
   -> unused判定のconfidenceを1段下げ、defaultではwarning、--strict時のみerror
 
-extra指定 (例: requests[security])
-  -> extraが有効化するtransitive依存を推移閉包に含めてCHK004判定する
+extra指定 (例: psycopg[pool])
+  -> lockfileでextraが追加する配布物 (psycopg-pool) は、その宣言と同じcontextで
+     宣言済みとみなす (CHK003/CHK004にしない)。extraはユーザーが明示的に要求したため (#516)
+  -> extraを付けていない宣言 (psycopg) からは従来どおりCHK003/CHK004
+  -> extraの展開を読むのはuv.lockのみ。lockfileがない場合は展開しない
 
 stub package (types-* / *-stubs)
   -> importされないため素朴にはCHK002になる
