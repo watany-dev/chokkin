@@ -71,7 +71,7 @@ Summary: 8 issues
 | `CHK009` | `duplicate_dependency`  | declared twice in one context, or in runtime and a group/extra            | warning                       |
 | `CHK010` | `unresolved_import`     | import that resolves to neither first-party, third-party, nor stdlib      | warning                       |
 
-Because any module top-level name is importable in Python, `unused_export` starts out as a preview rule (info-level in library mode) rather than a hard error.
+Because any module top-level name is importable in Python, `unused_export` starts out as a preview rule (info-level in library mode) rather than a hard error. In library mode, a name its own module reads (a TypeVar, a type alias, a helper) is not reported either, since outside callers can reach it through the module's API.
 
 ## CLI
 

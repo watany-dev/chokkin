@@ -71,7 +71,7 @@ Summary: 8 issues
 |`CHK009`|`duplicate_dependency` |同じcontext内、またはruntimeとgroup/extraに重複宣言されている|warning                     |
 |`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |warning                     |
 
-Pythonではmodule top-levelの名前が原則import可能なため、`unused_export` は当初preview rule(library modeではinfo扱い)として提供します。
+Pythonではmodule top-levelの名前が原則import可能なため、`unused_export` は当初preview rule(library modeではinfo扱い)として提供します。library modeでは、定義元module自身が読んでいる名前 (TypeVar、型alias、helperなど) も外部の利用者がAPI経由で届き得るため報告しません。
 
 ## CLI
 

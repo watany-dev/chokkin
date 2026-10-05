@@ -55,8 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pip` / `uv` / `pipx` and other environment managers invoked from `tox.ini`,
   shell scripts and pre-commit hooks are no longer CHK008 binary usages, as
   was already the case for GitHub Actions `run:` steps (#494).
+- Breaking change for the Rust library API: `SymbolDef` gains
+  `used_in_module` (#540).
 
 ### Fixed
+- Library mode no longer reports CHK006 for a symbol its own module reads
+  (TypeVars, type aliases, classes reached only as an attribute's type,
+  module-level helpers and loggers); app mode still does. openai-python
+  CHK006 258 → 20, transformers 11700 → 1299 (#540).
 - A declared or locked distribution whose name differs from its import only
   by a `python-` / `py-` / `py` prefix or `-python` / `-py` / `py` suffix
   (`pydocket` for `docket`, `discord-py` for `discord`) now satisfies the
