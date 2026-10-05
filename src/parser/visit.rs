@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use ruff_python_ast::visitor::{Visitor, walk_expr};
+use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, Decorator, ExceptHandler, Expr, Identifier, Stmt, StmtImport, StmtImportFrom,
 };
@@ -358,7 +358,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 }
                 self.visit_parameters(&def.parameters);
                 if let Some(returns) = &def.returns {
-                    self.visit_expr(returns);
+                    self.visit_annotation(returns);
                 }
                 self.visit_def_body(
                     &def.name,
@@ -404,7 +404,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                     self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
                 }
                 self.visit_expr(&ann_assign.target);
-                self.visit_expr(&ann_assign.annotation);
+                self.visit_annotation(&ann_assign.annotation);
                 if let Some(value) = &ann_assign.value {
                     self.visit_expr(value);
                 }
@@ -496,6 +496,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
         }
     }
 
+    /// Quoted forward references (`x: "list[T]"`) read the names inside them.
+    fn visit_annotation(&mut self, expr: &'ast Expr) {
+        AnnotationNames(&mut self.loaded_names).visit_expr(expr);
+        walk_annotation(self, expr);
+    }
+
     /// Walk one expression for dynamic imports and module attribute accesses.
     ///
     /// Both used to be separate full-tree passes; folding them into the statement
@@ -561,6 +567,51 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             _ => {},
         }
         walk_expr(self, expr);
+    }
+}
+
+/// Every name is collected, the ones outside strings included, because
+/// a parsed string annotation is a fresh tree the module walk never reaches.
+struct AnnotationNames<'n>(&'n mut HashSet<String>);
+
+impl<'a> Visitor<'a> for AnnotationNames<'_> {
+    fn visit_expr(&mut self, expr: &'a Expr) {
+        match expr {
+            Expr::Name(name) => {
+                self.0.insert(name.id.to_string());
+            },
+            Expr::StringLiteral(string) => {
+                if let Ok(parsed) = ruff_python_parser::parse_expression(string.value.to_str()) {
+                    self.visit_expr(parsed.expr());
+                }
+            },
+            // `Literal["fast"]` and the metadata of `Annotated[T, Field(alias="x")]`
+            // hold values, not names.
+            Expr::Subscript(subscript) => match subscript_name(&subscript.value) {
+                Some("Literal") => self.visit_expr(&subscript.value),
+                Some("Annotated") => {
+                    self.visit_expr(&subscript.value);
+                    match &*subscript.slice {
+                        Expr::Tuple(tuple) => {
+                            if let Some(first) = tuple.elts.first() {
+                                self.visit_expr(first);
+                            }
+                        },
+                        slice => self.visit_expr(slice),
+                    }
+                },
+                _ => walk_expr(self, expr),
+            },
+            _ => walk_expr(self, expr),
+        }
+    }
+}
+
+fn subscript_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Name(name) => Some(name.id.as_str()),
+        Expr::Attribute(attribute) => Some(attribute.attr.as_str()),
+        _ => None,
     }
 }
 
@@ -655,6 +706,32 @@ mod tests {
         assert_eq!(
             used,
             [("T", true), ("Res", true), ("C", false), ("unused", false)]
+        );
+    }
+
+    #[test]
+    fn marks_symbols_read_in_string_annotations() {
+        let parsed = visit_source(
+            "T = TypeVar(\"T\")\nP = 1\nSelf = 1\nfast = 1\n\ndef f(x: \"list[T]\") -> list[\"P\"]:\n    y: \"'Self'\" = 1\n\nz: Literal[\"fast\"]\nv: typing.Literal[\"fast\"]\nw: Annotated[\"T\", Field(alias=\"model\")]\nmodel = 1\n",
+        );
+        let used: Vec<_> = parsed
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.name.as_str(), symbol.used_in_module))
+            .collect();
+        assert_eq!(
+            used,
+            [
+                ("T", true),
+                ("P", true),
+                ("Self", true),
+                ("fast", false),
+                ("f", false),
+                ("z", false),
+                ("v", false),
+                ("w", false),
+                ("model", false)
+            ]
         );
     }
 

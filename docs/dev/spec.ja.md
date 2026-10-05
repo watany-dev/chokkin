@@ -796,6 +796,8 @@ from ._x import Foo as Foo で再exportしている (PEP 484 の明示的再expo
 
 library modeでは、定義元module自身がその名前を読んでいるsymbol (parser の `SymbolDef::used_in_module`。注釈・関数本体・class本体の `Name` load を含む) も CHK006 にしない (#540)。TypeVar、型alias、属性やメソッドの戻り値の型としてだけ外に出るclass、module内のhelperやloggerがこれに当たる。外部の利用者はこれらに属性経由で届き得るので、library では「private にできる」と言い切れない (knip の `ignoreExportsUsedInFile` 相当)。app modeでは従来どおり報告する。外部からの利用者がいなければ `_` を付けて private にできる、という指摘に意味があるため。判定は名前単位なので、同名のlocal変数や組み込み名 (`min` など) の読み取りでも used になる。
 
+引数・戻り値・`AnnAssign` の注釈にある文字列 (`x: "list[T]"`、`list["Foo"]` の内側) は式として parse し直し、中の `Name` も読み取りに数える (#545)。`Literal[...]` の中の文字列、`Annotated[...]` の2番目以降の引数、`cast("T", x)`、`TypeVar(bound="Foo")` は対象外。
+
 CHK007 は、再exportした `__init__.py` 自身がその名前を読んでいる import (parser の `ParsedModule::used_import_bindings`) を対象外にする。`from .x import a as b` の再export名は `b` とする。
 
 `unused_export` の自動削除はv1までは避ける。安全なfixは `__all__` からの削除程度に限定し、関数・class本体の削除は `--fix --unsafe` がある場合だけにする。
