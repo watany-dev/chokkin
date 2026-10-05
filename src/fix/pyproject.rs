@@ -7,7 +7,27 @@ use crate::manifest::{normalize_distribution_name, pep508_distribution_name};
 use super::error::FixError;
 use super::write::{read_manifest, write_manifest};
 
-fn load_doc(path: &std::path::Path) -> Result<(&str, DocumentMut), FixError> {
+/// A parsed manifest and the line ending it is written back with.
+struct LoadedDoc<'a> {
+    rel: &'a str,
+    doc: DocumentMut,
+    crlf: bool,
+}
+
+impl LoadedDoc<'_> {
+    /// `toml_edit` renders every newline as LF, so a CRLF manifest is
+    /// converted back instead of having all of its lines rewritten.
+    fn render(&self) -> String {
+        let text = self.doc.to_string();
+        if self.crlf {
+            text.replace("\r\n", "\n").replace('\n', "\r\n")
+        } else {
+            text
+        }
+    }
+}
+
+fn load_doc(path: &std::path::Path) -> Result<LoadedDoc<'_>, FixError> {
     let (rel, contents) = read_manifest(path, "pyproject.toml")?;
     let doc = contents
         .parse::<DocumentMut>()
@@ -15,7 +35,8 @@ fn load_doc(path: &std::path::Path) -> Result<(&str, DocumentMut), FixError> {
             path: rel.to_owned(),
             detail: error.to_string(),
         })?;
-    Ok((rel, doc))
+    let crlf = contents.contains("\r\n") && !contents.replace("\r\n", "").contains('\n');
+    Ok(LoadedDoc { rel, doc, crlf })
 }
 
 /// Remove the entry for `distribution` at a manifest label.
@@ -24,16 +45,17 @@ pub fn remove_by_label(
     label: &str,
     distribution: &str,
 ) -> Result<String, FixError> {
-    let (rel, mut doc) = load_doc(path)?;
+    let mut loaded = load_doc(path)?;
+    let (rel, doc) = (loaded.rel, &mut loaded.doc);
 
-    let removed = remove_label_in_document(&mut doc, label, distribution)?;
+    let removed = remove_label_in_document(doc, label, distribution)?;
     if !removed {
         return Err(FixError::Unsupported {
             detail: format!("could not find `{label}` in {rel}"),
         });
     }
 
-    write_manifest(path, rel, doc.to_string().as_bytes())?;
+    write_manifest(path, rel, loaded.render().as_bytes())?;
     Ok(format!("removed `{label}` from {rel}"))
 }
 
@@ -44,32 +66,34 @@ pub fn move_group_to_runtime(
     distribution: &str,
     raw: &str,
 ) -> Result<String, FixError> {
-    let (rel, mut doc) = load_doc(path)?;
+    let mut loaded = load_doc(path)?;
+    let (rel, doc) = (loaded.rel, &mut loaded.doc);
 
-    let removed = remove_label_in_document(&mut doc, from_label, distribution)?;
+    let removed = remove_label_in_document(doc, from_label, distribution)?;
     if !removed {
         return Err(FixError::Unsupported {
             detail: format!("could not remove source entry `{from_label}`"),
         });
     }
 
-    let _ = push_runtime_dependency(&mut doc, raw)?;
+    let _ = push_runtime_dependency(doc, raw)?;
 
-    write_manifest(path, rel, doc.to_string().as_bytes())?;
+    write_manifest(path, rel, loaded.render().as_bytes())?;
     Ok(format!("moved dependency to project.dependencies in {rel}"))
 }
 
 /// Add a runtime dependency to `[project].dependencies`.
 pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<String, FixError> {
-    let (rel, mut doc) = load_doc(path)?;
+    let mut loaded = load_doc(path)?;
+    let (rel, doc) = (loaded.rel, &mut loaded.doc);
 
-    if !push_runtime_dependency(&mut doc, raw)? {
+    if !push_runtime_dependency(doc, raw)? {
         return Ok(format!(
             "`{raw}` already exists in project.dependencies in {rel}"
         ));
     }
 
-    write_manifest(path, rel, doc.to_string().as_bytes())?;
+    write_manifest(path, rel, loaded.render().as_bytes())?;
     Ok(format!("added `{raw}` to project.dependencies in {rel}"))
 }
 
@@ -275,20 +299,64 @@ fn remove_array_index(
         return Ok(false);
     }
     let removed = array.remove(index);
-    // `Array::remove` keeps the next element's own prefix, so removing the
-    // head of `["a", "b"]` would leave `[ "b"]`. Comments are left alone.
-    if index == 0
-        && let Some(head) = array.get_mut(0)
-        && let Some(old) = removed.decor().prefix().and_then(blank_prefix)
-        && head.decor().prefix().and_then(blank_prefix).is_some()
-    {
-        head.decor_mut().set_prefix(old.to_owned());
+    let removed_prefix = removed
+        .decor()
+        .prefix()
+        .and_then(toml_edit::RawString::as_str)
+        .unwrap_or_default();
+    // The text after an element's comma up to its successor (`prefix`, or the
+    // array's `trailing` for the last one) starts with the rest of that line,
+    // comment included. Keep the previous line's end, drop the removed line's
+    // (#480 kept `[ "b"]` from becoming `["b"]`; this also keeps `# why` on
+    // the entry it was written for).
+    if let Some(next) = array.get_mut(index) {
+        let next_prefix = next
+            .decor()
+            .prefix()
+            .and_then(toml_edit::RawString::as_str)
+            .unwrap_or_default();
+        let joined = if next_prefix.contains('\n') {
+            join_line_ends(removed_prefix, next_prefix)
+        } else {
+            removed_prefix.to_owned()
+        };
+        next.decor_mut().set_prefix(joined);
+    } else if array.trailing_comma() {
+        let trailing = array.trailing().as_str().unwrap_or_default();
+        let joined = join_line_ends(removed_prefix, trailing);
+        array.set_trailing(joined);
+    } else {
+        // Without a trailing comma the last line's end, up to `]`, is the
+        // removed element's suffix; it moves to the new last element.
+        let removed_suffix = removed
+            .decor()
+            .suffix()
+            .and_then(toml_edit::RawString::as_str)
+            .unwrap_or_default();
+        let joined = join_line_ends(removed_prefix, removed_suffix);
+        match index.checked_sub(1).and_then(|last| array.get_mut(last)) {
+            Some(last) => {
+                let suffix = last
+                    .decor()
+                    .suffix()
+                    .and_then(toml_edit::RawString::as_str)
+                    .unwrap_or_default();
+                let suffix = format!("{suffix}{joined}");
+                last.decor_mut().set_suffix(suffix);
+            },
+            None => array.set_trailing(joined),
+        }
     }
     Ok(true)
 }
 
-fn blank_prefix(raw: &toml_edit::RawString) -> Option<&str> {
-    raw.as_str().filter(|s| s.trim().is_empty())
+/// `before`'s first line end followed by everything after `after`'s first
+/// line end; `after` unchanged when `before` does not end a line.
+fn join_line_ends(before: &str, after: &str) -> String {
+    match (before.split_once('\n'), after.split_once('\n')) {
+        (Some((line_end, _)), Some((_, rest))) => format!("{line_end}\n{rest}"),
+        _ => after.to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +397,84 @@ dependencies = ["boto3>=1.0", "requests>=2.0"]
         remove_by_label(&path, "project.dependencies[0]", "alpha").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(updated.contains("dependencies = [\n    \"bravo\",\n]"));
+    }
+
+    #[test]
+    fn removal_keeps_each_inline_comment_on_its_own_entry() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\n    \"alpha\",  # a\n    \"bravo\",  # b\n    \"charlie\",  # c\n    \"delta\",  # d\n]\n",
+        )
+        .expect("write");
+
+        remove_by_label(&path, "project.dependencies[3]", "delta").expect("remove last");
+        remove_by_label(&path, "project.dependencies[1]", "bravo").expect("remove middle");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            updated,
+            "[project]\nname = \"demo\"\ndependencies = [\n    \"alpha\",  # a\n    \"charlie\",  # c\n]\n"
+        );
+        for (index, name) in [(1, "charlie"), (0, "alpha")] {
+            remove_by_label(&path, &format!("project.dependencies[{index}]"), name)
+                .expect("remove");
+        }
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\n]"), "{updated}");
+    }
+
+    #[test]
+    fn single_line_removal_keeps_spacing() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\"a\", \"b\", \"c\", \"d\"]\n",
+        )
+        .expect("write");
+        for (index, name) in [(3, "d"), (1, "b"), (0, "a")] {
+            remove_by_label(&path, &format!("project.dependencies[{index}]"), name)
+                .expect("remove");
+        }
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = [\"c\"]\n"), "{updated}");
+    }
+
+    #[test]
+    fn removing_last_entry_without_trailing_comma_keeps_closing_line() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\n    \"a\",  # a\n    \"b\"  # b\n]\n",
+        )
+        .expect("write");
+        remove_by_label(&path, "project.dependencies[1]", "b").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            updated.ends_with("dependencies = [\n    \"a\"  # a\n]\n"),
+            "{updated}"
+        );
+        remove_by_label(&path, "project.dependencies[0]", "a").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.ends_with("dependencies = [\n]\n"), "{updated}");
+    }
+
+    #[test]
+    fn crlf_manifest_keeps_crlf_line_endings() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "# top\r\n[project]\r\nname = \"demo\"\r\ndependencies = [\r\n    \"a\",\r\n    \"b\",\r\n]\r\n",
+        )
+        .expect("write");
+        remove_by_label(&path, "project.dependencies[1]", "b").expect("remove");
+        add_runtime_dependency(&path, "c").expect("add");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(!updated.replace("\r\n", "").contains('\n'), "{updated:?}");
+        assert!(updated.starts_with("# top\r\n[project]\r\n"), "{updated:?}");
     }
 
     #[test]
