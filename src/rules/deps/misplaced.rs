@@ -9,9 +9,9 @@ use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::context::{
     DeclarationBucket, UsageContext, declaration_bucket, declaration_buckets, include_path_details,
-    usage_context_for_import,
+    is_directly_declared, usage_context_for_import,
 };
-use super::missing::{WorkspaceDeclaredIndex, governing_declarations};
+use super::missing::{WorkspaceDeclaredIndex, governing_declarations, member_declarations};
 use super::used::DeclaredIndex;
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
@@ -52,6 +52,14 @@ pub(super) fn detect_misplaced_dependencies(
         }
 
         let workspace_member = import.workspace_member.as_deref();
+        // Same as CHK003/CHK004: a member that declares it for runtime is
+        // satisfied, even when the root only lists it in a dev group.
+        if workspace_member
+            .and_then(|member_id| member_declarations(workspace_declared, member_id, distribution))
+            .is_some_and(|deps| is_directly_declared(deps, usage, config))
+        {
+            continue;
+        }
         let declarations = governing_declarations(
             declared,
             workspace_declared,

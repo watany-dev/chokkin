@@ -3,6 +3,8 @@
 //! Value validation happens at parse time so errors point at the file that
 //! actually contains the offending value.
 
+use std::collections::BTreeMap;
+
 use crate::discovery::ProjectRoot;
 
 use super::defaults::merge_layers;
@@ -34,17 +36,20 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
     }
 
     let mut uv_workspace = None;
+    let mut uv_path_sources = BTreeMap::new();
     if let Some(path) = file_at_root("pyproject.toml") {
-        let (partial, uv_hint) = parse_pyproject_config(&path)?;
-        uv_workspace = uv_hint;
-        if partial.has_any_field() {
+        let parsed = parse_pyproject_config(&path)?;
+        uv_workspace = parsed.uv_workspace;
+        uv_path_sources = parsed.uv_path_sources;
+        if parsed.partial.has_any_field() {
             sources.pyproject_tool_chokkin = true;
-            layers.push(partial);
+            layers.push(parsed.partial);
         }
     }
 
     let effective = merge_layers(&layers);
-    let workspace_members = resolve_workspace_members(root, &effective, uv_workspace.as_ref())?;
+    let workspace_members =
+        resolve_workspace_members(root, &effective, uv_workspace.as_ref(), &uv_path_sources)?;
 
     Ok(LoadedConfig {
         root: root.clone(),
