@@ -746,3 +746,48 @@ fn reexport_read_in_its_own_init_is_not_chk007() {
         "original"
     ));
 }
+
+const IN_FILE_USE_MODULE: &str = "from typing import TYPE_CHECKING, Generic, TypeVar, Union\n\nif TYPE_CHECKING:\n    from pydantic import TypeAdapter\nelse:\n    TypeAdapter = dict\n\nT = TypeVar(\"T\")\nArch = Union[str, int]\n\nclass Resource:\n    pass\n\nclass Client(Generic[T]):\n    arch: Arch\n\n    @property\n    def resource(self) -> Resource:\n        return Resource()\n\n    def adapter(self) -> TypeAdapter:\n        return TypeAdapter()\n\ndef unreferenced():\n    pass\n";
+
+/// A library cannot make private a name its own module reads: a `TypeVar`, a
+/// type alias, a class reached only as an attribute's type, or a name bound in
+/// a `TYPE_CHECKING` / `else` pair (#540). App mode still reports them.
+#[test]
+fn library_mode_symbol_used_in_its_own_module_is_not_chk006() {
+    let library = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        (
+            "src/acme/__init__.py",
+            "from ._base import Client as Client\n",
+        ),
+        ("src/acme/_base.py", IN_FILE_USE_MODULE),
+    ]);
+    for name in ["T", "Arch", "Resource", "TypeAdapter"] {
+        assert!(
+            !has_symbol_rule(&library, RuleId::Chk006, "acme._base", name),
+            "{name}: {library:?}"
+        );
+    }
+    assert!(has_symbol_rule(
+        &library,
+        RuleId::Chk006,
+        "acme._base",
+        "unreferenced"
+    ));
+
+    let app = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        ("app/base.py", IN_FILE_USE_MODULE),
+        (
+            "app/main.py",
+            "from app.base import Client\n\ndef main():\n    Client()\n",
+        ),
+    ]);
+    for name in ["T", "Arch", "Resource", "unreferenced"] {
+        assert!(
+            has_symbol_rule(&app, RuleId::Chk006, "app.base", name),
+            "{name}: {app:?}"
+        );
+    }
+}
