@@ -53,17 +53,38 @@ pub fn extract_requirements_file(
         return Ok(RequirementsExtraction::default());
     }
 
-    let mut include_stack = Vec::new();
     let mut result = RequirementsExtraction::default();
+    parse_requirements_root(root, &path, default_context, &mut result)?;
+    Ok(result)
+}
+
+/// Parse a requirements file that `setup.py` reads, keeping what was parsed
+/// before an unresolvable include; the flag is `false` when parsing stopped early.
+pub fn extract_requirements_path(
+    root: &Path,
+    path: &Path,
+    default_context: &DependencyContext,
+) -> (RequirementsExtraction, bool) {
+    let mut result = RequirementsExtraction::default();
+    let complete = parse_requirements_root(root, path, default_context, &mut result).is_ok();
+    (result, complete)
+}
+
+fn parse_requirements_root(
+    root: &Path,
+    path: &Path,
+    default_context: &DependencyContext,
+    result: &mut RequirementsExtraction,
+) -> Result<(), ManifestError> {
+    let mut include_stack = Vec::new();
     parse_requirements_file_path(RequirementsParseContext {
         root,
-        path: &path,
+        path,
         default_context,
         include_stack: &mut include_stack,
-        result: &mut result,
+        result,
         mode: RequirementsParseMode::Dependencies,
-    })?;
-    Ok(result)
+    })
 }
 
 fn parse_requirements_file_path(

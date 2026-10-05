@@ -214,6 +214,16 @@
       "target": "tests/fixtures/deps/setup_py_runtime_behind_dev_group/setup.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/setup_py_unknown_runtime/setup.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/setup_py_unknown_runtime/setup.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/setup_py_unknown_runtime/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/setup_py_unknown_runtime/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/transitive_urllib3/src/acme/main.py"
@@ -322,6 +332,11 @@
       "fingerprint": "CHK001:tests/fixtures/manifest/setup_py_partial_comment/setup.py",
       "code": "CHK001",
       "target": "tests/fixtures/manifest/setup_py_partial_comment/setup.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/manifest/setup_py_reads_requirements/setup.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/manifest/setup_py_reads_requirements/setup.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/manifest/setup_py_static/setup.py",

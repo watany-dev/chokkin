@@ -10,7 +10,8 @@ use crate::manifest::{
 use crate::plugins::PluginHints;
 use crate::resolver::ImportMap;
 use crate::rules::types::{
-    DependencyReport, IssueCandidate, WorkspaceDependencyBoundary, sort_candidates,
+    DependencyReport, IssueCandidate, RuleId, Severity, WorkspaceDependencyBoundary,
+    sort_candidates,
 };
 use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::{DiscoveredSources, PublicSurface};
@@ -88,6 +89,21 @@ fn lower_unused_when_a_skipped_file_is_reached(
     }
 }
 
+/// An unreadable `install_requires` may declare any import, so CHK003/CHK004
+/// become hints rather than errors (#491).
+fn lower_missing_when_runtime_dependencies_unknown(missing: &mut [IssueCandidate]) {
+    for candidate in missing {
+        if matches!(candidate.rule, RuleId::Chk003 | RuleId::Chk004) {
+            candidate.severity = Severity::Info;
+            candidate.confidence = Confidence::Maybe;
+            candidate
+                .explain
+                .details
+                .push("runtime dependencies could not be read statically".to_owned());
+        }
+    }
+}
+
 fn reconcile_project(
     dependency: &DependencyRuleContext<'_>,
     manifest: &LoadedManifest,
@@ -155,13 +171,17 @@ fn reconcile_project(
     }
     lower_unused_when_a_skipped_file_is_reached(&mut candidates, context, &reachable);
 
-    candidates.extend(detect_missing_dependencies(
+    let mut missing = detect_missing_dependencies(
         &import_declared,
         dependency,
         &reachable,
         lockfile_present,
         &workspace_declared,
-    ));
+    );
+    if manifest.sources.runtime_dependencies_unknown {
+        lower_missing_when_runtime_dependencies_unknown(&mut missing);
+    }
+    candidates.extend(missing);
 
     candidates.extend(detect_misplaced_dependencies(
         &import_declared,
