@@ -20,7 +20,7 @@ use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
 use super::used::{
     build_declared_index, collect_used_distributions, has_lockfile,
     mark_pytest_plugin_distributions, mark_self_referential_distribution,
-    mark_workspace_source_distributions, reachable_paths,
+    mark_workspace_source_distributions, reachable_paths, usage_paths,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
@@ -111,17 +111,12 @@ fn reconcile_project(
         .collect::<Vec<_>>();
     let lockfile_present = has_lockfile(manifest, resolution);
     let reachable = reachable_paths(graph, reachability);
+    let usage = usage_paths(&reachable, reachability);
 
-    let mut used = collect_used_distributions(context, plugins, &reachable);
+    let mut used = collect_used_distributions(context, plugins, &usage);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
-    mark_workspace_source_distributions(
-        manifest,
-        context,
-        &reachable,
-        workspace_boundaries,
-        &mut used,
-    );
+    mark_workspace_source_distributions(manifest, context, &usage, workspace_boundaries, &mut used);
 
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());

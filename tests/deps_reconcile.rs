@@ -97,7 +97,16 @@ fn reconcile_fixture(name: &str) -> chokkin::DependencyReport {
 }
 
 fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::DependencyReport {
-    let inputs = load_deps(&fixture(name), false);
+    reconcile_inputs(&load_deps(&fixture(name), false), strict)
+}
+
+fn reconcile_production_fixture(name: &str, strict: bool) -> chokkin::DependencyReport {
+    let mut inputs = load_deps(&fixture(name), true);
+    inputs.config.production = true;
+    reconcile_inputs(&inputs, strict)
+}
+
+fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::DependencyReport {
     let workspace_boundaries = inputs
         .workspace_inputs
         .iter()
@@ -665,6 +674,47 @@ fn include_group_is_checked_once_under_its_declaring_group() {
             .iter()
             .any(|line| line == "included via dependency-groups: server -> Shared_Libs")
     );
+}
+
+#[test]
+fn library_public_modules_use_dependencies_without_other_entry_roots() {
+    let report = reconcile_fixture("library_without_entry_roots");
+    // requests: imported by the package `__init__.py`; httpx: by a submodule
+    // nothing in the project imports; attrs: by a subpackage `__init__.py`
+    // nothing imports.
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "httpx"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "attrs"));
+    assert!(has_dist_rule(&report, RuleId::Chk002, "mypy-extensions"));
+    // An orphan outside the package may not ship, so its import is no missing
+    // dependency.
+    assert!(
+        !report
+            .candidates
+            .iter()
+            .any(|candidate| candidate.rule == RuleId::Chk003
+                && candidate.message.contains("jinja2"))
+    );
+
+    for strict in [false, true] {
+        let report = reconcile_production_fixture("library_without_entry_roots", strict);
+        let unused = report
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.rule == RuleId::Chk002)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unused,
+            Vec::<&chokkin::IssueCandidate>::new(),
+            "strict={strict}"
+        );
+    }
+}
+
+#[test]
+fn library_package_under_lib_root_uses_its_dependencies() {
+    let report = reconcile_fixture("library_lib_package_root");
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
 
 #[test]

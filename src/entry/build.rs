@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::{ChokkinConfig, EntrySpec};
+use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
 use crate::manifest::LoadedManifest;
 use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_target};
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
@@ -51,6 +51,9 @@ pub fn build_entry_roots(
     }
 
     let mode = resolve_project_mode(config, manifest, sources, &candidates, &mut warnings);
+    if mode == ProjectMode::Library {
+        collect_library_package_entries(sources, &file_contexts, &mut candidates);
+    }
     let mut roots = merge_entry_candidates(candidates);
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
 
@@ -162,6 +165,37 @@ fn collect_manifest_entries(
                 group: entry_point.group.clone(),
             },
         });
+    }
+}
+
+/// A library's public API is its own entry point: without this, a library
+/// with no script, test, or config root reaches nothing and every runtime
+/// dependency it imports reads as unused (#501).
+fn collect_library_package_entries(
+    sources: &DiscoveredSources,
+    file_contexts: &BTreeMap<&str, FileContext>,
+    candidates: &mut Vec<EntryCandidate>,
+) {
+    for package in &sources.layout.packages {
+        let prefix = format!("{}/", sources.layout.package_dir(package));
+        let inits = file_contexts
+            .range(prefix.as_str()..)
+            .take_while(|(path, _)| path.starts_with(&prefix))
+            .filter(|(path, context)| {
+                path.ends_with("/__init__.py") && **context == FileContext::Runtime
+            });
+        for (path, _) in inits {
+            candidates.push(EntryCandidate {
+                spec: EntrySpec {
+                    path: (*path).to_owned(),
+                    symbol: None,
+                },
+                context: FileContext::Runtime,
+                origin: EntryOrigin::Auto {
+                    rule: "auto:library package".to_owned(),
+                },
+            });
+        }
     }
 }
 

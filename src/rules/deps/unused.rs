@@ -220,15 +220,25 @@ fn unreachable_file_suffix(path: &str, reachability: &ReachabilityReport) -> Str
 
 /// Dev, optional-extra, and setup-extra declarations are not reported unless `--strict`.
 /// A group pulled into a non-dev group via `include-group` counts as that group too.
+/// `--production` drops dev and type groups from the analysis, so it never
+/// reports them, even with `--strict` (§1).
 fn should_suppress_unused_report(
     dep: &DeclaredDependency,
     config: &ChokkinConfig,
     strict: bool,
 ) -> bool {
+    let buckets = declaration_buckets(dep, &config.dependencies);
+    if config.production
+        && buckets
+            .iter()
+            .all(|bucket| matches!(bucket, DeclarationBucket::Dev | DeclarationBucket::Type))
+    {
+        return true;
+    }
     if strict {
         return false;
     }
-    if declaration_buckets(dep, &config.dependencies)
+    if buckets
         .iter()
         .all(|bucket| *bucket == DeclarationBucket::Dev)
     {
