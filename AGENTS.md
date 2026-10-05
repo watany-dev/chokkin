@@ -28,7 +28,7 @@ manifest extraction. v0.2 release validation measurements were
 recorded on 2026-06-15 with Rust 1.93: `make check`, OSS fixtures, full
 20-project OSS gate, and Criterion cache benches passed; synthetic 10k warm
 cache measured under 205 ms. Baseline CI adoption is dogfooded by this repo's
-`chokkin-baseline` workflow job and checked-in `chokkin-baseline.json` (see
+`msrv` CI job (baseline steps) and checked-in `chokkin-baseline.json` (see
 `docs/dev/v0.2-release-validation.md`). Phase 3 (v0.3) adds `schema_version` on
 JSON reporter and baseline output, published JSON Schema under `docs/schema/`,
 `[tool.chokkin.severity]` per-rule overrides wired through emit/reporters/exit codes,
