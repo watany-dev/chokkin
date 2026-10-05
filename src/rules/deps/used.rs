@@ -707,4 +707,29 @@ mod tests {
         );
         assert!(used.contains("streamlit"));
     }
+
+    #[test]
+    fn usage_paths_adds_only_library_orphans_capped_at_maybe() {
+        let orphan = |path: &str, mode, max_confidence| crate::reachability::UnreachableFile {
+            file: crate::graph::FileId(0),
+            path: path.to_owned(),
+            max_confidence,
+            mode,
+        };
+        let mut report = ReachabilityReport::default();
+        report.unreachable = vec![
+            orphan("public.py", ProjectMode::Library, Confidence::Maybe),
+            orphan(
+                "outside_wheel.py",
+                ProjectMode::Library,
+                Confidence::Certain,
+            ),
+            orphan("app_orphan.py", ProjectMode::App, Confidence::Maybe),
+        ];
+        let reachable = HashSet::from(["main.py"]);
+
+        let usage = usage_paths(&reachable, &report);
+
+        assert_eq!(usage, HashSet::from(["main.py", "public.py"]));
+    }
 }
