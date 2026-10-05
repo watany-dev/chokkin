@@ -1,6 +1,6 @@
 # Tool versions — keep in sync with .github/workflows/ci.yml
 CARGO_DENY_VERSION          ?= 0.19.2
-CARGO_TARPAULIN_VERSION     ?= 0.35.1
+CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_SEMVER_CHECKS_VERSION ?= 0.50.0
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 
@@ -132,11 +132,11 @@ kani:
 	cargo kani
 
 ## ─── Code coverage ────────────────────────────────────────────────────────────
-# NOTE: --fail-under is intentionally omitted until the analyzer is implemented.
+# NOTE: --fail-under-lines is intentionally omitted until the analyzer is implemented.
 # Re-enable at 95% once Phase 1 (v0.1 MVP) coverage is established.
 # See docs/dev/ci-porting-notes.md.
 coverage:
-	cargo tarpaulin --out html --skip-clean --timeout 300 -- --test-threads=1
+	cargo llvm-cov --locked --html
 
 ## ─── Semver ───────────────────────────────────────────────────────────────────
 semver:
@@ -153,7 +153,7 @@ sdist:
 tools:
 ifndef SKIP_TOOL_INSTALL
 	cargo install cargo-deny@$(CARGO_DENY_VERSION) --locked
-	cargo install cargo-tarpaulin@$(CARGO_TARPAULIN_VERSION) --locked
+	cargo install cargo-llvm-cov@$(CARGO_LLVM_COV_VERSION) --locked
 	cargo install cargo-semver-checks@$(CARGO_SEMVER_CHECKS_VERSION) --locked
 	cargo install cargo-mutants@$(CARGO_MUTANTS_VERSION) --locked
 endif

@@ -51,18 +51,18 @@ The package name `chokkin` is reserved by the published v0.1.0 release.
 
 ## Coverage threshold
 
-`cargo tarpaulin --fail-under 95` is intentionally omitted from both the
+`cargo llvm-cov --fail-under-lines 95` is intentionally omitted from both the
 Makefile and `ci.yml` until the Phase 1 (v0.1 MVP) analyzer implementation
 provides meaningful coverage. Re-enable when Phase 1 is merged:
 
 ```yaml
 # ci.yml coverage job — uncomment when Phase 1 lands:
-# --fail-under 95
+# --fail-under-lines 95
 ```
 
 ```makefile
 # Makefile coverage target — uncomment when Phase 1 lands:
-# --fail-under 95
+# --fail-under-lines 95
 ```
 
 ## Windows test temp directory

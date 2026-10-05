@@ -128,18 +128,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
-          tool: cargo-tarpaulin@0.35.1
-      # NOTE: --fail-under omitted until analyzer implementation reaches coverage targets.
-      # Re-enable at --fail-under 95 for Phase 1 (v0.1 MVP). See docs/dev/ci-porting-notes.md.
-      - run: cargo tarpaulin --out json --out html --skip-clean --timeout 300 -- --test-threads=1
+          tool: cargo-llvm-cov@0.9.1
+      # Source-based coverage runs the tests in parallel; tarpaulin's ptrace
+      # engine needed --test-threads=1 and took ~4 min.
+      # NOTE: --fail-under-lines omitted until analyzer implementation reaches coverage targets.
+      # Re-enable at --fail-under-lines 95 for Phase 1 (v0.1 MVP). See docs/dev/ci-porting-notes.md.
+      - run: cargo llvm-cov --locked --no-report
+      - run: cargo llvm-cov report --summary-only
+      - run: cargo llvm-cov report --html
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: coverage-report
-          path: tarpaulin-report.html
+          path: target/llvm-cov/html/
           retention-days: 14
 
   security:
