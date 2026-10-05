@@ -2,12 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobSet};
 
 use crate::config::ChokkinConfig;
 use crate::parser::{IgnoreDirective, ParseSummary};
 use crate::resolver::ResolutionIndex;
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
+use crate::sources::build_glob_set;
 
 /// Compiled ignore matchers for config and source directives.
 #[derive(Debug)]
@@ -55,7 +56,7 @@ impl IgnoreMatcher {
             config: config_rules,
             directives,
             binary_distributions: resolution.binary_resolutions.clone(),
-            vendored: build_vendored_matcher(&config.vendored),
+            vendored: build_glob_set(&config.vendored).unwrap_or_else(|_| GlobSet::empty()),
         }
     }
 
@@ -120,16 +121,6 @@ impl IgnoreMatcher {
         }
         None
     }
-}
-
-fn build_vendored_matcher(patterns: &[String]) -> GlobSet {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        if let Ok(glob) = Glob::new(pattern) {
-            builder.add(glob);
-        }
-    }
-    builder.build().unwrap_or_else(|_| GlobSet::empty())
 }
 
 fn candidate_line(candidate: &IssueCandidate) -> Option<u32> {
