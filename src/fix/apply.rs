@@ -31,8 +31,17 @@ pub fn apply_fixes_with_workspace(
         ..FixReport::default()
     };
 
-    for action in bottom_up_positional_removals(actions) {
-        match apply_action(root.path.as_path(), &action, options) {
+    let mut outcomes: Vec<_> = bottom_up_positional_removals(actions)
+        .into_iter()
+        .map(|(plan_index, action)| {
+            let outcome = apply_action(root.path.as_path(), &action, options);
+            (plan_index, action, outcome)
+        })
+        .collect();
+    // Report in plan (diagnostic) order, not the bottom-up order the edits needed.
+    outcomes.sort_by_key(|(plan_index, ..)| *plan_index);
+    for (_, action, outcome) in outcomes {
+        match outcome {
             Ok(applied) => report_out.applied.push(applied),
             Err(error) => {
                 let (rule, subject) = action.rule_subject();
@@ -55,9 +64,10 @@ pub fn apply_fixes_with_workspace(
 
 /// Removing an entry shifts every later line number or array index in the same place, so apply
 /// positional removals bottom-up.
-fn bottom_up_positional_removals(mut actions: Vec<FixAction>) -> Vec<FixAction> {
-    actions.sort_by(|a, b| removal_position(a).cmp(&removal_position(b)));
-    actions
+fn bottom_up_positional_removals(actions: Vec<FixAction>) -> Vec<(usize, FixAction)> {
+    let mut indexed: Vec<_> = actions.into_iter().enumerate().collect();
+    indexed.sort_by(|(_, a), (_, b)| removal_position(a).cmp(&removal_position(b)));
+    indexed
 }
 
 /// `(file, array, Reverse(position))` for removals addressed by requirements line or
@@ -332,7 +342,7 @@ mod tests {
 
         let ordered: Vec<String> = bottom_up_positional_removals(actions)
             .iter()
-            .map(|action| match action {
+            .map(|(_, action)| match action {
                 FixAction::RemoveDependency { label, line, .. } => format!("{label}:{line:?}"),
                 FixAction::MoveToRuntime { from_label, .. } => from_label.clone(),
                 FixAction::AddMissingDependency { name, .. } => name.clone(),
@@ -351,6 +361,44 @@ mod tests {
                 "requirements.txt:Some(1)",
             ]
         );
+    }
+
+    #[test]
+    fn applied_fixes_are_reported_in_plan_order() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\"boto3\", \"click\"]\n",
+        )
+        .expect("write");
+        let root = project_root(dir.path());
+        let mut manifest = empty_manifest(&root);
+        manifest.sources.pyproject_toml = true;
+        let at = |name: &str, index: usize| {
+            let mut issue = unused_dependency_issue(name);
+            if let Some(origin) = issue.location.manifest.as_mut() {
+                origin.label = format!("project.dependencies[{index}]");
+            }
+            issue
+        };
+        let mut report = issue_report(at("boto3", 0));
+        report.issues.push(at("click", 1));
+
+        let fix_report =
+            apply_fixes_with_workspace(&report, &root, &manifest, &[], FixOptions::default());
+
+        let names: Vec<_> = fix_report
+            .applied
+            .iter()
+            .filter_map(|applied| match &applied.subject {
+                crate::rules::IssueSubject::Distribution { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, ["boto3", "click"]);
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.contains("dependencies = []"), "{updated}");
     }
 
     #[test]
