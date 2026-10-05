@@ -60,14 +60,35 @@ pub fn analyze_with_context(
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
 
     let surface = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
-    let mut candidates = detect_unused_exports(
-        &registry,
+    // A library member ships its own wheel, so its files are judged as a
+    // library whatever the root mode is, and the root's wheel surface does
+    // not apply to them (#515).
+    let mode_for = |path: &str| {
+        if entry.in_library_member(path) {
+            ProjectMode::Library
+        } else {
+            mode
+        }
+    };
+    // A library symbol the wheel does not ship has no outside caller (R-05).
+    let export_mode = |path: &str| {
+        if !entry.in_library_member(path)
+            && surface
+                .as_ref()
+                .is_some_and(|surface| !surface.contains(path))
+        {
+            ProjectMode::App
+        } else {
+            mode_for(path)
+        }
+    };
+    let mut candidates =
+        detect_unused_exports(&registry, &reference_index, &external_symbols, export_mode);
+    candidates.extend(detect_unused_reexports(
+        &reexports,
         &reference_index,
-        &external_symbols,
-        mode,
-        surface.as_ref(),
-    );
-    candidates.extend(detect_unused_reexports(&reexports, &reference_index, mode));
+        mode_for,
+    ));
     candidates.extend(detect_unresolved_imports(
         resolution, &reachable, manifest, sources,
     ));
@@ -104,8 +125,7 @@ fn detect_unused_exports(
     registry: &[RegistryEntry],
     references: &ReferenceIndex,
     external_symbols: &indexmap::IndexSet<SymbolId>,
-    mode: ProjectMode,
-    surface: Option<&PublicSurface>,
+    mode_for: impl Fn(&str) -> ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
@@ -117,10 +137,7 @@ fn detect_unused_exports(
             continue;
         }
 
-        // A library symbol the wheel does not ship has no outside caller (R-05).
-        let shipped = surface.is_none_or(|surface| surface.contains(&entry.path));
-        let symbol_mode = if shipped { mode } else { ProjectMode::App };
-        let (severity, confidence) = unused_export_severity(symbol_mode, entry.in_all);
+        let (severity, confidence) = unused_export_severity(mode_for(&entry.path), entry.in_all);
         candidates.push(IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -161,7 +178,7 @@ fn detect_unused_exports(
 fn detect_unused_reexports(
     reexports: &[ReExport],
     references: &ReferenceIndex,
-    mode: ProjectMode,
+    mode_for: impl Fn(&str) -> ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
@@ -169,7 +186,7 @@ fn detect_unused_reexports(
         if is_reexport_used(reexport, references) {
             continue;
         }
-        let (severity, confidence) = unused_reexport_severity(mode);
+        let (severity, confidence) = unused_reexport_severity(mode_for(&reexport.path));
         candidates.push(IssueCandidate {
             rule: RuleId::Chk007,
             subject: IssueSubject::Symbol {

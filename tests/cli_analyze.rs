@@ -816,6 +816,48 @@ fn binary_malformed_dynamic_import_names_do_not_abort_analysis() {
     assert_eq!(parsed["issues"], serde_json::json!([]), "{parsed}");
 }
 
+/// An app root over an auto-detected library member: the member ships its own
+/// wheel, so its unused public API is judged as a library's (#515).
+#[test]
+fn binary_library_member_symbols_use_library_mode() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("main.py", "from acme_lib import helper\n\nhelper()\n"),
+        (
+            "libs/acme-lib/pyproject.toml",
+            "[project]\nname = \"acme-lib\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "libs/acme-lib/acme_lib/__init__.py",
+            "from .core import helper, Extra\n",
+        ),
+        (
+            "libs/acme-lib/acme_lib/core.py",
+            "def helper():\n    pass\n\n\ndef lib_dead():\n    pass\n\n\nclass Extra:\n    pass\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    let severity = |code: &str, target: &str| {
+        issues
+            .iter()
+            .find(|issue| issue["code"] == code && issue["target"] == target)
+            .map(|issue| issue["severity"].as_str().unwrap_or_default().to_owned())
+    };
+    for (code, target) in [
+        ("CHK006", "libs/acme-lib/acme_lib/core.py:lib_dead"),
+        ("CHK007", "libs/acme-lib/acme_lib/__init__.py:Extra"),
+    ] {
+        assert_eq!(
+            severity(code, target).as_deref(),
+            Some("info"),
+            "{issues:?}"
+        );
+    }
+}
+
 /// `llama_index`'s azurepostgresql member: `psycopg[pool]` brings in
 /// `psycopg-pool` through the lock's `optional-dependencies` (#516). An
 /// undeclared monorepo locks each member; a uv workspace locks at the root.
