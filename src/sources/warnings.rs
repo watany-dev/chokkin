@@ -16,12 +16,12 @@ pub enum SourcesWarning {
         /// Root-relative entry path.
         path: String,
     },
-    /// Multiple flat-layout package candidates; one was chosen.
-    #[error("sources: ambiguous flat layout ({candidates:?}); chose `{chosen}`")]
+    /// Several undeclared package directories; one was chosen.
+    #[error("sources: ambiguous package directory ({candidates:?}); chose `{chosen}`")]
     AmbiguousFlatLayout {
-        /// All detected candidates.
+        /// Root-relative candidate directories.
         candidates: Vec<String>,
-        /// Selected package directory name.
+        /// Selected root-relative package directory.
         chosen: String,
     },
     /// `.gitignore` could not be read or parsed.
@@ -43,5 +43,16 @@ pub enum SourcesWarning {
         path: String,
         /// Human-readable error description.
         reason: String,
+    },
+    /// The only undeclared package directory is not named after the project.
+    #[error(
+        "sources: no package directory matches project `{project}`; guessed `{chosen}` \
+         (declare it in the build backend config or [tool.chokkin] project)"
+    )]
+    GuessedPackageDir {
+        /// `[project].name`.
+        project: String,
+        /// Selected root-relative package directory.
+        chosen: String,
     },
 }

@@ -550,6 +550,7 @@ mod tests {
     fn empty_layout() -> LayoutInfo {
         LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),

@@ -658,6 +658,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo {
                 layout: ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
@@ -705,6 +706,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo {
                 layout: ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
@@ -783,6 +785,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo {
                 layout: ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
@@ -851,6 +854,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo {
                 layout: ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),

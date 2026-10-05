@@ -79,8 +79,9 @@ pub(super) fn collect_used_distributions(
     used
 }
 
-/// `workspace = true` dependencies resolve as first-party imports, so they
-/// carry no distribution; match them back by normalized import name, or by
+/// `workspace = true` dependencies, and `path` sources that hold the project's
+/// own package (`streamlit = { path = "lib" }`), resolve as first-party
+/// imports, so they carry no distribution; match them back by normalized import name, or by
 /// the member tree that holds the imported module (`airflow` from
 /// `airflow-core/src/airflow` uses `apache-airflow-core`). The manifest's own
 /// entry point targets count as such imports too, and so do the imports of a
@@ -106,7 +107,7 @@ pub(super) fn mark_workspace_source_distributions(
         .collect();
     for module in &first_party {
         let name = normalize_distribution_name(import_root(module));
-        if manifest.uv.is_workspace_source(&name) {
+        if manifest.uv.is_local_source(&name) {
             used.insert(name);
         }
     }
@@ -330,6 +331,7 @@ mod tests {
             root: graph.root.clone(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
+                package_root: "src".to_owned(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
@@ -585,6 +587,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
+                package_root: "src".to_owned(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
@@ -615,5 +618,66 @@ mod tests {
         let mut used: Vec<String> = used.into_iter().collect();
         used.sort();
         assert_eq!(used, ["core", "sdk"]);
+    }
+
+    /// `streamlit = { path = "lib" }` holds the project's own package, so a
+    /// first-party `streamlit` import uses that dependency.
+    #[test]
+    fn path_source_is_used_through_first_party_imports() {
+        let mut manifest = manifest_at(
+            std::env::temp_dir().join("dev"),
+            "streamlit-dev",
+            &["streamlit"],
+            &[],
+        );
+        manifest.uv.sources.push(crate::manifest::UvSource {
+            name: "streamlit".to_owned(),
+            kind: crate::manifest::UvSourceKind::Path("lib".to_owned()),
+        });
+        let resolution = ResolutionIndex {
+            imports: vec![ResolvedImport {
+                import_root: "streamlit".to_owned(),
+                full_module: "streamlit.web".to_owned(),
+                file: "e2e/app.py".to_owned(),
+                workspace_member: None,
+                line: 1,
+                context: ImportContext::Runtime,
+                optional: false,
+                platform_guarded: false,
+                origin: ModuleOrigin::FirstParty,
+                distribution: None,
+                confidence: ResolveConfidence::Certain,
+            }],
+            ..ResolutionIndex::default()
+        };
+        let sources = crate::sources::DiscoveredSources {
+            root: manifest.root.clone(),
+            layout: crate::sources::LayoutInfo {
+                layout: crate::sources::ProjectLayout::Src,
+                package_root: "lib".to_owned(),
+                packages: vec!["streamlit".to_owned()],
+                local_packages: Vec::new(),
+                inferred_globs: Vec::new(),
+            },
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let graph = ProjectGraph::new(manifest.root.clone());
+        let mut used = IndexSet::new();
+        mark_workspace_source_distributions(
+            &manifest,
+            &RuleContext {
+                resolution: &resolution,
+                reachability: &ReachabilityReport::default(),
+                graph: &graph,
+                sources: &sources,
+                parse: &crate::parser::ParseSummary::default(),
+            },
+            &HashSet::from(["e2e/app.py"]),
+            &[],
+            &mut used,
+        );
+        assert!(used.contains("streamlit"));
     }
 }

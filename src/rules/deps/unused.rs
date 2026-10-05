@@ -474,6 +474,7 @@ mod tests {
             root: graph_root(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
+                package_root: "src".to_owned(),
                 packages: vec!["acme".to_owned()],
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
