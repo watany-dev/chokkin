@@ -1000,4 +1000,329 @@ mod tests {
             }
         }
     }
+
+    /// Random project trees checked against a reference model of the
+    /// heuristic, plus layout invariants that hold whatever decided it.
+    mod tree_props {
+        use std::collections::BTreeSet;
+
+        use super::*;
+        use crate::manifest::UvSource;
+        use crate::sources::build_glob_set;
+        use proptest::prelude::*;
+
+        /// Directory names a project root can hold: project-named, unrelated,
+        /// non-package, local-package, and names that are not identifiers.
+        const NAMES: &[&str] = &[
+            "acme", "acme_api", "other", "zeta", "tests", "test", "scripts", "docs", "build",
+            "examples", "e2e_web", "lib", "src", "my-pkg", "v1.0", "_priv", "café", "class",
+        ];
+
+        const PROJECT_NAMES: &[&str] = &["acme", "acme-api", "acme_api", "other", "nomatch"];
+
+        const UV_PATHS: &[&str] = &[
+            ".",
+            "./",
+            "lib",
+            "./lib/",
+            "lib/.",
+            "./lib/./",
+            "packages/acme",
+            "../acme",
+        ];
+
+        #[derive(Debug, Clone)]
+        struct Tree {
+            root: BTreeSet<&'static str>,
+            src: BTreeSet<&'static str>,
+            lib: BTreeSet<&'static str>,
+            packages_acme: BTreeSet<&'static str>,
+            plain_dirs: BTreeSet<&'static str>,
+            name: Option<&'static str>,
+            uv: Option<(&'static str, &'static str)>,
+        }
+
+        fn names(max: usize) -> impl Strategy<Value = BTreeSet<&'static str>> {
+            prop::collection::btree_set(prop::sample::select(NAMES), 0..max)
+        }
+
+        fn tree() -> impl Strategy<Value = Tree> {
+            (
+                names(6),
+                prop_oneof![2 => Just(BTreeSet::new()), 1 => names(3)],
+                prop_oneof![1 => Just(BTreeSet::new()), 1 => names(3)],
+                names(3),
+                names(4),
+                prop::option::of(prop::sample::select(PROJECT_NAMES)),
+                prop::option::of((
+                    prop::sample::select(&["acme", "other", "acme-api"][..]),
+                    prop::sample::select(UV_PATHS),
+                )),
+            )
+                .prop_map(|(root, src, lib, packages_acme, plain_dirs, name, uv)| {
+                    Tree {
+                        root,
+                        src,
+                        lib,
+                        packages_acme,
+                        plain_dirs,
+                        name,
+                        uv,
+                    }
+                })
+        }
+
+        fn package_dirs(tree: &Tree) -> Vec<String> {
+            let mut dirs: Vec<String> = tree.root.iter().map(|&n| n.to_owned()).collect();
+            dirs.extend(tree.src.iter().map(|n| format!("src/{n}")));
+            dirs.extend(tree.lib.iter().map(|n| format!("lib/{n}")));
+            dirs.extend(
+                tree.packages_acme
+                    .iter()
+                    .map(|n| format!("packages/acme/{n}")),
+            );
+            dirs
+        }
+
+        fn build(tree: &Tree) -> tempfile::TempDir {
+            let temp = tempfile::TempDir::new().expect("tempdir");
+            for dir in package_dirs(tree) {
+                let path = temp.path().join(&dir);
+                fs::create_dir_all(&path).expect("create dir");
+                fs::write(path.join("__init__.py"), "").expect("write init");
+                fs::write(path.join("mod.py"), "").expect("write module");
+            }
+            for dir in &tree.plain_dirs {
+                fs::create_dir_all(temp.path().join("plain").join(dir)).expect("create dir");
+            }
+            temp
+        }
+
+        fn metadata_for(tree: &Tree) -> ProjectMetadata {
+            ProjectMetadata {
+                name: tree.name.map(str::to_owned),
+                ..ProjectMetadata::default()
+            }
+        }
+
+        fn uv_for(tree: &Tree) -> UvToolSettings {
+            UvToolSettings {
+                sources: tree
+                    .uv
+                    .iter()
+                    .map(|&(name, path)| UvSource {
+                        name: name.to_owned(),
+                        kind: UvSourceKind::Path(path.to_owned()),
+                    })
+                    .collect(),
+            }
+        }
+
+        /// Reference model of `heuristic_layout` over the generated tree:
+        /// `(package_root, packages, guessed)`.
+        fn model_heuristic(tree: &Tree) -> Option<(String, Vec<String>, bool)> {
+            let sorted = |set: &BTreeSet<&str>| {
+                let mut names: Vec<String> = set.iter().map(|&n| n.to_owned()).collect();
+                names.sort();
+                names
+            };
+            if !tree.src.is_empty() {
+                return Some(("src".to_owned(), sorted(&tree.src), false));
+            }
+            let skip = |name: &&str| NON_PACKAGE_DIRS.contains(name) || name.starts_with("e2e");
+            let root: BTreeSet<&str> = tree.root.iter().copied().filter(|n| !skip(n)).collect();
+            let lib: BTreeSet<&str> = tree.lib.iter().copied().filter(|n| !skip(n)).collect();
+            let candidates: Vec<(&str, Vec<String>)> = [("", sorted(&root)), ("lib", sorted(&lib))]
+                .into_iter()
+                .filter(|(_, packages)| !packages.is_empty())
+                .collect();
+            let wanted: Vec<String> = tree.name.map(normalized_project_names).unwrap_or_default();
+            for (base, packages) in &candidates {
+                if let Some(found) = wanted.iter().find(|name| packages.contains(name)) {
+                    return Some(((*base).to_owned(), vec![found.clone()], false));
+                }
+            }
+            let (base, packages) = candidates.into_iter().next()?;
+            let guessed = packages.len() > 1 || tree.name.is_some();
+            Some((base.to_owned(), vec![packages[0].clone()], guessed))
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(96))]
+
+            /// Without wheel targets or uv sources the layout is exactly the
+            /// directory-name heuristic of spec §10 step 3.
+            #[test]
+            fn heuristic_layout_matches_reference_model(tree in tree()) {
+                let temp = build(&tree);
+                let (layout, warning) =
+                    infer_layout(temp.path(), &metadata_for(&tree), &UvToolSettings::default());
+                match model_heuristic(&tree) {
+                    None => {
+                        prop_assert_eq!(layout.layout, ProjectLayout::Unknown);
+                        prop_assert_eq!(warning, None);
+                    },
+                    Some((package_root, packages, guessed)) => {
+                        prop_assert_eq!(&layout.package_root, &package_root);
+                        prop_assert_eq!(&layout.packages, &packages);
+                        prop_assert_eq!(warning.is_some(), guessed);
+                    },
+                }
+                let local: Vec<String> = LOCAL_PACKAGE_DIRS
+                    .iter()
+                    .filter(|name| tree.root.contains(*name))
+                    .map(|name| (*name).to_owned())
+                    .collect();
+                prop_assert_eq!(&layout.local_packages, &local);
+            }
+
+            /// Whatever decided the layout (heuristic or uv path source), each
+            /// chosen package is an on-disk package whose `__init__.py` the
+            /// inferred globs select and `path_to_module` names after it.
+            #[test]
+            fn chosen_packages_round_trip_through_globs_and_module_names(tree in tree()) {
+                let temp = build(&tree);
+                let (layout, warning) =
+                    infer_layout(temp.path(), &metadata_for(&tree), &uv_for(&tree));
+                prop_assert_eq!(
+                    infer_layout(temp.path(), &metadata_for(&tree), &uv_for(&tree)),
+                    (layout.clone(), warning)
+                );
+                if layout.layout == ProjectLayout::Unknown {
+                    prop_assert!(layout.packages.is_empty());
+                    return Ok(());
+                }
+                prop_assert!(!layout.package_root.starts_with('/'));
+                prop_assert!(
+                    layout.package_root.is_empty()
+                        || layout.package_root.split('/').all(|part| !matches!(part, "" | "." | "..")),
+                    "package_root `{}` is not a normalized relative path",
+                    layout.package_root
+                );
+                let globs = build_glob_set(&layout.inferred_globs).expect("globs");
+                for package in &layout.packages {
+                    let init = format!("{}/__init__.py", layout.package_dir(package));
+                    prop_assert!(temp.path().join(&init).is_file(), "{init} missing");
+                    prop_assert!(globs.is_match(&init), "{init} not selected by {:?}", layout.inferred_globs);
+                    // A dotted directory (`v1.0/`) is still chosen as a package
+                    // but has no importable module name; reported, not changed.
+                    if package.contains('.') {
+                        prop_assert_eq!(path_to_module(&init, &layout), None);
+                        continue;
+                    }
+                    prop_assert_eq!(path_to_module(&init, &layout), Some(package.clone()));
+                    let module = format!("{}/mod.py", layout.package_dir(package));
+                    prop_assert_eq!(path_to_module(&module, &layout), Some(format!("{package}.mod")));
+                }
+            }
+        }
+    }
+
+    /// `path_to_module` over arbitrary layouts and paths: the name it gives
+    /// is a module Python could import from that file.
+    mod module_name_props {
+        use std::collections::BTreeMap;
+
+        use super::*;
+        use proptest::prelude::*;
+
+        const SEGMENTS: &[&str] = &[
+            "acme", "pkg", "sub", "src", "lib", "tests", "foo", "bar", "foo.bar", "my-pkg",
+            "0001_x", "__init__", "", ".hidden",
+        ];
+
+        fn layout_strategy() -> impl Strategy<Value = LayoutInfo> {
+            (
+                prop::sample::select(
+                    &[
+                        ProjectLayout::Src,
+                        ProjectLayout::Flat,
+                        ProjectLayout::Unknown,
+                    ][..],
+                ),
+                prop::sample::select(&["", "src", "lib"][..]),
+                prop::collection::vec(prop::sample::select(&["acme", "pkg", "foo"][..]), 0..3),
+                prop::collection::vec(prop::sample::select(&["tests", "scripts"][..]), 0..2),
+            )
+                .prop_map(|(layout, root, packages, local)| {
+                    let package_root = match layout {
+                        ProjectLayout::Src if root.is_empty() => "src",
+                        ProjectLayout::Src => root,
+                        _ => "",
+                    };
+                    LayoutInfo {
+                        layout,
+                        package_root: package_root.to_owned(),
+                        packages: packages.into_iter().map(str::to_owned).collect(),
+                        local_packages: local.into_iter().map(str::to_owned).collect(),
+                        inferred_globs: Vec::new(),
+                        members: Vec::new(),
+                    }
+                })
+        }
+
+        fn path_strategy() -> impl Strategy<Value = String> {
+            prop::collection::vec(prop::sample::select(SEGMENTS), 1..5)
+                .prop_map(|parts| format!("{}.py", parts.join("/")))
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            #[test]
+            fn module_names_have_no_empty_or_dotted_parts(
+                layout in layout_strategy(),
+                path in path_strategy(),
+            ) {
+                if let Some(module) = path_to_module(&path, &layout) {
+                    prop_assert!(
+                        module.split('.').all(|part| !part.is_empty()),
+                        "{path} -> `{module}`"
+                    );
+                    // Each module part is one path component, never several.
+                    let parts = module.split('.').count();
+                    let components = path.trim_end_matches(".py").split('/').count();
+                    prop_assert!(parts <= components, "{path} -> `{module}`");
+                }
+            }
+
+            /// Two files share a module name only as `x.py` and `x/__init__.py`,
+            /// or as `<package_root>/x` and a root-level `x`: both are on
+            /// `sys.path`, so one shadows the other the way Python does.
+            #[test]
+            fn distinct_files_get_distinct_module_names(
+                layout in layout_strategy(),
+                paths in prop::collection::btree_set(path_strategy(), 1..12),
+            ) {
+                let mut seen: BTreeMap<String, String> = BTreeMap::new();
+                for path in &paths {
+                    let Some(module) = path_to_module(path, &layout) else {
+                        continue;
+                    };
+                    let stem = path.trim_end_matches(".py").trim_end_matches("/__init__");
+                    if let Some(other) = seen.get(&module) {
+                        let other_stem = other.trim_end_matches(".py").trim_end_matches("/__init__");
+                        let source_root = match layout.layout {
+                            ProjectLayout::Src => layout.package_root.as_str(),
+                            ProjectLayout::Unknown => "src",
+                            ProjectLayout::Flat => "",
+                        };
+                        let under_root = |a: &str, b: &str| {
+                            !source_root.is_empty()
+                                && a.strip_prefix(source_root)
+                                    .and_then(|rest| rest.strip_prefix('/'))
+                                    == Some(b)
+                        };
+                        prop_assert!(
+                            stem == other_stem
+                                || under_root(stem, other_stem)
+                                || under_root(other_stem, stem),
+                            "{} and {} both name `{}`", path, other, module
+                        );
+                    }
+                    seen.insert(module, path.clone());
+                }
+            }
+        }
+    }
 }
