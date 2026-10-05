@@ -8,9 +8,10 @@ on:
   workflow_dispatch:
 
 # Serialize releases; do not cancel in-progress to protect partial uploads.
+# PR runs never publish, so a newer push to the same PR supersedes them.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
