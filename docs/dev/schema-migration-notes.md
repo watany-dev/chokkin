@@ -88,6 +88,7 @@ Top-level fields:
 | `issues` | array | emitted issues after baseline suppression |
 | `summary.total` | integer | count of emitted issues |
 | `summary.by_code` | object | issue count keyed by rule code |
+| `summary.files` | object | `{"runtime": integer, "reachable_runtime": integer}`: runtime-context files and how many are reachable (additive, #495) |
 | `suppressed.baseline` | integer | count suppressed by baseline fingerprint |
 | `diagnostics` | array | non-fatal warnings also printed to stderr, as `{"message": string}` (additive; e.g. a skipped undecodable source, #486) |
 

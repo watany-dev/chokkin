@@ -1019,6 +1019,10 @@ v0.6〜v0.7で入れたもの (実 OSS での精度と monorepo 対応)。
 - library mode の member symbol 判定と、宣言済み public API を CHK006 / CHK007 から外す
 - in-package tests / vendored code を報告対象から分離 (vendored 設定)
 - 動的 setup.py の読み取りと、依存不明時の CHK003 降格
+- 定義元 module 内で読まれる symbol を CHK006 から外す (library mode と、app mode の `__all__` 外)
+- root の conftest.py / pytest testpaths の探索、文字列 annotation 内の名前の読み取り
+- CHK008 を command word に、CHK009 を同一 context の重複に絞る
+- 接頭辞・接尾辞付き distribution 名の照合、PEP 508 / 440 の受理を packaging に揃える
 ```
 
 v0.8で入れるもの (Knip 相当の運用性)。
@@ -1243,7 +1247,10 @@ exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall se
             Rust library API の整理 (#436-#438, #446)
   - v0.7.0: auto-workspace (#488)、library mode の member symbol 判定と宣言済み
             public API (#489, #525)、in-package tests / vendored (#490)、
-            動的 setup.py (#539)、path source / extras / metapackage の依存判定
+            動的 setup.py (#539)、path source / extras / metapackage の依存判定、
+            CHK006 の used_in_module (#540, #564)、root conftest.py / testpaths
+            (#544)、文字列 annotation (#545)、CHK008 / CHK009 (#494)、
+            marker 付き uv path source (#508)
 exit   : JSON schema / SARIF / exit code の既存契約を壊さない (Rust library API の
          breaking は ADR 0004 の対象外)、Phase 4 の gate を維持
 ```

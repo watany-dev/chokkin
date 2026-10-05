@@ -14,7 +14,9 @@ equivalent for Python.
 `analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
 `markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
 and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
-reports resolved/inventoried workspace member counts when uv/chokkin workspaces are found;
+reports resolved/inventoried workspace member counts when uv/chokkin workspaces are found
+(a monorepo without a workspace declaration is read as an auto workspace, #488;
+`--no-auto-workspace` turns that off);
 resolver tags member-owned imports, treats cross-member imports as first-party, `--strict`
 requires member-local direct dependency declarations, and reporters expose member ids on
 workspace findings. Phase 2 cache policy plumbing exists via `CacheOptions` / `--no-cache`
