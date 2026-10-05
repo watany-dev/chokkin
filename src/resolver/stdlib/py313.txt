@@ -1,4 +1,5 @@
 __future__
+__main__
 _abc
 _aix_support
 _android_support

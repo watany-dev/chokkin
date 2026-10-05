@@ -10,9 +10,10 @@ static PY310_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
 static PY311_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
 static PY312_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
 static PY313_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
+static PY314_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
 
 const OLDEST_BUNDLED_MINOR: u32 = 10;
-const NEWEST_BUNDLED_MINOR: u32 = 13;
+const NEWEST_BUNDLED_MINOR: u32 = 14;
 
 /// Python 3 minors whose stdlib counts: a root that is stdlib in any of them
 /// is stdlib, so `tomllib` behind a `sys.version_info` guard is not a missing
@@ -50,7 +51,8 @@ fn stdlib_modules(minor: u32) -> &'static HashSet<&'static str> {
         0..=10 => PY310_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py310.txt"))),
         11 => PY311_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py311.txt"))),
         12 => PY312_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py312.txt"))),
-        _ => PY313_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py313.txt"))),
+        13 => PY313_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py313.txt"))),
+        _ => PY314_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py314.txt"))),
     }
 }
 
@@ -110,6 +112,20 @@ mod tests {
     fn pep594_modules_removed_for_py313() {
         assert!(exact("py312").contains("cgi"));
         assert!(!exact("py313").contains("cgi"));
+    }
+
+    #[test]
+    fn compression_is_stdlib_only_from_py314() {
+        assert!(!exact("py313").contains("compression"));
+        assert!(exact("py314").contains("compression"));
+        assert!(exact("py314").contains("annotationlib"));
+    }
+
+    #[test]
+    fn main_module_is_stdlib_for_every_target() {
+        for version in ["py310", "py311", "py312", "py313", "py314"] {
+            assert!(exact(version).contains("__main__"), "{version}");
+        }
     }
 
     #[test]

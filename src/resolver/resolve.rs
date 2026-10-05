@@ -343,10 +343,13 @@ fn resolve_import_root(
     // is the only evidence left; the spelling alone is not, or a local module
     // like `e2e_config` would pass as a missing `e2e-config` (#361).
     let distribution = normalize_distribution_name(root_name);
-    if manifest
-        .dependencies
-        .iter()
-        .any(|dep| normalize_distribution_name(&dep.name) == distribution)
+    let declared = || {
+        manifest
+            .dependencies
+            .iter()
+            .map(|dep| normalize_distribution_name(&dep.name))
+    };
+    if declared().any(|dep| dep == distribution)
         || manifest.lockfile.edges.contains_key(&distribution)
     {
         return RootResolution {
@@ -354,6 +357,9 @@ fn resolve_import_root(
             distribution: Some(distribution),
             confidence: ResolveConfidence::Likely,
         };
+    }
+    if let Some(resolution) = loose_declared_match(&distribution, declared()) {
+        return resolution;
     }
 
     RootResolution {
@@ -373,17 +379,67 @@ fn scoped_declaration(
     scoped: &ScopedDeclarations,
 ) -> Option<RootResolution> {
     let distribution = normalize_distribution_name(root_name);
-    scoped
-        .scripts
-        .get(file)
-        .into_iter()
-        .chain(workspace_member.and_then(|member| scoped.members.get(member)))
-        .any(|names| names.contains(&distribution))
-        .then_some(RootResolution {
+    let declared = || {
+        scoped
+            .scripts
+            .get(file)
+            .into_iter()
+            .chain(workspace_member.and_then(|member| scoped.members.get(member)))
+            .flatten()
+    };
+    if declared().any(|name| *name == distribution) {
+        return Some(RootResolution {
             origin: ModuleOrigin::ThirdParty,
             distribution: Some(distribution),
             confidence: ResolveConfidence::Likely,
+        });
+    }
+    loose_declared_match(&distribution, declared().cloned())
+}
+
+/// A declared distribution whose name differs from the import root only by a
+/// `py` / `python` affix (`markdown-it-py` for `markdown_it`, `odfpy` for
+/// `odf`, `pydocket` for `docket`). Weaker than an exact match, so `Maybe`;
+/// limited to declared names so a local module never passes as one (#361).
+fn loose_declared_match(
+    distribution: &str,
+    declared: impl IntoIterator<Item = String>,
+) -> Option<RootResolution> {
+    declared
+        .into_iter()
+        .find(|name| affix_stripped(name).any(|stripped| stripped == distribution))
+        .map(|name| RootResolution {
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some(name),
+            confidence: ResolveConfidence::Maybe,
         })
+}
+
+/// `name` without a leading `python-` / `py-` / `py` and without a trailing
+/// `-python` / `-py` / `py`, one side or both. Never yields `name` itself or
+/// an empty name.
+fn affix_stripped(name: &str) -> impl Iterator<Item = &str> {
+    fn strip_prefix(name: &str) -> Option<&str> {
+        ["python-", "py-", "py"]
+            .into_iter()
+            .find_map(|prefix| name.strip_prefix(prefix))
+    }
+    fn strip_suffix(name: &str) -> Option<&str> {
+        ["-python", "-py", "py"]
+            .into_iter()
+            .find_map(|suffix| name.strip_suffix(suffix))
+    }
+    let prefixless = strip_prefix(name);
+    [
+        prefixless,
+        strip_suffix(name),
+        prefixless.and_then(strip_suffix),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|stripped| {
+        !stripped.is_empty() && !stripped.starts_with('-') && !stripped.ends_with('-')
+    })
 }
 
 /// Every module and package importable from the project root or a workspace
@@ -550,6 +606,35 @@ mod tests {
     }
 
     #[test]
+    fn affix_stripped_drops_py_and_python_affixes() {
+        fn stripped(name: &str) -> Vec<&str> {
+            affix_stripped(name).collect()
+        }
+        assert_eq!(stripped("markdown-it-py"), vec!["markdown-it"]);
+        assert_eq!(stripped("odfpy"), vec!["odf"]);
+        assert_eq!(stripped("pydocket"), vec!["docket"]);
+        assert_eq!(stripped("python-dateutil"), vec!["dateutil"]);
+        assert!(stripped("py-spy").contains(&"spy"));
+        assert_eq!(stripped("pyobjc-py"), vec!["objc-py", "pyobjc", "objc"]);
+        assert!(stripped("py").is_empty());
+        assert!(stripped("requests").is_empty());
+    }
+
+    #[test]
+    fn loose_match_resolves_only_declared_names_as_maybe() {
+        let declared = || ["markdown-it-py".to_owned(), "odfpy".to_owned()];
+        let found = loose_declared_match("markdown-it", declared()).expect("markdown_it");
+        assert_eq!(found.distribution.as_deref(), Some("markdown-it-py"));
+        assert_eq!(found.confidence, ResolveConfidence::Maybe);
+        assert_eq!(
+            loose_declared_match("odf", declared()).and_then(|r| r.distribution),
+            Some("odfpy".to_owned())
+        );
+        assert_eq!(loose_declared_match("docket", declared()), None);
+        assert_eq!(loose_declared_match("markdown-it-py", declared()), None);
+    }
+
+    #[test]
     fn scoped_declaration_covers_only_its_own_script_or_member() {
         let scoped = ScopedDeclarations {
             scripts: BTreeMap::from([(
@@ -571,5 +656,9 @@ mod tests {
             Some("foo-bar")
         );
         assert_eq!(found("Foo_Bar", "packages/web/x.py", Some("web")), None);
+        assert_eq!(
+            found("foo_bar", "packages/api/x.py", Some("api")).as_deref(),
+            Some("foo-bar")
+        );
     }
 }
