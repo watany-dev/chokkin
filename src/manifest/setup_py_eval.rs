@@ -1572,10 +1572,10 @@ mod props {
     }
 
     #[test]
-    fn del_tuple_removes_every_key() {
+    fn del_tuple_and_list_remove_every_key() {
         let call = evaluate(
             "extras = {'a': ['x'], 'b': ['y'], 'c': ['z']}\n\
-             del extras['a'], extras['b']\n\
+             del (extras['a'], [extras['b']])\n\
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
