@@ -63,4 +63,19 @@ pub struct RenderContext {
     pub config_label: Option<String>,
     /// Non-fatal pipeline warnings, already rendered as text.
     pub diagnostics: Vec<String>,
+    /// Runtime file counts from reachability; `None` when not analyzed.
+    pub files: Option<FileCounts>,
+}
+
+/// Runtime-context source files and how many of them are reachable.
+///
+/// A collapse of `reachable_runtime` is what a misdetected package root or a
+/// missed entry point looks like from the outside, so the OSS corpus gate
+/// floors on it (#495).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FileCounts {
+    /// Files in the runtime context.
+    pub runtime: usize,
+    /// Runtime files reachable from entry roots or framework globs.
+    pub reachable_runtime: usize,
 }

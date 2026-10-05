@@ -83,7 +83,7 @@ pub use reachability::{
     analyze_reachability, apply_public_surface, path_to_module, trace_to_file,
 };
 pub use reporters::{
-    RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
+    FileCounts, RenderContext, ReporterId, config_label_from_sources, format_subject, render_issues,
 };
 pub use resolver::{
     ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, apply_resolution_to_graph,

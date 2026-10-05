@@ -16,6 +16,7 @@ fn context() -> RenderContext {
         version: "0.2.0-test",
         config_label: Some("pyproject.toml [tool.chokkin]".to_owned()),
         diagnostics: Vec::new(),
+        files: None,
     }
 }
 

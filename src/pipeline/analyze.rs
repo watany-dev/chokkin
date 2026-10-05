@@ -13,13 +13,14 @@ use crate::manifest::{DeclaredDependency, normalize_distribution_name};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{ReachabilityReport, analyze_reachability, apply_public_surface};
+use crate::reporters::FileCounts;
 use crate::resolver::{
     ScopedDeclarations, StdlibRange, apply_resolution_to_graph, resolve_imports_for_analysis,
 };
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
-use crate::sources::PublicSurface;
+use crate::sources::{FileContext, PublicSurface};
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project_with_cache};
@@ -44,6 +45,23 @@ pub struct AnalysisReport {
     pub baseline: Option<BaselineReport>,
     /// Non-fatal warnings from the full analysis pipeline.
     pub warnings: Vec<ProbeWarning>,
+}
+
+impl AnalysisReport {
+    /// Counts runtime-context files in the graph and how many are reachable.
+    #[must_use]
+    pub fn runtime_file_counts(&self) -> FileCounts {
+        let mut counts = FileCounts::default();
+        for (id, file) in self.graph.files() {
+            if file.context == FileContext::Runtime {
+                counts.runtime += 1;
+                if self.reachability.reachable.contains(&id) {
+                    counts.reachable_runtime += 1;
+                }
+            }
+        }
+        counts
+    }
 }
 
 /// Options for the analysis run beyond [`RuntimeOverrides`].

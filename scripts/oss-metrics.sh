@@ -6,6 +6,10 @@
 #   2. crashes (chokkin internal error, exit 3) == 0
 #   3. cold run on a `medium` project <= 2000 ms
 #
+# Corpus regression gates (#495):
+#   4. CLI/config errors (exit 2) == 0
+#   5. every project in --expect stays within its floors (see below)
+#
 # Usage:
 #   scripts/oss-metrics.sh [OPTIONS]
 #
@@ -13,6 +17,7 @@
 #   -m, --manifest PATH   Clone list (default: scripts/oss-clones.manifest)
 #   -l, --labels PATH     Ground-truth labels (default: scripts/oss-fixtures.labels.tsv)
 #   -R, --recall PATH     Recall sentinels (default: scripts/oss-recall.manifest)
+#   -e, --expect PATH     Regression floors (default: scripts/oss-expectations.tsv)
 #   -c, --clones DIR      Clone root (default: target/oss-clones)
 #   -o, --output DIR      Report directory (default: target/oss-metrics)
 #   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
@@ -27,16 +32,27 @@
 #   findings.tsv    every CHK001–CHK010 finding with ground-truth verdict
 #   summary.tsv     per-project: size, exit, median_ms, totals, by-code counts
 #   report.md       human-readable §17 scorecard + per-rule label coverage
+#   expectations.tsv  this run's values for the --expect projects, in the
+#                   --expect format (copy over the committed file to refresh)
 #
 # False-positive accounting: each reported CHK002 finding is matched against the
 # labels file on (slug, code, target). Verdict `fp` counts as a false positive;
 # `tp` as a true positive; `deferred` and unlabeled findings are unclassified.
 # The FP-rate gate cannot pass while CHK002 unclassified findings remain.
+# Projects with an --expect row are known failure patterns: their CHK002
+# findings must still be labelled, but they are left out of the FP rate
+# because the expectations gate already pins their counts.
 #
 # Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
 # separate recall gate measures in-repo sentinel fixtures (--recall manifest)
 # whose deliberately-unused dependencies are labelled `tp`. Every `tp` label
 # must appear in the run's findings or the recall gate fails.
+#
+# Expectations: each --expect row pins a floor on the project's runtime files
+# reachable from an entry root (`summary.files.reachable_runtime`) and its
+# per-rule issue counts. The gate fails when the reachable count drops below
+# the floor (the package root, entry points or workspace were missed) or a
+# rule's count grows past base + max(5, base/5) (a new false-positive pattern).
 
 set -uo pipefail
 
@@ -44,6 +60,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${OSS_CLONES_MANIFEST:-$ROOT/scripts/oss-clones.manifest}"
 LABELS="${OSS_LABELS:-$ROOT/scripts/oss-fixtures.labels.tsv}"
 RECALL_MANIFEST="${OSS_RECALL_MANIFEST:-$ROOT/scripts/oss-recall.manifest}"
+EXPECT="${OSS_EXPECTATIONS:-$ROOT/scripts/oss-expectations.tsv}"
 CLONES="${OSS_CLONES_DIR:-$ROOT/target/oss-clones}"
 OUTPUT="${OSS_METRICS_DIR:-$ROOT/target/oss-metrics}"
 CHOKKIN_BIN="${CHOKKIN_BIN:-$ROOT/target/release/chokkin}"
@@ -56,13 +73,14 @@ FP_GATE_PCT=5
 
 ALL_RULES=(CHK001 CHK002 CHK003 CHK004 CHK005 CHK006 CHK007 CHK008 CHK009 CHK010)
 
-usage() { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -m | --manifest) MANIFEST="$2"; shift 2 ;;
     -l | --labels) LABELS="$2"; shift 2 ;;
     -R | --recall) RECALL_MANIFEST="$2"; shift 2 ;;
+    -e | --expect) EXPECT="$2"; shift 2 ;;
     -c | --clones) CLONES="$2"; shift 2 ;;
     -o | --output) OUTPUT="$2"; shift 2 ;;
     -b | --bin) CHOKKIN_BIN="$2"; shift 2 ;;
@@ -94,6 +112,8 @@ FINDINGS="$OUTPUT/findings.tsv"
 REPORT="$OUTPUT/report.md"
 printf 'slug\tcategory\tsize\texit\tmedian_ms\ttotal\tCHK002\tCHK003\n' >"$SUMMARY"
 printf 'slug\tcode\ttarget\tverdict\tbucket\tconfidence\tmessage\n' >"$FINDINGS"
+EXPECT_OUT="$OUTPUT/expectations.tsv"
+printf '# slug\truntime_min\tcounts\n' >"$EXPECT_OUT"
 
 VERSION="$("$CHOKKIN_BIN" --version 2>/dev/null | awk '{print $2}')"
 
@@ -123,6 +143,41 @@ median_of() {
 
 ran=0
 crashes=0
+config_errors=0
+expect_misses=()
+
+# Check one project against its --expect row and record this run's values.
+check_expectations() {
+  local slug="$1" json_out="$2"
+  [[ -f "$EXPECT" ]] || return
+  local row
+  row="$(awk -F'\t' -v s="$slug" '!/^#/ && $1 == s {print; exit}' "$EXPECT")"
+  [[ -z "$row" ]] && return
+  local runtime_min base_counts runtime counts
+  IFS=$'\t' read -r _ runtime_min base_counts <<<"$row"
+  runtime="$(jq -r '.summary.files.reachable_runtime // empty' "$json_out" 2>/dev/null)"
+  counts="$(jq -r '.summary.by_code // {} | to_entries | sort_by(.key)
+                   | map("\(.key)=\(.value)") | join(",")' "$json_out" 2>/dev/null)"
+  printf '%s\t%s\t%s\n' "$slug" "$((${runtime:-0} * 9 / 10))" "$counts" >>"$EXPECT_OUT"
+
+  if [[ -z "$runtime" || "$runtime" -lt "$runtime_min" ]]; then
+    expect_misses+=("$slug:runtime=${runtime:-?}<${runtime_min}")
+  fi
+  local miss
+  while read -r miss; do
+    [[ -n "$miss" ]] && expect_misses+=("$slug:$miss")
+  done < <(awk -v base="$base_counts" -v head="$counts" 'BEGIN {
+    n = split(base, b, ","); for (i = 1; i <= n; i++) { split(b[i], kv, "="); want[kv[1]] = kv[2] }
+    n = split(head, h, ",")
+    for (i = 1; i <= n; i++) {
+      split(h[i], kv, "=")
+      w = want[kv[1]] + 0
+      slack = int(w / 5); if (slack < 5) slack = 5
+      if (kv[2] > w + slack) print kv[1] "=" kv[2] ">" w "+" slack
+    }
+  }')
+}
+
 medium_slow=()
 
 measure_one() {
@@ -164,6 +219,8 @@ measure_one() {
 
   ran=$((ran + 1))
   [[ "$exit_code" -eq 3 ]] && crashes=$((crashes + 1))
+  [[ "$exit_code" -eq 2 ]] && config_errors=$((config_errors + 1))
+  check_expectations "$slug" "$json_out"
   if [[ "$size" == "medium" && "$median_ms" -gt "$MEDIUM_GATE_MS" ]]; then
     medium_slow+=("$slug=${median_ms}ms")
   fi
@@ -206,8 +263,16 @@ rule_reported() {
   awk -F'\t' -v c="$1" 'NR>1 && $2==c {n++} END{print n+0}' "$FINDINGS"
 }
 
-y002_total="$(rule_reported CHK002)"
-y002_fp="$(verdict_count CHK002 fp)"
+# CHK002 total and fp over the projects without an --expect row.
+y002_rate() {
+  awk -F'\t' -v v="$1" 'FILENAME==ARGV[1] { if (!/^#/ && NF) pinned[$1]=1; next }
+    FNR>1 && $2=="CHK002" && !($1 in pinned) && (v=="" || $4==v) {n++}
+    END{print n+0}' <(cat "$EXPECT" 2>/dev/null) "$FINDINGS"
+}
+y002_total="$(y002_rate "")"
+y002_fp="$(y002_rate fp)"
+y002_expect_total="$(($(rule_reported CHK002) - y002_total))"
+y002_expect_fp="$(($(verdict_count CHK002 fp) - y002_fp))"
 y002_unclassified="$(($(verdict_count CHK002 unknown) + $(verdict_count CHK002 deferred)))"
 
 y003_total="$(rule_reported CHK003)"
@@ -233,12 +298,14 @@ if [[ -f "$LABELS" ]]; then
 fi
 tp_detected=$((tp_total - tp_missed))
 
-pass_fp=1; pass_crash=1; pass_speed=1; pass_recall=1
+pass_fp=1; pass_crash=1; pass_speed=1; pass_recall=1; pass_config=1; pass_expect=1
 [[ "$y002_unclassified" -gt 0 ]] && pass_fp=0
 if [[ "$y002_total" -gt 0 ]]; then
   awk -v f="$y002_fp" -v t="$y002_total" -v g="$FP_GATE_PCT" 'BEGIN{exit !(100*f/t < g)}' || pass_fp=0
 fi
 [[ "$crashes" -ne 0 ]] && pass_crash=0
+[[ "$config_errors" -ne 0 ]] && pass_config=0
+[[ "${#expect_misses[@]}" -ne 0 ]] && pass_expect=0
 [[ "${#medium_slow[@]}" -ne 0 ]] && pass_speed=0
 [[ "$tp_missed" -ne 0 ]] && pass_recall=0
 
@@ -275,6 +342,12 @@ coverage_pct() {
     echo "| Recall (\`tp\` labels) | all detected | ${tp_detected}/${tp_total} detected (missed: ${missed[*]}) | $(verdict "$pass_recall") |"
   fi
   echo "| Crashes (exit 3) | 0 | ${crashes} | $(verdict "$pass_crash") |"
+  echo "| CLI/config errors (exit 2) | 0 | ${config_errors} | $(verdict "$pass_config") |"
+  if [[ "${#expect_misses[@]}" -eq 0 ]]; then
+    echo "| Expectations (runtime floor, rule growth) | within | all within | $(verdict "$pass_expect") |"
+  else
+    echo "| Expectations (runtime floor, rule growth) | within | ${expect_misses[*]} | $(verdict "$pass_expect") |"
+  fi
   if [[ "${#medium_slow[@]}" -eq 0 ]]; then
     echo "| Cold run, medium project | <= ${MEDIUM_GATE_MS} ms | all within budget | $(verdict "$pass_speed") |"
   else
@@ -341,7 +414,8 @@ coverage_pct() {
   echo ""
   echo "## Notes"
   echo ""
-  echo "- FP rate denominator is reported CHK002 findings (user-facing precision)."
+  echo "- FP rate denominator is reported CHK002 findings (user-facing precision), excluding --expect projects."
+  echo "- CHK002 on --expect projects (failure-pattern corpus): ${y002_expect_total} reported, ${y002_expect_fp} FP — gated by expectations, not the FP rate."
   echo "- CHK002 unclassified = unknown + deferred; both block the §17 FP gate."
   echo "- Recall gate counts every \`tp\` label (all rules, incl. sentinels)."
   echo "- CHK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_tp} tp, ${y003_deferred} deferred, ${y003_unknown} unknown) — informational, not a §17 gate."
@@ -356,7 +430,8 @@ echo ""
 sed -n '/## Exit criteria/,/## Per-project/p' "$REPORT" | sed '$d'
 
 if [[ "$DO_GATE" -eq 1 ]]; then
-  if [[ "$pass_fp" -eq 1 && "$pass_crash" -eq 1 && "$pass_speed" -eq 1 && "$pass_recall" -eq 1 ]]; then
+  if [[ "$pass_fp" -eq 1 && "$pass_crash" -eq 1 && "$pass_speed" -eq 1 && "$pass_recall" -eq 1 &&
+    "$pass_config" -eq 1 && "$pass_expect" -eq 1 ]]; then
     exit 0
   fi
   echo "§17 gate FAILED" >&2

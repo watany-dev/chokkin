@@ -1210,3 +1210,8 @@ pdm	CHK002	httpcore	tp	-	never imported; only a transitive requirement of httpx
 pdm	CHK002	virtualenv	fp	-	run with [sys.executable, "-m", "virtualenv"]
 mitmproxy	CHK002	hyperframe	tp	-	runtime dependency only imported by tests
 mitmproxy	CHK002	msgpack	tp	-	never imported; the msgpack contentview is in mitmproxy_rs
+sqlalchemy	CHK002	typing-extensions	fp	-	imported by lib/sqlalchemy/util/typing.py; no entry root found for the lib/ src layout, so nothing is reachable (#495)
+llama_index	CHK002	llama-index-core	fp	-	root is a metapackage (wheel include `_llama-index/llama_index` absent from the tree); deps are the product, not imports
+llama_index	CHK002	llama-index-embeddings-openai	fp	-	root is a metapackage (wheel include `_llama-index/llama_index` absent from the tree); deps are the product, not imports
+llama_index	CHK002	llama-index-llms-openai	fp	-	root is a metapackage (wheel include `_llama-index/llama_index` absent from the tree); deps are the product, not imports
+llama_index	CHK002	script:docs/scripts/prepare_for_build.py:pyaml	tp	-	PEP 723 block declares pyaml but the script imports yaml (PyYAML) only

@@ -12,7 +12,8 @@
 #   -h, --help            Show help
 #
 # Clones are shallow (--depth 1) at the manifest `ref` (or default branch when
-# empty). The resolved commit SHA for every checkout is recorded in
+# empty). A 40-hex `ref` is a commit SHA: it is fetched by id, and an existing
+# checkout at another commit is re-cloned. The resolved commit SHA for every checkout is recorded in
 # <output>/clones.lock.tsv so a validation run is reproducible regardless of
 # upstream branch movement.
 #
@@ -30,7 +31,7 @@ OUTPUT="${OSS_CLONES_DIR:-$ROOT/target/oss-clones}"
 JOBS=4
 FORCE=0
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -70,13 +71,25 @@ clone_one() {
     rm -rf "$dest"
   fi
 
+  if [[ "$ref" =~ ^[0-9a-f]{40}$ && -d "$dest/.git" &&
+    "$(git -C "$dest" rev-parse HEAD 2>/dev/null)" != "$ref" ]]; then
+    echo "stale $slug (re-cloning at $ref)"
+    rm -rf "$dest"
+  fi
+
   if [[ -d "$dest/.git" ]]; then
     echo "have $slug (skip; --force to refresh)"
   else
     echo "clone $slug <- $url${ref:+ @ $ref}"
     local attempt=0 ok=0
     while [[ "$attempt" -lt 4 ]]; do
-      if [[ -n "$ref" ]]; then
+      if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+        # `git clone --branch` takes no SHA; GitHub serves a commit by id.
+        rm -rf "$dest"
+        git init --quiet "$dest" &&
+          git -C "$dest" fetch --quiet --depth 1 "$url.git" "$ref" 2>/dev/null &&
+          git -C "$dest" checkout --quiet --detach FETCH_HEAD && ok=1 && break
+      elif [[ -n "$ref" ]]; then
         git clone --quiet --depth 1 --branch "$ref" "$url.git" "$dest" 2>/dev/null && ok=1 && break
       else
         git clone --quiet --depth 1 "$url.git" "$dest" 2>/dev/null && ok=1 && break
