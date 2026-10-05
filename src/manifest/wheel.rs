@@ -336,6 +336,7 @@ mod tests {
         )
         .expect("targets");
         assert!(targets.paths.is_empty() && targets.find.is_empty());
+        assert_eq!(targets.source, "tool.hatch.build.targets.wheel");
     }
 
     #[test]
