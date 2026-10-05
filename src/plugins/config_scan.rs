@@ -66,7 +66,6 @@ pub fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     };
 
     scan_pyproject_tools(pyproject.as_ref(), &mut result, &mut seen_binaries);
-    scan_manifest_entry_points(ctx, &mut result, &mut seen_binaries, &known);
     scan_mkdocs_config(root, &mut result, &mut seen_binaries);
     scan_pre_commit_config(root, &mut result, &mut seen_binaries, &known);
     scan_tox_config(root, ctx, &mut result, &mut seen_binaries, &known);
@@ -111,31 +110,6 @@ fn merge_hits(
         push_distribution(result, distribution);
     }
     result.module_refs.extend(hits.module_refs);
-}
-
-fn scan_manifest_entry_points(
-    ctx: &PluginContext<'_>,
-    result: &mut ConfigScanResult,
-    seen: &mut HashSet<(String, String)>,
-    known: KnownBinary<'_>,
-) {
-    for entry in &ctx.manifest.entry_points {
-        if entry.group != "console_scripts" && entry.group != "gui_scripts" {
-            continue;
-        }
-        if known(&entry.name) {
-            push_binary(
-                result,
-                seen,
-                &entry.name,
-                ReferenceOrigin {
-                    file: entry.origin.file.clone(),
-                    line: entry.origin.line,
-                    label: format!("entry_points.{}", entry.name),
-                },
-            );
-        }
-    }
 }
 
 fn scan_mkdocs_config(
@@ -418,7 +392,7 @@ fn expand_tox_substitutions(command: &str) -> String {
     for ch in command.chars() {
         match ch {
             '{' => depth += 1,
-            '}' if depth > 0 => depth -= 1,
+            '}' => depth = depth.saturating_sub(1),
             _ if depth == 0 => expanded.push(ch),
             _ => {},
         }
@@ -1076,6 +1050,26 @@ mod tests {
     }
 
     #[test]
+    fn tox_commands_keep_their_block_across_blank_lines_only() {
+        let result = scan_files(&[(
+            "tox.ini",
+            "[testenv]\ncommands =\n    ruff check .\n\n    pytest tests/test_a.py::test_x\n\
+                 commands_post = coverage report\n[testenv:lint]\ncommands = {env:RUNNER:} mypy src\n",
+        )]);
+        assert_eq!(
+            usages(&result),
+            [
+                ("tox".to_owned(), "tox.ini".to_owned(), None),
+                ("ruff".to_owned(), "tox.ini".to_owned(), Some(3)),
+                ("pytest".to_owned(), "tox.ini".to_owned(), Some(5)),
+                ("coverage".to_owned(), "tox.ini".to_owned(), Some(6)),
+                ("mypy".to_owned(), "tox.ini".to_owned(), Some(8)),
+            ]
+        );
+        assert!(!result.used_distributions.contains(&"sphinx".to_owned()));
+    }
+
+    #[test]
     fn shell_scripts_and_local_hooks_read_command_words_only() {
         let result = scan_files(&[
             (
@@ -1089,9 +1083,10 @@ mod tests {
             ),
             (
                 "bin/release",
-                "#!/usr/bin/env python3\nimport subprocess  # black\n",
+                "#!/usr/bin/env python3\nblack = subprocess.run([\"black\", \".\"])\n",
             ),
             ("bin/lint", "#!/bin/sh -eu\nmypy src\n"),
+            ("bin/check", "#!/usr/bin/env -S bash -e\nruff check\n"),
             (
                 ".pre-commit-config.yaml",
                 "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        entry: ruff check\n\
@@ -1114,6 +1109,7 @@ mod tests {
         );
         assert_eq!(scripts("bin/release"), Vec::<(String, Option<u32>)>::new());
         assert_eq!(scripts("bin/lint"), [("mypy".to_owned(), Some(2))]);
+        assert_eq!(scripts("bin/check"), [("ruff".to_owned(), Some(2))]);
         assert_eq!(
             scripts(".pre-commit-config.yaml"),
             [

@@ -54,19 +54,14 @@ fn duplicate_declarations<'a>(
                 .map(|extra| normalize_distribution_name(extra))
         })
         .collect();
-    let mut involved = vec![false; declarations.len()];
-    for (index, dep) in declarations.iter().enumerate() {
-        for (other_index, other) in declarations.iter().enumerate().skip(index + 1) {
-            if duplicates(dep, other, &runtime_extras) {
-                involved[index] = true;
-                involved[other_index] = true;
-            }
-        }
-    }
     declarations
         .iter()
-        .zip(involved)
-        .filter_map(|(dep, involved)| involved.then_some(*dep))
+        .copied()
+        .filter(|dep| {
+            declarations
+                .iter()
+                .any(|other| duplicates(dep, other, &runtime_extras))
+        })
         .collect()
 }
 
@@ -77,7 +72,8 @@ fn duplicates(
 ) -> bool {
     // The same line reached twice (`requirements-dev.txt` including
     // `requirements.txt`, which is also read on its own) is one declaration,
-    // even when the include gives it another context.
+    // even when the include gives it another context. This also keeps a
+    // declaration from duplicating itself.
     if a.origin == b.origin {
         return false;
     }
