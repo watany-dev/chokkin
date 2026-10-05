@@ -1,0 +1,296 @@
+{
+  "packaging": "24.0",
+  "cases": [
+    {
+      "input": "foo==1.99999999999999999999",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo>=1.99999999999999999999",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo~=1.99999999999999999999",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo===1.*",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo===",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ HTTPS://example.com/foo.whl",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ Git+HTTPS://example.com/foo.git",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ ftp://example.com/foo.tar.gz",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ https://example.com/a b.whl",
+      "valid": false
+    },
+    {
+      "input": "foo.whl[tests]",
+      "valid": true,
+      "name": "foo-whl",
+      "extras": [
+        "tests"
+      ]
+    },
+    {
+      "input": "foo.tar.gz",
+      "valid": true,
+      "name": "foo-tar-gz",
+      "extras": []
+    },
+    {
+      "input": "foo[tests,]",
+      "valid": false
+    },
+    {
+      "input": "foo[,tests]",
+      "valid": false
+    },
+    {
+      "input": "foo[tests,,dev]",
+      "valid": false
+    },
+    {
+      "input": "A",
+      "valid": true,
+      "name": "a",
+      "extras": []
+    },
+    {
+      "input": "Foo_Bar.baz-qux",
+      "valid": true,
+      "name": "foo-bar-baz-qux",
+      "extras": []
+    },
+    {
+      "input": "foo-",
+      "valid": false
+    },
+    {
+      "input": "-foo",
+      "valid": false
+    },
+    {
+      "input": "foo[]",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo [ Tests , Dev ]",
+      "valid": true,
+      "name": "foo",
+      "extras": [
+        "dev",
+        "tests"
+      ]
+    },
+    {
+      "input": "foo[tests dev]",
+      "valid": false
+    },
+    {
+      "input": "foo[te-]",
+      "valid": false
+    },
+    {
+      "input": "foo[",
+      "valid": false
+    },
+    {
+      "input": "foo>=1.0,<2",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo (>=1.0, <2)",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo (>=1.0",
+      "valid": false
+    },
+    {
+      "input": "foo==1.0.*",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo!=1.0.*",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo>=1.0.*",
+      "valid": false
+    },
+    {
+      "input": "foo==1.0a1.*",
+      "valid": false
+    },
+    {
+      "input": "foo~=1",
+      "valid": false
+    },
+    {
+      "input": "foo~=1.0.post1",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo>=1.0+local",
+      "valid": false
+    },
+    {
+      "input": "foo==1.0+local",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo===2013b-custom",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo==v1.0",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo==1!2.0rc1.post3.dev4",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo>= 1.0 extra",
+      "valid": false
+    },
+    {
+      "input": "foo==",
+      "valid": false
+    },
+    {
+      "input": "foo<=>1",
+      "valid": false
+    },
+    {
+      "input": "foo @ https://h/x.whl ; python_version < '3.11'",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ https://h/x.whl;python_version<'3.11'",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ https://h/x.whl#sha256=abc",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ file:///tmp/x",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @ https://h/x trailing",
+      "valid": false
+    },
+    {
+      "input": "foo@https://h/x",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo @",
+      "valid": false
+    },
+    {
+      "input": "foo ; python_version >= '3.8'",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo; extra == 'tests' and (os_name == 'nt' or sys_platform == 'linux')",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo ; extra not in 'a'",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo ;",
+      "valid": false
+    },
+    {
+      "input": "foo ; python_version",
+      "valid": false
+    },
+    {
+      "input": "foo ; unknown_var == '1'",
+      "valid": false
+    },
+    {
+      "input": "foo ; python_version << '3'",
+      "valid": false
+    },
+    {
+      "input": "foo ; (python_version == '3'",
+      "valid": false
+    },
+    {
+      "input": "foo ; python_version == '3",
+      "valid": false
+    }
+  ]
+}

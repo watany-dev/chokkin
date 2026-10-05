@@ -27,8 +27,10 @@ pub enum ManifestWarning {
     InvalidRequirementLine {
         /// Root-relative file path.
         file: String,
-        /// 1-based line number.
-        line: u32,
+        /// 1-based line number, when the source tracks one.
+        line: Option<u32>,
+        /// TOML key path or requirements label, e.g. `project.dependencies[2]`.
+        label: String,
         /// Raw line content.
         raw: String,
     },

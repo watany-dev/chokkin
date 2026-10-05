@@ -76,10 +76,18 @@ fn write_manifest_warning(
                 "manifest: Hatch sections detected (partial dependency extraction)"
             )
         },
-        ManifestWarning::InvalidRequirementLine { file, line, raw } => write!(
-            formatter,
-            "manifest: invalid requirement at `{file}:{line}`: {raw}"
-        ),
+        ManifestWarning::InvalidRequirementLine {
+            file,
+            line,
+            label,
+            raw,
+        } => {
+            let at = line.map_or_else(
+                || format!("`{file}` ({label})"),
+                |line| format!("`{file}:{line}`"),
+            );
+            write!(formatter, "manifest: invalid requirement at {at}: {raw}")
+        },
         ManifestWarning::SetupPyPartiallyStatic { file, argument } => write!(
             formatter,
             "manifest: partially static setup.py `{file}` (argument `{argument}`)"
