@@ -493,6 +493,42 @@ mod tests {
     }
 
     #[test]
+    fn path_to_module_prefers_member_nested_under_root_source_root() {
+        // prefect: `src/` is the root's source root and also holds members.
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
+            packages: vec!["prefect".to_owned()],
+            local_packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            members: vec![MemberLayout {
+                path: "src/integrations/prefect-aws".to_owned(),
+                layout: LayoutInfo {
+                    layout: ProjectLayout::Flat,
+                    package_root: String::new(),
+                    packages: vec!["prefect_aws".to_owned()],
+                    local_packages: Vec::new(),
+                    inferred_globs: Vec::new(),
+                    members: Vec::new(),
+                },
+            }],
+        };
+        let init = "src/integrations/prefect-aws/prefect_aws/__init__.py";
+        assert_eq!(
+            path_to_module(init, &layout),
+            Some("prefect_aws".to_owned())
+        );
+        assert_eq!(
+            path_to_module("src/prefect/flows.py", &layout),
+            Some("prefect.flows".to_owned())
+        );
+        assert_eq!(
+            crate::parser::resolve_relative_import(init, &layout, 1, None, Some("_version")),
+            Some("prefect_aws._version".to_owned())
+        );
+    }
+
+    #[test]
     fn infer_layout_indexes_root_tests_package_without_distributing_it() {
         let temp = tempfile::TempDir::new().expect("tempdir");
         for dir in ["acme", "tests", "build"] {
