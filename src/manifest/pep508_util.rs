@@ -165,6 +165,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn url_like_matches_each_scheme_form() {
+        for (spec, expected) in [
+            ("https://host/p.zip", true),
+            ("file:///abs/p", true),
+            ("git+ssh://git@host/r.git", true),
+            ("git+git@host:r.git", true),
+            ("hg+http", true),
+            ("bzr+lp:project", true),
+            ("svn+svn", true),
+            ("requests", false),
+            ("./pkg", false),
+            ("pkg+git", false),
+        ] {
+            assert_eq!(is_url_like(spec), expected, "{spec:?}");
+        }
+    }
+
+    #[test]
     fn normalizes_distribution_name() {
         assert_eq!(normalize_distribution_name("PyYAML"), "pyyaml");
         assert_eq!(normalize_distribution_name("scikit_learn"), "scikit-learn");

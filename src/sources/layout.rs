@@ -569,6 +569,26 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn entry_is_dir_follows_symlinks_to_directories_only() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        fs::create_dir(root.join("real")).expect("create dir");
+        fs::write(root.join("file.py"), "").expect("write");
+        std::os::unix::fs::symlink(root.join("real"), root.join("dir_link")).expect("symlink");
+        std::os::unix::fs::symlink(root.join("file.py"), root.join("file_link")).expect("symlink");
+
+        let mut dirs: Vec<String> = fs::read_dir(root)
+            .expect("read_dir")
+            .flatten()
+            .filter(entry_is_dir)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        dirs.sort();
+        assert_eq!(dirs, ["dir_link", "real"]);
+    }
+
     fn tree(dirs: &[&str]) -> tempfile::TempDir {
         let temp = tempfile::TempDir::new().expect("tempdir");
         for dir in dirs {
@@ -593,7 +613,13 @@ mod tests {
 
     #[test]
     fn setuptools_find_where_beats_root_directory_names() {
-        let temp = tree(&["examples", "test", "lib/sqlalchemy", "lib/sqlalchemy/orm"]);
+        let temp = tree(&[
+            "examples",
+            "test",
+            "lib/sqlalchemy",
+            "lib/sqlalchemy/orm",
+            "lib/tests",
+        ]);
         let metadata = ProjectMetadata {
             wheel_targets: Some(find_in("lib")),
             ..metadata("SQLAlchemy")
@@ -616,17 +642,34 @@ mod tests {
 
     #[test]
     fn declared_subpackage_maps_to_its_top_level_package() {
-        let temp = tree(&["lib/acme", "lib/acme/sub"]);
+        let temp = tree(&["pkgs/acme", "pkgs/acme/sub"]);
         let metadata = ProjectMetadata {
             wheel_targets: Some(WheelTargets {
                 source: "tool.setuptools".to_owned(),
-                paths: vec!["lib/acme/sub".to_owned()],
+                paths: vec!["pkgs/acme/sub".to_owned()],
                 find: Vec::new(),
             }),
             ..ProjectMetadata::default()
         };
         let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
-        assert_eq!(layout.package_root, "lib");
+        assert_eq!(layout.package_root, "pkgs");
+        assert_eq!(layout.packages, vec!["acme".to_owned()]);
+    }
+
+    #[test]
+    fn declared_root_path_is_skipped() {
+        let temp = tree(&["pkgs/acme"]);
+        fs::write(temp.path().join("__init__.py"), "").expect("write");
+        let metadata = ProjectMetadata {
+            wheel_targets: Some(WheelTargets {
+                source: "tool.hatch.build".to_owned(),
+                paths: vec![String::new(), "pkgs/acme".to_owned()],
+                find: Vec::new(),
+            }),
+            ..ProjectMetadata::default()
+        };
+        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        assert_eq!(layout.package_root, "pkgs");
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
     }
 
@@ -669,6 +712,48 @@ mod tests {
             path_to_module("lib/streamlit/runtime/app.py", &layout),
             Some("streamlit.runtime.app".to_owned())
         );
+    }
+
+    #[test]
+    fn uv_path_source_is_used_only_when_heuristics_guess() {
+        let temp = tree(&["tools", "packages/acme/aaa", "packages/acme/acme"]);
+        let uv = UvToolSettings {
+            sources: vec![UvSource {
+                name: "acme".to_owned(),
+                kind: UvSourceKind::Path("packages/acme".to_owned()),
+            }],
+        };
+        let (layout, warning) = infer_layout(temp.path(), &metadata("acme"), &uv);
+        assert_eq!(layout.package_root, "packages/acme");
+        assert_eq!(layout.packages, vec!["acme".to_owned()]);
+        assert_eq!(warning, None);
+
+        fs::create_dir(temp.path().join("acme")).expect("create dir");
+        fs::write(temp.path().join("acme/__init__.py"), "").expect("write");
+        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &uv);
+        assert_eq!(layout.package_root, "");
+        assert_eq!(layout.packages, vec!["acme".to_owned()]);
+    }
+
+    #[test]
+    fn uv_path_source_must_stay_inside_root_and_provide_the_project() {
+        let temp = tree(&["packages/acme/src/acme"]);
+        let absolute = temp.path().join("packages/acme").display().to_string();
+        for (name, path) in [
+            ("other", "packages/acme"),
+            ("acme", absolute.as_str()),
+            ("acme", "packages/../packages/acme"),
+            ("acme", "./"),
+        ] {
+            let uv = UvToolSettings {
+                sources: vec![UvSource {
+                    name: name.to_owned(),
+                    kind: UvSourceKind::Path(path.to_owned()),
+                }],
+            };
+            let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &uv);
+            assert_eq!(layout.layout, ProjectLayout::Unknown, "{name} = {path}");
+        }
     }
 
     #[test]

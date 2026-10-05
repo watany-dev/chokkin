@@ -631,4 +631,51 @@ mod tests {
         );
         assert!(root_only.is_empty(), "{root_only:?}");
     }
+
+    #[test]
+    fn non_runtime_usage_is_reported_only_under_strict() {
+        let test_import = || ResolvedImport {
+            context: crate::parser::ImportContext::Test,
+            ..runtime_import("pytest_mock")
+        };
+        let index: DeclaredIndex<'_> = BTreeMap::new();
+
+        let relaxed = detect_with(&index, test_import(), LockfileGraph::default(), false, &[]);
+        assert_eq!(relaxed, []);
+
+        let strict = detect_with(&index, test_import(), LockfileGraph::default(), true, &[]);
+        assert_eq!(strict.len(), 1);
+        assert_eq!(strict[0].rule, RuleId::Chk003);
+    }
+
+    #[test]
+    fn optional_and_platform_guarded_imports_are_both_collected() {
+        let import = |line, optional, platform_guarded| crate::parser::ImportRef {
+            module: "pkg".to_owned(),
+            name: None,
+            alias: None,
+            line,
+            kind: crate::parser::ImportKind::Import,
+            context: crate::parser::ImportContext::Runtime,
+            optional,
+            platform_guarded,
+            relative_level: 0,
+        };
+        let parse = ParseSummary {
+            modules: vec![crate::parser::ParsedModule {
+                path: FILE.to_owned(),
+                imports: vec![
+                    import(1, false, false),
+                    import(2, true, false),
+                    import(3, false, true),
+                    import(4, true, true),
+                ],
+                ..crate::parser::ParsedModule::default()
+            }],
+        };
+        assert_eq!(
+            collect_optional_imports(&parse),
+            HashSet::from([2, 3, 4].map(|line| (FILE.to_owned(), line)))
+        );
+    }
 }
