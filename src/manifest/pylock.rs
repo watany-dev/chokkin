@@ -26,7 +26,10 @@ pub fn extract_pylock(path: &Path) -> Result<LockfileGraph, ManifestError> {
             .map(normalize_distribution_name);
         merge_package(&mut edges, name, deps);
     }
-    Ok(LockfileGraph { edges })
+    Ok(LockfileGraph {
+        edges,
+        ..LockfileGraph::default()
+    })
 }
 
 #[cfg(test)]

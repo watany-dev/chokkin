@@ -32,7 +32,10 @@ pub fn extract_pdm_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
             .filter_map(requirement_name);
         merge_package(&mut edges, name, deps);
     }
-    Ok(LockfileGraph { edges })
+    Ok(LockfileGraph {
+        edges,
+        ..LockfileGraph::default()
+    })
 }
 
 /// Distribution name at the head of a PEP 508 string such as

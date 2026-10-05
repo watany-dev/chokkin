@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use indexmap::IndexSet;
 
+use crate::config::{Confidence, ProjectMode};
 use crate::graph::{ModuleOrigin, ProjectGraph};
-use crate::manifest::{LoadedManifest, normalize_distribution_name};
+use crate::manifest::{LoadedManifest, LockfileGraph, normalize_distribution_name};
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolutionIndex, import_root};
@@ -25,6 +26,32 @@ pub(super) fn build_declared_index(manifest: &LoadedManifest) -> DeclaredIndex<'
     index
 }
 
+/// [`build_declared_index`] plus the distributions `lockfile` says a
+/// declared `pkg[extra]` adds, each indexed under the declaration that
+/// requested it: the user asked for them explicitly, so importing one is not
+/// CHK003 (#516).
+pub(super) fn build_import_declared_index<'a>(
+    manifest: &'a LoadedManifest,
+    lockfile: &LockfileGraph,
+) -> DeclaredIndex<'a> {
+    let mut index = build_declared_index(manifest);
+    for dep in &manifest.dependencies {
+        let Some(extras) = lockfile.extras.get(&dep.name) else {
+            continue;
+        };
+        for extra in &dep.extras {
+            for name in extras
+                .get(&normalize_distribution_name(extra))
+                .into_iter()
+                .flatten()
+            {
+                index.entry(name.clone()).or_default().push(dep);
+            }
+        }
+    }
+    index
+}
+
 /// Collect root-relative paths of reachable Python files.
 pub(super) fn reachable_paths<'g>(
     graph: &'g ProjectGraph,
@@ -35,6 +62,29 @@ pub(super) fn reachable_paths<'g>(
         .iter()
         .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.as_str()))
         .collect()
+}
+
+/// Reachable files plus library orphans an outside caller may import: the
+/// files whose imports keep a declared dependency from reading as unused.
+///
+/// A library's public modules are its entry points, so a library with no
+/// script, test, or config root would otherwise report every runtime
+/// dependency unused (#501). Those orphans are the ones still capped at
+/// `Maybe` after the wheel public surface re-scored the rest. Only CHK002
+/// uses this set: an orphan's import is no proof the module ships, so it
+/// must not raise CHK003-CHK005.
+pub(super) fn usage_paths<'a>(
+    reachable: &HashSet<&'a str>,
+    reachability: &'a ReachabilityReport,
+) -> HashSet<&'a str> {
+    let public_orphans = reachability
+        .unreachable
+        .iter()
+        .filter(|file| {
+            file.mode == ProjectMode::Library && file.max_confidence == Confidence::Maybe
+        })
+        .map(|file| file.path.as_str());
+    reachable.iter().copied().chain(public_orphans).collect()
 }
 
 /// Whether the project has lockfile data for transitive checks.
@@ -529,6 +579,7 @@ mod tests {
         let resolution = ResolutionIndex {
             transitive: LockfileGraph {
                 edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
+                ..LockfileGraph::default()
             },
             ..ResolutionIndex::default()
         };
@@ -682,5 +733,30 @@ mod tests {
             &mut used,
         );
         assert!(used.contains("streamlit"));
+    }
+
+    #[test]
+    fn usage_paths_adds_only_library_orphans_capped_at_maybe() {
+        let orphan = |path: &str, mode, max_confidence| crate::reachability::UnreachableFile {
+            file: crate::graph::FileId(0),
+            path: path.to_owned(),
+            max_confidence,
+            mode,
+        };
+        let mut report = ReachabilityReport::default();
+        report.unreachable = vec![
+            orphan("public.py", ProjectMode::Library, Confidence::Maybe),
+            orphan(
+                "outside_wheel.py",
+                ProjectMode::Library,
+                Confidence::Certain,
+            ),
+            orphan("app_orphan.py", ProjectMode::App, Confidence::Maybe),
+        ];
+        let reachable = HashSet::from(["main.py"]);
+
+        let usage = usage_paths(&reachable, &report);
+
+        assert_eq!(usage, HashSet::from(["main.py", "public.py"]));
     }
 }

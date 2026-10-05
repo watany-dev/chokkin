@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acme"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = ["requests", "httpx", "attrs"]
+
+[dependency-groups]
+typing = ["mypy-extensions"]

@@ -182,7 +182,7 @@ setup.py  # static parseのみ。実行しない。
 uv.lock / pylock.toml / pylock.<name>.toml / poetry.lock / pdm.lock
 ```
 
-lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>.toml(名前順) > poetry.lock > pdm.lock とする。複数形式を合成しないのは、同一projectで形式が混在するのは移行途中であり、新しい側(uv/PEP 751)が実体に近いため。読んだlockfileの種類と相対pathは `ManifestSources.lockfile` に記録し、`--probe` に表示する。どの形式も package名と依存edgeだけを `LockfileGraph` に読み、同名packageのedgeは合流させる。pylock.tomlは `[[packages]].dependencies[].name`、poetry.lockは `[package.dependencies]` のkey(1.x / 2.x共通)、pdm.lockは `dependencies` のPEP 508文字列の先頭名を使う。pdm.lockの `groups` / `extras` は読まない。CHK004はimportが宣言依存から到達可能かだけを問い、group別の到達性はmanifest側のcontextで判定済みのため。候補lockfileはすべてcacheの入力fingerprintに入れる(優先順位が変わると読む対象が変わるため)。lockfileは読むだけで編集しない。
+lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>.toml(名前順) > poetry.lock > pdm.lock とする。複数形式を合成しないのは、同一projectで形式が混在するのは移行途中であり、新しい側(uv/PEP 751)が実体に近いため。読んだlockfileの種類と相対pathは `ManifestSources.lockfile` に記録し、`--probe` に表示する。どの形式も package名と依存edgeだけを `LockfileGraph` に読み、同名packageのedgeは合流させる。pylock.tomlは `[[packages]].dependencies[].name`、poetry.lockは `[package.dependencies]` のkey(1.x / 2.x共通)、pdm.lockは `dependencies` のPEP 508文字列の先頭名を使う。uv.lockだけは `[package.optional-dependencies]` も extra名→配布物名 として `LockfileGraph.extras` に読む(上記のextra指定の判定に使う。依存側の `extra = [...]` はmanifestの宣言から分かるので読まない)。pdm.lockの `groups` / `extras` は読まない。CHK004はimportが宣言依存から到達可能かだけを問い、group別の到達性はmanifest側のcontextで判定済みのため。候補lockfileはすべてcacheの入力fingerprintに入れる(優先順位が変わると読む対象が変わるため)。lockfileは読むだけで編集しない。
 
 requirements系filesのパース規則を定める。コメントはpip互換で「行頭または空白が先行する `#`」のみを除去し、URLフラグメント（`#sha256=` / `#egg=`）は保持する。`-r` / `--requirement`（`--requirement=other.txt` 含む）は再帰的に追跡する。`-c` / `--constraint` はversion制約の情報源としてのみ読み、`LoadedManifest.constraints` に積み、依存宣言とは合流させない（ファイル欠如はwarning）。`-e ./path` とlocal path指定はworkspace/first-party候補として扱い、distribution名は空のopaque依存として記録する。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
 
@@ -583,8 +583,11 @@ marker付き依存 (例: pywin32; sys_platform == "win32")
   -> 解析環境では未使用に見えても誤検知になりやすい
   -> unused判定のconfidenceを1段下げ、defaultではwarning、--strict時のみerror
 
-extra指定 (例: requests[security])
-  -> extraが有効化するtransitive依存を推移閉包に含めてCHK004判定する
+extra指定 (例: psycopg[pool])
+  -> lockfileでextraが追加する配布物 (psycopg-pool) は、その宣言と同じcontextで
+     宣言済みとみなす (CHK003/CHK004にしない)。extraはユーザーが明示的に要求したため (#516)
+  -> extraを付けていない宣言 (psycopg) からは従来どおりCHK003/CHK004
+  -> extraの展開を読むのはuv.lockのみ。lockfileがない場合は展開しない
 
 stub package (types-* / *-stubs)
   -> importされないため素朴にはCHK002になる
@@ -1303,7 +1306,11 @@ parallelize対象は、file discovery、parse、import extraction、symbol extra
 `discover_populated_cache` を測る。
 通常は 1k modules、`CHOKKIN_BENCH_LARGE=1 cargo bench --bench pipeline` で
 5k / 10k も追加する。cold は解析 cache が空の状態であり、OS page cache は消さない。
-fixture 作成・cache 削除・graph clone は計測外。warm parse は CLI と同じ disk reuse を測る。全群は `make bench-save` / `make bench-cmp` の対象になる。
+fixture 作成・cache 削除・graph clone は計測外。warm parse は CLI と同じ disk reuse を測る。
+同じ target の `workspace_members/analyze_no_cache` は、`sdist` / `wheels` 行を持つ
+`uv.lock` 付き nested member を 200 個並べた monorepo（llama_index の integrations 型）を
+cache 無効で解析し、member 数に比例する probe / resolution の退行を拾う（#513）。
+`uv.lock` は byte の大半を占める `sdist` / `wheels` 行を落としてから TOML parse する。全群は `make bench-save` / `make bench-cmp` の対象になる。
 
 warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm`（disk bundle からの warm parse、100 / 1k / 5k / 10k files）を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした（当時の値は in-memory store 経由。in-memory store 削除後の disk warm は 10k で約 61 ms）。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
