@@ -170,6 +170,8 @@ pub struct PytestImportSettings {
     /// `--import-mode=importlib` in `addopts`: test and conftest directories
     /// are not put on `sys.path`.
     pub importlib: bool,
+    /// `testpaths` entries, relative to the config file's directory.
+    pub testpaths: Vec<String>,
 }
 
 /// Read [`PytestImportSettings`] from the config file pytest itself picks.
@@ -220,13 +222,14 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
                 .collect(),
             _ => Vec::new(),
         });
-    let pythonpath = match options.get("pythonpath") {
+    let words = |key: &str| match options.get(key) {
         Some(toml::Value::String(text)) => split_words(text),
-        _ => str_list(options, "pythonpath"),
+        _ => str_list(options, key),
     };
     Some(PytestImportSettings {
-        pythonpath,
+        pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&addopts),
+        testpaths: words("testpaths"),
     })
 }
 
@@ -235,6 +238,7 @@ fn ini_import_settings(section: &IniSection) -> PytestImportSettings {
     PytestImportSettings {
         pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&words("addopts")),
+        testpaths: words("testpaths"),
     }
 }
 
@@ -308,10 +312,12 @@ mod tests {
         let root = temp.path();
         std::fs::write(
             root.join("pyproject.toml"),
-            "[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+            "[tool.pytest.ini_options]\npythonpath = [\"src\"]\ntestpaths = \"t/unit t/e2e\"\n",
         )
         .expect("write pyproject");
         assert_eq!(import_settings(root).pythonpath, ["src"]);
+        // pytest splits a string `testpaths` on whitespace, as in an ini file.
+        assert_eq!(import_settings(root).testpaths, ["t/unit", "t/e2e"]);
 
         std::fs::write(
             root.join("pytest.ini"),
@@ -323,6 +329,7 @@ mod tests {
             PytestImportSettings {
                 pythonpath: Vec::new(),
                 importlib: true,
+                testpaths: Vec::new(),
             }
         );
     }

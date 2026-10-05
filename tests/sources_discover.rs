@@ -72,6 +72,7 @@ fn infers_src_layout() {
             "tests/**/*.{py,pyi,ipynb}".to_owned(),
             "test/**/*.{py,pyi,ipynb}".to_owned(),
             "scripts/**/*.{py,pyi,ipynb}".to_owned(),
+            "conftest.py".to_owned(),
         ]
     );
 
@@ -354,4 +355,89 @@ fn includes_ipynb_as_notebook_kind() {
         .expect("notebook file");
     assert_eq!(notebook.kind, FileKind::Notebook);
     assert_eq!(notebook.context, FileContext::Runtime);
+}
+
+/// pytest `testpaths` join discovery as test context, read from the root
+/// config and from the config beside a `[tool.uv.sources]` package root (#544).
+#[test]
+fn discovers_pytest_testpaths_as_test_context() {
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.pytest.ini_options]\ntestpaths = \"t/unit/\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("conftest.py", ""),
+        ("t/unit/test_core.py", ""),
+        ("t/unit/helpers.py", ""),
+        ("t/other.py", ""),
+    ]);
+    let found = paths(&sources);
+    assert!(found.contains(&"conftest.py"), "{found:?}");
+    assert!(found.contains(&"t/unit/test_core.py"), "{found:?}");
+    assert!(!found.contains(&"t/other.py"), "{found:?}");
+    let helpers = sources
+        .files
+        .iter()
+        .find(|file| file.path == "t/unit/helpers.py")
+        .expect("testpaths helper");
+    assert_eq!(helpers.context, FileContext::Test);
+
+    let nested = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme-dev\"\nversion = \"0.0.0\"\ndependencies = [\"acme\"]\n\n[tool.uv.sources]\nacme = { path = \"lib\", editable = true }\n",
+        ),
+        (
+            "lib/pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+        ),
+        ("lib/acme/__init__.py", ""),
+        ("lib/tests/util.py", ""),
+    ]);
+    assert_eq!(nested.layout.package_root, "lib");
+    assert!(
+        paths(&nested).contains(&"lib/tests/util.py"),
+        "{:?}",
+        nested.effective_globs
+    );
+}
+
+fn context_of(sources: &DiscoveredSources, path: &str) -> FileContext {
+    sources
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .unwrap_or_else(|| panic!("{path} not discovered: {:?}", paths(sources)))
+        .context
+}
+
+#[test]
+fn pytest_testpaths_skip_packages_and_explicit_globs() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"acme\", \"acme/sub\", \"t[1]\"]\n";
+    let sources = discover_tree(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        ("acme/core.py", ""),
+        ("acme/sub/mod.py", ""),
+        ("t[1]/helpers.py", ""),
+    ]);
+    assert_eq!(context_of(&sources, "acme/core.py"), FileContext::Runtime);
+    assert_eq!(
+        context_of(&sources, "acme/sub/mod.py"),
+        FileContext::Runtime
+    );
+    assert_eq!(context_of(&sources, "t[1]/helpers.py"), FileContext::Test);
+
+    let explicit = discover_tree(&[
+        (
+            "pyproject.toml",
+            &format!("{pyproject}\n[tool.chokkin]\nproject = [\"**/*.py\"]\n"),
+        ),
+        ("t[1]/helpers.py", ""),
+    ]);
+    assert_eq!(
+        context_of(&explicit, "t[1]/helpers.py"),
+        FileContext::Runtime
+    );
 }

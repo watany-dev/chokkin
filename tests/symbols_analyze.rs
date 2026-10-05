@@ -803,3 +803,71 @@ fn symbol_used_in_its_own_module_is_not_chk006() {
         "unreferenced"
     ));
 }
+
+const STRING_ANNOTATION_MODULE: &str = "from typing import TypeVar\n\nT = TypeVar(\"T\")\n\ndef f(x: \"list[T]\") -> \"T\":\n    return x[0]\n";
+
+/// A name read only inside a quoted annotation is still read by its module
+/// (#545), which skips CHK006 in both modes (#540, #564).
+#[test]
+fn symbol_used_in_string_annotation_is_not_chk006() {
+    let library = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        ("src/acme/__init__.py", "from ._base import f as f\n"),
+        ("src/acme/_base.py", STRING_ANNOTATION_MODULE),
+    ]);
+    assert!(
+        !has_symbol_rule(&library, RuleId::Chk006, "acme._base", "T"),
+        "{library:?}"
+    );
+
+    let app = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        ("app/base.py", STRING_ANNOTATION_MODULE),
+        (
+            "app/main.py",
+            "from app.base import f\n\ndef main():\n    f([1])\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(&app, RuleId::Chk006, "app.base", "T"),
+        "{app:?}"
+    );
+}
+
+/// Tests outside `tests/` still use library symbols: the rootdir
+/// `conftest.py` and a suite under pytest `testpaths` are discovered (#544).
+#[test]
+fn library_mode_symbol_used_by_root_conftest_or_testpaths_is_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"library\"\n\n[tool.pytest.ini_options]\ntestpaths = \"t/unit/\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/helpers.py",
+            "def from_conftest():\n    pass\n\ndef from_testpath():\n    pass\n\ndef unreferenced():\n    pass\n",
+        ),
+        (
+            "conftest.py",
+            "from acme.helpers import from_conftest\n\nfrom_conftest()\n",
+        ),
+        (
+            "t/unit/test_helpers.py",
+            "from acme.helpers import from_testpath\n\ndef test_it():\n    from_testpath()\n",
+        ),
+    ]);
+    for name in ["from_conftest", "from_testpath"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "acme.helpers", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.helpers",
+        "unreferenced"
+    ));
+}

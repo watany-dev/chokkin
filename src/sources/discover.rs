@@ -6,7 +6,7 @@ use crate::manifest::LoadedManifest;
 
 use super::error::SourcesError;
 use super::glob::{build_glob_set, effective_exclude};
-use super::layout::infer_layout;
+use super::layout::{infer_layout, pytest_testpaths};
 use super::types::DiscoveredSources;
 use super::walk::{
     CollectOptions, collect_files, large_project_warning, load_gitignore, validate_entries,
@@ -19,15 +19,28 @@ pub fn discover_sources(
     manifest: &LoadedManifest,
 ) -> Result<DiscoveredSources, SourcesError> {
     let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
-    let effective_globs = if config.effective.project.is_empty() {
-        layout.inferred_globs.clone()
+    // Only inferred globs take testpaths: the parse cache keys on the globs,
+    // so testpaths outside them would change file contexts unnoticed.
+    let (test_globs, effective_globs) = if config.effective.project.is_empty() {
+        let test_globs: Vec<String> = pytest_testpaths(&root.path, &layout)
+            .iter()
+            .map(|path| globset::escape(path))
+            .flat_map(|path| [format!("{path}/**/*.{{py,pyi,ipynb}}"), path])
+            .collect();
+        let mut globs = layout.inferred_globs.clone();
+        let fresh = test_globs
+            .iter()
+            .filter(|glob| !layout.inferred_globs.contains(glob));
+        globs.extend(fresh.cloned());
+        (test_globs, globs)
     } else {
-        config.effective.project.clone()
+        (Vec::new(), config.effective.project.clone())
     };
 
     let exclude_patterns = effective_exclude(&config.effective.exclude);
     let project_matcher = build_glob_set(&effective_globs)?;
     let exclude_matcher = build_glob_set(&exclude_patterns)?;
+    let test_matcher = build_glob_set(&test_globs)?;
 
     let (gitignore, gitignore_warning) = if config.effective.respect_gitignore {
         load_gitignore(&root.path)
@@ -39,6 +52,7 @@ pub fn discover_sources(
         root: &root.path,
         project_matcher: &project_matcher,
         exclude_matcher: &exclude_matcher,
+        test_matcher: &test_matcher,
         exclude_patterns: &exclude_patterns,
         respect_gitignore: config.effective.respect_gitignore,
         gitignore: gitignore.as_ref(),
