@@ -791,3 +791,40 @@ fn library_mode_symbol_used_in_its_own_module_is_not_chk006() {
         );
     }
 }
+
+/// Tests outside `tests/` still use library symbols: the rootdir
+/// `conftest.py` and a suite under pytest `testpaths` are discovered (#544).
+#[test]
+fn library_mode_symbol_used_by_root_conftest_or_testpaths_is_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"library\"\n\n[tool.pytest.ini_options]\ntestpaths = \"t/unit/\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/helpers.py",
+            "def from_conftest():\n    pass\n\ndef from_testpath():\n    pass\n\ndef unreferenced():\n    pass\n",
+        ),
+        (
+            "conftest.py",
+            "from acme.helpers import from_conftest\n\nfrom_conftest()\n",
+        ),
+        (
+            "t/unit/test_helpers.py",
+            "from acme.helpers import from_testpath\n\ndef test_it():\n    from_testpath()\n",
+        ),
+    ]);
+    for name in ["from_conftest", "from_testpath"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "acme.helpers", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.helpers",
+        "unreferenced"
+    ));
+}

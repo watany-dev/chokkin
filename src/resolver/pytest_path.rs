@@ -257,6 +257,7 @@ mod tests {
         let settings = PytestImportSettings {
             pythonpath: vec!["./tests/e2e/".to_owned()],
             importlib: true,
+            ..PytestImportSettings::default()
         };
         let paths = PytestImportPaths::with_settings(&sources(&E2E), &settings);
         assert_eq!(
@@ -266,6 +267,7 @@ mod tests {
         let importlib_only = PytestImportSettings {
             pythonpath: Vec::new(),
             importlib: true,
+            ..PytestImportSettings::default()
         };
         let paths = PytestImportPaths::with_settings(&sources(&E2E), &importlib_only);
         assert_eq!(

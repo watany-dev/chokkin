@@ -10,6 +10,7 @@ use crate::manifest::{
     normalize_distribution_name,
 };
 use crate::path_util::join_rel;
+use crate::plugins::pytest_import_settings;
 
 use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
@@ -323,7 +324,38 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     globs.push("tests/**/*.{py,pyi,ipynb}".to_owned());
     globs.push("test/**/*.{py,pyi,ipynb}".to_owned());
     globs.push("scripts/**/*.{py,pyi,ipynb}".to_owned());
+    // pytest always loads the rootdir conftest, wherever the suite lives.
+    globs.push("conftest.py".to_owned());
     globs
+}
+
+/// Root-relative pytest `testpaths` from the root config and, for a package
+/// root such as streamlit's `lib/`, from the config beside it (#544).
+/// Entries overlapping a package (pandas' `testpaths = "pandas"`) are dropped:
+/// they would turn the runtime package into test code.
+pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+    let package_root = layout.package_root.as_str();
+    let mut dirs = vec![""];
+    if !package_root.is_empty() {
+        dirs.push(package_root);
+    }
+    let mut testpaths = Vec::new();
+    for dir in dirs {
+        for path in pytest_import_settings(&root.join(dir)).testpaths {
+            let Some(path) = in_root_dir(&path) else {
+                continue;
+            };
+            let path = join_rel(dir, &path);
+            let overlaps_package = layout.packages.iter().any(|package| {
+                let package = layout.package_dir(package);
+                Path::new(&path).starts_with(&package) || Path::new(&package).starts_with(&path)
+            });
+            if !overlaps_package && !testpaths.contains(&path) {
+                testpaths.push(path);
+            }
+        }
+    }
+    testpaths
 }
 
 fn normalized_project_names(name: &str) -> Vec<String> {
@@ -617,6 +649,7 @@ mod tests {
                 "tests/**/*.{py,pyi,ipynb}".to_owned(),
                 "test/**/*.{py,pyi,ipynb}".to_owned(),
                 "scripts/**/*.{py,pyi,ipynb}".to_owned(),
+                "conftest.py".to_owned(),
             ]
         );
     }
