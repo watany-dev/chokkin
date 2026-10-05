@@ -22,7 +22,6 @@ const MAX_VALUE_NODES: usize = 100_000;
 /// comprehensions end as `Unknown` instead of running away.
 const MAX_STEPS: usize = 5_000_000;
 
-/// Statically evaluated Python value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Value {
     Str(String),
@@ -51,7 +50,6 @@ impl Value {
     }
 }
 
-/// One flattened entry of a dependency list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DependencyItem {
     Requirement(String),
@@ -65,7 +63,6 @@ pub(super) struct DependencyItems {
     pub complete: bool,
 }
 
-/// Evaluated keyword arguments of the `setup(...)` call.
 #[derive(Debug)]
 pub(super) struct SetupCall {
     pub keywords: Vec<(String, Value)>,

@@ -124,8 +124,8 @@ pub fn extract_manifest(
 
     let mut requirements_runtime_declared = false;
     for (filename, context) in requirements_specs {
-        // Already read as `install_requires`; reading it again as dev would
-        // report every entry as a duplicate.
+        // Already read as `install_requires`; reading it again would report
+        // every entry as a duplicate.
         if setup_py_files_read.iter().any(|read| read == filename) {
             continue;
         }
