@@ -372,9 +372,14 @@ fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
     Some(module_path.replace('/', "."))
 }
 
+/// `None` when a path component holds a `.` (`foo.bar.py`, `.hidden/`): no
+/// import can name it, and as `foo.bar` it would shadow `foo/bar.py`.
 fn module_path(path: &str) -> Option<&str> {
     let stem = path.strip_suffix(".py")?;
-    Some(stem.strip_suffix("/__init__").unwrap_or(stem))
+    let stem = stem.strip_suffix("/__init__").unwrap_or(stem);
+    stem.split('/')
+        .all(|part| !part.is_empty() && !part.contains('.'))
+        .then_some(stem)
 }
 
 fn module_under(path: &str, package_root: &str) -> Option<String> {
@@ -427,6 +432,25 @@ mod tests {
             Some("acme".to_owned())
         );
         assert_eq!(path_to_module("tests/unit/test_core.py", &layout), None);
+    }
+
+    #[test]
+    fn path_to_module_rejects_dotted_components() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            package_root: String::new(),
+            packages: vec!["pkg".to_owned()],
+            local_packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            members: Vec::new(),
+        };
+        assert_eq!(path_to_module("pkg/foo.bar.py", &layout), None);
+        assert_eq!(path_to_module("pkg/.hidden/x.py", &layout), None);
+        assert_eq!(path_to_module("pkg/.py", &layout), None);
+        assert_eq!(
+            path_to_module("pkg/foo/bar.py", &layout),
+            Some("pkg.foo.bar".to_owned())
+        );
     }
 
     #[test]
