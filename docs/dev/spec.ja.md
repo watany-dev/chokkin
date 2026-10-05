@@ -230,6 +230,13 @@ exclude = [
   "dist/**",
   "**/__pycache__/**",
 ]
+# 解析・到達性の追跡はするが issue は出さない vendored code (#490)
+vendored = [
+  "**/_vendor/**",
+  "**/vendored/**",
+  "**/externals/**",
+  "**/third_party/**",
+]
 
 [tool.chokkin.dependencies]
 dev_groups = ["dev", "test", "tests", "lint", "docs"]
@@ -266,6 +273,8 @@ CHK001 = "off"
 CHK006 = "info"
 CHK002 = "error"
 ```
+
+`vendored` は `exclude` と違い走査から外さない。vendored code 経由の import や symbol 参照は到達性と参照元に数え、そこで見つかった issue だけを報告しない（`SuppressReason::Vendored`。baseline 件数には含めない）。layer をまたいでは置き換えで、`vendored = []` で無効にできる。
 
 ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
 
@@ -473,12 +482,15 @@ migrations/**/*.py はframework-used扱いにする
 pytest pluginの例。
 
 ```text
-tests/**/test_*.py / tests/**/*_test.py をtest contextのentry rootにする
+**/test_*.py / **/*_test.py をtest contextのentry rootにする
+  (testpaths 未設定のpytestはrootdir配下から集めるため、pandas/tests/ や
+   monorepo memberの tests/ も含む)
   (pytestのtest discoveryに相当。conftest.pyはtest filesをimportしないため、
    test file自体をrootにしないとtest内のimportが依存使用として数えられない)
 conftest.py をentryにする
 pytest_plugins = ["..."] をmodule referenceにする
-[tool.pytest.ini_options] を読む (testpaths / python_files があれば上記globを上書き)
+[tool.pytest.ini_options] を読む (testpaths / python_files があれば上記globを上書き。
+  testpaths の "." はrootdirとして扱う)
 pytest command usageをbinary usageにする
 ```
 
@@ -526,14 +538,16 @@ contextは依存だけでなく**file側にも割り当てる**。CHK005(misplac
 
 ```text
 src/** / flat layoutのpackage/** / [project.scripts]到達file -> runtime
-tests/** / conftest.py / *_test.py / test_*.py             -> test
+**/tests/** / root直下の test/** / conftest.py / *_test.py / test_*.py -> test
 docs/**                                                     -> docs
 noxfile.py / 各tool設定が参照するscript                      -> dev
 scripts/**                                                  -> dev (設定で変更可)
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
 ```
 
-root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。ただし参照元としては数えるため、tests/ からだけ import される symbol は CHK006 にしない (`__init__.py` の有無によらない、#410)。
+root直下の `tests/` / `test/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。ただし参照元としては数えるため、tests/ からだけ import される symbol は CHK006 にしない (`__init__.py` の有無によらない、#410)。
+
+package 内の `tests/`（`pandas/tests/`）も test context とし、test context の file（pytest plugin が test root にした file を含む）はすべて CHK006/CHK007 の対象外・参照元のみとする (#490)。単数形の `test/` は root 直下だけを test とし、既定 glob でも走査する（sqlalchemy の `test/` から参照される symbol を CHK006 にしないため）。package 内の `test/` / `testing/` は `django.test` / `sqlalchemy.testing` のように配布される API なので runtime のままにする。
 
 本体 package のディレクトリ (`LayoutInfo::package_root`) は次の順で決める (#487)。build backend の宣言を読まずにディレクトリ名から推測すると、`lib/sqlalchemy` を持つ sqlalchemy で `examples/` を本体と取り違えるため。
 
@@ -680,7 +694,7 @@ migrations/**/*.py
 tests/**/*.py
 docs/conf.py
 generated files
-vendored code
+vendored code (`vendored` 設定、§5)
 namespace package fragments
 plugin-marked files
 ```

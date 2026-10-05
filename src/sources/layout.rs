@@ -16,6 +16,7 @@ use super::warnings::SourcesWarning;
 
 const NON_PACKAGE_DIRS: &[&str] = &[
     "tests",
+    "test",
     "scripts",
     "docs",
     "build",
@@ -28,7 +29,7 @@ const NON_PACKAGE_DIRS: &[&str] = &[
 /// `NON_PACKAGE_DIRS` that hold project source rather than build or
 /// environment output, so an `__init__.py` makes them importable by name
 /// (pytest puts the rootdir on `sys.path`).
-const LOCAL_PACKAGE_DIRS: &[&str] = &["tests", "scripts", "docs"];
+const LOCAL_PACKAGE_DIRS: &[&str] = &["tests", "test", "scripts", "docs"];
 
 /// Source directory tried after `src/` and the repository root (#487).
 const LIB_DIR: &str = "lib";
@@ -301,7 +302,10 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
             .collect(),
         ProjectLayout::Unknown => vec!["**/*.{py,pyi,ipynb}".to_owned()],
     };
+    // The singular `test/` is where sqlalchemy and CPython-style projects
+    // keep their suite; without it the symbols only tests call read as unused.
     globs.push("tests/**/*.{py,pyi,ipynb}".to_owned());
+    globs.push("test/**/*.{py,pyi,ipynb}".to_owned());
     globs.push("scripts/**/*.{py,pyi,ipynb}".to_owned());
     globs
 }
@@ -531,7 +535,7 @@ mod tests {
     #[test]
     fn infer_layout_indexes_root_tests_package_without_distributing_it() {
         let temp = tempfile::TempDir::new().expect("tempdir");
-        for dir in ["acme", "tests", "build"] {
+        for dir in ["acme", "tests", "test", "build"] {
             fs::create_dir_all(temp.path().join(dir)).expect("create dir");
             fs::write(temp.path().join(dir).join("__init__.py"), "").expect("write");
         }
@@ -542,7 +546,14 @@ mod tests {
         );
         assert_eq!(layout.layout, ProjectLayout::Flat);
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
-        assert_eq!(layout.local_packages, vec!["tests".to_owned()]);
+        assert_eq!(
+            layout.local_packages,
+            vec!["tests".to_owned(), "test".to_owned()]
+        );
+        assert_eq!(
+            path_to_module("test/base/fixtures.py", &layout),
+            Some("test.base.fixtures".to_owned())
+        );
         assert_eq!(warning, None);
         assert_eq!(
             path_to_module("tests/integration/client.py", &layout),
@@ -564,6 +575,7 @@ mod tests {
             vec![
                 "src/**/*.{py,pyi,ipynb}".to_owned(),
                 "tests/**/*.{py,pyi,ipynb}".to_owned(),
+                "test/**/*.{py,pyi,ipynb}".to_owned(),
                 "scripts/**/*.{py,pyi,ipynb}".to_owned(),
             ]
         );
@@ -829,15 +841,15 @@ mod tests {
             }
 
             #[test]
-            fn default_globs_always_cover_tests_and_scripts(
+            fn default_globs_always_cover_test_dirs_and_scripts(
                 packages in candidate_names(),
             ) {
                 for layout in [ProjectLayout::Src, ProjectLayout::Flat, ProjectLayout::Unknown] {
                     let globs = default_globs(layout, "src", &packages);
-                    let tests_glob = "tests/**/*.{py,pyi,ipynb}".to_owned();
-                    let scripts_glob = "scripts/**/*.{py,pyi,ipynb}".to_owned();
-                    prop_assert!(globs.contains(&tests_glob));
-                    prop_assert!(globs.contains(&scripts_glob));
+                    for glob in ["tests", "test", "scripts"] {
+                        let glob = format!("{glob}/**/*.{{py,pyi,ipynb}}");
+                        prop_assert!(globs.contains(&glob));
+                    }
                 }
             }
         }

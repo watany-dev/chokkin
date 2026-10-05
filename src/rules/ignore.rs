@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use globset::Glob;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::config::ChokkinConfig;
 use crate::parser::{IgnoreDirective, ParseSummary};
@@ -17,6 +17,7 @@ pub struct IgnoreMatcher {
     // CHK008 carries the binary name, but §18 names the (already normalized)
     // distribution it maps to.
     binary_distributions: BTreeMap<String, String>,
+    vendored: GlobSet,
 }
 
 impl IgnoreMatcher {
@@ -54,12 +55,19 @@ impl IgnoreMatcher {
             config: config_rules,
             directives,
             binary_distributions: resolution.binary_resolutions.clone(),
+            vendored: build_vendored_matcher(&config.vendored),
         }
     }
 
     /// Why a pre-issue candidate is suppressed, or `None` when it is not.
     pub fn matches_candidate(&self, candidate: &IssueCandidate) -> Option<SuppressReason> {
         let file = file_path_for(&candidate.subject, &candidate.origins);
+        if file
+            .as_deref()
+            .is_some_and(|path| self.vendored.is_match(path))
+        {
+            return Some(SuppressReason::Vendored);
+        }
         if self.matches_config(candidate.rule, &candidate.subject, file.as_deref()) {
             return Some(SuppressReason::Config);
         }
@@ -112,6 +120,16 @@ impl IgnoreMatcher {
         }
         None
     }
+}
+
+fn build_vendored_matcher(patterns: &[String]) -> GlobSet {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        if let Ok(glob) = Glob::new(pattern) {
+            builder.add(glob);
+        }
+    }
+    builder.build().unwrap_or_else(|_| GlobSet::empty())
 }
 
 fn candidate_line(candidate: &IssueCandidate) -> Option<u32> {
@@ -257,6 +275,66 @@ mod tests {
         assert_eq!(
             matcher.matches_candidate(&candidate),
             Some(SuppressReason::Config)
+        );
+    }
+
+    fn symbol_candidate(file: &str) -> IssueCandidate {
+        IssueCandidate {
+            rule: RuleId::Chk006,
+            subject: IssueSubject::Symbol {
+                module: "pip._vendor.rich".to_owned(),
+                name: "dead".to_owned(),
+            },
+            severity: Severity::Warning,
+            confidence: crate::config::Confidence::Likely,
+            message: "unused".to_owned(),
+            workspace_member: None,
+            origins: vec![Origin::Import {
+                file: file.to_owned(),
+                line: 1,
+                module: "pip._vendor.rich".to_owned(),
+            }],
+            explain: ExplainData::default(),
+        }
+    }
+
+    #[test]
+    fn default_vendored_dirs_suppress_issues_at_any_depth() {
+        let matcher = IgnoreMatcher::build(
+            &default_config(),
+            &ParseSummary::default(),
+            &ResolutionIndex::default(),
+        );
+        for file in [
+            "src/pip/_vendor/rich/console.py",
+            "sklearn/externals/array_api_compat/common.py",
+            "acme/vendored/six.py",
+            "third_party/lib.py",
+        ] {
+            assert_eq!(
+                matcher.matches_candidate(&symbol_candidate(file)),
+                Some(SuppressReason::Vendored),
+                "{file}"
+            );
+        }
+        assert_eq!(
+            matcher.matches_candidate(&symbol_candidate("src/pip/_internal/cli.py")),
+            None
+        );
+    }
+
+    #[test]
+    fn empty_vendored_config_reports_vendored_dirs() {
+        let mut config = default_config();
+        config.vendored.clear();
+        let matcher = IgnoreMatcher::build(
+            &config,
+            &ParseSummary::default(),
+            &ResolutionIndex::default(),
+        );
+        assert_eq!(
+            matcher.matches_candidate(&symbol_candidate("src/pip/_vendor/rich/console.py")),
+            None
         );
     }
 

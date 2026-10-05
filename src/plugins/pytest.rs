@@ -283,13 +283,22 @@ mod tests {
     #[test]
     fn pytest_test_globs_use_defaults() {
         let globs = pytest_test_globs(&[], &[]);
-        // pytest's defaults: `testpaths` unset → `tests`, `python_files` → `test_*.py *_test.py`.
+        // pytest's defaults: `testpaths` unset → rootdir, `python_files` → `test_*.py *_test.py`.
         assert_eq!(
             globs,
-            vec![
-                "tests/**/test_*.py".to_owned(),
-                "tests/**/*_test.py".to_owned(),
-            ]
+            vec!["**/test_*.py".to_owned(), "**/*_test.py".to_owned()]
+        );
+    }
+
+    #[test]
+    fn pytest_test_globs_treat_dot_testpath_as_rootdir() {
+        let globs = pytest_test_globs(
+            &[".".to_owned(), "./test/".to_owned()],
+            &["check_*.py".to_owned()],
+        );
+        assert_eq!(
+            globs,
+            vec!["**/check_*.py".to_owned(), "test/**/check_*.py".to_owned()]
         );
     }
 

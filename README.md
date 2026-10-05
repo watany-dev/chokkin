@@ -150,6 +150,12 @@ exclude = [
   "dist/**",
   "**/__pycache__/**",
 ]
+vendored = [             # analyzed and traced, but never reported
+  "**/_vendor/**",
+  "**/vendored/**",
+  "**/externals/**",
+  "**/third_party/**",
+]
 
 [tool.chokkin.dependencies]
 dev_groups = ["dev", "test", "tests", "lint", "docs"]

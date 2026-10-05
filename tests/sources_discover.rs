@@ -70,6 +70,7 @@ fn infers_src_layout() {
         vec![
             "src/**/*.{py,pyi,ipynb}".to_owned(),
             "tests/**/*.{py,pyi,ipynb}".to_owned(),
+            "test/**/*.{py,pyi,ipynb}".to_owned(),
             "scripts/**/*.{py,pyi,ipynb}".to_owned(),
         ]
     );
