@@ -370,10 +370,7 @@ impl<'a> Evaluator<'a> {
                     return;
                 };
                 if let Some(Value::Dict(items)) = self.env.get_mut(base.id.as_str()) {
-                    match items.iter_mut().find(|(existing, _)| *existing == key) {
-                        Some((_, slot)) => *slot = value,
-                        None => items.push((key, value)),
-                    }
+                    insert_entry(items, key, value);
                 }
             },
             Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
@@ -419,10 +416,15 @@ impl<'a> Evaluator<'a> {
                 let mut items: Vec<(String, Value)> = Vec::new();
                 for item in &dict.items {
                     match item.key.as_ref().map(|key| self.eval(key)) {
-                        Some(Value::Str(key)) => items.push((key, self.eval(&item.value))),
+                        Some(Value::Str(key)) => {
+                            let value = self.eval(&item.value);
+                            insert_entry(&mut items, key, value);
+                        },
                         None => {
                             if let Value::Dict(spread) = self.eval(&item.value) {
-                                items.extend(spread);
+                                for (key, value) in spread {
+                                    insert_entry(&mut items, key, value);
+                                }
                             }
                         },
                         Some(_) => {},
@@ -473,7 +475,7 @@ impl<'a> Evaluator<'a> {
                     let Value::Str(key) = key else {
                         return Value::Unknown;
                     };
-                    items.push((key, value));
+                    insert_entry(&mut items, key, value);
                 }
                 Value::Dict(items)
             },
@@ -679,6 +681,14 @@ fn requirement_table_key(raw: &str) -> &str {
         .next()
         .unwrap_or(raw)
         .trim()
+}
+
+/// `dict[key] = value`: a repeated key keeps its first position and the last value.
+fn insert_entry(items: &mut Vec<(String, Value)>, key: String, value: Value) {
+    match items.iter_mut().find(|(existing, _)| *existing == key) {
+        Some((_, slot)) => *slot = value,
+        None => items.push((key, value)),
+    }
 }
 
 fn add(left: Value, right: Value) -> Value {

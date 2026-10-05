@@ -209,6 +209,23 @@ mod tests {
     }
 
     #[test]
+    fn repeated_dict_keys_keep_the_last_value_like_python() {
+        let result = extract(
+            "base = {'dev': ['old-base']}\n\
+             extras = {**base, 'dev': ['ruff'], 'test': ['old'], 'test': ['pytest']}\n\
+             table = {k: [k + '-v1'] for k in ['a', 'a']}\n\
+             setup(install_requires=extras['dev'] + table['a'], extras_require=extras)\n",
+            &[],
+        );
+        assert_eq!(
+            names_in(&result, &DependencyContext::Runtime),
+            vec!["ruff", "a-v1"]
+        );
+        assert_eq!(names_in(&result, &extra("dev")), vec!["ruff"]);
+        assert_eq!(names_in(&result, &extra("test")), vec!["pytest"]);
+    }
+
+    #[test]
     fn helper_functions_reading_requirements_files_are_followed() {
         let contents = r#"
 import os
