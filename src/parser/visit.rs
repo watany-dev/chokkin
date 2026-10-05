@@ -570,8 +570,6 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
     }
 }
 
-/// Collects the names read inside the string literals of one annotation.
-///
 /// Every loaded name is collected, the ones outside strings included, because
 /// a parsed string annotation is a fresh tree the module walk never reaches.
 struct AnnotationNames<'n>(&'n mut HashSet<String>);
