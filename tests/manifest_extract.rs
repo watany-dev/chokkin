@@ -191,6 +191,49 @@ fn manifest_cache_notices_shadowing_include() {
 }
 
 #[test]
+fn requirements_include_context_matches_whole_words() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    for dir in ["reqs", "tests"] {
+        std::fs::create_dir(temp.path().join(dir)).expect("create dir");
+    }
+    let files = [
+        (
+            "requirements.txt",
+            "-r reqs/protests.txt\n-r reqs/documentsdb.txt\n-r tests/requirements.txt\n-r requirements-docs.txt\n",
+        ),
+        ("reqs/protests.txt", "pandas\n"),
+        ("reqs/documentsdb.txt", "numpy\n"),
+        ("tests/requirements.txt", "pytest\n"),
+        ("requirements-docs.txt", "sphinx\n"),
+    ];
+    for (path, body) in files {
+        std::fs::write(temp.path().join(path), body).expect("write requirements");
+    }
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract");
+    let context_of = |name: &str| {
+        manifest
+            .dependencies
+            .iter()
+            .find(|dep| dep.name == name)
+            .map(|dep| dep.context.clone())
+            .expect("declared")
+    };
+    assert_eq!(context_of("pandas"), DependencyContext::Runtime);
+    assert_eq!(context_of("numpy"), DependencyContext::Runtime);
+    assert_eq!(
+        context_of("pytest"),
+        DependencyContext::Group("tests".to_owned())
+    );
+    assert_eq!(
+        context_of("sphinx"),
+        DependencyContext::Group("docs".to_owned())
+    );
+}
+
+#[test]
 fn manifest_cache_hit_uses_current_root_after_move() {
     let temp = tempfile::tempdir().expect("temp dir");
     let before = temp.path().join("a");
