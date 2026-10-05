@@ -274,6 +274,11 @@
       "target": "tests/fixtures/deps/uv_path_source_member/lib/acme/cli.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/uv_path_source_renamed_module/src/app/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/uv_path_source_renamed_module/src/app/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/uv_tool_constraints/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/uv_tool_constraints/src/acme/main.py"

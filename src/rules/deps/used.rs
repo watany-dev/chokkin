@@ -180,7 +180,7 @@ pub(super) fn mark_workspace_source_distributions(
             continue;
         };
         let name = normalize_distribution_name(name);
-        if !declared.contains(&name) || !manifest.uv.is_workspace_source(&name) {
+        if !declared.contains(&name) || !manifest.uv.is_local_source(&name) {
             continue;
         }
         let Some(member_path) = member_path(manifest, boundary.manifest) else {
