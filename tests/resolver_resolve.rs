@@ -410,7 +410,14 @@ fn affixed_declared_name_resolves_as_maybe() {
             "pyproject.toml",
             "[project]\nname = \"affix-demo\"\nversion = \"0.1.0\"\ndependencies = [\"widget-py\", \"pygadget\"]\n",
         ),
-        ("app.py", "import widget\nimport gadget\nimport gizmo\n"),
+        (
+            "uv.lock",
+            "version = 1\n\n[[package]]\nname = \"widget-py\"\nversion = \"1.0\"\ndependencies = [{ name = \"python-doohickey\" }]\n\n[[package]]\nname = \"python-doohickey\"\nversion = \"1.0\"\n",
+        ),
+        (
+            "app.py",
+            "import widget\nimport gadget\nimport doohickey\nimport gizmo\n",
+        ),
     ]);
     let index = resolve_path(temp.path());
     let root = |name: &str| {
@@ -439,5 +446,6 @@ fn affixed_declared_name_resolves_as_maybe() {
         )
     );
     assert_eq!(root("gadget").1.as_deref(), Some("pygadget"));
+    assert_eq!(root("doohickey").1.as_deref(), Some("python-doohickey"));
     assert_eq!(root("gizmo").0, ModuleOrigin::Unknown);
 }

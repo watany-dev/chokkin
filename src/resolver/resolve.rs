@@ -358,7 +358,8 @@ fn resolve_import_root(
             confidence: ResolveConfidence::Likely,
         };
     }
-    if let Some(resolution) = loose_declared_match(&distribution, declared()) {
+    let locked = manifest.lockfile.edges.keys().cloned();
+    if let Some(resolution) = loose_declared_match(&distribution, declared().chain(locked)) {
         return resolution;
     }
 
@@ -400,7 +401,8 @@ fn scoped_declaration(
 /// A declared distribution whose name differs from the import root only by a
 /// `py` / `python` affix (`markdown-it-py` for `markdown_it`, `odfpy` for
 /// `odf`, `pydocket` for `docket`). Weaker than an exact match, so `Maybe`;
-/// limited to declared names so a local module never passes as one (#361).
+/// limited to declared or locked names so a local module never passes as one
+/// (#361).
 fn loose_declared_match(
     distribution: &str,
     declared: impl IntoIterator<Item = String>,
@@ -415,31 +417,21 @@ fn loose_declared_match(
         })
 }
 
-/// `name` without a leading `python-` / `py-` / `py` and without a trailing
-/// `-python` / `-py` / `py`, one side or both. Never yields `name` itself or
-/// an empty name.
+/// `name` without a leading `python-` / `py-` / `py`, or without a trailing
+/// `-python` / `-py` / `py`. Never yields an empty name.
 fn affix_stripped(name: &str) -> impl Iterator<Item = &str> {
-    fn strip_prefix(name: &str) -> Option<&str> {
-        ["python-", "py-", "py"]
-            .into_iter()
-            .find_map(|prefix| name.strip_prefix(prefix))
-    }
-    fn strip_suffix(name: &str) -> Option<&str> {
-        ["-python", "-py", "py"]
-            .into_iter()
-            .find_map(|suffix| name.strip_suffix(suffix))
-    }
-    let prefixless = strip_prefix(name);
-    [
-        prefixless,
-        strip_suffix(name),
-        prefixless.and_then(strip_suffix),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|stripped| {
-        !stripped.is_empty() && !stripped.starts_with('-') && !stripped.ends_with('-')
-    })
+    let prefixless = ["python-", "py-", "py"]
+        .into_iter()
+        .find_map(|prefix| name.strip_prefix(prefix));
+    let suffixless = ["-python", "-py", "py"]
+        .into_iter()
+        .find_map(|suffix| name.strip_suffix(suffix));
+    [prefixless, suffixless]
+        .into_iter()
+        .flatten()
+        .filter(|stripped| {
+            !stripped.is_empty() && !stripped.starts_with('-') && !stripped.ends_with('-')
+        })
 }
 
 /// Every module and package importable from the project root or a workspace
@@ -615,7 +607,7 @@ mod tests {
         assert_eq!(stripped("pydocket"), vec!["docket"]);
         assert_eq!(stripped("python-dateutil"), vec!["dateutil"]);
         assert!(stripped("py-spy").contains(&"spy"));
-        assert_eq!(stripped("pyobjc-py"), vec!["objc-py", "pyobjc", "objc"]);
+        assert_eq!(stripped("pyobjc-py"), vec!["objc-py", "pyobjc"]);
         assert!(stripped("py").is_empty());
         assert!(stripped("requests").is_empty());
     }
