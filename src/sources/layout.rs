@@ -161,27 +161,43 @@ fn uv_source_layout(
         let UvSourceKind::Path(path) = &source.kind else {
             return None;
         };
-        let path = path.trim_start_matches("./").trim_end_matches('/');
-        let inside_root = !path.is_empty()
-            && !Path::new(path).is_absolute()
-            && !path.split(['/', '\\']).any(|part| part == "..");
-        if !inside_root || !names.contains(&normalize_distribution_name(&source.name)) {
+        let path = in_root_dir(path)?;
+        if !names.contains(&normalize_distribution_name(&source.name)) {
             return None;
         }
         let member = ProjectMetadata {
             name: Some(source.name.clone()),
             ..ProjectMetadata::default()
         };
-        let (inner, warning) = heuristic_layout(&root.join(path), &member);
+        let (inner, warning) = heuristic_layout(&root.join(&path), &member);
         (inner.layout != ProjectLayout::Unknown).then(|| {
             let package_root = if inner.package_root.is_empty() {
-                path.to_owned()
+                path.clone()
             } else {
-                join_rel(path, &inner.package_root)
+                join_rel(&path, &inner.package_root)
             };
             (layout_info(&package_root, inner.packages), warning)
         })
     })
+}
+
+/// `path` as a normalized root-relative directory below the root: `.`
+/// segments dropped (`lib/.` is `lib`), `None` for the root itself, an
+/// absolute path, or one that climbs out with `..`. A `.` left in would end
+/// up in `package_root`, which no discovered path starts with.
+fn in_root_dir(path: &str) -> Option<String> {
+    if Path::new(path).is_absolute() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for part in path.split(['/', '\\']) {
+        match part {
+            "" | "." => {},
+            ".." => return None,
+            part => parts.push(part),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 /// Directory-name inference: `src/`, then root packages, then `lib/`, with a
@@ -727,6 +743,25 @@ mod tests {
     }
 
     #[test]
+    fn uv_path_source_package_root_drops_dot_segments() {
+        let temp = tree(&["lib/acme_api"]);
+        for path in ["lib/.", "./lib/./"] {
+            let uv = UvToolSettings {
+                sources: vec![UvSource {
+                    name: "acme".to_owned(),
+                    kind: UvSourceKind::Path(path.to_owned()),
+                }],
+            };
+            let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &uv);
+            assert_eq!(layout.package_root, "lib", "{path}");
+            assert_eq!(
+                path_to_module("lib/acme_api/app.py", &layout),
+                Some("acme_api.app".to_owned())
+            );
+        }
+    }
+
+    #[test]
     fn uv_path_source_is_used_only_when_heuristics_guess() {
         let temp = tree(&["tools", "packages/acme/aaa", "packages/acme/acme"]);
         let uv = UvToolSettings {
@@ -756,6 +791,8 @@ mod tests {
             ("acme", absolute.as_str()),
             ("acme", "packages/../packages/acme"),
             ("acme", "./"),
+            ("acme", "."),
+            ("acme", "./."),
         ] {
             let uv = UvToolSettings {
                 sources: vec![UvSource {
