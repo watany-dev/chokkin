@@ -15,14 +15,15 @@ pub fn resolve_module_to_path(
     let suffix = normalized.replace('.', "/");
     let mut candidates = Vec::new();
 
-    if layout.layout == ProjectLayout::Flat
+    if layout.layout != ProjectLayout::Unknown
         && layout
             .packages
             .iter()
             .any(|package| normalized == package || normalized.starts_with(&format!("{package}.")))
     {
-        candidates.push(format!("{suffix}.py"));
-        candidates.push(format!("{suffix}/__init__.py"));
+        let path = layout.package_dir(&suffix);
+        candidates.push(format!("{path}.py"));
+        candidates.push(format!("{path}/__init__.py"));
     }
 
     candidates.push(format!("src/{suffix}.py"));
@@ -64,6 +65,7 @@ mod tests {
     fn src_layout() -> LayoutInfo {
         LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
@@ -96,6 +98,23 @@ mod tests {
     }
 
     #[test]
+    fn resolves_module_under_declared_package_root() {
+        let layout = LayoutInfo {
+            package_root: "lib".to_owned(),
+            ..src_layout()
+        };
+        let paths = known(&["lib/acme/web/cli.py", "lib/acme/__init__.py"]);
+        assert_eq!(
+            resolve_module_to_path("acme.web.cli", &layout, &paths),
+            Some("lib/acme/web/cli.py".to_owned())
+        );
+        assert_eq!(
+            resolve_module_to_path("acme", &layout, &paths),
+            Some("lib/acme/__init__.py".to_owned())
+        );
+    }
+
+    #[test]
     fn normalizes_app_config_suffix() {
         let layout = src_layout();
         let paths = known(&["src/acme/__init__.py"]);
@@ -109,6 +128,7 @@ mod tests {
     fn flat_layout_resolves_package_module() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
+            package_root: String::new(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
@@ -125,6 +145,7 @@ mod tests {
     fn workspace_member_src_layout_resolves_module_file() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),

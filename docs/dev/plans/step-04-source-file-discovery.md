@@ -61,7 +61,7 @@ Step 3 (`extract_manifest`) の直後に位置し、解析対象となる **Pyth
 2. flat layout
    条件: <root>/<name>/__init__.py が存在し、
          かつ <name> が慣習的な非 package 名でない
-         （tests, scripts, docs, build, dist, .venv は除外）
+         （tests, scripts, docs, build, dist, examples, benchmarks, e2e*, .venv は除外）
    推定 package 名: 該当ディレクトリ名
 
 3. fallback（layout 不明）
@@ -72,7 +72,7 @@ Step 3 (`extract_manifest`) の直後に位置し、解析対象となる **Pyth
 **`manifest.metadata.name` の利用:**
 
 - flat layout で package ディレクトリが複数候補のとき、`[project].name` を正規化
-  （`acme-api` → `acme_api` → `acme` の **完全一致優先**、なければ先頭候補 + `SourcesWarning::AmbiguousFlatLayout`）
+  （`acme-api` → `acme_api` → `acme` の **完全一致優先**、なければ先頭候補 + `SourcesWarning::AmbiguousFlatLayout`。build backend 宣言・uv path source・`lib/` を含む現行の推定順は spec の §10 を参照、#487）
 - src layout では `src/<name>/` の `<name>` を優先（metadata.name は補助）
 
 **自動生成される `project` globs（layout 別）:**
@@ -283,7 +283,8 @@ glob 構築失敗と走査時の致命的 IO のみ。個別ファイルの読�
 | --- | --- |
 | `MissingEntryPath { path }` | `config.entry` が存在しないファイルを指す |
 | `EntryPathIsDirectory { path }` | entry がディレクトリ |
-| `AmbiguousFlatLayout { candidates, chosen }` | flat で複数 package 候補 |
+| `AmbiguousFlatLayout { candidates, chosen }` | 複数 package 候補から先頭を選んだ |
+| `GuessedPackageDir { project, chosen }` | project 名と一致しない唯一の候補を選んだ |
 | `GitignoreUnreadable { path }` | `.gitignore` 読み取り失敗 |
 | `LargeProject { file_count }` | 閾値超過（10_000） |
 

@@ -388,14 +388,17 @@ fn write_scripts(scripts: &[InlineScript], out: &mut impl Write) -> io::Result<(
 }
 
 fn format_layout(sources: &DiscoveredSources) -> String {
-    let layout = sources.layout.layout.as_str();
-    if sources.layout.packages.is_empty() {
+    let info = &sources.layout;
+    let layout = info.layout.as_str();
+    let root = if info.package_root.is_empty() || info.package_root == "src" {
+        String::new()
+    } else {
+        format!("root: {}, ", info.package_root)
+    };
+    if info.packages.is_empty() {
         layout.to_owned()
     } else {
-        format!(
-            "{layout} (packages: {})",
-            sources.layout.packages.join(", ")
-        )
+        format!("{layout} ({root}packages: {})", info.packages.join(", "))
     }
 }
 
@@ -574,6 +577,7 @@ mod tests {
             },
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),

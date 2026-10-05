@@ -104,6 +104,7 @@ mod tests {
     fn src_layout() -> LayoutInfo {
         LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
@@ -142,6 +143,7 @@ mod tests {
         // entry, so a name derived for it could never be looked up.
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
@@ -176,6 +178,7 @@ mod tests {
     fn relative_import_under_unknown_layout_drops_src_prefix() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),

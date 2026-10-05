@@ -1,0 +1,13 @@
+[project]
+name = "acme-dev"
+version = "0.1.0"
+dependencies = ["acme"]
+
+[project.scripts]
+acme = "acme.cli:main"
+
+[dependency-groups]
+dev = ["numpy"]
+
+[tool.uv.sources]
+acme = { path = "lib", editable = true }

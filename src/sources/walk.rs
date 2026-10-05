@@ -301,6 +301,7 @@ mod tests {
 
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: vec![
@@ -340,6 +341,7 @@ mod tests {
 
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: vec![
@@ -376,6 +378,7 @@ mod tests {
 
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: vec!["**/*.{py,pyi}".to_owned()],

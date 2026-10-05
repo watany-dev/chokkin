@@ -551,6 +551,7 @@ mod tests {
         let module = ruff_python_parser::parse_module(source).expect("parse");
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),

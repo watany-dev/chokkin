@@ -28,6 +28,8 @@ struct PyProjectTool {
 #[derive(Deserialize)]
 struct UvTool {
     workspace: Option<UvWorkspace>,
+    #[serde(default)]
+    sources: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Deserialize)]
@@ -49,10 +51,16 @@ pub fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError
     Ok(partial)
 }
 
-/// Read `[tool.chokkin]` from `pyproject.toml` and optional `[tool.uv.workspace]` hint.
-pub fn parse_pyproject_config(
-    path: &Path,
-) -> Result<(PartialConfig, Option<UvWorkspaceHint>), ConfigError> {
+/// `[tool.chokkin]` and the uv hints that shape workspace members.
+pub struct PyProjectConfig {
+    pub partial: PartialConfig,
+    pub uv_workspace: Option<UvWorkspaceHint>,
+    /// `[tool.uv.sources]` path entries as written, keyed by distribution name.
+    pub uv_path_sources: BTreeMap<String, String>,
+}
+
+/// Read `[tool.chokkin]` from `pyproject.toml` with its `[tool.uv]` member hints.
+pub fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, ConfigError> {
     let PyProject {
         tool: PyProjectTool { chokkin, uv },
     } = parse_toml::<PyProject>(path)?;
@@ -60,8 +68,15 @@ pub fn parse_pyproject_config(
     let partial = chokkin.unwrap_or_default();
     validate(path, &partial)?;
 
-    let uv_workspace = uv
-        .and_then(|uv| uv.workspace)
+    let (workspace, sources) = uv.map_or_else(Default::default, |uv| (uv.workspace, uv.sources));
+    let uv_path_sources = sources
+        .into_iter()
+        .filter_map(|(name, value)| {
+            let path = value.get("path")?.as_str()?.to_owned();
+            Some((name, path))
+        })
+        .collect();
+    let uv_workspace = workspace
         .and_then(|workspace| workspace.members)
         .map(|members| match members {
             UvMembers::One(member) => vec![member],
@@ -69,7 +84,11 @@ pub fn parse_pyproject_config(
         })
         .filter(|members| !members.is_empty())
         .map(|members| UvWorkspaceHint { members });
-    Ok((partial, uv_workspace))
+    Ok(PyProjectConfig {
+        partial,
+        uv_workspace,
+        uv_path_sources,
+    })
 }
 
 fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {

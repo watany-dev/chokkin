@@ -293,6 +293,7 @@ mod tests {
             root,
             layout: LayoutInfo {
                 layout: ProjectLayout::Flat,
+                package_root: String::new(),
                 packages: vec!["acme".to_owned()],
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
