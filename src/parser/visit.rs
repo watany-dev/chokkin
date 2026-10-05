@@ -570,14 +570,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
     }
 }
 
-/// Every loaded name is collected, the ones outside strings included, because
+/// Every name is collected, the ones outside strings included, because
 /// a parsed string annotation is a fresh tree the module walk never reaches.
 struct AnnotationNames<'n>(&'n mut HashSet<String>);
 
 impl<'a> Visitor<'a> for AnnotationNames<'_> {
     fn visit_expr(&mut self, expr: &'a Expr) {
         match expr {
-            Expr::Name(name) if name.ctx.is_load() => {
+            Expr::Name(name) => {
                 self.0.insert(name.id.to_string());
             },
             Expr::StringLiteral(string) => {
@@ -712,7 +712,7 @@ mod tests {
     #[test]
     fn marks_symbols_read_in_string_annotations() {
         let parsed = visit_source(
-            "T = TypeVar(\"T\")\nP = 1\nSelf = 1\nfast = 1\n\ndef f(x: \"list[T]\") -> list[\"P\"]:\n    y: \"'Self'\" = 1\n\nz: Literal[\"fast\"]\nw: Annotated[\"T\", Field(alias=\"model\")]\nmodel = 1\n",
+            "T = TypeVar(\"T\")\nP = 1\nSelf = 1\nfast = 1\n\ndef f(x: \"list[T]\") -> list[\"P\"]:\n    y: \"'Self'\" = 1\n\nz: Literal[\"fast\"]\nv: typing.Literal[\"fast\"]\nw: Annotated[\"T\", Field(alias=\"model\")]\nmodel = 1\n",
         );
         let used: Vec<_> = parsed
             .symbols
@@ -728,6 +728,7 @@ mod tests {
                 ("fast", false),
                 ("f", false),
                 ("z", false),
+                ("v", false),
                 ("w", false),
                 ("model", false)
             ]
