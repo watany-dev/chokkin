@@ -985,7 +985,18 @@ v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap
 - parser 移行の決定 (Python 3.12+ 構文、#140)
 ```
 
-v0.6で入れるもの (Knip 相当の運用性)。
+v0.6〜v0.7で入れたもの (実 OSS での精度と monorepo 対応)。
+
+```text
+- --fix の安全化 (stale な行番号・配列 index をエラーにする、改行コード保持)
+- Rust library API の整理
+- 宣言のない monorepo の nested pyproject.toml を workspace member として扱う (--no-auto-workspace)
+- library mode の member symbol 判定と、宣言済み public API を CHK006 / CHK007 から外す
+- in-package tests / vendored code を報告対象から分離 (vendored 設定)
+- 動的 setup.py の読み取りと、依存不明時の CHK003 降格
+```
+
+v0.8で入れるもの (Knip 相当の運用性)。
 
 ```text
 - framework / format plugin 拡充 (Django 周辺 / Typer / Click / Streamlit / Airflow / Dagster / marimo など)
@@ -1194,7 +1205,25 @@ exit   : 拡充 corpus で CHK002 誤検知率 5%未満 (未分類0)、recall se
          v0.5.0 で再測定し合格 (docs/dev/v0.5-release-validation.md、CHK003 288 → 170)
 ```
 
-### Phase 5: v0.6 Knip 相当の運用性(+6〜8週)
+### Phase 4.5: v0.6〜v0.7 実 OSS での精度と monorepo 対応 — ✅ v0.6.0 リリース済み
+
+```text
+目標   : Phase 5 に入る前に、§17 corpus と failure-pattern OSS で見つかった誤検知・
+         取りこぼしを潰す
+背景   : v0.5.0 後の実測で、--fix の誤削除、宣言のない monorepo、library の公開 API、
+         package 内 tests / vendored code が主な誤検知源だった。Knip 相当の運用性
+         (Phase 5) より先に直す
+成果物 :
+  - v0.6.0: --fix の stale 行番号・配列 index 検出、requirements の改行コード保持、
+            Rust library API の整理 (#436-#438, #446)
+  - v0.7.0: auto-workspace (#488)、library mode の member symbol 判定と宣言済み
+            public API (#489, #525)、in-package tests / vendored (#490)、
+            動的 setup.py (#539)、path source / extras / metapackage の依存判定
+exit   : JSON schema / SARIF / exit code の既存契約を壊さない (Rust library API の
+         breaking は ADR 0004 の対象外)、Phase 4 の gate を維持
+```
+
+### Phase 5: v0.8 Knip 相当の運用性(+6〜8週)
 
 ```text
 目標   : 導入・抑制・説明・CI 連携を Knip と同じ水準にそろえる
@@ -1220,7 +1249,7 @@ exit   : 追加した CLI flag・hint・reporter が JSON schema / SARIF / exit 
          Phase 4 の gate を維持
 ```
 
-### Phase 6: v0.7 検出範囲の拡張(preview)
+### Phase 6: v0.9 検出範囲の拡張(preview)
 
 ```text
 目標   : v1.0 で凍結しない preview rule と editor 連携の試作

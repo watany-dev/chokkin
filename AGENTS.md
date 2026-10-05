@@ -54,7 +54,8 @@ Implementation follows the phased roadmap in `docs/dev/spec.ja.md` §17. Phase 4
 (v0.5, modern packaging: PEP 735 `include-group`, PEP 723 inline scripts,
 `pylock.toml` / `poetry.lock` / `pdm.lock`, `[tool.uv]`, build context, plugin
 auto-enable, parser re-selection to `ruff_python_parser`) shipped in v0.5.0.
-Next up is Phase 5 (v0.6, Knip-parity operability). The Knip / Python-ecosystem gap analysis behind it, with `R-xx`
+v0.6.0 and the upcoming v0.7.0 are Phase 4.5 (accuracy on real OSS
+projects and monorepos); next up is Phase 5 (v0.8, Knip-parity operability). The Knip / Python-ecosystem gap analysis behind it, with `R-xx`
 backlog IDs, is `docs/dev/roadmap-gap-analysis.ja.md`.
 
 ## Repository structure

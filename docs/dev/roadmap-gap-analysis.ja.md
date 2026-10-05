@@ -1,6 +1,8 @@
 # ロードマップ ギャップ分析 (2026-09, v0.4.1 時点)
 
 > 本文の「v0.4.1」は v0.4.0 後の main を指す。v0.4.1 はリリースされず、その変更は v0.5.0 に含まれた。
+>
+> v0.6 / v0.7 は実 OSS での精度と monorepo 対応に充てたため (spec §17 Phase 4.5)、P1 は v0.8、P2 は v0.9 preview に繰り下げた。
 
 `docs/dev/spec.ja.md` §16 / §17 のロードマップを更新するための棚卸し。
 元ネタである [Knip](https://knip.dev/) の機能セットと、2026 年時点のモダンな
@@ -120,7 +122,7 @@ chokkin v0.4.1 に「何があり、何が足りないか」を整理し、優�
   plugin を自動で on にする。明示の `[tool.chokkin.plugins] x = false` が常に優先。
   `--probe` に有効化理由を出す。
 
-### P1 — Knip 相当の運用性 (v0.6)
+### P1 — Knip 相当の運用性 (v0.8)
 
 - **R-08 framework / format plugin 拡充** — Django (templatetags / management
   commands / `admin.py` / `signals.py` / `AppConfig.ready`)、Typer / Click entry、
@@ -153,7 +155,7 @@ chokkin v0.4.1 に「何があり、何が足りないか」を整理し、優�
   lockstep 更新の運用を ADR 0001 の改訂として決める。`lazy import` は通常の import と
   同じ edge にし、import 時副作用の有無は区別しない。
 
-### P2 — 検出範囲の拡張 (v0.7 preview 〜 v1.x)
+### P2 — 検出範囲の拡張 (v0.9 preview 〜 v1.x)
 
 - **R-15 依存宣言の整合性ルール** — stdlib を依存として宣言している (deptry
   DEP005 相当)、`[tool.uv.sources]` / constraint / override に宣言外の名前がある
