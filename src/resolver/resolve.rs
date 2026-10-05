@@ -608,8 +608,8 @@ mod tests {
         assert_eq!(stripped("python-dateutil"), vec!["dateutil"]);
         assert!(stripped("py-spy").contains(&"spy"));
         assert_eq!(stripped("pyobjc-py"), vec!["objc-py", "pyobjc"]);
-        assert!(stripped("py").is_empty());
-        assert!(stripped("requests").is_empty());
+        assert_eq!(stripped("py"), Vec::<&str>::new());
+        assert_eq!(stripped("requests"), Vec::<&str>::new());
     }
 
     #[test]
