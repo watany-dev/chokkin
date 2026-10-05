@@ -238,7 +238,7 @@ mod tests {
             &[],
         );
         assert_eq!(names_in(&result, &extra("dev")), vec!["ruff"]);
-        assert!(names_in(&result, &extra("docs")).is_empty());
+        assert_eq!(names_in(&result, &extra("docs")), Vec::<String>::new());
     }
 
     #[test]
