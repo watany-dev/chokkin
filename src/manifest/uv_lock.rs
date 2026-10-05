@@ -130,6 +130,24 @@ mod tests {
         assert_eq!(graph.edges.get("idna"), Some(&Vec::new()));
     }
 
+    // The full-text fallback hides a wrong strip from `parse`, so check the
+    // filtered text itself.
+    #[test]
+    fn strip_artifacts_keeps_only_graph_lines() {
+        let stripped = strip_artifacts(
+            "[[package]]\nname = \"acme\"\n\
+             sdist = { url = \"https://x/acme.tar.gz\" }\n\
+             wheels = [\n    { url = \"https://x/acme.whl\" },\n]\n\
+             dependencies = [{ name = \"idna\" }]\n\
+             wheels = [{ url = \"https://x/idna.whl\" }]\n",
+        );
+
+        assert_eq!(
+            stripped,
+            "[[package]]\nname = \"acme\"\ndependencies = [{ name = \"idna\" }]\n"
+        );
+    }
+
     #[test]
     fn rejects_invalid_toml() {
         let error = parse("[[package\n").expect_err("invalid TOML");
