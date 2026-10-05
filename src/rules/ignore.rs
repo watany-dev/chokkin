@@ -881,4 +881,174 @@ mod tests {
             );
         }
     }
+
+    /// I1 of `docs/dev/formal/ignore_model.py` over generated names and
+    /// patterns, plus vendored suppression taking precedence.
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        /// Reference glob for patterns made of literals and `*` (which, as in
+        /// `globset`'s default, also crosses `/`).
+        fn reference_glob(pattern: &str, value: &str) -> bool {
+            match pattern.split_once('*') {
+                None => pattern == value,
+                Some((head, rest)) => value.strip_prefix(head).is_some_and(|value| {
+                    (0..=value.len())
+                        .filter(|cut| value.is_char_boundary(*cut))
+                        .any(|cut| reference_glob(rest, &value[cut..]))
+                }),
+            }
+        }
+
+        #[derive(Debug, Clone)]
+        enum Kind {
+            Distribution(RuleId),
+            Import(RuleId, Option<String>),
+            Binary(Option<String>),
+        }
+
+        #[derive(Debug, Clone)]
+        struct Case {
+            kind: Kind,
+            name: String,
+            module: String,
+            file: String,
+        }
+
+        fn name() -> impl Strategy<Value = String> {
+            "[ab]{1,2}(-[ab]{1,2})?"
+        }
+
+        fn case_strategy() -> impl Strategy<Value = Case> {
+            let kind = prop_oneof![
+                prop::sample::select(vec![RuleId::Chk002, RuleId::Chk005, RuleId::Chk009])
+                    .prop_map(Kind::Distribution),
+                (
+                    prop::sample::select(vec![RuleId::Chk003, RuleId::Chk004]),
+                    prop::option::of(name())
+                )
+                    .prop_map(|(rule, dist)| Kind::Import(rule, dist)),
+                prop::option::of(name()).prop_map(Kind::Binary),
+            ];
+            (
+                kind,
+                name(),
+                prop::sample::select(vec!["a", "b", "_vendor", "x/vendored"]),
+                "[ab]{1,2}",
+            )
+                .prop_map(|(kind, name, dir, stem)| Case {
+                    kind,
+                    module: name.replace('-', "_"),
+                    file: format!("src/{dir}/{stem}.py"),
+                    name,
+                })
+        }
+
+        /// Patterns drawn from the case's own names, module and path, so
+        /// that near misses (module vs distribution, path globs) are common.
+        fn pattern_strategy(case: &Case) -> impl Strategy<Value = String> + use<> {
+            let dist = match &case.kind {
+                Kind::Import(_, dist) | Kind::Binary(dist) => dist.clone(),
+                Kind::Distribution(_) => None,
+            };
+            let mut seeds = vec![case.name.clone(), case.module.clone(), case.file.clone()];
+            seeds.extend(dist);
+            (
+                prop::sample::select(seeds),
+                0usize..4,
+                prop::option::of("[ab]"),
+            )
+                .prop_map(|(seed, shape, symbol)| {
+                    let base = match shape {
+                        0 => seed,
+                        1 => format!("{}*", &seed[..seed.len() / 2]),
+                        2 => format!("*{}", &seed[seed.len() / 2..]),
+                        _ => "*".to_owned(),
+                    };
+                    match symbol {
+                        Some(symbol) => format!("{base}:{symbol}"),
+                        None => base,
+                    }
+                })
+        }
+
+        fn build(case: &Case, pattern: &str) -> (IgnoreMatcher, IssueCandidate) {
+            let (rule, subject, binary_dist) = match &case.kind {
+                Kind::Distribution(rule) => (
+                    *rule,
+                    IssueSubject::Distribution {
+                        name: case.name.clone(),
+                    },
+                    None,
+                ),
+                Kind::Import(rule, dist) => (
+                    *rule,
+                    IssueSubject::Import {
+                        module: case.module.clone(),
+                        file: case.file.clone(),
+                        line: 1,
+                        distribution: dist.clone(),
+                    },
+                    None,
+                ),
+                Kind::Binary(dist) => (
+                    RuleId::Chk008,
+                    IssueSubject::Binary {
+                        name: case.name.clone(),
+                    },
+                    dist.clone(),
+                ),
+            };
+            let mut config = default_config();
+            config
+                .ignore
+                .insert(rule.as_code().to_owned(), vec![pattern.to_owned()]);
+            let mut resolution = ResolutionIndex::default();
+            if let Some(dist) = binary_dist {
+                resolution
+                    .binary_resolutions
+                    .insert(case.name.clone(), dist);
+            }
+            let matcher = IgnoreMatcher::build(&config, &ParseSummary::default(), &resolution);
+            (matcher, candidate(rule, subject, Vec::new()))
+        }
+
+        fn expected(case: &Case, pattern: &str) -> Option<SuppressReason> {
+            let glob = |value: &str| reference_glob(pattern, value);
+            let vendored = case.file.contains("/_vendor/") || case.file.contains("/vendored/");
+            match &case.kind {
+                Kind::Import(..) if vendored => Some(SuppressReason::Vendored),
+                Kind::Distribution(_) => glob(&case.name).then_some(SuppressReason::Config),
+                Kind::Import(_, dist) => dist
+                    .as_deref()
+                    .is_some_and(glob)
+                    .then_some(SuppressReason::Config),
+                Kind::Binary(dist) => (glob(&case.name) || dist.as_deref().is_some_and(glob))
+                    .then_some(SuppressReason::Config),
+            }
+        }
+
+        proptest! {
+            /// Dependency rules match only the distribution (and, for
+            /// CHK008, the binary name), never a module or path, whatever the
+            /// pattern; vendored files are suppressed before any of that.
+            #[test]
+            fn dependency_ignores_match_only_distribution_names(
+                (case, pattern) in case_strategy().prop_flat_map(|case| {
+                    let pattern = pattern_strategy(&case);
+                    (Just(case), pattern)
+                })
+            ) {
+                let (matcher, candidate) = build(&case, &pattern);
+                prop_assert_eq!(matcher.matches_candidate(&candidate), expected(&case, &pattern));
+            }
+
+            #[test]
+            fn reference_glob_agrees_with_globset(pattern in "[ab*]{0,5}", value in "[ab]{0,5}") {
+                prop_assert_eq!(glob_match(&pattern, &value), reference_glob(&pattern, &value));
+            }
+        }
+    }
 }

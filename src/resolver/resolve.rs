@@ -652,6 +652,70 @@ mod tests {
         assert_eq!(loose_declared_match("markdown-it-py", declared()), None);
     }
 
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        const PREFIXES: [&str; 3] = ["python-", "py-", "py"];
+        const SUFFIXES: [&str; 3] = ["-python", "-py", "py"];
+
+        /// Normalized names built from the letters that spell the affixes,
+        /// so accidental affixes are common.
+        fn name() -> impl Strategy<Value = String> {
+            "[pythonab]{1,5}(-[pythonab]{1,4}){0,2}"
+        }
+
+        proptest! {
+            /// Every stripped form is a proper, well-formed core of the name
+            /// left by removing one known affix.
+            #[test]
+            fn affix_stripped_yields_well_formed_cores(name in name()) {
+                for core in affix_stripped(&name) {
+                    prop_assert!(!core.is_empty() && core != name);
+                    prop_assert!(!core.starts_with('-') && !core.ends_with('-'), "{core}");
+                    let prefixed = PREFIXES.iter().any(|affix| name == format!("{affix}{core}"));
+                    let suffixed = SUFFIXES.iter().any(|affix| name == format!("{core}{affix}"));
+                    prop_assert!(prefixed || suffixed, "{name} -> {core}");
+                }
+            }
+
+            /// Adding an affix to a core is undone by `affix_stripped`,
+            /// except where a longer prefix (`python-` over `py`) claims it.
+            #[test]
+            fn affix_stripped_recovers_the_core(core in name(), affix in 0usize..6) {
+                let affixed = match affix {
+                    0..3 => format!("{}{core}", PREFIXES[affix]),
+                    _ => format!("{core}{}", SUFFIXES[affix - 3]),
+                };
+                prop_assume!(!(affix == 2 && core.starts_with("thon-")));
+                prop_assert!(
+                    affix_stripped(&affixed).any(|stripped| stripped == core),
+                    "{affixed} should strip to {core}"
+                );
+            }
+
+            /// The loose match is the first declared name one affix away from
+            /// the import; it never returns an exact name or an undeclared one.
+            #[test]
+            fn loose_match_is_the_first_affixed_declared_name(
+                root in name(),
+                declared in prop::collection::vec(name(), 0..6),
+            ) {
+                let expected = declared
+                    .iter()
+                    .find(|name| affix_stripped(name).any(|core| core == root))
+                    .cloned();
+                let found = loose_declared_match(&root, declared);
+                prop_assert_eq!(found.as_ref().and_then(|r| r.distribution.clone()), expected);
+                if let Some(found) = found {
+                    prop_assert_eq!(found.confidence, ResolveConfidence::Maybe);
+                    prop_assert_ne!(found.distribution.as_deref(), Some(root.as_str()));
+                }
+            }
+        }
+    }
+
     #[test]
     fn scoped_declaration_covers_only_its_own_script_or_member() {
         let scoped = ScopedDeclarations {
