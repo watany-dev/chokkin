@@ -192,7 +192,10 @@ mod tests {
             stripped.as_deref(),
             Some("[[package]]\nname = \"acme\"\ndependencies = [{ name = \"idna\" }]\n")
         );
-        assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\" }]\nx = 1\n]\n"), None);
+        assert_eq!(
+            strip_artifacts("wheels = [\n    { url = \"a\" }]\nx = 1\n]\n"),
+            None
+        );
         assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\" },\n"), None);
     }
 
@@ -222,6 +225,17 @@ mod tests {
 
         use super::*;
         use proptest::prelude::*;
+
+        /// `wheels` arrays as uv writes them and as hand edits may leave them.
+        const WHEELS: [&str; 7] = [
+            "",
+            "wheels = [\n    { url = \"https://x/a.whl\", hash = \"sha256:00\" },\n]\n",
+            "wheels = [{ url = \"https://x/a.whl\" }]\n",
+            "wheels = [\n    { url = \"https://x/a.whl\" }]\n",
+            "wheels = [\n    { url = \"https://x/a.whl\" },\n    { url = \"https://x/b.whl\" }\n]\n",
+            "wheels = [\n    { url = \"https://x/a.whl\",\n      hash = \"sha256:00\" },\n]\n",
+            "wheels = [\n  # comment\n  { url = \"https://x/a.whl\" },\n]\n",
+        ];
 
         fn package_name() -> impl Strategy<Value = String> {
             "[A-Za-z0-9]([A-Za-z0-9._-]{0,12}[A-Za-z0-9])?"
@@ -269,6 +283,38 @@ mod tests {
                 for (name, deps) in &expected {
                     prop_assert_eq!(graph.edges.get(name), Some(deps));
                 }
+            }
+
+            #[test]
+            fn artifact_layout_does_not_change_the_graph(
+                packages in prop::collection::btree_map(
+                    package_name(),
+                    (prop::collection::vec(package_name(), 0..3), 0usize..WHEELS.len(), any::<bool>()),
+                    1..5,
+                ),
+            ) {
+                let mut contents = String::from("version = 1\n");
+                let mut expected = std::collections::BTreeMap::new();
+                for (name, (deps, wheels, sdist)) in &packages {
+                    writeln!(contents, "\n[[package]]\nname = \"{name}\"").expect("write");
+                    if *sdist {
+                        contents.push_str("sdist = { url = \"https://x/a.tar.gz\", hash = \"sha256:00\" }\n");
+                    }
+                    contents.push_str(WHEELS[*wheels]);
+                    let rendered = deps
+                        .iter()
+                        .map(|dep| format!("{{ name = \"{dep}\" }}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    writeln!(contents, "dependencies = [{rendered}]").expect("write");
+                    expected.insert(
+                        normalize_distribution_name(name),
+                        deps.iter().map(|dep| normalize_distribution_name(dep)).collect::<Vec<_>>(),
+                    );
+                }
+
+                let graph = parse(&contents).expect("generated uv.lock is valid TOML");
+                prop_assert_eq!(graph.edges, expected, "{}", contents);
             }
 
             #[test]
