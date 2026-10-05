@@ -356,46 +356,48 @@ fn resolve_requirements_include(
     None
 }
 
-/// Infer dependency context from an included requirements filename (Phase 1.5 §4.B).
+/// Infer dependency context from an included requirements path (Phase 1.5 §4.B).
+///
+/// Only whole directory names and `-`/`_`/`.`-separated stem words count, so
+/// `protests.txt` or `documentsdb.txt` keep the parent context (#505).
 fn context_for_requirements_include(
     include_path: &str,
     parent: &DependencyContext,
 ) -> DependencyContext {
-    let basename = Path::new(include_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(include_path);
-    let normalized = basename.to_ascii_lowercase();
-
+    let path = Path::new(include_path);
+    let lower = |s: &std::ffi::OsStr| s.to_string_lossy().to_ascii_lowercase();
+    let basename = path.file_name().map(lower).unwrap_or_default();
     if matches!(
-        normalized.as_str(),
-        "requirements-dev.txt"
-            | "dev-requirements.txt"
-            | "requirements-packaging.txt"
-            | "requirements-github-actions.txt"
+        basename.as_str(),
+        "requirements-packaging.txt" | "requirements-github-actions.txt"
     ) {
         return DependencyContext::Group("dev".to_owned());
     }
 
-    if normalized.starts_with("requirements-docs")
-        || normalized.contains("documentation")
-        || normalized.contains("docs")
-    {
-        return DependencyContext::Group("docs".to_owned());
-    }
+    let stem = path.file_stem().map(lower).unwrap_or_default();
+    let mut words: Vec<String> = path
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .filter_map(|component| match component {
+            std::path::Component::Normal(name) => Some(lower(name)),
+            _ => None,
+        })
+        .collect();
+    words.extend(stem.split(['-', '_', '.']).map(str::to_owned));
+    let has_word = |candidates: &[&str]| words.iter().any(|w| candidates.contains(&w.as_str()));
 
-    if normalized.starts_with("requirements-test")
-        || normalized.contains("testing")
-        || normalized.contains("tests")
-    {
-        return DependencyContext::Group("tests".to_owned());
+    if has_word(&["dev"]) {
+        DependencyContext::Group("dev".to_owned())
+    } else if has_word(&["docs", "doc", "documentation"]) {
+        DependencyContext::Group("docs".to_owned())
+    } else if has_word(&["tests", "test", "testing"]) {
+        DependencyContext::Group("tests".to_owned())
+    } else if has_word(&["optional"]) {
+        DependencyContext::Group("dev".to_owned())
+    } else {
+        parent.clone()
     }
-
-    if normalized.contains("optional") {
-        return DependencyContext::Group("dev".to_owned());
-    }
-
-    parent.clone()
 }
 
 #[cfg(test)]
@@ -455,6 +457,31 @@ mod tests {
             ),
             DependencyContext::Group(group) if group == "docs"
         ));
+    }
+
+    #[test]
+    fn include_context_matches_whole_words_only() {
+        let parent = DependencyContext::Runtime;
+        let group_of = |path: &str| match context_for_requirements_include(path, &parent) {
+            DependencyContext::Group(group) => Some(group),
+            _ => None,
+        };
+        assert_eq!(group_of("reqs/protests.txt"), None);
+        assert_eq!(group_of("reqs/documentsdb.txt"), None);
+        assert_eq!(group_of("reqs/developer.txt"), None);
+        assert_eq!(group_of("tests/requirements.txt").as_deref(), Some("tests"));
+        assert_eq!(group_of("requirements_test.txt").as_deref(), Some("tests"));
+        assert_eq!(group_of("requirements-docs.txt").as_deref(), Some("docs"));
+        assert_eq!(group_of("dev-requirements.txt").as_deref(), Some("dev"));
+        assert_eq!(group_of("requirements-dev.txt").as_deref(), Some("dev"));
+        assert_eq!(
+            group_of("requirements-optional.txt").as_deref(),
+            Some("dev")
+        );
+        assert_eq!(
+            group_of("requirements-packaging.txt").as_deref(),
+            Some("dev")
+        );
     }
 
     mod props {
