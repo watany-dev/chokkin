@@ -326,19 +326,6 @@ fn normalized_project_names(name: &str) -> Vec<String> {
 /// callers treat imports from it as unresolved rather than inventing a name.
 #[must_use]
 pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
-    let module = layout_module_name(path, layout)?;
-    // A directory such as `prefect-aws/` cannot be a package, so only a
-    // `sys.path` entry at it makes the files below importable (#512).
-    let parts: Vec<&str> = module.split('.').collect();
-    let start = parts
-        .iter()
-        .rposition(|part| !is_identifier(part))
-        .map_or(0, |index| index + 1);
-    let importable = parts.get(start..).unwrap_or_default();
-    (!importable.is_empty()).then(|| importable.join("."))
-}
-
-fn layout_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
     if let Some((member, rest)) = layout.member_for(path) {
         return path_to_module(rest, &member.layout)
             .or_else(|| namespace_module_name(rest, &member.layout));
@@ -363,14 +350,6 @@ fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
         return None;
     }
     Some(module_path.replace('/', "."))
-}
-
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|first| first == '_' || first.is_alphabetic())
-        && chars.all(|c| c == '_' || c.is_alphanumeric())
 }
 
 fn module_path(path: &str) -> Option<&str> {
@@ -515,45 +494,33 @@ mod tests {
 
     #[test]
     fn path_to_module_prefers_member_nested_under_root_source_root() {
-        let member_layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            package_root: String::new(),
-            packages: vec!["prefect_aws".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        };
-        let mut layout = LayoutInfo {
+        // prefect: `src/` is the root's source root and also holds members.
+        let layout = LayoutInfo {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["prefect".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
-            members: Vec::new(),
+            members: vec![MemberLayout {
+                path: "src/integrations/prefect-aws".to_owned(),
+                layout: LayoutInfo {
+                    layout: ProjectLayout::Flat,
+                    package_root: String::new(),
+                    packages: vec!["prefect_aws".to_owned()],
+                    local_packages: Vec::new(),
+                    inferred_globs: Vec::new(),
+                    members: Vec::new(),
+                },
+            }],
         };
         let init = "src/integrations/prefect-aws/prefect_aws/__init__.py";
-        // Without the member, `prefect-aws/` is not a package directory.
         assert_eq!(
             path_to_module(init, &layout),
             Some("prefect_aws".to_owned())
         );
-        assert_eq!(
-            path_to_module("src/integrations/prefect-aws/conftest.py", &layout),
-            Some("conftest".to_owned())
-        );
-        assert_eq!(path_to_module("src/my-pkg/__init__.py", &layout), None);
         assert_eq!(
             path_to_module("src/prefect/flows.py", &layout),
             Some("prefect.flows".to_owned())
-        );
-
-        layout.members = vec![MemberLayout {
-            path: "src/integrations/prefect-aws".to_owned(),
-            layout: member_layout,
-        }];
-        assert_eq!(
-            path_to_module(init, &layout),
-            Some("prefect_aws".to_owned())
         );
         assert_eq!(
             crate::parser::resolve_relative_import(init, &layout, 1, None, Some("_version")),
