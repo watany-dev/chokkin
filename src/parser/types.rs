@@ -182,6 +182,9 @@ pub struct ParsedModule {
     /// Names listed in `__all__`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exports: Vec<String>,
+    /// Names bound by an import and read in this module (`from .x import f; f()`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub used_import_bindings: Vec<String>,
     /// Extracted ignore directives.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<IgnoreDirective>,

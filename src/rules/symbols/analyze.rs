@@ -20,6 +20,7 @@ use crate::sources::{DiscoveredSources, PublicSurface, path_to_module};
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
+use super::public::{PublicApi, exports_reexport};
 
 /// Analyze public symbol usage and unresolved imports (§12).
 #[must_use]
@@ -56,6 +57,7 @@ pub fn analyze_with_context(
     let registry = build_registry(&surface_modules, &module_names);
     let reference_index = ReferenceIndex::build(&reachable_modules, &module_names);
     let reexports = collect_reexports(&surface_modules, &module_names, &sources.layout);
+    let public_api = PublicApi::build(&surface_modules, &module_names);
     let external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
 
@@ -82,8 +84,13 @@ pub fn analyze_with_context(
             mode_for(path)
         }
     };
-    let mut candidates =
-        detect_unused_exports(&registry, &reference_index, &external_symbols, export_mode);
+    let mut candidates = detect_unused_exports(
+        &registry,
+        &reference_index,
+        &external_symbols,
+        &public_api,
+        export_mode,
+    );
     candidates.extend(detect_unused_reexports(
         &reexports,
         &reference_index,
@@ -125,6 +132,7 @@ fn detect_unused_exports(
     registry: &[RegistryEntry],
     references: &ReferenceIndex,
     external_symbols: &indexmap::IndexSet<SymbolId>,
+    public_api: &PublicApi,
     mode_for: impl Fn(&str) -> ProjectMode,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
@@ -136,8 +144,12 @@ fn detect_unused_exports(
         if references.is_externally_referenced(&entry.id) {
             continue;
         }
+        let mode = mode_for(&entry.path);
+        if mode == ProjectMode::Library && public_api.exports_symbol(entry) {
+            continue;
+        }
 
-        let (severity, confidence) = unused_export_severity(mode_for(&entry.path), entry.in_all);
+        let (severity, confidence) = unused_export_severity(mode, entry.in_all);
         candidates.push(IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -186,7 +198,11 @@ fn detect_unused_reexports(
         if is_reexport_used(reexport, references) {
             continue;
         }
-        let (severity, confidence) = unused_reexport_severity(mode_for(&reexport.path));
+        let mode = mode_for(&reexport.path);
+        if mode == ProjectMode::Library && exports_reexport(reexport) {
+            continue;
+        }
+        let (severity, confidence) = unused_reexport_severity(mode);
         candidates.push(IssueCandidate {
             rule: RuleId::Chk007,
             subject: IssueSubject::Symbol {

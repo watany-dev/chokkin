@@ -398,6 +398,7 @@ mod tests {
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
+            used_import_bindings: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
                 codes: vec!["CHK003".to_owned()],
@@ -448,6 +449,7 @@ mod tests {
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
+            used_import_bindings: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
                 codes: vec!["CHK006".to_owned()],
@@ -589,6 +591,7 @@ mod tests {
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
+            used_import_bindings: Vec::new(),
             ignores: vec![directive],
             has_opaque_dynamic_import: false,
             runs_python_file: false,

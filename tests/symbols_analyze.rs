@@ -639,3 +639,110 @@ fn reexport_collection_honours_relative_imports_and_all() {
         );
     }
 }
+
+const LIBRARY_PYPROJECT: &str =
+    "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"library\"\n";
+
+/// `__all__`, `X as X`, `import *` into a public module, and a public
+/// package's `__init__` each declare library API (#489).
+#[test]
+fn library_mode_declared_public_api_is_not_reported() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        (
+            "src/acme/__init__.py",
+            "from ._client import Client as Client\nfrom ._client import Session\nfrom ._models import *\nfrom . import _api\n\ndef top_level():\n    pass\n",
+        ),
+        (
+            "src/acme/_client.py",
+            "class Client:\n    pass\n\nclass Session:\n    pass\n",
+        ),
+        (
+            "src/acme/_models.py",
+            "from ._base import *\n\nclass Model:\n    pass\n",
+        ),
+        (
+            "src/acme/_base.py",
+            "__all__ = [\"Base\"]\n\nclass Base:\n    pass\n\nclass NotStarred:\n    pass\n",
+        ),
+        (
+            "src/acme/_api.py",
+            "__all__ = [\"listed\"]\n\ndef listed():\n    pass\n\ndef unlisted():\n    pass\n",
+        ),
+        (
+            "src/acme/_internal/__init__.py",
+            "from .impl import kept as kept, dropped\n\ndef internal_top():\n    pass\n",
+        ),
+        (
+            "src/acme/_internal/impl.py",
+            "def kept():\n    pass\n\ndef dropped():\n    pass\n",
+        ),
+    ]);
+    for (rule, module, name) in [
+        (RuleId::Chk007, "acme", "Client"),
+        (RuleId::Chk007, "acme", "Session"),
+        (RuleId::Chk006, "acme", "top_level"),
+        (RuleId::Chk006, "acme._models", "Model"),
+        (RuleId::Chk006, "acme._base", "Base"),
+        (RuleId::Chk006, "acme._api", "listed"),
+        (RuleId::Chk007, "acme._internal", "kept"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, rule, module, name),
+            "{rule:?} {module}.{name}: {report:?}"
+        );
+    }
+    for (rule, module, name) in [
+        (RuleId::Chk006, "acme._base", "NotStarred"),
+        (RuleId::Chk006, "acme._api", "unlisted"),
+        (RuleId::Chk006, "acme._internal", "internal_top"),
+        (RuleId::Chk007, "acme._internal", "dropped"),
+    ] {
+        let candidate = find_symbol(&report, rule, module, name)
+            .unwrap_or_else(|| panic!("{rule:?} {module}.{name}: {report:?}"));
+        assert_eq!(candidate.severity, Severity::Info, "{module}.{name}");
+    }
+}
+
+/// An `__init__` that reads its own import uses it; an alias is the name the
+/// package exposes (#489).
+#[test]
+fn reexport_read_in_its_own_init_is_not_chk007() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/pkg/__init__.py",
+            "from .impl import used_here, unused, original as renamed\n\nused_here()\n",
+        ),
+        (
+            "app/pkg/impl.py",
+            "def used_here():\n    pass\n\ndef unused():\n    pass\n\ndef original():\n    pass\n",
+        ),
+        ("app/main.py", "import app.pkg\n\ndef main():\n    pass\n"),
+    ]);
+    assert!(!has_symbol_rule(
+        &report,
+        RuleId::Chk007,
+        "app.pkg",
+        "used_here"
+    ));
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk007,
+        "app.pkg",
+        "unused"
+    ));
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk007,
+        "app.pkg",
+        "renamed"
+    ));
+    assert!(!has_symbol_rule(
+        &report,
+        RuleId::Chk007,
+        "app.pkg",
+        "original"
+    ));
+}

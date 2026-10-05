@@ -748,7 +748,16 @@ entry point target
 
 decorator 由来の used 判定は `src/rules/symbols/external.rs` の `REGISTRATION_DECORATOR_SUFFIXES` 1 か所で持つ (`get` / `post` / `put` / `delete` / `patch` / `route` / `websocket` / `fixture` / `shared_task` / `task` / `command` の suffix と `pytest.mark.*`)。parser は静的に名前の付く decorator をすべて記録し、Flask route / Celery task の module reference は各 plugin が自前の述語で判定する。suffix を足すのは、`tests/fixtures/symbols/` にその誤検知を再現する fixture を置いてからにする。
 
-`__all__` があるmoduleでは、`__all__` をpublic API宣言として扱う。`__all__` にあるが内部から使われないものは、library modeではinfo、app modeではwarningにする。wheel target から public surface が求まる場合、surface 外 module の symbol は library mode でも warning にする (§8)。
+`__all__` があるmoduleでは、`__all__` をpublic API宣言として扱う。`__all__` にあるが内部から使われないものは、app modeではwarning (confidence certain) にする。library modeでは、次のいずれかに当てはまるsymbolを公開APIとみなし、CHK006 / CHK007 を出さない (`src/rules/symbols/public.rs`、#489)。それ以外の未参照symbolはinfoにする。wheel target から public surface が求まる場合、surface 外 module の symbol は library mode でも app mode 相当 (warning、公開API扱いなし) にする (§8)。
+
+```text
+__all__ に載っている
+from ._x import Foo as Foo で再exportしている (PEP 484 の明示的再export)
+公開module (`_` 始まりの要素を含まないdotted name) から from m import * で連鎖的に到達できる (m に __all__ があればその名前だけ)
+公開packageの __init__.py で定義・再exportしている
+```
+
+CHK007 は、再exportした `__init__.py` 自身がその名前を読んでいる import (parser の `ParsedModule::used_import_bindings`) を対象外にする。`from .x import a as b` の再export名は `b` とする。
 
 `unused_export` の自動削除はv1までは避ける。安全なfixは `__all__` からの削除程度に限定し、関数・class本体の削除は `--fix --unsafe` がある場合だけにする。
 

@@ -20,6 +20,8 @@ pub(super) struct ReExport {
     pub path: String,
     /// 1-based source line.
     pub line: u32,
+    /// Listed in `__all__` or written as `import X as X` (PEP 484 explicit re-export).
+    pub declared_public: bool,
 }
 
 /// Collect relative re-exports from package `__init__.py` files.
@@ -53,14 +55,20 @@ pub(super) fn collect_reexports(
                 continue;
             }
             // `from . import x` carries no `name`: the parser folds `x` into `module`.
-            let name = match &import.name {
+            let imported = match &import.name {
                 Some(name) => name.as_str(),
                 None => import
                     .module
                     .rsplit_once('.')
                     .map_or(import.module.as_str(), |(_, last)| last),
             };
-            if name.starts_with('_') && !module.exports.iter().any(|export| export == name) {
+            let name = import.alias.as_deref().unwrap_or(imported);
+            let in_all = module.exports.iter().any(|export| export == name);
+            if name.starts_with('_') && !in_all {
+                continue;
+            }
+            // The package's own code reads it, so it is an import, not only a re-export.
+            if module.used_import_bindings.iter().any(|used| used == name) {
                 continue;
             }
 
@@ -70,6 +78,7 @@ pub(super) fn collect_reexports(
                 source_module: import.module.clone(),
                 path: module.path.clone(),
                 line: import.line,
+                declared_public: in_all || import.alias.as_deref() == Some(imported),
             });
         }
     }

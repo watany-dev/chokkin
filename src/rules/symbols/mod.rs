@@ -4,5 +4,6 @@ mod analyze;
 mod exports;
 mod external;
 mod graph;
+mod public;
 
 pub use analyze::analyze_with_context;
