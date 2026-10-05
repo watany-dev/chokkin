@@ -312,10 +312,12 @@ mod tests {
         let root = temp.path();
         std::fs::write(
             root.join("pyproject.toml"),
-            "[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+            "[tool.pytest.ini_options]\npythonpath = [\"src\"]\ntestpaths = \"t/unit t/e2e\"\n",
         )
         .expect("write pyproject");
         assert_eq!(import_settings(root).pythonpath, ["src"]);
+        // pytest splits a string `testpaths` on whitespace, as in an ini file.
+        assert_eq!(import_settings(root).testpaths, ["t/unit", "t/e2e"]);
 
         std::fs::write(
             root.join("pytest.ini"),

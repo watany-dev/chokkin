@@ -414,14 +414,19 @@ fn context_of(sources: &DiscoveredSources, path: &str) -> FileContext {
 
 #[test]
 fn pytest_testpaths_skip_packages_and_explicit_globs() {
-    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"acme\", \"t[1]\"]\n";
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"acme\", \"acme/sub\", \"t[1]\"]\n";
     let sources = discover_tree(&[
         ("pyproject.toml", pyproject),
         ("acme/__init__.py", ""),
         ("acme/core.py", ""),
+        ("acme/sub/mod.py", ""),
         ("t[1]/helpers.py", ""),
     ]);
     assert_eq!(context_of(&sources, "acme/core.py"), FileContext::Runtime);
+    assert_eq!(
+        context_of(&sources, "acme/sub/mod.py"),
+        FileContext::Runtime
+    );
     assert_eq!(context_of(&sources, "t[1]/helpers.py"), FileContext::Test);
 
     let explicit = discover_tree(&[
