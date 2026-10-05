@@ -59,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `used_in_module` (#540).
 
 ### Fixed
+- A name read only inside a quoted annotation (`x: "list[T]"`,
+  `-> "Message[R]"`, `list["Foo"]`) now counts as read by its module, so
+  library mode no longer reports such TypeVars and imports-turned-aliases as
+  CHK006. `Literal[...]` strings, `Annotated[...]` metadata, `cast("T", x)` and `TypeVar(bound="Foo")`
+  are not parsed (#545).
 - Library mode no longer reports CHK006 for a symbol its own module reads
   (TypeVars, type aliases, classes reached only as an attribute's type,
   module-level helpers and loggers); app mode still does. openai-python

@@ -791,3 +791,34 @@ fn library_mode_symbol_used_in_its_own_module_is_not_chk006() {
         );
     }
 }
+
+const STRING_ANNOTATION_MODULE: &str = "from typing import TypeVar\n\nT = TypeVar(\"T\")\n\ndef f(x: \"list[T]\") -> \"T\":\n    return x[0]\n";
+
+/// A name read only inside a quoted annotation is still read by its module
+/// (#545).
+#[test]
+fn library_mode_symbol_used_in_string_annotation_is_not_chk006() {
+    let library = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        ("src/acme/__init__.py", "from ._base import f as f\n"),
+        ("src/acme/_base.py", STRING_ANNOTATION_MODULE),
+    ]);
+    assert!(
+        !has_symbol_rule(&library, RuleId::Chk006, "acme._base", "T"),
+        "{library:?}"
+    );
+
+    let app = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        ("app/base.py", STRING_ANNOTATION_MODULE),
+        (
+            "app/main.py",
+            "from app.base import f\n\ndef main():\n    f([1])\n",
+        ),
+    ]);
+    assert!(
+        has_symbol_rule(&app, RuleId::Chk006, "app.base", "T"),
+        "{app:?}"
+    );
+}
