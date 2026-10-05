@@ -27,7 +27,6 @@ CASES = [
     "foo[tests,]",
     "foo[,tests]",
     "foo[tests,,dev]",
-    # Names and extras
     "A",
     "Foo_Bar.baz-qux",
     "foo-",
@@ -37,7 +36,6 @@ CASES = [
     "foo[tests dev]",
     "foo[te-]",
     "foo[",
-    # Version specifiers
     "foo>=1.0,<2",
     "foo (>=1.0, <2)",
     "foo (>=1.0",
@@ -55,7 +53,6 @@ CASES = [
     "foo>= 1.0 extra",
     "foo==",
     "foo<=>1",
-    # Direct URLs
     "foo @ https://h/x.whl ; python_version < '3.11'",
     "foo @ https://h/x.whl;python_version<'3.11'",
     "foo @ https://h/x.whl#sha256=abc",
@@ -63,7 +60,6 @@ CASES = [
     "foo @ https://h/x trailing",
     "foo@https://h/x",
     "foo @",
-    # Markers
     "foo ; python_version >= '3.8'",
     "foo; extra == 'tests' and (os_name == 'nt' or sys_platform == 'linux')",
     "foo ; extra not in 'a'",
