@@ -429,6 +429,43 @@ fn binary_scoped_declarations_resolve_normalized_roots() {
     assert!(!unresolved("member_dep"), "{keys:?}");
 }
 
+#[test]
+fn binary_scoped_exact_declaration_beats_affixed_root_name() {
+    // `pyzzfoo` / `zzbar-py` at the root only loosely match `zzfoo` / `zzbar`;
+    // the script block and member manifest declare those names exactly.
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"scoped-root\"\nversion = \"0.1.0\"\ndependencies = [\"pyzzfoo\", \"zzbar-py\"]\n\n[project.scripts]\napi-cli = \"api.main:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+        ),
+        (
+            "services/api/pyproject.toml",
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\ndependencies = [\"zzbar\"]\n",
+        ),
+        ("services/api/src/api/__init__.py", ""),
+        (
+            "services/api/src/api/main.py",
+            "import zzbar\n\n\ndef main() -> None:\n    zzbar.run()\n",
+        ),
+        (
+            "scripts/tool.py",
+            "# /// script\n# dependencies = [\"zzfoo\"]\n# ///\nimport zzfoo\n\nzzfoo.run()\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(temp.path(), &[]));
+    assert!(
+        keys.iter()
+            .all(|(_, target)| !target.starts_with("script:")),
+        "{keys:?}"
+    );
+    for root_dep in ["pyzzfoo", "zzbar-py"] {
+        assert!(
+            keys.contains(&("CHK002".to_owned(), root_dep.to_owned())),
+            "{keys:?}"
+        );
+    }
+}
+
 fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {

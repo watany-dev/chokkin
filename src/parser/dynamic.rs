@@ -292,4 +292,115 @@ mod tests {
         assert_eq!(run("[sys.executable]"), None);
         assert_eq!(run(r#"["python", "-m", "pip"]"#), None);
     }
+
+    mod props {
+        use proptest::prelude::*;
+        use ruff_python_ast::Expr;
+
+        use super::expr;
+        use crate::parser::dynamic::{LiteralTarget, literal_target};
+
+        #[derive(Debug, Clone)]
+        enum Package {
+            Absent,
+            NoneLiteral,
+            Literal(String),
+            /// `package=__package__`, with the caller's `__package__`.
+            Dunder(Option<String>),
+        }
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum Outcome {
+            Module(String),
+            Opaque,
+            Nothing,
+        }
+
+        /// `importlib.import_module(name, package)` per `CPython` 3.11,
+        /// written from `importlib/__init__.py` and `_bootstrap._resolve_name`.
+        fn import_module(name: &str, package: &Package) -> Outcome {
+            let valid = |module: String| {
+                if module.split('.').any(str::is_empty) {
+                    Outcome::Nothing
+                } else {
+                    Outcome::Module(module)
+                }
+            };
+            let Some(relative) = name.strip_prefix('.') else {
+                return valid(name.to_owned());
+            };
+            let package = match package {
+                Package::Absent | Package::NoneLiteral => return Outcome::Nothing,
+                Package::Dunder(None) => return Outcome::Opaque,
+                Package::Literal(package) | Package::Dunder(Some(package)) => package,
+            };
+            // `if not package: raise TypeError`.
+            if package.is_empty() {
+                return Outcome::Nothing;
+            }
+            let rest = relative.trim_start_matches('.');
+            let level = name.len() - rest.len();
+            // `bits = package.rsplit('.', level - 1); if len(bits) < level: raise`.
+            let bits: Vec<&str> = package.rsplitn(level, '.').collect();
+            if bits.len() < level {
+                return Outcome::Nothing;
+            }
+            let base = bits.last().copied().unwrap_or_default();
+            valid(if rest.is_empty() {
+                base.to_owned()
+            } else {
+                format!("{base}.{rest}")
+            })
+        }
+
+        fn dotted() -> impl Strategy<Value = String> {
+            "[ab.]{0,7}"
+        }
+
+        fn package() -> impl Strategy<Value = Package> {
+            prop_oneof![
+                Just(Package::Absent),
+                Just(Package::NoneLiteral),
+                dotted().prop_map(Package::Literal),
+                prop::option::of(dotted()).prop_map(Package::Dunder),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            #[test]
+            fn literal_target_matches_import_module(
+                name in dotted(),
+                package in package(),
+                keyword in any::<bool>(),
+            ) {
+                let argument = match &package {
+                    Package::Absent => String::new(),
+                    Package::NoneLiteral => "None".to_owned(),
+                    Package::Literal(package) => format!("{package:?}"),
+                    Package::Dunder(_) => "__package__".to_owned(),
+                };
+                let call = match (argument.is_empty(), keyword) {
+                    (true, _) => format!("importlib.import_module({name:?})"),
+                    (false, false) => format!("importlib.import_module({name:?}, {argument})"),
+                    (false, true) => format!("importlib.import_module(name={name:?}, package={argument})"),
+                };
+                let Expr::Call(call) = expr(&call) else {
+                    return Err(TestCaseError::fail("expected a call"));
+                };
+                let current = match &package {
+                    Package::Dunder(current) => current.clone(),
+                    _ => None,
+                };
+                let got = match literal_target(&call, || current) {
+                    Some(LiteralTarget::Module(module)) => Outcome::Module(module),
+                    Some(LiteralTarget::Opaque) => Outcome::Opaque,
+                    Some(LiteralTarget::Nothing) => Outcome::Nothing,
+                    None => return Err(TestCaseError::fail("literal name not recognised")),
+                };
+                prop_assert_eq!(got, import_module(&name, &package));
+            }
+        }
+    }
 }

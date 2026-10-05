@@ -44,7 +44,10 @@ pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
 
     // A filtered lock that no longer parses means the strip guessed wrong, so
     // the full text decides whether the file is really invalid.
-    let lock: UvLock = toml::from_str(&strip_artifacts(&contents))
+    let stripped = strip_artifacts(&contents);
+    let lock: UvLock = stripped
+        .as_deref()
+        .map_or_else(|| toml::from_str(&contents), toml::from_str)
         .or_else(|_| toml::from_str(&contents))
         .map_err(|error| ManifestError::InvalidUvLock {
             path: path.to_path_buf(),
@@ -85,13 +88,19 @@ fn dependency_names(deps: &[UvDependency]) -> Vec<String> {
 
 /// Drop the `sdist` and `wheels` lines uv writes for every package: they are
 /// ~95% of a lock's bytes and TOML parsing them dominated the probe of a
-/// monorepo with hundreds of member lockfiles (#513).
-fn strip_artifacts(contents: &str) -> String {
+/// monorepo with hundreds of member lockfiles (#513). `None` when a `wheels`
+/// block is not uv's one-table-per-line layout, since skipping to the next
+/// `]` line could then drop graph lines and still parse.
+fn strip_artifacts(contents: &str) -> Option<String> {
     let mut kept = String::with_capacity(contents.len() / 16);
     let mut in_wheels = false;
     for line in contents.lines() {
         if in_wheels {
             in_wheels = line != "]";
+            let item = line.trim();
+            if in_wheels && !(item.starts_with('{') && item.ends_with("},")) {
+                return None;
+            }
         } else if line == "wheels = [" {
             in_wheels = true;
         } else if !line.starts_with("sdist = ") && !line.starts_with("wheels = [{") {
@@ -99,7 +108,7 @@ fn strip_artifacts(contents: &str) -> String {
             kept.push('\n');
         }
     }
-    kept
+    (!in_wheels).then_some(kept)
 }
 
 #[cfg(test)]
@@ -180,9 +189,31 @@ mod tests {
         );
 
         assert_eq!(
-            stripped,
-            "[[package]]\nname = \"acme\"\ndependencies = [{ name = \"idna\" }]\n"
+            stripped.as_deref(),
+            Some("[[package]]\nname = \"acme\"\ndependencies = [{ name = \"idna\" }]\n")
         );
+        assert_eq!(
+            strip_artifacts("wheels = [\n    { url = \"a\" }]\nx = 1\n]\n"),
+            None
+        );
+        assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\" },\n"), None);
+        assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\",\n]\n"), None);
+        assert_eq!(strip_artifacts("wheels = [\n    url = \"a\" },\n]\n"), None);
+    }
+
+    #[test]
+    fn wheels_array_closed_on_its_last_item_does_not_hide_later_packages() {
+        let graph = parse(
+            "[[package]]\nname = \"acme\"\n\
+             dependencies = [{ name = \"idna\" }]\n\
+             wheels = [\n    { url = \"https://x/acme.whl\" }]\n\n\
+             [[package]]\nname = \"idna\"\n\
+             dependencies = [{ name = \"six\" }]\n",
+        )
+        .expect("valid uv.lock");
+
+        assert_eq!(graph.edges.get("acme"), Some(&vec!["idna".to_owned()]));
+        assert_eq!(graph.edges.get("idna"), Some(&vec!["six".to_owned()]));
     }
 
     #[test]
@@ -196,6 +227,17 @@ mod tests {
 
         use super::*;
         use proptest::prelude::*;
+
+        /// `wheels` arrays as uv writes them and as hand edits may leave them.
+        const WHEELS: [&str; 7] = [
+            "",
+            "wheels = [\n    { url = \"https://x/a.whl\", hash = \"sha256:00\" },\n]\n",
+            "wheels = [{ url = \"https://x/a.whl\" }]\n",
+            "wheels = [\n    { url = \"https://x/a.whl\" }]\n",
+            "wheels = [\n    { url = \"https://x/a.whl\" },\n    { url = \"https://x/b.whl\" }\n]\n",
+            "wheels = [\n    { url = \"https://x/a.whl\",\n      hash = \"sha256:00\" },\n]\n",
+            "wheels = [\n  # comment\n  { url = \"https://x/a.whl\" },\n]\n",
+        ];
 
         fn package_name() -> impl Strategy<Value = String> {
             "[A-Za-z0-9]([A-Za-z0-9._-]{0,12}[A-Za-z0-9])?"
@@ -243,6 +285,38 @@ mod tests {
                 for (name, deps) in &expected {
                     prop_assert_eq!(graph.edges.get(name), Some(deps));
                 }
+            }
+
+            #[test]
+            fn artifact_layout_does_not_change_the_graph(
+                packages in prop::collection::btree_map(
+                    package_name(),
+                    (prop::collection::vec(package_name(), 0..3), 0usize..WHEELS.len(), any::<bool>()),
+                    1..5,
+                ),
+            ) {
+                let mut contents = String::from("version = 1\n");
+                let mut expected = std::collections::BTreeMap::new();
+                for (name, (deps, wheels, sdist)) in &packages {
+                    writeln!(contents, "\n[[package]]\nname = \"{name}\"").expect("write");
+                    if *sdist {
+                        contents.push_str("sdist = { url = \"https://x/a.tar.gz\", hash = \"sha256:00\" }\n");
+                    }
+                    contents.push_str(WHEELS[*wheels]);
+                    let rendered = deps
+                        .iter()
+                        .map(|dep| format!("{{ name = \"{dep}\" }}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    writeln!(contents, "dependencies = [{rendered}]").expect("write");
+                    expected.insert(
+                        normalize_distribution_name(name),
+                        deps.iter().map(|dep| normalize_distribution_name(dep)).collect::<Vec<_>>(),
+                    );
+                }
+
+                let graph = parse(&contents).expect("generated uv.lock is valid TOML");
+                prop_assert_eq!(graph.edges, expected, "{}", contents);
             }
 
             #[test]

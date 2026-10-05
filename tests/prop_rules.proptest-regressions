@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0d0afe747c0dc897ac3eff04ee7c0db32c55808232613b533f73c12847dd7e98 # shrinks to spec = Spec { deps: [Dep { runtime: None, dev: false, extra: false, plain: false, optional: true, test: false, locked: false, hub_edge: true }], has_lock: true, order: [0] }
+cc b35935963ecc69a54b2cd23161f605487242cac86cebb8eec4343997031c5e87 # shrinks to spec = Spec { deps: [Dep { runtime: Some(true), dev: false, extra: true, plain: false, optional: false, test: false, locked: true, hub_edge: true }], has_lock: false, order: [0] }, strict = true

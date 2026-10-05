@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 
 use crate::discovery::ProjectRoot;
@@ -84,11 +84,16 @@ fn resolve_uv_members(
     let mut builder = GlobSetBuilder::new();
     for pattern in &hint.members {
         let normalized = normalize_relative_path(pattern);
-        let glob = Glob::new(&normalized).map_err(|source| ConfigError::Validation {
-            path: root.join("pyproject.toml"),
-            field: "tool.uv.workspace.members".to_owned(),
-            message: source.to_string(),
-        })?;
+        // uv expands members one path component at a time: `packages/*`
+        // never reaches `packages/foo/tests/fixture/`.
+        let glob = GlobBuilder::new(&normalized)
+            .literal_separator(true)
+            .build()
+            .map_err(|source| ConfigError::Validation {
+                path: root.join("pyproject.toml"),
+                field: "tool.uv.workspace.members".to_owned(),
+                message: source.to_string(),
+            })?;
         builder.add(glob);
     }
     let set = builder.build().map_err(|source| ConfigError::Validation {
@@ -97,8 +102,7 @@ fn resolve_uv_members(
         message: source.to_string(),
     })?;
 
-    let mut seen = BTreeSet::new();
-    let mut members = Vec::new();
+    let mut paths = BTreeSet::new();
     for pyproject in find_pyprojects(root)? {
         let Some(member_dir) = pyproject.parent() else {
             continue;
@@ -107,24 +111,37 @@ fn resolve_uv_members(
             continue;
         }
         let rel = relative_path(root, member_dir)?;
-        if !set.is_match(&rel) {
-            continue;
+        if set.is_match(&rel) {
+            paths.insert(rel);
         }
-        if !seen.insert(rel.clone()) {
-            continue;
-        }
-        let id = member_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(rel.as_str())
-            .to_owned();
-        members.push(ResolvedWorkspaceMember {
-            id,
-            path: rel.clone(),
-            pyproject_toml: Some(format!("{rel}/pyproject.toml")),
-        });
     }
-    Ok(members)
+    Ok(members_with_unique_ids(paths))
+}
+
+/// Members named after their directory; a shared basename falls back to the
+/// full path for every holder, since per-member declarations are keyed by
+/// id. A unique basename cannot equal another member's path, whose own
+/// basename would then be shared.
+fn members_with_unique_ids(paths: BTreeSet<String>) -> Vec<ResolvedWorkspaceMember> {
+    let basename = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_owned();
+    let mut basename_counts = BTreeMap::new();
+    for rel in &paths {
+        *basename_counts.entry(basename(rel)).or_insert(0_usize) += 1;
+    }
+    paths
+        .into_iter()
+        .map(|rel| {
+            let id = match basename(&rel) {
+                name if basename_counts.get(&name) == Some(&1) => name,
+                _ => rel.clone(),
+            };
+            ResolvedWorkspaceMember {
+                id,
+                pyproject_toml: Some(format!("{rel}/pyproject.toml")),
+                path: rel,
+            }
+        })
+        .collect()
 }
 
 /// Deepest member directory auto-detection visits; `llama_index` keeps its
@@ -181,28 +198,7 @@ pub fn detect_nested_members(
             paths.insert(relative_path(&root.path, member_dir)?);
         }
     }
-    let basename = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_owned();
-    let mut basename_counts = BTreeMap::new();
-    for rel in &paths {
-        *basename_counts.entry(basename(rel)).or_insert(0_usize) += 1;
-    }
-    // A shared basename falls back to the full path for every holder; a
-    // unique basename cannot equal another member's path, whose own basename
-    // would then be shared.
-    Ok(paths
-        .into_iter()
-        .map(|rel| {
-            let id = match basename(&rel) {
-                name if basename_counts.get(&name) == Some(&1) => name,
-                _ => rel.clone(),
-            };
-            ResolvedWorkspaceMember {
-                id,
-                pyproject_toml: Some(format!("{rel}/pyproject.toml")),
-                path: rel,
-            }
-        })
-        .collect())
+    Ok(members_with_unique_ids(paths))
 }
 
 /// Hidden and tool directories never hold members; test trees hold fixture
@@ -276,13 +272,20 @@ fn relative_path(root: &Path, path: &Path) -> Result<String, ConfigError> {
         })
 }
 
+/// `./packages/*/` and `packages\*` both become `packages/*`: a `.` or empty
+/// segment left in would never match a walked path.
 fn normalize_relative_path(path: &str) -> String {
-    path.trim_matches('/').trim_matches('\\').replace('\\', "/")
+    path.split(['/', '\\'])
+        .filter(|part| !matches!(*part, "" | "."))
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
+
+    use globset::Glob;
 
     use super::*;
     use crate::config::default_config;
@@ -337,6 +340,64 @@ mod tests {
         .expect("resolve");
         let paths: Vec<_> = members.iter().map(|member| member.path.as_str()).collect();
         assert_eq!(paths, [".hidden/pkg"]);
+    }
+
+    fn uv_members(root_path: &Path, patterns: &[&str]) -> Vec<(String, String)> {
+        resolve_workspace_members(
+            &root(root_path),
+            &default_config(),
+            Some(&UvWorkspaceHint {
+                members: patterns.iter().map(|p| (*p).to_owned()).collect(),
+            }),
+            &BTreeMap::new(),
+        )
+        .expect("resolve")
+        .into_iter()
+        .map(|member| (member.id, member.path))
+        .collect()
+    }
+
+    #[test]
+    fn uv_member_star_stays_within_one_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = "[project]\nname = \"pkg\"\n";
+        write(temp.path(), "packages/api/pyproject.toml", project);
+        write(
+            temp.path(),
+            "packages/api/tests/demo/pyproject.toml",
+            project,
+        );
+        assert_eq!(
+            uv_members(temp.path(), &["packages/*"]),
+            [("api".to_owned(), "packages/api".to_owned())]
+        );
+    }
+
+    #[test]
+    fn uv_member_patterns_and_override_paths_drop_dot_segments() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write(temp.path(), "packages/api/pyproject.toml", "");
+        assert_eq!(
+            uv_members(temp.path(), &["./packages/*/"]),
+            [("api".to_owned(), "packages/api".to_owned())]
+        );
+        assert_eq!(normalize_relative_path("./lib/./x/"), "lib/x");
+    }
+
+    #[test]
+    fn uv_members_sharing_a_basename_get_path_ids() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for dir in ["apps/core", "libs/core", "libs/api"] {
+            write(temp.path(), &format!("{dir}/pyproject.toml"), "");
+        }
+        assert_eq!(
+            uv_members(temp.path(), &["apps/*", "libs/*"]),
+            [
+                ("apps/core".to_owned(), "apps/core".to_owned()),
+                ("api".to_owned(), "libs/api".to_owned()),
+                ("libs/core".to_owned(), "libs/core".to_owned()),
+            ]
+        );
     }
 
     fn write(root: &Path, file: &str, text: &str) {
@@ -445,5 +506,244 @@ mod tests {
                 pyproject_toml: Some("lib/pyproject.toml".to_owned()),
             }]
         );
+    }
+
+    mod props {
+        use std::collections::BTreeSet;
+
+        use super::*;
+        use crate::config::WorkspaceOverride;
+        use proptest::prelude::*;
+
+        const PARTS: &[&str] = &[
+            "a",
+            "b",
+            "core",
+            "openai",
+            "legacy",
+            "examples",
+            "vendor",
+            "tests",
+            ".hidden",
+            "build",
+            "node_modules",
+        ];
+
+        const EXCLUDES: &[&str] = &["examples", "**/legacy", "a/b"];
+
+        const UV_PATTERNS: &[&str] = &["*", "a/*", "./a/*", "*/core", "a/**", "b/core", "./b/"];
+
+        const SOURCE_PATHS: &[&str] = &[
+            "a", "./a", "a/", "a/./core", "a/core", "../out", ".", "./", "b/core", "missing",
+        ];
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Kind {
+            Project,
+            ToolOnly,
+            Broken,
+        }
+
+        #[derive(Debug, Clone)]
+        struct Tree {
+            dirs: BTreeMap<Vec<&'static str>, Kind>,
+            gitignore: bool,
+        }
+
+        fn tree() -> impl Strategy<Value = Tree> {
+            (
+                prop::collection::btree_map(
+                    prop::collection::vec(prop::sample::select(PARTS), 1..7),
+                    prop_oneof![
+                        4 => Just(Kind::Project),
+                        1 => Just(Kind::ToolOnly),
+                        1 => Just(Kind::Broken),
+                    ],
+                    0..10,
+                ),
+                any::<bool>(),
+            )
+                .prop_map(|(dirs, gitignore)| Tree { dirs, gitignore })
+        }
+
+        fn build(tree: &Tree) -> tempfile::TempDir {
+            let temp = tempfile::tempdir().expect("tempdir");
+            write(
+                temp.path(),
+                "pyproject.toml",
+                "[project]\nname = \"root\"\n",
+            );
+            if tree.gitignore {
+                write(temp.path(), ".gitignore", "vendor/\n");
+            }
+            for (dir, kind) in &tree.dirs {
+                let text = match kind {
+                    Kind::Project => "[project]\nname = \"pkg\"\n",
+                    Kind::ToolOnly => "[tool.ruff]\n",
+                    Kind::Broken => "[project",
+                };
+                write(
+                    temp.path(),
+                    &format!("{}/pyproject.toml", dir.join("/")),
+                    text,
+                );
+            }
+            temp
+        }
+
+        fn glob_set(patterns: &[&str]) -> GlobSet {
+            let mut builder = GlobSetBuilder::new();
+            for pattern in patterns {
+                builder.add(Glob::new(pattern).expect("glob"));
+            }
+            builder.build().expect("globset")
+        }
+
+        /// #488 auto-detection, spelled out per directory instead of per walk.
+        fn model_nested(tree: &Tree, excludes: &[&str]) -> Vec<(String, String)> {
+            let exclude = glob_set(excludes);
+            let paths: BTreeSet<String> = tree
+                .dirs
+                .iter()
+                .filter(|(dir, kind)| {
+                    **kind == Kind::Project
+                        && dir.len() <= AUTO_MEMBER_MAX_DEPTH
+                        && !dir.iter().any(|part| {
+                            part.starts_with('.')
+                                || matches!(*part, "tests" | "build" | "node_modules")
+                                || (tree.gitignore && *part == "vendor")
+                        })
+                        && (1..=dir.len()).all(|len| {
+                            let prefix = dir[..len].join("/");
+                            !exclude.is_match(&prefix) && !exclude.is_match(format!("{prefix}/**"))
+                        })
+                })
+                .map(|(dir, _)| dir.join("/"))
+                .collect();
+            let basename = |path: &str| path.rsplit('/').next().unwrap_or(path).to_owned();
+            paths
+                .iter()
+                .map(|path| {
+                    let shared = paths
+                        .iter()
+                        .filter(|other| basename(other) == basename(path))
+                        .count()
+                        > 1;
+                    let id = if shared { path.clone() } else { basename(path) };
+                    (id, path.clone())
+                })
+                .collect()
+        }
+
+        /// What `uv` itself would take as members: `*` stays within one path
+        /// component, and any `pyproject.toml` (even tool-only) counts.
+        fn model_uv(tree: &Tree, patterns: &[&str]) -> BTreeSet<String> {
+            let mut builder = GlobSetBuilder::new();
+            for pattern in patterns {
+                let pattern = pattern.trim_start_matches("./").trim_end_matches('/');
+                builder.add(
+                    globset::GlobBuilder::new(pattern)
+                        .literal_separator(true)
+                        .build()
+                        .expect("glob"),
+                );
+            }
+            let set = builder.build().expect("globset");
+            tree.dirs
+                .keys()
+                .filter(|dir| !dir.iter().any(|part| matches!(*part, "node_modules")))
+                .map(|dir| dir.join("/"))
+                .filter(|path| set.is_match(path))
+                .collect()
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            #[test]
+            fn detect_nested_members_matches_reference_model(
+                tree in tree(),
+                excludes in prop::sample::subsequence(EXCLUDES, 0..=EXCLUDES.len()),
+            ) {
+                let temp = build(&tree);
+                prop_assert_eq!(detect(temp.path(), &excludes), model_nested(&tree, &excludes));
+            }
+
+            /// Members from uv globs, path sources and overrides together:
+            /// one member per directory, each a normalized path below the
+            /// root, uv members exactly the directories uv would pick, and
+            /// ids unique so per-member declarations never overwrite.
+            #[test]
+            fn resolved_members_are_distinct_normalized_directories(
+                tree in tree(),
+                patterns in prop::option::of(prop::sample::subsequence(UV_PATTERNS, 1..=3)),
+                sources in prop::collection::btree_map(
+                    prop::sample::select(&["acme", "core", "x"][..]),
+                    prop::sample::select(SOURCE_PATHS),
+                    0..3,
+                ),
+                override_path in prop::option::of(prop::sample::select(&["a", "./a", "a/", "b/core"][..])),
+            ) {
+                let temp = build(&tree);
+                let mut config = default_config();
+                if let Some(path) = override_path {
+                    config.workspaces.insert(
+                        "ov".to_owned(),
+                        WorkspaceOverride {
+                            path: path.to_owned(),
+                            entry: None,
+                            project: None,
+                            mode: None,
+                        },
+                    );
+                }
+                let hint = patterns.as_ref().map(|patterns| UvWorkspaceHint {
+                    members: patterns.iter().map(|p| (*p).to_owned()).collect(),
+                });
+                let sources: BTreeMap<String, String> = sources
+                    .into_iter()
+                    .map(|(name, path)| (name.to_owned(), path.to_owned()))
+                    .collect();
+                let members = resolve_workspace_members(
+                    &root(temp.path()),
+                    &config,
+                    hint.as_ref(),
+                    &sources,
+                )
+                .expect("resolve");
+
+                let mut dirs = BTreeSet::new();
+                for member in &members {
+                    prop_assert!(
+                        member.path.split('/').all(|part| !matches!(part, "" | "." | "..")),
+                        "member path `{}` is not normalized", member.path
+                    );
+                    let dir = temp.path().join(&member.path);
+                    let key = dir.canonicalize().unwrap_or(dir);
+                    prop_assert!(dirs.insert(key), "two members for `{}`", member.path);
+                }
+                // Only uv members' ids are checked: a path source keeps its
+                // distribution name even when a uv member's basename matches
+                // it (reported, not changed).
+                let uv_members: Vec<&ResolvedWorkspaceMember> = members
+                    .iter()
+                    .filter(|m| m.id != "ov" && !sources.contains_key(&m.id))
+                    .collect();
+                let ids: BTreeSet<&str> = uv_members.iter().map(|m| m.id.as_str()).collect();
+                prop_assert_eq!(ids.len(), uv_members.len(), "duplicate ids in {:?}", members);
+
+                if let Some(patterns) = &patterns {
+                    let uv: BTreeSet<String> = uv_members.iter().map(|m| m.path.clone()).collect();
+                    let expected = model_uv(&tree, patterns);
+                    for path in &uv {
+                        prop_assert!(expected.contains(path), "uv would not pick `{}`", path);
+                    }
+                    let taken: BTreeSet<&str> = members.iter().map(|m| m.path.as_str()).collect();
+                    for path in &expected {
+                        prop_assert!(taken.contains(path.as_str()), "uv member `{}` missing", path);
+                    }
+                }
+            }
+        }
     }
 }
