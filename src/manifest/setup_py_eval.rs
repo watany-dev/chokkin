@@ -1563,4 +1563,38 @@ mod props {
             }
         }
     }
+
+    #[test]
+    fn del_name_forgets_the_value() {
+        let call = evaluate("reqs = ['a']\ndel reqs\nsetup(install_requires=reqs)\n")
+            .expect("setup() call");
+        assert_eq!(known(call.keyword("install_requires")), None);
+    }
+
+    #[test]
+    fn del_tuple_removes_every_key() {
+        let call = evaluate(
+            "extras = {'a': ['x'], 'b': ['y'], 'c': ['z']}\n\
+             del extras['a'], extras['b']\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            known(call.keyword("extras_require")),
+            Some(Py::Dict(vec![(
+                "c".to_owned(),
+                Py::List(vec![Py::Str("z".to_owned())])
+            )]))
+        );
+    }
+
+    #[test]
+    fn del_in_loop_body_marks_the_value_partial() {
+        let call = evaluate(
+            "extras = {'a': ['x']}\nfor _ in COND:\n    del extras['a']\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        assert_eq!(known(call.keyword("extras_require")), None);
+    }
 }

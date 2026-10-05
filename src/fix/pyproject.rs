@@ -478,6 +478,21 @@ dependencies = ["boto3>=1.0", "requests>=2.0"]
     }
 
     #[test]
+    fn mixed_line_endings_are_not_converted_to_crlf() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "[project]\r\nname = \"demo\"\ndependencies = [\n    \"a\",\n    \"b\",\n]\n",
+        )
+        .expect("write");
+        remove_by_label(&path, "project.dependencies[1]", "b").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(updated.matches("\r\n").count() <= 1, "{updated:?}");
+        assert!(updated.contains("\"a\",\n]\n"), "{updated:?}");
+    }
+
+    #[test]
     fn removes_poetry_runtime_dependency() {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("pyproject.toml");

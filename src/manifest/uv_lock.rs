@@ -197,6 +197,8 @@ mod tests {
             None
         );
         assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\" },\n"), None);
+        assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\",\n]\n"), None);
+        assert_eq!(strip_artifacts("wheels = [\n    url = \"a\" },\n]\n"), None);
     }
 
     #[test]

@@ -77,4 +77,15 @@ mod tests {
         assert_eq!(exports, vec!["_helper".to_owned()]);
         assert_eq!(diagnostics, []);
     }
+
+    #[test]
+    fn other_assignments_do_not_replace_exports() {
+        let source = "__all__ = [\"foo\"]\nx = [\"bar\"]\ny: list[str] = [\"baz\"]\n\
+                      z = f()\nw: list[str] = g()\n__all__.x = h()\n";
+        let parsed = ruff_python_parser::parse_module(source).expect("parse");
+        let mut diagnostics = Vec::new();
+        let exports = extract_exports(parsed.suite(), &LineIndex::new(source), &mut diagnostics);
+        assert_eq!(exports, vec!["foo".to_owned()]);
+        assert_eq!(diagnostics, []);
+    }
 }

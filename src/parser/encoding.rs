@@ -231,6 +231,9 @@ mod tests {
             "iso-ir-100",
             "iso8859.1",
             "windows.1252",
+            // Not the tokenizer's `latin-1` prefix; `encodings` folds it to the
+            // `latin_1` codec module.
+            "latin--1",
         ] {
             let source = format!("# coding: {name}\ns = '").into_bytes();
             let decoded = decode_python_source([source, b"\xe9'\n".to_vec()].concat());
