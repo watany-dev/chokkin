@@ -795,7 +795,7 @@ fn binary_malformed_dynamic_import_names_do_not_abort_analysis() {
         ),
         (
             "src/acme/__init__.py",
-            "import importlib\ndef main(): pass\nimportlib.import_module(\".sub\", __package__)\nimportlib.import_module(\"\", \"acme\")\nimportlib.import_module(\"not a module\")\nimportlib.import_module(\"foo-bar\")\n",
+            "import importlib\ndef main(): pass\nimportlib.import_module(\".sub\", __package__)\nimportlib.import_module(\"\", \"acme\")\nimportlib.import_module(\"a..b\")\nimportlib.import_module(\"pkg.\")\n",
         ),
         ("src/acme/sub.py", ""),
     ]);

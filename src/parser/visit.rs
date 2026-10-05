@@ -713,10 +713,22 @@ mod tests {
     #[test]
     fn drops_literal_names_python_cannot_import() {
         let parsed = visit_source(
-            "import importlib\nimportlib.import_module(\"\", \"acme\")\nimportlib.import_module(\"not a module\")\nimportlib.import_module(\"foo-bar\")\nimportlib.import_module(\".sub\")\nimportlib.import_module(\".sub\", None)\n__import__(\"\")\n",
+            "import importlib\nimportlib.import_module(\"\", \"acme\")\nimportlib.import_module(\"a..b\")\nimportlib.import_module(\"pkg.\")\nimportlib.import_module(\".sub\")\nimportlib.import_module(\".sub\", None)\n__import__(\"\")\n",
         );
         assert_eq!(parsed.dynamic_imports, []);
         assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn keeps_literal_names_with_non_identifier_segments() {
+        let parsed =
+            visit_source("import importlib\nimportlib.import_module(\"tests.my-harness.case\")\n");
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| dynamic.module.as_str())
+            .collect();
+        assert_eq!(modules, vec!["tests.my-harness.case"]);
     }
 
     #[test]

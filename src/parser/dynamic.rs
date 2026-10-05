@@ -97,7 +97,9 @@ pub fn literal_target(
     } else {
         name.to_owned()
     };
-    Some(if is_dotted_identifier(&module) {
+    // `importlib` does not require identifiers: a `tests/my-harness/` directory
+    // imports as `tests.my-harness`. Only an empty segment can never resolve.
+    Some(if module.split('.').all(|part| !part.is_empty()) {
         LiteralTarget::Module(module)
     } else {
         LiteralTarget::Nothing
