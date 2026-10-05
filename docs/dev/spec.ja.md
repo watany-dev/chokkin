@@ -361,14 +361,14 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 解決戦略は多層にする。
 
 ```text
-1. stdlib判定 (bundled リスト `resolver/stdlib/py310.txt` 〜 `py313.txt`。各版の `sys.stdlib_module_names` から `scripts/generate-stdlib-modules.py` で再生成。`target_version` から `requires-python` の上限 minor (上限なしなら最新 bundled) までのいずれかで stdlib なら stdlib。`sys.version_info` ガード下の `tomllib` 等を誤検出しないため)
+1. stdlib判定 (bundled リスト `resolver/stdlib/py310.txt` 〜 `py314.txt`。各版の `sys.stdlib_module_names` に `__main__` を加えて `scripts/generate-stdlib-modules.py` で再生成。`target_version` から `requires-python` の上限 minor (上限なしなら最新 bundled) までのいずれかで stdlib なら stdlib。`sys.version_info` ガード下の `tomllib` 等を誤検出しないため)
 2. first-party module判定
 3. workspace member判定
 4. local .venv の dist-info / METADATA / top_level.txt / RECORD を読む
 5. Core Metadata の Import-Name / Import-Namespace を読む
 6. bundled package-module-map を使う
 7. user-defined package_module_map を使う
-8. 最後に import root を PEP 503 `normalize_distribution_name` で正規化し、manifest の宣言依存か lockfile の package(import したファイルの PEP 723 script block・所属 workspace member の manifest / lockfile も含む)に同じ正規化名があればその distribution とみなす(confidence `Likely`。`import foo_bar` と宣言 `Foo_Bar` など)。一致しなければ推測はせず `Unknown`(CHK010)にする。綴りだけでは third-party と決めない(#361)
+8. 最後に import root を PEP 503 `normalize_distribution_name` で正規化し、manifest の宣言依存か lockfile の package(import したファイルの PEP 723 script block・所属 workspace member の manifest / lockfile も含む)に同じ正規化名があればその distribution とみなす(confidence `Likely`。`import foo_bar` と宣言 `Foo_Bar` など)。完全一致しなければ、正規化した宣言名・lock 名から接頭辞 `python-` / `py-` / `py` と接尾辞 `-python` / `-py` / `py` を外した名前と比べ、一致すればその distribution とみなす(confidence `Maybe`。`import docket` と宣言 `pydocket`、`import discord` と lock `discord-py` など)。それでも一致しなければ推測はせず `Unknown`(CHK010)にする。綴りだけでは third-party と決めない(#361)
 ```
 
 PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root と first-party の import root(project 同梱の script が `uv run` で index から自 project を入れるケース)も、block が同名を宣言していれば使用とみなす。`[sys.executable, <file>, ...]` で別 file を実行する script は、子 process が block の環境を共有し import を追えないため script の CHK002 を出さない。`subprocess` を import する script では、複数語の文字列 literal(`"ruff format ..."`)の先頭語をコマンド名とみなし、同名の宣言依存を使用として数える。

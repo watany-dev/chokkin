@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `used_import_bindings` (#489).
 
 ### Fixed
+- A declared or locked distribution whose name differs from its import only
+  by a `python-` / `py-` / `py` prefix or `-python` / `-py` / `py` suffix
+  (`pydocket` for `docket`, `discord-py` for `discord`) now satisfies the
+  import as a `maybe` match, and the bundled map covers `markdown-it-py`,
+  `pytest` (`_pytest`), `odfpy`, `matplotlib` (`mpl_toolkits`), `billiard`,
+  `huggingface-hub` and `torch`, so these no longer raise a CHK002 + CHK010
+  pair (#492).
+- Python 3.14's standard library (`compression`, `annotationlib`, ...) and
+  `__main__` are recognized as stdlib (#492).
 - Library mode no longer reports a library's declared public API as CHK006 /
   CHK007: names in `__all__`, `from ._x import Foo as Foo` re-exports, names
   reached through `from ._x import *` into a public module, and anything in a
