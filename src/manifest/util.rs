@@ -23,6 +23,17 @@ pub fn read_to_string(path: &Path) -> Result<String, ManifestError> {
     })
 }
 
+/// Read a manifest file as UTF-8 or the PEP 263 coding it declares.
+///
+/// `None` when the bytes cannot be decoded; the caller skips the file.
+pub fn read_text(path: &Path) -> Result<Option<String>, ManifestError> {
+    let bytes = std::fs::read(path).map_err(|source| ManifestError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(crate::parser::decode_python_source(bytes))
+}
+
 /// Context for pushing a parsed dependency declaration.
 pub struct DependencyPush<'a> {
     /// Target dependency list.

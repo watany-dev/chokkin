@@ -48,34 +48,26 @@ fn write_manifest_warning(
     warning: &ManifestWarning,
 ) -> fmt::Result {
     match warning {
-        ManifestWarning::SetupPyNotStatic { file } => {
-            write!(
-                formatter,
-                "manifest: skipped non-static setup.py at `{file}`"
-            )
-        },
+        ManifestWarning::SetupPyNotStatic { file } => write!(
+            formatter,
+            "manifest: skipped non-static setup.py at `{file}`"
+        ),
         ManifestWarning::RuntimeDependenciesUnknown { file } => write!(
             formatter,
             "manifest: runtime dependencies in `{file}` could not be read statically; missing-dependency findings are reported as low-confidence info"
         ),
-        ManifestWarning::PoetryDetected => {
-            write!(
-                formatter,
-                "manifest: Poetry sections detected (partial dependency extraction)"
-            )
-        },
-        ManifestWarning::PdmDetected => {
-            write!(
-                formatter,
-                "manifest: PDM sections detected (partial dependency extraction)"
-            )
-        },
-        ManifestWarning::HatchDetected => {
-            write!(
-                formatter,
-                "manifest: Hatch sections detected (partial dependency extraction)"
-            )
-        },
+        ManifestWarning::PoetryDetected => write!(
+            formatter,
+            "manifest: Poetry sections detected (partial dependency extraction)"
+        ),
+        ManifestWarning::PdmDetected => write!(
+            formatter,
+            "manifest: PDM sections detected (partial dependency extraction)"
+        ),
+        ManifestWarning::HatchDetected => write!(
+            formatter,
+            "manifest: Hatch sections detected (partial dependency extraction)"
+        ),
         ManifestWarning::InvalidRequirementLine {
             file,
             line,
@@ -109,6 +101,10 @@ fn write_manifest_warning(
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
         },
+        ManifestWarning::FileUndecodable { file } => write!(
+            formatter,
+            "manifest: skipped `{file}`: not UTF-8 and no supported PEP 263 coding declaration"
+        ),
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
             "manifest: ignored PEP 723 script block in `{file}`: {reason}"
@@ -256,6 +252,18 @@ mod tests {
         for (warning, expected) in cases {
             assert_eq!(warning.to_string(), expected);
         }
+    }
+
+    #[test]
+    fn undecodable_manifest_file_renders_like_a_skipped_source() {
+        let warning = ProbeWarning::Manifest(ManifestWarning::FileUndecodable {
+            file: "setup.py".to_owned(),
+        });
+
+        assert_eq!(
+            warning.to_string(),
+            "manifest: skipped `setup.py`: not UTF-8 and no supported PEP 263 coding declaration"
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use super::pep508_util::{
     extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement, requirement_name,
 };
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
-use super::util::{DependencyPush, path_is_within_root, push_dependency};
+use super::util::{DependencyPush, path_is_within_root, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
 /// Result of parsing one or more requirements files.
@@ -25,6 +25,8 @@ pub struct RequirementsExtraction {
     pub files_read: Vec<String>,
     /// Root-relative `-r`/`-c` candidate paths that were probed but absent.
     pub files_missing: Vec<String>,
+    /// A file in the chain could not be decoded and was left out.
+    pub skipped: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -66,7 +68,8 @@ pub fn extract_requirements_path(
     default_context: &DependencyContext,
 ) -> (RequirementsExtraction, bool) {
     let mut result = RequirementsExtraction::default();
-    let complete = parse_requirements_root(root, path, default_context, &mut result).is_ok();
+    let complete = parse_requirements_root(root, path, default_context, &mut result).is_ok()
+        && !result.skipped;
     (result, complete)
 }
 
@@ -104,12 +107,14 @@ fn parse_requirements_file_path(
 
     let rel = rel_to_root(ctx.root, ctx.path);
     ctx.result.files_read.push(rel.clone());
+    let Some(contents) = read_text(ctx.path)? else {
+        ctx.result.skipped = true;
+        ctx.result
+            .warnings
+            .push(ManifestWarning::FileUndecodable { file: rel });
+        return Ok(());
+    };
     ctx.include_stack.push(canonical);
-
-    let contents = std::fs::read_to_string(ctx.path).map_err(|source| ManifestError::Io {
-        path: ctx.path.to_path_buf(),
-        source,
-    })?;
 
     for (line_number, line) in contents.lines().enumerate() {
         parse_requirements_line(&mut ctx, &rel, line, line_number)?;
@@ -540,6 +545,41 @@ mod tests {
         assert_eq!(
             requirements_line_distribution("acme>=1  # pinned"),
             Some("acme".to_owned())
+        );
+    }
+
+    #[test]
+    fn undecodable_include_is_skipped_and_marks_the_chain_incomplete() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            temp.path().join("requirements.txt"),
+            "requests\n-r extra.txt\n",
+        )
+        .expect("write requirements");
+        std::fs::write(temp.path().join("extra.txt"), b"# Ren\xe9\nurllib3\n")
+            .expect("write extra");
+
+        let (result, complete) = extract_requirements_path(
+            temp.path(),
+            &temp.path().join("requirements.txt"),
+            &DependencyContext::Runtime,
+        );
+        assert!(!complete);
+        assert!(result.skipped);
+        assert_eq!(
+            result
+                .dependencies
+                .iter()
+                .map(|dep| dep.name.as_str())
+                .collect::<Vec<_>>(),
+            ["requests"]
+        );
+        assert_eq!(result.files_read, ["requirements.txt", "extra.txt"]);
+        assert_eq!(
+            result.warnings,
+            [ManifestWarning::FileUndecodable {
+                file: "extra.txt".to_owned()
+            }]
         );
     }
 

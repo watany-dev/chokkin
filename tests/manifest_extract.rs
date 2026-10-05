@@ -36,6 +36,27 @@ fn extract_fixture(name: &str) -> chokkin::LoadedManifest {
     extract_manifest(&root, &config).expect("extract manifest")
 }
 
+fn extract_files(files: &[(&str, &[u8])]) -> chokkin::LoadedManifest {
+    let temp = tempfile::tempdir().expect("temp dir");
+    for (name, contents) in files {
+        std::fs::write(temp.path().join(name), contents).expect("write project file");
+    }
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    extract_manifest(&root, &config).expect("extraction completes")
+}
+
+/// Neither UTF-8 nor declaring a PEP 263 coding.
+const UNDECODABLE_SETUP_PY: &[u8] =
+    b"from setuptools import setup\nsetup(name='acme', author='Ren\xe9', install_requires=['requests'])\n";
+
+fn runtime_unknown_file(manifest: &chokkin::LoadedManifest) -> Option<&str> {
+    manifest.warnings.iter().find_map(|warning| match warning {
+        ManifestWarning::RuntimeDependenciesUnknown { file } => Some(file.as_str()),
+        _ => None,
+    })
+}
+
 fn dependency_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
     manifest
         .dependencies
@@ -344,6 +365,107 @@ fn setup_py_unreadable_install_requires_marks_runtime_unknown() {
         warning,
         ManifestWarning::RuntimeDependenciesUnknown { file } if file == "setup.py"
     )));
+}
+
+/// A `setup.py` that is neither UTF-8 nor declares its coding no longer
+/// aborts extraction; its runtime dependencies count as unknown (#552).
+#[test]
+fn undecodable_setup_py_is_skipped_and_marks_runtime_unknown() {
+    let manifest = extract_files(&[
+        (
+            "pyproject.toml",
+            b"[build-system]\nrequires = [\"setuptools\"]\n",
+        ),
+        ("setup.py", UNDECODABLE_SETUP_PY),
+    ]);
+    assert_eq!(dependency_names(&manifest), Vec::<&str>::new());
+    assert!(!manifest.sources.setup_py);
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(
+        manifest.warnings,
+        [
+            ManifestWarning::FileUndecodable {
+                file: "setup.py".to_owned()
+            },
+            ManifestWarning::RuntimeDependenciesUnknown {
+                file: "setup.py".to_owned()
+            },
+        ]
+    );
+}
+
+/// A skipped `setup.cfg` is vouched for by a fully read `install_requires`.
+#[test]
+fn undecodable_setup_cfg_is_covered_by_static_setup_py() {
+    let manifest = extract_files(&[
+        ("setup.cfg", b"[metadata]\nauthor = Ren\xe9\n"),
+        (
+            "setup.py",
+            b"from setuptools import setup\nsetup(name='acme', install_requires=['requests'])\n",
+        ),
+    ]);
+    assert_eq!(dependency_names(&manifest), ["requests"]);
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(
+        manifest.warnings,
+        [ManifestWarning::FileUndecodable {
+            file: "setup.cfg".to_owned()
+        }]
+    );
+}
+
+/// With no other runtime declaration, a skipped root `requirements.txt`
+/// leaves the runtime set unknown.
+#[test]
+fn undecodable_runtime_requirements_marks_runtime_unknown() {
+    let manifest = extract_files(&[("requirements.txt", b"# Ren\xe9\nrequests\n")]);
+    assert_eq!(dependency_names(&manifest), Vec::<&str>::new());
+    assert_eq!(manifest.sources.requirements_files, ["requirements.txt"]);
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), Some("requirements.txt"));
+}
+
+/// Runtime dependencies declared in `pyproject.toml` vouch for a skipped
+/// `setup.py`.
+#[test]
+fn undecodable_setup_py_is_covered_by_pyproject_dependencies() {
+    let manifest = extract_files(&[
+        (
+            "pyproject.toml",
+            b"[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        ),
+        ("setup.py", UNDECODABLE_SETUP_PY),
+    ]);
+    assert_eq!(dependency_names(&manifest), ["requests"]);
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), None);
+}
+
+/// A root `requirements.txt` read as runtime vouches for a skipped
+/// `setup.py`.
+#[test]
+fn undecodable_setup_py_is_covered_by_runtime_requirements() {
+    let manifest = extract_files(&[
+        ("setup.py", UNDECODABLE_SETUP_PY),
+        ("requirements.txt", b"requests\n"),
+    ]);
+    assert_eq!(dependency_names(&manifest), ["requests"]);
+    assert_eq!(manifest.dependencies[0].context, DependencyContext::Runtime);
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), None);
+}
+
+/// `dynamic = ["dependencies"]` with nothing filling it in leaves the runtime
+/// set unknown.
+#[test]
+fn unfilled_dynamic_dependencies_mark_runtime_unknown() {
+    let manifest = extract_files(&[(
+        "pyproject.toml",
+        b"[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndynamic = [\"dependencies\"]\n",
+    )]);
+    assert_eq!(dependency_names(&manifest), Vec::<&str>::new());
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), Some("pyproject.toml"));
 }
 
 #[test]
