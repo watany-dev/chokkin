@@ -832,10 +832,14 @@ fn binary_library_member_symbols_use_library_mode() {
         ),
         (
             "libs/acme-lib/acme_lib/__init__.py",
+            "from ._impl import helper\n",
+        ),
+        (
+            "libs/acme-lib/acme_lib/_impl/__init__.py",
             "from .core import helper, Extra\n",
         ),
         (
-            "libs/acme-lib/acme_lib/core.py",
+            "libs/acme-lib/acme_lib/_impl/core.py",
             "def helper():\n    pass\n\n\ndef lib_dead():\n    pass\n\n\nclass Extra:\n    pass\n",
         ),
     ]);
@@ -847,8 +851,8 @@ fn binary_library_member_symbols_use_library_mode() {
             .map(|issue| issue["severity"].as_str().unwrap_or_default().to_owned())
     };
     for (code, target) in [
-        ("CHK006", "libs/acme-lib/acme_lib/core.py:lib_dead"),
-        ("CHK007", "libs/acme-lib/acme_lib/__init__.py:Extra"),
+        ("CHK006", "libs/acme-lib/acme_lib/_impl/core.py:lib_dead"),
+        ("CHK007", "libs/acme-lib/acme_lib/_impl/__init__.py:Extra"),
     ] {
         assert_eq!(
             severity(code, target).as_deref(),

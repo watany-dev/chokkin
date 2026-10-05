@@ -39,6 +39,7 @@ pub struct ModuleVisitor<'a> {
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
     command_words: BTreeSet<String>,
+    loaded_names: HashSet<String>,
     parsed: ParsedModule,
 }
 
@@ -64,6 +65,7 @@ impl<'a> ModuleVisitor<'a> {
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
             command_words: BTreeSet::new(),
+            loaded_names: HashSet::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -82,6 +84,15 @@ impl<'a> ModuleVisitor<'a> {
         if runs_commands {
             self.parsed.shell_commands = self.command_words.into_iter().collect();
         }
+        let used: BTreeSet<String> = self
+            .parsed
+            .imports
+            .iter()
+            .filter_map(import_binding)
+            .filter(|binding| self.loaded_names.contains(*binding))
+            .map(str::to_owned)
+            .collect();
+        self.parsed.used_import_bindings = used.into_iter().collect();
         self.parsed
     }
 
@@ -487,6 +498,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
     /// walk keeps cold parse to a single traversal per file.
     fn visit_expr(&mut self, expr: &'ast Expr) {
         match expr {
+            Expr::Name(name) if name.ctx.is_load() => {
+                self.loaded_names.insert(name.id.to_string());
+            },
             Expr::Attribute(attribute) => {
                 if let Some(receiver) = attribute_receiver(&attribute.value) {
                     let line = self.line_number(attribute);
@@ -550,6 +564,20 @@ fn alias_as_name(alias: &Alias) -> Option<String> {
     alias.asname.as_ref().map(ToString::to_string)
 }
 
+/// The name an import binds in the importing module, if any.
+fn import_binding(import: &ImportRef) -> Option<&str> {
+    if let Some(alias) = &import.alias {
+        return Some(alias);
+    }
+    match (import.kind, import.name.as_deref()) {
+        (ImportKind::ImportFrom, Some("*")) => None,
+        (ImportKind::ImportFrom, Some(name)) => Some(name),
+        // `from . import x` carries no `name`: the parser folds `x` into `module`.
+        (ImportKind::ImportFrom, None) => import.module.rsplit('.').next(),
+        (ImportKind::Import, _) => import.module.split('.').next(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,6 +628,14 @@ mod tests {
         assert!(parsed.attribute_accesses.iter().any(|access| {
             access.receiver == "acme.utils" && access.name == "CONFIG" && access.line == 3
         }));
+    }
+
+    #[test]
+    fn records_import_bindings_read_as_names() {
+        let parsed = visit_source(
+            "import os.path\nimport json as js\nfrom acme import used, unused, orig as alias\nfrom acme.models import *\n\ndef f():\n    return used, alias, os.sep, js\n\nunused = 1\n",
+        );
+        assert_eq!(parsed.used_import_bindings, ["alias", "js", "os", "used"]);
     }
 
     #[test]

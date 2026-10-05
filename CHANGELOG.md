@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `uv.lock` is parsed into only the fields the dependency graph reads, and
   auto-detected members' inputs are collected in parallel; a monorepo with
   ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488).
+- Breaking change for the Rust library API: `ParsedModule` gains
+  `used_import_bindings` (#489).
+
+### Fixed
+- Library mode no longer reports a library's declared public API as CHK006 /
+  CHK007: names in `__all__`, `from ._x import Foo as Foo` re-exports, names
+  reached through `from ._x import *` into a public module, and anything in a
+  public package's `__init__` (#489).
+- CHK007 skips an import its own `__init__` reads, and names a renamed
+  re-export (`from .x import a as b`) by the name the package exposes (#489).
 
 ## [0.6.0] - 2026-10-03
 

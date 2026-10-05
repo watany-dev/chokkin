@@ -18,8 +18,10 @@ Injections (expected to be reported):
                               <pkg>/__init__.py
   CHK006  unreferenced func   public `chokkin_mut_unreferenced()` appended to an
                               existing (reachable) module of <pkg>
-  CHK007  unused re-export    <pkg>/__init__.py re-exports a new function from a
-                              new sibling module; nothing uses it
+  CHK007  unused re-export    a new private subpackage <pkg>/_chokkin_mut_pkg
+                              re-exports a function from its own module; nothing
+                              uses it (a public package's re-export is library
+                              API, #489)
 
 Traps (must not be reported):
   dynamic-import   new <pkg>/chokkin_mut_plugin.py loaded only through
@@ -212,10 +214,11 @@ def m_unreferenced(work: Path, pkg: Path, mod: Path | None):
 
 
 def m_reexport(work: Path, pkg: Path, mod: Path | None):
-    (pkg / f"{PREFIX}_src.py").write_text(
-        f"def {PREFIX}_reexported():\n    return None\n", encoding="utf-8"
-    )
-    append(pkg / "__init__.py", f"from .{PREFIX}_src import {PREFIX}_reexported  # noqa")
+    sub = pkg / f"_{PREFIX}_pkg"
+    sub.mkdir()
+    (sub / "src.py").write_text(f"def {PREFIX}_reexported():\n    return None\n", encoding="utf-8")
+    (sub / "__init__.py").write_text(f"from .src import {PREFIX}_reexported\n", encoding="utf-8")
+    append(pkg / "__init__.py", f"from . import _{PREFIX}_pkg  # noqa")
     return {("CHK007", f"{PREFIX}_reexported")}
 
 
