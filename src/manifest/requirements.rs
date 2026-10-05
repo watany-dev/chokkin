@@ -327,7 +327,7 @@ fn editable_flag_value(line: &str) -> Option<&str> {
 
 #[must_use]
 fn is_local_path(spec: &str) -> bool {
-    spec.starts_with("./") || spec.starts_with("../") || spec.starts_with('.')
+    spec.starts_with('.')
 }
 
 /// Absent candidates are appended to `missing` so the manifest cache can
@@ -482,6 +482,59 @@ mod tests {
             group_of("requirements-packaging.txt").as_deref(),
             Some("dev")
         );
+    }
+
+    #[test]
+    fn editable_short_attach_accepts_paths_and_urls_only() {
+        for (value, expected) in [
+            (".", true),
+            ("./pkg", true),
+            ("../pkg", true),
+            ("/abs/pkg", true),
+            ("git+https://host/r.git", true),
+            ("https://host/p.zip", true),
+            ("file:///abs/pkg", true),
+            ("xample-pkg", false),
+            ("pkg", false),
+            ("hg+https", false),
+        ] {
+            assert_eq!(editable_short_attach_valid(value), expected, "{value:?}");
+            let line = format!("-e{value}");
+            assert_eq!(editable_flag_value(&line).is_some(), expected, "{line:?}");
+        }
+        // A bare flag is not an attached value, so the path check is skipped.
+        assert_eq!(editable_flag_value("-e"), Some(""));
+    }
+
+    #[test]
+    fn option_lines_never_name_a_distribution() {
+        assert_eq!(
+            requirements_line_distribution("--find-links https://host/#egg=acme"),
+            None
+        );
+        assert_eq!(
+            requirements_line_distribution("-e git+https://host/r.git#egg=acme"),
+            Some("acme".to_owned())
+        );
+        assert_eq!(
+            requirements_line_distribution("acme>=1  # pinned"),
+            Some("acme".to_owned())
+        );
+    }
+
+    #[test]
+    fn local_path_is_any_dot_prefix() {
+        for (spec, expected) in [
+            (".", true),
+            ("./pkg", true),
+            ("../pkg", true),
+            (".venv/pkg", true),
+            ("pkg", false),
+            ("/abs/pkg", false),
+            ("", false),
+        ] {
+            assert_eq!(is_local_path(spec), expected, "{spec:?}");
+        }
     }
 
     mod props {

@@ -65,3 +65,77 @@ pub(super) fn detect_duplicate_dependencies(
 
     candidates
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::default_config;
+    use crate::manifest::{DependencyContext, DependencyOrigin};
+
+    fn dep(name: &str, context: DependencyContext, opaque: bool) -> DeclaredDependency {
+        DeclaredDependency {
+            name: name.to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(1),
+                label: name.to_owned(),
+            },
+            opaque,
+            included_via: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn reports_distribution_declared_in_distinct_buckets() {
+        let deps = [
+            dep("requests", DependencyContext::Runtime, false),
+            dep(
+                "requests",
+                DependencyContext::Group("dev".to_owned()),
+                false,
+            ),
+            dep(
+                "requests",
+                DependencyContext::Group("typing".to_owned()),
+                false,
+            ),
+            dep(
+                "requests",
+                DependencyContext::OptionalExtra("http".to_owned()),
+                false,
+            ),
+        ];
+        let found = detect_duplicate_dependencies(&deps, &default_config());
+        assert_eq!(found.len(), 1);
+        let issue = &found[0];
+        assert_eq!(issue.rule, RuleId::Chk009);
+        assert_eq!(
+            issue.subject,
+            IssueSubject::Distribution {
+                name: "requests".to_owned()
+            }
+        );
+        assert_eq!(
+            issue.message,
+            "requests is declared in multiple contexts: runtime, dev, type, optional:http"
+        );
+        assert_eq!(issue.origins.len(), 4);
+    }
+
+    #[test]
+    fn same_bucket_and_opaque_declarations_are_not_duplicates() {
+        let deps = [
+            dep("requests", DependencyContext::Runtime, false),
+            dep("requests", DependencyContext::Runtime, false),
+            dep("pytest", DependencyContext::Group("dev".to_owned()), false),
+            dep("pytest", DependencyContext::Group("test".to_owned()), false),
+            dep("opaque", DependencyContext::Runtime, false),
+            dep("opaque", DependencyContext::Group("dev".to_owned()), true),
+        ];
+        assert_eq!(detect_duplicate_dependencies(&deps, &default_config()), []);
+    }
+}

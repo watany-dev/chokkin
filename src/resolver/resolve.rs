@@ -502,4 +502,74 @@ mod tests {
         assert_eq!(resolution.confidence, ResolveConfidence::Maybe);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
+
+    fn member(id: &str, path: &str) -> ResolvedWorkspaceMember {
+        ResolvedWorkspaceMember {
+            id: id.to_owned(),
+            path: path.to_owned(),
+            pyproject_toml: None,
+        }
+    }
+
+    #[test]
+    fn workspace_member_is_the_longest_whole_directory_prefix() {
+        let members = [
+            member("api", "packages/api"),
+            member("plugins", "packages/api/plugins"),
+        ];
+        let owner = |file: &str| workspace_member_for_file(file, &members);
+        assert_eq!(owner("packages/api/app.py").as_deref(), Some("api"));
+        assert_eq!(
+            owner("packages\\api\\plugins\\x.py").as_deref(),
+            Some("plugins")
+        );
+        assert_eq!(owner("packages/api"), Some("api".to_owned()));
+        assert_eq!(owner("packages/api2/app.py"), None);
+        assert_eq!(owner("src/app.py"), None);
+    }
+
+    #[test]
+    fn local_modules_cover_flat_src_and_member_roots() {
+        let file = |path: &str| DiscoveredFile {
+            path: path.to_owned(),
+            kind: crate::sources::FileKind::Python,
+            context: crate::sources::FileContext::Runtime,
+        };
+        let modules = local_modules(
+            &[
+                file("acme/core.py"),
+                file("src/pkg/stub.pyi"),
+                file("packages/api/src/api/views.py"),
+                file("README.md"),
+            ],
+            &[member("api", "packages/api")],
+        );
+        for expected in ["acme", "acme.core", "pkg", "pkg.stub", "api", "api.views"] {
+            assert!(modules.contains(expected), "{expected}: {modules:?}");
+        }
+    }
+
+    #[test]
+    fn scoped_declaration_covers_only_its_own_script_or_member() {
+        let scoped = ScopedDeclarations {
+            scripts: BTreeMap::from([(
+                "scripts/tool.py".to_owned(),
+                BTreeSet::from(["rich".to_owned()]),
+            )]),
+            members: BTreeMap::from([("api".to_owned(), BTreeSet::from(["foo-bar".to_owned()]))]),
+        };
+        let found = |root: &str, file: &str, member: Option<&str>| {
+            scoped_declaration(root, file, member, &scoped).and_then(|r| r.distribution)
+        };
+        assert_eq!(
+            found("rich", "scripts/tool.py", None).as_deref(),
+            Some("rich")
+        );
+        assert_eq!(found("rich", "src/app.py", None), None);
+        assert_eq!(
+            found("Foo_Bar", "packages/api/x.py", Some("api")).as_deref(),
+            Some("foo-bar")
+        );
+        assert_eq!(found("Foo_Bar", "packages/web/x.py", Some("web")), None);
+    }
 }
