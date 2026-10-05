@@ -46,6 +46,7 @@ pub(super) struct PartialConfig {
     pub respect_gitignore: Option<bool>,
     pub confidence: Option<Confidence>,
     pub exclude: Option<Vec<String>>,
+    pub vendored: Option<Vec<String>>,
     pub dependencies: Option<PartialDependencyGroups>,
     pub package_module_map: Option<BTreeMap<String, Vec<String>>>,
     pub binary_map: Option<BTreeMap<String, String>>,
@@ -89,6 +90,15 @@ pub fn default_config() -> ChokkinConfig {
             "build/**".to_owned(),
             "dist/**".to_owned(),
             "**/__pycache__/**".to_owned(),
+        ],
+        // Copies of other projects (`pip/_vendor`, `sklearn/externals`) are
+        // traced so their imports still count, but their dead code is not
+        // the project's to remove (#490).
+        vendored: vec![
+            "**/_vendor/**".to_owned(),
+            "**/vendored/**".to_owned(),
+            "**/externals/**".to_owned(),
+            "**/third_party/**".to_owned(),
         ],
         dependencies: DependencyGroupsConfig {
             dev_groups: vec![
@@ -140,6 +150,9 @@ pub fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
         }
         if let Some(exclude) = &layer.exclude {
             config.exclude.clone_from(exclude);
+        }
+        if let Some(vendored) = &layer.vendored {
+            config.vendored.clone_from(vendored);
         }
         if let Some(dependencies) = &layer.dependencies {
             dependencies.apply_to(&mut config.dependencies);

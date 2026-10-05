@@ -485,6 +485,47 @@ fn binary_root_tests_package_imports_resolve_first_party() {
     assert_eq!(flagged, ["tests/orphan.py"], "{keys:?}");
 }
 
+/// pandas-style `acme/tests/`, a root `test/` and pip-style `_vendor/` (#490).
+#[test]
+fn binary_in_package_tests_and_vendored_code_are_not_reported() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/core.py",
+            "from acme._vendor.six import used\n\n\ndef run() -> int:\n    return used()\n\n\ndef dead() -> int:\n    return 0\n",
+        ),
+        (
+            "acme/util.py",
+            "def only_from_root_test() -> int:\n    return 1\n",
+        ),
+        ("acme/_vendor/__init__.py", ""),
+        (
+            "acme/_vendor/six.py",
+            "def used() -> int:\n    return 1\n\n\ndef dead_vendored() -> int:\n    return 0\n",
+        ),
+        ("acme/tests/__init__.py", ""),
+        (
+            "acme/tests/test_core.py",
+            "from acme.core import run\n\n\ndef helper() -> int:\n    return 1\n\n\ndef test_run() -> None:\n    assert run() == 1\n",
+        ),
+        (
+            "test/test_util.py",
+            "from acme.util import only_from_root_test\n\n\ndef test_util() -> None:\n    assert only_from_root_test() == 1\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    let flagged: Vec<_> = keys
+        .iter()
+        .filter(|(code, _)| matches!(code.as_str(), "CHK001" | "CHK006" | "CHK007"))
+        .map(|(code, target)| format!("{code}:{target}"))
+        .collect();
+    assert_eq!(flagged, ["CHK006:acme/core.py:dead"], "{keys:?}");
+}
+
 fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     let temp = tempfile::TempDir::new().expect("tempdir");
     for (file, text) in files {

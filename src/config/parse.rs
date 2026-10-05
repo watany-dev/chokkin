@@ -123,6 +123,11 @@ fn validate(path: &Path, config: &PartialConfig) -> Result<(), ConfigError> {
         "exclude",
         config.exclude.iter().flatten().map(String::as_str),
     )?;
+    ensure_relative_all(
+        path,
+        "vendored",
+        config.vendored.iter().flatten().map(String::as_str),
+    )?;
     ensure_known_rules(
         path,
         "ignore",

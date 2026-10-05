@@ -264,6 +264,8 @@ pub enum SuppressReason {
     FileLevel,
     /// Matched a frozen issue in the baseline file.
     Baseline,
+    /// Lies in vendored code (`vendored` config).
+    Vendored,
 }
 
 /// Issue suppressed by ignore configuration or directives.

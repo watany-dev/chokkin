@@ -15,7 +15,7 @@ use crate::rules::RuleContext;
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, sort_candidates,
 };
-use crate::sources::{DiscoveredSources, PublicSurface, path_to_module};
+use crate::sources::{DiscoveredSources, FileContext, PublicSurface, path_to_module};
 
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
@@ -45,13 +45,17 @@ pub fn analyze_with_context(
         .filter(|module| reachable.contains(module.path.as_str()))
         .collect();
     let module_names = build_module_names(&reachable_modules, sources);
-    // Root `tests/`-style packages are importable but not an API surface:
-    // pytest calls their functions, so their symbols would all read as unused.
-    // They still reference the symbols they import.
+    // Test code and root `tests/`-style packages are importable but not an
+    // API surface: pytest calls their functions, so their symbols would all
+    // read as unused. They still reference the symbols they import.
+    let test_files = test_file_paths(sources, entry);
     let surface_modules: Vec<_> = reachable_modules
         .iter()
         .copied()
-        .filter(|module| !sources.layout.in_local_package(&module.path))
+        .filter(|module| {
+            !sources.layout.in_local_package(&module.path)
+                && !test_files.contains(module.path.as_str())
+        })
         .collect();
 
     let registry = build_registry(&surface_modules, &module_names);
@@ -113,6 +117,22 @@ fn reachable_file_paths<'g>(
         .iter()
         .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.as_str()))
         .collect()
+}
+
+/// Files whose context is `Test`, by path or because a plugin rooted them as
+/// tests (pytest `testpaths` with custom `python_files`).
+fn test_file_paths<'a>(sources: &'a DiscoveredSources, entry: &'a EntryPlan) -> HashSet<&'a str> {
+    let by_path = sources
+        .files
+        .iter()
+        .filter(|file| file.context == FileContext::Test)
+        .map(|file| file.path.as_str());
+    let by_root = entry
+        .roots
+        .iter()
+        .filter(|root| root.context == FileContext::Test)
+        .map(|root| root.spec.path.as_str());
+    by_path.chain(by_root).collect()
 }
 
 fn build_module_names<'a>(

@@ -150,6 +150,12 @@ exclude = [
   "dist/**",
   "**/__pycache__/**",
 ]
+vendored = [             # 解析・到達性の追跡はするがissueは出さない
+  "**/_vendor/**",
+  "**/vendored/**",
+  "**/externals/**",
+  "**/third_party/**",
+]
 
 [tool.chokkin.dependencies]
 dev_groups = ["dev", "test", "tests", "lint", "docs"]

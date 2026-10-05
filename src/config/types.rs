@@ -329,6 +329,8 @@ pub struct ChokkinConfig {
     pub confidence: Confidence,
     /// Glob patterns excluded from analysis.
     pub exclude: Vec<String>,
+    /// Glob patterns of vendored code: analyzed, but never reported.
+    pub vendored: Vec<String>,
     /// Dependency group mappings.
     pub dependencies: DependencyGroupsConfig,
     /// User overrides for distribution → import module names.

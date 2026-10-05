@@ -20,11 +20,17 @@ pub fn assign_file_context(path: &str) -> FileContext {
     FileContext::Runtime
 }
 
+/// `tests/` at any depth is test code (`pandas/tests/`), but only the root
+/// `test/` is: a `test` package inside a distribution is shipped API
+/// (`django.test`), as is `testing/` (`sqlalchemy.testing`).
 fn is_test_path(path: &str) -> bool {
-    if path.starts_with("tests/") {
+    if path.starts_with("test/") {
         return true;
     }
-    let file_name = path.rsplit('/').next().unwrap_or(path);
+    let (dirs, file_name) = path.rsplit_once('/').unwrap_or(("", path));
+    if dirs.split('/').any(|dir| dir == "tests") {
+        return true;
+    }
     if file_name == "conftest.py" {
         return true;
     }
@@ -93,6 +99,43 @@ mod tests {
             assign_file_context("src/acme/module_test.PYI"),
             FileContext::Test
         );
+    }
+
+    #[test]
+    fn assigns_test_context_for_in_package_tests_tree() {
+        assert_eq!(
+            assign_file_context("pandas/tests/frame/common.py"),
+            FileContext::Test
+        );
+        assert_eq!(
+            assign_file_context("src/acme/tests/__init__.py"),
+            FileContext::Test
+        );
+    }
+
+    #[test]
+    fn singular_test_dir_is_test_context_only_at_root() {
+        assert_eq!(
+            assign_file_context("test/base/helpers.py"),
+            FileContext::Test
+        );
+        assert_eq!(
+            assign_file_context("django/test/client.py"),
+            FileContext::Runtime
+        );
+        assert_eq!(
+            assign_file_context("lib/sqlalchemy/testing/fixtures.py"),
+            FileContext::Runtime
+        );
+    }
+
+    #[test]
+    fn tests_must_be_a_whole_directory_name() {
+        assert_eq!(
+            assign_file_context("acme/mytests/util.py"),
+            FileContext::Runtime
+        );
+        assert_eq!(assign_file_context("acme/tests.py"), FileContext::Runtime);
     }
 
     #[test]

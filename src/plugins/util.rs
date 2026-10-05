@@ -317,17 +317,24 @@ pub fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -> Vec<S
         python_files.to_vec()
     };
 
+    // Without `testpaths` pytest collects from the rootdir down, which is how
+    // in-package suites (`acme/tests/`) are found.
     let roots = if testpaths.is_empty() {
-        vec!["tests".to_owned()]
+        vec![String::new()]
     } else {
         testpaths.to_vec()
     };
 
     let mut globs = Vec::new();
     for root in roots {
-        let normalized = root.trim_end_matches('/');
+        let normalized = root.trim_start_matches("./").trim_end_matches('/');
+        let prefix = if normalized.is_empty() || normalized == "." {
+            String::new()
+        } else {
+            format!("{normalized}/")
+        };
         for pattern in &file_patterns {
-            globs.push(format!("{normalized}/**/{pattern}"));
+            globs.push(format!("{prefix}**/{pattern}"));
         }
     }
     globs

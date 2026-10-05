@@ -19,8 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`llama_index.core`) resolve to its files, and its packages are first-party
   to every file, so a member importing itself no longer raises CHK003 and an
   application member's modules are no longer certain CHK001 (#488).
+- A new `vendored` setting (default `**/_vendor/**`, `**/vendored/**`,
+  `**/externals/**`, `**/third_party/**`) marks vendored code: it is still
+  traced and counts as a referencer, but its issues are not reported. `vendored = []` turns it off (#490).
+- The root `test/` directory (sqlalchemy, CPython style) is scanned by
+  default, is a test context, and imports as the local `test.*` package
+  (#490).
 
 ### Changed
+- `tests/` directories at any depth (`pandas/tests/`) are test context, and
+  test-context files, including those a pytest config roots as tests, are no
+  longer reported by CHK006/CHK007 — they only count as referencers. Without
+  `testpaths`, pytest test files are collected from the whole project, as
+  pytest does, so tests inside packages and monorepo members are roots
+  (pandas CHK006 7946 → 469) (#490).
+- Breaking change for the Rust library API: `ChokkinConfig` / `PartialConfig`
+  gain `vendored` and `SuppressReason` gains `Vendored` (#490).
 - Breaking change for the Rust library API: `EntryPlan` gains
   `library_members`, `UnreachableFile` gains `mode`, `RuntimeOverrides` gains
   `no_auto_workspace`, `ProbeReport` gains `auto_workspace`, `ProbeWarning`
