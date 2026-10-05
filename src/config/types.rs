@@ -407,6 +407,9 @@ pub struct RuntimeOverrides {
     pub include_rules: Option<Vec<String>>,
     /// When set, suppress issues for these rule codes (`CHK00x`).
     pub exclude_rules: Option<Vec<String>>,
+    /// When true, do not treat nested `pyproject.toml` files as workspace
+    /// members in projects that declare no workspace.
+    pub no_auto_workspace: Option<bool>,
 }
 
 /// Returns true when `path` must be rejected as non-root-relative.

@@ -237,6 +237,7 @@ mod tests {
                     packages: Vec::new(),
                     local_packages: Vec::new(),
                     inferred_globs: Vec::new(),
+                    members: Vec::new(),
                 },
                 effective_globs: Vec::new(),
                 files: Vec::new(),

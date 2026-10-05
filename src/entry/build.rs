@@ -11,7 +11,7 @@ use super::auto::detect_auto_entries;
 use super::merge::merge_entry_candidates;
 use super::mode::resolve_project_mode;
 use super::module::resolve_module_to_path;
-use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryWarning};
+use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning};
 
 /// Build the entry root plan for reachability analysis (pipeline step 8).
 #[must_use]
@@ -58,7 +58,52 @@ pub fn build_entry_roots(
         mode,
         roots,
         warnings,
+        library_members: Vec::new(),
     }
+}
+
+/// Add each workspace member's own manifest entry points as roots of `plan`.
+///
+/// The root manifest never names a member's `[project.scripts]`, so without
+/// this every file of an app member is an orphan (#488).
+pub fn add_member_manifest_roots<'a>(
+    plan: &mut EntryPlan,
+    root_sources: &DiscoveredSources,
+    members: impl IntoIterator<Item = (&'a str, &'a LoadedManifest, &'a DiscoveredSources)>,
+) {
+    let root_paths = known_file_paths(root_sources);
+    for (member_path, manifest, sources) in members {
+        let mut candidates = Vec::new();
+        collect_manifest_entries(
+            manifest,
+            sources,
+            &known_file_paths(sources),
+            &mut candidates,
+            &mut Vec::new(),
+        );
+        for candidate in candidates {
+            let path = format!("{member_path}/{}", candidate.spec.path);
+            if !root_paths.contains(&path) {
+                continue;
+            }
+            if let Some(root) = plan.roots.iter_mut().find(|root| root.spec.path == path) {
+                if !root.origins.contains(&candidate.origin) {
+                    root.origins.push(candidate.origin);
+                }
+                continue;
+            }
+            plan.roots.push(EntryRoot {
+                spec: EntrySpec {
+                    path,
+                    symbol: candidate.spec.symbol,
+                },
+                context: candidate.context,
+                origins: vec![candidate.origin],
+            });
+        }
+    }
+    plan.roots
+        .sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
 }
 
 fn known_file_paths(sources: &DiscoveredSources) -> BTreeSet<String> {
@@ -191,7 +236,7 @@ fn context_for_path(path: &str, file_contexts: &BTreeMap<&str, FileContext>) -> 
 }
 
 fn retain_existing_root(
-    root: &super::types::EntryRoot,
+    root: &EntryRoot,
     known_paths: &BTreeSet<String>,
     warnings: &mut Vec<EntryWarning>,
 ) -> bool {

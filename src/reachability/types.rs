@@ -2,7 +2,7 @@
 
 use indexmap::IndexSet;
 
-use crate::config::Confidence;
+use crate::config::{Confidence, ProjectMode};
 use crate::graph::{FileId, ModuleOrigin};
 
 /// A module import recorded for dependency reconciliation (Step 10).
@@ -29,6 +29,9 @@ pub struct UnreachableFile {
     pub path: String,
     /// Upper bound on issue confidence for Step 12.
     pub max_confidence: Confidence,
+    /// Mode the file was scored under; a library workspace member's own
+    /// mode can differ from the project's.
+    pub mode: ProjectMode,
 }
 
 /// One step in a reachability trace path.

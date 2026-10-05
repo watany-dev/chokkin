@@ -283,6 +283,8 @@ project = ["src/**/*.py", "tests/**/*.py"]
 
 uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。root の `[tool.uv.sources]` の path source のうち、root配下にあり `[project]` を持つ `pyproject.toml` があるもの（streamlit の `lib/` など）も、distribution名をidとするmemberとして同様に扱う（#499。root外・git・url sourceは対象外）。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。非 strict でも import元 member が使用contextに合う宣言を持てば CHK003 / CHK004 / CHK005 はいずれも出さない。CHK003 / CHK004 / CHK005 の振り分けは「import元 member に宣言があればそれを、なければ root の宣言を」見る共通 lookup で行い、1 importにつきどれか1つだけを出す（member が宣言していなくても root で dev-only なら CHK005）。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
 
+uv / chokkin のworkspace宣言がない場合（llama_indexのように数百の `pyproject.toml` を持つmonorepo、#488）は、Step 4のsource discovery後に `detect_nested_members` が確定rootから深さ4までの入れ子 `pyproject.toml` を探し、`[project].name` を持つものだけを `workspace_members` にする（`--no-auto-workspace` で無効）。root自身・tool設定だけの `pyproject.toml`・`exclude` globに一致するもの、隠しdirectoryと `venv` / `build` / `dist` / `node_modules` / `tests` / `fixtures` などの配下は対象外。member idはdirectory名で、重複したら相対pathにする。検出時は `AutoWorkspace` warningで件数を出す。以後は宣言されたworkspaceと同じく member別manifestで依存を判定する。`load_config` ではなくprobeで行うのは、member manifest読込みが `load_config` を再帰的に呼ぶため。
+
 `chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
 
 ## 6. 解析エンジン仕様
@@ -411,6 +413,8 @@ root直下の <package>/__init__.py (flat layout) があり、明確なentryが�
 いずれにも該当しない
   -> app mode。ただしunused_fileのconfidence上限をlikelyに落とす
 ```
+
+自動検出したworkspace member（§5、#488）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外をlibrary modeで判定し（`EntryPlan::mode_for`）、wheel public surfaceによる引き上げの対象外にする。
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 

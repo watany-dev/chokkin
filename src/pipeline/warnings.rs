@@ -16,6 +16,8 @@ pub enum ProbeWarning {
     Sources(SourcesWarning),
     /// Warning from plugin hint extraction.
     Plugin(PluginsWarning),
+    /// Workspace members were inferred from nested `pyproject.toml` files.
+    AutoWorkspace { member_count: usize },
     /// A source that could not be decoded and was left out of the analysis.
     SkippedSource {
         /// Root-relative path of the source.
@@ -29,6 +31,10 @@ impl fmt::Display for ProbeWarning {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
             Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
             Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
+            Self::AutoWorkspace { member_count } => write!(
+                formatter,
+                "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
+            ),
             Self::SkippedSource { path } => write!(
                 formatter,
                 "parse: skipped `{path}`: not UTF-8 and no supported PEP 263 coding declaration"

@@ -548,6 +548,149 @@ fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
     );
 }
 
+/// `llama_index`: hundreds of member pyprojects and no workspace declaration
+/// (#488).
+fn undeclared_monorepo() -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"llama-index\"\nversion = \"0.1.0\"\ndependencies = [\"llama-index-core\"]\n",
+        ),
+        (
+            "llama-index-core/pyproject.toml",
+            "[project]\nname = \"llama-index-core\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        ),
+        (
+            "llama-index-core/llama_index/core/__init__.py",
+            "from llama_index.core.base import BaseLLM\n",
+        ),
+        (
+            "llama-index-core/llama_index/core/base.py",
+            "import requests\n\n\nclass BaseLLM:\n    session = requests\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/pyproject.toml",
+            "[project]\nname = \"llama-index-llms-openai\"\nversion = \"0.1.0\"\ndependencies = [\"openai\", \"llama-index-core\"]\n\n[dependency-groups]\ndev = [\"pytest\"]\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/__init__.py",
+            "from llama_index.llms.openai.base import OpenAI\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/base.py",
+            "import openai\nfrom llama_index.core import BaseLLM\n\n\nclass OpenAI(BaseLLM):\n    client = openai\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/tests/conftest.py",
+            "import openai\nimport pytest\n",
+        ),
+        // App member: its own `[project.scripts]` is the only entry, and it
+        // imports its own package by the distribution's underscore spelling.
+        (
+            "llama-dev/pyproject.toml",
+            "[project]\nname = \"llama-dev\"\nversion = \"0.1.0\"\n\n[project.scripts]\nllama-dev = \"llama_dev.cli:cli\"\n",
+        ),
+        // Its lockfile lists the member itself, so `llama_dev` matches a
+        // locked name before anything says it is local.
+        (
+            "llama-dev/uv.lock",
+            "version = 1\n\n[[package]]\nname = \"llama-dev\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n",
+        ),
+        ("llama-dev/llama_dev/__init__.py", ""),
+        (
+            "llama-dev/llama_dev/cli.py",
+            "from llama_dev import utils\nfrom . import release\n\n\ndef cli():\n    utils.run()\n    release.run()\n",
+        ),
+        ("llama-dev/llama_dev/utils.py", "def run():\n    pass\n"),
+        ("llama-dev/llama_dev/release.py", "def run():\n    pass\n"),
+        ("llama-dev/llama_dev/orphan.py", ""),
+        // Tool-only pyproject: not a member.
+        ("docs/pyproject.toml", "[tool.ruff]\nline-length = 88\n"),
+    ])
+}
+
+fn certain_chk001(issues: &[serde_json::Value]) -> Vec<String> {
+    issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001" && issue["confidence"] == "certain")
+        .map(|issue| issue["target"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+#[test]
+fn binary_undeclared_monorepo_members_are_auto_detected() {
+    let project = undeclared_monorepo();
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        certain_chk001(&issues),
+        ["llama-dev/llama_dev/orphan.py"],
+        "{issues:?}"
+    );
+    let keys = issue_keys(&issues);
+    assert!(
+        keys.iter().all(|(code, target)| !(matches!(
+            code.as_str(),
+            "CHK003" | "CHK004" | "CHK010"
+        ) && (target == "openai"
+            || target == "requests"
+            || target.contains("llama_dev")))),
+        "{keys:?}"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--probe")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stdout.contains("Workspace: 3 members"), "{stdout}");
+    assert!(
+        stderr.contains("treating 3 nested pyproject.toml as workspace members"),
+        "{stderr}"
+    );
+    assert!(project.path().join(".chokkin").is_dir());
+    assert!(!project.path().join("llama-index-core/.chokkin").exists());
+}
+
+/// Library scoring is only for detected members; a declared member keeps the
+/// root's mode, so its orphans stay certain.
+#[test]
+fn binary_declared_workspace_member_is_not_scored_as_library() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[project.scripts]\napi-cli = \"api.main:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+        ),
+        (
+            "services/api/pyproject.toml",
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\n",
+        ),
+        ("services/api/src/api/__init__.py", ""),
+        (
+            "services/api/src/api/main.py",
+            "from . import helper\nfrom api import util\n\n\ndef main() -> None:\n    helper.run()\n    util.run()\n",
+        ),
+        ("services/api/src/api/helper.py", "def run():\n    pass\n"),
+        ("services/api/src/api/util.py", "def run():\n    pass\n"),
+        ("services/api/src/api/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    // Imports inside the member resolve against its own `src/` layout.
+    assert_eq!(
+        certain_chk001(&issues),
+        ["services/api/src/api/orphan.py"],
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn binary_no_auto_workspace_keeps_single_project_analysis() {
+    let project = undeclared_monorepo();
+    let issues = json_issues(project.path(), &["--no-auto-workspace"]);
+    assert!(!certain_chk001(&issues).is_empty(), "{issues:?}");
+}
+
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not
 /// abort the run (#486).
 #[test]

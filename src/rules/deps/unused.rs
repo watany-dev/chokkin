@@ -478,6 +478,7 @@ mod tests {
                 packages: vec!["acme".to_owned()],
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -516,6 +517,7 @@ mod tests {
                 file: legacy_file,
                 path: "src/legacy/aws.py".to_owned(),
                 max_confidence: Confidence::Certain,
+                mode: crate::config::ProjectMode::App,
             });
 
         let mut resolution = ResolutionIndex::default();

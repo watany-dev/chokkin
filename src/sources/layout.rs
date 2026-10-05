@@ -78,6 +78,7 @@ fn layout_info(package_root: &str, packages: Vec<String>) -> LayoutInfo {
         inferred_globs: default_globs(layout, package_root, &packages),
         packages,
         local_packages: Vec::new(),
+        members: Vec::new(),
     }
 }
 
@@ -210,6 +211,7 @@ fn heuristic_layout(
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: default_globs(ProjectLayout::Unknown, "", &[]),
+            members: Vec::new(),
         };
         return (layout, None);
     };
@@ -324,8 +326,11 @@ fn normalized_project_names(name: &str) -> Vec<String> {
 /// callers treat imports from it as unresolved rather than inventing a name.
 #[must_use]
 pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
-    let stem = path.strip_suffix(".py")?;
-    let module_path = stem.strip_suffix("/__init__").unwrap_or(stem);
+    if let Some((member, rest)) = layout.member_for(path) {
+        return path_to_module(rest, &member.layout)
+            .or_else(|| namespace_module_name(rest, &member.layout));
+    }
+    let module_path = module_path(path)?;
 
     let distributed = match layout.layout {
         ProjectLayout::Src => module_under(module_path, &layout.package_root),
@@ -334,6 +339,22 @@ pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
             .or_else(|| package_module_name(module_path, &layout.packages)),
     };
     distributed.or_else(|| package_module_name(module_path, &layout.local_packages))
+}
+
+/// A member with no regular package ships PEP 420 namespace packages
+/// (`llama_index/` without `__init__.py`) straight from its root.
+fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
+    let module_path = module_path(path)?;
+    let (top, _) = module_path.split_once('/')?;
+    if layout.layout != ProjectLayout::Unknown || NON_PACKAGE_DIRS.contains(&top) {
+        return None;
+    }
+    Some(module_path.replace('/', "."))
+}
+
+fn module_path(path: &str) -> Option<&str> {
+    let stem = path.strip_suffix(".py")?;
+    Some(stem.strip_suffix("/__init__").unwrap_or(stem))
 }
 
 fn module_under(path: &str, package_root: &str) -> Option<String> {
@@ -358,6 +379,7 @@ fn package_module_name(path: &str, packages: &[String]) -> Option<String> {
 mod tests {
     use super::*;
     use crate::manifest::{ProjectMetadata, UvSource};
+    use crate::sources::MemberLayout;
 
     fn metadata(name: &str) -> ProjectMetadata {
         ProjectMetadata {
@@ -374,6 +396,7 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         assert_eq!(
             path_to_module("src/acme/api/routes.py", &layout),
@@ -394,6 +417,7 @@ mod tests {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         assert_eq!(
             path_to_module("src/acme/api/__init__.py", &layout),
@@ -410,12 +434,62 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         assert_eq!(
             path_to_module("acme/core.py", &layout),
             Some("acme.core".to_owned())
         );
         assert_eq!(path_to_module("scripts/run.py", &layout), None);
+    }
+
+    #[test]
+    fn path_to_module_resolves_inside_members() {
+        let member = |path: &str, layout, packages: &[&str]| MemberLayout {
+            path: path.to_owned(),
+            layout: LayoutInfo {
+                layout,
+                package_root: if layout == ProjectLayout::Src {
+                    "src"
+                } else {
+                    ""
+                }
+                .to_owned(),
+                packages: packages.iter().map(|&package| package.to_owned()).collect(),
+                local_packages: Vec::new(),
+                inferred_globs: Vec::new(),
+                members: Vec::new(),
+            },
+        };
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            package_root: String::new(),
+            packages: Vec::new(),
+            local_packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            members: vec![
+                member("services/api", ProjectLayout::Src, &["api"]),
+                member("llama-dev", ProjectLayout::Flat, &["llama_dev"]),
+                member("llama-index-core", ProjectLayout::Unknown, &[]),
+            ],
+        };
+        for (path, module) in [
+            ("services/api/src/api/main.py", Some("api.main")),
+            ("llama-dev/llama_dev/__init__.py", Some("llama_dev")),
+            (
+                "llama-index-core/llama_index/core/base.py",
+                Some("llama_index.core.base"),
+            ),
+            ("services/api/tests/test_main.py", None),
+            ("llama-index-core/tests/test_base.py", None),
+            ("llama-index-core/setup.py", None),
+        ] {
+            assert_eq!(
+                path_to_module(path, &layout),
+                module.map(str::to_owned),
+                "{path}"
+            );
+        }
     }
 
     #[test]

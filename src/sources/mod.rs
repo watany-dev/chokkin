@@ -18,6 +18,7 @@ pub(crate) use layout::infer_layout;
 pub use layout::path_to_module;
 pub use surface::PublicSurface;
 pub use types::{
-    DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
+    DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, MemberLayout,
+    ProjectLayout,
 };
 pub use warnings::SourcesWarning;

@@ -368,6 +368,7 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         }
     }
 
@@ -391,6 +392,7 @@ mod tests {
     fn entry_plan() -> EntryPlan {
         EntryPlan {
             mode: ProjectMode::App,
+            library_members: Vec::new(),
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "src/acme/main.py".to_owned(),

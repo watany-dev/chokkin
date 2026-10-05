@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Monorepos without a workspace declaration now treat nested
+  `pyproject.toml` files that declare `[project].name` (depth ≤ 4, honoring
+  `exclude`) as workspace members, so dependencies declared in a member's
+  manifest satisfy its imports and orphan files in library members are
+  `maybe` CHK001 warnings instead of certain errors. `--no-auto-workspace`
+  keeps the previous single-project analysis (#488).
+- Inside such members, `[project.scripts]` become entry points, the member's
+  own packages (`src/` or flat) and PEP 420 namespace packages
+  (`llama_index.core`) resolve to its files, and its packages are first-party
+  to every file, so a member importing itself no longer raises CHK003 and an
+  application member's modules are no longer certain CHK001 (#488).
+
+### Changed
+- Breaking change for the Rust library API: `EntryPlan` gains
+  `library_members`, `UnreachableFile` gains `mode`, `RuntimeOverrides` gains
+  `no_auto_workspace`, `ProbeReport` gains `auto_workspace`, `ProbeWarning`
+  gains `AutoWorkspace`, `LayoutInfo` gains `members` (`MemberLayout`),
+  `emit_issues`
+  drops its mode argument, and `apply_public_surface` takes the `EntryPlan`
+  (#488).
+- `uv.lock` is parsed into only the fields the dependency graph reads, and
+  auto-detected members' inputs are collected in parallel; a monorepo with
+  ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488).
+
 ## [0.6.0] - 2026-10-03
 
 v0.5.1 was prepared but never published to PyPI; its fixes ship here.

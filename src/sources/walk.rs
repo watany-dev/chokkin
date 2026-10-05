@@ -308,6 +308,7 @@ mod tests {
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
+            members: Vec::new(),
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&["src/acme/generated/**".to_owned()]);
@@ -347,6 +348,7 @@ mod tests {
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
+            members: Vec::new(),
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[]);
@@ -380,6 +382,7 @@ mod tests {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: vec!["**/*.{py,pyi}".to_owned()],
+            members: Vec::new(),
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[".venv/**".to_owned()]);
