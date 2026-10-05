@@ -259,11 +259,33 @@ impl<'a> Evaluator<'a> {
 
     /// `reqs.append(...)` and friends change a value we only track by assignment.
     fn taint_mutation(&mut self, call: &ExprCall) {
-        if let Expr::Attribute(attribute) = &*call.func
-            && let Expr::Name(base) = &*attribute.value
-            && let Some(value) = self.env.get_mut(base.id.as_str())
-        {
+        let Expr::Attribute(attribute) = &*call.func else {
+            return;
+        };
+        if let Some(value) = self.place_mut(&attribute.value) {
             value.taint();
+        } else {
+            self.taint_target(&attribute.value);
+        }
+    }
+
+    /// The stored value a name or string-key subscript chain refers to.
+    fn place_mut(&mut self, expr: &Expr) -> Option<&mut Value> {
+        match expr {
+            Expr::Name(name) => self.env.get_mut(name.id.as_str()),
+            Expr::Subscript(subscript) => {
+                let Value::Str(key) = self.eval(&subscript.slice) else {
+                    return None;
+                };
+                match self.place_mut(&subscript.value)? {
+                    Value::Dict(items) => items
+                        .iter_mut()
+                        .find(|(existing, _)| *existing == key)
+                        .map(|(_, value)| value),
+                    _ => None,
+                }
+            },
+            _ => None,
         }
     }
 

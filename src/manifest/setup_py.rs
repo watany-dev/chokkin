@@ -209,6 +209,27 @@ mod tests {
     }
 
     #[test]
+    fn method_calls_on_dict_entries_mark_the_entry_partial() {
+        let result = extract(
+            "extras = {'dev': ['ruff'], 'test': ['pytest']}\n\
+             extras['dev'].append(load())\n\
+             setup(extras_require=extras)\n",
+            &[],
+        );
+        assert_eq!(names_in(&result, &extra("dev")), vec!["ruff"]);
+        assert!(result.warnings.iter().any(|warning| matches!(
+            warning,
+            ManifestWarning::SetupPyPartiallyStatic { argument, .. }
+                if argument == "extras_require.dev"
+        )));
+        assert!(!result.warnings.iter().any(|warning| matches!(
+            warning,
+            ManifestWarning::SetupPyPartiallyStatic { argument, .. }
+                if argument == "extras_require.test"
+        )));
+    }
+
+    #[test]
     fn repeated_dict_keys_keep_the_last_value_like_python() {
         let result = extract(
             "base = {'dev': ['old-base']}\n\
