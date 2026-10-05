@@ -230,6 +230,18 @@ mod tests {
     }
 
     #[test]
+    fn deleted_dict_entries_are_not_reported() {
+        let result = extract(
+            "extras = {'dev': ['ruff'], 'docs': ['sphinx']}\n\
+             del extras['docs']\n\
+             setup(extras_require=extras)\n",
+            &[],
+        );
+        assert_eq!(names_in(&result, &extra("dev")), vec!["ruff"]);
+        assert!(names_in(&result, &extra("docs")).is_empty());
+    }
+
+    #[test]
     fn repeated_dict_keys_keep_the_last_value_like_python() {
         let result = extract(
             "base = {'dev': ['old-base']}\n\

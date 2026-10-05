@@ -189,6 +189,7 @@ impl<'a> Evaluator<'a> {
                 Stmt::FunctionDef(def) => {
                     self.functions.insert(def.name.id.to_string(), def);
                 },
+                Stmt::Delete(delete) => self.delete(&delete.targets),
                 Stmt::If(if_stmt) => {
                     let mut branches = vec![if_stmt.body.as_slice()];
                     branches.extend(if_stmt.elif_else_clauses.iter().map(|c| c.body.as_slice()));
@@ -269,6 +270,28 @@ impl<'a> Evaluator<'a> {
         }
     }
 
+    fn delete(&mut self, targets: &[Expr]) {
+        for target in targets {
+            match target {
+                Expr::Name(name) => {
+                    self.env.remove(name.id.as_str());
+                },
+                Expr::Subscript(subscript) => {
+                    if let Value::Str(key) = self.eval(&subscript.slice)
+                        && let Some(Value::Dict(items)) = self.place_mut(&subscript.value)
+                    {
+                        items.retain(|(existing, _)| *existing != key);
+                    } else {
+                        self.taint_target(&subscript.value);
+                    }
+                },
+                Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
+                | Expr::List(ruff_python_ast::ExprList { elts, .. }) => self.delete(elts),
+                _ => {},
+            }
+        }
+    }
+
     /// The stored value a name or string-key subscript chain refers to.
     fn place_mut(&mut self, expr: &Expr) -> Option<&mut Value> {
         match expr {
@@ -324,6 +347,11 @@ impl<'a> Evaluator<'a> {
                 Stmt::AnnAssign(ruff_python_ast::StmtAnnAssign { target, .. })
                 | Stmt::AugAssign(ruff_python_ast::StmtAugAssign { target, .. }) => {
                     self.taint_target(target);
+                },
+                Stmt::Delete(delete) => {
+                    for target in &delete.targets {
+                        self.taint_target(target);
+                    }
                 },
                 Stmt::For(for_stmt) => {
                     self.taint_target(&for_stmt.target);
@@ -780,3 +808,4 @@ fn is_setup(func: &Expr) -> bool {
         _ => false,
     }
 }
+
