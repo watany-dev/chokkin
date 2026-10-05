@@ -265,11 +265,9 @@ fn expected_for(name: &str, dep: Dep, has_lock: bool, strict: bool) -> Vec<Key> 
         };
         out.push(key("CHK002", name, "error", confidence));
     }
-    let buckets = [dep.runtime.is_some(), dep.dev, dep.extra]
-        .into_iter()
-        .filter(|declared| *declared)
-        .count();
-    if buckets >= 2 {
+    // A dev group or extra repeats only a runtime declaration; groups and
+    // extras never duplicate each other (#555).
+    if dep.runtime.is_some() && (dep.dev || dep.extra) {
         out.push(key("CHK009", name, "warning", "certain"));
     }
 
