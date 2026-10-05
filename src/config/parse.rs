@@ -56,7 +56,7 @@ pub struct PyProjectConfig {
     pub partial: PartialConfig,
     pub uv_workspace: Option<UvWorkspaceHint>,
     /// `[tool.uv.sources]` path entries as written, keyed by distribution name;
-    /// a marker-scoped array contributes each distinct `path` in order.
+    /// a marker-scoped array contributes each `path` in order.
     pub uv_path_sources: BTreeMap<String, Vec<String>>,
 }
 
@@ -98,16 +98,10 @@ fn source_paths(value: &toml::Value) -> Vec<String> {
         toml::Value::Array(items) => items.as_slice(),
         other => std::slice::from_ref(other),
     };
-    let mut paths: Vec<String> = Vec::new();
-    for path in entries
+    entries
         .iter()
-        .filter_map(|entry| entry.get("path")?.as_str())
-    {
-        if !paths.iter().any(|seen| seen == path) {
-            paths.push(path.to_owned());
-        }
-    }
-    paths
+        .filter_map(|entry| Some(entry.get("path")?.as_str()?.to_owned()))
+        .collect()
 }
 
 fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
