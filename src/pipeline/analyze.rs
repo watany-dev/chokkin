@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
-use crate::entry::{EntryPlan, build_entry_roots, is_library_member};
+use crate::entry::{EntryPlan, add_member_manifest_roots, build_entry_roots, is_library_member};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
@@ -196,6 +196,14 @@ fn run_analysis_core(
         production,
     );
     crate::entry::add_script_roots(&mut entry, &probe.scripts, &probe.sources, production);
+    add_member_manifest_roots(
+        &mut entry,
+        &probe.sources,
+        probe
+            .workspace_inputs
+            .iter()
+            .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
+    );
     if probe.auto_workspace && probe.effective_config.mode == ProjectMode::Auto {
         entry.library_members = probe
             .workspace_inputs

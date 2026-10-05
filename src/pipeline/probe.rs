@@ -2,6 +2,7 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::VERSION;
 use crate::cache::CacheOptions;
@@ -17,7 +18,9 @@ use crate::manifest::{
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
-use crate::sources::{DiscoveredSources, FileContext, FileKind, build_glob_set, discover_sources};
+use crate::sources::{
+    DiscoveredSources, FileContext, FileKind, MemberLayout, build_glob_set, discover_sources,
+};
 
 use super::error::ProbeError;
 use super::warnings::{ProbeWarning, collect_warnings};
@@ -98,13 +101,20 @@ pub fn probe_project_with_cache(
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
 
-    let sources = discover_sources(&root, &loaded, &manifest)?;
+    let mut sources = discover_sources(&root, &loaded, &manifest)?;
     let auto_members = auto_detect_members(&mut loaded, overrides)?;
     // The manifest cache lives under each member root; an undeclared monorepo
     // would gain hundreds of untracked `.chokkin/` directories.
     let member_cache = if auto_members > 0 { None } else { cache };
     let workspace_inputs =
         collect_workspace_inputs(&root, &loaded.workspace_members, overrides, member_cache)?;
+    sources.layout.members = workspace_inputs
+        .iter()
+        .map(|input| MemberLayout {
+            path: input.member.path.clone(),
+            layout: input.sources.layout.clone(),
+        })
+        .collect();
     let (scripts, script_warnings) = discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),
@@ -182,25 +192,65 @@ fn collect_workspace_inputs(
     overrides: &RuntimeOverrides,
     cache: Option<&CacheOptions>,
 ) -> Result<Vec<WorkspaceMemberInputs>, ProbeError> {
-    let mut inputs = Vec::new();
-    for member in members {
-        let member_root = member_project_root(root, member);
-        if !member_root.path.is_dir() {
-            continue;
-        }
-        let mut loaded = load_config(&member_root)?;
-        apply_overrides(&mut loaded.effective, overrides);
-        let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
-        let target_version = resolve_target_version(&loaded.effective, &manifest);
-        loaded.effective.target_version = Some(target_version);
-        let sources = discover_sources(&member_root, &loaded, &manifest)?;
-        inputs.push(WorkspaceMemberInputs {
-            member: member.clone(),
-            manifest,
-            sources,
-        });
+    // Members are independent, and an undeclared monorepo's hundreds of member
+    // lockfiles dominate the probe when read one after another (#488).
+    let workers = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(members.len())
+        .max(1);
+    let cursor = AtomicUsize::new(0);
+    let mut results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let index = cursor.fetch_add(1, Ordering::Relaxed);
+                        let Some(member) = members.get(index) else {
+                            return done;
+                        };
+                        done.push((index, member_inputs(root, member, overrides, cache)));
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+            })
+            .collect::<Vec<_>>()
+    });
+    results.sort_by_key(|(index, _)| *index);
+    results
+        .into_iter()
+        .filter_map(|(_, inputs)| inputs.transpose())
+        .collect()
+}
+
+fn member_inputs(
+    root: &ProjectRoot,
+    member: &ResolvedWorkspaceMember,
+    overrides: &RuntimeOverrides,
+    cache: Option<&CacheOptions>,
+) -> Result<Option<WorkspaceMemberInputs>, ProbeError> {
+    let member_root = member_project_root(root, member);
+    if !member_root.path.is_dir() {
+        return Ok(None);
     }
-    Ok(inputs)
+    let mut loaded = load_config(&member_root)?;
+    apply_overrides(&mut loaded.effective, overrides);
+    let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
+    let target_version = resolve_target_version(&loaded.effective, &manifest);
+    loaded.effective.target_version = Some(target_version);
+    let sources = discover_sources(&member_root, &loaded, &manifest)?;
+    Ok(Some(WorkspaceMemberInputs {
+        member: member.clone(),
+        manifest,
+        sources,
+    }))
 }
 
 fn member_project_root(root: &ProjectRoot, member: &ResolvedWorkspaceMember) -> ProjectRoot {
@@ -527,6 +577,7 @@ mod tests {
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             },
             effective_globs: Vec::new(),
             files: Vec::new(),

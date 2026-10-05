@@ -26,6 +26,7 @@ fn parse_fixture(name: &str) -> chokkin::ParsedModule {
         packages: Vec::new(),
         local_packages: Vec::new(),
         inferred_globs: Vec::new(),
+        members: Vec::new(),
     };
     parse_file(
         &root,
@@ -51,12 +52,14 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         _ => LayoutInfo {
             layout: ProjectLayout::Unknown,
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
     };
     parse_file(
@@ -206,6 +209,7 @@ fn parse_project_sources_fixture_suite() {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files,
@@ -283,6 +287,7 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
             packages: vec!["app".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -343,6 +348,7 @@ fn parse_cache_follows_pep723_block_edits() {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -415,6 +421,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -461,6 +468,7 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -541,6 +549,7 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files,
@@ -604,6 +613,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
         packages: Vec::new(),
         local_packages: Vec::new(),
         inferred_globs: Vec::new(),
+        members: Vec::new(),
     };
     let discovered = |path: &str| chokkin::DiscoveredFile {
         path: path.to_owned(),

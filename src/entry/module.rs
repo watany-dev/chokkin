@@ -67,6 +67,7 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         }
     }
 
@@ -111,6 +112,7 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         let paths = known(&["acme/foo.py"]);
         assert_eq!(
@@ -126,6 +128,7 @@ mod tests {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         let paths = known(&["services/api/src/api/main.py"]);
         assert_eq!(

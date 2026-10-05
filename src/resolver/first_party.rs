@@ -15,10 +15,18 @@ pub fn is_first_party_import(
     metadata: &ProjectMetadata,
 ) -> bool {
     let import_norm = normalize_distribution_name(import_root);
+    // A workspace member's own packages are first-party to every file, the
+    // member's own included (`llama_dev` inside `llama-dev/`).
     if layout
         .packages
         .iter()
         .chain(&layout.local_packages)
+        .chain(
+            layout
+                .members
+                .iter()
+                .flat_map(|member| &member.layout.packages),
+        )
         .any(|package| normalize_distribution_name(package) == import_norm)
     {
         return true;
@@ -110,6 +118,7 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: vec!["tests".to_owned()],
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         for root in ["acme", "tests"] {
             assert!(is_first_party_import(
@@ -127,6 +136,7 @@ mod tests {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         let metadata = ProjectMetadata {
             name: Some("my-package".to_owned()),

@@ -233,6 +233,7 @@ mod parse_file_props {
                 packages: vec!["acme".to_owned()],
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             };
             let parsed = parse_file(
                 &root,
@@ -274,6 +275,7 @@ mod parse_file_props {
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             };
             let parsed = parse_file(&root, "m.py", &layout, FileContext::Runtime, &TargetVersion::default_py311())
                 .expect("parse");

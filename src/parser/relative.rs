@@ -107,6 +107,7 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         }
     }
 
@@ -144,6 +145,7 @@ mod tests {
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         assert_eq!(
             resolve_relative_import("tests/unit/test_core.py", &layout, 1, None, Some("helpers")),
@@ -177,6 +179,7 @@ mod tests {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         assert_eq!(
             resolve_relative_import("src/acme/api/__init__.py", &layout, 1, Some("models"), None),

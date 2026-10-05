@@ -85,6 +85,7 @@ pub fn resolve_imports_for_analysis(
     let mut imports = Vec::new();
     let mut root_cache: RootCache = BTreeMap::new();
     let pytest_paths = PytestImportPaths::build(sources);
+    let local_modules = local_modules(&sources.files, workspace_members);
 
     for module in &parse.modules {
         let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
@@ -113,6 +114,7 @@ pub fn resolve_imports_for_analysis(
                 &venv_index.imports,
                 scoped,
                 &pytest_paths,
+                &local_modules,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -135,6 +137,7 @@ pub fn resolve_imports_for_analysis(
                 &venv_index.imports,
                 scoped,
                 &pytest_paths,
+                &local_modules,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -159,6 +162,7 @@ pub fn resolve_imports_for_analysis(
             &venv_index.imports,
             scoped,
             &pytest_paths,
+            &local_modules,
             &mut warnings,
             &mut root_cache,
         ));
@@ -202,6 +206,7 @@ fn resolve_import_site(
     venv_imports: &BTreeMap<String, Vec<String>>,
     scoped: &ScopedDeclarations,
     pytest_paths: &PytestImportPaths,
+    local_modules: &BTreeSet<String>,
     warnings: &mut Vec<ResolveWarning>,
     root_cache: &mut RootCache,
 ) -> ResolvedImport {
@@ -237,9 +242,7 @@ fn resolve_import_site(
             // A first-party root may share its namespace with a distribution
             // (`poetry` and `poetry.core`); the local tree wins when it has the
             // module itself.
-            (ModuleOrigin::FirstParty, Some((module, ..)))
-                if has_local_module(module, &sources.files, workspace_members) =>
-            {
+            (ModuleOrigin::FirstParty, Some((module, ..))) if local_modules.contains(module) => {
                 core
             },
             (_, Some((_, distributions, confidence))) => root_resolution_from_candidates(
@@ -383,15 +386,13 @@ fn scoped_declaration(
         })
 }
 
-/// Whether any discovered file is `module` or lies under it, from the project
-/// root or a workspace member, in flat or `src/` layout. Deeper matches such as
+/// Every module and package importable from the project root or a workspace
+/// member, in flat or `src/` layout. Deeper matches such as
 /// `tests/fixtures/vendor/poetry/core/` are not importable as `poetry.core`.
-fn has_local_module(
-    module: &str,
+fn local_modules(
     files: &[DiscoveredFile],
     workspace_members: &[ResolvedWorkspaceMember],
-) -> bool {
-    let path = module.replace('.', "/");
+) -> BTreeSet<String> {
     let roots: Vec<String> = ["", "src/"]
         .into_iter()
         .map(str::to_owned)
@@ -401,15 +402,29 @@ fn has_local_module(
                 .flat_map(|member| [format!("{}/", member.path), format!("{}/src/", member.path)]),
         )
         .collect();
-    files.iter().any(|file| {
+    let mut modules = BTreeSet::new();
+    for file in files {
         let file = file.path.replace('\\', "/");
-        roots.iter().any(|root| {
-            file.strip_prefix(root.as_str()).is_some_and(|rest| {
-                rest.strip_prefix(path.as_str())
-                    .is_some_and(|tail| matches!(tail, ".py" | ".pyi") || tail.starts_with('/'))
-            })
-        })
-    })
+        for rest in roots
+            .iter()
+            .filter_map(|root| file.strip_prefix(root.as_str()))
+        {
+            let mut parts: Vec<&str> = rest.split('/').collect();
+            let leaf = parts.pop().and_then(|leaf| {
+                leaf.strip_suffix(".py")
+                    .or_else(|| leaf.strip_suffix(".pyi"))
+            });
+            let mut module = String::new();
+            for part in parts.into_iter().chain(leaf) {
+                if !module.is_empty() {
+                    module.push('.');
+                }
+                module.push_str(part);
+                modules.insert(module.clone());
+            }
+        }
+    }
+    modules
 }
 
 fn workspace_member_for_file(

@@ -554,6 +554,7 @@ mod tests {
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &lines);
