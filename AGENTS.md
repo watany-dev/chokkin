@@ -192,8 +192,8 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `scripts/oss-expectations.tsv` — regression floors for the failure-pattern
   corpus at the end of the manifest (#495): a floor on
   `summary.files.reachable_runtime` and per-rule issue counts. A drop below the
-  floor or a rule growing past base + max(5, base/5) fails the gate; those
-  projects' CHK002 findings must be labelled but are left out of the FP rate.
+  floor or a rule growing past base + max(5, base/5) fails the gate. Their
+  CHK002 findings are labelled and counted in the FP rate like the rest (#529).
 - `scripts/generate-chk003-labels.py` — heuristic CHK003 label generator (re-run
   after `make oss-metrics` when refreshing CHK003 triage).
 - `docs/dev/oss-validation-report.md` — committed §17 CHK002 scorecard.

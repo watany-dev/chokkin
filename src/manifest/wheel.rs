@@ -104,8 +104,9 @@ fn targets(source: &str, paths: Vec<String>, find: Vec<PackageFind>) -> Option<W
     })
 }
 
-/// `packages` / `only-include`; the wheel target overrides `[tool.hatch.build]`.
-/// `sources` only rewrites install paths, so it never changes which files ship.
+/// `packages` / `include` / `only-include`; the wheel target overrides
+/// `[tool.hatch.build]`. `sources` only rewrites install paths, so it never
+/// changes which files ship. `bypass-selection` ships nothing (a metapackage).
 fn hatch_targets(tool: &toml::Table) -> Option<WheelTargets> {
     [
         (
@@ -117,7 +118,14 @@ fn hatch_targets(tool: &toml::Table) -> Option<WheelTargets> {
     .into_iter()
     .find_map(|(keys, source)| {
         let section = table_at(tool, keys)?;
+        if section.get("bypass-selection").and_then(Value::as_bool) == Some(true) {
+            return Some(WheelTargets {
+                source: source.to_owned(),
+                ..WheelTargets::default()
+            });
+        }
         let mut paths = string_array(section.get("packages"));
+        paths.extend(string_array(section.get("include")));
         paths.extend(string_array(section.get("only-include")));
         targets(source, paths, Vec::new())
     })
@@ -308,6 +316,26 @@ mod tests {
         .expect("targets");
         assert_eq!(targets.source, "tool.hatch.build.targets.wheel");
         assert_eq!(targets.paths, vec!["src/acme", "extra.py"]);
+    }
+
+    #[test]
+    fn hatch_wheel_include() {
+        let targets = parse(
+            "[tool.hatch.build.targets.wheel]\ninclude = [\"/_meta/acme\"]\n",
+            Some("hatchling.build"),
+        )
+        .expect("targets");
+        assert_eq!(targets.paths, vec!["_meta/acme"]);
+    }
+
+    #[test]
+    fn hatch_bypass_selection_ships_nothing() {
+        let targets = parse(
+            "[tool.hatch.build.targets.wheel]\nbypass-selection = true\n",
+            Some("hatchling.build"),
+        )
+        .expect("targets");
+        assert!(targets.paths.is_empty() && targets.find.is_empty());
     }
 
     #[test]

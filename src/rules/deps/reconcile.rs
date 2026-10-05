@@ -3,13 +3,17 @@
 use std::collections::HashSet;
 
 use crate::config::Confidence;
-use crate::manifest::{InlineScript, LoadedManifest, normalize_distribution_name};
+use crate::manifest::{
+    DeclaredDependency, DependencyContext, InlineScript, LoadedManifest,
+    normalize_distribution_name,
+};
 use crate::plugins::PluginHints;
 use crate::resolver::ImportMap;
 use crate::rules::types::{
     DependencyReport, IssueCandidate, WorkspaceDependencyBoundary, sort_candidates,
 };
 use crate::rules::{DependencyRuleContext, RuleContext};
+use crate::sources::{DiscoveredSources, PublicSurface};
 
 use super::binary::detect_unlisted_binaries;
 use super::duplicate::detect_duplicate_dependencies;
@@ -134,9 +138,15 @@ fn reconcile_project(
         build_requires: &manifest.metadata.build_requires,
     };
 
+    let metapackage = ships_no_code(manifest, context.sources);
     for deps in declared.values() {
+        let deps: Vec<&DeclaredDependency> = deps
+            .iter()
+            .copied()
+            .filter(|dep| !metapackage || matches!(dep.context, DependencyContext::Group(_)))
+            .collect();
         candidates.extend(detect_unused_dependencies(
-            deps,
+            &deps,
             &used,
             config,
             strict,
@@ -173,6 +183,17 @@ fn reconcile_project(
         candidates,
         used_distributions: used,
     }
+}
+
+/// A wheel target that matches no source file ships a metapackage, whose
+/// distributed dependencies are its content rather than imports (#529).
+/// Dependency groups are not distributed, so they are still checked.
+fn ships_no_code(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
+    manifest
+        .metadata
+        .wheel_targets
+        .as_ref()
+        .is_some_and(|targets| PublicSurface::resolve(Some(targets), &sources.files).is_none())
 }
 
 fn workspace_declared_indices<'a>(
@@ -387,6 +408,72 @@ mod tests {
             report.candidates[0].rule,
             crate::rules::types::RuleId::Chk002
         );
+    }
+
+    #[test]
+    fn metapackage_keeps_distributed_dependencies_out_of_chk002() {
+        let dep = |name: &str, context: DependencyContext| DeclaredDependency {
+            name: name.to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(5),
+                label: format!("{name} declaration"),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        };
+        let mut manifest = minimal_manifest(vec![
+            dep("acme-core", DependencyContext::Runtime),
+            dep(
+                "acme-extra",
+                DependencyContext::OptionalExtra("all".to_owned()),
+            ),
+            dep("pytest-mock", DependencyContext::Group("dev".to_owned())),
+        ]);
+        manifest.metadata.wheel_targets = Some(crate::manifest::WheelTargets {
+            source: "tool.hatch.build.targets.wheel".to_owned(),
+            paths: vec!["_meta/acme".to_owned()],
+            find: Vec::new(),
+        });
+        let resolution = ResolutionIndex::default();
+        let reachability = ReachabilityReport::default();
+        let plugins = PluginHints {
+            contributions: Vec::new(),
+            config_binary_usages: Vec::new(),
+            config_used_distributions: Vec::new(),
+            config_module_refs: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let config = crate::config::default_config();
+        let (sources, parse, graph) = reconcile_inputs(&manifest);
+        let report = reconcile_with_context(
+            &DependencyRuleContext {
+                rules: &RuleContext {
+                    resolution: &resolution,
+                    reachability: &reachability,
+                    graph: &graph,
+                    sources: &sources,
+                    parse: &parse,
+                },
+                config: &config,
+                strict: true,
+            },
+            &manifest,
+            &plugins,
+            &[],
+            &[],
+        );
+        let reported: Vec<_> = report
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.rule == crate::rules::types::RuleId::Chk002)
+            .map(|candidate| candidate.explain.summary.as_str())
+            .collect();
+        assert_eq!(reported, ["pytest-mock is declared but not used"]);
     }
 
     #[test]

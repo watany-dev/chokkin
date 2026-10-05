@@ -39,9 +39,6 @@
 # labels file on (slug, code, target). Verdict `fp` counts as a false positive;
 # `tp` as a true positive; `deferred` and unlabeled findings are unclassified.
 # The FP-rate gate cannot pass while CHK002 unclassified findings remain.
-# Projects with an --expect row are known failure patterns: their CHK002
-# findings must still be labelled, but they are left out of the FP rate
-# because the expectations gate already pins their counts (until #529).
 #
 # Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
 # separate recall gate measures in-repo sentinel fixtures (--recall manifest)
@@ -73,7 +70,7 @@ FP_GATE_PCT=5
 
 ALL_RULES=(CHK001 CHK002 CHK003 CHK004 CHK005 CHK006 CHK007 CHK008 CHK009 CHK010)
 
-usage() { sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -263,16 +260,8 @@ rule_reported() {
   awk -F'\t' -v c="$1" 'NR>1 && $2==c {n++} END{print n+0}' "$FINDINGS"
 }
 
-# CHK002 total and fp over the projects without an --expect row.
-y002_rate() {
-  awk -F'\t' -v v="$1" 'FILENAME==ARGV[1] { if (!/^#/ && NF) pinned[$1]=1; next }
-    FNR>1 && $2=="CHK002" && !($1 in pinned) && (v=="" || $4==v) {n++}
-    END{print n+0}' <(cat "$EXPECT" 2>/dev/null) "$FINDINGS"
-}
-y002_total="$(y002_rate "")"
-y002_fp="$(y002_rate fp)"
-y002_expect_total="$(($(rule_reported CHK002) - y002_total))"
-y002_expect_fp="$(($(verdict_count CHK002 fp) - y002_fp))"
+y002_total="$(rule_reported CHK002)"
+y002_fp="$(verdict_count CHK002 fp)"
 y002_unclassified="$(($(verdict_count CHK002 unknown) + $(verdict_count CHK002 deferred)))"
 
 y003_total="$(rule_reported CHK003)"
@@ -414,8 +403,7 @@ coverage_pct() {
   echo ""
   echo "## Notes"
   echo ""
-  echo "- FP rate denominator is reported CHK002 findings (user-facing precision), excluding --expect projects."
-  echo "- CHK002 on --expect projects (failure-pattern corpus): ${y002_expect_total} reported, ${y002_expect_fp} FP — gated by expectations, not the FP rate."
+  echo "- FP rate denominator is reported CHK002 findings (user-facing precision)."
   echo "- CHK002 unclassified = unknown + deferred; both block the §17 FP gate."
   echo "- Recall gate counts every \`tp\` label (all rules, incl. sentinels)."
   echo "- CHK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_tp} tp, ${y003_deferred} deferred, ${y003_unknown} unknown) — informational, not a §17 gate."
