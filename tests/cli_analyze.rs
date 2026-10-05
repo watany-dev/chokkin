@@ -623,6 +623,37 @@ fn binary_undeclared_monorepo_members_are_auto_detected() {
         stderr.contains("treating 2 nested pyproject.toml as workspace members"),
         "{stderr}"
     );
+    assert!(project.path().join(".chokkin").is_dir());
+    assert!(!project.path().join("llama-index-core/.chokkin").exists());
+}
+
+/// Library scoring is only for detected members; a declared member keeps the
+/// root's mode, so its orphans stay certain.
+#[test]
+fn binary_declared_workspace_member_is_not_scored_as_library() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[project.scripts]\napi-cli = \"api.main:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+        ),
+        (
+            "services/api/pyproject.toml",
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\n",
+        ),
+        ("services/api/src/api/__init__.py", ""),
+        (
+            "services/api/src/api/main.py",
+            "def main() -> None:\n    pass\n",
+        ),
+        ("services/api/src/api/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert!(
+        certain_chk001(&issues)
+            .iter()
+            .any(|target| target == "services/api/src/api/orphan.py"),
+        "{issues:?}"
+    );
 }
 
 #[test]

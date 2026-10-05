@@ -196,7 +196,7 @@ fn run_analysis_core(
         production,
     );
     crate::entry::add_script_roots(&mut entry, &probe.scripts, &probe.sources, production);
-    if probe.effective_config.mode == ProjectMode::Auto {
+    if probe.auto_workspace && probe.effective_config.mode == ProjectMode::Auto {
         entry.library_members = probe
             .workspace_inputs
             .iter()

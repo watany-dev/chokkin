@@ -41,6 +41,9 @@ pub struct ProbeReport {
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
     /// Member-scoped manifest and source inventories.
     pub workspace_inputs: Vec<WorkspaceMemberInputs>,
+    /// Whether `workspace_members` were inferred from nested `pyproject.toml`
+    /// files rather than declared (#488).
+    pub auto_workspace: bool,
     /// PEP 723 scripts among the discovered Python files.
     pub scripts: Vec<InlineScript>,
     /// Why each plugin is on or off; already applied to `effective_config.plugins`.
@@ -97,8 +100,11 @@ pub fn probe_project_with_cache(
 
     let sources = discover_sources(&root, &loaded, &manifest)?;
     let auto_members = auto_detect_members(&mut loaded, overrides)?;
+    // The manifest cache lives under each member root; an undeclared monorepo
+    // would gain hundreds of untracked `.chokkin/` directories.
+    let member_cache = if auto_members > 0 { None } else { cache };
     let workspace_inputs =
-        collect_workspace_inputs(&root, &loaded.workspace_members, overrides, cache)?;
+        collect_workspace_inputs(&root, &loaded.workspace_members, overrides, member_cache)?;
     let (scripts, script_warnings) = discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),
@@ -121,6 +127,7 @@ pub fn probe_project_with_cache(
         sources,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
+        auto_workspace: auto_members > 0,
         scripts,
         plugin_activations,
         warnings,

@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Breaking change for the Rust library API: `EntryPlan` gains
   `library_members`, `UnreachableFile` gains `mode`, `RuntimeOverrides` gains
-  `no_auto_workspace`, `ProbeWarning` gains `AutoWorkspace`, `emit_issues`
+  `no_auto_workspace`, `ProbeReport` gains `auto_workspace`, `ProbeWarning`
+  gains `AutoWorkspace`, `emit_issues`
   drops its mode argument, and `apply_public_surface` takes the `EntryPlan`
   (#488).
 
