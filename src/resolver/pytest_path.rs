@@ -292,4 +292,52 @@ mod tests {
             Some("rootmod.py")
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn segments() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec("[a-z][a-z0-9_]{0,3}", 0..4)
+        }
+
+        proptest! {
+            #[test]
+            fn normalize_dir_strips_dot_slash_and_trailing_slashes(
+                dir in segments(),
+                leading in 0usize..3,
+                trailing in 0usize..3,
+                backslashes in any::<bool>(),
+            ) {
+                let clean = dir.join("/");
+                let mut entry = format!("{}{clean}{}", "./".repeat(leading), "/".repeat(trailing));
+                if backslashes {
+                    entry = entry.replace('/', "\\");
+                }
+                prop_assert_eq!(normalize_dir(&entry), clean.as_str());
+                prop_assert_eq!(normalize_dir(&clean), clean);
+            }
+
+            #[test]
+            fn is_same_or_under_compares_whole_segments(
+                dir in segments(),
+                ancestor in segments(),
+            ) {
+                // Reference model: `ancestor`'s segments prefix `dir`'s, so
+                // `src/ab` is not under `src/a`.
+                prop_assert_eq!(
+                    is_same_or_under(&dir.join("/"), &ancestor.join("/")),
+                    dir.starts_with(&ancestor)
+                );
+            }
+
+            #[test]
+            fn join_then_parent_dir_roundtrips(dir in segments(), name in "[a-z][a-z0-9_]{0,3}") {
+                let dir = dir.join("/");
+                let path = join(&dir, &name);
+                prop_assert_eq!(parent_dir(&path), dir.as_str());
+                prop_assert_eq!(file_name(&path), name.as_str());
+            }
+        }
+    }
 }

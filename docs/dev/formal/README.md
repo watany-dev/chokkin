@@ -12,6 +12,19 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 | `exit_status_z3.py` | `rules/emit.rs`, `baseline/store.rs`, `rules/filter.rs` | Z3 (SMT) | E1 baseline 適用後の exit status が emit と同じ意味論 / E2 baseline が exit 0 を exit 1 に変えない |
 | `ignore_model.py` | `rules/ignore.rs` (§18) | 有限領域の全数探索 | I1 dependency 系 rule の config ignore は distribution 名 glob（CHK008 は binary 名も可）、I1b distribution 未解決なら ignore しない |
 
+## 実装に対する検証 (kani / proptest)
+
+上表のモデルは移植に対する検証のため、移植と実装の乖離は検出できない。#418 で一部の
+性質を Rust 実装そのものに対して検証するようにした (`make kani`、`make check` には含めない)。
+
+| 性質 | 検証 | 場所 |
+|---|---|---|
+| `exit_status_z3.py` E1 / E2 | kani (`compute_exit_status`、issue 2 件の任意の kept 部分集合・3 通りの `no_exit_code`) | `src/rules/emit.rs` `mod verification` |
+| `deps_rules_z3.py` の `matches_usage` 表 (S1/S2/W1 の前提) | kani (`bucket_matches_usage` の全組合せ、`declaration_matches_usage` の自 group + include 元 group) | `src/rules/deps/context.rs` `mod verification` |
+| `relative_import_model.py` P1 / P2 | proptest (CPython `_resolve_name` を参照モデルとする差分テスト、src / flat layout) | `src/parser/relative.rs` `mod props` |
+
+Z3 / 全数探索モデルは workspace member や baseline の組合せなど kani では重い性質のために残す。
+
 ## 実行方法
 
 ```bash

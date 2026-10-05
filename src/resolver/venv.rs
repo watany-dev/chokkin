@@ -307,4 +307,40 @@ mod tests {
             vec!["new".to_owned()]
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn dist_info_name_drops_the_version(
+                name in "[A-Za-z0-9][A-Za-z0-9._-]{0,10}",
+                version in "[0-9][0-9a-z.+]{0,8}",
+            ) {
+                prop_assert_eq!(
+                    parse_dist_info_name(&format!("{name}-{version}.dist-info")),
+                    Some(normalize_distribution_name(&name))
+                );
+            }
+
+            #[test]
+            fn record_path_yields_its_first_segment(
+                first in "[a-z][a-z0-9_]{0,6}",
+                rest in prop::collection::vec("[a-z][a-z0-9_.]{0,6}", 0..3),
+                dot_slash in any::<bool>(),
+                module_file in any::<bool>(),
+            ) {
+                let mut path = if module_file && rest.is_empty() {
+                    format!("{first}.py")
+                } else {
+                    std::iter::once(first.clone()).chain(rest).collect::<Vec<_>>().join("/")
+                };
+                if dot_slash {
+                    path.insert_str(0, "./");
+                }
+                prop_assert_eq!(top_level_import_from_record_path(&path), Some(first));
+            }
+        }
+    }
 }

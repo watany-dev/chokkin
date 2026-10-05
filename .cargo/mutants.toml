@@ -1,0 +1,3 @@
+# `#[cfg(kani)]` harnesses are never compiled by `cargo test`, so every mutant
+# in them is a guaranteed miss.
+exclude_re = ["verification::"]

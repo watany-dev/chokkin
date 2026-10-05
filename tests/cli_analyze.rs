@@ -875,3 +875,26 @@ fn binary_extra_distributions_count_as_declared() {
         assert_eq!(undeclared("psycopg~=3.0"), 1, "{uv_workspace}");
     }
 }
+
+#[test]
+fn binary_notebooks_are_entry_roots() {
+    let notebook = r#"{"cells": [{"cell_type": "code", "source": ["from acme import plotting\n", "plotting.draw()\n"]}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}"#;
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/cli.py", "def main():\n    pass\n"),
+        ("acme/plotting.py", "def draw():\n    pass\n"),
+        ("acme/orphan.py", ""),
+        ("acme/demo.ipynb", notebook),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    let orphans: Vec<_> = issue_keys(&issues)
+        .into_iter()
+        .filter(|(code, _)| code == "CHK001")
+        .map(|(_, target)| target)
+        .collect();
+    assert_eq!(orphans, ["acme/orphan.py"], "{issues:?}");
+}

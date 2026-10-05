@@ -105,14 +105,17 @@ pub(super) fn include_path_details(dep: &DeclaredDependency) -> Vec<String> {
 
 /// Whether a declaration satisfies usage in the given context.
 #[must_use]
-pub(super) fn declaration_matches_usage(
+fn declaration_matches_usage(
     dep: &DeclaredDependency,
     usage: UsageContext,
-    config: &ChokkinConfig,
+    groups: &DependencyGroupsConfig,
 ) -> bool {
-    declaration_buckets(dep, &config.dependencies)
-        .iter()
-        .any(|bucket| bucket_matches_usage(bucket, usage))
+    bucket_matches_usage(&declaration_bucket(&dep.context, groups), usage)
+        || dep
+            .included_via
+            .iter()
+            .filter_map(|chain| chain.first())
+            .any(|includer| bucket_matches_usage(&group_bucket(includer, groups), usage))
 }
 
 fn bucket_matches_usage(bucket: &DeclarationBucket, usage: UsageContext) -> bool {
@@ -160,7 +163,135 @@ pub(super) fn is_directly_declared(
 ) -> bool {
     declarations
         .iter()
-        .any(|dep| declaration_matches_usage(dep, usage, config))
+        .any(|dep| declaration_matches_usage(dep, usage, &config.dependencies))
+}
+
+/// kani proofs of the context table behind `docs/dev/formal/deps_rules_z3.py`
+/// S1/S2/W1, run against the implementation instead of a hand port
+/// (`make kani`).
+#[cfg(kani)]
+mod verification {
+    use super::*;
+    use crate::manifest::DependencyOrigin;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Kind {
+        Runtime,
+        Dev,
+        Type,
+        Optional,
+    }
+
+    fn any_usage() -> UsageContext {
+        match kani::any::<u8>() % 5 {
+            0 => UsageContext::Runtime,
+            1 => UsageContext::Type,
+            2 => UsageContext::Test,
+            3 => UsageContext::Docs,
+            _ => UsageContext::Dev,
+        }
+    }
+
+    fn any_bucket() -> (DeclarationBucket, Kind) {
+        match kani::any::<u8>() % 4 {
+            0 => (DeclarationBucket::Runtime, Kind::Runtime),
+            1 => (DeclarationBucket::Dev, Kind::Dev),
+            2 => (DeclarationBucket::Type, Kind::Type),
+            _ => (
+                DeclarationBucket::Optional("extra".to_owned()),
+                Kind::Optional,
+            ),
+        }
+    }
+
+    /// `matches_usage` of `deps_rules_z3.py` (spec §10).
+    fn spec_matches(kind: Kind, usage: UsageContext) -> bool {
+        match usage {
+            UsageContext::Runtime => matches!(kind, Kind::Runtime | Kind::Optional),
+            UsageContext::Type => matches!(kind, Kind::Type | Kind::Runtime | Kind::Optional),
+            UsageContext::Test | UsageContext::Docs | UsageContext::Dev => {
+                matches!(kind, Kind::Dev | Kind::Runtime | Kind::Optional)
+            },
+        }
+    }
+
+    const GROUPS: [(&str, Kind); 4] = [
+        ("dev", Kind::Dev),
+        ("typing", Kind::Type),
+        ("server", Kind::Runtime),
+        // Unlisted groups fall back to dev.
+        ("other", Kind::Dev),
+    ];
+
+    fn any_group() -> (&'static str, Kind) {
+        GROUPS[usize::from(kani::any::<u8>() % 4)]
+    }
+
+    fn any_context() -> (DependencyContext, Kind) {
+        match kani::any::<u8>() % 4 {
+            0 => (DependencyContext::Runtime, Kind::Runtime),
+            1 => {
+                let (name, kind) = any_group();
+                (DependencyContext::Group(name.to_owned()), kind)
+            },
+            2 => (
+                DependencyContext::OptionalExtra("extra".to_owned()),
+                Kind::Optional,
+            ),
+            _ => (
+                DependencyContext::SetupExtra("extra".to_owned()),
+                Kind::Optional,
+            ),
+        }
+    }
+
+    /// The table itself; S2 (a dev/type-only declaration is not "declared"
+    /// for runtime usage, so it reaches CHK005 rather than CHK003/CHK004)
+    /// rests on its runtime row.
+    #[kani::proof]
+    fn bucket_matches_usage_follows_spec_table() {
+        let (bucket, kind) = any_bucket();
+        let usage = any_usage();
+        assert_eq!(
+            bucket_matches_usage(&bucket, usage),
+            spec_matches(kind, usage)
+        );
+    }
+
+    /// A declaration counts for a usage when its own group or the group that
+    /// includes it (PEP 735) does, under the configured group classification.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn declaration_matches_usage_follows_own_and_including_group() {
+        let groups = DependencyGroupsConfig {
+            dev_groups: vec!["dev".to_owned()],
+            runtime_groups: vec!["server".to_owned()],
+            type_groups: vec!["typing".to_owned()],
+        };
+        let (context, own_kind) = any_context();
+        let includer = kani::any::<bool>().then(any_group);
+        let dep = DeclaredDependency {
+            name: "pkg".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context,
+            origin: DependencyOrigin {
+                file: String::new(),
+                line: None,
+                label: String::new(),
+            },
+            opaque: false,
+            included_via: includer
+                .map(|(name, _)| vec![vec![name.to_owned(), "inner".to_owned()]])
+                .unwrap_or_default(),
+        };
+        let usage = any_usage();
+
+        let expected = spec_matches(own_kind, usage)
+            || includer.is_some_and(|(_, kind)| spec_matches(kind, usage));
+        assert_eq!(declaration_matches_usage(&dep, usage, &groups), expected);
+    }
 }
 
 #[cfg(test)]
