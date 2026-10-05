@@ -600,6 +600,15 @@ fn in_tree_path_source_manifest_governs_its_tree() {
     assert_eq!(rules_mentioning(&report, "urllib3"), [RuleId::Chk004]);
 }
 
+/// Issue #509: `acme.cli:main` in `project.scripts` reaches the `acme` path
+/// source with no import of it, and that still uses the dependency.
+#[test]
+fn path_source_reached_only_from_an_entry_point_is_used() {
+    let report = reconcile_fixture("uv_path_source_member");
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "acme"));
+    assert!(report.used_distributions.contains("acme"));
+}
+
 #[test]
 fn uv_workspace_source_dependency_is_used() {
     let report = reconcile_fixture("uv_workspace_source");
