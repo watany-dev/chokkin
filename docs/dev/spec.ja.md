@@ -423,7 +423,7 @@ root直下の <package>/__init__.py (flat layout) があり、明確なentryが�
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 
-library mode の public surface は wheel target 設定から静的に求める (v0.5 R-05): `[tool.hatch.build.targets.wheel]` (なければ `[tool.hatch.build]`) の `packages` / `only-include`、`[tool.setuptools]` の `packages` / `packages.find` / `package-dir` / `py-modules`、`[tool.pdm.build]` の `includes`、`[tool.flit.module]`、`[tool.maturin]` の `python-source` / `module-name`。`build-backend` が既知ならその backend の table だけを読む。hatch の `sources` による path 書き換えは読まない。surface 外の未到達 file は CHK001 を app mode 相当の confidence に戻し、surface 外 module の symbol は CHK006 を app mode 相当 (warning) にする。設定がない、または一致する file がない場合は従来どおり全 file を public 扱いにする。
+library mode の public surface は wheel target 設定から静的に求める (v0.5 R-05): `[tool.hatch.build.targets.wheel]` (なければ `[tool.hatch.build]`) の `packages` / `include` / `only-include`、`[tool.setuptools]` の `packages` / `packages.find` / `package-dir` / `py-modules`、`[tool.pdm.build]` の `includes`、`[tool.flit.module]`、`[tool.maturin]` の `python-source` / `module-name`。`build-backend` が既知ならその backend の table だけを読む。hatch の `sources` による path 書き換えは読まない。surface 外の未到達 file は CHK001 を app mode 相当の confidence に戻し、surface 外 module の symbol は CHK006 を app mode 相当 (warning) にする。設定がない、または一致する file がない場合は従来どおり全 file を public 扱いにする。wheel target が宣言されているのに一致する file がない場合 (`bypass-selection = true` を含む) は code を持たない metapackage とみなし、配布する依存を CHK002 の対象外にする (§10、#529)。
 
 ## 9. plugin仕様
 
@@ -593,6 +593,11 @@ stub package (types-* / *-stubs)
   -> importされないため素朴にはCHK002になる
   -> 対応するruntime packageの使用があればtype contextでused扱い
   -> runtime package自体が未使用なら、stubも併せてunused報告する
+
+metapackage (wheel target が一致する file を持たない、または hatch の bypass-selection)
+  -> 配布する依存そのものが中身なので、import されなくても未使用ではない
+  -> project.dependencies / extras は CHK002 の対象外 (#529)
+  -> dependency group は配布しないので従来どおり判定する
 ```
 
 `TYPE_CHECKING` 配下のimportはtype contextにする。`import typing as t` や
@@ -1038,7 +1043,7 @@ llama_index / transformers / openai-python / langchain、commit SHA pinned) は
 に project ごとの `reachable_runtime` の下限 (直近の実測の 90%) と rule 別 issue 数を
 固定し、下限割れか rule 別件数が base + max(5, base/5) を超えると expectations gate が
 失敗する。exit 2 (CLI/config error) も gate で 0 件を要求する。この corpus の CHK002
-もラベル付けは必須だが、件数は expectations で固定するので FP 率の分母には入れない。
+も他の project と同じくラベル付けを必須とし、FP 率の分母に入れる (#529)。
 
 **現状 (v0.1.0): §17 exit criteria達成。** Phase 1.5 完了後の OSS 20 件検証で
 CHK002 誤検知率 **0.0% (0 FP / 2 reported)**、recall sentinel **2/2 検出**、
