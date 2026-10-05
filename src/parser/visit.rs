@@ -93,6 +93,9 @@ impl<'a> ModuleVisitor<'a> {
             .map(str::to_owned)
             .collect();
         self.parsed.used_import_bindings = used.into_iter().collect();
+        for symbol in &mut self.parsed.symbols {
+            symbol.used_in_module = self.loaded_names.contains(&symbol.name);
+        }
         self.parsed
     }
 
@@ -313,6 +316,7 @@ impl<'a> ModuleVisitor<'a> {
             is_public,
             decorators: normalized,
             in_type_checking: self.in_type_checking,
+            used_in_module: false,
         });
     }
 
@@ -636,6 +640,22 @@ mod tests {
             "import os.path\nimport json as js\nfrom acme import used, unused, orig as alias\nfrom acme.models import *\n\ndef f():\n    return used, alias, os.sep, js\n\nunused = 1\n",
         );
         assert_eq!(parsed.used_import_bindings, ["alias", "js", "os", "used"]);
+    }
+
+    #[test]
+    fn marks_symbols_read_in_their_own_module() {
+        let parsed = visit_source(
+            "T = TypeVar(\"T\")\n\nclass Res:\n    pass\n\nclass C:\n    def get(self) -> Res:\n        x: T\n\ndef unused():\n    pass\n",
+        );
+        let used: Vec<_> = parsed
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.name.as_str(), symbol.used_in_module))
+            .collect();
+        assert_eq!(
+            used,
+            [("T", true), ("Res", true), ("C", false), ("unused", false)]
+        );
     }
 
     #[test]

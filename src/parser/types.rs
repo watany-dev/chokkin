@@ -123,6 +123,9 @@ pub struct SymbolDef {
     /// Defined inside a `TYPE_CHECKING` block.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub in_type_checking: bool,
+    /// The name is read somewhere in its own module (annotations included).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub used_in_module: bool,
 }
 
 /// Inline or file-level ignore directive (§18).

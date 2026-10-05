@@ -165,7 +165,11 @@ fn detect_unused_exports(
             continue;
         }
         let mode = mode_for(&entry.path);
-        if mode == ProjectMode::Library && public_api.exports_symbol(entry) {
+        // A library cannot make a name private that its own module reads:
+        // it is a TypeVar, an alias, or a type reached through an attribute (#540).
+        if mode == ProjectMode::Library
+            && (entry.def.used_in_module || public_api.exports_symbol(entry))
+        {
             continue;
         }
 

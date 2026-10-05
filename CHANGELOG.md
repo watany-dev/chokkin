@@ -47,8 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488).
 - Breaking change for the Rust library API: `ParsedModule` gains
   `used_import_bindings` (#489).
+- Breaking change for the Rust library API: `SymbolDef` gains
+  `used_in_module` (#540).
 
 ### Fixed
+- Library mode no longer reports CHK006 for a symbol its own module reads
+  (TypeVars, type aliases, classes reached only as an attribute's type,
+  module-level helpers and loggers); app mode still does. openai-python
+  CHK006 258 → 20, transformers 11700 → 1299 (#540).
 - A declared or locked distribution whose name differs from its import only
   by a `python-` / `py-` / `py` prefix or `-python` / `-py` / `py` suffix
   (`pydocket` for `docket`, `discord-py` for `discord`) now satisfies the
