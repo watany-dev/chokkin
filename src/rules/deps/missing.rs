@@ -519,6 +519,7 @@ mod tests {
         index.insert("requests".to_owned(), vec![&requests]);
         let transitive = LockfileGraph {
             edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
+            ..LockfileGraph::default()
         };
         assert!(is_transitive_only("urllib3", &index, &transitive));
         assert!(!is_transitive_only("certifi", &index, &transitive));
@@ -535,6 +536,7 @@ mod tests {
                 ("urllib3".to_owned(), Vec::new()),
                 ("pyyaml".to_owned(), Vec::new()),
             ]),
+            ..LockfileGraph::default()
         };
 
         let edge = detect(&index, "urllib3", transitive());
@@ -587,6 +589,7 @@ mod tests {
 
         let transitive = LockfileGraph {
             edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),
+            ..LockfileGraph::default()
         };
         assert_eq!(detect(&index, "pytest", transitive), []);
     }

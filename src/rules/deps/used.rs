@@ -6,7 +6,7 @@ use indexmap::IndexSet;
 
 use crate::config::{Confidence, ProjectMode};
 use crate::graph::{ModuleOrigin, ProjectGraph};
-use crate::manifest::{LoadedManifest, normalize_distribution_name};
+use crate::manifest::{LoadedManifest, LockfileGraph, normalize_distribution_name};
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolutionIndex, import_root};
@@ -22,6 +22,32 @@ pub(super) fn build_declared_index(manifest: &LoadedManifest) -> DeclaredIndex<'
     let mut index: DeclaredIndex<'_> = BTreeMap::new();
     for dep in &manifest.dependencies {
         index.entry(dep.name.clone()).or_default().push(dep);
+    }
+    index
+}
+
+/// [`build_declared_index`] plus the distributions `lockfile` says a
+/// declared `pkg[extra]` adds, each indexed under the declaration that
+/// requested it: the user asked for them explicitly, so importing one is not
+/// CHK003 (#516).
+pub(super) fn build_import_declared_index<'a>(
+    manifest: &'a LoadedManifest,
+    lockfile: &LockfileGraph,
+) -> DeclaredIndex<'a> {
+    let mut index = build_declared_index(manifest);
+    for dep in &manifest.dependencies {
+        let Some(extras) = lockfile.extras.get(&dep.name) else {
+            continue;
+        };
+        for extra in &dep.extras {
+            for name in extras
+                .get(&normalize_distribution_name(extra))
+                .into_iter()
+                .flatten()
+            {
+                index.entry(name.clone()).or_default().push(dep);
+            }
+        }
     }
     index
 }
@@ -553,6 +579,7 @@ mod tests {
         let resolution = ResolutionIndex {
             transitive: LockfileGraph {
                 edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
+                ..LockfileGraph::default()
             },
             ..ResolutionIndex::default()
         };

@@ -14,11 +14,11 @@ use crate::rules::{DependencyRuleContext, RuleContext};
 use super::binary::detect_unlisted_binaries;
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::detect_misplaced_dependencies;
-use super::missing::detect_missing_dependencies;
+use super::missing::{WorkspaceDeclaredIndex, detect_missing_dependencies};
 use super::script::{detect_script_dependency_issues, is_script_third_party};
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
 use super::used::{
-    build_declared_index, collect_used_distributions, has_lockfile,
+    build_declared_index, build_import_declared_index, collect_used_distributions, has_lockfile,
     mark_pytest_plugin_distributions, mark_self_referential_distribution,
     mark_workspace_source_distributions, reachable_paths, usage_paths,
 };
@@ -102,13 +102,8 @@ fn reconcile_project(
         ..
     } = *context;
     let declared = build_declared_index(manifest);
-    let workspace_declared = workspace_boundaries
-        .iter()
-        .map(|boundary| super::missing::WorkspaceDeclaredIndex {
-            member_id: boundary.member_id,
-            declared: build_declared_index(boundary.manifest),
-        })
-        .collect::<Vec<_>>();
+    let workspace_declared = workspace_declared_indices(manifest, workspace_boundaries);
+    let import_declared = build_import_declared_index(manifest, &manifest.lockfile);
     let lockfile_present = has_lockfile(manifest, resolution);
     let reachable = reachable_paths(graph, reachability);
     let usage = usage_paths(&reachable, reachability);
@@ -151,7 +146,7 @@ fn reconcile_project(
     lower_unused_when_a_skipped_file_is_reached(&mut candidates, context, &reachable);
 
     candidates.extend(detect_missing_dependencies(
-        &declared,
+        &import_declared,
         dependency,
         &reachable,
         lockfile_present,
@@ -159,7 +154,7 @@ fn reconcile_project(
     ));
 
     candidates.extend(detect_misplaced_dependencies(
-        &declared,
+        &import_declared,
         dependency,
         &reachable,
         &workspace_declared,
@@ -178,6 +173,27 @@ fn reconcile_project(
         candidates,
         used_distributions: used,
     }
+}
+
+fn workspace_declared_indices<'a>(
+    root: &LoadedManifest,
+    workspace_boundaries: &[WorkspaceDependencyBoundary<'a>],
+) -> Vec<WorkspaceDeclaredIndex<'a>> {
+    workspace_boundaries
+        .iter()
+        .map(|boundary| {
+            // A uv workspace keeps one lockfile at the root for every member.
+            let lockfile = if boundary.manifest.sources.lockfile.is_some() {
+                &boundary.manifest.lockfile
+            } else {
+                &root.lockfile
+            };
+            WorkspaceDeclaredIndex {
+                member_id: boundary.member_id,
+                declared: build_import_declared_index(boundary.manifest, lockfile),
+            }
+        })
+        .collect()
 }
 
 /// Map a `types-*` stub name to its runtime package when the pattern is known.

@@ -816,6 +816,66 @@ fn binary_malformed_dynamic_import_names_do_not_abort_analysis() {
     assert_eq!(parsed["issues"], serde_json::json!([]), "{parsed}");
 }
 
+/// `llama_index`'s azurepostgresql member: `psycopg[pool]` brings in
+/// `psycopg-pool` through the lock's `optional-dependencies` (#516). An
+/// undeclared monorepo locks each member; a uv workspace locks at the root.
+fn extras_member_project(requirement: &str, uv_workspace: bool) -> tempfile::TempDir {
+    let (root, lock) = if uv_workspace {
+        (
+            "[tool.uv.workspace]\nmembers = [\"vector-stores\"]\n",
+            "uv.lock",
+        )
+    } else {
+        ("", "vector-stores/uv.lock")
+    };
+    write_project(&[
+        (
+            "pyproject.toml",
+            &format!("[project]\nname = \"llama-index\"\nversion = \"0.1.0\"\n\n{root}"),
+        ),
+        (
+            "vector-stores/pyproject.toml",
+            &format!(
+                "[project]\nname = \"vector-stores\"\nversion = \"0.1.0\"\ndependencies = [\"{requirement}\"]\n\n[project.scripts]\nvs = \"vector_stores.cli:main\"\n"
+            ),
+        ),
+        (
+            lock,
+            "version = 1\n\n\
+             [[package]]\nname = \"vector-stores\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n\
+             dependencies = [{ name = \"psycopg\", extra = [\"pool\"] }]\n\n\
+             [[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\n\n\
+             [package.optional-dependencies]\npool = [{ name = \"psycopg-pool\" }]\n\n\
+             [[package]]\nname = \"psycopg-pool\"\nversion = \"3.2.0\"\n",
+        ),
+        ("vector-stores/vector_stores/__init__.py", ""),
+        (
+            "vector-stores/vector_stores/cli.py",
+            "import psycopg\nimport psycopg_pool\n\n\ndef main():\n    return psycopg, psycopg_pool\n",
+        ),
+    ])
+}
+
+#[test]
+fn binary_extra_distributions_count_as_declared() {
+    for uv_workspace in [false, true] {
+        let undeclared = |requirement: &str| {
+            let project = extras_member_project(requirement, uv_workspace);
+            json_issues(project.path(), &[])
+                .into_iter()
+                .filter(|issue| {
+                    matches!(issue["code"].as_str(), Some("CHK003" | "CHK004"))
+                        && issue["distribution"] == "psycopg-pool"
+                })
+                .count()
+        };
+
+        assert_eq!(undeclared("psycopg[binary,Pool]~=3.0"), 0, "{uv_workspace}");
+        assert_eq!(undeclared("psycopg[binary]~=3.0"), 1, "{uv_workspace}");
+        assert_eq!(undeclared("psycopg~=3.0"), 1, "{uv_workspace}");
+    }
+}
+
 #[test]
 fn binary_notebooks_are_entry_roots() {
     let notebook = r#"{"cells": [{"cell_type": "code", "source": ["from acme import plotting\n", "plotting.draw()\n"]}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}"#;
