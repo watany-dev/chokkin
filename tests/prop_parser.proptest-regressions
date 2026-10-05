@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b0d3b2a455e3128dd420d12a6cbbd62d2a635d6313e48c2022792a98d8127ee1 # shrinks to header = 0, file_ignore = true, imports = [("zza", false, 0)], eol = "\n", bom = true
+cc 25cf1e8d44305fa11ba0ca5a210ec5d7b0d82b6961641a9f6caca63a7ff43157 # shrinks to header = 0, file_ignore = false, imports = [("zza", true, 1)], eol = "\r", bom = false
