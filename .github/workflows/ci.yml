@@ -130,6 +130,11 @@ jobs:
           toolchain: stable
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # The old key holds tarpaulin's plain build. llvm-cov builds into
+          # target/llvm-cov-target, and an exact key hit skips the save, so
+          # without a new key the instrumented deps are rebuilt on every run.
+          key: llvm-cov
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-llvm-cov@0.9.1
