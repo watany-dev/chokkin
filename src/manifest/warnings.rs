@@ -11,6 +11,12 @@ pub enum ManifestWarning {
         /// Root-relative path to `setup.py`.
         file: String,
     },
+    /// Runtime dependencies could not be read statically; CHK003/CHK004 are
+    /// downgraded to low-confidence info.
+    RuntimeDependenciesUnknown {
+        /// Root-relative manifest file declaring the unreadable dependencies.
+        file: String,
+    },
     /// Poetry manifest sections were detected.
     PoetryDetected,
     /// PDM manifest sections were detected.

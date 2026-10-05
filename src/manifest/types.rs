@@ -237,6 +237,10 @@ pub struct ManifestSources {
     pub lockfile: Option<LockfileSource>,
     /// Poetry sections were detected.
     pub poetry: bool,
+    /// Runtime dependencies are declared in a form that could not be read
+    /// statically, so CHK003/CHK004 findings are downgraded (#491).
+    #[serde(default)]
+    pub runtime_dependencies_unknown: bool,
 }
 
 /// Fully extracted manifest for a project root.

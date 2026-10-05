@@ -76,6 +76,10 @@ pub fn extract_manifest(
         sources.setup_cfg = true;
     }
 
+    let static_runtime_declared = dependencies
+        .iter()
+        .any(|dep| dep.context == DependencyContext::Runtime);
+    let mut setup_py_runtime_unknown = false;
     let setup_py_path = root_path.join("setup.py");
     if setup_py_path.is_file() {
         let extracted = extract_setup_py(root_path, &setup_py_path)?;
@@ -97,7 +101,10 @@ pub fn extract_manifest(
             dependencies.extend(extracted.dependencies);
             sources.setup_py = true;
         }
+        sources.requirements_files.extend(extracted.files_read);
+        sources.requirements_missing.extend(extracted.files_missing);
         warnings.extend(extracted.warnings);
+        setup_py_runtime_unknown = extracted.runtime_unknown;
     }
 
     let dev_group = DependencyContext::Group("dev".to_owned());
@@ -113,8 +120,13 @@ pub fn extract_manifest(
         ("requirements-test.txt", &tests_group),
     ];
 
+    let mut requirements_runtime_declared = false;
     for (filename, context) in requirements_specs {
         let extracted = extract_requirements_file(root_path, filename, context)?;
+        requirements_runtime_declared |= extracted
+            .dependencies
+            .iter()
+            .any(|dep| dep.context == DependencyContext::Runtime);
         if !extracted.files_read.is_empty() {
             sources.requirements_files.extend(extracted.files_read);
         }
@@ -122,6 +134,25 @@ pub fn extract_manifest(
         dependencies.extend(extracted.dependencies);
         constraints.extend(extracted.constraints);
         warnings.extend(extracted.warnings);
+    }
+
+    // Only declarations from another source vouch for the runtime set; a
+    // partially read setup.py may still hide the rest of it.
+    let other_runtime_declared = static_runtime_declared || requirements_runtime_declared;
+    let dynamic_runtime_unknown = metadata.dynamic.iter().any(|item| item == "dependencies")
+        && !dependencies
+            .iter()
+            .any(|dep| dep.context == DependencyContext::Runtime);
+    if (setup_py_runtime_unknown && !other_runtime_declared) || dynamic_runtime_unknown {
+        sources.runtime_dependencies_unknown = true;
+        warnings.push(ManifestWarning::RuntimeDependenciesUnknown {
+            file: if setup_py_runtime_unknown {
+                "setup.py"
+            } else {
+                "pyproject.toml"
+            }
+            .to_owned(),
+        });
     }
 
     if let Some((source, graph)) = extract_lockfile(root_path)? {
@@ -208,7 +239,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v4".to_owned(),
+            unit_version: "manifest-extract-v5".to_owned(),
         },
         inputs,
     })

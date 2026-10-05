@@ -54,6 +54,10 @@ fn write_manifest_warning(
                 "manifest: skipped non-static setup.py at `{file}`"
             )
         },
+        ManifestWarning::RuntimeDependenciesUnknown { file } => write!(
+            formatter,
+            "manifest: runtime dependencies in `{file}` could not be read statically; missing-dependency findings are reported as low-confidence info"
+        ),
         ManifestWarning::PoetryDetected => {
             write!(
                 formatter,

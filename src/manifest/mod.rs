@@ -15,6 +15,7 @@ mod requirements;
 mod script;
 mod setup_cfg;
 mod setup_py;
+mod setup_py_eval;
 mod types;
 pub(crate) mod util;
 mod uv_lock;
