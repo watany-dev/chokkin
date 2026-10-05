@@ -64,9 +64,6 @@ pub enum AnalyzeError {
     /// Baseline read/write failed.
     #[error(transparent)]
     Baseline(#[from] BaselineError),
-    /// Invalid CLI invocation.
-    #[error("invalid CLI: {0}")]
-    Usage(String),
 }
 
 impl AnalyzeError {
@@ -75,7 +72,7 @@ impl AnalyzeError {
     pub const fn is_usage_error(&self) -> bool {
         match self {
             Self::Probe(error) => error.is_usage_error(),
-            Self::Plugins(_) | Self::Parse(_) | Self::Usage(_) => true,
+            Self::Plugins(_) | Self::Parse(_) => true,
             Self::Graph(_) | Self::Reachability(_) | Self::Baseline(_) => false,
         }
     }

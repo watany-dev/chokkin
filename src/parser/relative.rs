@@ -43,6 +43,31 @@ pub fn resolve_relative_import(
     })
 }
 
+/// `__package__` of the module at `file_path`: the module itself for a
+/// package `__init__.py`, its parent otherwise.
+#[must_use]
+pub fn module_package(file_path: &str, layout: &LayoutInfo) -> Option<String> {
+    let current_module = path_to_module(file_path, layout)?;
+    Some(containing_package(
+        &current_module,
+        file_path.ends_with("__init__.py"),
+    ))
+}
+
+/// Absolute name of a dotted relative `name` against `package`, as
+/// `importlib.util.resolve_name` computes it.
+#[must_use]
+pub fn resolve_relative_name(name: &str, package: &str) -> Option<String> {
+    let suffix = name.trim_start_matches('.');
+    let level = u8::try_from(name.len() - suffix.len()).ok()?;
+    let base = ascend_package(package, level)?;
+    Some(if suffix.is_empty() {
+        base
+    } else {
+        join_module(&base, suffix)
+    })
+}
+
 /// Build a diagnostic for an unresolved relative import.
 #[must_use]
 pub fn unresolved_relative_diagnostic(path: &str, line: u32) -> ParseDiagnostic {
@@ -110,6 +135,20 @@ mod tests {
             inferred_globs: Vec::new(),
             members: Vec::new(),
         }
+    }
+
+    #[test]
+    fn resolve_relative_name_mirrors_importlib() {
+        assert_eq!(
+            resolve_relative_name(".sub", "acme"),
+            Some("acme.sub".to_owned())
+        );
+        assert_eq!(
+            resolve_relative_name("..", "acme.api"),
+            Some("acme".to_owned())
+        );
+        assert_eq!(resolve_relative_name("..sub", "acme"), None);
+        assert_eq!(resolve_relative_name(".sub", ""), None);
     }
 
     #[test]

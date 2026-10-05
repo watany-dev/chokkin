@@ -8,7 +8,7 @@ use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
 use crate::entry::{EntryPlan, add_member_manifest_roots, build_entry_roots, is_library_member};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
-use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
+use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
@@ -341,7 +341,9 @@ fn build_analysis_graph(
     for module in &parse.modules {
         let file_id = graph
             .file_id(&module.path)
-            .ok_or_else(|| AnalyzeError::Usage(format!("unknown parsed file `{}`", module.path)))?;
+            .ok_or_else(|| GraphError::Invariant {
+                detail: format!("unknown parsed file `{}`", module.path),
+            })?;
         add_parsed_imports(&mut graph, file_id, module)?;
     }
     for reference in plugins.module_refs() {
