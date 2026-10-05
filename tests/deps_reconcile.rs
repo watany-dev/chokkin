@@ -238,6 +238,21 @@ fn transitive_urllib3_emits_chk004() {
     assert_eq!(candidate.severity, Severity::Error);
 }
 
+#[test]
+fn optional_transitive_import_prefers_chk004() {
+    let report = reconcile_fixture("transitive_urllib3_optional");
+    let rules = |needle: &str| {
+        report
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.message.contains(needle))
+            .map(|candidate| (candidate.rule, candidate.severity))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rules("urllib3"), [(RuleId::Chk004, Severity::Error)]);
+    assert_eq!(rules("pyyaml"), [(RuleId::Chk003, Severity::Info)]);
+}
+
 fn chk004_summary(name: &str) -> Vec<(String, Severity, Confidence)> {
     reconcile_fixture(name)
         .candidates
