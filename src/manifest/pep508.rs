@@ -89,6 +89,11 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
             Some(inner) => (inner.strip_suffix(')')?.trim(), true),
             None => (spec, false),
         };
+        // `packaging` allows one trailing comma after the last specifier.
+        let spec = match spec.strip_suffix(',').map(str::trim_end) {
+            Some(head) if !head.is_empty() && !head.ends_with(',') => head,
+            _ => spec,
+        };
         let version = if spec.is_empty() {
             if parenthesized {
                 return None;
@@ -545,6 +550,26 @@ mod tests {
     }
 
     #[test]
+    fn one_trailing_specifier_comma_is_accepted_like_packaging() {
+        for (input, spec) in [
+            ("pkg>=1,", ">=1"),
+            ("pkg >=1 , <2 ,", ">=1, <2"),
+            ("pkg (>=1 , )", ">=1"),
+            ("pkg>=1, ; os_name == 'nt'", ">=1"),
+        ] {
+            let requirement = parse(input).unwrap_or_else(|| panic!("{input:?} must parse"));
+            assert_eq!(
+                requirement.version_or_url.as_deref(),
+                Some(spec),
+                "{input:?}"
+            );
+        }
+        for input in ["pkg ,", "pkg>=1,,", "pkg (,)"] {
+            assert_eq!(parse(input), None, "{input:?}");
+        }
+    }
+
+    #[test]
     fn invalid_extra_names_are_rejected_without_panicking() {
         // Regression: pep508_rs 0.9 panics on these.
         for input in ["pkg[a-]", "1[1-", "pkg[a-]>=1", "pkg[-a]"] {
@@ -619,6 +644,142 @@ mod tests {
     mod props {
         use super::*;
         use proptest::prelude::*;
+
+        const OPERATORS: [&str; 7] = ["==", "!=", ">=", "<=", "<", ">", "~="];
+        const SUFFIXES: [&str; 5] = ["", "a1", ".post1", ".dev0", "rc2"];
+        const MARKERS: [&str; 5] = [
+            "python_version < '3.11'",
+            "extra == 'dev'",
+            "'linux' in sys_platform",
+            "os_name != \"nt\" and (platform_machine == 'x86_64' or extra not in 'a')",
+            "(python_full_version>='3.8')",
+        ];
+
+        fn space() -> impl Strategy<Value = &'static str> {
+            prop::sample::select(["", " ", "  ", "\t"].as_slice())
+        }
+
+        /// One valid specifier: `(text as written, text without whitespace)`.
+        fn specifier() -> impl Strategy<Value = (String, String)> {
+            (
+                prop::sample::select(OPERATORS.as_slice()),
+                prop::collection::vec(0u16..300, 1..4),
+                prop::sample::select(SUFFIXES.as_slice()),
+                any::<bool>(),
+                space(),
+            )
+                .prop_map(|(op, release, suffix, star, gap)| {
+                    let mut version = release
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    if op == "~=" && release.len() < 2 {
+                        version.push_str(".0");
+                    }
+                    if star && matches!(op, "==" | "!=") {
+                        version.push_str(".*");
+                    } else {
+                        version.push_str(suffix);
+                    }
+                    (format!("{op}{gap}{version}"), format!("{op}{version}"))
+                })
+        }
+
+        fn requirement() -> impl Strategy<Value = (String, Requirement)> {
+            (
+                "[A-Za-z0-9]([A-Za-z0-9._-]{0,8}[A-Za-z0-9])?",
+                prop::option::of(prop::collection::vec(
+                    "[A-Za-z0-9]([A-Za-z0-9._-]{0,6}[A-Za-z0-9])?",
+                    0..3,
+                )),
+                prop::collection::vec(specifier(), 0..4),
+                (any::<bool>(), any::<bool>()),
+                prop::option::of(prop::sample::select(MARKERS.as_slice())),
+                prop::collection::vec(space(), 6),
+            )
+                .prop_map(
+                    |(name, extras, specifiers, (comma, parens), marker, gaps)| {
+                        let mut text = format!("{}{name}{}", gaps[0], gaps[1]);
+                        if let Some(extras) = &extras {
+                            text.push('[');
+                            text.push_str(&extras.join(&format!("{},{}", gaps[2], gaps[3])));
+                            text.push(']');
+                        }
+                        let written: Vec<&str> = specifiers
+                            .iter()
+                            .map(|(written, _)| written.as_str())
+                            .collect();
+                        let mut spec = written.join(&format!("{},{}", gaps[2], gaps[4]));
+                        if comma && !spec.is_empty() {
+                            spec.push(',');
+                        }
+                        if parens && !spec.is_empty() {
+                            spec = format!("({}{spec}{})", gaps[3], gaps[5]);
+                        }
+                        text.push_str(gaps[4]);
+                        text.push_str(&spec);
+                        if let Some(marker) = marker {
+                            text = format!("{text}{};{}{marker}{}", gaps[5], gaps[0], gaps[1]);
+                        }
+                        let canonical: Vec<&str> = specifiers
+                            .iter()
+                            .map(|(_, canonical)| canonical.as_str())
+                            .collect();
+                        let expected = Requirement {
+                            name,
+                            extras: extras
+                                .unwrap_or_default()
+                                .iter()
+                                .map(|extra| normalize_distribution_name(extra))
+                                .collect(),
+                            version_or_url: (!canonical.is_empty()).then(|| canonical.join(", ")),
+                            marker: marker.map(str::to_owned),
+                        };
+                        (text, expected)
+                    },
+                )
+        }
+
+        fn render(requirement: &Requirement) -> String {
+            let extras = if requirement.extras.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", requirement.extras.join(","))
+            };
+            let version = requirement.version_or_url.as_deref().unwrap_or_default();
+            let marker = requirement
+                .marker
+                .as_deref()
+                .map_or_else(String::new, |marker| format!(" ; {marker}"));
+            format!("{}{extras} {version}{marker}", requirement.name)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            #[test]
+            fn grammar_valid_requirements_parse_to_their_parts((text, expected) in requirement()) {
+                prop_assert_eq!(parse_requirement(&text), Some(expected), "{:?}", text);
+            }
+
+            #[test]
+            fn rendered_requirement_reparses_to_itself((text, _) in requirement()) {
+                let Some(parsed) = parse_requirement(&text) else {
+                    return Ok(());
+                };
+                prop_assert_eq!(parse_requirement(&render(&parsed)), Some(parsed), "{:?}", text);
+            }
+
+            #[test]
+            fn specifier_set_splits_like_its_parts(specifiers in prop::collection::vec(specifier(), 1..5)) {
+                let written: Vec<&str> = specifiers.iter().map(|(written, _)| written.as_str()).collect();
+                let parsed = parse_version_specifiers(&written.join(" , "));
+                let texts = parsed.map(|parsed| parsed.into_iter().map(|spec| spec.text).collect::<Vec<_>>());
+                let canonical: Vec<String> = specifiers.into_iter().map(|(_, canonical)| canonical).collect();
+                prop_assert_eq!(texts, Some(canonical));
+            }
+        }
 
         proptest! {
             #[test]

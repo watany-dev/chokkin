@@ -143,6 +143,26 @@
       "valid": false
     },
     {
+      "input": "foo>=1.0,",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo (>=1.0, <2 ,)",
+      "valid": true,
+      "name": "foo",
+      "extras": []
+    },
+    {
+      "input": "foo>=1.0,,",
+      "valid": false
+    },
+    {
+      "input": "foo ,",
+      "valid": false
+    },
+    {
       "input": "foo==1.0.*",
       "valid": true,
       "name": "foo",
