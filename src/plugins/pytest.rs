@@ -170,6 +170,8 @@ pub struct PytestImportSettings {
     /// `--import-mode=importlib` in `addopts`: test and conftest directories
     /// are not put on `sys.path`.
     pub importlib: bool,
+    /// `testpaths` entries, relative to the config file's directory.
+    pub testpaths: Vec<String>,
 }
 
 /// Read [`PytestImportSettings`] from the config file pytest itself picks.
@@ -220,13 +222,14 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
                 .collect(),
             _ => Vec::new(),
         });
-    let pythonpath = match options.get("pythonpath") {
+    let words = |key: &str| match options.get(key) {
         Some(toml::Value::String(text)) => split_words(text),
-        _ => str_list(options, "pythonpath"),
+        _ => str_list(options, key),
     };
     Some(PytestImportSettings {
-        pythonpath,
+        pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&addopts),
+        testpaths: words("testpaths"),
     })
 }
 
@@ -235,6 +238,7 @@ fn ini_import_settings(section: &IniSection) -> PytestImportSettings {
     PytestImportSettings {
         pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&words("addopts")),
+        testpaths: words("testpaths"),
     }
 }
 
@@ -323,6 +327,7 @@ mod tests {
             PytestImportSettings {
                 pythonpath: Vec::new(),
                 importlib: true,
+                testpaths: Vec::new(),
             }
         );
     }

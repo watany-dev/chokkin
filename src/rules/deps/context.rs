@@ -140,18 +140,29 @@ fn bucket_matches_usage(bucket: &DeclarationBucket, usage: UsageContext) -> bool
 pub(super) fn usage_context_for_import(
     file: &str,
     import_context: ImportContext,
-    _sources: &DiscoveredSources,
+    sources: &DiscoveredSources,
 ) -> UsageContext {
     match import_context {
         ImportContext::Type => UsageContext::Type,
         ImportContext::Test => UsageContext::Test,
-        ImportContext::Runtime => match assign_file_context(file) {
+        ImportContext::Runtime => match file_context(file, sources) {
             FileContext::Test => UsageContext::Test,
             FileContext::Docs => UsageContext::Docs,
             FileContext::Dev => UsageContext::Dev,
             FileContext::Runtime => UsageContext::Runtime,
         },
     }
+}
+
+/// The context discovery gave `file` (pytest `testpaths` make it test),
+/// falling back to its path for a file outside the discovered set.
+fn file_context(file: &str, sources: &DiscoveredSources) -> FileContext {
+    sources
+        .files
+        .binary_search_by(|candidate| candidate.path.as_str().cmp(file))
+        .ok()
+        .and_then(|index| sources.files.get(index))
+        .map_or_else(|| assign_file_context(file), |found| found.context)
 }
 
 /// Whether a declaration is considered directly declared for the usage context.
@@ -413,6 +424,20 @@ mod tests {
         assert_eq!(
             usage_context_for_import("src/acme/app.py", ImportContext::Runtime, &sources),
             UsageContext::Runtime
+        );
+    }
+
+    #[test]
+    fn discovered_context_wins_over_path() {
+        let mut sources = empty_sources();
+        sources.files.push(crate::sources::DiscoveredFile {
+            path: "t/unit/helpers.py".to_owned(),
+            kind: crate::sources::FileKind::Python,
+            context: FileContext::Test,
+        });
+        assert_eq!(
+            usage_context_for_import("t/unit/helpers.py", ImportContext::Runtime, &sources),
+            UsageContext::Test
         );
     }
 }
