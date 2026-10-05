@@ -388,6 +388,37 @@ fn duplicate_requests_emits_chk009() {
     assert!(duplicate.message.contains("dev"));
 }
 
+/// #507: a group declaration that adds extras the runtime one lacks refines
+/// it instead of repeating it, even when the distribution is a path source.
+#[test]
+fn group_declaration_with_extra_extras_is_not_a_duplicate() {
+    let report = reconcile_fixture("duplicate_refined_extras");
+    assert!(!has_dist_rule(&report, RuleId::Chk009, "streamlit"));
+    let duplicate = candidate_for_distribution(&report, RuleId::Chk009, "requests")
+        .expect("requests duplicate");
+    assert_eq!(
+        duplicate.message,
+        "requests is declared in multiple contexts: group:dev, runtime"
+    );
+}
+
+/// #494: extras and groups do not duplicate each other and the project's own
+/// extras are never duplicates; only the same list twice is.
+#[test]
+fn duplicates_across_extras_and_groups_are_not_reported() {
+    let report = reconcile_fixture("duplicate_across_extras");
+    for name in ["boto3", "acme", "mypy", "requests"] {
+        assert!(!has_dist_rule(&report, RuleId::Chk009, name), "{name}");
+    }
+    let duplicate =
+        candidate_for_distribution(&report, RuleId::Chk009, "pytest").expect("pytest duplicate");
+    assert_eq!(
+        duplicate.message,
+        "pytest is declared more than once in group:test"
+    );
+    assert_eq!(duplicate.origins.len(), 2);
+}
+
 #[test]
 fn marker_pywin32_emits_chk002_likely_in_strict_mode() {
     let report = reconcile_fixture_with_strict("marker_pywin32", true);
@@ -619,6 +650,25 @@ fn path_source_reached_only_from_an_entry_point_is_used() {
     let report = reconcile_fixture("uv_path_source_member");
     assert!(!has_dist_rule(&report, RuleId::Chk002, "acme"));
     assert!(report.used_distributions.contains("acme"));
+}
+
+/// Issue #553: `acme-core` from a path source ships `acme.core`, not
+/// `acme_core`, so only its member tree can tie the import back to it. Runs
+/// the full pipeline: `load_deps` leaves member layouts out, and `acme`
+/// would then resolve without going through the member tree.
+#[test]
+fn path_source_is_used_through_its_member_tree() {
+    let report = chokkin::analyze_project(
+        &fixture("uv_path_source_renamed_module"),
+        None,
+        &RuntimeOverrides::default(),
+        chokkin::AnalyzeOptions {
+            cache: chokkin::CacheOptions::disabled(),
+            ..chokkin::AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze");
+    assert_eq!(report.issues.issues, []);
 }
 
 #[test]

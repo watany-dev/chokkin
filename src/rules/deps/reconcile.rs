@@ -194,7 +194,7 @@ fn reconcile_project(
 
     candidates.extend(detect_duplicate_dependencies(
         &manifest.dependencies,
-        config,
+        manifest.metadata.name.as_deref(),
     ));
 
     sort_candidates(&mut candidates);

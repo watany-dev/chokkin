@@ -769,6 +769,72 @@ fn binary_no_auto_workspace_keeps_single_project_analysis() {
     assert!(!certain_chk001(&issues).is_empty(), "{issues:?}");
 }
 
+/// A latin-1 `setup.py` is read through its PEP 263 declaration, and one
+/// without a declaration is skipped with a warning; neither aborts the run
+/// (#552).
+#[test]
+fn binary_non_utf8_setup_py_does_not_abort_the_run() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndynamic = [\"dependencies\"]\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let declared = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("src/acme/__init__.py", "import requests\n"),
+        ("tests/test_acme.py", "import acme\n"),
+    ]);
+    fs::write(
+        declared.path().join("setup.py"),
+        b"# -*- coding: latin-1 -*-\nfrom setuptools import setup\nsetup(name='acme', author='Ren\xe9', install_requires=['requests'])\n",
+    )
+    .expect("write latin-1 setup.py");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(declared.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("manifest:"), "{stderr}");
+
+    let undeclared = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("src/acme/__init__.py", "import requests\n"),
+        ("tests/test_acme.py", "import acme\n"),
+    ]);
+    fs::write(
+        undeclared.path().join("setup.py"),
+        b"from setuptools import setup\nsetup(name='acme', author='Ren\xe9', install_requires=['requests'])\n",
+    )
+    .expect("write undeclared latin-1 setup.py");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(undeclared.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "manifest: skipped `setup.py`: not UTF-8 and no supported PEP 263 coding declaration"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("runtime dependencies in `setup.py` could not be read"),
+        "{stderr}"
+    );
+    // CHK003 for `requests` is downgraded, so no certain issue is reported.
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let keys = issue_keys(parsed["issues"].as_array().expect("issues"));
+    assert!(keys.iter().all(|(code, _)| code != "CHK003"), "{keys:?}");
+}
+
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not
 /// abort the run (#486).
 #[test]

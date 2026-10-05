@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "chokkin_version": "0.6.0",
-  "generated_at": "unix:1790578853",
+  "chokkin_version": "0.7.0",
+  "generated_at": "unix:1791191121",
   "issues": [
     {
       "fingerprint": "CHK001:docs/dev/formal/deps_rules_z3.py",
@@ -82,6 +82,16 @@
       "fingerprint": "CHK001:tests/fixtures/deps/dev_missing/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/dev_missing/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/duplicate_across_extras/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/duplicate_across_extras/src/acme/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/duplicate_refined_extras/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/duplicate_refined_extras/src/acme/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/duplicate_requests/src/acme/main.py",
@@ -272,6 +282,11 @@
       "fingerprint": "CHK001:tests/fixtures/deps/uv_path_source_member/lib/acme/cli.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/uv_path_source_member/lib/acme/cli.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/uv_path_source_renamed_module/src/app/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/uv_path_source_renamed_module/src/app/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/deps/uv_tool_constraints/src/acme/main.py",
@@ -644,11 +659,6 @@
       "target": "tests/fixtures/reachability/shipped_entries/src/acme/plugin.py"
     },
     {
-      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/reached_via_main.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/reachability/shipped_entries/src/acme/reached_via_main.py"
-    },
-    {
       "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries/src/acme/used_by_cli.py",
       "code": "CHK001",
       "target": "tests/fixtures/reachability/shipped_entries/src/acme/used_by_cli.py"
@@ -679,11 +689,6 @@
       "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/plugin.py"
     },
     {
-      "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/reached_via_main.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/reached_via_main.py"
-    },
-    {
       "fingerprint": "CHK001:tests/fixtures/reachability/shipped_entries_library/src/acme/used_by_cli.py",
       "code": "CHK001",
       "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/used_by_cli.py"
@@ -702,11 +707,6 @@
       "fingerprint": "CHK001:tests/fixtures/resolver/stdlib/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/resolver/stdlib/main.py"
-    },
-    {
-      "fingerprint": "CHK001:tests/fixtures/resolver/third_party/main.py",
-      "code": "CHK001",
-      "target": "tests/fixtures/resolver/third_party/main.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/resolver/user_map/main.py",
@@ -874,134 +874,39 @@
       "target": "script:tests/fixtures/deps/pep723_unused_script/scripts/tool.py:boto3"
     },
     {
-      "fingerprint": "CHK008:black",
-      "code": "CHK008",
-      "target": "black"
-    },
-    {
-      "fingerprint": "CHK008:build",
-      "code": "CHK008",
-      "target": "build"
-    },
-    {
-      "fingerprint": "CHK008:cogapp",
-      "code": "CHK008",
-      "target": "cogapp"
-    },
-    {
-      "fingerprint": "CHK008:coverage",
-      "code": "CHK008",
-      "target": "coverage"
-    },
-    {
-      "fingerprint": "CHK008:flake8",
-      "code": "CHK008",
-      "target": "flake8"
-    },
-    {
-      "fingerprint": "CHK008:flask",
-      "code": "CHK008",
-      "target": "flask"
-    },
-    {
-      "fingerprint": "CHK008:httpbin",
-      "code": "CHK008",
-      "target": "httpbin"
-    },
-    {
-      "fingerprint": "CHK008:httpx",
-      "code": "CHK008",
-      "target": "httpx"
-    },
-    {
-      "fingerprint": "CHK008:ipython",
-      "code": "CHK008",
-      "target": "ipython"
-    },
-    {
-      "fingerprint": "CHK008:isort",
-      "code": "CHK008",
-      "target": "isort"
-    },
-    {
-      "fingerprint": "CHK008:mkdocs",
-      "code": "CHK008",
-      "target": "mkdocs"
-    },
-    {
-      "fingerprint": "CHK008:mkdocs-material",
-      "code": "CHK008",
-      "target": "mkdocs-material"
-    },
-    {
-      "fingerprint": "CHK008:mypy",
-      "code": "CHK008",
-      "target": "mypy"
-    },
-    {
-      "fingerprint": "CHK008:pre-commit",
-      "code": "CHK008",
-      "target": "pre-commit"
-    },
-    {
       "fingerprint": "CHK008:pytest",
       "code": "CHK008",
       "target": "pytest"
     },
     {
-      "fingerprint": "CHK008:ruff",
-      "code": "CHK008",
-      "target": "ruff"
-    },
-    {
-      "fingerprint": "CHK008:sphinx",
-      "code": "CHK008",
-      "target": "sphinx"
-    },
-    {
-      "fingerprint": "CHK008:towncrier",
-      "code": "CHK008",
-      "target": "towncrier"
-    },
-    {
-      "fingerprint": "CHK008:tox",
-      "code": "CHK008",
-      "target": "tox"
-    },
-    {
-      "fingerprint": "CHK008:twine",
-      "code": "CHK008",
-      "target": "twine"
-    },
-    {
-      "fingerprint": "CHK008:typer",
-      "code": "CHK008",
-      "target": "typer"
-    },
-    {
-      "fingerprint": "CHK008:uvicorn",
-      "code": "CHK008",
-      "target": "uvicorn"
-    },
-    {
-      "fingerprint": "CHK008:virtualenv",
-      "code": "CHK008",
-      "target": "virtualenv"
-    },
-    {
-      "fingerprint": "CHK008:wheel",
-      "code": "CHK008",
-      "target": "wheel"
-    },
-    {
-      "fingerprint": "CHK010:tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme",
+      "fingerprint": "CHK010:scripts/bench-gate.py:oss_corpus",
       "code": "CHK010",
-      "target": "tests/fixtures/reachability/shipped_entries/src/acme/__main__.py:acme"
+      "target": "scripts/bench-gate.py:oss_corpus"
     },
     {
-      "fingerprint": "CHK010:tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme",
+      "fingerprint": "CHK010:scripts/oss-differential.py:oss_corpus",
       "code": "CHK010",
-      "target": "tests/fixtures/reachability/shipped_entries_library/src/acme/__main__.py:acme"
+      "target": "scripts/oss-differential.py:oss_corpus"
+    },
+    {
+      "fingerprint": "CHK010:scripts/oss-gate.py:oss_corpus",
+      "code": "CHK010",
+      "target": "scripts/oss-gate.py:oss_corpus"
+    },
+    {
+      "fingerprint": "CHK010:scripts/oss-mutation-recall.py:oss_corpus",
+      "code": "CHK010",
+      "target": "scripts/oss-mutation-recall.py:oss_corpus"
+    },
+    {
+      "fingerprint": "CHK010:scripts/oss-provision-envs.py:oss_corpus",
+      "code": "CHK010",
+      "target": "scripts/oss-provision-envs.py:oss_corpus"
+    },
+    {
+      "fingerprint": "CHK010:scripts/oss-remove-and-test.py:oss_corpus",
+      "code": "CHK010",
+      "target": "scripts/oss-remove-and-test.py:oss_corpus"
     }
   ]
 }

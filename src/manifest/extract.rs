@@ -56,9 +56,14 @@ pub fn extract_manifest(
         sources.pyproject_toml = true;
     }
 
+    // Manifest whose runtime dependencies could not be read, if any.
+    let mut runtime_unknown_in: Option<&str> = None;
     let setup_cfg_path = root_path.join("setup.cfg");
     if setup_cfg_path.is_file() {
         let extracted = extract_setup_cfg(root_path, &setup_cfg_path)?;
+        if extracted.skipped {
+            runtime_unknown_in = Some("setup.cfg");
+        }
         let kept_source = if sources.pyproject_toml {
             "pyproject.toml"
         } else {
@@ -79,11 +84,20 @@ pub fn extract_manifest(
     let static_runtime_declared = dependencies
         .iter()
         .any(|dep| dep.context == DependencyContext::Runtime);
-    let mut setup_py_runtime_unknown = false;
     let mut setup_py_files_read: Vec<String> = Vec::new();
     let setup_py_path = root_path.join("setup.py");
     if setup_py_path.is_file() {
         let extracted = extract_setup_py(root_path, &setup_py_path)?;
+        if extracted.runtime_unknown {
+            runtime_unknown_in = Some("setup.py");
+        } else if extracted
+            .dependencies
+            .iter()
+            .any(|dep| dep.context == DependencyContext::Runtime)
+        {
+            // A fully read `install_requires` vouches for a skipped setup.cfg.
+            runtime_unknown_in = None;
+        }
         let kept_source = if sources.pyproject_toml {
             "pyproject.toml"
         } else if sources.setup_cfg {
@@ -106,7 +120,6 @@ pub fn extract_manifest(
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
         warnings.extend(extracted.warnings);
-        setup_py_runtime_unknown = extracted.runtime_unknown;
     }
 
     let dev_group = DependencyContext::Group("dev".to_owned());
@@ -130,10 +143,16 @@ pub fn extract_manifest(
             continue;
         }
         let extracted = extract_requirements_file(root_path, filename, context)?;
-        requirements_runtime_declared |= extracted
-            .dependencies
-            .iter()
-            .any(|dep| dep.context == DependencyContext::Runtime);
+        if extracted.skipped {
+            if **context == DependencyContext::Runtime {
+                runtime_unknown_in.get_or_insert(filename);
+            }
+        } else {
+            requirements_runtime_declared |= extracted
+                .dependencies
+                .iter()
+                .any(|dep| dep.context == DependencyContext::Runtime);
+        }
         if !extracted.files_read.is_empty() {
             sources.requirements_files.extend(extracted.files_read);
         }
@@ -150,15 +169,15 @@ pub fn extract_manifest(
         && !dependencies
             .iter()
             .any(|dep| dep.context == DependencyContext::Runtime);
-    if (setup_py_runtime_unknown && !other_runtime_declared) || dynamic_runtime_unknown {
+    let unknown_file = match runtime_unknown_in {
+        Some(file) if !other_runtime_declared => Some(file),
+        _ if dynamic_runtime_unknown => Some("pyproject.toml"),
+        _ => None,
+    };
+    if let Some(file) = unknown_file {
         sources.runtime_dependencies_unknown = true;
         warnings.push(ManifestWarning::RuntimeDependenciesUnknown {
-            file: if setup_py_runtime_unknown {
-                "setup.py"
-            } else {
-                "pyproject.toml"
-            }
-            .to_owned(),
+            file: file.to_owned(),
         });
     }
 

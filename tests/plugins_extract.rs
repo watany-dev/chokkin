@@ -310,17 +310,22 @@ fn github_actions_plugin_records_run_binaries() {
         contrib
             .binary_usages
             .iter()
-            .any(|usage| usage.binary == "uv"
+            .any(|usage| usage.binary == "pytest"
                 && usage.origin.file == ".github/workflows/ci.yml"
                 && usage.origin.line == Some(15))
     );
+    // `uv run ruff` runs ruff; uv itself is an environment manager, not a dependency.
     assert!(
         contrib
             .binary_usages
             .iter()
-            .any(|usage| usage.binary == "pytest"
-                && usage.origin.file == ".github/workflows/ci.yml"
-                && usage.origin.line == Some(15))
+            .any(|usage| usage.binary == "ruff" && usage.origin.line == Some(15))
+    );
+    assert!(
+        !contrib
+            .binary_usages
+            .iter()
+            .any(|usage| usage.binary == "uv")
     );
 }
 

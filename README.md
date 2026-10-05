@@ -68,7 +68,7 @@ Summary: 8 issues
 | `CHK006` | `unused_export`         | public symbol not referenced from outside its module                      | warning                       |
 | `CHK007` | `unused_reexport`       | re-export (e.g. in `__init__.py`) not referenced internally               | library: info / app: warning  |
 | `CHK008` | `unlisted_binary`       | CLI used by tox/nox/pre-commit/CI without a declared dependency           | warning                       |
-| `CHK009` | `duplicate_dependency`  | declared in multiple of main/dev/optional                                 | warning                       |
+| `CHK009` | `duplicate_dependency`  | declared twice in one context, or in runtime and a group/extra            | warning                       |
 | `CHK010` | `unresolved_import`     | import that resolves to neither first-party, third-party, nor stdlib      | warning                       |
 
 Because any module top-level name is importable in Python, `unused_export` starts out as a preview rule (info-level in library mode) rather than a hard error. In library mode, a name its own module reads (a TypeVar, a type alias, a helper) is not reported either, since outside callers can reach it through the module's API.

@@ -1,0 +1,17 @@
+[project]
+name = "acme"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[project.optional-dependencies]
+s3 = ["boto3"]
+sqs = ["boto3"]
+all = ["acme[s3,sqs]"]
+
+[project.scripts]
+acme = "acme.main:main"
+
+[dependency-groups]
+dev = ["pytest", "mypy"]
+test = ["pytest", "pytest"]
+typing = ["mypy"]

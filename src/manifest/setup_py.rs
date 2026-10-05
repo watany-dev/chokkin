@@ -11,7 +11,7 @@ use super::setup_py_eval::{
     DependencyItem, SetupCall, Value, dependency_items, evaluate_setup_call,
 };
 use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
-use super::util::{DependencyPush, push_dependency, read_to_string};
+use super::util::{DependencyPush, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.py`.
@@ -36,9 +36,15 @@ pub struct SetupPyExtraction {
 
 /// Extract manifest data from `setup.py` without executing Python.
 pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, ManifestError> {
-    let contents = read_to_string(path)?;
     let rel = rel_to_root(root, path);
     let mut result = SetupPyExtraction::default();
+    let Some(contents) = read_text(path)? else {
+        result.runtime_unknown = true;
+        result
+            .warnings
+            .push(ManifestWarning::FileUndecodable { file: rel });
+        return Ok(result);
+    };
 
     let call = parse_module(&contents).and_then(|stmts| evaluate_setup_call(root, &stmts));
     let Some(call) = call else {
@@ -448,6 +454,47 @@ if __name__ == "__main__":
         let result = extract("from setuptools import setup\nsetup_kwargs = {}\n", &[]);
         assert!(result.runtime_unknown);
         assert!(!result.parsed);
+    }
+
+    fn extract_bytes(contents: &[u8]) -> SetupPyExtraction {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let setup = temp.path().join("setup.py");
+        std::fs::write(&setup, contents).expect("write setup.py");
+        extract_setup_py(temp.path(), &setup).expect("extract")
+    }
+
+    /// A latin-1 `setup.py` with its PEP 263 declaration is read like any
+    /// other (#552).
+    #[test]
+    fn declared_latin1_setup_py_is_decoded() {
+        let result = extract_bytes(
+            b"# -*- coding: latin-1 -*-\nfrom setuptools import setup\n\
+              setup(name='acme', author='Ren\xe9', install_requires=['requests'])\n",
+        );
+        assert!(result.parsed);
+        assert!(!result.runtime_unknown);
+        assert_eq!(result.metadata.name.as_deref(), Some("acme"));
+        assert_eq!(
+            names_in(&result, &DependencyContext::Runtime),
+            vec!["requests"]
+        );
+        assert_eq!(result.warnings, []);
+    }
+
+    #[test]
+    fn undecodable_setup_py_is_skipped_as_unknown() {
+        let result = extract_bytes(
+            b"from setuptools import setup\nsetup(name='acme', author='Ren\xe9', install_requires=['requests'])\n",
+        );
+        assert!(!result.parsed);
+        assert!(result.runtime_unknown);
+        assert_eq!(result.dependencies, []);
+        assert_eq!(
+            result.warnings,
+            [ManifestWarning::FileUndecodable {
+                file: "setup.py".to_owned()
+            }]
+        );
     }
 
     mod props {
