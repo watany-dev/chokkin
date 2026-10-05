@@ -426,6 +426,43 @@ mod tests {
     }
 
     #[test]
+    fn runtime_file_counts_skip_tests_and_count_reachable_files() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path();
+        fs::write(
+            root.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n\n[project.scripts]\ndemo = \"demo.cli:main\"\n",
+        )
+        .expect("write");
+        fs::create_dir_all(root.join("demo")).expect("mkdir");
+        fs::create_dir_all(root.join("tests")).expect("mkdir");
+        fs::write(root.join("demo/__init__.py"), "").expect("write");
+        fs::write(
+            root.join("demo/cli.py"),
+            "from demo import used\n\ndef main():\n    used.run()\n",
+        )
+        .expect("write");
+        fs::write(root.join("demo/used.py"), "def run():\n    pass\n").expect("write");
+        fs::write(root.join("demo/orphan.py"), "X = 1\n").expect("write");
+        fs::write(root.join("tests/test_demo.py"), "import demo.used\n").expect("write");
+
+        let report = analyze_project(
+            root,
+            None,
+            &RuntimeOverrides::default(),
+            AnalyzeOptions::default(),
+        )
+        .expect("analyze");
+        assert_eq!(
+            report.runtime_file_counts(),
+            FileCounts {
+                runtime: 4,
+                reachable_runtime: 3,
+            }
+        );
+    }
+
+    #[test]
     fn analyze_strict_passes_strict_to_dependency_reconciliation() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/deps/marker_pywin32");
         let default_report = analyze_project(
