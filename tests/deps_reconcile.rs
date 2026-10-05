@@ -716,3 +716,21 @@ fn library_package_under_lib_root_uses_its_dependencies() {
     let report = reconcile_fixture("library_lib_package_root");
     assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
+
+#[test]
+fn dev_group_declaration_does_not_hide_unused_setup_py_runtime_declaration() {
+    for strict in [false, true] {
+        let report = reconcile_fixture_with_strict("setup_py_runtime_behind_dev_group", strict);
+        let httpx =
+            candidate_for_distribution(&report, RuleId::Chk002, "httpx").expect("httpx CHK002");
+        assert!(
+            matches!(
+                httpx.origins.as_slice(),
+                [chokkin::Origin::Manifest(origin)] if origin.file == "setup.py"
+            ),
+            "strict={strict}: {:?}",
+            httpx.origins
+        );
+        assert!(has_dist_rule(&report, RuleId::Chk002, "requests"));
+    }
+}

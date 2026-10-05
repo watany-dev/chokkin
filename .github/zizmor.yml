@@ -8,3 +8,4 @@ rules:
   stale-action-refs:
     ignore:
       - ci.yml
+      - verification.yml

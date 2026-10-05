@@ -33,7 +33,7 @@ pub(super) fn detect_unused_dependencies(
     let mut candidates = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    for dep in declared {
+    for dep in report_order(declared, config) {
         if dep.opaque {
             continue;
         }
@@ -83,6 +83,23 @@ pub(super) fn detect_unused_dependencies(
     }
 
     candidates
+}
+
+/// Runtime, unconditional declarations first, so a dev-group entry stacked
+/// earlier (pyproject before setup.py) cannot hide a runtime one under the
+/// one-report-per-name rule.
+fn report_order<'a>(
+    declared: &[&'a DeclaredDependency],
+    config: &ChokkinConfig,
+) -> Vec<&'a DeclaredDependency> {
+    let mut ordered = declared.to_vec();
+    ordered.sort_by_key(|dep| {
+        (
+            should_suppress_unused_report(dep, config, false),
+            dep.marker.is_some(),
+        )
+    });
+    ordered
 }
 
 fn build_requires_note(distribution: &str, context: &UnusedEvidenceContext<'_>) -> Option<String> {

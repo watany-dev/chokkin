@@ -204,6 +204,16 @@
       "target": "tests/fixtures/deps/self_extra/src/self_extra/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/setup_py_runtime_behind_dev_group/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/setup_py_runtime_behind_dev_group/main.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/deps/setup_py_runtime_behind_dev_group/setup.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/setup_py_runtime_behind_dev_group/setup.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/transitive_urllib3/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/transitive_urllib3/src/acme/main.py"

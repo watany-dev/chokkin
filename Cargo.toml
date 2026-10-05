@@ -83,6 +83,8 @@ trivial_numeric_casts = "warn"
 variant_size_differences = "warn"
 noop_method_call = "warn"
 meta_variable_misuse = "warn"
+# kani proof harnesses (`make kani`).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [lints.clippy]
 # Groups as a strict baseline; CI runs clippy with -D warnings.
