@@ -386,7 +386,8 @@ pub struct UvWorkspaceHint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedWorkspaceMember {
     /// Stable member id. Explicit chokkin workspaces use the table id; uv
-    /// workspaces use the member directory basename.
+    /// workspaces use the member directory basename, or the whole path when
+    /// another member shares that basename.
     pub id: String,
     /// Member directory path relative to the project root using `/`.
     pub path: String,

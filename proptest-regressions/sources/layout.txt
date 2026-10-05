@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9b28ceba4e6c252d063f4847eb04b8b0395cb622d4a90b0c225cd233a3e6cb5e # shrinks to layout = LayoutInfo { layout: Flat, package_root: "", packages: ["pkg"], local_packages: [], inferred_globs: [], members: [] }, path = "pkg/foo.bar.py"
+cc 6f284d664bf666b1ba92d4ed78cb3e5d2b0d2ddf5d1071b050f66c6f77619b51 # shrinks to tree = Tree { root: {}, src: {}, lib: {"acme_api"}, packages_acme: {}, plain_dirs: {}, name: Some("acme"), uv: Some(("acme", "lib/.")) }
+cc cf0e5cd93bd60f822914ac8c66f72472d31199f0103a443e18d6cf91be6cc837 # shrinks to layout = LayoutInfo { layout: Src, package_root: "src", packages: [], local_packages: ["tests"], inferred_globs: [], members: [] }, paths = {"src/tests.py", "tests.py"}
+cc cdc376b8be33de9da4ce30a120e0b699bfd9e2a2b977885dc1fb7584e515149d # shrinks to tree = Tree { root: {"v1.0"}, src: {}, lib: {}, packages_acme: {}, plain_dirs: {}, name: None, uv: None }
+cc ed6d002476b704ed377598db4a629a82d58d77a6afb1aa3def957b713ce1676a # shrinks to layout = LayoutInfo { layout: Unknown, package_root: "", packages: ["foo"], local_packages: [], inferred_globs: [], members: [] }, paths = {"foo.py", "src/foo.py"}
