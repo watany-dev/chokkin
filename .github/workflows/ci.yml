@@ -19,37 +19,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fmt:
-    name: Format
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          toolchain: stable
-          components: rustfmt
-      - run: cargo fmt --check
-
+  # Short checks share one job to save runner slots and setup time.
+  # Each check step runs even if an earlier one failed (`!cancelled()`).
   lint:
-    name: Lint
+    name: Lint (fmt, clippy, doc, machete)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
-          components: clippy
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-machete@0.9.2
+      - name: cargo fmt
+        run: cargo fmt --check
+      - name: cargo clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: cargo doc
+        if: ${{ !cancelled() }}
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+      - name: cargo machete
+        if: ${{ !cancelled() }}
+        run: cargo machete
 
   test:
     name: Test (${{ matrix.os }})
@@ -64,7 +63,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -84,22 +83,7 @@ jobs:
       - run: cargo test --locked --doc
 
   msrv:
-    name: MSRV (1.96)
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          toolchain: "1.96"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo check --all-targets --locked
-
-  chokkin-baseline:
-    name: Chokkin baseline
+    name: MSRV (1.96) + chokkin baseline
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -107,15 +91,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable # zizmor: ignore[superfluous-actions] keep CI toolchain consistent
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable # zizmor: ignore[superfluous-actions] keep CI toolchain consistent
         with:
           toolchain: "1.96"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # rust-cache skips saving on an exact key hit, so without a new key the
+          # cache keeps only `cargo check` output and the baseline run rebuilds deps.
+          key: baseline
+      - name: cargo check (MSRV)
+        run: cargo check --all-targets --locked
+      # Dev profile: the findings do not depend on the profile, and the
+      # release profile (thin LTO, codegen-units=1) is slow to rebuild each push.
       - name: Run chokkin with checked-in baseline
-        run: cargo run --locked --release -- --baseline chokkin-baseline.json --reporter github
+        if: ${{ !cancelled() }}
+        run: cargo run --locked -- --baseline chokkin-baseline.json --reporter github
       - name: Write chokkin SARIF
         if: always()
-        run: cargo run --locked --release -- --baseline chokkin-baseline.json --reporter sarif > chokkin.sarif
+        run: cargo run --locked -- --baseline chokkin-baseline.json --reporter sarif > chokkin.sarif
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -132,21 +125,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
+          components: llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # The old key holds tarpaulin's plain build. llvm-cov builds into
+          # target/llvm-cov-target, and an exact key hit skips the save, so
+          # without a new key the instrumented deps are rebuilt on every run.
+          key: llvm-cov
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
-          tool: cargo-tarpaulin@0.35.1
-      # NOTE: --fail-under omitted until analyzer implementation reaches coverage targets.
-      # Re-enable at --fail-under 95 for Phase 1 (v0.1 MVP). See docs/dev/ci-porting-notes.md.
-      - run: cargo tarpaulin --out json --out html --skip-clean --timeout 300 -- --test-threads=1
+          tool: cargo-llvm-cov@0.9.1
+      # Source-based coverage runs the tests in parallel; tarpaulin's ptrace
+      # engine needed --test-threads=1 and took ~4 min.
+      # NOTE: --fail-under-lines omitted until analyzer implementation reaches coverage targets.
+      # Re-enable at --fail-under-lines 95 for Phase 1 (v0.1 MVP). See docs/dev/ci-porting-notes.md.
+      - run: cargo llvm-cov --locked --no-report
+      - run: cargo llvm-cov report --summary-only
+      - run: cargo llvm-cov report --html
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: coverage-report
-          path: tarpaulin-report.html
+          path: target/llvm-cov/html/
           retention-days: 14
 
   security:
@@ -157,50 +160,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-deny@0.19.2
       - run: cargo deny check advisories licenses bans sources
-
-  machete:
-    name: Unused deps (cargo-machete)
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          toolchain: stable
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
-        with:
-          tool: cargo-machete@0.9.2
-      - run: cargo machete
-
-  check-generated:
-    name: Generated resolver maps
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # generate-stdlib-modules.py reads sys.stdlib_module_names from each python3.X.
-      # Patch versions are pinned: the list can change between patches (3.12.x added _wmi).
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: |
-            3.10.21
-            3.11.16
-            3.12.14
-            3.13.15
-      - run: make check-generated
 
   semver:
     name: Semver (PR only)
@@ -212,7 +178,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -223,41 +189,48 @@ jobs:
       # accumulate on main while the bumped version is still unreleased.
       - run: cargo semver-checks --baseline-rev "$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
 
-  actionlint:
-    name: Actionlint
+  repo-checks:
+    name: Repo checks (actionlint, generated maps, action)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install actionlint
         run: bash <(curl -Ls https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash) 1.7.11
-      - run: ./actionlint -color
-
-  action:
-    name: Action smoke test
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: actionlint
+        run: ./actionlint -color
+      # generate-stdlib-modules.py reads sys.stdlib_module_names from each python3.X.
+      # Patch versions are pinned: the list can change between patches (3.12.x added _wmi).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: ${{ !cancelled() }}
         with:
-          persist-credentials: false
-      - name: Create clean fixture
+          python-version: |
+            3.10.21
+            3.11.16
+            3.12.14
+            3.13.15
+      - name: Check generated resolver maps
+        if: ${{ !cancelled() }}
+        run: make check-generated
+      - name: Create action smoke-test fixture
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p "$RUNNER_TEMP/demo/src/demo"
           printf '[project]\nname = "demo"\nversion = "0.0.0"\n' > "$RUNNER_TEMP/demo/pyproject.toml"
           echo 'VALUE = 1' > "$RUNNER_TEMP/demo/src/demo/__init__.py"
       - id: chokkin
+        if: ${{ !cancelled() }}
         uses: ./
         with:
           # The default pins the next release, which may not be on PyPI yet.
           version: latest
           working-directory: ${{ runner.temp }}/demo
           sarif-file: out/chokkin.sarif
-      - name: Check SARIF output
+      - name: Check action SARIF output
+        if: ${{ !cancelled() }}
         env:
           SARIF: ${{ steps.chokkin.outputs.sarif-file }}
         run: jq -e '.version == "2.1.0"' "$SARIF"
