@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use indexmap::IndexSet;
 
+use crate::config::{Confidence, ProjectMode};
 use crate::graph::{ModuleOrigin, ProjectGraph};
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::plugins::PluginHints;
@@ -35,6 +36,29 @@ pub(super) fn reachable_paths<'g>(
         .iter()
         .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.as_str()))
         .collect()
+}
+
+/// Reachable files plus library orphans an outside caller may import: the
+/// files whose imports keep a declared dependency from reading as unused.
+///
+/// A library's public modules are its entry points, so a library with no
+/// script, test, or config root would otherwise report every runtime
+/// dependency unused (#501). Those orphans are the ones still capped at
+/// `Maybe` after the wheel public surface re-scored the rest. Only CHK002
+/// uses this set: an orphan's import is no proof the module ships, so it
+/// must not raise CHK003-CHK005.
+pub(super) fn usage_paths<'a>(
+    reachable: &HashSet<&'a str>,
+    reachability: &'a ReachabilityReport,
+) -> HashSet<&'a str> {
+    let public_orphans = reachability
+        .unreachable
+        .iter()
+        .filter(|file| {
+            file.mode == ProjectMode::Library && file.max_confidence == Confidence::Maybe
+        })
+        .map(|file| file.path.as_str());
+    reachable.iter().copied().chain(public_orphans).collect()
 }
 
 /// Whether the project has lockfile data for transitive checks.
