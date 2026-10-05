@@ -99,6 +99,10 @@ jobs:
         with:
           toolchain: "1.96"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # rust-cache skips saving on an exact key hit, so without a new key the
+          # cache keeps only `cargo check` output and the baseline run rebuilds deps.
+          key: baseline
       - name: cargo check (MSRV)
         run: cargo check --all-targets --locked
       # Dev profile: the findings do not depend on the profile, and the
