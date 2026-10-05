@@ -157,6 +157,13 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
         production: report.probe.effective_config.production,
         version: VERSION,
         config_label: Some(config_label_from_sources(&report.probe.config_sources)),
+        diagnostics: report
+            .probe
+            .warnings
+            .iter()
+            .chain(&report.warnings)
+            .map(ToString::to_string)
+            .collect(),
     };
 
     let output = render_issues(args.reporter_id(), &report.issues, &context);

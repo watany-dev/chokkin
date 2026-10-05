@@ -260,6 +260,7 @@ mod tests {
                 shell_commands: Vec::new(),
                 decorator_sites: Vec::new(),
                 diagnostics: Vec::new(),
+                skipped: false,
             },
         )
         .expect("imports");

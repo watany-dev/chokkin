@@ -631,3 +631,98 @@ fn binary_no_auto_workspace_keeps_single_project_analysis() {
     let issues = json_issues(project.path(), &["--no-auto-workspace"]);
     assert!(!certain_chk001(&issues).is_empty(), "{issues:?}");
 }
+
+/// langchain ships a deliberately non-UTF-8 fixture; one such file must not
+/// abort the run (#486).
+#[test]
+fn binary_undecodable_source_is_skipped_with_a_diagnostic() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("tests/test_latin.py", "import acme.latin\n"),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", ""),
+        ("acme/orphan.py", ""),
+    ]);
+    fs::write(
+        project.path().join("acme/latin.py"),
+        b"# -*- coding: latin-1 -*-\nimport acme.helper\ns = 'caf\xe9'\n",
+    )
+    .expect("write latin-1 source");
+    fs::write(
+        project.path().join("acme/cyrillic.py"),
+        b"# coding: iso-8859-5\nu = '\xd0\xd1'\n",
+    )
+    .expect("write iso-8859-5 source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("skipped `acme/cyrillic.py`"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let keys = issue_keys(parsed["issues"].as_array().expect("issues"));
+    // The latin-1 module is decoded and its import followed; the skipped one
+    // is not reported as unused.
+    let unused_files: Vec<_> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK001")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unused_files, ["acme/orphan.py"], "{keys:?}");
+    assert!(
+        parsed["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("acme/cyrillic.py")),
+        "{parsed}"
+    );
+}
+
+#[test]
+fn reachable_undecodable_source_lowers_unused_findings_to_likely() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("tests/test_cyrillic.py", "import acme.cyrillic\n"),
+        ("acme/__init__.py", ""),
+        ("acme/orphan.py", ""),
+    ]);
+    // It may import `requests` or `acme.orphan`; nobody can tell.
+    fs::write(
+        project.path().join("acme/cyrillic.py"),
+        b"# coding: iso-8859-5\nimport requests\nu = '\xd0\xd1'\n",
+    )
+    .expect("write iso-8859-5 source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let confidences: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| matches!(issue["code"].as_str(), Some("CHK001" | "CHK002")))
+        .map(|issue| (issue["code"].clone(), issue["confidence"].clone()))
+        .collect();
+    assert_eq!(
+        confidences,
+        [
+            ("CHK001".into(), "likely".into()),
+            ("CHK002".into(), "likely".into())
+        ],
+        "{parsed}"
+    );
+}

@@ -341,6 +341,8 @@ Python parserはRust実装でよい。Ruff ecosystemのparserを使うか、Rust
 
 現行は `ruff_python_parser` `=0.0.15` (MSRV 1.96)。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従するため、ADR 0001 の Amendment 2026-09-25 と #320 / #321 の実測 (PoC は draft PR #349) を受けて、#351 で `rustpython-parser` 0.4 から移行した。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新する (dependabot の `ruff-parser` group)。parser の AST 型を扱うのは `src/parser/` と `setup.py` の literal 評価 (`src/manifest/literals.rs` / `setup_py.rs`) に限り、`ParsedModule` 以降は backend に依存しない (結果: `docs/dev/issue-294-parser-migration-plan.md`)。行番号は byte offset から `src/parser/lines.rs` の `LineIndex` で求める。decorator 付きの def/class の symbol 行は CPython と同じく `def` / `class` の行にする。`type X = …` (PEP 695) は module level の変数と同じ symbol にし、alias の値と type parameter の bound / default も走査する。t-string (PEP 750) と `except A, B:` (PEP 758) は f-string / tuple の except と同じに走査する。`lazy import` (PEP 810) は通常の import と同じ edge にする。
 
+source は byte で読み、UTF-8 として decode する（`src/parser/encoding.rs`）。UTF-8 でない file は PEP 263 の coding 宣言（先頭2行、2行目は1行目が comment か空行のときだけ）を見て、latin-1 と cp1252 は decode する。それ以外の encoding や宣言のない非UTF-8 file は解析を止めずに `ParsedModule::skipped` を立てて skip し、`parse: skipped …` の warning を stderr と JSON reporter の `diagnostics` に出す。中身を読めていないので、skip した file は CHK001 の候補にしない。到達可能な file を skip した場合は、その import が分からないため opaque dynamic import と同じく CHK001 の confidence を下げ、CHK002 も Likely にして `--fix` の対象から外す (#486)。また PEP 723 の inline script も同じ decode を通して読む (#486)。
+
 ## 7. import resolution仕様
 
 Pythonの依存解析で最大の罠は、distribution名とimport名が一致しないこと。Python標準の `importlib.metadata` でも、distribution package名とtop-level import package名は必ずしも1:1対応しない。1つのdistributionが複数import packageを持つことも、namespace packageで1つのimport名に複数distributionが対応することもある。
@@ -919,7 +921,7 @@ v0.2で入れるもの。
 - cache
 ```
 
-v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。
+v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。 JSON reporter は stderr に出す非致命的な warning を top-level の `diagnostics` (`[{"message": …}]`) にも入れる (#486)。
 
 v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap-gap-analysis.ja.md`)。
 
@@ -1266,7 +1268,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v10。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v11。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime

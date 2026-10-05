@@ -18,6 +18,11 @@ pub enum ProbeWarning {
     Plugin(PluginsWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
     AutoWorkspace { member_count: usize },
+    /// A source that could not be decoded and was left out of the analysis.
+    SkippedSource {
+        /// Root-relative path of the source.
+        path: String,
+    },
 }
 
 impl fmt::Display for ProbeWarning {
@@ -29,6 +34,10 @@ impl fmt::Display for ProbeWarning {
             Self::AutoWorkspace { member_count } => write!(
                 formatter,
                 "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
+            ),
+            Self::SkippedSource { path } => write!(
+                formatter,
+                "parse: skipped `{path}`: not UTF-8 and no supported PEP 263 coding declaration"
             ),
         }
     }

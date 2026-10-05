@@ -178,11 +178,14 @@ fn run_analysis_core(
         parse: &parse,
         cache: Some(&options.cache),
     })?;
-    let warnings: Vec<ProbeWarning> = plugins
-        .warnings
+    let warnings: Vec<ProbeWarning> = parse
+        .modules
         .iter()
-        .cloned()
-        .map(ProbeWarning::Plugin)
+        .filter(|module| module.skipped)
+        .map(|module| ProbeWarning::SkippedSource {
+            path: module.path.clone(),
+        })
+        .chain(plugins.warnings.iter().cloned().map(ProbeWarning::Plugin))
         .collect();
 
     let mut entry = build_entry_roots(
