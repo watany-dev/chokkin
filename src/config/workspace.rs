@@ -102,8 +102,7 @@ fn resolve_uv_members(
         message: source.to_string(),
     })?;
 
-    let mut seen = BTreeSet::new();
-    let mut members = Vec::new();
+    let mut paths = BTreeSet::new();
     for pyproject in find_pyprojects(root)? {
         let Some(member_dir) = pyproject.parent() else {
             continue;
@@ -112,24 +111,37 @@ fn resolve_uv_members(
             continue;
         }
         let rel = relative_path(root, member_dir)?;
-        if !set.is_match(&rel) {
-            continue;
+        if set.is_match(&rel) {
+            paths.insert(rel);
         }
-        if !seen.insert(rel.clone()) {
-            continue;
-        }
-        let id = member_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(rel.as_str())
-            .to_owned();
-        members.push(ResolvedWorkspaceMember {
-            id,
-            path: rel.clone(),
-            pyproject_toml: Some(format!("{rel}/pyproject.toml")),
-        });
     }
-    Ok(members)
+    Ok(members_with_unique_ids(paths))
+}
+
+/// Members named after their directory; a shared basename falls back to the
+/// full path for every holder, since per-member declarations are keyed by
+/// id. A unique basename cannot equal another member's path, whose own
+/// basename would then be shared.
+fn members_with_unique_ids(paths: BTreeSet<String>) -> Vec<ResolvedWorkspaceMember> {
+    let basename = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_owned();
+    let mut basename_counts = BTreeMap::new();
+    for rel in &paths {
+        *basename_counts.entry(basename(rel)).or_insert(0_usize) += 1;
+    }
+    paths
+        .into_iter()
+        .map(|rel| {
+            let id = match basename(&rel) {
+                name if basename_counts.get(&name) == Some(&1) => name,
+                _ => rel.clone(),
+            };
+            ResolvedWorkspaceMember {
+                id,
+                pyproject_toml: Some(format!("{rel}/pyproject.toml")),
+                path: rel,
+            }
+        })
+        .collect()
 }
 
 /// Deepest member directory auto-detection visits; `llama_index` keeps its
@@ -186,28 +198,7 @@ pub fn detect_nested_members(
             paths.insert(relative_path(&root.path, member_dir)?);
         }
     }
-    let basename = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_owned();
-    let mut basename_counts = BTreeMap::new();
-    for rel in &paths {
-        *basename_counts.entry(basename(rel)).or_insert(0_usize) += 1;
-    }
-    // A shared basename falls back to the full path for every holder; a
-    // unique basename cannot equal another member's path, whose own basename
-    // would then be shared.
-    Ok(paths
-        .into_iter()
-        .map(|rel| {
-            let id = match basename(&rel) {
-                name if basename_counts.get(&name) == Some(&1) => name,
-                _ => rel.clone(),
-            };
-            ResolvedWorkspaceMember {
-                id,
-                pyproject_toml: Some(format!("{rel}/pyproject.toml")),
-                path: rel,
-            }
-        })
-        .collect())
+    Ok(members_with_unique_ids(paths))
 }
 
 /// Hidden and tool directories never hold members; test trees hold fixture
@@ -387,6 +378,22 @@ mod tests {
             [("api".to_owned(), "packages/api".to_owned())]
         );
         assert_eq!(normalize_relative_path("./lib/./x/"), "lib/x");
+    }
+
+    #[test]
+    fn uv_members_sharing_a_basename_get_path_ids() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for dir in ["apps/core", "libs/core", "libs/api"] {
+            write(temp.path(), &format!("{dir}/pyproject.toml"), "");
+        }
+        assert_eq!(
+            uv_members(temp.path(), &["apps/*", "libs/*"]),
+            [
+                ("apps/core".to_owned(), "apps/core".to_owned()),
+                ("api".to_owned(), "libs/api".to_owned()),
+                ("libs/core".to_owned(), "libs/core".to_owned()),
+            ]
+        );
     }
 
     fn write(root: &Path, file: &str, text: &str) {
