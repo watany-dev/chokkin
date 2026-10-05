@@ -785,3 +785,33 @@ fn reachable_undecodable_source_lowers_unused_findings_to_likely() {
         "{parsed}"
     );
 }
+
+#[test]
+fn binary_malformed_dynamic_import_names_do_not_abort_analysis() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "src/acme/__init__.py",
+            "import importlib\ndef main(): pass\nimportlib.import_module(\".sub\", __package__)\nimportlib.import_module(\"\", \"acme\")\nimportlib.import_module(\"not a module\")\nimportlib.import_module(\"foo-bar\")\n",
+        ),
+        ("src/acme/sub.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    // `.sub` resolves against `__package__`, so `sub.py` is reachable.
+    assert_eq!(parsed["issues"], serde_json::json!([]), "{parsed}");
+}

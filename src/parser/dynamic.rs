@@ -4,6 +4,8 @@ use std::collections::HashSet;
 
 use ruff_python_ast::{Alias, Expr, ExprCall, Operator};
 
+use super::relative::resolve_relative_name;
+
 /// Names one module binds to the dynamic import loaders.
 pub struct LoaderNames {
     /// Names bound to the `importlib` module.
@@ -56,10 +58,50 @@ impl LoaderNames {
     }
 }
 
-/// Literal module name passed to a loader call, positionally or as `name=`.
+/// What a loader call with a literal module name loads.
+#[derive(Debug)]
+pub enum LiteralTarget {
+    /// This absolute module.
+    Module(String),
+    /// A module relative to a package this walk cannot see.
+    Opaque,
+    /// Nothing: the call raises before importing (empty or malformed name,
+    /// relative name without a package).
+    Nothing,
+}
+
+/// Literal module name passed to a loader call, positionally or as `name=`,
+/// made absolute against `package=` the way `importlib.util.resolve_name` does.
+///
+/// `current_package` is the `__package__` of the calling module. Returns
+/// `None` when the name is not a literal.
 #[must_use]
-pub fn literal_module(call: &ExprCall) -> Option<String> {
-    str_constant(module_argument(call)?).map(str::to_owned)
+pub fn literal_target(
+    call: &ExprCall,
+    current_package: impl FnOnce() -> Option<String>,
+) -> Option<LiteralTarget> {
+    let name = str_constant(module_argument(call)?)?;
+    let module = if name.starts_with('.') {
+        let package = match argument(call, 1, "package") {
+            None | Some(Expr::NoneLiteral(_)) => return Some(LiteralTarget::Nothing),
+            Some(Expr::Name(name)) if name.id.as_str() == "__package__" => current_package(),
+            Some(expr) => str_constant(expr).map(str::to_owned),
+        };
+        let Some(package) = package else {
+            return Some(LiteralTarget::Opaque);
+        };
+        match resolve_relative_name(name, &package) {
+            Some(module) => module,
+            None => return Some(LiteralTarget::Nothing),
+        }
+    } else {
+        name.to_owned()
+    };
+    Some(if is_dotted_identifier(&module) {
+        LiteralTarget::Module(module)
+    } else {
+        LiteralTarget::Nothing
+    })
 }
 
 /// Package whose submodule a loader call builds from a literal prefix:
@@ -78,17 +120,21 @@ pub fn module_prefix(call: &ExprCall) -> Option<String> {
 }
 
 fn module_argument(call: &ExprCall) -> Option<&Expr> {
-    call.arguments.args.first().or_else(|| {
+    argument(call, 0, "name")
+}
+
+fn argument<'a>(call: &'a ExprCall, index: usize, keyword: &str) -> Option<&'a Expr> {
+    call.arguments.args.get(index).or_else(|| {
         call.arguments
             .keywords
             .iter()
-            .find(|keyword| {
-                keyword
+            .find(|candidate| {
+                candidate
                     .arg
                     .as_ref()
-                    .is_some_and(|arg| arg.as_str() == "name")
+                    .is_some_and(|arg| arg.as_str() == keyword)
             })
-            .map(|keyword| &keyword.value)
+            .map(|candidate| &candidate.value)
     })
 }
 
