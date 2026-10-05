@@ -245,7 +245,7 @@ setuptools.setup(install_requires=install_requires(), extras_require=extras_requ
             vec!["billiard", "kombu"]
         );
         assert_eq!(names_in(&result, &extra("redis")), vec!["redis"]);
-        assert!(names_in(&result, &extra("yaml")).is_empty());
+        assert_eq!(names_in(&result, &extra("yaml")), Vec::<String>::new());
         assert!(
             result
                 .files_read
@@ -377,7 +377,7 @@ if __name__ == "__main__":
     fn requirements_references_stay_inside_root() {
         let result = extract("setup(install_requires=read('../outside.txt'))\n", &[]);
         assert!(result.runtime_unknown);
-        assert!(result.files_missing.is_empty());
+        assert_eq!(result.files_missing, Vec::<String>::new());
     }
 
     #[test]
@@ -387,7 +387,10 @@ if __name__ == "__main__":
             &[],
         );
         assert!(result.runtime_unknown);
-        assert!(names_in(&result, &DependencyContext::Runtime).is_empty());
+        assert_eq!(
+            names_in(&result, &DependencyContext::Runtime),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
