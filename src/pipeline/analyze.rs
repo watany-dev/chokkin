@@ -5,10 +5,10 @@ use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
-use crate::config::RuntimeOverrides;
-use crate::entry::{EntryPlan, build_entry_roots};
+use crate::config::{ProjectMode, RuntimeOverrides};
+use crate::entry::{EntryPlan, add_member_manifest_roots, build_entry_roots, is_library_member};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
-use crate::graph::{ProjectGraph, add_parsed_imports, build_graph_skeleton};
+use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
@@ -178,11 +178,14 @@ fn run_analysis_core(
         parse: &parse,
         cache: Some(&options.cache),
     })?;
-    let warnings: Vec<ProbeWarning> = plugins
-        .warnings
+    let warnings: Vec<ProbeWarning> = parse
+        .modules
         .iter()
-        .cloned()
-        .map(ProbeWarning::Plugin)
+        .filter(|module| module.skipped)
+        .map(|module| ProbeWarning::SkippedSource {
+            path: module.path.clone(),
+        })
+        .chain(plugins.warnings.iter().cloned().map(ProbeWarning::Plugin))
         .collect();
 
     let mut entry = build_entry_roots(
@@ -193,6 +196,22 @@ fn run_analysis_core(
         production,
     );
     crate::entry::add_script_roots(&mut entry, &probe.scripts, &probe.sources, production);
+    add_member_manifest_roots(
+        &mut entry,
+        &probe.sources,
+        probe
+            .workspace_inputs
+            .iter()
+            .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
+    );
+    if probe.auto_workspace && probe.effective_config.mode == ProjectMode::Auto {
+        entry.library_members = probe
+            .workspace_inputs
+            .iter()
+            .filter(|input| is_library_member(&input.manifest, &input.sources))
+            .map(|input| input.member.path.clone())
+            .collect();
+    }
 
     let mut graph = build_analysis_graph(probe, &parse, &plugins)?;
 
@@ -230,7 +249,7 @@ fn run_analysis_core(
         probe.manifest.metadata.wheel_targets.as_ref(),
         &probe.sources.files,
     ) {
-        apply_public_surface(&mut reachability, &surface, entry.mode);
+        apply_public_surface(&mut reachability, &surface, &entry);
     }
 
     let workspace_boundaries = probe
@@ -276,7 +295,6 @@ fn run_analysis_core(
         &parse,
         &probe.effective_config,
         overrides,
-        entry.mode,
         &resolution,
     );
 
@@ -323,7 +341,9 @@ fn build_analysis_graph(
     for module in &parse.modules {
         let file_id = graph
             .file_id(&module.path)
-            .ok_or_else(|| AnalyzeError::Usage(format!("unknown parsed file `{}`", module.path)))?;
+            .ok_or_else(|| GraphError::Invariant {
+                detail: format!("unknown parsed file `{}`", module.path),
+            })?;
         add_parsed_imports(&mut graph, file_id, module)?;
     }
     for reference in plugins.module_refs() {
@@ -384,7 +404,7 @@ mod tests {
             AnalyzeOptions::default(),
         )
         .expect("analyze");
-        assert!(report.issues.issues.is_empty());
+        assert_eq!(report.issues.issues, []);
     }
 
     #[test]

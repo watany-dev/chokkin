@@ -20,6 +20,7 @@ fn context() -> RenderContext {
         production: false,
         version: "0.3.0-test",
         config_label: Some("pyproject.toml [tool.chokkin]".to_owned()),
+        diagnostics: Vec::new(),
     }
 }
 
@@ -130,6 +131,6 @@ fn baseline_v03_validates_and_reads_v02_without_schema_version() {
         &RuntimeOverrides::default(),
     )
     .expect("apply v0.2 baseline");
-    assert!(report.issues.is_empty());
+    assert_eq!(report.issues, []);
     assert_eq!(report.exit_status, ExitStatus::Success);
 }

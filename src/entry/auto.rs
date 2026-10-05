@@ -72,17 +72,11 @@ fn is_shallow_entry_path(path: &str, file_name: &str, layout: &crate::sources::L
         return true;
     }
 
-    match layout.layout {
-        ProjectLayout::Src => layout
+    layout.layout != ProjectLayout::Unknown
+        && layout
             .packages
             .iter()
-            .any(|package| path == format!("src/{package}/{file_name}")),
-        ProjectLayout::Flat => layout
-            .packages
-            .iter()
-            .any(|package| path == format!("{package}/{file_name}")),
-        ProjectLayout::Unknown => false,
-    }
+            .any(|package| path == format!("{}/{file_name}", layout.package_dir(package)))
 }
 
 #[cfg(test)]
@@ -115,9 +109,11 @@ mod tests {
     fn src_layout() -> LayoutInfo {
         LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         }
     }
 
@@ -139,6 +135,20 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn detects_lib_package_asgi_py() {
+        let layout = LayoutInfo {
+            package_root: "lib".to_owned(),
+            ..src_layout()
+        };
+        let sources = sources_with(&["lib/acme/asgi.py", "src/acme/asgi.py"], &layout);
+        let paths: Vec<_> = detect_auto_entries(&sources)
+            .into_iter()
+            .map(|entry| entry.spec.path)
+            .collect();
+        assert_eq!(paths, ["lib/acme/asgi.py"]);
     }
 
     #[test]

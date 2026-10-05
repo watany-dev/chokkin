@@ -242,7 +242,7 @@ fn fastapi_src_main_is_plugin_entry() {
 #[test]
 fn disabled_plugin_skipped() {
     let hints = extract_fixture("plugins_disabled");
-    assert!(hints.contributions.is_empty());
+    assert_eq!(hints.contributions, []);
 }
 
 #[test]
@@ -459,15 +459,15 @@ fn full_pipeline_step5() {
     );
 
     // The fixture has no tests and no FastAPI app, so only Django contributes.
-    assert!(entry_paths(pytest_contrib(&hints)).is_empty());
-    assert!(entry_paths(fastapi_contrib(&hints)).is_empty());
+    assert_eq!(entry_paths(pytest_contrib(&hints)), Vec::<&str>::new());
+    assert_eq!(entry_paths(fastapi_contrib(&hints)), Vec::<&str>::new());
     let mut django_entries = entry_paths(django_contrib(&hints));
     django_entries.sort_unstable();
     assert_eq!(
         django_entries,
         ["manage.py", "mysite/settings.py", "mysite/urls.py"]
     );
-    assert!(hints.warnings.is_empty());
+    assert_eq!(hints.warnings, []);
 }
 
 #[test]
@@ -510,8 +510,8 @@ fn config_scan_deps_fixture() {
 fn no_django_no_panic() {
     let hints = extract_fixture("no_django");
     let django = django_contrib(&hints);
-    assert!(django.entries.is_empty());
-    assert!(hints.warnings.is_empty());
+    assert_eq!(django.entries, []);
+    assert_eq!(hints.warnings, []);
 }
 
 /// Flask and Celery module-ref lines for `pkg.mod` in a one-module project.

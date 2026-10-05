@@ -60,6 +60,29 @@ pub struct EntryPlan {
     pub roots: Vec<EntryRoot>,
     /// Non-fatal conditions.
     pub warnings: Vec<EntryWarning>,
+    /// Root-relative directories of workspace members that ship as their own
+    /// libraries, whatever mode the project itself resolved to (#488).
+    pub library_members: Vec<String>,
+}
+
+impl EntryPlan {
+    /// Mode that scores an orphan at root-relative `path`.
+    #[must_use]
+    pub fn mode_for(&self, path: &str) -> ProjectMode {
+        if self.in_library_member(path) {
+            ProjectMode::Library
+        } else {
+            self.mode
+        }
+    }
+
+    #[must_use]
+    pub fn in_library_member(&self, path: &str) -> bool {
+        self.library_members.iter().any(|member| {
+            path.strip_prefix(member.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
 }
 
 /// Non-fatal entry construction warnings.

@@ -15,10 +15,18 @@ pub fn is_first_party_import(
     metadata: &ProjectMetadata,
 ) -> bool {
     let import_norm = normalize_distribution_name(import_root);
+    // A workspace member's own packages are first-party to every file, the
+    // member's own included (`llama_dev` inside `llama-dev/`).
     if layout
         .packages
         .iter()
         .chain(&layout.local_packages)
+        .chain(
+            layout
+                .members
+                .iter()
+                .flat_map(|member| &member.layout.packages),
+        )
         .any(|package| normalize_distribution_name(package) == import_norm)
     {
         return true;
@@ -72,7 +80,7 @@ pub fn path_source_imports(root: &Path, uv: &UvToolSettings) -> BTreeMap<String,
             name: Some(source.name.clone()),
             ..ProjectMetadata::default()
         };
-        let (layout, _) = infer_layout(&root.join(path), &metadata);
+        let (layout, _) = infer_layout(&root.join(path), &metadata, &UvToolSettings::default());
         let mut packages = layout.packages;
         if packages.is_empty() {
             packages.push(source.name.replace('-', "_"));
@@ -107,9 +115,11 @@ mod tests {
     fn layout_package_is_first_party() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: vec!["tests".to_owned()],
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         for root in ["acme", "tests"] {
             assert!(is_first_party_import(
@@ -124,9 +134,11 @@ mod tests {
     fn metadata_name_matches_normalized_import_root() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         let metadata = ProjectMetadata {
             name: Some("my-package".to_owned()),

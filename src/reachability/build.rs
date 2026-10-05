@@ -28,7 +28,6 @@ pub fn analyze_reachability(
     parse: &ParseSummary,
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
-    let mode = entry.mode;
     let module_index = ModuleIndex::build(graph, sources);
     let framework = apply_framework_globs(graph, sources, plugins)?;
     let bfs = run_reachability_bfs(
@@ -40,14 +39,22 @@ pub fn analyze_reachability(
         framework.predecessors,
     );
     let reachable = bfs.reachable;
+    // A reachable skipped file's imports are as unknown as an opaque one's.
     let reached_opaque_dynamic_import = parse.modules.iter().any(|module| {
-        module.has_opaque_dynamic_import
+        (module.has_opaque_dynamic_import || module.skipped)
             && graph
                 .file_id(&module.path)
                 .is_some_and(|file_id| reachable.contains(&file_id))
     });
-    let confidence = confidence_for_unreachable(mode, reached_opaque_dynamic_import);
 
+    // Nothing was read from a skipped file, so it is neither known unused nor
+    // a reliable source of edges; reporting it would only be a guess.
+    let skipped: std::collections::HashSet<&str> = parse
+        .modules
+        .iter()
+        .filter(|module| module.skipped)
+        .map(|module| module.path.as_str())
+        .collect();
     let mut unreachable = Vec::new();
     for file in &sources.files {
         if !matches!(file.kind, FileKind::Python | FileKind::Notebook) {
@@ -56,7 +63,8 @@ pub fn analyze_reachability(
         if production && !file.context.is_included_in_production() {
             continue;
         }
-        if is_excluded(file, mode) {
+        let mode = entry.mode_for(&file.path);
+        if is_excluded(file, mode) || skipped.contains(file.path.as_str()) {
             continue;
         }
         let Some(file_id) = graph.file_id(&file.path) else {
@@ -69,7 +77,8 @@ pub fn analyze_reachability(
         unreachable.push(UnreachableFile {
             file: file_id,
             path: file.path.clone(),
-            max_confidence: confidence,
+            max_confidence: confidence_for_unreachable(mode, reached_opaque_dynamic_import),
+            mode,
         });
     }
 
@@ -89,19 +98,20 @@ pub fn analyze_reachability(
 ///
 /// Library mode caps orphans at `Maybe` because an outside caller may import
 /// them; a file outside the distributed packages has no such caller, so it is
-/// scored as in app mode.
+/// scored as in app mode. The surface is the root distribution's, so files of
+/// library workspace members, which ship in their own wheels, keep `Maybe`.
 pub fn apply_public_surface(
     report: &mut ReachabilityReport,
     surface: &PublicSurface,
-    mode: ProjectMode,
+    entry: &EntryPlan,
 ) {
-    if mode != ProjectMode::Library {
+    if entry.mode != ProjectMode::Library {
         return;
     }
     let confidence =
         confidence_for_unreachable(ProjectMode::App, report.reached_opaque_dynamic_import);
     for file in &mut report.unreachable {
-        if !surface.contains(&file.path) {
+        if !surface.contains(&file.path) && !entry.in_library_member(&file.path) {
             file.max_confidence = confidence;
         }
     }
@@ -262,6 +272,7 @@ mod tests {
     fn app_entry(roots: &[&str]) -> EntryPlan {
         EntryPlan {
             mode: ProjectMode::App,
+            library_members: Vec::new(),
             roots: roots
                 .iter()
                 .map(|path| EntryRoot {
@@ -282,9 +293,11 @@ mod tests {
             root,
             layout: LayoutInfo {
                 layout: ProjectLayout::Flat,
+                package_root: String::new(),
                 packages: vec!["acme".to_owned()],
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             },
             effective_globs: Vec::new(),
             files: paths
@@ -386,7 +399,7 @@ mod tests {
         let models = graph.file_id("acme/models.py").expect("models");
         assert!(report.reachable.contains(&models));
         assert!(!report.framework_used.contains(&models));
-        assert!(report.unreachable.is_empty());
+        assert_eq!(report.unreachable, []);
         assert!(
             report
                 .used_modules
@@ -414,5 +427,118 @@ mod tests {
     #[test]
     fn opaque_import_inside_the_orphan_itself_keeps_it_certain() {
         assert_eq!(orphan_confidence("acme/orphan.py"), Confidence::Certain);
+    }
+
+    #[test]
+    fn library_member_orphans_are_maybe_while_app_orphans_stay_certain() {
+        let parse = ParseSummary {
+            modules: ["acme/main.py", "acme/orphan.py", "libs/core/pkg/orphan.py"]
+                .map(|path| parsed(path, &[], false))
+                .into(),
+        };
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let mut paths: Vec<&str> = parse.modules.iter().map(|m| m.path.as_str()).collect();
+        paths.push("libs/core/tests/test_x.py");
+        let mut sources = flat_sources(root, &paths);
+        if let Some(test) = sources.files.last_mut() {
+            test.context = FileContext::Test;
+        }
+        let mut graph = graph_for(&sources, &parse, &[]);
+        let mut entry = app_entry(&["acme/main.py"]);
+        entry.library_members = vec!["libs/core".to_owned()];
+        let report =
+            analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
+                .expect("reachability");
+
+        let found: Vec<_> = report
+            .unreachable
+            .iter()
+            .map(|file| (file.path.as_str(), file.max_confidence, file.mode))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("acme/orphan.py", Confidence::Certain, ProjectMode::App),
+                (
+                    "libs/core/pkg/orphan.py",
+                    Confidence::Maybe,
+                    ProjectMode::Library
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn library_root_lifts_its_orphans_but_not_library_members() {
+        let parse = ParseSummary {
+            modules: [
+                "acme/__init__.py",
+                "acme/orphan.py",
+                "libs/core/pkg/orphan.py",
+            ]
+            .map(|path| parsed(path, &[], false))
+            .into(),
+        };
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let paths: Vec<&str> = parse.modules.iter().map(|m| m.path.as_str()).collect();
+        let sources = flat_sources(root, &paths);
+        let mut graph = graph_for(&sources, &parse, &[]);
+        let mut entry = app_entry(&["acme/__init__.py"]);
+        entry.mode = ProjectMode::Library;
+        entry.library_members = vec!["libs/core".to_owned()];
+        let mut report =
+            analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
+                .expect("reachability");
+        let surface = PublicSurface {
+            files: std::collections::BTreeSet::new(),
+        };
+        apply_public_surface(&mut report, &surface, &entry);
+
+        let found: Vec<_> = report
+            .unreachable
+            .iter()
+            .map(|file| (file.path.as_str(), file.max_confidence))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("acme/orphan.py", Confidence::Certain),
+                ("libs/core/pkg/orphan.py", Confidence::Maybe),
+            ]
+        );
+    }
+
+    #[test]
+    fn skipped_reachable_file_lowers_orphans_and_is_not_reported() {
+        let parse = ParseSummary {
+            modules: vec![
+                parsed("acme/main.py", &["acme.latin"], false),
+                ParsedModule {
+                    path: "acme/latin.py".to_owned(),
+                    skipped: true,
+                    ..ParsedModule::default()
+                },
+                parsed("acme/orphan.py", &[], false),
+                ParsedModule {
+                    path: "acme/stray.py".to_owned(),
+                    skipped: true,
+                    ..ParsedModule::default()
+                },
+            ],
+        };
+        let origins = [("acme.latin", ModuleOrigin::FirstParty)];
+        let (_, report) = analyze(&parse, &[], &origins, &["acme/main.py"], &no_plugins());
+        let unreachable: Vec<_> = report
+            .unreachable
+            .iter()
+            .map(|file| (file.path.as_str(), file.max_confidence))
+            .collect();
+        assert_eq!(unreachable, [("acme/orphan.py", Confidence::Likely)]);
     }
 }

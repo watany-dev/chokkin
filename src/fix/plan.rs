@@ -75,7 +75,7 @@ pub(super) fn plan_fixes(
     manifest: &LoadedManifest,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
-) -> Result<Vec<FixAction>, Vec<SkippedFix>> {
+) -> (Vec<FixAction>, Vec<SkippedFix>) {
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
 
@@ -92,11 +92,7 @@ pub(super) fn plan_fixes(
         }
     }
 
-    if !skipped.is_empty() && actions.is_empty() {
-        return Err(skipped);
-    }
-
-    Ok(actions)
+    (actions, skipped)
 }
 
 fn is_duplicate_add_missing(actions: &[FixAction], action: &FixAction) -> bool {
@@ -474,7 +470,7 @@ mod tests {
             summary: IssueSummary::default(),
             exit_status: crate::ExitStatus::IssuesFound,
         };
-        let actions = plan_fixes(&report, &manifest, &[], FixOptions::default()).expect("plan");
+        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
         assert_eq!(
             actions,
             vec![FixAction::RemoveDependency {
@@ -520,7 +516,7 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let actions = plan_fixes(
+        let (actions, skipped) = plan_fixes(
             &report,
             &manifest,
             &[],
@@ -528,8 +524,8 @@ mod tests {
                 add_missing: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("plan");
+        );
+        assert_eq!(skipped, []);
 
         assert_eq!(
             actions,
@@ -573,7 +569,7 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let actions = plan_fixes(
+        let (actions, skipped) = plan_fixes(
             &report,
             &manifest,
             &[],
@@ -581,8 +577,8 @@ mod tests {
                 add_missing: true,
                 ..FixOptions::default()
             },
-        )
-        .expect("plan");
+        );
+        assert_eq!(skipped, []);
 
         assert_eq!(actions.len(), 1);
     }
@@ -620,7 +616,7 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let skipped = plan_fixes(
+        let (actions, skipped) = plan_fixes(
             &report,
             &manifest,
             &[],
@@ -628,8 +624,8 @@ mod tests {
                 add_missing: true,
                 ..FixOptions::default()
             },
-        )
-        .expect_err("workspace member add-missing should be skipped");
+        );
+        assert_eq!(actions, []);
 
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].detail.contains("workspace member `api`"));
@@ -676,13 +672,13 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let skipped = plan_fixes(
+        let (actions, skipped) = plan_fixes(
             &report(RuleId::Chk002),
             &manifest,
             &[],
             FixOptions::default(),
-        )
-        .expect_err("script CHK002 is skipped");
+        );
+        assert_eq!(actions, []);
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
 
@@ -690,18 +686,81 @@ mod tests {
             add_missing: true,
             ..FixOptions::default()
         };
-        let skipped = plan_fixes(&report(RuleId::Chk003), &manifest, &[], add_missing)
-            .expect_err("script CHK003 is skipped under --add-missing");
+        let (actions, skipped) = plan_fixes(&report(RuleId::Chk003), &manifest, &[], add_missing);
+        assert_eq!(actions, []);
         assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
 
-        let actions = plan_fixes(
+        let (actions, skipped) = plan_fixes(
             &report(RuleId::Chk003),
             &manifest,
             &[],
             FixOptions::default(),
-        )
-        .expect("plain CHK003 is not a fix target");
-        assert!(actions.is_empty());
+        );
+        assert_eq!(skipped, []);
+        assert_eq!(actions, []);
+    }
+
+    #[test]
+    fn keeps_skipped_fixes_alongside_applicable_actions() {
+        let origin = DependencyOrigin {
+            file: "pyproject.toml".to_owned(),
+            line: None,
+            label: "project.dependencies[0]".to_owned(),
+        };
+        let manifest = manifest_with(vec![DeclaredDependency {
+            name: "boto3".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: origin.clone(),
+            opaque: false,
+            included_via: Vec::new(),
+        }]);
+        let issue = |location, subject| Issue {
+            rule: RuleId::Chk002,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "unused".to_owned(),
+            workspace_member: None,
+            location,
+            subject,
+            explain: None,
+        };
+        let report = IssueReport {
+            issues: vec![
+                issue(
+                    IssueLocation {
+                        file: None,
+                        line: None,
+                        manifest: Some(origin),
+                    },
+                    IssueSubject::Distribution {
+                        name: "boto3".to_owned(),
+                    },
+                ),
+                issue(
+                    IssueLocation {
+                        file: Some("scripts/tool.py".to_owned()),
+                        line: Some(3),
+                        manifest: None,
+                    },
+                    IssueSubject::ScriptDistribution {
+                        script: "scripts/tool.py".to_owned(),
+                        name: "httpx".to_owned(),
+                    },
+                ),
+            ],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
     }
 
     #[test]

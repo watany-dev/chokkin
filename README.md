@@ -7,7 +7,7 @@ Find unused files, dependencies, and public symbols in Python projects.
 `chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
 
 > [!NOTE]
-> **Status: v0.5.1 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. v0.5 follows modern Python packaging: PEP 735 `include-group`, PEP 723 inline scripts, `pylock.toml` / `poetry.lock` / `pdm.lock` for the transitive check, `[tool.uv]` sources / constraints / legacy dev-dependencies, build-system context and wheel-target public surface, more binary / plugin usage sources, and plugin auto-enable from declared dependencies. The parser moved to `ruff_python_parser`, files are parsed in parallel, and the warm cache is keyed on file stat. **v0.1.0 through v0.5.1 have been released.**
+> **Status: v0.6.0 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. v0.5 follows modern Python packaging: PEP 735 `include-group`, PEP 723 inline scripts, `pylock.toml` / `poetry.lock` / `pdm.lock` for the transitive check, `[tool.uv]` sources / constraints / legacy dev-dependencies, build-system context and wheel-target public surface, more binary / plugin usage sources, and plugin auto-enable from declared dependencies. The parser moved to `ruff_python_parser`, files are parsed in parallel, and the warm cache is keyed on file stat. v0.6 makes `--fix` refuse stale line numbers and array indices instead of deleting the wrong dependency, keeps requirements line endings, and trims the Rust library API. **v0.1.0 through v0.6.0 have been released.**
 
 ## Why chokkin?
 
@@ -31,7 +31,7 @@ uvx chokkin
 No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, and one lockfile: `uv.lock`, `pylock.toml`, `poetry.lock`, or `pdm.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
 
 ```text
-chokkin 0.5.1
+chokkin 0.6.0
 
 Project: acme-api
 Config : pyproject.toml
@@ -108,6 +108,7 @@ Key flags:
 - `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files. `--add-missing` adds Certain CHK003 findings to non-Poetry `[project].dependencies` when the distribution is unambiguous; workspace findings are inserted into the member `pyproject.toml` when that member manifest was inventoried. Unsupported cases are reported as skipped fixes with details on stderr.
 - `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
 - `--no-cache` — disable Phase 2 cache reads/writes. Parse and manifest/config scan cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
+- `--no-auto-workspace` — do not treat nested `pyproject.toml` files with a `[project]` name as workspace members when the repository declares no uv or chokkin workspace (see workspace mode below).
 - `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
 - `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
 - `--explain` / `--trace` — show why an issue was reported and how reachability was judged. `CHK002` explain includes top-level modules and reachable/unreachable import evidence; `--trace` prints a positive path for reachable files and a negative trace (reason, entry roots, incoming import chain) for unreachable files. These are the intended path for investigating and reporting false positives.
@@ -185,7 +186,7 @@ The root `.chokkin/` directory is reserved for analyzer data and is always exclu
 
 - **app mode** — there's a clear entry (`console_scripts`, `manage.py`, `asgi.py`, `wsgi.py`, `app.py`). Unused files are reported aggressively.
 - **library mode** — a `[project] name` with a package and no clear entry. Public modules may be imported by external users, so unused files/exports are reported at low confidence (or as info). For serious unused-file detection in a library, declare `entry` explicitly.
-- **workspace mode** — multiple `pyproject.toml` files or `tool.uv.workspace.members`. Each member is analyzed separately (per-member `[tool.chokkin.workspaces.<name>]` config is supported), sharing the workspace lockfile.
+- **workspace mode** — multiple `pyproject.toml` files or `tool.uv.workspace.members`. Each member is analyzed separately (per-member `[tool.chokkin.workspaces.<name>]` config is supported), sharing the workspace lockfile. Without a workspace declaration (llama_index-style monorepos), nested `pyproject.toml` files up to four directories deep that declare a `[project]` name become members automatically; hidden, build, and test directories and `exclude` globs are skipped, a warning reports the member count, and `--no-auto-workspace` turns this off. A detected member that names a distribution and has no app entry is scored like a library: its unreachable files drop to `maybe` and its tests are not reported.
 
 ### Dependency contexts
 
@@ -256,7 +257,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: watany-dev/chokkin@v0.5.1
+      - uses: watany-dev/chokkin@v0.6.0
         with:
           baseline: chokkin-baseline.json
           sarif-file: chokkin.sarif
@@ -279,7 +280,7 @@ Without the action, pin the version with `uvx`:
 
 ```yaml
       - uses: astral-sh/setup-uv@v10.2.0
-      - run: uvx chokkin@0.5.1 --baseline chokkin-baseline.json --reporter github
+      - run: uvx chokkin@0.6.0 --baseline chokkin-baseline.json --reporter github
 ```
 
 ## Installation

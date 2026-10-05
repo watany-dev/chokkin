@@ -176,9 +176,11 @@ mod tests {
     fn src_layout() -> LayoutInfo {
         LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         }
     }
 
@@ -260,6 +262,7 @@ mod tests {
                 shell_commands: Vec::new(),
                 decorator_sites: Vec::new(),
                 diagnostics: Vec::new(),
+                skipped: false,
             },
         )
         .expect("imports");
@@ -271,16 +274,19 @@ mod tests {
                 file: legacy_id,
                 path: "src/acme/legacy.py".to_owned(),
                 max_confidence: Confidence::Certain,
+                mode: ProjectMode::App,
             },
             UnreachableFile {
                 file: old_api_id,
                 path: "src/acme/old_api.py".to_owned(),
                 max_confidence: Confidence::Certain,
+                mode: ProjectMode::App,
             },
         ];
 
         let entry = EntryPlan {
             mode: ProjectMode::App,
+            library_members: Vec::new(),
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "src/acme/cli.py".to_owned(),

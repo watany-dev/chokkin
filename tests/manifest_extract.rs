@@ -146,7 +146,7 @@ fn manifest_cache_notices_created_constraint_file() {
     let cache = CacheOptions::default();
     let first =
         extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
-    assert!(first.constraints.is_empty());
+    assert_eq!(first.constraints, []);
     assert!(
         first
             .warnings
@@ -188,6 +188,49 @@ fn manifest_cache_notices_shadowing_include() {
     let names = dependency_names(&second);
     assert!(names.contains(&"idna"));
     assert!(!names.contains(&"urllib3"));
+}
+
+#[test]
+fn requirements_include_context_matches_whole_words() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    for dir in ["reqs", "tests"] {
+        std::fs::create_dir(temp.path().join(dir)).expect("create dir");
+    }
+    let files = [
+        (
+            "requirements.txt",
+            "-r reqs/protests.txt\n-r reqs/documentsdb.txt\n-r tests/requirements.txt\n-r requirements-docs.txt\n",
+        ),
+        ("reqs/protests.txt", "pandas\n"),
+        ("reqs/documentsdb.txt", "numpy\n"),
+        ("tests/requirements.txt", "pytest\n"),
+        ("requirements-docs.txt", "sphinx\n"),
+    ];
+    for (path, body) in files {
+        std::fs::write(temp.path().join(path), body).expect("write requirements");
+    }
+
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest(&root, &config).expect("extract");
+    let context_of = |name: &str| {
+        manifest
+            .dependencies
+            .iter()
+            .find(|dep| dep.name == name)
+            .map(|dep| dep.context.clone())
+            .expect("declared")
+    };
+    assert_eq!(context_of("pandas"), DependencyContext::Runtime);
+    assert_eq!(context_of("numpy"), DependencyContext::Runtime);
+    assert_eq!(
+        context_of("pytest"),
+        DependencyContext::Group("tests".to_owned())
+    );
+    assert_eq!(
+        context_of("sphinx"),
+        DependencyContext::Group("docs".to_owned())
+    );
 }
 
 #[test]
@@ -301,7 +344,7 @@ fn opaque_url_not_unused_candidate() {
         .iter()
         .find(|dep| dep.opaque)
         .expect("opaque editable dependency");
-    assert!(editable.name.is_empty());
+    assert_eq!(editable.name, "");
     assert!(
         editable
             .specifier
@@ -407,7 +450,7 @@ fn requirements_url_without_egg_is_opaque() {
         .iter()
         .find(|dep| dep.opaque)
         .expect("opaque git dependency");
-    assert!(dep.name.is_empty());
+    assert_eq!(dep.name, "");
     assert!(
         dep.specifier
             .as_deref()

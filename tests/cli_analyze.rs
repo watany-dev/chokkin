@@ -366,7 +366,7 @@ fn binary_pep723_script_findings_follow_baseline_and_config_ignore() {
         temp.path(),
         &["--baseline", &baseline_arg, "--update-baseline"],
     );
-    assert!(!before.is_empty());
+    assert_ne!(before, Vec::<serde_json::Value>::new());
     let baseline_contents = fs::read_to_string(&baseline).expect("read baseline");
     assert!(baseline_contents.contains("script:scripts/tool.py:pyyaml"));
     let after = json_issues(temp.path(), &["--baseline", &baseline_arg]);
@@ -546,4 +546,272 @@ fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
             .any(|(code, target)| code == "CHK010" && target.ends_with("lifecycle")),
         "{keys:?}"
     );
+}
+
+/// `llama_index`: hundreds of member pyprojects and no workspace declaration
+/// (#488).
+fn undeclared_monorepo() -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"llama-index\"\nversion = \"0.1.0\"\ndependencies = [\"llama-index-core\"]\n",
+        ),
+        (
+            "llama-index-core/pyproject.toml",
+            "[project]\nname = \"llama-index-core\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        ),
+        (
+            "llama-index-core/llama_index/core/__init__.py",
+            "from llama_index.core.base import BaseLLM\n",
+        ),
+        (
+            "llama-index-core/llama_index/core/base.py",
+            "import requests\n\n\nclass BaseLLM:\n    session = requests\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/pyproject.toml",
+            "[project]\nname = \"llama-index-llms-openai\"\nversion = \"0.1.0\"\ndependencies = [\"openai\", \"llama-index-core\"]\n\n[dependency-groups]\ndev = [\"pytest\"]\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/__init__.py",
+            "from llama_index.llms.openai.base import OpenAI\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/base.py",
+            "import openai\nfrom llama_index.core import BaseLLM\n\n\nclass OpenAI(BaseLLM):\n    client = openai\n",
+        ),
+        (
+            "llama-index-integrations/llms/llama-index-llms-openai/tests/conftest.py",
+            "import openai\nimport pytest\n",
+        ),
+        // App member: its own `[project.scripts]` is the only entry, and it
+        // imports its own package by the distribution's underscore spelling.
+        (
+            "llama-dev/pyproject.toml",
+            "[project]\nname = \"llama-dev\"\nversion = \"0.1.0\"\n\n[project.scripts]\nllama-dev = \"llama_dev.cli:cli\"\n",
+        ),
+        // Its lockfile lists the member itself, so `llama_dev` matches a
+        // locked name before anything says it is local.
+        (
+            "llama-dev/uv.lock",
+            "version = 1\n\n[[package]]\nname = \"llama-dev\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n",
+        ),
+        ("llama-dev/llama_dev/__init__.py", ""),
+        (
+            "llama-dev/llama_dev/cli.py",
+            "from llama_dev import utils\nfrom . import release\n\n\ndef cli():\n    utils.run()\n    release.run()\n",
+        ),
+        ("llama-dev/llama_dev/utils.py", "def run():\n    pass\n"),
+        ("llama-dev/llama_dev/release.py", "def run():\n    pass\n"),
+        ("llama-dev/llama_dev/orphan.py", ""),
+        // Tool-only pyproject: not a member.
+        ("docs/pyproject.toml", "[tool.ruff]\nline-length = 88\n"),
+    ])
+}
+
+fn certain_chk001(issues: &[serde_json::Value]) -> Vec<String> {
+    issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001" && issue["confidence"] == "certain")
+        .map(|issue| issue["target"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+#[test]
+fn binary_undeclared_monorepo_members_are_auto_detected() {
+    let project = undeclared_monorepo();
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        certain_chk001(&issues),
+        ["llama-dev/llama_dev/orphan.py"],
+        "{issues:?}"
+    );
+    let keys = issue_keys(&issues);
+    assert!(
+        keys.iter().all(|(code, target)| !(matches!(
+            code.as_str(),
+            "CHK003" | "CHK004" | "CHK010"
+        ) && (target == "openai"
+            || target == "requests"
+            || target.contains("llama_dev")))),
+        "{keys:?}"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--probe")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stdout.contains("Workspace: 3 members"), "{stdout}");
+    assert!(
+        stderr.contains("treating 3 nested pyproject.toml as workspace members"),
+        "{stderr}"
+    );
+    assert!(project.path().join(".chokkin").is_dir());
+    assert!(!project.path().join("llama-index-core/.chokkin").exists());
+}
+
+/// Library scoring is only for detected members; a declared member keeps the
+/// root's mode, so its orphans stay certain.
+#[test]
+fn binary_declared_workspace_member_is_not_scored_as_library() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[project.scripts]\napi-cli = \"api.main:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+        ),
+        (
+            "services/api/pyproject.toml",
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\n",
+        ),
+        ("services/api/src/api/__init__.py", ""),
+        (
+            "services/api/src/api/main.py",
+            "from . import helper\nfrom api import util\n\n\ndef main() -> None:\n    helper.run()\n    util.run()\n",
+        ),
+        ("services/api/src/api/helper.py", "def run():\n    pass\n"),
+        ("services/api/src/api/util.py", "def run():\n    pass\n"),
+        ("services/api/src/api/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    // Imports inside the member resolve against its own `src/` layout.
+    assert_eq!(
+        certain_chk001(&issues),
+        ["services/api/src/api/orphan.py"],
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn binary_no_auto_workspace_keeps_single_project_analysis() {
+    let project = undeclared_monorepo();
+    let issues = json_issues(project.path(), &["--no-auto-workspace"]);
+    assert!(!certain_chk001(&issues).is_empty(), "{issues:?}");
+}
+
+/// langchain ships a deliberately non-UTF-8 fixture; one such file must not
+/// abort the run (#486).
+#[test]
+fn binary_undecodable_source_is_skipped_with_a_diagnostic() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("tests/test_latin.py", "import acme.latin\n"),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", ""),
+        ("acme/orphan.py", ""),
+    ]);
+    fs::write(
+        project.path().join("acme/latin.py"),
+        b"# -*- coding: latin-1 -*-\nimport acme.helper\ns = 'caf\xe9'\n",
+    )
+    .expect("write latin-1 source");
+    fs::write(
+        project.path().join("acme/cyrillic.py"),
+        b"# coding: iso-8859-5\nu = '\xd0\xd1'\n",
+    )
+    .expect("write iso-8859-5 source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("skipped `acme/cyrillic.py`"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let keys = issue_keys(parsed["issues"].as_array().expect("issues"));
+    // The latin-1 module is decoded and its import followed; the skipped one
+    // is not reported as unused.
+    let unused_files: Vec<_> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK001")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unused_files, ["acme/orphan.py"], "{keys:?}");
+    assert!(
+        parsed["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("acme/cyrillic.py")),
+        "{parsed}"
+    );
+}
+
+#[test]
+fn reachable_undecodable_source_lowers_unused_findings_to_likely() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("tests/test_cyrillic.py", "import acme.cyrillic\n"),
+        ("acme/__init__.py", ""),
+        ("acme/orphan.py", ""),
+    ]);
+    // It may import `requests` or `acme.orphan`; nobody can tell.
+    fs::write(
+        project.path().join("acme/cyrillic.py"),
+        b"# coding: iso-8859-5\nimport requests\nu = '\xd0\xd1'\n",
+    )
+    .expect("write iso-8859-5 source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let confidences: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| matches!(issue["code"].as_str(), Some("CHK001" | "CHK002")))
+        .map(|issue| (issue["code"].clone(), issue["confidence"].clone()))
+        .collect();
+    assert_eq!(
+        confidences,
+        [
+            ("CHK001".into(), "likely".into()),
+            ("CHK002".into(), "likely".into())
+        ],
+        "{parsed}"
+    );
+}
+
+#[test]
+fn binary_malformed_dynamic_import_names_do_not_abort_analysis() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "src/acme/__init__.py",
+            "import importlib\ndef main(): pass\nimportlib.import_module(\".sub\", __package__)\nimportlib.import_module(\"\", \"acme\")\nimportlib.import_module(\"a..b\")\nimportlib.import_module(\"pkg.\")\n",
+        ),
+        ("src/acme/sub.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    // `.sub` resolves against `__package__`, so `sub.py` is reachable.
+    assert_eq!(parsed["issues"], serde_json::json!([]), "{parsed}");
 }

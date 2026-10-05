@@ -168,6 +168,102 @@ Gate result:
 | Cold run, medium project | <= 2000 ms | all within budget | PASS |
 | CHK003 excluding `tp` | <= `573ff37` | 283 <= 288 | PASS |
 
+## #346 corpus measurements (#338–#342)
+
+Measured on 2026-10-04 with chokkin `0.6.0` over the same 20 pinned clones.
+These are measurements, not new release criteria. Details and reproduction
+steps are in [`chk001-remove-and-test.md`](./chk001-remove-and-test.md)
+(#338, #339) and
+[`oss-differential-and-recall.md`](./oss-differential-and-recall.md) (#340,
+#341, #342).
+
+### Gates (#342)
+
+| Gate | Harness | Measured | Result |
+|---|---|---|---|
+| Determinism: cold, warm and `--no-cache` byte-identical | `make oss-gate` | 30/30 (20 clones + 10 sentinels) | PASS |
+| JSON schema and summary consistency | `make oss-gate` | 30/30 | PASS |
+| Crash: no exit 3, no non-JSON output | `make oss-gate` | 0 | PASS |
+| Performance: no benchmark > 10% slower with its 95% CI above 0, confirmed by a re-run | `make bench-gate` (A/A: this branch has no Rust change) | 0/27 regressed | PASS |
+
+The performance gate was calibrated with an A/A run on a shared VM:
+`make bench-save BASELINE=main` followed by `make bench-gate` on the same code.
+A single comparison flagged 4 of 27 benchmarks (+10.9% to +14.6%, CIs above 0),
+so sequential runs drift by more than the threshold. The gate now re-runs only
+the flagged benchmarks (`--confirm 1`) and fails only if they regress again. In
+the calibrated run, `parse_cache_warm/src/1000` went from +10.5% to -1.6% on
+re-run, and the gate passed. Use a dedicated runner for a tighter threshold.
+
+### Precision by removal (#338, #339)
+
+Each finding is removed from a disposable copy and the project's own test
+suite is run offline in a per-project venv. Precision = pass / (pass + break).
+
+| Rule | Removal | Tested | pass | break | Precision |
+|---|---|---:|---:|---:|---:|
+| CHK001 | delete the file | 50 | 28 | 22 | 56.0% |
+| CHK006 | delete or privatize the symbol | 243 | 226 | 17 | 93.0% |
+
+All 22 CHK001 breaks are files the suite uses without importing them. Seven
+are fastapi modules judged in app mode, seven are black test data, and eight
+are werkzeug/uvicorn test modules loaded by path or import string. Django
+(988 CHK001) is not run: about 6 minutes per baseline, four environmental
+baseline failures and an expected yield dominated by string-loaded modules.
+
+CHK006 is sampled to 15 findings per project, giving 243 tests over 17 projects.
+Of the 17 breaks, 5 are chokkin false positives: names re-exported through
+`from m import *` (httpx's private modules into `httpx/__init__.py`, and
+`attrs.exceptions`). Another 5 are names referenced as strings (`dictConfig`,
+`monkeypatch.setattr`, `getattr`), 3 are framework hooks called by name
+(pytest plugin hooks and an IPython extension), and 4 are classes whose
+runtime name is observable once they are renamed.
+
+### Mutation recall (#341)
+
+| Injection | Default | `--confidence maybe` |
+|---|---:|---:|
+| CHK001 orphan module | 8/20 | 20/20 |
+| CHK002 unused dependency | 14/14 | 14/14 |
+| CHK003 undeclared import | 18/20 | 18/20 |
+| CHK010 unresolved import | 18/20 | 18/20 |
+| CHK006 unreferenced function | 17/20 | 17/20 |
+| CHK007 unused re-export | 18/20 | 18/20 |
+| Trap: `importlib.import_module` target (lower is better) | 0/20 | 2/20 |
+| Trap: `PyYAML`/`Pillow` dist ≠ import name (lower is better) | 1/14 | 1/14 |
+
+The CHK001 default misses are the library-mode `maybe` cap. Every other miss
+and trap trigger is in urllib3 or pluggy (no entry root, see follow-ups), plus
+one anyio backend loaded through `importlib`.
+
+### Differential (#340)
+
+Agreement is low by design, so the useful output is the triage of each
+disagreement:
+
+| Rule | Tool | Jaccard | Main reason for disagreement |
+|---|---|---:|---|
+| CHK002 | deptry / fawltydeps | 0% (0 vs 74/81) | the others flag dev and docs extras, which chokkin treats as non-runtime |
+| CHK003 | deptry / fawltydeps | 13.9% / 36.7% | `setup.py` with variable `install_requires` (requests); optional backends (django) |
+| CHK006 | vulture / deadcode | 7.9% / 7.3% | different claims: the others report names unused anywhere, and CHK006 reports public module-level names that nothing outside their module uses; the other-only names are dynamically loaded or framework-used |
+| CHK007 | ruff F401 / pyflakes | 6.1% / 18.9% | the `import X as X` and `__all__` re-export conventions |
+
+### Follow-ups
+
+1. **Library with `console_scripts` resolves to app** (fastapi, uvicorn), so
+   public modules are judged by app reachability. Treat `[project.scripts]`
+   together with an importable package as library in `auto` mode, or cap
+   CHK001 inside the distributed package.
+2. **Library entry roots.** In urllib3 and pluggy nothing is reachable,
+   because the package is not an entry root and `test/` and `testing/` are
+   not discovered as test roots.
+3. **String module references** (`import_module(f"...{lang}.formats")`,
+   gunicorn `-k uvicorn.workers.UvicornWorker`, Django settings dotted paths):
+   the plugin route of spec §9.
+4. **Star re-exports for CHK006.** A name pulled into a public module with
+   `from m import *` (and listed in its `__all__`) should count as used.
+5. **`setup.py` with a non-literal `install_requires`** is skipped, which
+   produces requests' CHK003 false positives (labelled `deferred`).
+
 ## Phase 1.5 remediation summary
 
 | Workstream | Change | Impact |

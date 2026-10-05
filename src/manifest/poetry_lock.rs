@@ -132,7 +132,7 @@ content-hash = "def"
             sorted_deps(&graph, "requests"),
             vec!["certifi", "charset-normalizer", "urllib3"]
         );
-        assert!(sorted_deps(&graph, "urllib3").is_empty());
+        assert_eq!(sorted_deps(&graph, "urllib3"), Vec::<String>::new());
         assert_eq!(graph.edges.len(), 2);
     }
 
@@ -143,7 +143,7 @@ content-hash = "def"
             sorted_deps(&graph, "flask"),
             vec!["blinker", "colorama", "importlib-metadata", "werkzeug"]
         );
-        assert!(sorted_deps(&graph, "werkzeug").is_empty());
+        assert_eq!(sorted_deps(&graph, "werkzeug"), Vec::<String>::new());
     }
 
     #[test]

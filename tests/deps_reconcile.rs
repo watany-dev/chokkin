@@ -238,6 +238,21 @@ fn transitive_urllib3_emits_chk004() {
     assert_eq!(candidate.severity, Severity::Error);
 }
 
+#[test]
+fn optional_transitive_import_prefers_chk004() {
+    let report = reconcile_fixture("transitive_urllib3_optional");
+    let rules = |needle: &str| {
+        report
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.message.contains(needle))
+            .map(|candidate| (candidate.rule, candidate.severity))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rules("urllib3"), [(RuleId::Chk004, Severity::Error)]);
+    assert_eq!(rules("pyyaml"), [(RuleId::Chk003, Severity::Info)]);
+}
+
 fn chk004_summary(name: &str) -> Vec<(String, Severity, Confidence)> {
     reconcile_fixture(name)
         .candidates
@@ -559,16 +574,28 @@ fn uv_path_source_resolves_without_venv() {
         chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "mylib"
     )));
     let report = reconcile_fixture("uv_path_source");
-    assert!(rules_mentioning(&report, "mylib").is_empty());
+    assert_eq!(rules_mentioning(&report, "mylib"), []);
     assert!(!has_dist_rule(&report, RuleId::Chk002, "my-lib"));
     assert!(report.used_distributions.contains("my-lib"));
+}
+
+/// Issue #499: an in-tree path source with its own `[project]` is read as a
+/// workspace member, so its runtime declarations govern the code under it.
+#[test]
+fn in_tree_path_source_manifest_governs_its_tree() {
+    let inputs = load_deps(&fixture("uv_path_source_member"), false);
+    assert_eq!(inputs.workspace_inputs.len(), 1);
+    let report = reconcile_fixture("uv_path_source_member");
+    assert_eq!(rules_mentioning(&report, "requests"), []);
+    assert_eq!(rules_mentioning(&report, "numpy"), []);
+    assert_eq!(rules_mentioning(&report, "urllib3"), [RuleId::Chk004]);
 }
 
 #[test]
 fn uv_workspace_source_dependency_is_used() {
     let report = reconcile_fixture("uv_workspace_source");
     assert!(!has_dist_rule(&report, RuleId::Chk002, "billing"));
-    assert!(rules_mentioning(&report, "billing").is_empty());
+    assert_eq!(rules_mentioning(&report, "billing"), []);
 }
 
 #[test]
@@ -586,7 +613,7 @@ fn build_plugin_declared_as_runtime_dep_notes_build_requires() {
         unused.explain.details
     );
     assert!(!has_dist_rule(&report, RuleId::Chk002, "hatchling"));
-    assert!(rules_mentioning(&report, "hatchling").is_empty());
+    assert_eq!(rules_mentioning(&report, "hatchling"), []);
     assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
 

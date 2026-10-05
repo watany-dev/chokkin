@@ -6,15 +6,12 @@ use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Sev
 
 /// Build CHK001 candidates from unreachable files.
 #[must_use]
-pub fn chk001_candidates(
-    unreachable: &[UnreachableFile],
-    mode: ProjectMode,
-) -> Vec<IssueCandidate> {
+pub fn chk001_candidates(unreachable: &[UnreachableFile]) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
     for file in unreachable {
         let confidence = file.max_confidence;
-        let severity = chk001_severity(mode, confidence);
+        let severity = chk001_severity(file.mode, confidence);
 
         candidates.push(IssueCandidate {
             rule: RuleId::Chk001,
@@ -36,8 +33,8 @@ pub fn chk001_candidates(
     candidates
 }
 
-fn chk001_severity(mode: crate::config::ProjectMode, confidence: Confidence) -> Severity {
-    if mode == crate::config::ProjectMode::Library && confidence == Confidence::Maybe {
+fn chk001_severity(mode: ProjectMode, confidence: Confidence) -> Severity {
+    if mode == ProjectMode::Library && confidence == Confidence::Maybe {
         Severity::Warning
     } else {
         Severity::Error

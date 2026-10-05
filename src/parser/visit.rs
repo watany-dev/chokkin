@@ -13,12 +13,12 @@ use crate::sources::{FileContext, LayoutInfo};
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
 use super::dynamic::{
-    LoaderNames, PythonRun, command_word, literal_module, module_prefix, python_run,
+    LiteralTarget, LoaderNames, PythonRun, command_word, literal_target, module_prefix, python_run,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
 use super::platform_guard::is_platform_guard_test;
-use super::relative::{resolve_relative_import, unresolved_relative_diagnostic};
+use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_test;
 use super::types::{
     AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef,
@@ -500,11 +500,19 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             Expr::Call(call) => {
                 let arguments = &call.arguments;
                 if self.loader_names.is_loader(&call.func) {
-                    if let Some(module) = literal_module(call) {
-                        let line = self.line_number(call);
-                        self.parsed
-                            .dynamic_imports
-                            .push(DynamicImport { module, line });
+                    if let Some(target) =
+                        literal_target(call, || module_package(self.path, self.layout))
+                    {
+                        match target {
+                            LiteralTarget::Module(module) => {
+                                let line = self.line_number(call);
+                                self.parsed
+                                    .dynamic_imports
+                                    .push(DynamicImport { module, line });
+                            },
+                            LiteralTarget::Opaque => self.parsed.has_opaque_dynamic_import = true,
+                            LiteralTarget::Nothing => {},
+                        }
                     } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
                         if let Some(module) = module_prefix(call) {
                             let line = self.line_number(call);
@@ -551,9 +559,11 @@ mod tests {
         let module = ruff_python_parser::parse_module(source).expect("parse");
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         };
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &lines);
@@ -639,14 +649,14 @@ mod tests {
     #[test]
     fn marks_opaque_assignment_with_non_literal() {
         let parsed = visit_source("import importlib\nmod = importlib.import_module(name)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(parsed.has_opaque_dynamic_import);
     }
 
     #[test]
     fn records_command_words_only_with_subprocess() {
         let source = "cmd = \"ruff format --check\"\nrun(cmd, shell=True)\n";
-        assert!(visit_source(source).shell_commands.is_empty());
+        assert_eq!(visit_source(source).shell_commands, Vec::<String>::new());
         let parsed = visit_source(&format!("import subprocess\n{source}"));
         assert_eq!(parsed.shell_commands, vec!["ruff".to_owned()]);
     }
@@ -655,7 +665,7 @@ mod tests {
     fn records_prefix_of_built_module_name() {
         let parsed =
             visit_source("import importlib\nimportlib.import_module(\"acme.commands.\" + name)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         let prefixes: Vec<_> = parsed
             .dynamic_import_prefixes
             .iter()
@@ -682,7 +692,7 @@ mod tests {
     #[test]
     fn marks_opaque_aliased_import_module() {
         let parsed = visit_source("from importlib import import_module\nimport_module(name)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(parsed.has_opaque_dynamic_import);
     }
 
@@ -701,9 +711,67 @@ mod tests {
     }
 
     #[test]
+    fn drops_literal_names_python_cannot_import() {
+        let parsed = visit_source(
+            "import importlib\nimportlib.import_module(\"\", \"acme\")\nimportlib.import_module(\"a..b\")\nimportlib.import_module(\"pkg.\")\nimportlib.import_module(\".sub\")\nimportlib.import_module(\".sub\", None)\n__import__(\"\")\n",
+        );
+        assert_eq!(parsed.dynamic_imports, []);
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn keeps_literal_names_with_non_identifier_segments() {
+        let parsed =
+            visit_source("import importlib\nimportlib.import_module(\"tests.my-harness.case\")\n");
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| dynamic.module.as_str())
+            .collect();
+        assert_eq!(modules, vec!["tests.my-harness.case"]);
+    }
+
+    #[test]
+    fn resolves_relative_literal_against_package_argument() {
+        let source = "import importlib\nimportlib.import_module(\".sub\", __package__)\nimportlib.import_module(\"..api\", package=\"acme.core\")\n";
+        let module = ruff_python_parser::parse_module(source).expect("parse");
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
+            packages: vec!["acme".to_owned()],
+            local_packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            members: Vec::new(),
+        };
+        let lines = LineIndex::new(source);
+        let mut visitor = ModuleVisitor::new(
+            "src/acme/__init__.py",
+            &layout,
+            FileContext::Runtime,
+            &lines,
+        );
+        visitor.visit_module(module.suite());
+        let parsed = visitor.into_parsed();
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| dynamic.module.as_str())
+            .collect();
+        assert_eq!(modules, vec!["acme.sub", "acme.api"]);
+        assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn marks_opaque_relative_literal_with_unknown_package() {
+        let parsed = visit_source("import importlib\nimportlib.import_module(\".sub\", base)\n");
+        assert_eq!(parsed.dynamic_imports, []);
+        assert!(parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
     fn marks_opaque_non_literal_keyword() {
         let parsed = visit_source("import importlib\nimportlib.import_module(name=target)\n");
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(parsed.has_opaque_dynamic_import);
     }
 
@@ -719,7 +787,7 @@ mod tests {
         let parsed = visit_source(
             "from acme.loader import import_module\nimport_module(name)\nimport_module(\"acme.a\")\n",
         );
-        assert!(parsed.dynamic_imports.is_empty());
+        assert_eq!(parsed.dynamic_imports, []);
         assert!(!parsed.has_opaque_dynamic_import);
     }
 

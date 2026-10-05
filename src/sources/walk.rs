@@ -301,12 +301,14 @@ mod tests {
 
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: vec![
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
+            members: Vec::new(),
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&["src/acme/generated/**".to_owned()]);
@@ -339,12 +341,14 @@ mod tests {
 
         let layout = LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: vec![
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
+            members: Vec::new(),
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[]);
@@ -374,9 +378,11 @@ mod tests {
 
         let layout = LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: vec!["**/*.{py,pyi}".to_owned()],
+            members: Vec::new(),
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[".venv/**".to_owned()]);

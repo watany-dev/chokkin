@@ -7,7 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Monorepos without a workspace declaration now treat nested
+  `pyproject.toml` files that declare `[project].name` (depth ≤ 4, honoring
+  `exclude`) as workspace members, so dependencies declared in a member's
+  manifest satisfy its imports and orphan files in library members are
+  `maybe` CHK001 warnings instead of certain errors. `--no-auto-workspace`
+  keeps the previous single-project analysis (#488).
+- Inside such members, `[project.scripts]` become entry points, the member's
+  own packages (`src/` or flat) and PEP 420 namespace packages
+  (`llama_index.core`) resolve to its files, and its packages are first-party
+  to every file, so a member importing itself no longer raises CHK003 and an
+  application member's modules are no longer certain CHK001 (#488).
+
+### Changed
+- Breaking change for the Rust library API: `EntryPlan` gains
+  `library_members`, `UnreachableFile` gains `mode`, `RuntimeOverrides` gains
+  `no_auto_workspace`, `ProbeReport` gains `auto_workspace`, `ProbeWarning`
+  gains `AutoWorkspace`, `LayoutInfo` gains `members` (`MemberLayout`),
+  `emit_issues`
+  drops its mode argument, and `apply_public_surface` takes the `EntryPlan`
+  (#488).
+- `uv.lock` is parsed into only the fields the dependency graph reads, and
+  auto-detected members' inputs are collected in parallel; a monorepo with
+  ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488).
+
+## [0.6.0] - 2026-10-03
+
+v0.5.1 was prepared but never published to PyPI; its fixes ship here.
+
+### Changed
+- Breaking change for the Rust library API (the CLI, config keys, and JSON /
+  SARIF output are unchanged): unused or test-only public items are removed,
+  including the in-memory parse cache (`ParseCacheStore`, `ParseCacheStats`,
+  the `cache` argument of `parse_project_sources_with_cache`), `SymbolReport`,
+  `TransitiveIndex`, `ResolvedMode` (folded into `ProjectMode`),
+  `ProjectRoot.start`, `PluginsWarning::PluginNoOp`, never-constructed error
+  variants, graph edges only tests read, and the `Git` / `Url` / `Index`
+  payloads of `UvSourceKind` (#446).
+- Invalid `mode` / severity / plugin values in config now report serde's error
+  text; accepted values are unchanged (#458).
+- `[tool.uv] default-groups` is no longer parsed; `--production` never read it
+  (#456).
+
 ### Fixed
+- Resolver counts only importable local modules and dedupes ambiguity warnings.
+- Manifest parsing accepts arbitrary version strings after `===`.
+- pytest import settings follow pytest's config file precedence.
+- Resolver models pytest `prepend` import mode for test-local imports (#360).
+- CHK006 no longer reports symbols referenced only from `tests/` (a v0.5.0
+  regression), with or without `tests/__init__.py` (#410).
+- CHK006 tracks `from pkg import module; module.name` references, including
+  aliases and `from . import module` (#411).
 - `--fix` removes a requirements line only when it names the target
   distribution, reading names the way the manifest parser does, and applies
   several removals in one file bottom-up. It no longer deletes a used
@@ -19,18 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and removes an entry only when it names the target distribution. It no longer
   deletes a used dependency after an earlier removal shifts array indices; a
   stale index is reported as an error instead (#436).
-
-## [0.5.1] - 2026-09-29
-
-### Fixed
-- Resolver counts only importable local modules and dedupes ambiguity warnings.
-- Manifest parsing accepts arbitrary version strings after `===`.
-- pytest import settings follow pytest's config file precedence.
-- Resolver models pytest `prepend` import mode for test-local imports (#360).
-- CHK006 no longer reports symbols referenced only from `tests/` (a v0.5.0
-  regression), with or without `tests/__init__.py` (#410).
-- CHK006 tracks `from pkg import module; module.name` references, including
-  aliases and `from . import module` (#411).
 
 ## [0.5.0] - 2026-09-28
 

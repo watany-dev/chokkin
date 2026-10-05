@@ -42,6 +42,7 @@ Options:
       --baseline <PATH>   Suppress issues already recorded in a baseline file
       --update-baseline   Write current issues to --baseline
       --no-cache          Disable cache reads and writes
+      --no-auto-workspace Do not treat nested pyproject.toml as workspace members
       --probe             Run probe mode (pipeline steps 1-4 only)
       --init              Append starter [tool.chokkin] config to pyproject.toml
       --project-root PATH Override project root discovery start directory
@@ -156,6 +157,13 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
         production: report.probe.effective_config.production,
         version: VERSION,
         config_label: Some(config_label_from_sources(&report.probe.config_sources)),
+        diagnostics: report
+            .probe
+            .warnings
+            .iter()
+            .chain(&report.warnings)
+            .map(ToString::to_string)
+            .collect(),
     };
 
     let output = render_issues(args.reporter_id(), &report.issues, &context);

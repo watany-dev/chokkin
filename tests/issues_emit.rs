@@ -27,7 +27,6 @@ struct EmitInputs {
     reachability: chokkin::ReachabilityReport,
     deps: chokkin::DependencyReport,
     symbols: Vec<chokkin::IssueCandidate>,
-    entry: chokkin::EntryPlan,
 }
 
 fn load_emit(path: &Path) -> EmitInputs {
@@ -115,7 +114,6 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         reachability,
         deps,
         symbols,
-        entry,
     }
 }
 
@@ -129,7 +127,6 @@ fn emit_reports_unused_dependency() {
         &inputs.parse,
         &inputs.config,
         &RuntimeOverrides::default(),
-        inputs.entry.mode,
         &ResolutionIndex::default(),
     );
     assert!(
@@ -155,7 +152,6 @@ fn config_ignore_suppresses_matching_issue() {
         &inputs.parse,
         &config,
         &RuntimeOverrides::default(),
-        inputs.entry.mode,
         &ResolutionIndex::default(),
     );
     assert!(
@@ -164,7 +160,7 @@ fn config_ignore_suppresses_matching_issue() {
             .iter()
             .all(|issue| issue.rule != RuleId::Chk002)
     );
-    assert!(!report.suppressed.is_empty());
+    assert_ne!(report.suppressed, []);
 }
 
 #[test]
@@ -196,7 +192,6 @@ fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> cho
         &inputs.parse,
         config,
         &RuntimeOverrides::default(),
-        inputs.entry.mode,
         &ResolutionIndex::default(),
     )
 }
@@ -213,7 +208,6 @@ fn emit_with_config_and_overrides(
         &inputs.parse,
         config,
         overrides,
-        inputs.entry.mode,
         &ResolutionIndex::default(),
     )
 }
@@ -232,7 +226,7 @@ fn severity_off_disables_rule_without_suppressed_entry() {
             .iter()
             .all(|issue| issue.rule != RuleId::Chk002)
     );
-    assert!(report.suppressed.is_empty());
+    assert_eq!(report.suppressed, []);
     assert_eq!(report.exit_status, ExitStatus::Success);
 }
 

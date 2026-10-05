@@ -3,6 +3,7 @@
 mod attributes;
 mod decorators;
 mod dynamic;
+mod encoding;
 mod error;
 mod exports;
 mod ignores;
@@ -14,6 +15,7 @@ mod type_checking;
 mod types;
 mod visit;
 
+pub(crate) use encoding::decode_python_source;
 pub use error::ParseError;
 pub use ignores::extract_ignores;
 pub use parse::{parse_file, parse_project_sources_with_cache};

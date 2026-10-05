@@ -25,14 +25,10 @@ pub fn apply_fixes_with_workspace(
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
 ) -> FixReport {
-    let mut report_out = FixReport::default();
-
-    let actions = match plan_fixes(report, manifest, workspace_manifests, options) {
-        Ok(actions) => actions,
-        Err(skipped) => {
-            report_out.skipped = skipped;
-            return report_out;
-        },
+    let (actions, skipped) = plan_fixes(report, manifest, workspace_manifests, options);
+    let mut report_out = FixReport {
+        skipped,
+        ..FixReport::default()
     };
 
     for action in bottom_up_positional_removals(actions) {
@@ -456,7 +452,7 @@ mod tests {
             apply_fixes_with_workspace(&report, &root, &manifest, &[], FixOptions::default());
 
         assert!(dir.path().join("src/legacy.py").exists());
-        assert!(fix_report.applied.is_empty());
+        assert_eq!(fix_report.applied, []);
         assert_eq!(fix_report.skipped.len(), 1);
         assert_eq!(
             fix_report.skipped[0].reason,
@@ -571,7 +567,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let root = project_root(dir.path());
         let mut manifest = empty_manifest(&root);
-        assert!(lockfile_reminders(&manifest).is_empty());
+        assert_eq!(lockfile_reminders(&manifest), Vec::<String>::new());
 
         manifest.sources.lockfile = Some(crate::manifest::LockfileSource {
             kind: LockfileKind::Pdm,

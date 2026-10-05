@@ -76,6 +76,9 @@ pub struct DiscoveredFile {
 pub struct LayoutInfo {
     /// Detected layout kind.
     pub layout: ProjectLayout,
+    /// Root-relative directory holding `packages`: `""` for flat, `src` for
+    /// src layout, or a declared directory such as `lib`.
+    pub package_root: String,
     /// Package directory names (e.g. `acme` for `src/acme` or `acme/`).
     pub packages: Vec<String>,
     /// Root-level non-distribution packages (`tests/` with `__init__.py`)
@@ -83,9 +86,44 @@ pub struct LayoutInfo {
     pub local_packages: Vec<String>,
     /// Globs used when `config.project` was empty.
     pub inferred_globs: Vec<String>,
+    /// Workspace members' own layouts. The root layout cannot name a module
+    /// inside a member, so without them no import within a member resolves.
+    pub members: Vec<MemberLayout>,
+}
+
+/// Layout of one workspace member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberLayout {
+    /// Root-relative member directory using `/` separators.
+    pub path: String,
+    /// Layout inferred from the member's own manifest and sources.
+    pub layout: LayoutInfo,
 }
 
 impl LayoutInfo {
+    /// The innermost member containing root-relative `path`, with the path
+    /// relative to that member.
+    #[must_use]
+    pub fn member_for<'a>(&self, path: &'a str) -> Option<(&MemberLayout, &'a str)> {
+        self.members
+            .iter()
+            .filter_map(|member| {
+                let rest = path.strip_prefix(member.path.as_str())?.strip_prefix('/')?;
+                Some((member, rest))
+            })
+            .max_by_key(|(member, _)| member.path.len())
+    }
+
+    /// Root-relative directory of `package` (`lib/sqlalchemy`, or `acme` flat).
+    #[must_use]
+    pub fn package_dir(&self, package: &str) -> String {
+        if self.package_root.is_empty() {
+            package.to_owned()
+        } else {
+            format!("{}/{package}", self.package_root)
+        }
+    }
+
     #[must_use]
     pub fn in_local_package(&self, path: &str) -> bool {
         self.local_packages.iter().any(|package| {
@@ -105,9 +143,14 @@ impl LayoutInfo {
     pub fn cache_key_hash(&self) -> String {
         let mut hasher = CacheKeyHasher::new();
         hasher.field_str(self.layout.as_str());
+        hasher.field_str(&self.package_root);
         hash_str_list(&mut hasher, &self.packages);
         hash_str_list(&mut hasher, &self.local_packages);
         hash_str_list(&mut hasher, &self.inferred_globs);
+        for member in &self.members {
+            hasher.field_str(&member.path);
+            hasher.field_str(&member.layout.cache_key_hash());
+        }
         hasher.finish()
     }
 }

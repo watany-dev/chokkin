@@ -1,6 +1,6 @@
 [package]
 name = "chokkin"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Find unused files, dependencies, and public symbols in Python projects"
@@ -47,7 +47,7 @@ toml_edit = "0.25"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 # Local schema tests only; skip resolve-http so reqwest/h2/rustls stay out of
 # the tree (RUSTSEC-2026-0258 / RUSTSEC-2026-0285).
-jsonschema = { version = "0.56", default-features = false }
+jsonschema = { version = "0.58", default-features = false }
 proptest = "1"
 tempfile = "3"
 

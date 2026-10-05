@@ -2,10 +2,13 @@
 
 use std::collections::HashSet;
 
+use crate::config::Confidence;
 use crate::manifest::{InlineScript, LoadedManifest, normalize_distribution_name};
 use crate::plugins::PluginHints;
 use crate::resolver::ImportMap;
-use crate::rules::types::{DependencyReport, WorkspaceDependencyBoundary, sort_candidates};
+use crate::rules::types::{
+    DependencyReport, IssueCandidate, WorkspaceDependencyBoundary, sort_candidates,
+};
 use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::binary::detect_unlisted_binaries;
@@ -60,6 +63,25 @@ pub fn reconcile_with_context(
     ));
     sort_candidates(&mut report.candidates);
     report
+}
+
+/// A reachable file that could not be decoded may import any declared
+/// dependency, so none is certainly unused (and `--fix` must not remove it).
+fn lower_unused_when_a_skipped_file_is_reached(
+    unused: &mut [IssueCandidate],
+    context: &RuleContext<'_>,
+    reachable: &HashSet<&str>,
+) {
+    if context
+        .parse
+        .modules
+        .iter()
+        .any(|module| module.skipped && reachable.contains(module.path.as_str()))
+    {
+        for candidate in unused {
+            candidate.confidence = candidate.confidence.min(Confidence::Likely);
+        }
+    }
 }
 
 fn reconcile_project(
@@ -131,6 +153,7 @@ fn reconcile_project(
             Some(&evidence),
         ));
     }
+    lower_unused_when_a_skipped_file_is_reached(&mut candidates, context, &reachable);
 
     candidates.extend(detect_missing_dependencies(
         &declared,
@@ -210,9 +233,11 @@ mod tests {
                 root: manifest.root.clone(),
                 layout: crate::sources::LayoutInfo {
                     layout: crate::sources::ProjectLayout::Src,
+                    package_root: "src".to_owned(),
                     packages: Vec::new(),
                     local_packages: Vec::new(),
                     inferred_globs: Vec::new(),
+                    members: Vec::new(),
                 },
                 effective_globs: Vec::new(),
                 files: Vec::new(),

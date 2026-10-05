@@ -23,9 +23,11 @@ fn parse_fixture(name: &str) -> chokkin::ParsedModule {
     };
     let layout = LayoutInfo {
         layout: ProjectLayout::Unknown,
+        package_root: String::new(),
         packages: Vec::new(),
         local_packages: Vec::new(),
         inferred_globs: Vec::new(),
+        members: Vec::new(),
     };
     parse_file(
         &root,
@@ -48,15 +50,19 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
     let layout = match dir {
         "imports" => LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         _ => LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
     };
     parse_file(
@@ -72,7 +78,7 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
 #[test]
 fn parses_basic_imports() {
     let parsed = parse_fixture("p2_basic_imports.py");
-    assert!(parsed.diagnostics.is_empty());
+    assert_eq!(parsed.diagnostics, []);
     assert_eq!(parsed.imports.len(), 2);
     assert!(parsed.imports.iter().any(|import| import.module == "os"));
     assert!(
@@ -87,7 +93,7 @@ fn parses_basic_imports() {
 fn relative_import_without_package_emits_warning() {
     let parsed = parse_fixture("p3_relative_import.py");
     assert_eq!(parsed.imports.len(), 1);
-    assert!(parsed.imports[0].module.is_empty());
+    assert_eq!(parsed.imports[0].module, "");
     assert!(
         parsed
             .diagnostics
@@ -134,7 +140,7 @@ fn collects_type_checking_alias_import_context() {
 #[test]
 fn syntax_error_yields_diagnostic() {
     let parsed = parse_fixture("p9_syntax_error.py");
-    assert!(parsed.imports.is_empty());
+    assert_eq!(parsed.imports, []);
     assert_eq!(parsed.diagnostics.len(), 1);
     assert_eq!(parsed.diagnostics[0].severity, ParseSeverity::Error);
     assert_eq!(parsed.diagnostics[0].line, 1);
@@ -203,9 +209,11 @@ fn parse_project_sources_fixture_suite() {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files,
@@ -280,9 +288,11 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["app".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -340,9 +350,11 @@ fn parse_cache_follows_pep723_block_edits() {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -412,9 +424,11 @@ fn parse_project_sources_extracts_notebook_code_cells() {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -458,9 +472,11 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::DiscoveredFile {
@@ -482,7 +498,7 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
             .iter()
             .all(|diagnostic| diagnostic.severity != ParseSeverity::Error)
     );
-    assert!(module.imports.is_empty());
+    assert_eq!(module.imports, []);
     assert!(module.diagnostics.iter().any(|diagnostic| {
         diagnostic.severity == ParseSeverity::Warning
             && diagnostic.message.contains("invalid notebook JSON")
@@ -538,9 +554,11 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         },
         effective_globs: Vec::new(),
         files,
@@ -601,9 +619,11 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
     };
     let layout = LayoutInfo {
         layout: ProjectLayout::Src,
+        package_root: "src".to_owned(),
         packages: Vec::new(),
         local_packages: Vec::new(),
         inferred_globs: Vec::new(),
+        members: Vec::new(),
     };
     let discovered = |path: &str| chokkin::DiscoveredFile {
         path: path.to_owned(),

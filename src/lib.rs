@@ -96,8 +96,8 @@ pub use rules::{
     issue_stable_target,
 };
 pub use sources::{
-    DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
-    PublicSurface, SourcesError, SourcesWarning, discover_sources,
+    DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, MemberLayout,
+    ProjectLayout, PublicSurface, SourcesError, SourcesWarning, discover_sources,
 };
 
 /// The version of chokkin, taken from `Cargo.toml`.

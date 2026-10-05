@@ -1,13 +1,36 @@
 //! `uv.lock` graph extraction.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
-use toml::Value;
+use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 use super::error::ManifestError;
 use super::pep508_util::normalize_distribution_name;
 use super::types::LockfileGraph;
+
+/// Only the fields the graph needs: skipping `sdist`/`wheels` without building
+/// values keeps a monorepo's hundreds of member lockfiles cheap to read (#488).
+#[derive(Deserialize)]
+struct UvLock {
+    #[serde(default)]
+    package: Vec<UvPackage>,
+}
+
+#[derive(Deserialize)]
+struct UvPackage {
+    name: Option<String>,
+    #[serde(default)]
+    dependencies: Vec<UvDependency>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum UvDependency {
+    Table { name: String },
+    Name(String),
+    Other(IgnoredAny),
+}
 
 /// Parse `uv.lock` into a dependency name graph.
 pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
@@ -16,39 +39,28 @@ pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
         source,
     })?;
 
-    let table: toml::Table =
-        toml::from_str(&contents).map_err(|error| ManifestError::InvalidUvLock {
-            path: path.to_path_buf(),
-            message: error.to_string(),
-        })?;
+    let lock: UvLock = toml::from_str(&contents).map_err(|error| ManifestError::InvalidUvLock {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
 
-    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    if let Some(packages) = table.get("package").and_then(Value::as_array) {
-        for package in packages {
-            let Some(package_table) = package.as_table() else {
-                continue;
-            };
-            let Some(name) = package_table.get("name").and_then(Value::as_str) else {
-                continue;
-            };
-            let normalized = normalize_distribution_name(name);
-            let mut deps = Vec::new();
-            if let Some(dependencies) = package_table.get("dependencies").and_then(Value::as_array)
-            {
-                for dep in dependencies {
-                    if let Some(dep_table) = dep.as_table() {
-                        if let Some(dep_name) = dep_table.get("name").and_then(Value::as_str) {
-                            deps.push(normalize_distribution_name(dep_name));
-                        }
-                    } else if let Some(dep_name) = dep.as_str() {
-                        deps.push(normalize_distribution_name(dep_name));
-                    }
-                }
-            }
-            edges.insert(normalized, deps);
-        }
-    }
+    let edges = lock
+        .package
+        .into_iter()
+        .filter_map(|package| {
+            let deps = package
+                .dependencies
+                .iter()
+                .filter_map(|dep| match dep {
+                    UvDependency::Table { name } | UvDependency::Name(name) => {
+                        Some(normalize_distribution_name(name))
+                    },
+                    UvDependency::Other(_) => None,
+                })
+                .collect();
+            Some((normalize_distribution_name(&package.name?), deps))
+        })
+        .collect();
 
     Ok(LockfileGraph { edges })
 }

@@ -186,6 +186,8 @@ lockfileは1つだけ読み、優先順は uv.lock > pylock.toml > pylock.<name>
 
 requirements系filesのパース規則を定める。コメントはpip互換で「行頭または空白が先行する `#`」のみを除去し、URLフラグメント（`#sha256=` / `#egg=`）は保持する。`-r` / `--requirement`（`--requirement=other.txt` 含む）は再帰的に追跡する。`-c` / `--constraint` はversion制約の情報源としてのみ読み、`LoadedManifest.constraints` に積み、依存宣言とは合流させない（ファイル欠如はwarning）。`-e ./path` とlocal path指定はworkspace/first-party候補として扱い、distribution名は空のopaque依存として記録する。VCS URL・direct URL指定は `name @ url` 形式または `#egg=` からdistribution名を抽出し、抽出できない場合はopaque依存としてunused判定の対象外にする。environment markerは保持し、§10の判定で使う。
 
+`-r` で読んだ依存の context は include パスから推定する。ディレクトリ名と、ファイル stem を `-` / `_` / `.` で区切った語の**完全一致**だけを見る（`dev` → dev、`docs` / `doc` / `documentation` → docs、`tests` / `test` / `testing` → tests、`optional` → dev。`requirements-packaging.txt` / `requirements-github-actions.txt` は dev）。どれにも当たらなければ include 元の context を引き継ぐ。部分文字列では判定しないので、`protests.txt` や `documentsdb.txt` は runtime のまま (#505)。
+
 `setup.py` は `ruff_python_parser` でASTにし、`setup()` 呼び出しのキーワード引数のみを静的に読む(構文エラー時は静的解析不可として扱う)。リストに文字列リテラル以外の要素が混ざる場合は `SetupPyPartiallyStatic` warningを出す。複数manifest sourceのmetadataは pyproject.toml > setup.cfg > setup.py の優先順位でマージし、衝突時は `MetadataConflict` warningを出して上位を保持する。`[tool.uv.workspace]` membersはStep 2で読み込んだ `UvWorkspaceHint` を `LoadedManifest.uv_workspace` にコピーし、キャッシュhash入力に使う。
 
 `[tool.uv]` のその他のキーは次のように読む（R-04）。legacy `dev-dependencies` は `[dependency-groups] dev` と同じ `Group("dev")` 宣言として合流させ、`--fix` は `tool.uv.dev-dependencies[i]` ラベルで配列要素を削除できる。`constraint-dependencies` / `override-dependencies` は `-c` と同様に `LoadedManifest.constraints` へ積み、origin ラベル（`tool.uv.constraint-dependencies[i]` 等）を保持するが、CHK002/CHK003/CHK009 の入力にはしない。`default-groups` は読まない（`--production` は runtime 以外の context を常に除外するため、インストール既定値に依存させない）。`[tool.uv.sources]` は distribution 名ごとに path / workspace / その他（git / url / index 等）の種別と、path source の記述どおりの相対pathを `LoadedManifest.uv.sources` に保持する（絶対pathはキャッシュに入れない）。path source（`editable = true` を含む）はStep 7でroot基準に解決したローカルtreeからlayout推論でimport名を導出し、そのdistributionへのCertainな対応としてvenvなしで解決する（キャッシュ外で毎回読むためstaleにならない。package未検出時はdistribution名の `-`→`_` をimport名とする）。`workspace = true` source は既存のworkspace member判定でfirst-partyとして解決し、到達可能なimportがあればそのdependencyをusedとして扱う。used になったmemberのtree内ファイルのimport（stdlib以外。`airflow` のようにdistributionへ解決されるものも含む）も同様に数え、他memberのtreeに届けばそのmemberもusedとする（`airflow-core` が `airflow.sdk` をimportすれば `apache-airflow-task-sdk` もused）。
@@ -281,7 +283,9 @@ entry = ["src/worker/__main__.py"]
 project = ["src/**/*.py", "tests/**/*.py"]
 ```
 
-uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。CHK003 / CHK004 / CHK005 の振り分けは「import元 member に宣言があればそれを、なければ root の宣言を」見る共通 lookup で行い、1 importにつきどれか1つだけを出す（member が宣言していなくても root で dev-only なら CHK005）。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
+uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理する仕組みで、各memberが自分の `pyproject.toml` を持ち、workspace全体で単一lockfileを共有する。`tool.uv.workspace.members` がある場合は自動でworkspace modeに入り、確定rootから下方向に member glob と member `pyproject.toml` を解決する。root の `[tool.uv.sources]` の path source のうち、root配下にあり `[project]` を持つ `pyproject.toml` があるもの（streamlit の `lib/` など）も、distribution名をidとするmemberとして同様に扱う（#499。root外・git・url sourceは対象外）。v0.2では解決済みmemberを `LoadedConfig.workspace_members` として保持し、member別の `LoadedManifest` / source inventory を `ProbeReport.workspace_inputs` に載せる。resolver は `workspace_members` を受け取り、cross-member import を first-party として扱い、各 `ResolvedImport` に import元の `workspace_member` を付与する。Step 10 は `--strict` 時に `ResolvedImport.workspace_member` と member 別 manifest を照合し、root で宣言済みでも import元 member が直接宣言していない third-party import を CHK003 として報告し、member内で宣言済みでもruntime使用に対してcontextが合わない場合は CHK005 として報告する。非 strict でも import元 member が使用contextに合う宣言を持てば CHK003 / CHK004 / CHK005 はいずれも出さない。CHK003 / CHK004 / CHK005 の振り分けは「import元 member に宣言があればそれを、なければ root の宣言を」見る共通 lookup で行い、1 importにつきどれか1つだけを出す（member が宣言していなくても root で dev-only なら CHK005）。Step 12以降のissue/reportersは `workspace_member` を保持し、human/GitHub系reporterでは subject に `member:` prefix を付け、JSONでは `workspace_member` fieldを出力する。以後の段階で各memberの依存・source・entryを別々に解析しつつ、root dependencyとの関係を判断する。
+
+uv / chokkin のworkspace宣言がない場合（llama_indexのように数百の `pyproject.toml` を持つmonorepo、#488）は、Step 4のsource discovery後に `detect_nested_members` が確定rootから深さ4までの入れ子 `pyproject.toml` を探し、`[project].name` を持つものだけを `workspace_members` にする（`--no-auto-workspace` で無効）。root自身・tool設定だけの `pyproject.toml`・`exclude` globに一致するもの、隠しdirectoryと `venv` / `build` / `dist` / `node_modules` / `tests` / `fixtures` などの配下は対象外。member idはdirectory名で、重複したら相対pathにする。検出時は `AutoWorkspace` warningで件数を出す。以後は宣言されたworkspaceと同じく member別manifestで依存を判定する。`load_config` ではなくprobeで行うのは、member manifest読込みが `load_config` を再帰的に呼ぶため。
 
 `chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
 
@@ -338,6 +342,8 @@ File reaches File
 Python parserはRust実装でよい。Ruff ecosystemのparserを使うか、RustPython parserを使うかはライセンス・保守性・Python新構文対応速度で選ぶ。ただし、Ruffのparser crate群をAstralが安定APIとして公開し続ける保証はないため、採用する場合はversion固定またはvendoring前提のリスクを織り込む。重要なのは、ASTだけではなくtoken位置・comments・string literalを保持すること。`# chokkin: ignore[...]`、`__all__`、`TYPE_CHECKING`、`importlib.import_module("...")`（代入・`return`・呼び出し引数など式中のネストも含む）、framework設定のstring literalを拾う必要がある。
 
 現行は `ruff_python_parser` `=0.0.15` (MSRV 1.96)。Python 3.12 以降の構文 (PEP 695 / 750 / 758 / 810) に追従するため、ADR 0001 の Amendment 2026-09-25 と #320 / #321 の実測 (PoC は draft PR #349) を受けて、#351 で `rustpython-parser` 0.4 から移行した。`ruff_*` crate は同じ version に完全固定 (`=0.0.N`) して 1 PR で lockstep に更新する (dependabot の `ruff-parser` group)。parser の AST 型を扱うのは `src/parser/` と `setup.py` の literal 評価 (`src/manifest/literals.rs` / `setup_py.rs`) に限り、`ParsedModule` 以降は backend に依存しない (結果: `docs/dev/issue-294-parser-migration-plan.md`)。行番号は byte offset から `src/parser/lines.rs` の `LineIndex` で求める。decorator 付きの def/class の symbol 行は CPython と同じく `def` / `class` の行にする。`type X = …` (PEP 695) は module level の変数と同じ symbol にし、alias の値と type parameter の bound / default も走査する。t-string (PEP 750) と `except A, B:` (PEP 758) は f-string / tuple の except と同じに走査する。`lazy import` (PEP 810) は通常の import と同じ edge にする。
+
+source は byte で読み、UTF-8 として decode する（`src/parser/encoding.rs`）。UTF-8 でない file は PEP 263 の coding 宣言（先頭2行、2行目は1行目が comment か空行のときだけ）を見て、latin-1 と cp1252 は decode する。それ以外の encoding や宣言のない非UTF-8 file は解析を止めずに `ParsedModule::skipped` を立てて skip し、`parse: skipped …` の warning を stderr と JSON reporter の `diagnostics` に出す。中身を読めていないので、skip した file は CHK001 の候補にしない。到達可能な file を skip した場合は、その import が分からないため opaque dynamic import と同じく CHK001 の confidence を下げ、CHK002 も Likely にして `--fix` の対象から外す (#486)。また PEP 723 の inline script も同じ decode を通して読む (#486)。
 
 ## 7. import resolution仕様
 
@@ -409,6 +415,8 @@ root直下の <package>/__init__.py (flat layout) があり、明確なentryが�
 いずれにも該当しない
   -> app mode。ただしunused_fileのconfidence上限をlikelyに落とす
 ```
+
+自動検出したworkspace member（§5、#488）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外をlibrary modeで判定し（`EntryPlan::mode_for`）、wheel public surfaceによる引き上げの対象外にする。
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 
@@ -524,6 +532,15 @@ plugin / [tool.chokkin] のcontext指定が上記を上書きする
 
 root直下の `tests/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。ただし参照元としては数えるため、tests/ からだけ import される symbol は CHK006 にしない (`__init__.py` の有無によらない、#410)。
 
+本体 package のディレクトリ (`LayoutInfo::package_root`) は次の順で決める (#487)。build backend の宣言を読まずにディレクトリ名から推測すると、`lib/sqlalchemy` を持つ sqlalchemy で `examples/` を本体と取り違えるため。
+
+1. build backend の宣言: setuptools `packages` / `package-dir` / `packages.find.where`、hatch `packages`、flit・pdm・maturin の module 指定、poetry `packages` (`from` + `include`)。宣言 path は親に `__init__.py` が続く限り遡って top-level package にする。宣言が異なる root にまたがる場合は使わない
+2. `[tool.uv.sources]` の `path` source のうち、project 名 (`streamlit-dev` なら `streamlit_dev` / `streamlit`) と同名で root 配下にあるもの (`streamlit = { path = "lib" }`)。その tree に 3 を当てる
+3. heuristic: `src/` 配下の package、なければ root 直下と `lib/` 直下の package 候補。project 名と一致する候補を優先し、一致しなければ先頭候補を選んで `GuessedPackageDir` (候補 1 つ、`[project].name` あり) か `AmbiguousFlatLayout` (候補複数) を warning に出す (`--probe` も同じ)
+4. 候補が無ければ layout 不明として `**/*.py` を走査する
+
+`tests` / `scripts` / `docs` / `build` / `dist` / `examples` / `benchmarks` / `e2e*` などは本体候補にしない。`package_root` が `src` 以外 (`lib` など) のときは `--probe` の Layout 行に `root: lib` を出し、module 名は `package_root` からの相対 path で決める。`path` source が本体を持つ場合、その package への import は first-party だが、CHK001 では `workspace = true` source と同じくその依存を used として数える。
+
 pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。
 
 判定例。
@@ -595,6 +612,8 @@ except ImportError:
 ```
 
 この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
+
+ただし lockfile の edge で宣言依存から推移的に到達できる場合は、optional / platform-guarded でも CHK004（transitive edge、Certain）を優先する。`try:` で包むだけで「推移依存への直接 import」の指摘が消える抜け道を作らないため (#504)。lockfile に載っているだけで edge で到達できない場合は根拠が弱いので、conditional CHK003 のままにする。
 
 `[build-system].requires` / `build-backend` は build context (v0.5 R-05) として `ProjectMetadata.build_requires` / `build_backend` に inventory し、CHK002/CHK003 の宣言集合には入れない (build requires は runtime import を満たさず、未使用扱いにもならない)。hatch-vcs / setuptools-scm のような build plugin が project / dev 依存にも宣言されて未使用なら、CHK002 を出すかどうかは既存の context 方針のままにし、evidence に `also in build-system.requires` を添える。`--probe` の Manifest 欄に backend と requires を表示する。
 
@@ -915,7 +934,7 @@ v0.2で入れるもの。
 - cache
 ```
 
-v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。
+v0.2 時点の JSON reporter / baseline file は draft schema として扱い、互換性方針と migration note は `docs/dev/schema-migration-notes.md` に置く。v0.3 (Phase 3) で `schema_version: "1"` と公開 JSON Schema (`docs/schema/`) を追加し、v0.2 baseline reader 互換を維持する。完全な semver 契約は v1.0 で凍結する。import 地点を subject に持つ CHK003 / CHK004 / CHK010 の JSON issue は、`path` に import 元 file、`symbol` に import した dotted module、`distribution` に resolver が選んだ distribution (CHK010 は `null`) を入れる (#363)。 JSON reporter は stderr に出す非致命的な warning を top-level の `diagnostics` (`[{"message": …}]`) にも入れる (#486)。
 
 v0.5で入れるもの (モダン packaging 追従。詳細は `docs/dev/roadmap-gap-analysis.ja.md`)。
 
@@ -1262,7 +1281,7 @@ chokkin version
 config hash         # effective globs の hash
 manifest hash       # layout (`LayoutInfo::cache_key_hash`) の hash
 python target version
-unit version        # parse-v10。ParsedModule の形や key 規則を変えたら上げる
+unit version        # parse-v11。ParsedModule の形や key 規則を変えたら上げる
 file path
 file size
 file mtime

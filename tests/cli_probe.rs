@@ -51,7 +51,7 @@ fn binary_probe_broken_pyproject_exits_two() {
         output.status.code(),
         Some(ExitStatus::UsageError.code().into())
     );
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     assert!(stderr.contains("invalid TOML"), "{stderr}");
 }
@@ -113,7 +113,7 @@ Plugins
 fn probe_warnings_written_to_stderr_format() {
     let root = fixture_path("sources/missing_entry");
     let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");
-    assert!(!report.warnings.is_empty());
+    assert_ne!(report.warnings, []);
     let mut output = Vec::new();
     write_probe_warnings(&report.warnings, &mut output).expect("write");
     let text = String::from_utf8(output).expect("utf8");

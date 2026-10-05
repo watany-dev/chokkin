@@ -61,4 +61,6 @@ pub struct RenderContext {
     pub version: &'static str,
     /// Primary config file label for the header.
     pub config_label: Option<String>,
+    /// Non-fatal pipeline warnings, already rendered as text.
+    pub diagnostics: Vec<String>,
 }

@@ -82,7 +82,7 @@ pub fn inline_script_target(text: &str) -> Option<TargetVersion> {
 
 /// Read every listed Python file below `root` and collect its script block.
 ///
-/// Unreadable files are skipped here; parse (step 5) reports them.
+/// Unreadable or undecodable files are skipped here; parse (step 5) reports them.
 pub fn discover_inline_scripts<'a>(
     root: &Path,
     paths: impl IntoIterator<Item = &'a str>,
@@ -90,7 +90,10 @@ pub fn discover_inline_scripts<'a>(
     let mut scripts = Vec::new();
     let mut warnings = Vec::new();
     for path in paths {
-        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+        let Some(text) = std::fs::read(root.join(path))
+            .ok()
+            .and_then(crate::parser::decode_python_source)
+        else {
             continue;
         };
         if let Some(script) = parse_inline_script(path, &text, &mut warnings) {
@@ -251,7 +254,7 @@ mod tests {
     fn parses_pep723_spec_example() {
         let (script, warnings) = parse(SPEC_EXAMPLE);
         let script = script.expect("script block");
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
         assert_eq!(script.requires_python.as_deref(), Some(">=3.11"));
         assert_eq!(
             script.target_version.as_ref().map(TargetVersion::as_str),
@@ -270,11 +273,23 @@ mod tests {
     }
 
     #[test]
+    fn latin1_script_file_is_discovered() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut bytes = b"# -*- coding: latin-1 -*-\n".to_vec();
+        bytes.extend_from_slice(SPEC_EXAMPLE.as_bytes());
+        bytes.extend_from_slice(b"s = 'caf\xe9'\n");
+        std::fs::write(temp.path().join("run.py"), bytes).expect("write");
+        let (scripts, warnings) = discover_inline_scripts(temp.path(), ["run.py"]);
+        assert_eq!(warnings, []);
+        assert_eq!(scripts.len(), 1);
+    }
+
+    #[test]
     fn crlf_block_matches_lf_block() {
         let crlf = SPEC_EXAMPLE.replace('\n', "\r\n");
         let (lf_script, _) = parse(SPEC_EXAMPLE);
         let (crlf_script, warnings) = parse(&crlf);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
         assert_eq!(crlf_script, lf_script);
     }
 
@@ -304,7 +319,7 @@ mod tests {
     fn unclosed_block_is_not_a_script() {
         let (script, warnings) = parse("# /// script\n# dependencies = []\nimport os\n");
         assert!(script.is_none());
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     #[test]
@@ -312,7 +327,7 @@ mod tests {
         let text = format!("# /// pyproject\n# [tool.x]\n# ///\n\n{SPEC_EXAMPLE}");
         let (script, warnings) = parse(&text);
         assert!(script.is_some());
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, []);
     }
 
     #[test]

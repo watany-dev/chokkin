@@ -222,9 +222,11 @@ mod tests {
             root: root.clone(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -251,7 +253,7 @@ mod tests {
             cache: None,
         })
         .expect("extract hints");
-        assert!(hints.contributions.is_empty());
+        assert_eq!(hints.contributions, []);
     }
 
     fn scan_cache_fixture(root_path: &Path) -> (LoadedConfig, DiscoveredSources, LoadedManifest) {
@@ -274,9 +276,11 @@ mod tests {
             root: root.clone(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Unknown,
+                package_root: String::new(),
                 packages: Vec::new(),
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             },
             effective_globs: Vec::new(),
             files: Vec::new(),

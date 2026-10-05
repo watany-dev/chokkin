@@ -364,9 +364,11 @@ mod tests {
     fn layout() -> LayoutInfo {
         LayoutInfo {
             layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         }
     }
 
@@ -390,6 +392,7 @@ mod tests {
     fn entry_plan() -> EntryPlan {
         EntryPlan {
             mode: ProjectMode::App,
+            library_members: Vec::new(),
             roots: vec![EntryRoot {
                 spec: EntrySpec {
                     path: "src/acme/main.py".to_owned(),
@@ -641,7 +644,7 @@ mod tests {
             "expected an import step via acme.a, got {step:?}"
         );
         assert_eq!(reached_from(&outcome, a_id), Some(main_id));
-        assert!(outcome.used_modules.is_empty());
+        assert_eq!(outcome.used_modules, []);
     }
 
     #[test]

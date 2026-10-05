@@ -67,10 +67,7 @@ pub(super) fn detect_missing_dependencies(
         let root_declared =
             root_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
 
-        if member_declared
-            || (!strict && root_declared)
-            || (root_declared && workspace_member.is_none())
-        {
+        if member_declared {
             continue;
         }
 
@@ -87,9 +84,9 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        // Declared, only in a bucket that does not match this usage context.
-        // §10 hands that case to CHK005 alone: it is neither missing (CHK003)
-        // nor transitive-only (CHK004).
+        // Declared in any bucket, including the root declaration a non-strict
+        // or non-member import relies on. A bucket that does not match this
+        // usage context is CHK005's alone (§10), not CHK003 or CHK004.
         if governing_declarations(
             declared,
             workspace_declared,
@@ -102,18 +99,24 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        if optional_imports.contains(&(import.file.clone(), import.line)) {
-            candidates.push(optional_missing_candidate(import, distribution, strict));
-            continue;
-        }
-
-        candidates.push(undeclared_candidate(
-            import,
-            distribution,
-            declared,
-            &resolution.transitive,
-            has_lockfile,
-        ));
+        // A lock edge proves a transitive dependency, so wrapping the import in
+        // `try:` must not hide CHK004; a lock entry without an edge is too weak
+        // to override the optional relaxation (#504).
+        let transitive =
+            has_lockfile && is_transitive_only(distribution, declared, &resolution.transitive);
+        candidates.push(
+            if !transitive && optional_imports.contains(&(import.file.clone(), import.line)) {
+                optional_missing_candidate(import, distribution, strict)
+            } else {
+                undeclared_candidate(
+                    import,
+                    distribution,
+                    declared,
+                    &resolution.transitive,
+                    has_lockfile,
+                )
+            },
+        );
     }
 
     candidates
@@ -166,7 +169,7 @@ pub(super) fn governing_declarations<'i, 'a>(
         .or_else(|| declared.get(distribution).map(Vec::as_slice))
 }
 
-fn member_declarations<'i, 'a>(
+pub(super) fn member_declarations<'i, 'a>(
     workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
     member_id: &str,
     distribution: &str,
@@ -446,9 +449,11 @@ mod tests {
             },
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
+                package_root: "src".to_owned(),
                 packages: vec!["acme".to_owned()],
                 local_packages: Vec::new(),
                 inferred_globs: Vec::new(),
+                members: Vec::new(),
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -567,7 +572,7 @@ mod tests {
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
-        assert!(detect(&index, "requests", LockfileGraph::default()).is_empty());
+        assert_eq!(detect(&index, "requests", LockfileGraph::default()), []);
     }
 
     /// §10: a dev-group-only dependency used at runtime is CHK005 territory,
@@ -578,12 +583,12 @@ mod tests {
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("pytest".to_owned(), vec![&pytest]);
 
-        assert!(detect(&index, "pytest", LockfileGraph::default()).is_empty());
+        assert_eq!(detect(&index, "pytest", LockfileGraph::default()), []);
 
         let transitive = LockfileGraph {
             edges: BTreeMap::from([("pytest".to_owned(), vec!["pluggy".to_owned()])]),
         };
-        assert!(detect(&index, "pytest", transitive).is_empty());
+        assert_eq!(detect(&index, "pytest", transitive), []);
     }
 
     #[test]

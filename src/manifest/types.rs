@@ -156,6 +156,16 @@ impl UvToolSettings {
             .iter()
             .any(|source| source.name == name && source.kind == UvSourceKind::Workspace)
     }
+
+    /// Whether normalized `name` is built from a tree on disk (`workspace = true`
+    /// or a `path` source), so its imports may resolve as first-party.
+    #[must_use]
+    pub fn is_local_source(&self, name: &str) -> bool {
+        self.sources.iter().any(|source| {
+            source.name == name
+                && matches!(source.kind, UvSourceKind::Workspace | UvSourceKind::Path(_))
+        })
+    }
 }
 
 /// Resolved dependency graph from a lockfile.

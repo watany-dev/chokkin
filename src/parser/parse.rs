@@ -17,6 +17,7 @@ use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
 use crate::sources::{DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo};
 
+use super::encoding::decode_python_source;
 use super::error::ParseError;
 use super::ignores::extract_ignores;
 use super::lines::LineIndex;
@@ -26,7 +27,8 @@ use super::visit::ModuleVisitor;
 /// Parse one `.py` file under `root` (static only; never executes Python).
 ///
 /// Syntax errors are recorded in [`ParsedModule::diagnostics`]; the function still
-/// returns `Ok` unless the file cannot be read.
+/// returns `Ok` unless the file cannot be read. A file that cannot be decoded
+/// comes back with [`ParsedModule::skipped`] set.
 ///
 /// # Errors
 ///
@@ -38,11 +40,9 @@ pub fn parse_file(
     file_context: crate::sources::FileContext,
     target: &TargetVersion,
 ) -> Result<ParsedModule, ParseError> {
-    let absolute = root.path.join(path);
-    let source = std::fs::read_to_string(&absolute).map_err(|source| ParseError::Io {
-        path: absolute,
-        source,
-    })?;
+    let Some(source) = read_source(root, path)? else {
+        return Ok(skipped_module(path));
+    };
     // A PEP 723 script runs under its own `requires-python`, so the syntax
     // gate follows it. Reading it from the text keeps the parse cache valid:
     // the file fingerprint already covers the block.
@@ -54,6 +54,23 @@ pub fn parse_file(
         file_context,
         script_target.as_ref().unwrap_or(target),
     ))
+}
+
+fn read_source(root: &ProjectRoot, path: &str) -> Result<Option<String>, ParseError> {
+    let absolute = root.path.join(path);
+    let bytes = std::fs::read(&absolute).map_err(|source| ParseError::Io {
+        path: absolute,
+        source,
+    })?;
+    Ok(decode_python_source(bytes))
+}
+
+fn skipped_module(path: &str) -> ParsedModule {
+    ParsedModule {
+        path: path.to_owned(),
+        skipped: true,
+        ..ParsedModule::default()
+    }
 }
 
 fn parse_python_source(
@@ -95,11 +112,9 @@ fn parse_notebook_file(
     file_context: crate::sources::FileContext,
     target: &TargetVersion,
 ) -> Result<ParsedModule, ParseError> {
-    let absolute = root.path.join(path);
-    let source = std::fs::read_to_string(&absolute).map_err(|source| ParseError::Io {
-        path: absolute,
-        source,
-    })?;
+    let Some(source) = read_source(root, path)? else {
+        return Ok(skipped_module(path));
+    };
     let extracted = match notebook_python_source(&source) {
         Ok(source) => source,
         Err(message) => {
@@ -456,7 +471,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v10".to_owned(),
+        unit_version: "parse-v12".to_owned(),
     }
 }
 
@@ -535,9 +550,11 @@ mod tests {
     fn empty_layout() -> LayoutInfo {
         LayoutInfo {
             layout: ProjectLayout::Unknown,
+            package_root: String::new(),
             packages: Vec::new(),
             local_packages: Vec::new(),
             inferred_globs: Vec::new(),
+            members: Vec::new(),
         }
     }
 
@@ -647,12 +664,12 @@ mod tests {
         let temp = TempDir::new().expect("tempdir");
         let names: Vec<String> = (0..200).map(|index| format!("mod_{index:04}.py")).collect();
         for (index, name) in names.iter().enumerate() {
-            let contents: &[u8] = if index == 60 || index == 150 {
-                b"\xff\xfe not utf-8\n"
+            // A directory named like a source cannot be read as a file.
+            if index == 60 || index == 150 {
+                fs::create_dir(temp.path().join(name)).expect("mkdir");
             } else {
-                b"import os\n"
-            };
-            fs::write(temp.path().join(name), contents).expect("write");
+                fs::write(temp.path().join(name), "import os\n").expect("write");
+            }
         }
         let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
         let (root, sources) = python_sources(temp.path(), &borrowed);

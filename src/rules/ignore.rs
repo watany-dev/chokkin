@@ -408,6 +408,7 @@ mod tests {
             shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
+            skipped: false,
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -457,6 +458,7 @@ mod tests {
             shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
+            skipped: false,
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -593,6 +595,7 @@ mod tests {
             shell_commands: Vec::new(),
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
+            skipped: false,
         });
         IgnoreMatcher::build(&default_config(), &parse, &ResolutionIndex::default())
     }
@@ -704,6 +707,21 @@ mod tests {
         let unused = candidate(RuleId::Chk006, dead_api(), api_origin());
 
         assert!(suppressed_by_config(&matcher, &unused));
+    }
+
+    /// §18: CHK006 path globs may use wildcards, with or without a symbol glob.
+    #[test]
+    fn config_ignore_matches_symbol_wildcard_path_globs() {
+        let unused = candidate(RuleId::Chk006, dead_api(), api_origin());
+
+        for pattern in ["src/**/*.py", "src/acme/*.py:dead_*"] {
+            let matcher = config_matcher(RuleId::Chk006, &[pattern]);
+            assert!(suppressed_by_config(&matcher, &unused), "{pattern}");
+        }
+        for pattern in ["tests/**/*.py", "src/**/*.pyi", "src/acme/*.py:live_*"] {
+            let matcher = config_matcher(RuleId::Chk006, &[pattern]);
+            assert!(!suppressed_by_config(&matcher, &unused), "{pattern}");
+        }
     }
 
     /// `path:symbol` needs both halves to match.

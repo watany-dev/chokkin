@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::ExitStatus;
-use crate::config::{ChokkinConfig, ProjectMode, RuntimeOverrides};
+use crate::config::{ChokkinConfig, RuntimeOverrides};
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::ResolutionIndex;
@@ -34,14 +34,13 @@ pub fn emit_issues(
     parse: &ParseSummary,
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
-    mode: ProjectMode,
     resolution: &ResolutionIndex,
 ) -> IssueReport {
     let strict = overrides.strict.unwrap_or(false);
     let matcher = IgnoreMatcher::build(config, parse, resolution);
     let confidence_floor = effective_confidence_floor(config, overrides, strict);
 
-    let mut candidates = chk001_candidates(&unreachable.unreachable, mode);
+    let mut candidates = chk001_candidates(&unreachable.unreachable);
     candidates.extend(deps.candidates.clone());
     candidates.extend_from_slice(symbols);
 
@@ -346,6 +345,7 @@ mod tests {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
             max_confidence: Confidence::Certain,
+            mode: ProjectMode::App,
         });
 
         let deps = DependencyReport::default();
@@ -359,7 +359,6 @@ mod tests {
             &parse,
             &config,
             &RuntimeOverrides::default(),
-            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert_eq!(issues.issues.len(), 1);
@@ -404,6 +403,7 @@ mod tests {
             file: FileId(0),
             path: "src/legacy.py".to_owned(),
             max_confidence: Confidence::Certain,
+            mode: ProjectMode::App,
         });
 
         let issues = emit_issues(
@@ -416,7 +416,6 @@ mod tests {
                 no_exit_code: Some(true),
                 ..RuntimeOverrides::default()
             },
-            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         assert_eq!(issues.exit_status, ExitStatus::Success);
@@ -455,10 +454,9 @@ mod tests {
             &ParseSummary::default(),
             &config,
             &RuntimeOverrides::default(),
-            ProjectMode::App,
             &ResolutionIndex::default(),
         );
-        assert!(report.issues.is_empty());
+        assert_eq!(report.issues, []);
     }
 
     #[test]
@@ -493,7 +491,6 @@ mod tests {
             &ParseSummary::default(),
             &default_config(),
             &RuntimeOverrides::default(),
-            ProjectMode::App,
             &ResolutionIndex::default(),
         );
         let text = explain_issue(&report, "CHK002:boto3").expect("explain");

@@ -61,7 +61,7 @@ fn build_graph_registers_files_and_dependencies() {
 
     assert_eq!(graph.distribution_count(), 1);
     assert!(graph.distribution_id("requests").is_some());
-    assert!(graph.edges().is_empty());
+    assert_eq!(graph.edges(), []);
 }
 
 #[test]

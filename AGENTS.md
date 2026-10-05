@@ -10,7 +10,7 @@ It builds a project-wide reachability graph for Python projects and reports
 unused files, dependencies, and public symbols — a [Knip](https://knip.dev/)
 equivalent for Python.
 
-**Status:** v0.5.1 released on top of v0.1.0–v0.4.0. Default CLI runs
+**Status:** v0.6.0 released on top of v0.1.0–v0.5.0. Default CLI runs
 `analyze_project` (pipeline steps 1–13) with `default` / `compact` / `json` /
 `markdown` / `github` / `sarif` reporters, `--explain`, `--trace`, `--fix`,
 and baseline filtering. `--probe` runs steps 1–4 only (`probe_project`) and
@@ -46,7 +46,7 @@ over a 20-project set (`docs/dev/oss-validation-report.md`); `make oss-fixtures`
 is the no-network in-repo skeleton. **The §17 CHK002 gate is met** (see
 `docs/dev/oss-validation-report.md`): 0 false positives across the 20-project
 validation set after Phase 1.5 remediation. Crashes 0, cold-run speed within
-budget. PyPI **v0.1.0** through **v0.5.1** have been released.
+budget. PyPI **v0.1.0** through **v0.6.0** have been released.
 `src/graph/` provides skeleton nodes, import edges, and distribution → module
 links; entry and file → file reachability is computed by the step 9 BFS, not
 stored as graph edges.
@@ -194,10 +194,22 @@ scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 - `docs/dev/oss-validation-report.md` — committed §17 CHK002 scorecard.
   **Current status: CHK002 FP gate met** (0/0 after Phase 1.5). Per-rule label
   coverage stocktake: `docs/dev/v0.3-stocktake-coverage.md`.
-- `scripts/oss-remove-and-test.py` (`make oss-oracle`) — opt-in CHK001
-  remove-and-test oracle (#85 WS2). **Executes untrusted project tests** in
-  disposable copies; isolated runners only, never release/default CI. Report:
+- `scripts/oss-gate.py` (`make oss-gate`) — determinism (cold / warm /
+  `--no-cache` byte-identical JSON), JSON-schema and crash gates (#342).
+  `scripts/bench-gate.py` (`make bench-gate`) — perf regression pass/fail
+  against a saved criterion baseline.
+- `scripts/oss-provision-envs.py` (`make oss-envs`) + `scripts/oss-remove-and-test.py`
+  (`make oss-oracle`, `ARGS="--rule CHK006"` for symbols) — opt-in
+  remove-and-test oracle (#338/#339) with per-project venvs from
+  `scripts/oss-test-env.manifest`, run offline (`scripts/oss_netns_exec.py`).
+  **Builds and executes untrusted projects** in disposable copies; isolated
+  runners only, never release/default CI. Report:
   `docs/dev/chk001-remove-and-test.md`.
+- `scripts/oss-differential.py` (`make oss-diff`) — differential oracle vs
+  vulture / deadcode / deptry / fawltydeps / ruff F401 / pyflakes (#340);
+  `scripts/oss-mutation-recall.py` (`make oss-mutation`) — mutation-injection
+  recall (#341). Report: `docs/dev/oss-differential-and-recall.md`.
+  Shared helpers: `scripts/oss_corpus.py`.
 
 ## PR hygiene
 
