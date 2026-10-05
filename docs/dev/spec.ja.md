@@ -794,7 +794,7 @@ from ._x import Foo as Foo で再exportしている (PEP 484 の明示的再expo
 公開packageの __init__.py で定義・再exportしている
 ```
 
-library modeでは、定義元module自身がその名前を読んでいるsymbol (parser の `SymbolDef::used_in_module`。注釈・関数本体・class本体の `Name` load を含む) も CHK006 にしない (#540)。TypeVar、型alias、属性やメソッドの戻り値の型としてだけ外に出るclass、module内のhelperやloggerがこれに当たる。外部の利用者はこれらに属性経由で届き得るので、library では「private にできる」と言い切れない (knip の `ignoreExportsUsedInFile` 相当)。app modeでは従来どおり報告する。外部からの利用者がいなければ `_` を付けて private にできる、という指摘に意味があるため。判定は名前単位なので、同名のlocal変数や組み込み名 (`min` など) の読み取りでも used になる。
+library modeでは、定義元module自身がその名前を読んでいるsymbol (parser の `SymbolDef::used_in_module`。注釈・関数本体・class本体の `Name` load を含む) も CHK006 にしない (#540)。TypeVar、型alias、属性やメソッドの戻り値の型としてだけ外に出るclass、module内のhelperやloggerがこれに当たる。外部の利用者はこれらに属性経由で届き得るので、library では「private にできる」と言い切れない (knip の `ignoreExportsUsedInFile` 相当)。app modeでも、`__all__` に載っていない `used_in_module` のsymbolは CHK006 にしない (#564)。Python には `export` がないため、`__all__` にない top-level 名は TS の非 export 宣言に当たり、knip の `exports` が対象にしないものと揃える。`__all__` に載っている名前は明示的な export として扱い、module内で読まれていても外部参照がなければ報告する (knip の `ignoreExportsUsedInFile: false` 既定と同じ)。判定は名前単位なので、同名のlocal変数や組み込み名 (`min` など) の読み取りでも used になる。
 
 引数・戻り値・`AnnAssign` の注釈にある文字列 (`x: "list[T]"`、`list["Foo"]` の内側) は式として parse し直し、中の `Name` も読み取りに数える (#545)。`Literal[...]` の中の文字列、`Annotated[...]` の2番目以降の引数、`cast("T", x)`、`TypeVar(bound="Foo")` は対象外。
 

@@ -751,9 +751,10 @@ const IN_FILE_USE_MODULE: &str = "from typing import TYPE_CHECKING, Generic, Typ
 
 /// A library cannot make private a name its own module reads: a `TypeVar`, a
 /// type alias, a class reached only as an attribute's type, or a name bound in
-/// a `TYPE_CHECKING` / `else` pair (#540). App mode still reports them.
+/// a `TYPE_CHECKING` / `else` pair (#540). App mode skips them too unless
+/// `__all__` exports them (#564).
 #[test]
-fn library_mode_symbol_used_in_its_own_module_is_not_chk006() {
+fn symbol_used_in_its_own_module_is_not_chk006() {
     let library = analyze_generated(&[
         ("pyproject.toml", LIBRARY_PYPROJECT),
         (
@@ -775,29 +776,40 @@ fn library_mode_symbol_used_in_its_own_module_is_not_chk006() {
         "unreferenced"
     ));
 
+    let app_module = format!("__all__ = [\"Client\", \"Arch\"]\n\n{IN_FILE_USE_MODULE}");
     let app = analyze_generated(&[
         ("pyproject.toml", APP_PYPROJECT),
         ("app/__init__.py", ""),
-        ("app/base.py", IN_FILE_USE_MODULE),
+        ("app/base.py", &app_module),
         (
             "app/main.py",
             "from app.base import Client\n\ndef main():\n    Client()\n",
         ),
     ]);
-    for name in ["T", "Arch", "Resource", "unreferenced"] {
+    for name in ["T", "Resource", "TypeAdapter"] {
         assert!(
-            has_symbol_rule(&app, RuleId::Chk006, "app.base", name),
+            !has_symbol_rule(&app, RuleId::Chk006, "app.base", name),
             "{name}: {app:?}"
         );
     }
+    let arch = find_symbol(&app, RuleId::Chk006, "app.base", "Arch")
+        .unwrap_or_else(|| panic!("Arch: {app:?}"));
+    assert_eq!(arch.severity, Severity::Warning);
+    assert_eq!(arch.confidence, Confidence::Certain);
+    assert!(has_symbol_rule(
+        &app,
+        RuleId::Chk006,
+        "app.base",
+        "unreferenced"
+    ));
 }
 
 const STRING_ANNOTATION_MODULE: &str = "from typing import TypeVar\n\nT = TypeVar(\"T\")\n\ndef f(x: \"list[T]\") -> \"T\":\n    return x[0]\n";
 
 /// A name read only inside a quoted annotation is still read by its module
-/// (#545).
+/// (#545), which skips CHK006 in both modes (#540, #564).
 #[test]
-fn library_mode_symbol_used_in_string_annotation_is_not_chk006() {
+fn symbol_used_in_string_annotation_is_not_chk006() {
     let library = analyze_generated(&[
         ("pyproject.toml", LIBRARY_PYPROJECT),
         ("src/acme/__init__.py", "from ._base import f as f\n"),
@@ -818,7 +830,7 @@ fn library_mode_symbol_used_in_string_annotation_is_not_chk006() {
         ),
     ]);
     assert!(
-        has_symbol_rule(&app, RuleId::Chk006, "app.base", "T"),
+        !has_symbol_rule(&app, RuleId::Chk006, "app.base", "T"),
         "{app:?}"
     );
 }

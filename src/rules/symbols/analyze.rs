@@ -167,9 +167,13 @@ fn detect_unused_exports(
         let mode = mode_for(&entry.path);
         // A library cannot make a name private that its own module reads:
         // it is a TypeVar, an alias, or a type reached through an attribute (#540).
-        if mode == ProjectMode::Library
-            && (entry.def.used_in_module || public_api.exports_symbol(entry))
-        {
+        // Without `export`, an app's top-level name outside `__all__` is a plain
+        // declaration, which knip's `exports` does not report either (#564).
+        let skip = match mode {
+            ProjectMode::Library => entry.def.used_in_module || public_api.exports_symbol(entry),
+            ProjectMode::App | ProjectMode::Auto => entry.def.used_in_module && !entry.in_all,
+        };
+        if skip {
             continue;
         }
 
