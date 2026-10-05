@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6c8b8e3a70d2f4c733d7a52557d85f686a7e98c5b0571f6b2e7f3d40599dfb9b # shrinks to tree = Tree { dirs: {["a", "a"]: Project}, gitignore: false }, patterns = Some(["*"]), sources = {}, override_path = None
+cc 15bc5a13001dcd16bf91b6d2978dd5ba60a82e8b9cdb5ad4b375eb0341d7bf38 # shrinks to tree = Tree { dirs: {["b"]: Project}, gitignore: false }, patterns = Some(["./b/"]), sources = {}, override_path = None
+cc ca995bc14b52802ef3f030089993aa0d054113daa580f336ccbdc9e71801520c # shrinks to tree = Tree { dirs: {["a", "core"]: Project, ["core"]: Project}, gitignore: false }, patterns = Some(["*"]), sources = {"core": "a/./core"}, override_path = None

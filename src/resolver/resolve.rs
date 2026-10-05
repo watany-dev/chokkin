@@ -255,8 +255,14 @@ fn resolve_import_site(
     };
 
     let workspace_member = workspace_member_for_file(file, workspace_members);
+    // An exact name in the file's own script block or member manifest beats an
+    // affixed root declaration (`pyfoo` must not take a script's `foo`).
     let core = if core.origin == ModuleOrigin::Unknown {
-        scoped_declaration(&root_name, file, workspace_member.as_deref(), scoped).unwrap_or(core)
+        let member = workspace_member.as_deref();
+        scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
+            .or_else(|| root_loose_match(&root_name, manifest))
+            .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
+            .unwrap_or(core)
     } else {
         core
     };
@@ -343,13 +349,10 @@ fn resolve_import_root(
     // is the only evidence left; the spelling alone is not, or a local module
     // like `e2e_config` would pass as a missing `e2e-config` (#361).
     let distribution = normalize_distribution_name(root_name);
-    let declared = || {
-        manifest
-            .dependencies
-            .iter()
-            .map(|dep| normalize_distribution_name(&dep.name))
-    };
-    if declared().any(|dep| dep == distribution)
+    if manifest
+        .dependencies
+        .iter()
+        .any(|dep| normalize_distribution_name(&dep.name) == distribution)
         || manifest.lockfile.edges.contains_key(&distribution)
     {
         return RootResolution {
@@ -358,16 +361,34 @@ fn resolve_import_root(
             confidence: ResolveConfidence::Likely,
         };
     }
-    let locked = manifest.lockfile.edges.keys().cloned();
-    if let Some(resolution) = loose_declared_match(&distribution, declared().chain(locked)) {
-        return resolution;
-    }
 
+    // The affixed-name step runs per site in [`resolve_import_site`], after a
+    // script or member's exact declaration has had its chance.
     RootResolution {
         origin: ModuleOrigin::Unknown,
         distribution: None,
         confidence: ResolveConfidence::Maybe,
     }
+}
+
+/// Affixed counterpart of the declared-or-locked step in
+/// [`resolve_import_root`] (`pyfoo` for `import foo`).
+fn root_loose_match(root_name: &str, manifest: &LoadedManifest) -> Option<RootResolution> {
+    let declared = manifest
+        .dependencies
+        .iter()
+        .map(|dep| normalize_distribution_name(&dep.name));
+    let locked = manifest.lockfile.edges.keys().cloned();
+    loose_declared_match(
+        &normalize_distribution_name(root_name),
+        declared.chain(locked),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopedMatch {
+    Exact,
+    Loose,
 }
 
 /// Per-file counterpart of the declared-name step in [`resolve_import_root`]:
@@ -378,6 +399,7 @@ fn scoped_declaration(
     file: &str,
     workspace_member: Option<&str>,
     scoped: &ScopedDeclarations,
+    kind: ScopedMatch,
 ) -> Option<RootResolution> {
     let distribution = normalize_distribution_name(root_name);
     let declared = || {
@@ -388,14 +410,18 @@ fn scoped_declaration(
             .chain(workspace_member.and_then(|member| scoped.members.get(member)))
             .flatten()
     };
-    if declared().any(|name| *name == distribution) {
-        return Some(RootResolution {
-            origin: ModuleOrigin::ThirdParty,
-            distribution: Some(distribution),
-            confidence: ResolveConfidence::Likely,
-        });
+    match kind {
+        ScopedMatch::Exact => {
+            declared()
+                .any(|name| *name == distribution)
+                .then_some(RootResolution {
+                    origin: ModuleOrigin::ThirdParty,
+                    distribution: Some(distribution),
+                    confidence: ResolveConfidence::Likely,
+                })
+        },
+        ScopedMatch::Loose => loose_declared_match(&distribution, declared().cloned()),
     }
-    loose_declared_match(&distribution, declared().cloned())
 }
 
 /// A declared distribution whose name differs from the import root only by a
@@ -626,6 +652,70 @@ mod tests {
         assert_eq!(loose_declared_match("markdown-it-py", declared()), None);
     }
 
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        const PREFIXES: [&str; 3] = ["python-", "py-", "py"];
+        const SUFFIXES: [&str; 3] = ["-python", "-py", "py"];
+
+        /// Normalized names built from the letters that spell the affixes,
+        /// so accidental affixes are common.
+        fn name() -> impl Strategy<Value = String> {
+            "[pythonab]{1,5}(-[pythonab]{1,4}){0,2}"
+        }
+
+        proptest! {
+            /// Every stripped form is a proper, well-formed core of the name
+            /// left by removing one known affix.
+            #[test]
+            fn affix_stripped_yields_well_formed_cores(name in name()) {
+                for core in affix_stripped(&name) {
+                    prop_assert!(!core.is_empty() && core != name);
+                    prop_assert!(!core.starts_with('-') && !core.ends_with('-'), "{core}");
+                    let prefixed = PREFIXES.iter().any(|affix| name == format!("{affix}{core}"));
+                    let suffixed = SUFFIXES.iter().any(|affix| name == format!("{core}{affix}"));
+                    prop_assert!(prefixed || suffixed, "{name} -> {core}");
+                }
+            }
+
+            /// Adding an affix to a core is undone by `affix_stripped`,
+            /// except where a longer prefix (`python-` over `py`) claims it.
+            #[test]
+            fn affix_stripped_recovers_the_core(core in name(), affix in 0usize..6) {
+                let affixed = match affix {
+                    0..3 => format!("{}{core}", PREFIXES[affix]),
+                    _ => format!("{core}{}", SUFFIXES[affix - 3]),
+                };
+                prop_assume!(!(affix == 2 && core.starts_with("thon-")));
+                prop_assert!(
+                    affix_stripped(&affixed).any(|stripped| stripped == core),
+                    "{affixed} should strip to {core}"
+                );
+            }
+
+            /// The loose match is the first declared name one affix away from
+            /// the import; it never returns an exact name or an undeclared one.
+            #[test]
+            fn loose_match_is_the_first_affixed_declared_name(
+                root in name(),
+                declared in prop::collection::vec(name(), 0..6),
+            ) {
+                let expected = declared
+                    .iter()
+                    .find(|name| affix_stripped(name).any(|core| core == root))
+                    .cloned();
+                let found = loose_declared_match(&root, declared);
+                prop_assert_eq!(found.as_ref().and_then(|r| r.distribution.clone()), expected);
+                if let Some(found) = found {
+                    prop_assert_eq!(found.confidence, ResolveConfidence::Maybe);
+                    prop_assert_ne!(found.distribution.as_deref(), Some(root.as_str()));
+                }
+            }
+        }
+    }
+
     #[test]
     fn scoped_declaration_covers_only_its_own_script_or_member() {
         let scoped = ScopedDeclarations {
@@ -636,7 +726,8 @@ mod tests {
             members: BTreeMap::from([("api".to_owned(), BTreeSet::from(["foo-bar".to_owned()]))]),
         };
         let found = |root: &str, file: &str, member: Option<&str>| {
-            scoped_declaration(root, file, member, &scoped).and_then(|r| r.distribution)
+            scoped_declaration(root, file, member, &scoped, ScopedMatch::Exact)
+                .and_then(|r| r.distribution)
         };
         assert_eq!(
             found("rich", "scripts/tool.py", None).as_deref(),

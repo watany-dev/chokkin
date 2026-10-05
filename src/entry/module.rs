@@ -157,4 +157,100 @@ mod tests {
             Some("services/api/src/api/main.py".to_owned())
         );
     }
+
+    mod props {
+        use super::*;
+        use crate::sources::path_to_module;
+        use proptest::prelude::*;
+
+        const PARTS: &[&str] = &["acme", "api", "core", "x", "src", "lib", "tests"];
+
+        fn layout_strategy() -> impl Strategy<Value = LayoutInfo> {
+            (
+                prop::sample::select(&[ProjectLayout::Src, ProjectLayout::Flat][..]),
+                prop::sample::select(&["src", "lib", "python"][..]),
+                prop::sample::subsequence(PARTS, 1..3),
+            )
+                .prop_map(|(layout, root, packages)| LayoutInfo {
+                    layout,
+                    package_root: if layout == ProjectLayout::Src {
+                        root.to_owned()
+                    } else {
+                        String::new()
+                    },
+                    packages: packages.into_iter().map(str::to_owned).collect(),
+                    local_packages: Vec::new(),
+                    inferred_globs: Vec::new(),
+                    members: Vec::new(),
+                })
+        }
+
+        /// Files inside the layout's packages: `<pkg>/<parts>.py` or
+        /// `<pkg>/<parts>/__init__.py`, under the package root.
+        fn files_strategy(layout: &LayoutInfo) -> impl Strategy<Value = BTreeSet<String>> + use<> {
+            let packages = layout.packages.clone();
+            let package_root = layout.package_root.clone();
+            prop::collection::btree_set(
+                (
+                    prop::sample::select(packages),
+                    prop::collection::vec(prop::sample::select(PARTS), 0..3),
+                    any::<bool>(),
+                ),
+                1..8,
+            )
+            .prop_map(move |entries| {
+                entries
+                    .into_iter()
+                    .map(|(package, parts, init)| {
+                        let mut segments = vec![package.as_str()];
+                        segments.extend(parts);
+                        let stem = segments.join("/");
+                        let file = if init || segments.len() == 1 {
+                            format!("{stem}/__init__.py")
+                        } else {
+                            format!("{stem}.py")
+                        };
+                        if package_root.is_empty() {
+                            file
+                        } else {
+                            format!("{package_root}/{file}")
+                        }
+                    })
+                    .collect()
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            /// Every package file's module name resolves back to that file,
+            /// so entry targets and the module index agree on which file a
+            /// dotted name means.
+            #[test]
+            fn package_module_names_resolve_back_to_their_file(
+                (layout, paths) in layout_strategy()
+                    .prop_flat_map(|layout| (Just(layout.clone()), files_strategy(&layout)))
+            ) {
+                for path in &paths {
+                    let Some(module) = path_to_module(path, &layout) else {
+                        continue;
+                    };
+                    let resolved = resolve_module_to_path(&module, &layout, &paths);
+                    // `x.py` beside `x/__init__.py` is one module name for two
+                    // files; both the index and this resolver take `x.py`.
+                    let twin = path
+                        .strip_suffix("/__init__.py")
+                        .map(|stem| format!("{stem}.py"))
+                        .filter(|twin| paths.contains(twin));
+                    prop_assert_eq!(
+                        resolved,
+                        Some(twin.unwrap_or_else(|| path.clone())),
+                        "{} -> {}",
+                        path,
+                        module
+                    );
+                }
+            }
+        }
+    }
 }

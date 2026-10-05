@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 76f3ce88b2e45cc74563e32a984426bff131cb4038ede8c2fc7f8c1dc0c4c3ad # shrinks to tape = [4, 6, 159, 0, 8, 30, 37, 191, 78, 0, 0, 43, 29, 170, 0, 0, 4, 0, 0, 72, 73, 43, 103, 27, 0, 0, 0, 0, 0, 0, 0, 108, 0], mutation = ".append('z')", through_dict = true

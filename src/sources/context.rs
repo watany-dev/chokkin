@@ -200,5 +200,97 @@ mod tests {
                 );
             }
         }
+
+        const DIRS: &[&str] = &[
+            "tests", "test", "Tests", "testing", "mytests", "docs", "scripts", "src", "acme", "lib",
+        ];
+
+        const FILES: &[&str] = &[
+            "conftest.py",
+            "noxfile.py",
+            "test_x.py",
+            "test_x.pyi",
+            "test_x.PY",
+            "Test_x.py",
+            "test_x.txt",
+            "test_",
+            "x_test.py",
+            "x_TEST.Pyi",
+            "x_test.pyc",
+            "_test.py",
+            "tests.py",
+            "mod.py",
+            "é_test.py",
+        ];
+
+        fn path_strategy() -> impl Strategy<Value = (Vec<&'static str>, &'static str)> {
+            (
+                prop::collection::vec(prop::sample::select(DIRS), 0..4),
+                prop::sample::select(FILES),
+            )
+        }
+
+        /// Spec §10 file-context rules, written from the directory list.
+        fn model(dirs: &[&str], file: &str) -> FileContext {
+            let lower = file.to_ascii_lowercase();
+            let test_file = file == "conftest.py"
+                || (file.starts_with("test_")
+                    && matches!(lower.rsplit_once('.'), Some((_, "py" | "pyi"))))
+                || lower.ends_with("_test.py")
+                || lower.ends_with("_test.pyi");
+            if dirs.first() == Some(&"test") || dirs.contains(&"tests") || test_file {
+                FileContext::Test
+            } else if dirs.first() == Some(&"docs") {
+                FileContext::Docs
+            } else if dirs.first() == Some(&"scripts") || (dirs.is_empty() && file == "noxfile.py")
+            {
+                FileContext::Dev
+            } else {
+                FileContext::Runtime
+            }
+        }
+
+        fn join(dirs: &[&str], file: &str) -> String {
+            dirs.iter()
+                .copied()
+                .chain([file])
+                .collect::<Vec<_>>()
+                .join("/")
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+
+            #[test]
+            fn assign_file_context_matches_reference_model((dirs, file) in path_strategy()) {
+                let path = join(&dirs, file);
+                prop_assert_eq!(assign_file_context(&path), model(&dirs, file), "{}", path);
+            }
+
+            /// Moving a file under a `tests/` directory, at any depth, makes
+            /// it test code; nesting a test file deeper never makes it
+            /// runtime code unless it only lived in the root `test/`.
+            #[test]
+            fn tests_dir_and_nesting_are_monotone(
+                (dirs, file) in path_strategy(),
+                at in 0usize..4,
+                outer in prop::sample::select(&["acme", "src", "lib"][..]),
+            ) {
+                let mut nested = dirs.clone();
+                nested.insert(at.min(dirs.len()), "tests");
+                prop_assert_eq!(assign_file_context(&join(&nested, file)), FileContext::Test);
+
+                let path = join(&dirs, file);
+                let mut deeper = vec![outer];
+                deeper.extend(&dirs);
+                if assign_file_context(&path) == FileContext::Test && dirs.first() != Some(&"test") {
+                    prop_assert_eq!(
+                        assign_file_context(&join(&deeper, file)),
+                        FileContext::Test,
+                        "{}", path
+                    );
+                }
+            }
+        }
     }
 }

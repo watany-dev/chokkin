@@ -3,7 +3,9 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use ruff_text_size::TextSize;
 
+use super::lines::LineIndex;
 use super::types::IgnoreDirective;
 
 #[allow(clippy::expect_used)]
@@ -17,6 +19,7 @@ static IGNORE_RE: LazyLock<Regex> = LazyLock::new(|| {
 pub fn extract_ignores(source: &str) -> Vec<IgnoreDirective> {
     let mut directives = Vec::new();
     let first_stmt_offset = first_statement_offset(source);
+    let lines = LineIndex::new(source);
 
     for caps in IGNORE_RE.captures_iter(source) {
         let Some(full) = caps.get(0) else {
@@ -49,14 +52,7 @@ pub fn extract_ignores(source: &str) -> Vec<IgnoreDirective> {
         let line = if file_level {
             0
         } else {
-            u32::try_from(
-                source[..full.start()]
-                    .chars()
-                    .filter(|ch| *ch == '\n')
-                    .count(),
-            )
-            .unwrap_or(0)
-            .saturating_add(1)
+            TextSize::try_from(full.start()).map_or(0, |offset| lines.line(offset))
         };
 
         directives.push(IgnoreDirective {
@@ -73,16 +69,16 @@ fn is_valid_code(code: &str) -> bool {
     code.len() == 6 && code.starts_with("CHK") && code[3..].chars().all(|ch| ch.is_ascii_digit())
 }
 
+/// Byte offset where the leading comment/blank block ends. Lines split at
+/// `\r` too, so a CRLF ending counts both bytes and a lone `\r` ends a line.
 fn first_statement_offset(source: &str) -> usize {
     let mut offset: usize = 0;
-    let lines = source.lines();
-    for line in lines {
+    for line in source.split_inclusive(['\n', '\r']) {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            offset = offset.saturating_add(line.len()).saturating_add(1);
-            continue;
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            break;
         }
-        break;
+        offset = offset.saturating_add(line.len());
     }
     offset
 }
@@ -99,6 +95,24 @@ mod tests {
         assert!(!directives[0].file_level);
         assert_eq!(directives[0].codes, vec!["CHK003".to_owned()]);
         assert_eq!(directives[0].line, 1);
+    }
+
+    #[test]
+    fn file_ignore_after_long_crlf_header_is_kept() {
+        let source = format!(
+            "{}# chokkin: file-ignore[CHK001]\r\nimport os\r\n",
+            "# license\r\n".repeat(40)
+        );
+        let directives = extract_ignores(&source);
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].file_level);
+    }
+
+    #[test]
+    fn inline_ignore_line_counts_lone_cr() {
+        let directives = extract_ignores("\rimport os\rimport sys  # chokkin: ignore[CHK003]\r");
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].line, 3);
     }
 
     #[test]
