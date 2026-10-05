@@ -17,6 +17,7 @@ pub fn resolve_workspace_members(
     root: &ProjectRoot,
     config: &ChokkinConfig,
     uv_workspace: Option<&UvWorkspaceHint>,
+    uv_path_sources: &BTreeMap<String, String>,
 ) -> Result<Vec<ResolvedWorkspaceMember>, ConfigError> {
     let mut members = BTreeMap::new();
 
@@ -24,6 +25,10 @@ pub fn resolve_workspace_members(
         for member in resolve_uv_members(&root.path, hint)? {
             members.entry(member.path.clone()).or_insert(member);
         }
+    }
+
+    for member in path_source_members(&root.path, uv_path_sources) {
+        members.entry(member.path.clone()).or_insert(member);
     }
 
     for (id, override_cfg) in &config.workspaces {
@@ -42,6 +47,41 @@ pub fn resolve_workspace_members(
     }
 
     Ok(members.into_values().collect())
+}
+
+/// Issue #499: a path source that is its own project inside the root (`lib/`
+/// in streamlit) declares the dependencies of the code under it, so it is read
+/// like a uv workspace member. Trees outside the root are not scanned.
+fn path_source_members(
+    root: &Path,
+    uv_path_sources: &BTreeMap<String, String>,
+) -> Vec<ResolvedWorkspaceMember> {
+    let Ok(canonical_root) = root.canonicalize() else {
+        return Vec::new();
+    };
+    uv_path_sources
+        .iter()
+        .filter_map(|(name, path)| {
+            let dir = root.join(path).canonicalize().ok()?;
+            let rel = dir.strip_prefix(&canonical_root).ok()?;
+            if rel.as_os_str().is_empty() || !declares_project(&dir.join("pyproject.toml")) {
+                return None;
+            }
+            let rel = normalize_relative_path(rel.to_string_lossy().as_ref());
+            Some(ResolvedWorkspaceMember {
+                id: name.clone(),
+                pyproject_toml: Some(format!("{rel}/pyproject.toml")),
+                path: rel,
+            })
+        })
+        .collect()
+}
+
+fn declares_project(pyproject: &Path) -> bool {
+    std::fs::read_to_string(pyproject)
+        .ok()
+        .and_then(|contents| contents.parse::<toml::Table>().ok())
+        .is_some_and(|table| table.contains_key("project"))
 }
 
 fn resolve_uv_members(
@@ -166,6 +206,7 @@ mod tests {
             Some(&UvWorkspaceHint {
                 members: vec!["services/*".to_owned()],
             }),
+            &BTreeMap::new(),
         )
         .expect("resolve");
         assert_eq!(members.len(), 1);
@@ -186,9 +227,42 @@ mod tests {
             Some(&UvWorkspaceHint {
                 members: vec![".venv/*".to_owned(), ".hidden/*".to_owned()],
             }),
+            &BTreeMap::new(),
         )
         .expect("resolve");
         let paths: Vec<_> = members.iter().map(|member| member.path.as_str()).collect();
         assert_eq!(paths, [".hidden/pkg"]);
+    }
+
+    #[test]
+    fn in_tree_path_source_project_becomes_member() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for (dir, pyproject) in [
+            ("lib", "[project]\nname = \"acme\"\n"),
+            ("tools", "[tool.black]\n"),
+        ] {
+            fs::create_dir_all(temp.path().join(dir)).expect("mkdir");
+            fs::write(temp.path().join(dir).join("pyproject.toml"), pyproject).expect("write");
+        }
+        let sources: BTreeMap<String, String> = [
+            ("acme", "./lib"),
+            ("tools", "tools"),
+            ("outside", "../elsewhere"),
+            ("self", "."),
+        ]
+        .into_iter()
+        .map(|(name, path)| (name.to_owned(), path.to_owned()))
+        .collect();
+        let members =
+            resolve_workspace_members(&root(temp.path()), &default_config(), None, &sources)
+                .expect("resolve");
+        assert_eq!(
+            members,
+            [ResolvedWorkspaceMember {
+                id: "acme".to_owned(),
+                path: "lib".to_owned(),
+                pyproject_toml: Some("lib/pyproject.toml".to_owned()),
+            }]
+        );
     }
 }

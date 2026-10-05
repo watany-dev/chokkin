@@ -163,7 +163,7 @@ pub(super) fn governing_declarations<'i, 'a>(
         .or_else(|| declared.get(distribution).map(Vec::as_slice))
 }
 
-fn member_declarations<'i, 'a>(
+pub(super) fn member_declarations<'i, 'a>(
     workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
     member_id: &str,
     distribution: &str,
