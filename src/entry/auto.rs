@@ -1,7 +1,7 @@
 //! §8 automatic entry detection from discovered source files.
 
 use crate::config::EntrySpec;
-use crate::sources::{DiscoveredSources, FileContext, ProjectLayout};
+use crate::sources::{DiscoveredSources, FileContext, FileKind, ProjectLayout};
 
 use super::types::{EntryCandidate, EntryOrigin};
 
@@ -51,6 +51,20 @@ pub fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandidate> {
         {
             candidates.push(candidate(path, file.context, "auto:scripts/**".to_owned()));
         }
+    }
+
+    // A notebook is run cell by cell and nothing imports it, so it can only
+    // ever be a root; the modules it imports are reachable through it (#514).
+    for file in sources
+        .files
+        .iter()
+        .filter(|file| file.kind == FileKind::Notebook)
+    {
+        candidates.push(candidate(
+            &file.path,
+            file.context,
+            "auto:**/*.ipynb".to_owned(),
+        ));
     }
 
     candidates
