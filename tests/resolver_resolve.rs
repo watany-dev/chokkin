@@ -449,3 +449,30 @@ fn affixed_declared_name_resolves_as_maybe() {
     assert_eq!(root("doohickey").1.as_deref(), Some("python-doohickey"));
     assert_eq!(root("gizmo").0, ModuleOrigin::Unknown);
 }
+
+#[test]
+fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
+    let index = resolve_path(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/reachability/pytest_plugins_var"),
+    );
+    let context = |file: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == "pytest_asyncio" && resolved.file == file)
+            .map(|resolved| resolved.context)
+    };
+    assert_eq!(
+        context("tests/conftest.py"),
+        Some(chokkin::ImportContext::Test)
+    );
+    assert_eq!(
+        context("src/acme/__init__.py"),
+        Some(chokkin::ImportContext::Runtime)
+    );
+    assert!(!index.warnings.iter().any(|warning| matches!(
+        warning,
+        chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "pytest_asyncio"
+    )));
+}
