@@ -234,6 +234,10 @@ pub struct ManifestSources {
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).
     pub setup_py: bool,
+    /// `setup.py` passes a `name` that cannot be read statically
+    /// (`name=about["__title__"]`, #586).
+    #[serde(default)]
+    pub setup_py_dynamic_name: bool,
     /// `uv.lock` contributed. Kept for library API compatibility; mirrors
     /// `lockfile` having [`LockfileKind::Uv`].
     pub uv_lock: bool,

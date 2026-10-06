@@ -25,6 +25,8 @@ pub struct SetupPyExtraction {
     pub warnings: Vec<ManifestWarning>,
     /// Whether static parsing succeeded.
     pub parsed: bool,
+    /// `setup()` passes a `name` that cannot be read statically.
+    pub dynamic_name: bool,
     /// `install_requires` could not be fully read (no static `setup()` call,
     /// or a value the evaluator cannot follow).
     pub runtime_unknown: bool,
@@ -59,6 +61,7 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
         .extend(call.probed_missing.iter().cloned());
 
     result.metadata.name = string_keyword(&call, "name");
+    result.dynamic_name = result.metadata.name.is_none() && call.keyword("name").is_some();
     result.metadata.version = string_keyword(&call, "version");
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
@@ -454,6 +457,17 @@ if __name__ == "__main__":
         let result = extract("from setuptools import setup\nsetup_kwargs = {}\n", &[]);
         assert!(result.runtime_unknown);
         assert!(!result.parsed);
+    }
+
+    #[test]
+    fn unreadable_name_keyword_is_dynamic() {
+        let result = extract(
+            "from setuptools import setup\nabout = {}\nexec(open(\"src/acme/__version__.py\").read(), about)\nsetup(name=about[\"__title__\"], packages=[\"acme\"], package_dir={\"\": \"src\"})\n",
+            &[],
+        );
+        assert!(result.dynamic_name);
+        assert_eq!(result.metadata.name, None);
+        assert!(!extract("from setuptools import setup\nsetup()\n", &[]).dynamic_name);
     }
 
     fn extract_bytes(contents: &[u8]) -> SetupPyExtraction {

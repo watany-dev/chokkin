@@ -113,6 +113,7 @@ pub fn extract_manifest(
             kept_source,
             "setup.py",
         );
+        sources.setup_py_dynamic_name = extracted.dynamic_name;
         if extracted.parsed {
             dependencies.extend(extracted.dependencies);
             sources.setup_py = true;

@@ -132,6 +132,21 @@ fn library_only_resolves_library_mode() {
 }
 
 #[test]
+fn setup_py_without_static_name_resolves_library_mode() {
+    let inputs = load_pipeline(&fixture("setup_py_dynamic_name"));
+    assert_eq!(inputs.manifest.metadata.name, None);
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &inputs.plugins,
+        false,
+    );
+
+    assert_eq!(plan.mode, ProjectMode::Library);
+}
+
+#[test]
 fn explicit_config_entry_merges_with_auto() {
     let inputs = load_pipeline(&fixture("explicit_entry"));
     let plan = build_entry_roots(
