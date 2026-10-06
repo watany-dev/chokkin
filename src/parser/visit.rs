@@ -34,6 +34,7 @@ pub struct ModuleVisitor<'a> {
     in_type_checking: bool,
     try_depth: u32,
     platform_guard_depth: u32,
+    function_depth: u32,
     module_level: bool,
     /// Module-level names set to `True` inside a `try` body (`has_x = True`).
     try_flags: HashSet<String>,
@@ -62,6 +63,7 @@ impl<'a> ModuleVisitor<'a> {
             in_type_checking: false,
             try_depth: 0,
             platform_guard_depth: 0,
+            function_depth: 0,
             module_level: true,
             try_flags: HashSet::new(),
             typing_aliases: HashSet::from(["typing".to_owned()]),
@@ -161,9 +163,14 @@ impl<'a> ModuleVisitor<'a> {
             self.record_symbol(name.to_string(), kind, line, decorators);
         }
         let saved = self.module_level;
+        let saved_function_depth = self.function_depth;
         self.module_level = false;
+        if matches!(kind, SymbolKind::Function) {
+            self.function_depth += 1;
+        }
         self.visit_body(body);
         self.module_level = saved;
+        self.function_depth = saved_function_depth;
     }
 
     /// `[sys.executable, "-m", "pkg"]` uses `pkg` without importing it. It is
@@ -183,6 +190,7 @@ impl<'a> ModuleVisitor<'a> {
                     context,
                     optional: true,
                     platform_guarded: false,
+                    deferred: self.function_depth > 0,
                     relative_level: 0,
                 });
             },
@@ -196,6 +204,7 @@ impl<'a> ModuleVisitor<'a> {
         let context = self.current_import_context();
         let optional = self.try_depth > 0;
         let platform_guarded = self.platform_guard_depth > 0;
+        let deferred = self.function_depth > 0;
         for alias in &import.names {
             self.loader_names.record_import(alias);
             if alias.name.as_str() == "typing" {
@@ -215,6 +224,7 @@ impl<'a> ModuleVisitor<'a> {
                 context,
                 optional,
                 platform_guarded,
+                deferred,
                 relative_level: 0,
             });
         }
@@ -225,6 +235,7 @@ impl<'a> ModuleVisitor<'a> {
         let context = self.current_import_context();
         let optional = self.try_depth > 0;
         let platform_guarded = self.platform_guard_depth > 0;
+        let deferred = self.function_depth > 0;
         let level = u8::try_from(import_from.level).unwrap_or(u8::MAX);
         let module_suffix = import_from.module.as_ref().map(ToString::to_string);
 
@@ -291,6 +302,7 @@ impl<'a> ModuleVisitor<'a> {
                 context,
                 optional,
                 platform_guarded,
+                deferred,
                 relative_level: level,
             });
         }
@@ -1140,6 +1152,42 @@ g = lambda x=utils.G: x
         assert_eq!(
             optional_by_module(&parsed),
             [("ujson", true), ("inner_lib", false)]
+        );
+    }
+
+    /// #583: only function bodies defer an import; a class body runs at
+    /// import time.
+    #[test]
+    fn imports_in_function_bodies_are_deferred() {
+        let parsed = visit_source(
+            "import top_lib
+
+class C:
+    import class_lib
+
+    def m(self):
+        import method_lib
+
+def f():
+    def inner():
+        import nested_lib
+    import func_lib
+",
+        );
+        let deferred: Vec<(&str, bool)> = parsed
+            .imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.deferred))
+            .collect();
+        assert_eq!(
+            deferred,
+            [
+                ("top_lib", false),
+                ("class_lib", false),
+                ("method_lib", true),
+                ("nested_lib", true),
+                ("func_lib", true),
+            ]
         );
     }
 

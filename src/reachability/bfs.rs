@@ -347,6 +347,7 @@ mod tests {
                     context: ImportContext::Runtime,
                     optional: false,
                     platform_guarded: false,
+                    deferred: false,
                     relative_level: 0,
                 })
                 .collect(),
@@ -614,6 +615,7 @@ mod tests {
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            deferred: false,
             relative_level: 0,
         };
         let modules = vec![ParsedModule {

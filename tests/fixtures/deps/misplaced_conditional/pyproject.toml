@@ -1,0 +1,10 @@
+[project]
+name = "misplaced-conditional"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["polars", "sympy", "xarray"]
+
+[project.scripts]
+acme-cli = "acme.main:main"
