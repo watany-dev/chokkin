@@ -764,7 +764,8 @@ fn binary_undeclared_monorepo_members_are_auto_detected() {
 
 /// A declared member without an app entry ships its own wheel, so its
 /// orphans are library-scored like a detected member's, even when only its
-/// tests reach them and `--production` drops the tests (#587).
+/// tests reach them and `--production` drops the tests. Files its wheel does
+/// not ship keep app scoring (#587).
 #[test]
 fn binary_declared_workspace_library_member_is_scored_as_library() {
     let project = write_project(&[
@@ -774,8 +775,10 @@ fn binary_declared_workspace_library_member_is_scored_as_library() {
         ),
         (
             "providers/google/pyproject.toml",
-            "[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\n\n[project.entry-points.apache_airflow_provider]\nprovider_info = \"airflow.providers.google.get_provider_info:get_provider_info\"\n",
+            "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\n\n[project.entry-points.apache_airflow_provider]\nprovider_info = \"airflow.providers.google.get_provider_info:get_provider_info\"\n\n[tool.flit.module]\nname = \"airflow.providers.google\"\n",
         ),
+        // Outside the member's wheel, so no outside caller imports it.
+        ("providers/google/docs/conf.py", "project = \"google\"\n"),
         // Namespace package: no `src/airflow/__init__.py`.
         (
             "providers/google/src/airflow/providers/google/__init__.py",
@@ -803,7 +806,7 @@ fn binary_declared_workspace_library_member_is_scored_as_library() {
         let issues = json_issues(project.path(), extra);
         assert_eq!(
             certain_chk001(&issues),
-            ["core/src/core/orphan.py"],
+            ["core/src/core/orphan.py", "providers/google/docs/conf.py"],
             "{extra:?}: {issues:?}"
         );
         assert!(
