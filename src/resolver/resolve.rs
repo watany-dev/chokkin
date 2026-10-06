@@ -7,7 +7,7 @@ use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::{ImportContext, ParseSummary, import_context_for_file};
 use crate::plugins::ModuleReference;
-use crate::sources::{DiscoveredFile, DiscoveredSources};
+use crate::sources::{DiscoveredFile, DiscoveredSources, path_to_module};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
@@ -62,6 +62,7 @@ pub fn resolve_imports_for_analysis(
     let mut root_cache: RootCache = BTreeMap::new();
     let pytest_paths = PytestImportPaths::build(sources);
     let local_modules = local_modules(&sources.files, workspace_members);
+    let indexed_roots = indexed_roots(sources);
 
     for module in &parse.modules {
         let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
@@ -91,6 +92,7 @@ pub fn resolve_imports_for_analysis(
                 scoped,
                 &pytest_paths,
                 &local_modules,
+                &indexed_roots,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -114,6 +116,7 @@ pub fn resolve_imports_for_analysis(
                 scoped,
                 &pytest_paths,
                 &local_modules,
+                &indexed_roots,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -150,6 +153,7 @@ pub fn resolve_imports_for_analysis(
                 scoped,
                 &pytest_paths,
                 &local_modules,
+                &indexed_roots,
                 &mut site_warnings,
                 &mut root_cache,
             ));
@@ -180,6 +184,7 @@ pub fn resolve_imports_for_analysis(
             scoped,
             &pytest_paths,
             &local_modules,
+            &indexed_roots,
             &mut warnings,
             &mut root_cache,
         ));
@@ -224,6 +229,7 @@ fn resolve_import_site(
     scoped: &ScopedDeclarations,
     pytest_paths: &PytestImportPaths,
     local_modules: &BTreeSet<String>,
+    indexed_roots: &BTreeSet<String>,
     warnings: &mut Vec<ResolveWarning>,
     root_cache: &mut RootCache,
 ) -> ResolvedImport {
@@ -279,6 +285,15 @@ fn resolve_import_site(
         scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
             .or_else(|| root_loose_match(&root_name, manifest))
             .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
+            // A root that reachability maps to a file is local, even beside a
+            // member's declared package (`devel-common/src/docs/`, #612).
+            .or_else(|| {
+                indexed_roots.contains(&root_name).then_some(RootResolution {
+                    origin: ModuleOrigin::FirstParty,
+                    distribution: None,
+                    confidence: ResolveConfidence::Certain,
+                })
+            })
             .unwrap_or(core)
     } else {
         core
@@ -516,6 +531,17 @@ fn local_modules(
         }
     }
     modules
+}
+
+/// Import roots of the modules [`path_to_module`] names, the same names
+/// reachability resolves to files.
+fn indexed_roots(sources: &DiscoveredSources) -> BTreeSet<String> {
+    sources
+        .files
+        .iter()
+        .filter_map(|file| path_to_module(&file.path, &sources.layout))
+        .map(|module| import_root(&module).to_owned())
+        .collect()
 }
 
 fn workspace_member_for_file(

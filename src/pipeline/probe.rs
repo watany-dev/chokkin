@@ -19,7 +19,8 @@ use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
 use crate::sources::{
-    DiscoveredSources, FileContext, FileKind, MemberLayout, build_glob_set, discover_sources,
+    DiscoveredSources, FileContext, FileKind, MemberLayout, apply_member_docs_context,
+    build_glob_set, discover_sources,
 };
 
 use super::error::ProbeError;
@@ -115,6 +116,7 @@ pub(super) fn probe_project_with_cache(
             layout: input.sources.layout.clone(),
         })
         .collect();
+    apply_member_docs_context(&mut sources, loaded.effective.production);
     let (scripts, script_warnings) = discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),
