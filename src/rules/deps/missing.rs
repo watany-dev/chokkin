@@ -405,9 +405,19 @@ pub(super) fn is_transitive_only(
 pub(super) fn collect_optional_imports(parse: &ParseSummary) -> HashSet<(String, u32)> {
     let mut optional = HashSet::new();
     for module in &parse.modules {
-        for import in &module.imports {
-            if import.optional || import.platform_guarded {
-                optional.insert((module.path.clone(), import.line));
+        let flags = module
+            .imports
+            .iter()
+            .map(|import| (import.line, import.optional || import.platform_guarded))
+            .chain(
+                module
+                    .dynamic_imports
+                    .iter()
+                    .map(|import| (import.line, import.optional || import.platform_guarded)),
+            );
+        for (line, is_optional) in flags {
+            if is_optional {
+                optional.insert((module.path.clone(), line));
             }
         }
     }

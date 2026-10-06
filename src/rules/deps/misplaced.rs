@@ -187,11 +187,21 @@ fn import_strengths(parse: &ParseSummary) -> HashMap<(String, u32), ImportStreng
     let optional = collect_optional_imports(parse);
     let mut strengths = HashMap::new();
     for module in &parse.modules {
-        for import in &module.imports {
-            let key = (module.path.clone(), import.line);
+        let deferred = module
+            .imports
+            .iter()
+            .map(|import| (import.line, import.deferred))
+            .chain(
+                module
+                    .dynamic_imports
+                    .iter()
+                    .map(|import| (import.line, import.deferred)),
+            );
+        for (line, deferred) in deferred {
+            let key = (module.path.clone(), line);
             let strength = if optional.contains(&key) {
                 ImportStrength::Optional
-            } else if import.deferred {
+            } else if deferred {
                 ImportStrength::Deferred
             } else {
                 ImportStrength::TopLevel

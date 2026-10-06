@@ -208,10 +208,18 @@ impl<'a> ModuleVisitor<'a> {
         }
         for (module, literal) in pytest_plugin_names(value) {
             let line = self.line_number(literal);
-            self.parsed.pytest_plugins.push(DynamicImport {
-                module: module.to_owned(),
-                line,
-            });
+            let plugin = self.dynamic_import(module.to_owned(), line);
+            self.parsed.pytest_plugins.push(plugin);
+        }
+    }
+
+    fn dynamic_import(&self, module: String, line: u32) -> DynamicImport {
+        DynamicImport {
+            module,
+            line,
+            optional: self.try_depth > 0,
+            platform_guarded: self.platform_guard_depth > 0,
+            deferred: self.function_depth > 0,
         }
     }
 
@@ -588,20 +596,16 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                     {
                         match target {
                             LiteralTarget::Module(module) => {
-                                let line = self.line_number(call);
-                                self.parsed
-                                    .dynamic_imports
-                                    .push(DynamicImport { module, line });
+                                let dynamic = self.dynamic_import(module, self.line_number(call));
+                                self.parsed.dynamic_imports.push(dynamic);
                             },
                             LiteralTarget::Opaque => self.parsed.has_opaque_dynamic_import = true,
                             LiteralTarget::Nothing => {},
                         }
                     } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
                         if let Some(module) = module_prefix(call) {
-                            let line = self.line_number(call);
-                            self.parsed
-                                .dynamic_import_prefixes
-                                .push(DynamicImport { module, line });
+                            let prefix = self.dynamic_import(module, self.line_number(call));
+                            self.parsed.dynamic_import_prefixes.push(prefix);
                         }
                         self.parsed.has_opaque_dynamic_import = true;
                     }
@@ -871,6 +875,34 @@ mod tests {
         );
         assert_eq!(parsed.dynamic_imports.len(), 1);
         assert_eq!(parsed.dynamic_imports[0].line, 3);
+    }
+
+    #[test]
+    fn dynamic_imports_record_try_platform_and_function_scope() {
+        let parsed = visit_source(
+            "import importlib, sys\ntry:\n    importlib.import_module(\"a\")\nexcept ImportError:\n    pass\nif sys.platform == \"win32\":\n    importlib.import_module(\"b\")\ndef f():\n    importlib.import_module(\"c\")\nimportlib.import_module(\"d\")\n",
+        );
+        let flags: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|import| {
+                (
+                    import.module.as_str(),
+                    import.optional,
+                    import.platform_guarded,
+                    import.deferred,
+                )
+            })
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("a", true, false, false),
+                ("b", false, true, false),
+                ("c", false, false, true),
+                ("d", false, false, false),
+            ]
+        );
     }
 
     #[test]

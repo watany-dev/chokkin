@@ -88,14 +88,17 @@ mod tests {
                 DynamicImport {
                     module: "plugins.a".to_owned(),
                     line: 5,
+                    ..DynamicImport::default()
                 },
                 DynamicImport {
                     module: String::new(),
                     line: 6,
+                    ..DynamicImport::default()
                 },
                 DynamicImport {
                     module: "os".to_owned(),
                     line: 7,
+                    ..DynamicImport::default()
                 },
             ],
             dynamic_import_prefixes: Vec::new(),

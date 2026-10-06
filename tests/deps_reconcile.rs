@@ -376,18 +376,21 @@ fn misplaced_confidence_follows_the_strongest_import() {
     };
     assert_eq!(summary("polars"), (Severity::Info, Confidence::Likely));
     assert_eq!(summary("sympy"), (Severity::Warning, Confidence::Likely));
+    // Dynamic imports follow the same strength rules (#599).
+    assert_eq!(summary("rich"), (Severity::Info, Confidence::Likely));
+    assert_eq!(summary("keras"), (Severity::Warning, Confidence::Likely));
     // The function-local import comes first; the later top-level one decides.
     assert_eq!(summary("xarray"), (Severity::Warning, Confidence::Certain));
     let xarray = candidate_for_distribution(&report, RuleId::Chk005, "xarray").expect("xarray");
     assert!(matches!(
         xarray.origins.as_slice(),
-        [chokkin::Origin::Import { line: 13, .. }]
+        [chokkin::Origin::Import { line: 20, .. }]
     ));
     // An equally strong later import keeps the first origin.
     let sympy = candidate_for_distribution(&report, RuleId::Chk005, "sympy").expect("sympy");
     assert!(matches!(
         sympy.origins.as_slice(),
-        [chokkin::Origin::Import { line: 17, .. }]
+        [chokkin::Origin::Import { line: 24, .. }]
     ));
 }
 
