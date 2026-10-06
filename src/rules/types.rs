@@ -169,8 +169,6 @@ pub enum Origin {
     },
     /// CLI binary usage from a plugin.
     Binary(ReferenceOrigin),
-    /// Configuration module reference.
-    Config(ReferenceOrigin),
 }
 
 /// Structured data for `--explain` (Step 12).
@@ -314,7 +312,7 @@ impl IssueReport {
 
 /// Stable target identifier used by baseline and machine-readable reporters.
 #[must_use]
-pub fn issue_stable_target(issue: &Issue) -> String {
+pub(crate) fn issue_stable_target(issue: &Issue) -> String {
     let target = match &issue.subject {
         IssueSubject::File { path } => normalize_rel_path(Path::new(path)),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),

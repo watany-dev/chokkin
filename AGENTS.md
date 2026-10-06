@@ -112,6 +112,11 @@ explicit opt-in separated from the default flow.
 - **New logic lives in `src/lib.rs`** (and its submodules), not in `main.rs`.
   The CLI layer only dispatches arguments and maps `ExitStatus` to process
   exit codes.
+- **The library is not a public API** (ADR 0004). Modules in `src/lib.rs` are
+  private, items default to `pub(crate)` (`unreachable_pub` warns), and the
+  crate root re-exports only what `main.rs` uses. Integration tests and benches
+  import from `chokkin::internals`; add an item there only when they need it.
+  This keeps rustc's `dead_code` lint effective on the whole pipeline.
 - **No `unsafe` code** — enforced by `Cargo.toml` `[lints.rust] unsafe_code = "forbid"`.
 - **No `unwrap`/`expect`/`panic` in production code** — use `Result`/`Option`.
   These are allowed in `tests/` and `#[cfg(test)]` blocks via `clippy.toml`.

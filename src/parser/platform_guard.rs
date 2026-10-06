@@ -4,7 +4,7 @@ use ruff_python_ast::{CmpOp, Expr};
 
 /// Returns `true` when `expr` compares `sys.platform` (literal comparison only).
 #[must_use]
-pub fn is_platform_guard_test(expr: &Expr) -> bool {
+pub(super) fn is_platform_guard_test(expr: &Expr) -> bool {
     let Expr::Compare(compare) = expr else {
         return false;
     };

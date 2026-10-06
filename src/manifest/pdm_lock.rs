@@ -16,7 +16,7 @@ use super::types::LockfileGraph;
 ///
 /// `groups` / `extras` are dropped: declaration contexts come from the
 /// manifest, and the graph only answers "reachable from a declared dependency".
-pub fn extract_pdm_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
+pub(super) fn extract_pdm_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
     let table = read_lock_table(path)?;
     let mut edges = BTreeMap::new();
     for package in array_tables(&table, "package") {

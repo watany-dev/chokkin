@@ -13,7 +13,7 @@ use crate::sources::{DiscoveredSources, FileContext, FileKind};
 
 /// Extra import directories that apply to test-context files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PytestImportPaths {
+pub(crate) struct PytestImportPaths {
     files: HashSet<String>,
     /// Every directory holding a discovered file, at any depth.
     dirs: HashSet<String>,
@@ -24,12 +24,15 @@ pub struct PytestImportPaths {
 
 impl PytestImportPaths {
     #[must_use]
-    pub fn build(sources: &DiscoveredSources) -> Self {
+    pub(crate) fn build(sources: &DiscoveredSources) -> Self {
         Self::with_settings(sources, &pytest_import_settings(&sources.root.path))
     }
 
     #[must_use]
-    pub fn with_settings(sources: &DiscoveredSources, settings: &PytestImportSettings) -> Self {
+    pub(crate) fn with_settings(
+        sources: &DiscoveredSources,
+        settings: &PytestImportSettings,
+    ) -> Self {
         let mut files = HashSet::new();
         let mut dirs = HashSet::new();
         for file in &sources.files {
@@ -92,7 +95,7 @@ impl PytestImportPaths {
     /// Whether top-level module `root` is a local file or directory on the
     /// `sys.path` pytest gives `file`.
     #[must_use]
-    pub fn provides_root(&self, file: &str, root: &str) -> bool {
+    pub(crate) fn provides_root(&self, file: &str, root: &str) -> bool {
         self.search_dirs(file).any(|dir| {
             let base = join(dir, root);
             self.dirs.contains(&base)
@@ -102,7 +105,7 @@ impl PytestImportPaths {
     }
 
     #[must_use]
-    pub fn resolve(&self, file: &str, module: &str) -> Option<&str> {
+    pub(crate) fn resolve(&self, file: &str, module: &str) -> Option<&str> {
         let relative = module.replace('.', "/");
         self.search_dirs(file).find_map(|dir| {
             let base = join(dir, &relative);

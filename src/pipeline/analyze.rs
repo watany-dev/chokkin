@@ -85,7 +85,7 @@ pub struct AnalyzeOptions {
 ///
 /// # Errors
 ///
-/// Returns [`AnalyzeError`] when a pipeline step fails fatally.
+/// Returns `AnalyzeError` when a pipeline step fails fatally.
 #[allow(clippy::needless_pass_by_value)]
 pub fn analyze_project(
     start: &Path,
@@ -397,9 +397,9 @@ mod tests {
 
     use super::*;
     use crate::ExitStatus;
-    use crate::RuleId;
-    use crate::Severity;
     use crate::rules::IssueSubject;
+    use crate::rules::RuleId;
+    use crate::rules::Severity;
 
     #[test]
     fn analyze_unused_dependency_fixture() {

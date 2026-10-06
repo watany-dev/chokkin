@@ -11,7 +11,7 @@ const APP_ENTRY_FILE_NAMES: &[&str] = &["manage.py", "asgi.py", "wsgi.py", "app.
 
 /// Resolve effective project mode from config, manifest, and discovered entries.
 #[must_use]
-pub fn resolve_project_mode(
+pub(super) fn resolve_project_mode(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
@@ -45,7 +45,7 @@ pub fn resolve_project_mode(
 /// Namespace packages (`llama_index`) have no `__init__.py`, so unlike root
 /// mode resolution no package is required.
 #[must_use]
-pub fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
+pub(crate) fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
     names_distribution(manifest) && !has_clear_app_signals(manifest, &detect_auto_entries(sources))
 }
 

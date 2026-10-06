@@ -15,7 +15,7 @@ use super::types::LockfileGraph;
 /// `[package.dependencies]` keys are the dependency names whatever the value
 /// shape (version string, table, or array of marker-split tables), and
 /// `[metadata.files]` from 1.x is ignored.
-pub fn extract_poetry_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
+pub(super) fn extract_poetry_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
     let table = read_lock_table(path)?;
     let mut edges = BTreeMap::new();
     for package in array_tables(&table, "package") {

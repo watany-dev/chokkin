@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use chokkin::{
+use chokkin::internals::{
     Confidence, PluginId, ProjectMode, ProjectRoot, RootMarker, TargetVersion, load_config,
 };
 use proptest::prelude::*;

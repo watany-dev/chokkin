@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use chokkin::{
+use chokkin::internals::{
     ConfigSources, LoadedConfig, ProjectRoot, RootMarker, default_config, extract_manifest,
 };
 use proptest::prelude::*;

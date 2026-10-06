@@ -10,7 +10,9 @@ mod support;
 use std::hint::black_box;
 use std::path::Path;
 
-use chokkin::{LoadedConfig, ProjectRoot, discover_project_root, extract_manifest, load_config};
+use chokkin::internals::{
+    LoadedConfig, ProjectRoot, discover_project_root, extract_manifest, load_config,
+};
 use criterion::{Criterion, criterion_group, criterion_main};
 use tempfile::TempDir;
 

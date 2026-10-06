@@ -18,7 +18,7 @@ use super::types::{ReachPredecessor, ReachabilityReport, TraceStep, UnreachableF
 ///
 /// # Errors
 ///
-/// Returns [`ReachabilityError`] when framework globs cannot be compiled.
+/// Returns `ReachabilityError` when framework globs cannot be compiled.
 #[allow(clippy::too_many_arguments)]
 pub fn analyze_reachability(
     graph: &mut ProjectGraph,
@@ -122,7 +122,7 @@ pub fn apply_public_surface(
 ///
 /// `surfaces` pairs each library member's root-relative directory with its
 /// surface, whose paths are relative to that member.
-pub fn apply_member_surfaces(
+pub(crate) fn apply_member_surfaces(
     report: &mut ReachabilityReport,
     surfaces: &[(String, PublicSurface)],
 ) {

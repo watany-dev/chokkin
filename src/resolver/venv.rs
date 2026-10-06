@@ -23,7 +23,7 @@ pub struct VenvIndex {
 
 /// Load import mappings from a project virtualenv when present.
 #[must_use]
-pub fn load_venv_index(root: &ProjectRoot, warnings: &mut Vec<ResolveWarning>) -> VenvIndex {
+pub(super) fn load_venv_index(root: &ProjectRoot, warnings: &mut Vec<ResolveWarning>) -> VenvIndex {
     let Some(venv_path) = discover_venv(&root.path) else {
         return VenvIndex::default();
     };

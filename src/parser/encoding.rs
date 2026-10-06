@@ -7,7 +7,7 @@
 /// decoded, anything else (or no declaration) is `None` so the caller can
 /// skip the file instead of guessing.
 #[must_use]
-pub fn decode_python_source(bytes: Vec<u8>) -> Option<String> {
+pub(crate) fn decode_python_source(bytes: Vec<u8>) -> Option<String> {
     let bytes = match String::from_utf8(bytes) {
         Ok(text) => {
             return Some(match text.strip_prefix('\u{feff}') {

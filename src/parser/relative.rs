@@ -9,7 +9,7 @@ use super::types::ParseSeverity;
 ///
 /// Returns `None` when the import cannot be resolved (caller records a diagnostic).
 #[must_use]
-pub fn resolve_relative_import(
+pub(crate) fn resolve_relative_import(
     file_path: &str,
     layout: &LayoutInfo,
     level: u8,
@@ -46,7 +46,7 @@ pub fn resolve_relative_import(
 /// `__package__` of the module at `file_path`: the module itself for a
 /// package `__init__.py`, its parent otherwise.
 #[must_use]
-pub fn module_package(file_path: &str, layout: &LayoutInfo) -> Option<String> {
+pub(super) fn module_package(file_path: &str, layout: &LayoutInfo) -> Option<String> {
     let current_module = path_to_module(file_path, layout)?;
     Some(containing_package(
         &current_module,
@@ -57,7 +57,7 @@ pub fn module_package(file_path: &str, layout: &LayoutInfo) -> Option<String> {
 /// Absolute name of a dotted relative `name` against `package`, as
 /// `importlib.util.resolve_name` computes it.
 #[must_use]
-pub fn resolve_relative_name(name: &str, package: &str) -> Option<String> {
+pub(super) fn resolve_relative_name(name: &str, package: &str) -> Option<String> {
     let suffix = name.trim_start_matches('.');
     let level = u8::try_from(name.len() - suffix.len()).ok()?;
     let base = ascend_package(package, level)?;
@@ -70,7 +70,7 @@ pub fn resolve_relative_name(name: &str, package: &str) -> Option<String> {
 
 /// Build a diagnostic for an unresolved relative import.
 #[must_use]
-pub fn unresolved_relative_diagnostic(path: &str, line: u32) -> ParseDiagnostic {
+pub(super) fn unresolved_relative_diagnostic(path: &str, line: u32) -> ParseDiagnostic {
     ParseDiagnostic {
         line,
         message: format!("could not resolve relative import in `{path}` (missing package context)"),

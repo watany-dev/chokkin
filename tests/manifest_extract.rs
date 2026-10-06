@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chokkin::{
+use chokkin::internals::{
     CacheOptions, ConfigSources, DependencyContext, LoadedConfig, LockfileKind, ManifestError,
     ManifestWarning, ProjectRoot, RootMarker, TargetVersion, default_config, discover_project_root,
     extract_manifest, extract_manifest_with_cache, load_config, resolve_target_version,
@@ -29,14 +29,14 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     }
 }
 
-fn extract_fixture(name: &str) -> chokkin::LoadedManifest {
+fn extract_fixture(name: &str) -> chokkin::internals::LoadedManifest {
     let path = fixture(name);
     let root = discover_project_root(&path).unwrap_or_else(|_| project_root_at(&path));
     let config = load_config(&root).expect("load config");
     extract_manifest(&root, &config).expect("extract manifest")
 }
 
-fn extract_files(files: &[(&str, &[u8])]) -> chokkin::LoadedManifest {
+fn extract_files(files: &[(&str, &[u8])]) -> chokkin::internals::LoadedManifest {
     let temp = tempfile::tempdir().expect("temp dir");
     for (name, contents) in files {
         std::fs::write(temp.path().join(name), contents).expect("write project file");
@@ -50,14 +50,14 @@ fn extract_files(files: &[(&str, &[u8])]) -> chokkin::LoadedManifest {
 const UNDECODABLE_SETUP_PY: &[u8] =
     b"from setuptools import setup\nsetup(name='acme', author='Ren\xe9', install_requires=['requests'])\n";
 
-fn runtime_unknown_file(manifest: &chokkin::LoadedManifest) -> Option<&str> {
+fn runtime_unknown_file(manifest: &chokkin::internals::LoadedManifest) -> Option<&str> {
     manifest.warnings.iter().find_map(|warning| match warning {
         ManifestWarning::RuntimeDependenciesUnknown { file } => Some(file.as_str()),
         _ => None,
     })
 }
 
-fn dependency_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
+fn dependency_names(manifest: &chokkin::internals::LoadedManifest) -> Vec<&str> {
     manifest
         .dependencies
         .iter()
@@ -648,7 +648,7 @@ fn setup_cfg_install_requires() {
     assert!(names.contains(&"flask"), "dependencies: {names:?}");
 }
 
-fn build_requires_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
+fn build_requires_names(manifest: &chokkin::internals::LoadedManifest) -> Vec<&str> {
     manifest
         .metadata
         .build_requires
@@ -710,7 +710,7 @@ fn maturin_build_requires_and_python_source() {
     assert_eq!(targets.paths, ["python/acme", "python/acme.py"]);
 }
 
-fn dev_group_names(manifest: &chokkin::LoadedManifest) -> Vec<&str> {
+fn dev_group_names(manifest: &chokkin::internals::LoadedManifest) -> Vec<&str> {
     let dev = DependencyContext::Group("dev".to_owned());
     manifest
         .dependencies

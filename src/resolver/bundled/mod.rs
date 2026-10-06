@@ -1,4 +1,4 @@
 //! Generated bundled maps.
 
-pub mod binaries;
-pub mod package_modules;
+pub(super) mod binaries;
+pub(super) mod package_modules;

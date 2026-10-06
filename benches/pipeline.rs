@@ -1,12 +1,12 @@
 //! Realistic source sizes and disk-cache paths; setup and cleanup are untimed.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod support;
-use chokkin::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
-use chokkin::reachability::analyze_reachability;
-use chokkin::{
-    AnalyzeOptions, CacheOptions, RuntimeOverrides, analyze_project,
-    parse_project_sources_with_cache, resolve_target_version,
+use chokkin::internals::analyze_reachability;
+use chokkin::internals::{
+    AnalyzeOptions, CacheOptions, parse_project_sources_with_cache, resolve_target_version,
 };
+use chokkin::internals::{PluginExtractRequest, extract_plugin_hints_with_parse};
+use chokkin::{RuntimeOverrides, analyze_project};
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
@@ -47,7 +47,7 @@ fn bench_pipeline(c: &mut Criterion) {
             "cache must not change findings"
         );
         drop(uncached);
-        let config = chokkin::load_config(&report.probe.root).expect("config");
+        let config = chokkin::internals::load_config(&report.probe.root).expect("config");
         let sources = &report.probe.sources;
         let manifest = &report.probe.manifest;
         let target = resolve_target_version(&config.effective, manifest);
@@ -144,8 +144,12 @@ fn bench_pipeline(c: &mut Criterion) {
         });
         group.bench_function(BenchmarkId::new("discover_populated_cache", n), |b| {
             b.iter(|| {
-                chokkin::discover_sources(black_box(&report.probe.root), &config, manifest)
-                    .expect("discover")
+                chokkin::internals::discover_sources(
+                    black_box(&report.probe.root),
+                    &config,
+                    manifest,
+                )
+                .expect("discover")
             });
         });
     }

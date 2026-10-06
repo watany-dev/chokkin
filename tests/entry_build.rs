@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chokkin::{
+use chokkin::internals::{
     EntryOrigin, EntryWarning, PluginExtractRequest, ProjectMode, ProjectRoot, RootMarker,
     build_entry_roots, discover_project_root, discover_sources, extract_manifest,
     extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
@@ -38,10 +38,10 @@ fn project_root_at(path: &Path) -> ProjectRoot {
 }
 
 struct PipelineInputs {
-    config: chokkin::ChokkinConfig,
-    manifest: chokkin::LoadedManifest,
-    sources: chokkin::DiscoveredSources,
-    plugins: chokkin::PluginHints,
+    config: chokkin::internals::ChokkinConfig,
+    manifest: chokkin::internals::LoadedManifest,
+    sources: chokkin::internals::DiscoveredSources,
+    plugins: chokkin::internals::PluginHints,
 }
 
 fn load_pipeline(path: &Path) -> PipelineInputs {
@@ -69,7 +69,7 @@ fn load_pipeline(path: &Path) -> PipelineInputs {
     }
 }
 
-fn entry_paths(plan: &chokkin::EntryPlan) -> Vec<&str> {
+fn entry_paths(plan: &chokkin::internals::EntryPlan) -> Vec<&str> {
     plan.roots
         .iter()
         .map(|root| root.spec.path.as_str())

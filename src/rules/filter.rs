@@ -5,7 +5,7 @@ use crate::rules::types::{Issue, RuleId};
 
 /// Effective confidence floor after config and overrides.
 #[must_use]
-pub fn effective_confidence_floor(
+pub(super) fn effective_confidence_floor(
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
     strict: bool,
@@ -18,13 +18,13 @@ pub fn effective_confidence_floor(
 
 /// Returns true when an issue should be shown after confidence filtering.
 #[must_use]
-pub fn passes_confidence_filter(issue: &Issue, floor: Confidence) -> bool {
+pub(super) fn passes_confidence_filter(issue: &Issue, floor: Confidence) -> bool {
     issue.confidence >= floor
 }
 
 /// Returns true when an issue passes include/exclude rule filters.
 #[must_use]
-pub fn passes_rule_filter(issue: &Issue, overrides: &RuntimeOverrides) -> bool {
+pub(super) fn passes_rule_filter(issue: &Issue, overrides: &RuntimeOverrides) -> bool {
     if let Some(include) = &overrides.include_rules
         && !include
             .iter()
@@ -44,7 +44,7 @@ pub fn passes_rule_filter(issue: &Issue, overrides: &RuntimeOverrides) -> bool {
 
 /// Whether an issue should trigger a non-zero exit code.
 #[must_use]
-pub fn counts_toward_exit(issue: &Issue, strict: bool) -> bool {
+pub(super) fn counts_toward_exit(issue: &Issue, strict: bool) -> bool {
     let (min_severity, min_confidence) = if strict {
         (crate::rules::types::Severity::Warning, Confidence::Maybe)
     } else {

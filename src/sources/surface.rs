@@ -9,7 +9,7 @@ use crate::path_util::join_rel;
 
 use super::types::DiscoveredFile;
 
-/// Discovered files a wheel ships, resolved from [`WheelTargets`].
+/// Discovered files a wheel ships, resolved from `WheelTargets`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PublicSurface {
     /// Root-relative paths of distributed files.

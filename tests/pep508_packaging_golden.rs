@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use chokkin::{ManifestWarning, ProjectRoot, RootMarker, extract_manifest, load_config};
+use chokkin::internals::{ManifestWarning, ProjectRoot, RootMarker, extract_manifest, load_config};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

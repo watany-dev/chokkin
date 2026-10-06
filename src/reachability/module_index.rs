@@ -8,7 +8,7 @@ use crate::sources::{DiscoveredSources, path_to_module};
 
 /// Maps dotted module names to project files.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModuleIndex {
+pub(crate) struct ModuleIndex {
     module_to_file: HashMap<String, FileId>,
     path_to_file: HashMap<String, FileId>,
     pytest: PytestImportPaths,
@@ -17,7 +17,7 @@ pub struct ModuleIndex {
 impl ModuleIndex {
     /// Build a module index from discovered sources and the project graph.
     #[must_use]
-    pub fn build(graph: &ProjectGraph, sources: &DiscoveredSources) -> Self {
+    pub(crate) fn build(graph: &ProjectGraph, sources: &DiscoveredSources) -> Self {
         let mut module_to_file = HashMap::new();
         let mut path_to_file = HashMap::new();
         for (file_id, file) in graph.files() {
@@ -35,7 +35,7 @@ impl ModuleIndex {
 
     /// Resolve a dotted module name to a first-party file id.
     #[must_use]
-    pub fn resolve(&self, module: &str) -> Option<FileId> {
+    pub(crate) fn resolve(&self, module: &str) -> Option<FileId> {
         self.module_to_file.get(module).copied()
     }
 
@@ -43,7 +43,7 @@ impl ModuleIndex {
     /// `sys.path` entries for a test file come first, as prepend mode puts
     /// them ahead of everything else.
     #[must_use]
-    pub fn resolve_from(&self, from_path: &str, module: &str) -> Option<FileId> {
+    pub(crate) fn resolve_from(&self, from_path: &str, module: &str) -> Option<FileId> {
         self.pytest
             .resolve(from_path, module)
             .and_then(|path| self.path_to_file.get(path).copied())
@@ -52,7 +52,7 @@ impl ModuleIndex {
 
     /// Modules strictly inside package `prefix`, sorted by name.
     #[must_use]
-    pub fn under(&self, prefix: &str) -> Vec<(&str, FileId)> {
+    pub(crate) fn under(&self, prefix: &str) -> Vec<(&str, FileId)> {
         let mut modules: Vec<_> = self
             .module_to_file
             .iter()

@@ -8,7 +8,7 @@ use super::types::ParseDiagnostic;
 use super::types::ParseSeverity;
 
 /// Extract `__all__` names and emit warnings for unsupported forms.
-pub fn extract_exports(
+pub(super) fn extract_exports(
     stmts: &[Stmt],
     lines: &LineIndex,
     diagnostics: &mut Vec<ParseDiagnostic>,

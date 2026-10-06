@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Baseline file schema written by `--update-baseline`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BaselineFile {
+pub(super) struct BaselineFile {
     /// Baseline schema version (`"1"` in v0.3; omitted files are v0.2 draft).
     #[serde(default = "default_baseline_schema_version")]
     pub schema_version: String,
@@ -23,7 +23,7 @@ fn default_baseline_schema_version() -> String {
 
 /// One frozen issue fingerprint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BaselineEntry {
+pub(super) struct BaselineEntry {
     /// Stable issue fingerprint.
     pub fingerprint: String,
     /// Rule code, duplicated for reviewability.

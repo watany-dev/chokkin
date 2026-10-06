@@ -61,7 +61,7 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
 }
 
 /// Apply CLI/runtime overrides onto a loaded file configuration.
-pub fn apply_overrides(config: &mut ChokkinConfig, overrides: &RuntimeOverrides) {
+pub(crate) fn apply_overrides(config: &mut ChokkinConfig, overrides: &RuntimeOverrides) {
     if let Some(production) = overrides.production {
         config.production = production;
     }

@@ -23,7 +23,7 @@ fn format_manifest_origin(origin: &DependencyOrigin) -> String {
 }
 
 /// Short subject label for compact output.
-pub fn format_subject(subject: &IssueSubject) -> String {
+pub(super) fn format_subject(subject: &IssueSubject) -> String {
     match subject {
         IssueSubject::File { path } => path.clone(),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
@@ -36,7 +36,7 @@ pub fn format_subject(subject: &IssueSubject) -> String {
 }
 
 /// Short subject label annotated with workspace member metadata when present.
-pub fn format_issue_subject(issue: &Issue) -> String {
+pub(super) fn format_issue_subject(issue: &Issue) -> String {
     let subject = format_subject(&issue.subject);
     issue
         .workspace_member

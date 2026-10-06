@@ -7,7 +7,7 @@ use ruff_python_ast::{Alias, Expr, ExprCall, Operator};
 use super::relative::resolve_relative_name;
 
 /// Names one module binds to the dynamic import loaders.
-pub struct LoaderNames {
+pub(super) struct LoaderNames {
     /// Names bound to the `importlib` module.
     modules: HashSet<String>,
     /// Names bound directly to a loader function.
@@ -25,7 +25,7 @@ impl Default for LoaderNames {
 
 impl LoaderNames {
     /// Track `import importlib as il`.
-    pub fn record_import(&mut self, alias: &Alias) {
+    pub(super) fn record_import(&mut self, alias: &Alias) {
         if alias.name.as_str() == "importlib"
             && let Some(asname) = &alias.asname
         {
@@ -34,7 +34,7 @@ impl LoaderNames {
     }
 
     /// Track `from importlib import import_module [as im]`.
-    pub fn record_import_from(&mut self, module: Option<&str>, alias: &Alias) {
+    pub(super) fn record_import_from(&mut self, module: Option<&str>, alias: &Alias) {
         if module == Some("importlib") && alias.name.as_str() == "import_module" {
             let bound = alias.asname.as_ref().unwrap_or(&alias.name);
             self.functions.insert(bound.to_string());
@@ -43,7 +43,7 @@ impl LoaderNames {
 
     /// Whether `expr` names `importlib.import_module` or `__import__`, aliases included.
     #[must_use]
-    pub fn is_loader(&self, expr: &Expr) -> bool {
+    pub(super) fn is_loader(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Attribute(attribute) => {
                 attribute.attr.as_str() == "import_module"
@@ -60,7 +60,7 @@ impl LoaderNames {
 
 /// What a loader call with a literal module name loads.
 #[derive(Debug)]
-pub enum LiteralTarget {
+pub(super) enum LiteralTarget {
     /// This absolute module.
     Module(String),
     /// A module relative to a package this walk cannot see.
@@ -76,7 +76,7 @@ pub enum LiteralTarget {
 /// `current_package` is the `__package__` of the calling module. Returns
 /// `None` when the name is not a literal.
 #[must_use]
-pub fn literal_target(
+pub(super) fn literal_target(
     call: &ExprCall,
     current_package: impl FnOnce() -> Option<String>,
 ) -> Option<LiteralTarget> {
@@ -109,7 +109,7 @@ pub fn literal_target(
 /// Package whose submodule a loader call builds from a literal prefix:
 /// `"pkg.commands." + name` or `f"pkg.commands.{name}"` gives `pkg.commands`.
 #[must_use]
-pub fn module_prefix(call: &ExprCall) -> Option<String> {
+pub(super) fn module_prefix(call: &ExprCall) -> Option<String> {
     let literal = match module_argument(call)? {
         Expr::BinOp(binop) if matches!(binop.op, Operator::Add) => leftmost_str(&binop.left)?,
         Expr::FString(fstring) if !fstring.value.is_implicit_concatenated() => {
@@ -151,7 +151,7 @@ fn leftmost_str(expr: &Expr) -> Option<&str> {
 /// Module names a `pytest_plugins = …` value makes pytest import: a string,
 /// or the string elements of a list or tuple.
 #[must_use]
-pub fn pytest_plugin_names(value: &Expr) -> Vec<(&str, &Expr)> {
+pub(super) fn pytest_plugin_names(value: &Expr) -> Vec<(&str, &Expr)> {
     let elts: &[Expr] = match value {
         Expr::List(list) => &list.elts,
         Expr::Tuple(tuple) => &tuple.elts,
@@ -166,7 +166,7 @@ pub fn pytest_plugin_names(value: &Expr) -> Vec<(&str, &Expr)> {
 /// What a `[sys.executable, …]` argument list runs in this interpreter's
 /// environment.
 #[derive(Debug, PartialEq, Eq)]
-pub enum PythonRun {
+pub(super) enum PythonRun {
     /// `[sys.executable, "-m", "module", …]`.
     Module(String),
     /// `[sys.executable, <file>, …]` with a path the parser cannot follow.
@@ -175,7 +175,7 @@ pub enum PythonRun {
 
 /// Recognize a `subprocess` argument list starting with `sys.executable`.
 #[must_use]
-pub fn python_run(elts: &[Expr]) -> Option<PythonRun> {
+pub(super) fn python_run(elts: &[Expr]) -> Option<PythonRun> {
     let (first, rest) = elts.split_first()?;
     let Expr::Attribute(attribute) = first else {
         return None;
@@ -199,7 +199,7 @@ pub fn python_run(elts: &[Expr]) -> Option<PythonRun> {
 /// The program a shell command line would run: the first word of a string
 /// literal that has more than one (`"ruff format --check"` gives `ruff`).
 #[must_use]
-pub fn command_word(expr: &Expr) -> Option<&str> {
+pub(super) fn command_word(expr: &Expr) -> Option<&str> {
     let mut words = str_constant(expr)?.split_whitespace();
     let first = words.next()?;
     words.next()?;

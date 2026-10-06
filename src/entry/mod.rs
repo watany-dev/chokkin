@@ -8,7 +8,10 @@ mod module;
 mod script;
 mod types;
 
-pub use build::{add_member_manifest_roots, build_entry_roots};
-pub use mode::is_library_member;
-pub use script::add_script_roots;
-pub use types::{EntryOrigin, EntryPlan, EntryRoot, EntryWarning};
+pub(crate) use build::add_member_manifest_roots;
+pub use build::build_entry_roots;
+pub(crate) use mode::is_library_member;
+pub(crate) use script::add_script_roots;
+#[cfg(test)]
+pub(crate) use types::EntryRoot;
+pub use types::{EntryOrigin, EntryPlan, EntryWarning};

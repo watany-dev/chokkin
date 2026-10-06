@@ -59,7 +59,7 @@ pub(super) struct PartialConfig {
 impl PartialConfig {
     /// Returns true when this layer sets at least one field.
     #[must_use]
-    pub fn has_any_field(&self) -> bool {
+    pub(super) fn has_any_field(&self) -> bool {
         *self != Self::default()
     }
 }
@@ -123,7 +123,7 @@ pub fn default_config() -> ChokkinConfig {
 
 /// Merge configuration layers from lowest to highest priority.
 #[must_use]
-pub fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
+pub(super) fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
     let mut config = default_config();
 
     for layer in layers {

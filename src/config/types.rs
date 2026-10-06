@@ -286,6 +286,7 @@ impl TryFrom<String> for EntrySpec {
 }
 
 /// Dependency group name mappings (§5 `[tool.chokkin.dependencies]`).
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyGroupsConfig {
     /// Group names treated as dev context.

@@ -36,7 +36,7 @@ enum UvDependency {
 }
 
 /// Parse `uv.lock` into a dependency name graph.
-pub fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
+pub(super) fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
     let contents = std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
         path: path.to_path_buf(),
         source,

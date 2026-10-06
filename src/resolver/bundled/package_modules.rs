@@ -2,7 +2,7 @@
 #![allow(clippy::doc_markdown)]
 
 /// Bundled distribution to import names (PyPI top packages + curated mismatches).
-pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
+pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("a2a-sdk", &["a2a"]),
     ("aiofiles", &["aiofiles"]),
     ("aiohttp", &["aiohttp"]),

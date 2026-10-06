@@ -23,7 +23,7 @@ const BASELINE_SCHEMA_VERSION: &str = "1";
 ///
 /// # Errors
 ///
-/// Returns [`BaselineError`] when the baseline path escapes the project root or
+/// Returns `BaselineError` when the baseline path escapes the project root or
 /// the file cannot be read or parsed.
 pub fn apply_baseline(
     report: &mut IssueReport,

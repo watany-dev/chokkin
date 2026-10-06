@@ -7,7 +7,7 @@ use super::warnings::ManifestWarning;
 /// Normalize a distribution name to lowercase hyphen form (PEP 503):
 /// runs of `-`, `_`, and `.` collapse into a single `-`.
 #[must_use]
-pub fn normalize_distribution_name(name: &str) -> String {
+pub(crate) fn normalize_distribution_name(name: &str) -> String {
     let mut normalized = String::with_capacity(name.len());
     let mut pending_separator = false;
     for ch in name.chars() {
@@ -29,7 +29,7 @@ pub fn normalize_distribution_name(name: &str) -> String {
 
 /// Extract a distribution name from a URL fragment `#egg=name`.
 #[must_use]
-pub fn extract_egg_name(spec: &str) -> Option<String> {
+pub(super) fn extract_egg_name(spec: &str) -> Option<String> {
     let fragment = spec.split('#').nth(1)?;
     for part in fragment.split('&') {
         if let Some(egg) = part.strip_prefix("egg=") {
@@ -43,7 +43,7 @@ pub fn extract_egg_name(spec: &str) -> Option<String> {
 }
 
 /// Parse a requirements-file line into a declared dependency, the way pip reads it.
-pub fn parse_requirement(
+pub(super) fn parse_requirement(
     raw: &str,
     context: DependencyContext,
     origin: DependencyOrigin,
@@ -56,7 +56,7 @@ pub fn parse_requirement(
 ///
 /// Unlike [`parse_requirement`], a name ending in an archive extension
 /// (`foo.tlz`, `foo.whl[x]`) is a distribution name here, as in `packaging`.
-pub fn parse_pep508_requirement(
+pub(super) fn parse_pep508_requirement(
     raw: &str,
     context: DependencyContext,
     origin: DependencyOrigin,
@@ -142,7 +142,7 @@ fn parse_pip_requirement(trimmed: &str) -> Option<Requirement> {
 /// Distribution name of a manifest-field requirement, read the way
 /// [`parse_pep508_requirement`] reads it; `None` for opaque or invalid entries.
 #[must_use]
-pub fn pep508_distribution_name(raw: &str) -> Option<String> {
+pub(crate) fn pep508_distribution_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     super::pep508::parse_requirement(trimmed)
         .map(|requirement| normalize_distribution_name(&requirement.name))

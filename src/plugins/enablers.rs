@@ -74,7 +74,7 @@ const ENABLERS: &[Enabler] = &[
 
 /// One place the enablers look: the project root or a workspace member.
 #[derive(Debug, Clone, Copy)]
-pub struct EnablerScope<'a> {
+pub(crate) struct EnablerScope<'a> {
     /// Workspace member, or `None` for the project root.
     pub member: Option<&'a ResolvedWorkspaceMember>,
     /// Manifest extracted from the scope's directory.
@@ -134,7 +134,7 @@ impl fmt::Display for PluginActivation {
 /// `config.explicit_plugins`. Scopes are checked in order, so pass the project
 /// root first to report root-level reasons ahead of member-level ones.
 #[must_use]
-pub fn resolve_plugin_activations(
+pub(crate) fn resolve_plugin_activations(
     config: &ChokkinConfig,
     scopes: &[EnablerScope<'_>],
 ) -> Vec<PluginActivation> {
@@ -244,7 +244,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest = manifest_at(temp.path(), &["flask"]);
         let activations = resolve_plugin_activations(
-            &crate::default_config(),
+            &crate::config::default_config(),
             &[EnablerScope {
                 member: None,
                 manifest: &manifest,
@@ -266,7 +266,7 @@ mod tests {
         std::fs::write(temp.path().join("mkdocs.yml"), "site_name: demo\n").expect("write");
         let manifest = manifest_at(temp.path(), &[]);
         let activations = resolve_plugin_activations(
-            &crate::default_config(),
+            &crate::config::default_config(),
             &[EnablerScope {
                 member: None,
                 manifest: &manifest,
@@ -283,7 +283,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::write(temp.path().join("alembic.ini"), "[alembic]\n").expect("write");
         let manifest = manifest_at(temp.path(), &["flask", "alembic"]);
-        let mut config = crate::default_config();
+        let mut config = crate::config::default_config();
         for plugin in [PluginId::Flask, PluginId::Alembic, PluginId::Pytest] {
             config.plugins.insert(plugin, false);
             config.explicit_plugins.insert(plugin);
@@ -307,7 +307,7 @@ mod tests {
     fn explicit_true_reports_config() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest = manifest_at(temp.path(), &[]);
-        let mut config = crate::default_config();
+        let mut config = crate::config::default_config();
         config.plugins.insert(PluginId::Tox, true);
         config.explicit_plugins.insert(PluginId::Tox);
         let activations = resolve_plugin_activations(
@@ -344,7 +344,7 @@ mod tests {
             pyproject_toml: None,
         };
         let activations = resolve_plugin_activations(
-            &crate::default_config(),
+            &crate::config::default_config(),
             &[
                 EnablerScope {
                     member: None,

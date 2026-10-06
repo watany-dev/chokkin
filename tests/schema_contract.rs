@@ -5,11 +5,11 @@
 use std::fs;
 use std::path::Path;
 
-use chokkin::{
-    Confidence, ExitStatus, FileCounts, Issue, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, ProjectMode, RenderContext, ReporterId, RuleId, RuntimeOverrides, Severity,
-    apply_baseline, render_issues, write_baseline,
+use chokkin::internals::{
+    Confidence, FileCounts, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
+    ProjectMode, ReporterId, RuleId, Severity, apply_baseline, write_baseline,
 };
+use chokkin::{ExitStatus, RenderContext, RuntimeOverrides, render_issues};
 use jsonschema::Validator;
 use serde_json::Value;
 

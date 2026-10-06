@@ -10,7 +10,7 @@ use super::types::{PluginContribution, ReferenceOrigin};
 use super::util::{decorator_suffix, push_binary, push_decorated_modules, push_symbol_ref};
 
 /// Extract Flask app references from static configuration.
-pub fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
+pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(PluginId::Flask);
     let root = ctx.root.path.as_path();
 

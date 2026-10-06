@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Errors that prevent fix application entirely.
 #[derive(Debug, Error)]
-pub enum FixError {
+pub(super) enum FixError {
     /// I/O failure while reading or writing a manifest file.
     #[error("failed to edit {path}: {source}")]
     Io {

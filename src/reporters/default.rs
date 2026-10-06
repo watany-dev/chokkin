@@ -60,7 +60,7 @@ pub fn config_label_from_sources(sources: &ConfigSources) -> String {
 }
 
 /// Shared by the analysis reporter and probe output, which label pyproject differently.
-pub fn config_label(sources: &ConfigSources, pyproject_label: &str) -> String {
+pub(crate) fn config_label(sources: &ConfigSources, pyproject_label: &str) -> String {
     let mut parts = Vec::new();
     if sources.dot_chokkin_toml.is_some() {
         parts.push(".chokkin.toml".to_owned());

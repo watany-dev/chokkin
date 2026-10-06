@@ -2,14 +2,16 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chokkin::{
+use chokkin::internals::{
     Confidence, PluginExtractRequest, ProjectMode, ProjectRoot, PublicSurface, RootMarker,
-    TracePath, TraceStep, add_parsed_imports, analyze_reachability, apply_public_surface,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, extract_manifest, extract_plugin_hints_with_parse, load_config,
-    parse_project_sources_with_cache, resolve_imports, resolve_target_version, trace_to_file,
+    ScopedDeclarations, TracePath, TraceStep, add_parsed_imports, analyze_reachability,
+    apply_public_surface, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
+    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
+    load_config, parse_project_sources_with_cache, resolve_imports_for_analysis,
+    resolve_target_version, trace_to_file,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -25,12 +27,12 @@ fn plugins_fixture(name: &str) -> PathBuf {
 }
 
 struct ReachabilityInputs {
-    manifest: chokkin::LoadedManifest,
-    sources: chokkin::DiscoveredSources,
-    plugins: chokkin::PluginHints,
-    parse: chokkin::ParseSummary,
-    entry: chokkin::EntryPlan,
-    graph: chokkin::ProjectGraph,
+    manifest: chokkin::internals::LoadedManifest,
+    sources: chokkin::internals::DiscoveredSources,
+    plugins: chokkin::internals::PluginHints,
+    parse: chokkin::internals::ParseSummary,
+    entry: chokkin::internals::EntryPlan,
+    graph: chokkin::internals::ProjectGraph,
 }
 
 fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
@@ -61,15 +63,20 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(
+            reference.module.clone(),
+            chokkin::internals::ModuleOrigin::Unknown,
+        );
     }
-    let resolution = resolve_imports(
+    let resolution = resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
+        &BTreeMap::new(),
+        &ScopedDeclarations::default(),
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
 
@@ -341,7 +348,7 @@ mod golden {
     use std::fs;
     use std::path::Path;
 
-    use chokkin::EntryOrigin;
+    use chokkin::internals::EntryOrigin;
     use serde::{Deserialize, Serialize};
 
     use super::*;
@@ -379,7 +386,7 @@ mod golden {
 
     fn snapshot_from_inputs(
         inputs: &ReachabilityInputs,
-        report: &chokkin::ReachabilityReport,
+        report: &chokkin::internals::ReachabilityReport,
     ) -> ReachabilitySnapshot {
         let mut reachable = report
             .reachable
@@ -419,7 +426,7 @@ mod golden {
     fn analyze_fixture(
         path: &Path,
         production: bool,
-    ) -> (ReachabilityInputs, chokkin::ReachabilityReport) {
+    ) -> (ReachabilityInputs, chokkin::internals::ReachabilityReport) {
         let mut inputs = load_reachability(path, production);
         let report = analyze_reachability(
             &mut inputs.graph,
