@@ -34,6 +34,8 @@ pub struct PyprojectExtraction {
     pub constraints: Vec<DeclaredDependency>,
     /// `[tool.uv]` sources.
     pub uv: UvToolSettings,
+    /// A `[project]` table is present.
+    pub has_project_table: bool,
 }
 
 /// Extract manifest data from `pyproject.toml`.
@@ -57,6 +59,7 @@ pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction
     result.uv = uv.settings;
 
     if let Some(project) = table.get("project").and_then(Value::as_table) {
+        result.has_project_table = true;
         result.metadata = parse_project_metadata(project);
         let skip_project_dependencies = result
             .metadata
@@ -486,6 +489,14 @@ mod tests {
         .expect("valid pyproject");
 
         assert_eq!(result.dependencies, []);
+    }
+
+    #[test]
+    fn records_whether_project_table_exists() {
+        let tool_only = extract("[tool.isort]\nprofile = \"black\"\n").expect("valid pyproject");
+        assert!(!tool_only.has_project_table);
+        let project = extract("[project]\nname = \"x\"\n").expect("valid pyproject");
+        assert!(project.has_project_table);
     }
 
     #[test]
