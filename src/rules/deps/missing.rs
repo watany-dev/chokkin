@@ -104,19 +104,19 @@ pub(super) fn detect_missing_dependencies(
         // to override the optional relaxation (#504).
         let transitive =
             has_lockfile && is_transitive_only(distribution, declared, &resolution.transitive);
-        candidates.push(
-            if !transitive && optional_imports.contains(&(import.file.clone(), import.line)) {
-                optional_missing_candidate(import, distribution, strict)
-            } else {
-                undeclared_candidate(
-                    import,
-                    distribution,
-                    declared,
-                    &resolution.transitive,
-                    has_lockfile,
-                )
-            },
-        );
+        let optional = optional_imports.contains(&(import.file.clone(), import.line));
+        candidates.push(if optional && !transitive {
+            optional_missing_candidate(import, distribution, strict)
+        } else {
+            let candidate = undeclared_candidate(
+                import,
+                distribution,
+                declared,
+                &resolution.transitive,
+                has_lockfile,
+            );
+            demote_optional_candidate(import, optional, candidate)
+        });
     }
 
     candidates
@@ -225,17 +225,12 @@ fn optional_missing_candidate(
     } else {
         Severity::Info
     };
-    let (kind, detail) = if import.platform_guarded {
-        (
-            "platform-guarded import",
-            "platform-guarded import — not treated as a hard missing dependency",
-        )
+    let kind = if import.platform_guarded {
+        "platform-guarded import"
     } else {
-        (
-            "optional try-import",
-            "try/except ImportError import — not treated as a hard missing dependency",
-        )
+        "optional try-import"
     };
+    let detail = conditional_import_detail(import);
     IssueCandidate {
         rule: RuleId::Chk003,
         subject: IssueSubject::Import {
@@ -257,6 +252,32 @@ fn optional_missing_candidate(
             summary: format!("conditional import of {distribution} has no declaration"),
             details: vec![detail.to_owned()],
         },
+    }
+}
+
+/// The lock edge keeps the rule CHK004, but the import still runs only when
+/// the package is available, so it is not an error (#582).
+fn demote_optional_candidate(
+    import: &ResolvedImport,
+    optional: bool,
+    mut candidate: IssueCandidate,
+) -> IssueCandidate {
+    if !optional {
+        return candidate;
+    }
+    candidate.severity = Severity::Warning;
+    candidate
+        .explain
+        .details
+        .push(conditional_import_detail(import).to_owned());
+    candidate
+}
+
+fn conditional_import_detail(import: &ResolvedImport) -> &'static str {
+    if import.platform_guarded {
+        "platform-guarded import — not treated as a hard missing dependency"
+    } else {
+        "try/except ImportError import — not treated as a hard missing dependency"
     }
 }
 
@@ -493,6 +514,7 @@ mod tests {
             pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
         let graph = crate::graph::ProjectGraph::new(sources.root.clone());
+        let parse = parse_for(&resolution.imports);
         detect_missing_dependencies(
             declared,
             &DependencyRuleContext {
@@ -501,7 +523,7 @@ mod tests {
                     sources: &sources,
                     graph: &graph,
                     reachability: &crate::reachability::ReachabilityReport::default(),
-                    parse: &ParseSummary::default(),
+                    parse: &parse,
                 },
                 config: &config,
                 strict,
@@ -510,6 +532,67 @@ mod tests {
             true,
             workspace_declared,
         )
+    }
+
+    /// Parse output carrying each import's `optional` / `platform_guarded` flags.
+    fn parse_for(imports: &[ResolvedImport]) -> ParseSummary {
+        let imports = imports
+            .iter()
+            .map(|import| crate::parser::ImportRef {
+                module: import.full_module.clone(),
+                name: None,
+                alias: None,
+                line: import.line,
+                kind: crate::parser::ImportKind::Import,
+                context: import.context,
+                optional: import.optional,
+                platform_guarded: import.platform_guarded,
+                relative_level: 0,
+            })
+            .collect();
+        ParseSummary {
+            modules: vec![crate::parser::ParsedModule {
+                path: FILE.to_owned(),
+                imports,
+                ..crate::parser::ParsedModule::default()
+            }],
+        }
+    }
+
+    /// #582: a lock edge keeps an optional import on CHK004 (#504), but as a
+    /// warning; without the edge it stays the conditional CHK003.
+    #[test]
+    fn optional_import_with_lock_edge_is_chk004_warning() {
+        let requests = declared_dep("requests");
+        let mut index: DeclaredIndex<'_> = BTreeMap::new();
+        index.insert("requests".to_owned(), vec![&requests]);
+        let transitive = || LockfileGraph {
+            edges: BTreeMap::from([
+                ("requests".to_owned(), vec!["urllib3".to_owned()]),
+                ("urllib3".to_owned(), Vec::new()),
+            ]),
+            ..LockfileGraph::default()
+        };
+        let optional = |distribution| ResolvedImport {
+            optional: true,
+            ..runtime_import(distribution)
+        };
+
+        for strict in [false, true] {
+            let edge = detect_with(&index, optional("urllib3"), transitive(), strict, &[]);
+            assert_eq!(edge.len(), 1);
+            assert_eq!(edge[0].rule, RuleId::Chk004);
+            assert_eq!(edge[0].severity, Severity::Warning);
+            assert_eq!(edge[0].confidence, Confidence::Certain);
+        }
+
+        let plain = detect(&index, "urllib3", transitive());
+        assert_eq!(plain[0].severity, Severity::Error);
+
+        let no_edge = detect_with(&index, optional("certifi"), transitive(), false, &[]);
+        assert_eq!(no_edge[0].rule, RuleId::Chk003);
+        assert_eq!(no_edge[0].severity, Severity::Info);
+        assert_eq!(no_edge[0].confidence, Confidence::Likely);
     }
 
     #[test]
