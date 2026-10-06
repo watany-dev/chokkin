@@ -9,10 +9,9 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use chokkin::{
-    AnalysisReport, CliArgs, ExitStatus, FixReport, RenderContext, RuntimeOverrides, VERSION,
-    analyze_project, config_label_from_sources, explain_issue, format_subject, init_project,
-    parse_cli_args, probe_project, render_issues, trace_output, write_probe_report,
-    write_probe_warnings,
+    AnalysisReport, CliArgs, ExitStatus, RenderContext, RuntimeOverrides, VERSION, analyze_project,
+    config_label_from_sources, explain_issue, init_project, parse_cli_args, probe_project,
+    render_fix_report, render_issues, trace_output, write_probe_report, write_probe_warnings,
 };
 
 const USAGE: &str = "\
@@ -172,8 +171,8 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
         return ExitCode::from(ExitStatus::InternalError.code());
     }
 
-    if let Some(fix_report) = &report.fix
-        && write_fix_report(fix_report, &mut std::io::stderr()).is_err()
+    if let Some(fix_text) = report.fix.as_ref().and_then(render_fix_report)
+        && std::io::stderr().write_all(fix_text.as_bytes()).is_err()
     {
         return ExitCode::from(ExitStatus::InternalError.code());
     }
@@ -202,37 +201,6 @@ fn print_stdout(text: &str) -> std::io::Result<()> {
     stdout.write_all(text.as_bytes())?;
     if !text.ends_with('\n') {
         stdout.write_all(b"\n")?;
-    }
-    Ok(())
-}
-
-fn write_fix_report(report: &FixReport, out: &mut impl Write) -> std::io::Result<()> {
-    if report.applied.is_empty() && report.skipped.is_empty() && report.reminders.is_empty() {
-        return Ok(());
-    }
-    writeln!(out, "Fixes:")?;
-    for fix in &report.applied {
-        writeln!(
-            out,
-            "  applied {} {} in {} — {}",
-            fix.rule.as_code(),
-            format_subject(&fix.subject),
-            fix.file,
-            fix.description
-        )?;
-    }
-    for skipped in &report.skipped {
-        writeln!(
-            out,
-            "  skipped {} {} — {:?}: {}",
-            skipped.rule.as_code(),
-            format_subject(&skipped.subject),
-            skipped.reason,
-            skipped.detail
-        )?;
-    }
-    for reminder in &report.reminders {
-        writeln!(out, "  reminder: {reminder}")?;
     }
     Ok(())
 }
