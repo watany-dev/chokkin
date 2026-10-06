@@ -46,8 +46,7 @@ pub fn resolve_project_mode(
 /// mode resolution no package is required.
 #[must_use]
 pub fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
-    manifest.metadata.name.is_some()
-        && !has_clear_app_signals(manifest, &detect_auto_entries(sources))
+    names_distribution(manifest) && !has_clear_app_signals(manifest, &detect_auto_entries(sources))
 }
 
 fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> Option<usize> {
@@ -83,10 +82,14 @@ fn has_clear_app_signals(manifest: &LoadedManifest, candidates: &[EntryCandidate
     })
 }
 
+/// requests sets `name=about["__title__"]` from an `exec`ed file; the name
+/// is unreadable but still declared (#586).
+fn names_distribution(manifest: &LoadedManifest) -> bool {
+    manifest.metadata.name.is_some() || manifest.sources.setup_py_dynamic_name
+}
+
 fn is_library_project(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
-    // requests sets `name=about["__title__"]` from an `exec`ed file, so a
-    // static `setup()` call stands in for an unreadable name (#586).
-    if manifest.metadata.name.is_none() && !manifest.sources.setup_py_call {
+    if !names_distribution(manifest) {
         return false;
     }
 
@@ -236,17 +239,6 @@ mod tests {
     }
 
     #[test]
-    fn library_mode_for_setup_py_without_static_name() {
-        let mut manifest = empty_manifest();
-        manifest.sources.setup_py_call = true;
-        let mut config = default_config();
-        config.mode = ProjectMode::Auto;
-        let mut warnings = Vec::new();
-        let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[], &mut warnings);
-        assert_eq!(mode, ProjectMode::Library);
-    }
-
-    #[test]
     fn manage_py_triggers_app_mode() {
         let mut manifest = empty_manifest();
         manifest.metadata.name = Some("acme".to_owned());
@@ -279,6 +271,8 @@ mod tests {
         sources.files[0].path = "llama_index/llms/openai/base.py".to_owned();
         let mut manifest = empty_manifest();
         assert!(!is_library_member(&manifest, &sources));
+        manifest.sources.setup_py_dynamic_name = true;
+        assert!(is_library_member(&manifest, &sources));
         manifest.metadata.name = Some("llama-index-llms-openai".to_owned());
         assert!(is_library_member(&manifest, &sources));
         sources.files[0].path = "manage.py".to_owned();
