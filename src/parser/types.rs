@@ -47,6 +47,10 @@ pub struct ImportRef {
     /// `true` when the import appears under an `if sys.platform …` guard.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub platform_guarded: bool,
+    /// `true` when the import sits in a function body, so it runs only when
+    /// the function is called.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deferred: bool,
     /// Relative import dot count (`0` = absolute).
     #[serde(default, skip_serializing_if = "is_zero_level")]
     pub relative_level: u8,

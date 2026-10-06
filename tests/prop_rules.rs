@@ -275,8 +275,13 @@ fn expected_for(name: &str, dep: Dep, has_lock: bool, strict: bool) -> Vec<Key> 
     if (dep.plain || dep.optional) && dep.runtime.is_none() && !dep.extra {
         if dep.dev {
             // W1 counterpart: a dev-only declaration used at runtime is
-            // misplaced, never missing.
-            out.push(key("CHK005", name, "warning", "certain"));
+            // misplaced, never missing. Only a top-level import makes it
+            // certain (#583).
+            out.push(if dep.plain {
+                key("CHK005", name, "warning", "certain")
+            } else {
+                key("CHK005", name, "info", "likely")
+            });
         } else if locked {
             if dep.plain {
                 let confidence = if dep.hub_edge { "certain" } else { "likely" };

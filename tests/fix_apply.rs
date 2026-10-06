@@ -88,6 +88,57 @@ fn fix_moves_direct_reference_with_extras_to_runtime() {
 }
 
 #[test]
+fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("misplaced_conditional"), temp.path()).expect("copy fixture");
+
+    let report = analyze_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    let fix_report = report.fix.expect("fix report");
+    let subjects = |rule_fixes: Vec<&chokkin::IssueSubject>| {
+        let mut names: Vec<String> = rule_fixes
+            .into_iter()
+            .filter_map(|subject| match subject {
+                chokkin::IssueSubject::Distribution { name } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(
+        subjects(
+            fix_report
+                .applied
+                .iter()
+                .filter(|fix| fix.rule == RuleId::Chk005)
+                .map(|fix| &fix.subject)
+                .collect()
+        ),
+        ["xarray"]
+    );
+    assert_eq!(
+        subjects(
+            fix_report
+                .skipped
+                .iter()
+                .filter(|fix| fix.rule == RuleId::Chk005)
+                .map(|fix| &fix.subject)
+                .collect()
+        ),
+        ["polars", "sympy"]
+    );
+}
+
+#[test]
 fn fix_removes_included_group_dependency_only_from_declaring_group() {
     let temp = tempfile::tempdir().expect("tempdir");
     copy_dir_recursive(&fixture("include_group"), temp.path()).expect("copy fixture");

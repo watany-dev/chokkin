@@ -547,6 +547,7 @@ mod tests {
                 context: import.context,
                 optional: import.optional,
                 platform_guarded: import.platform_guarded,
+                deferred: false,
                 relative_level: 0,
             })
             .collect();
@@ -742,6 +743,7 @@ mod tests {
             context: crate::parser::ImportContext::Runtime,
             optional,
             platform_guarded,
+            deferred: false,
             relative_level: 0,
         };
         let parse = ParseSummary {

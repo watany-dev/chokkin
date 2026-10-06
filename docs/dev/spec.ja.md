@@ -592,6 +592,8 @@ src/ で import urllib3
 
 判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。CHK004のevidenceは2種類に分ける。宣言依存からlockfileのedgeで到達できる場合は「transitive edge」(Certain)、lockfileにpackageとしては載っているが宣言依存から到達できない場合は「lockにあるが未宣言」(Likely)とし、messageとexplain detailで区別する。
 
+CHK005 は distribution 単位で 1 件にまとめ、その distribution の runtime import をすべて見てから confidence を決める。最初に見つかった import では決めない。トップレベルの import (class body を含む) が 1 つでもあれば warning / Certain。どれも関数本体の中 (`ImportRef.deferred`) なら warning / Likely。どれも optional / platform-guarded なら info / Likely とする。関数内の import は関数が呼ばれるまで実行されず、optional な import は「入っていれば使う」ものなので、どちらも runtime 必須とは言い切れない。`--fix` の MoveToRuntime は Certain だけが対象なので、こうした依存を runtime に昇格させない (#583)。origin には confidence を決めた import を出す。
+
 environment markerとextrasの扱いも定める。
 
 ```text

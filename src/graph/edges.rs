@@ -151,6 +151,7 @@ mod tests {
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            deferred: false,
             relative_level: 0,
         }
     }
