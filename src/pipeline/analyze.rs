@@ -12,7 +12,9 @@ use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_ske
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
 use crate::parser::parse_project_sources_with_cache;
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
-use crate::reachability::{ReachabilityReport, analyze_reachability, apply_public_surface};
+use crate::reachability::{
+    ReachabilityReport, analyze_reachability, apply_member_surfaces, apply_public_surface,
+};
 use crate::reporters::FileCounts;
 use crate::resolver::{
     ScopedDeclarations, StdlibRange, apply_resolution_to_graph, resolve_imports_for_analysis,
@@ -222,7 +224,7 @@ fn run_analysis_core(
             .iter()
             .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
     );
-    if probe.auto_workspace && probe.effective_config.mode == ProjectMode::Auto {
+    if probe.effective_config.mode == ProjectMode::Auto {
         entry.library_members = probe
             .workspace_inputs
             .iter()
@@ -269,6 +271,19 @@ fn run_analysis_core(
     ) {
         apply_public_surface(&mut reachability, &surface, &entry);
     }
+    let member_surfaces: Vec<_> = probe
+        .workspace_inputs
+        .iter()
+        .filter(|input| entry.library_members.contains(&input.member.path))
+        .filter_map(|input| {
+            let surface = PublicSurface::resolve(
+                input.manifest.metadata.wheel_targets.as_ref(),
+                &input.sources.files,
+            )?;
+            Some((input.member.path.clone(), surface))
+        })
+        .collect();
+    apply_member_surfaces(&mut reachability, &member_surfaces);
 
     let workspace_boundaries = probe
         .workspace_inputs

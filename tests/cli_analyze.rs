@@ -762,35 +762,60 @@ fn binary_undeclared_monorepo_members_are_auto_detected() {
     assert!(!project.path().join("llama-index-core/.chokkin").exists());
 }
 
-/// Library scoring is only for detected members; a declared member keeps the
-/// root's mode, so its orphans stay certain.
+/// A declared member without an app entry ships its own wheel, so its
+/// orphans are library-scored like a detected member's, even when only its
+/// tests reach them and `--production` drops the tests. Files its wheel does
+/// not ship keep app scoring (#587).
 #[test]
-fn binary_declared_workspace_member_is_not_scored_as_library() {
+fn binary_declared_workspace_library_member_is_scored_as_library() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[project.scripts]\napi-cli = \"api.main:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"providers/*\", \"core\"]\n",
         ),
         (
-            "services/api/pyproject.toml",
-            "[project]\nname = \"api\"\nversion = \"0.1.0\"\n",
+            "providers/google/pyproject.toml",
+            "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\n\n[project.entry-points.apache_airflow_provider]\nprovider_info = \"airflow.providers.google.get_provider_info:get_provider_info\"\n\n[tool.flit.module]\nname = \"airflow.providers.google\"\n",
         ),
-        ("services/api/src/api/__init__.py", ""),
+        // Outside the member's wheel, so no outside caller imports it.
+        ("providers/google/docs/conf.py", "project = \"google\"\n"),
+        // Namespace package: no `src/airflow/__init__.py`.
         (
-            "services/api/src/api/main.py",
-            "from . import helper\nfrom api import util\n\n\ndef main() -> None:\n    helper.run()\n    util.run()\n",
+            "providers/google/src/airflow/providers/google/__init__.py",
+            "",
         ),
-        ("services/api/src/api/helper.py", "def run():\n    pass\n"),
-        ("services/api/src/api/util.py", "def run():\n    pass\n"),
-        ("services/api/src/api/orphan.py", ""),
+        (
+            "providers/google/src/airflow/providers/google/hooks.py",
+            "def hook():\n    pass\n",
+        ),
+        (
+            "providers/google/tests/test_hooks.py",
+            "from airflow.providers.google.hooks import hook\n\n\ndef test_hook():\n    hook()\n",
+        ),
+        // App member: its console script keeps app scoring.
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n\n[project.scripts]\ncore = \"core.main:main\"\n",
+        ),
+        ("core/src/core/__init__.py", ""),
+        ("core/src/core/main.py", "def main():\n    pass\n"),
+        ("core/src/core/orphan.py", ""),
     ]);
-    let issues = json_issues(project.path(), &[]);
-    // Imports inside the member resolve against its own `src/` layout.
-    assert_eq!(
-        certain_chk001(&issues),
-        ["services/api/src/api/orphan.py"],
-        "{issues:?}"
-    );
+    let hooks = "providers/google/src/airflow/providers/google/hooks.py";
+    for extra in [&[][..], &["--production"][..]] {
+        let issues = json_issues(project.path(), extra);
+        assert_eq!(
+            certain_chk001(&issues),
+            ["core/src/core/orphan.py", "providers/google/docs/conf.py"],
+            "{extra:?}: {issues:?}"
+        );
+        assert!(
+            issues.iter().all(|issue| !(issue["code"] == "CHK001"
+                && issue["target"] == hooks
+                && issue["severity"] == "error")),
+            "{extra:?}: {issues:?}"
+        );
+    }
 }
 
 #[test]

@@ -117,6 +117,34 @@ pub fn apply_public_surface(
     }
 }
 
+/// Re-score library-member orphans that the member's own wheel does not ship
+/// (R-05, #587).
+///
+/// `surfaces` pairs each library member's root-relative directory with its
+/// surface, whose paths are relative to that member.
+pub fn apply_member_surfaces(
+    report: &mut ReachabilityReport,
+    surfaces: &[(String, PublicSurface)],
+) {
+    let confidence =
+        confidence_for_unreachable(ProjectMode::App, report.reached_opaque_dynamic_import);
+    for file in &mut report.unreachable {
+        // A nested member's files belong to the innermost one.
+        let owner = surfaces
+            .iter()
+            .filter_map(|(member, surface)| {
+                let rel = file.path.strip_prefix(member.as_str())?.strip_prefix('/')?;
+                Some((member.len(), rel, surface))
+            })
+            .max_by_key(|(len, _, _)| *len);
+        if let Some((_, rel, surface)) = owner
+            && !surface.contains(rel)
+        {
+            file.max_confidence = confidence;
+        }
+    }
+}
+
 /// Files a plugin's framework glob marks as used, with the glob that matched.
 struct FrameworkUsed {
     files: IndexSet<crate::graph::FileId>,
@@ -511,6 +539,56 @@ mod tests {
             [
                 ("acme/orphan.py", Confidence::Certain),
                 ("libs/core/pkg/orphan.py", Confidence::Maybe),
+            ]
+        );
+    }
+
+    #[test]
+    fn library_member_lifts_orphans_its_wheel_does_not_ship() {
+        let parse = ParseSummary {
+            modules: [
+                "acme/main.py",
+                "libs/core/pkg/orphan.py",
+                "libs/core/docs/conf.py",
+                "libs/core/plugins/x/pkg/orphan.py",
+            ]
+            .map(|path| parsed(path, &[], false))
+            .into(),
+        };
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let paths: Vec<&str> = parse.modules.iter().map(|m| m.path.as_str()).collect();
+        let sources = flat_sources(root, &paths);
+        let mut graph = graph_for(&sources, &parse, &[]);
+        let mut entry = app_entry(&["acme/main.py"]);
+        entry.library_members = vec!["libs/core".to_owned(), "libs/core/plugins/x".to_owned()];
+        let mut report =
+            analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
+                .expect("reachability");
+        let surface = |path: &str| PublicSurface {
+            files: [path.to_owned()].into(),
+        };
+        apply_member_surfaces(
+            &mut report,
+            &[
+                ("libs/core".to_owned(), surface("pkg/orphan.py")),
+                ("libs/core/plugins/x".to_owned(), surface("pkg/orphan.py")),
+            ],
+        );
+
+        let found: Vec<_> = report
+            .unreachable
+            .iter()
+            .map(|file| (file.path.as_str(), file.max_confidence))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("libs/core/docs/conf.py", Confidence::Certain),
+                ("libs/core/pkg/orphan.py", Confidence::Maybe),
+                ("libs/core/plugins/x/pkg/orphan.py", Confidence::Maybe),
             ]
         );
     }

@@ -433,7 +433,7 @@ src/<package>/__init__.py または root直下の <package>/__init__.py
 
 setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
 
-自動検出したworkspace member（§5、#488）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。
+workspace member（§5。宣言済み・自動検出とも、#488 / #587）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。代わりにmember自身のwheel target（member manifest、パスはmember相対）から求めたpublic surfaceを使い、その外にある未到達file（`docs/conf.py` 等）はCHK001をapp mode相当のconfidenceに戻す（`apply_member_surfaces`、#587）。入れ子のmemberでは最も深いmemberのsurfaceで判定する。
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 
