@@ -14,7 +14,7 @@ use super::types::{
 };
 use super::util::{
     IniSection, match_paths_against_globs, origin_for_file, parse_path_list,
-    pytest_ini_options_from_pyproject, pytest_test_globs, read_ini_section, read_pyproject_table,
+    pytest_options_from_pyproject, pytest_test_globs, read_ini_section, read_pyproject_table,
 };
 use super::warnings::PluginsWarning;
 
@@ -34,13 +34,9 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     if pyproject_path.is_file() {
         match read_pyproject_table(&pyproject_path) {
             Ok(table) => {
-                if let Some(options) = pytest_ini_options_from_pyproject(&table) {
+                if let Some((options, label)) = pytest_options_from_pyproject(&table) {
                     has_explicit_config = true;
-                    config_origin = Some(origin_for_file(
-                        root,
-                        &pyproject_path,
-                        "tool.pytest.ini_options",
-                    ));
+                    config_origin = Some(origin_for_file(root, &pyproject_path, label));
                     testpaths = str_list(options, "testpaths");
                     python_files = str_list(options, "python_files");
                 }
@@ -109,7 +105,26 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         .iter()
         .map(|file| file.path.clone())
         .collect();
-    for path in match_paths_against_globs(&source_paths, &globs) {
+    let mut test_files = match_paths_against_globs(&source_paths, &globs);
+    // Members' suites are collected by passing their directory to pytest
+    // (airflow's `providers/*/tests`), so the root `testpaths` does not limit
+    // them while `python_files` still applies.
+    let member_tests: Vec<String> = ctx
+        .sources
+        .files
+        .iter()
+        .filter(|file| {
+            file.context == FileContext::Test && ctx.sources.layout.member_for(&file.path).is_some()
+        })
+        .map(|file| file.path.clone())
+        .collect();
+    test_files.extend(match_paths_against_globs(
+        &member_tests,
+        &pytest_test_globs(&[], &python_files),
+    ));
+    test_files.sort();
+    test_files.dedup();
+    for path in test_files {
         contrib.entries.push(PluginEntry {
             spec: crate::config::EntrySpec { path, symbol: None },
             context: FileContext::Test,
@@ -135,7 +150,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     }
 
     if let Some(table) = pyproject_table.as_ref()
-        && let Some(options) = pytest_ini_options_from_pyproject(table)
+        && let Some((options, _)) = pytest_options_from_pyproject(table)
         && let Some(plugins) = options.get("pytest_plugins")
     {
         let plugin_modules = collect_pytest_plugins(plugins);
@@ -211,7 +226,7 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
         return None;
     }
     let table = read_pyproject_table(path).ok()?;
-    let options = pytest_ini_options_from_pyproject(&table)?;
+    let (options, _) = pytest_options_from_pyproject(&table)?;
     let addopts = options
         .get("addopts")
         .map_or_else(Vec::new, |value| match value {

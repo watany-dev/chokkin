@@ -279,15 +279,23 @@ fn split_ini_assignment(line: &str) -> Option<(&str, &str)> {
     Some((key, value))
 }
 
-/// Return the `[tool.pytest.ini_options]` table when present.
-pub fn pytest_ini_options_from_pyproject(table: &toml::Table) -> Option<&toml::Table> {
-    table
+/// Return the pytest options table in `pyproject.toml` with its label.
+///
+/// pytest ≥ 9 reads native `[tool.pytest]` when it holds keys besides
+/// `ini_options` (and rejects using both), else `[tool.pytest.ini_options]`.
+pub fn pytest_options_from_pyproject(table: &toml::Table) -> Option<(&toml::Table, &'static str)> {
+    let pytest = table
         .get("tool")
         .and_then(Value::as_table)
         .and_then(|tool| tool.get("pytest"))
+        .and_then(Value::as_table)?;
+    if pytest.keys().any(|key| key != "ini_options") {
+        return Some((pytest, "tool.pytest"));
+    }
+    pytest
+        .get("ini_options")
         .and_then(Value::as_table)
-        .and_then(|pytest| pytest.get("ini_options"))
-        .and_then(Value::as_table)
+        .map(|options| (options, "tool.pytest.ini_options"))
 }
 
 /// Return the `[tool.uvicorn]` table when present.
@@ -537,6 +545,29 @@ mod tests {
             section.get("testpaths").map(String::as_str),
             Some("integration")
         );
+    }
+
+    #[test]
+    fn pytest_options_prefer_native_table_over_ini_options() {
+        let label = |text: &str| {
+            let table: toml::Table = toml::from_str(text).expect("toml");
+            pytest_options_from_pyproject(&table).map(|(_, label)| label)
+        };
+        assert_eq!(
+            label("[tool.pytest.ini_options]\ntestpaths = [\"t\"]\n"),
+            Some("tool.pytest.ini_options")
+        );
+        assert_eq!(
+            label("[tool.pytest]\ntestpaths = [\"t\"]\n"),
+            Some("tool.pytest")
+        );
+        assert_eq!(
+            label(
+                "[tool.pytest]\nminversion = \"9.0\"\n[tool.pytest.ini_options]\ntestpaths = \"t\"\n"
+            ),
+            Some("tool.pytest")
+        );
+        assert_eq!(label("[tool.ruff]\n"), None);
     }
 
     #[test]

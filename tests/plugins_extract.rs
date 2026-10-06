@@ -136,6 +136,32 @@ fn pytest_respects_testpaths() {
 }
 
 #[test]
+fn pytest_reads_native_tool_pytest_table() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.pytest]\npython_files = [\"example_*.py\"]\n",
+    )
+    .expect("write pyproject");
+    for rel in ["acme/__init__.py", "tests/system/example_x.py"] {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, "").expect("write file");
+    }
+
+    let hints = extract_at(root);
+    let contrib = pytest_contrib(&hints);
+    let entry = contrib
+        .entries
+        .iter()
+        .find(|entry| entry.spec.path == "tests/system/example_x.py")
+        .expect("example_x.py entry");
+    assert_eq!(entry.context, FileContext::Test);
+    assert_eq!(entry.origin.label, "tool.pytest");
+}
+
+#[test]
 fn pytest_conftest_entry() {
     let hints = extract_fixture("pytest_pyproject");
     let contrib = pytest_contrib(&hints);
