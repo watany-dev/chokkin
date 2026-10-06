@@ -13,7 +13,8 @@ use crate::sources::{FileContext, LayoutInfo};
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
 use super::dynamic::{
-    LiteralTarget, LoaderNames, PythonRun, command_word, literal_target, module_prefix, python_run,
+    LiteralTarget, LoaderNames, PythonRun, command_word, literal_target, module_prefix,
+    pytest_plugin_names, python_run,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -196,6 +197,21 @@ impl<'a> ModuleVisitor<'a> {
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
             None => {},
+        }
+    }
+
+    /// pytest imports the modules a module-level `pytest_plugins` names, in
+    /// a conftest or in a module it loaded as a plugin.
+    fn record_pytest_plugins(&mut self, target: &str, value: &Expr) {
+        if target != "pytest_plugins" {
+            return;
+        }
+        for (module, literal) in pytest_plugin_names(value) {
+            let line = self.line_number(literal);
+            self.parsed.pytest_plugins.push(DynamicImport {
+                module: module.to_owned(),
+                line,
+            });
         }
     }
 
@@ -412,6 +428,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                                 line,
                                 &[],
                             );
+                            self.record_pytest_plugins(name.id.as_str(), &assign.value);
                         }
                     }
                 }
@@ -426,6 +443,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 {
                     let line = self.line_number(ann_assign);
                     self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
+                    if let Some(value) = &ann_assign.value {
+                        self.record_pytest_plugins(name.id.as_str(), value);
+                    }
                 }
                 self.visit_expr(&ann_assign.target);
                 self.visit_annotation(&ann_assign.annotation);
@@ -797,6 +817,31 @@ mod tests {
         assert_eq!(parsed.dynamic_imports[0].module, "acme.plugins");
         assert_eq!(parsed.dynamic_imports[0].line, 2);
         assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn extracts_pytest_plugins_literals() {
+        let modules = |source: &str| {
+            visit_source(source)
+                .pytest_plugins
+                .iter()
+                .map(|dynamic| (dynamic.module.clone(), dynamic.line))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            modules("pytest_plugins = [\n    \"tests.optional\",\n    name,\n    \"\",\n]\n"),
+            [("tests.optional".to_owned(), 2)]
+        );
+        assert_eq!(
+            modules("pytest_plugins = (\"a.b\", \"c\")\n"),
+            [("a.b".to_owned(), 1), ("c".to_owned(), 1)]
+        );
+        assert_eq!(
+            modules("pytest_plugins: str = \"a.b\"\n"),
+            [("a.b".to_owned(), 1)]
+        );
+        assert_eq!(modules("def f():\n    pytest_plugins = [\"a.b\"]\n"), []);
+        assert_eq!(modules("plugins = [\"a.b\"]\n"), []);
     }
 
     #[test]
