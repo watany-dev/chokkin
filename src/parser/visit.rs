@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, Decorator, ExceptHandler, Expr, Identifier, Stmt, StmtImport, StmtImportFrom,
+    Alias, Decorator, ExceptHandler, Expr, Identifier, Operator, Stmt, StmtImport, StmtImportFrom,
 };
 use ruff_text_size::Ranged;
 
@@ -465,7 +465,15 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 }
                 self.visit_expr(&alias.value);
             },
-            Stmt::AugAssign(aug_assign) => self.visit_expr(&aug_assign.value),
+            Stmt::AugAssign(aug_assign) => {
+                if self.module_level
+                    && matches!(aug_assign.op, Operator::Add)
+                    && let Expr::Name(name) = &*aug_assign.target
+                {
+                    self.record_pytest_plugins(name.id.as_str(), &aug_assign.value);
+                }
+                self.visit_expr(&aug_assign.value);
+            },
             Stmt::Return(return_stmt) => {
                 if let Some(value) = &return_stmt.value {
                     self.visit_expr(value);
@@ -839,6 +847,10 @@ mod tests {
         assert_eq!(
             modules("pytest_plugins: str = \"a.b\"\n"),
             [("a.b".to_owned(), 1)]
+        );
+        assert_eq!(
+            modules("pytest_plugins = [\"a\"]\npytest_plugins += [\"b\"]\n"),
+            [("a".to_owned(), 1), ("b".to_owned(), 2)]
         );
         assert_eq!(modules("def f():\n    pytest_plugins = [\"a.b\"]\n"), []);
         assert_eq!(modules("plugins = [\"a.b\"]\n"), []);
