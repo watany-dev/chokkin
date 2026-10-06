@@ -584,6 +584,15 @@ mod tests {
             assert_eq!(edge[0].rule, RuleId::Chk004);
             assert_eq!(edge[0].severity, Severity::Warning);
             assert_eq!(edge[0].confidence, Confidence::Certain);
+            assert!(
+                edge[0]
+                    .explain
+                    .details
+                    .iter()
+                    .any(|detail| detail.starts_with("try/except ImportError import")),
+                "{:?}",
+                edge[0].explain.details
+            );
         }
 
         let plain = detect(&index, "urllib3", transitive());
