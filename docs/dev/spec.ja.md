@@ -332,6 +332,8 @@ File reaches File
 
 実装（`src/graph/`）が edge として保持するのは `File imports Module` と `Distribution provides Module` だけで、entry/plugin/file からの到達は step 9 の BFS がその場で計算する（`ReachPredecessor` に最短経路を残す）。
 
+step 9 は関数本体の import（`deferred`。文字列 prefix の動的 import も含む）と `TYPE_CHECKING` 配下の import を辿らない BFS ももう 1 回走らせ、その到達集合を `ReachabilityReport::eager` に置く。eager に入らない reachable file は、関数が呼ばれるまで読み込まれないか、実行時には読み込まれない (#610)。
+
 処理順は固定する。
 
 ```text
@@ -602,7 +604,7 @@ src/ で import urllib3
 
 判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。CHK004のevidenceは2種類に分ける。宣言依存からlockfileのedgeで到達できる場合は「transitive edge」(Certain)、lockfileにpackageとしては載っているが宣言依存から到達できない場合は「lockにあるが未宣言」(Likely)とし、messageとexplain detailで区別する。
 
-CHK005 は distribution 単位で 1 件にまとめ、その distribution の runtime import をすべて見てから confidence を決める。最初に見つかった import では決めない。トップレベルの import (class body を含む) が 1 つでもあれば warning / Certain。どれも関数本体の中 (`ImportRef.deferred`) なら warning / Likely。どれも optional / platform-guarded なら info / Likely とする。関数内の import は関数が呼ばれるまで実行されず、optional な import は「入っていれば使う」ものなので、どちらも runtime 必須とは言い切れない。`--fix` の MoveToRuntime は Certain だけが対象なので、こうした依存を runtime に昇格させない (#583)。origin には confidence を決めた import を出す。
+CHK005 は distribution 単位で 1 件にまとめ、その distribution の runtime import をすべて見てから confidence を決める。最初に見つかった import では決めない。トップレベルの import (class body を含む) が 1 つでもあれば warning / Certain。どれも関数本体の中 (`ImportRef.deferred`) なら warning / Likely。どれも optional / platform-guarded なら info / Likely とする。関数内の import は関数が呼ばれるまで実行されず、optional な import は「入っていれば使う」ものなので、どちらも runtime 必須とは言い切れない。`--fix` の MoveToRuntime は Certain だけが対象なので、こうした依存を runtime に昇格させない (#583)。import 元の file が `ReachabilityReport::eager` に入らない場合は、トップレベルの import でも関数内と同じ扱いにする。関数内や `TYPE_CHECKING` 配下からしか読み込まれないモジュールの import は、そのモジュールが読み込まれるまで実行されないため (#610)。origin には confidence を決めた import を出す。
 
 environment markerとextrasの扱いも定める。
 
