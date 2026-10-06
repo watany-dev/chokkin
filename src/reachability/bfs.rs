@@ -356,6 +356,7 @@ mod tests {
                 .map(|(module, line)| DynamicImport {
                     module: (*module).to_owned(),
                     line: *line,
+                    ..DynamicImport::default()
                 })
                 .collect(),
             ..ParsedModule::default()
@@ -532,6 +533,7 @@ mod tests {
             dynamic_import_prefixes: vec![DynamicImport {
                 module: "acme".to_owned(),
                 line: 4,
+                ..DynamicImport::default()
             }],
             ..ParsedModule::default()
         }];

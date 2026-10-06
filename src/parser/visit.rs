@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, Decorator, ExceptHandler, Expr, Identifier, Stmt, StmtImport, StmtImportFrom,
+    Alias, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Stmt, StmtImport, StmtImportFrom,
 };
 use ruff_text_size::Ranged;
 
@@ -196,6 +196,16 @@ impl<'a> ModuleVisitor<'a> {
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
             None => {},
+        }
+    }
+
+    fn dynamic_import(&self, module: String, call: &ExprCall) -> DynamicImport {
+        DynamicImport {
+            module,
+            line: self.line_number(call),
+            optional: self.try_depth > 0,
+            platform_guarded: self.platform_guard_depth > 0,
+            deferred: self.function_depth > 0,
         }
     }
 
@@ -560,20 +570,16 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                     {
                         match target {
                             LiteralTarget::Module(module) => {
-                                let line = self.line_number(call);
-                                self.parsed
-                                    .dynamic_imports
-                                    .push(DynamicImport { module, line });
+                                let dynamic = self.dynamic_import(module, call);
+                                self.parsed.dynamic_imports.push(dynamic);
                             },
                             LiteralTarget::Opaque => self.parsed.has_opaque_dynamic_import = true,
                             LiteralTarget::Nothing => {},
                         }
                     } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
                         if let Some(module) = module_prefix(call) {
-                            let line = self.line_number(call);
-                            self.parsed
-                                .dynamic_import_prefixes
-                                .push(DynamicImport { module, line });
+                            let dynamic = self.dynamic_import(module, call);
+                            self.parsed.dynamic_import_prefixes.push(dynamic);
                         }
                         self.parsed.has_opaque_dynamic_import = true;
                     }
@@ -1196,6 +1202,48 @@ cmd = [sys.executable, \"-m\", \"top_run_lib\"]
                 ("run_lib", true),
                 ("top_from_lib", false),
                 ("top_run_lib", false),
+            ]
+        );
+    }
+
+    /// #599: dynamic imports carry the same strength flags as static ones.
+    #[test]
+    fn dynamic_imports_record_try_guard_and_function_flags() {
+        let parsed = visit_source(
+            "import importlib
+import sys
+
+importlib.import_module(\"top_lib\")
+try:
+    importlib.import_module(\"try_lib\")
+except ImportError:
+    pass
+if sys.platform == \"win32\":
+    __import__(\"win_lib\")
+
+def f():
+    importlib.import_module(\"func_lib\")
+",
+        );
+        let flags: Vec<(&str, bool, bool, bool)> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| {
+                (
+                    dynamic.module.as_str(),
+                    dynamic.optional,
+                    dynamic.platform_guarded,
+                    dynamic.deferred,
+                )
+            })
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("top_lib", false, false, false),
+                ("try_lib", true, false, false),
+                ("win_lib", false, true, false),
+                ("func_lib", false, false, true),
             ]
         );
     }
