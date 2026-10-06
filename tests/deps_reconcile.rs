@@ -270,7 +270,7 @@ fn optional_transitive_import_prefers_chk004() {
             .map(|candidate| (candidate.rule, candidate.severity))
             .collect::<Vec<_>>()
     };
-    assert_eq!(rules("urllib3"), [(RuleId::Chk004, Severity::Error)]);
+    assert_eq!(rules("urllib3"), [(RuleId::Chk004, Severity::Warning)]);
     assert_eq!(rules("pyyaml"), [(RuleId::Chk003, Severity::Info)]);
 }
 
