@@ -657,6 +657,50 @@ fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
     );
 }
 
+/// airflow: `[tool.pytest]` (pytest 9) adds `example_*.py`, and the root
+/// `testpaths` does not cover the member suites passed to pytest by path (#603).
+#[test]
+fn binary_pytest_native_python_files_cover_app_member_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"providers/*\"]\n\n[tool.pytest]\ntestpaths = [\"tests\"]\npython_files = [\"test_*.py\", \"example_*.py\"]\n",
+        ),
+        (
+            "providers/foo/pyproject.toml",
+            "[project]\nname = \"foo\"\nversion = \"0.1.0\"\n\n[project.scripts]\nfoo = \"foo.main:main\"\n",
+        ),
+        ("providers/foo/src/foo/__init__.py", ""),
+        (
+            "providers/foo/src/foo/main.py",
+            "def main() -> None:\n    pass\n",
+        ),
+        ("providers/foo/src/foo/example_unused.py", "X = 1\n"),
+        ("providers/foo/tests/system/example_dag.py", "DAG = 1\n"),
+        ("providers/foo/tests/system/helpers.py", "X = 1\n"),
+        // An existing `testpaths`, so pytest does not fall back to the rootdir.
+        ("tests/test_root.py", ""),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--include", "CHK001"]));
+    let reported = |path: &str| {
+        keys.iter()
+            .any(|(code, target)| code == "CHK001" && target == path)
+    };
+    assert!(
+        !reported("providers/foo/tests/system/example_dag.py"),
+        "{keys:?}"
+    );
+    assert!(
+        reported("providers/foo/tests/system/helpers.py"),
+        "{keys:?}"
+    );
+    // `python_files` reaches member tests only, not runtime modules.
+    assert!(
+        reported("providers/foo/src/foo/example_unused.py"),
+        "{keys:?}"
+    );
+}
+
 /// `llama_index`: hundreds of member pyprojects and no workspace declaration
 /// (#488).
 fn undeclared_monorepo() -> tempfile::TempDir {

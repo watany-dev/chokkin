@@ -493,12 +493,16 @@ pytest pluginの例。
   (pytestのtest discoveryに相当。conftest.pyはtest filesをimportしないため、
    test file自体をrootにしないとtest内のimportが依存使用として数えられない)
 conftest.py をentryにする
-[tool.pytest.ini_options] の pytest_plugins = ["..."] をmodule referenceにする
+pytest_plugins = ["..."] をmodule referenceにする
 Python sourceのmodule-level pytest_plugins = "..." / [...] / (...) の文字列literalを
   そのfileからのimportにする (conftest以外も対象。pluginとして読み込まれたmoduleの
   pytest_pluginsも有効なため。解決できない名前はunresolved警告にしない)
-[tool.pytest.ini_options] を読む (testpaths / python_files があれば上記globを上書き。
-  testpaths の "." はrootdirとして扱う)
+[tool.pytest] (pytest ≥ 9 の native table) または [tool.pytest.ini_options] を読む
+  (ini_options 以外のキーがあれば [tool.pytest] を優先。testpaths / python_files が
+   あれば上記globを上書き。testpaths の "." はrootdirとして扱う)
+workspace member 内の test context の file には testpaths に関係なく python_files を
+  適用する (member の suite はディレクトリを明示して pytest に渡すため。airflow の
+  providers/*/tests/**/example_*.py)
 pytest command usageをbinary usageにする
 ```
 
@@ -566,7 +570,7 @@ package 内の `tests/`（`pandas/tests/`）も test context とし、test conte
 
 `tests` / `scripts` / `docs` / `build` / `dist` / `examples` / `benchmarks` / `e2e*` などは本体候補にしない。`package_root` が `src` 以外 (`lib` など) のときは `--probe` の Layout 行に `root: lib` を出し、module 名は `package_root` からの相対 path で決める。`path` source が本体を持つ場合、その package への import は first-party だが、CHK001 では `workspace = true` source と同じくその依存を used として数える。
 
-pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。
+pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest]` / `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。
 
 判定例。
 
