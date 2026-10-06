@@ -136,6 +136,28 @@ fn pytest_respects_testpaths() {
 }
 
 #[test]
+fn pytest_searches_rootdir_when_no_testpaths_exist() {
+    // airflow sets `testpaths = ["tests"]` without a root `tests/`; pytest then
+    // collects from the rootdir instead.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.pytest]\ntestpaths = [\"tests\"]\n",
+    )
+    .expect("write pyproject");
+    for rel in ["acme/__init__.py", "acme/test_in_pkg.py"] {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, "").expect("write file");
+    }
+
+    let hints = extract_at(root);
+    let paths = entry_paths(pytest_contrib(&hints));
+    assert!(paths.contains(&"acme/test_in_pkg.py"));
+}
+
+#[test]
 fn pytest_reads_native_tool_pytest_table() {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let root = temp.path();

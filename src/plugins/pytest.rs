@@ -99,13 +99,24 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         label: "pytest defaults".to_owned(),
     });
 
+    let matches =
+        |globs: &Option<GlobSet>, path: &str| globs.as_ref().is_some_and(|set| set.is_match(path));
+    // pytest searches from the rootdir when no `testpaths` entry exists
+    // (airflow's root `tests`).
+    let under_testpaths = build_glob_set(&pytest_test_globs(&testpaths, &["*".to_owned()])).ok();
+    if !ctx
+        .sources
+        .files
+        .iter()
+        .any(|file| matches(&under_testpaths, &file.path))
+    {
+        testpaths.clear();
+    }
     let root_globs = build_glob_set(&pytest_test_globs(&testpaths, &python_files)).ok();
     // Members' suites are collected by passing their directory to pytest
     // (airflow's `providers/*/tests`), so the root `testpaths` does not limit
     // them while `python_files` still applies.
     let member_globs = build_glob_set(&pytest_test_globs(&[], &python_files)).ok();
-    let matches =
-        |globs: &Option<GlobSet>, path: &str| globs.as_ref().is_some_and(|set| set.is_match(path));
     let test_files = ctx.sources.files.iter().filter(|file| {
         matches(&root_globs, &file.path)
             || (file.context == FileContext::Test
