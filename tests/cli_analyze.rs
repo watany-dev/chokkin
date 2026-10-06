@@ -675,8 +675,11 @@ fn binary_pytest_native_python_files_cover_app_member_tests() {
             "providers/foo/src/foo/main.py",
             "def main() -> None:\n    pass\n",
         ),
+        ("providers/foo/src/foo/example_unused.py", "X = 1\n"),
         ("providers/foo/tests/system/example_dag.py", "DAG = 1\n"),
         ("providers/foo/tests/system/helpers.py", "X = 1\n"),
+        // An existing `testpaths`, so pytest does not fall back to the rootdir.
+        ("tests/test_root.py", ""),
     ]);
     let keys = issue_keys(&json_issues(project.path(), &["--include", "CHK001"]));
     let reported = |path: &str| {
@@ -689,6 +692,11 @@ fn binary_pytest_native_python_files_cover_app_member_tests() {
     );
     assert!(
         reported("providers/foo/tests/system/helpers.py"),
+        "{keys:?}"
+    );
+    // `python_files` reaches member tests only, not runtime modules.
+    assert!(
+        reported("providers/foo/src/foo/example_unused.py"),
         "{keys:?}"
     );
 }
