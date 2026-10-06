@@ -1172,6 +1172,11 @@ def f():
     def inner():
         import nested_lib
     import func_lib
+    from from_lib import x
+    cmd = [sys.executable, \"-m\", \"run_lib\"]
+
+from top_from_lib import y
+cmd = [sys.executable, \"-m\", \"top_run_lib\"]
 ",
         );
         let deferred: Vec<(&str, bool)> = parsed
@@ -1187,6 +1192,10 @@ def f():
                 ("method_lib", true),
                 ("nested_lib", true),
                 ("func_lib", true),
+                ("from_lib", true),
+                ("run_lib", true),
+                ("top_from_lib", false),
+                ("top_run_lib", false),
             ]
         );
     }

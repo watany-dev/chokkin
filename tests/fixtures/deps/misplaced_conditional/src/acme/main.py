@@ -17,3 +17,9 @@ def main() -> None:
     import sympy
 
     return polars, sympy, xr, to_array()
+
+
+def solve():
+    import sympy
+
+    return sympy

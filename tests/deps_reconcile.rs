@@ -383,6 +383,12 @@ fn misplaced_confidence_follows_the_strongest_import() {
         xarray.origins.as_slice(),
         [chokkin::Origin::Import { line: 13, .. }]
     ));
+    // An equally strong later import keeps the first origin.
+    let sympy = candidate_for_distribution(&report, RuleId::Chk005, "sympy").expect("sympy");
+    assert!(matches!(
+        sympy.origins.as_slice(),
+        [chokkin::Origin::Import { line: 17, .. }]
+    ));
 }
 
 #[test]
