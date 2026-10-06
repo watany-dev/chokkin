@@ -222,7 +222,7 @@ fn run_analysis_core(
             .iter()
             .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
     );
-    if probe.auto_workspace && probe.effective_config.mode == ProjectMode::Auto {
+    if probe.effective_config.mode == ProjectMode::Auto {
         entry.library_members = probe
             .workspace_inputs
             .iter()
