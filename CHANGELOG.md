@@ -72,6 +72,13 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   are reachable (#486, #495).
 
 ### Changed
+- Members of a declared workspace (`[tool.uv.workspace]` /
+  `[tool.chokkin.workspaces]`) that name a distribution and have no app
+  entry are scored like libraries, as auto-detected members already were:
+  their unreachable files are `maybe` CHK001 warnings, including under
+  `--production`. Files outside the member's own wheel targets (R-05), such
+  as `docs/conf.py`, keep app scoring. airflow's CHK001 count drops from
+  1,008 to 389 (1,867 to 509 with `--production`) (#587).
 - `tests/` directories at any depth (`pandas/tests/`) are test context, and
   test-context files, including those a pytest config roots as tests, are no
   longer reported by CHK006 / CHK007 — they only count as referencers.

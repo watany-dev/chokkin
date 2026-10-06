@@ -10,7 +10,7 @@ mod types;
 mod walk;
 mod warnings;
 
-pub use context::assign_file_context;
+pub use context::{assign_file_context, is_test_data_path};
 pub use discover::discover_sources;
 pub use error::SourcesError;
 pub use glob::build_glob_set;

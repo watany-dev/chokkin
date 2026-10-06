@@ -433,7 +433,7 @@ src/<package>/__init__.py または root直下の <package>/__init__.py
 
 setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
 
-自動検出したworkspace member（§5、#488）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。
+workspace member（§5。宣言済み・自動検出とも、#488 / #587）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。代わりにmember自身のwheel target（member manifest、パスはmember相対）から求めたpublic surfaceを使い、その外にある未到達file（`docs/conf.py` 等）はCHK001をapp mode相当のconfidenceに戻す（`apply_member_surfaces`、#587）。入れ子のmemberでは最も深いmemberのsurfaceで判定する。
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 
@@ -494,6 +494,9 @@ pytest pluginの例。
    test file自体をrootにしないとtest内のimportが依存使用として数えられない)
 conftest.py をentryにする
 pytest_plugins = ["..."] をmodule referenceにする
+Python sourceのmodule-level pytest_plugins = "..." / [...] / (...) の文字列literalを
+  そのfileからのimportにする (conftest以外も対象。pluginとして読み込まれたmoduleの
+  pytest_pluginsも有効なため。解決できない名前はunresolved警告にしない)
 [tool.pytest] (pytest ≥ 9 の native table) または [tool.pytest.ini_options] を読む
   (ini_options 以外のキーがあれば [tool.pytest] を優先。testpaths / python_files が
    あれば上記globを上書き。testpaths の "." はrootdirとして扱う)
@@ -732,6 +735,8 @@ vendored code (`vendored` 設定、§5)
 namespace package fragments
 plugin-marked files
 ```
+
+test tree（`tests/` と root の `test/`）の配下で、path に `data` / `fixtures` / `testdata` / `test_data` の directory を含む file はテストの入力データ（black の `tests/data/cases/*.py` など）とみなし、到達しなくても CHK001 にしない（`sources::is_test_data_path`、#593）。test から import されていれば通常どおり到達扱いになる。除外するのは CHK001 の候補だけで、`--strict` では従来どおり報告する。
 
 `unused_file` のconfidenceはこう決める。
 

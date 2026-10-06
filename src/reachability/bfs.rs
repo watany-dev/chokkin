@@ -298,7 +298,7 @@ fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<Im
         let Some(file_id) = graph.file_id(&module.path) else {
             continue;
         };
-        for dynamic in &module.dynamic_imports {
+        for dynamic in module.dynamic_imports.iter().chain(&module.pytest_plugins) {
             let also_static = module
                 .imports
                 .iter()

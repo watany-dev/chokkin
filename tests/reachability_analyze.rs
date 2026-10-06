@@ -243,6 +243,29 @@ fn dynamic_literal_import_reaches_target_module() {
 }
 
 #[test]
+fn pytest_plugins_variable_reaches_plugin_modules() {
+    let mut inputs = load_reachability(&fixture("pytest_plugins_var"), false);
+    let report = analyze_reachability(
+        &mut inputs.graph,
+        &inputs.sources,
+        &inputs.entry,
+        &inputs.plugins,
+        &inputs.parse,
+        false,
+    )
+    .expect("reachability");
+
+    let reachable = |path: &str| {
+        report
+            .reachable
+            .contains(&inputs.graph.file_id(path).expect("file id"))
+    };
+    assert!(reachable("tests/optional.py"));
+    assert!(reachable("tests/extra.py"));
+    assert!(!reachable("tests/orphan.py"));
+}
+
+#[test]
 fn django_migrations_are_framework_used() {
     let mut inputs = load_reachability(&plugins_fixture("django_migrations"), false);
     let report = analyze_reachability(

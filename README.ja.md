@@ -192,7 +192,7 @@ CHK002 = "error"
 
 - **app mode** — 明確なentry(`console_scripts` / `manage.py` / `asgi.py` / `wsgi.py` / `app.py`)がある場合。unused filesを積極的に報告します。
 - **library mode** — `[project] name` とpackageがあり、明確なentryがない場合。public moduleは外部から利用され得るため、unused files/exportsは低confidence(またはinfo)で報告します。libraryで本気のunused file検出をしたい場合は `entry` を明示してください。
-- **workspace mode** — 複数の `pyproject.toml` または `tool.uv.workspace.members` がある場合。workspace全体のlockfileを共有しつつ、各memberを個別に解析します(`[tool.chokkin.workspaces.<name>]` でmemberごとの設定が可能)。workspace宣言のないmonorepo(llama_index型)では、4階層までの入れ子の `pyproject.toml` のうち `[project]` name を持つものを自動でmemberにします。隠し・build・test系ディレクトリと `exclude` globは対象外で、検出数をwarningで表示し、`--no-auto-workspace` で無効化できます。distribution名を持ちapp entryのない検出memberはlibrary相当に扱い、未到達ファイルは `maybe` に落とし、テストは報告しません。
+- **workspace mode** — 複数の `pyproject.toml` または `tool.uv.workspace.members` がある場合。workspace全体のlockfileを共有しつつ、各memberを個別に解析します(`[tool.chokkin.workspaces.<name>]` でmemberごとの設定が可能)。workspace宣言のないmonorepo(llama_index型)では、4階層までの入れ子の `pyproject.toml` のうち `[project]` name を持つものを自動でmemberにします。隠し・build・test系ディレクトリと `exclude` globは対象外で、検出数をwarningで表示し、`--no-auto-workspace` で無効化できます。distribution名を持ちapp entryのないmember(宣言済み・自動検出とも)はlibrary相当に扱い、未到達ファイルは `maybe` に落とし、テストは報告しません。ただしmember自身のwheel targetが配布しないファイル(`docs/conf.py` 等)はapp相当のままです。
 
 ### dependency context
 
