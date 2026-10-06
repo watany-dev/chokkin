@@ -144,7 +144,38 @@ fn binary_fix_reports_skipped_detail() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     assert!(stderr.contains("Fixes:"));
     assert!(stderr.contains("skipped CHK001"));
-    assert!(stderr.contains("file removal requires `--allow-remove-files`"));
+    assert!(stderr.contains("file-removal-denied: file removal requires `--allow-remove-files`"));
+}
+
+#[test]
+fn binary_fix_dry_run_reports_planned_not_applied() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(&fixture_path(&["deps", "unused_boto3"]), temp.path()).expect("copy");
+    let pyproject = temp.path().join("pyproject.toml");
+    let before = fs::read_to_string(&pyproject).expect("read pyproject");
+
+    let dry_run = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--fix")
+        .arg("--dry-run")
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin --fix --dry-run");
+    let stderr = String::from_utf8(dry_run.stderr).expect("utf8");
+    assert!(stderr.contains("  planned CHK002 boto3"), "{stderr}");
+    assert!(!stderr.contains("  applied CHK"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(&pyproject).expect("read pyproject"),
+        before
+    );
+
+    let fix = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--fix")
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin --fix");
+    let stderr = String::from_utf8(fix.stderr).expect("utf8");
+    assert!(stderr.contains("  applied CHK002 boto3"), "{stderr}");
+    assert!(!stderr.contains("  planned CHK"), "{stderr}");
 }
 
 #[test]

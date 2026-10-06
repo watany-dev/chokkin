@@ -1,5 +1,7 @@
 //! Fix types for pipeline step 13.
 
+use std::fmt;
+
 use crate::manifest::LoadedManifest;
 use crate::rules::{IssueSubject, RuleId};
 
@@ -55,6 +57,18 @@ pub enum SkippedReason {
     Ambiguous,
 }
 
+impl fmt::Display for SkippedReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NotFixable => "not-fixable",
+            Self::UnsupportedTarget => "unsupported-target",
+            Self::FileRemovalDenied => "file-removal-denied",
+            Self::MissingOrigin => "missing-origin",
+            Self::Ambiguous => "ambiguous",
+        })
+    }
+}
+
 /// A fix that was not applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkippedFix {
@@ -71,6 +85,8 @@ pub struct SkippedFix {
 /// Outcome of optional fix application.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FixReport {
+    /// True when `applied` holds previews from `--dry-run` rather than written edits.
+    pub dry_run: bool,
     /// Applied manifest edits.
     pub applied: Vec<AppliedFix>,
     /// Skipped fixes with reasons.

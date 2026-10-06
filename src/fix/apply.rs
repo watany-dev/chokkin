@@ -27,6 +27,7 @@ pub fn apply_fixes_with_workspace(
 ) -> FixReport {
     let (actions, skipped) = plan_fixes(report, manifest, workspace_manifests, options);
     let mut report_out = FixReport {
+        dry_run: options.dry_run,
         skipped,
         ..FixReport::default()
     };
