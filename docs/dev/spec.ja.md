@@ -659,6 +659,8 @@ except ImportError:
     orjson = None
 ```
 
+`try` の `else:` 節の import も optional とする(`else:` は try 本体が例外なく通ったときだけ実行されるため)。module トップレベルの try 本体で `has_x = True` のように `True` を代入した名前は flag として覚え、module トップレベルの `if has_x:` 本体の import も optional とする(関数内の `if` は同名の局所変数があり得るので対象外)。`except` / `finally` 節の import は optional にしない (#580)。
+
 この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
 
 ただし lockfile の edge で宣言依存から推移的に到達できる場合は、optional / platform-guarded でも CHK004（transitive edge、Certain）を優先する。`try:` で包むだけで「推移依存への直接 import」の指摘が消える抜け道を作らないため (#504)。lockfile に載っているだけで edge で到達できない場合は根拠が弱いので、conditional CHK003 のままにする。
