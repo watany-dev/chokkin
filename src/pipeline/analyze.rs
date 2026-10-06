@@ -22,7 +22,7 @@ use crate::resolver::{
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
-use crate::sources::{FileContext, PublicSurface};
+use crate::sources::{DiscoveredSources, FileContext, PublicSurface, discover_sources};
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, probe_project_with_cache};
@@ -313,12 +313,19 @@ fn run_analysis_core(
         &probe.scripts,
     );
 
+    let production_tests = if production
+        && (entry.mode == ProjectMode::Library || !entry.library_members.is_empty())
+    {
+        Some(parse_production_tests(probe, &loaded, &target)?)
+    } else {
+        None
+    };
     let symbols = crate::rules::symbols::analyze_with_context(
         &context,
         &entry,
         &plugins,
-        entry.mode,
         &probe.manifest,
+        production_tests.as_deref(),
     );
 
     let issues = emit_issues(
@@ -338,6 +345,28 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// `--production` drops tests from discovery, but a library's tests are still
+/// the evidence that a public module's name is called from outside (#588).
+fn parse_production_tests(
+    probe: &ProbeReport,
+    loaded: &crate::config::LoadedConfig,
+    target: &crate::config::TargetVersion,
+) -> Result<Vec<crate::parser::ParsedModule>, AnalyzeError> {
+    let mut config = loaded.clone();
+    config.effective.production = false;
+    let discovered = discover_sources(&probe.root, &config, &probe.manifest)
+        .map_err(super::error::ProbeError::from)?;
+    let tests = DiscoveredSources {
+        files: discovered
+            .files
+            .into_iter()
+            .filter(|file| file.context == FileContext::Test)
+            .collect(),
+        ..probe.sources.clone()
+    };
+    Ok(parse_project_sources_with_cache(&probe.root, &tests, target, None)?.modules)
 }
 
 fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {

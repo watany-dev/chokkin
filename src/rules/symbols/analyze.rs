@@ -6,7 +6,7 @@ use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
-use crate::parser::ParsedModule;
+use crate::parser::{ParseSummary, ParsedModule};
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
@@ -20,7 +20,7 @@ use crate::sources::{DiscoveredSources, FileContext, PublicSurface, path_to_modu
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
-use super::public::{PublicApi, exports_reexport};
+use super::public::{PublicApi, exports_reexport, is_public_module};
 
 /// Analyze public symbol usage and unresolved imports (§12).
 #[must_use]
@@ -28,8 +28,8 @@ pub fn analyze_with_context(
     context: &RuleContext<'_>,
     entry: &EntryPlan,
     plugins: &PluginHints,
-    mode: ProjectMode,
     manifest: &LoadedManifest,
+    production_tests: Option<&[ParsedModule]>,
 ) -> Vec<IssueCandidate> {
     let RuleContext {
         resolution,
@@ -61,7 +61,11 @@ pub fn analyze_with_context(
     let registry = build_registry(&surface_modules, &module_names);
     let reference_index = ReferenceIndex::build(&reachable_modules, &module_names);
     let reexports = collect_reexports(&surface_modules, &module_names, &sources.layout);
-    let public_api = PublicApi::build(&surface_modules, &module_names);
+    let public_api = PublicApi::build(
+        &surface_modules,
+        &module_names,
+        production_api_references(production_tests, parse, &reachable, sources),
+    );
     let external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
 
@@ -73,7 +77,7 @@ pub fn analyze_with_context(
         if entry.in_library_member(path) {
             ProjectMode::Library
         } else {
-            mode
+            entry.mode
         }
     };
     // A library symbol the wheel does not ship has no outside caller (R-05).
@@ -133,6 +137,31 @@ fn test_file_paths<'a>(sources: &'a DiscoveredSources, entry: &'a EntryPlan) -> 
         .filter(|root| root.context == FileContext::Test)
         .map(|root| root.spec.path.as_str());
     by_path.chain(by_root).collect()
+}
+
+/// `--production` drops the tests and leaves the public modules only they
+/// reached unreachable, yet both still show which public-module names an
+/// outside caller uses (#588). An orphaned private module is dead code, not a
+/// caller.
+fn production_api_references(
+    production_tests: Option<&[ParsedModule]>,
+    parse: &ParseSummary,
+    reachable: &HashSet<&str>,
+    sources: &DiscoveredSources,
+) -> ReferenceIndex {
+    let Some(tests) = production_tests else {
+        return ReferenceIndex::default();
+    };
+    let all: Vec<_> = tests.iter().chain(&parse.modules).collect();
+    let names = build_module_names(&all, sources);
+    let unreachable_public = parse.modules.iter().filter(|module| {
+        !reachable.contains(module.path.as_str())
+            && names
+                .get(module.path.as_str())
+                .is_some_and(|name| is_public_module(name))
+    });
+    let evidence: Vec<_> = tests.iter().chain(unreachable_public).collect();
+    ReferenceIndex::build(&evidence, &names)
 }
 
 fn build_module_names<'a>(
