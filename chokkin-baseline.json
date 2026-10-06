@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "chokkin_version": "0.7.0",
-  "generated_at": "unix:1791191121",
+  "generated_at": "unix:1791258941",
   "issues": [
     {
       "fingerprint": "CHK001:docs/dev/formal/deps_rules_z3.py",
@@ -347,6 +347,21 @@
       "fingerprint": "CHK001:tests/fixtures/entry/fastapi_asgi/src/acme/asgi.py",
       "code": "CHK001",
       "target": "tests/fixtures/entry/fastapi_asgi/src/acme/asgi.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/entry/setup_py_dynamic_name/setup.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/entry/setup_py_dynamic_name/setup.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/entry/setup_py_dynamic_name/src/acme/__version__.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/entry/setup_py_dynamic_name/src/acme/__version__.py"
+    },
+    {
+      "fingerprint": "CHK001:tests/fixtures/entry/setup_py_dynamic_name/src/acme/utils.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/entry/setup_py_dynamic_name/src/acme/utils.py"
     },
     {
       "fingerprint": "CHK001:tests/fixtures/manifest/setup_py_dynamic/setup.py",
