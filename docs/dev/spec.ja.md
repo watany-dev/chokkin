@@ -411,7 +411,7 @@ scripts/**/*.py
 **/*.ipynb
 ```
 
-単独ファイル名でのentry推定(`main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` / `noxfile.py`)は**project root直下、およびsrc layoutのpackage直下のみ**を対象にする。任意の深さで同名ファイルをentry扱いすると、unused file検出が事実上無効化されるため。`__main__.py` と `conftest.py` は全階層で有効。`docs/conf.py` と `alembic/env.py` は記載のpathに限定する。
+単独ファイル名でのentry推定(`main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` / `noxfile.py`)は**project root直下、およびsrc layoutのpackage直下のみ**を対象にする。任意の深さで同名ファイルをentry扱いすると、unused file検出が事実上無効化されるため。`__main__.py` と `conftest.py` は全階層で有効。`docs/conf.py`（root と各 workspace member 直下）と `alembic/env.py` は記載のpathに限定する。
 
 discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry にする（rule `auto:**/*.ipynb`、#514）。notebook は cell 単位で直接実行され他の file から import されないため、PEP 723 script と同じく root としてしか使われない。そのため notebook 自身は CHK001 にならず、notebook からだけ import される module も到達可能になる。app 判定（`has_clear_app_signals`）は file 名で見るため、notebook があっても mode は変わらない。
 
@@ -435,7 +435,7 @@ src/<package>/__init__.py または root直下の <package>/__init__.py
 
 setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
 
-workspace member（§5。宣言済み・自動検出とも、#488 / #587）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。代わりにmember自身のwheel target（member manifest、パスはmember相対）から求めたpublic surfaceを使い、その外にある未到達file（`docs/conf.py` 等）はCHK001をapp mode相当のconfidenceに戻す（`apply_member_surfaces`、#587）。入れ子のmemberでは最も深いmemberのsurfaceで判定する。
+workspace member（§5。宣言済み・自動検出とも、#488 / #587）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。代わりにmember自身のwheel target（member manifest、パスはmember相対）から求めたpublic surfaceを使い、その外にある未到達file（`scripts/release.py` 等）はCHK001をapp mode相当のconfidenceに戻す（`apply_member_surfaces`、#587）。入れ子のmemberでは最も深いmemberのsurfaceで判定する。
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 
@@ -553,7 +553,7 @@ contextは依存だけでなく**file側にも割り当てる**。CHK005(misplac
 ```text
 src/** / flat layoutのpackage/** / [project.scripts]到達file -> runtime
 **/tests/** / root直下の test/** / conftest.py / *_test.py / test_*.py -> test
-docs/**                                                     -> docs
+docs/** / workspace member直下の docs/**                    -> docs
 noxfile.py / 各tool設定が参照するscript                      -> dev
 scripts/**                                                  -> dev (設定で変更可)
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
@@ -1445,7 +1445,7 @@ R-06 で binary / plugin usage の情報源を拡充した。共通の command �
 
 Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果の decorator site を使い、構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査にフォールバックするが、どちらも同じ正規化名と判定関数で判定する。
 
-Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
+Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。Sphinx は root に加え各 workspace member の `docs/conf.py` も同じく扱い、binary usage の origin はその member の conf.py にする (#612)。member の docs 配下は member が probe 末尾で確定してから docs context に付け替え (`apply_member_docs_context`)、`--production` では root の `docs/` と同様に解析対象から外す。member の宣言 package 外でも reachability が file に対応付ける import root（`devel-common/src/docs/`）は first-party に解決する。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 
 notebook parsing は v0.2 plugin 拡充の初期実装として、source discovery が `.ipynb` を `FileKind::Notebook` として拾い、parser が `cells[].cell_type == "code"` の `source` だけを連結して既存の Python static parser に渡す。markdown/raw cell と outputs は無視し、notebook JSON が壊れている場合は per-file warning diagnostic に留める。
 

@@ -822,7 +822,7 @@ fn binary_declared_workspace_library_member_is_scored_as_library() {
             "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\n\n[project.entry-points.apache_airflow_provider]\nprovider_info = \"airflow.providers.google.get_provider_info:get_provider_info\"\n\n[tool.flit.module]\nname = \"airflow.providers.google\"\n",
         ),
         // Outside the member's wheel, so no outside caller imports it.
-        ("providers/google/docs/conf.py", "project = \"google\"\n"),
+        ("providers/google/scripts/release.py", "VERSION = \"1\"\n"),
         // Namespace package: no `src/airflow/__init__.py`.
         (
             "providers/google/src/airflow/providers/google/__init__.py",
@@ -850,7 +850,10 @@ fn binary_declared_workspace_library_member_is_scored_as_library() {
         let issues = json_issues(project.path(), extra);
         assert_eq!(
             certain_chk001(&issues),
-            ["core/src/core/orphan.py", "providers/google/docs/conf.py"],
+            [
+                "core/src/core/orphan.py",
+                "providers/google/scripts/release.py"
+            ],
             "{extra:?}: {issues:?}"
         );
         assert!(
@@ -860,6 +863,65 @@ fn binary_declared_workspace_library_member_is_scored_as_library() {
             "{extra:?}: {issues:?}"
         );
     }
+}
+
+/// Monorepos keep Sphinx docs per member: each member's `docs/conf.py` is a
+/// docs entry, so it and the shared modules it imports stay reachable even
+/// with no root `docs/conf.py`, and `--production` drops it like root docs
+/// (#612).
+#[test]
+fn binary_member_sphinx_conf_is_a_docs_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"core\", \"providers/*\", \"devel-common\"]\n",
+        ),
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n\n[project.scripts]\ncore = \"core.main:main\"\n",
+        ),
+        ("core/src/core/__init__.py", ""),
+        ("core/src/core/main.py", "def main():\n    pass\n"),
+        ("core/src/core/orphan.py", ""),
+        (
+            "providers/google/pyproject.toml",
+            "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.flit.module]\nname = \"google_provider\"\n",
+        ),
+        ("providers/google/src/google_provider/__init__.py", ""),
+        (
+            "providers/google/docs/conf.py",
+            "from docs.provider_conf import *\n\nextensions = [\"sphinx_exts.redirects\"]\n",
+        ),
+        // The wheel ships `tests_common`; `docs` and `sphinx_exts` sit beside it.
+        (
+            "devel-common/pyproject.toml",
+            "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"devel-common\"\nversion = \"0.1.0\"\n\n[tool.flit.module]\nname = \"tests_common\"\n",
+        ),
+        ("devel-common/src/tests_common/__init__.py", ""),
+        ("devel-common/src/docs/__init__.py", ""),
+        (
+            "devel-common/src/docs/provider_conf.py",
+            "project = \"provider\"\n",
+        ),
+        ("devel-common/src/sphinx_exts/__init__.py", ""),
+        (
+            "devel-common/src/sphinx_exts/redirects.py",
+            "def setup(app):\n    pass\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        certain_chk001(&issues),
+        ["core/src/core/orphan.py"],
+        "{issues:?}"
+    );
+    let issues = json_issues(project.path(), &["--production"]);
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue["target"] != "providers/google/docs/conf.py"),
+        "{issues:?}"
+    );
 }
 
 #[test]

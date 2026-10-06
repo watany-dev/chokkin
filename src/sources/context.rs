@@ -1,6 +1,6 @@
 //! File context assignment (§10).
 
-use super::types::FileContext;
+use super::types::{DiscoveredSources, FileContext, LayoutInfo};
 
 /// Assign a file context from a root-relative path.
 ///
@@ -18,6 +18,38 @@ pub fn assign_file_context(path: &str) -> FileContext {
         return FileContext::Dev;
     }
     FileContext::Runtime
+}
+
+/// [`assign_file_context`] that also knows `<member>/docs/` is docs, for
+/// files `--production` dropped from the inventory.
+#[must_use]
+pub fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
+    match assign_file_context(path) {
+        FileContext::Runtime if is_member_docs_path(path, layout) => FileContext::Docs,
+        context => context,
+    }
+}
+
+/// Give `<member>/docs/` files the context root `docs/` gets. Members are
+/// detected after the walk, so this runs once they are known (#612).
+pub fn apply_member_docs_context(sources: &mut DiscoveredSources, production: bool) {
+    let layout = &sources.layout;
+    for file in &mut sources.files {
+        if file.context == FileContext::Runtime && is_member_docs_path(&file.path, layout) {
+            file.context = FileContext::Docs;
+        }
+    }
+    if production {
+        sources
+            .files
+            .retain(|file| file.context.is_included_in_production());
+    }
+}
+
+fn is_member_docs_path(path: &str, layout: &LayoutInfo) -> bool {
+    layout
+        .member_for(path)
+        .is_some_and(|(_, rest)| rest.starts_with("docs/"))
 }
 
 /// `tests/` at any depth is test code (`pandas/tests/`), but only the root
@@ -180,6 +212,83 @@ mod tests {
         ] {
             assert!(!is_test_data_path(path), "{path}");
         }
+    }
+
+    #[test]
+    fn member_docs_files_get_docs_context() {
+        use crate::discovery::{ProjectRoot, RootMarker};
+        use crate::sources::{DiscoveredFile, FileKind, LayoutInfo, MemberLayout, ProjectLayout};
+
+        let layout = || LayoutInfo {
+            layout: ProjectLayout::Unknown,
+            package_root: String::new(),
+            packages: Vec::new(),
+            local_packages: Vec::new(),
+            inferred_globs: Vec::new(),
+            members: Vec::new(),
+        };
+        let file = |path: &str| DiscoveredFile {
+            path: path.to_owned(),
+            kind: FileKind::Python,
+            context: assign_file_context(path),
+        };
+        let mut root_layout = layout();
+        root_layout.members = vec![MemberLayout {
+            path: "providers/google".to_owned(),
+            layout: layout(),
+        }];
+        let sources = |files| DiscoveredSources {
+            root: ProjectRoot {
+                path: std::path::PathBuf::from("/project"),
+                marker: RootMarker::PyProjectToml,
+            },
+            layout: root_layout.clone(),
+            effective_globs: Vec::new(),
+            files,
+            warnings: Vec::new(),
+        };
+        let paths = [
+            "providers/google/docs/conf.py",
+            "providers/google/docs/tests/test_conf.py",
+            "providers/google/src/docs/helper.py",
+            "providers/other/docs/conf.py",
+        ];
+
+        let mut all = sources(paths.map(file).to_vec());
+        apply_member_docs_context(&mut all, false);
+        let contexts: Vec<_> = all.files.iter().map(|file| file.context).collect();
+        assert_eq!(
+            contexts,
+            [
+                FileContext::Docs,
+                FileContext::Test,
+                FileContext::Runtime,
+                FileContext::Runtime
+            ]
+        );
+
+        let mut production = sources(paths.map(file).to_vec());
+        apply_member_docs_context(&mut production, true);
+        let kept: Vec<_> = production
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                "providers/google/src/docs/helper.py",
+                "providers/other/docs/conf.py"
+            ]
+        );
+        assert_eq!(
+            assign_layout_file_context(paths[0], &root_layout),
+            FileContext::Docs
+        );
+        assert_eq!(
+            assign_layout_file_context(paths[1], &root_layout),
+            FileContext::Test
+        );
     }
 
     #[test]
