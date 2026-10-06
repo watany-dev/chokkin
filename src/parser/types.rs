@@ -64,12 +64,21 @@ fn is_zero_level(level: &u8) -> bool {
 }
 
 /// A literal dynamic import (`importlib.import_module("…")` or `__import__("…")`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicImport {
     /// Resolved module name from a string literal.
     pub module: String,
     /// 1-based source line.
     pub line: u32,
+    /// Same as [`ImportRef::optional`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+    /// Same as [`ImportRef::platform_guarded`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub platform_guarded: bool,
+    /// Same as [`ImportRef::deferred`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deferred: bool,
 }
 
 /// Attribute access against an imported module binding (`module.attr`).

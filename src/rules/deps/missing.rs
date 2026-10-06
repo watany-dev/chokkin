@@ -405,9 +405,19 @@ pub(super) fn is_transitive_only(
 pub(super) fn collect_optional_imports(parse: &ParseSummary) -> HashSet<(String, u32)> {
     let mut optional = HashSet::new();
     for module in &parse.modules {
-        for import in &module.imports {
-            if import.optional || import.platform_guarded {
-                optional.insert((module.path.clone(), import.line));
+        let flags = module
+            .imports
+            .iter()
+            .map(|import| (import.line, import.optional || import.platform_guarded))
+            .chain(
+                module
+                    .dynamic_imports
+                    .iter()
+                    .map(|dynamic| (dynamic.line, dynamic.optional || dynamic.platform_guarded)),
+            );
+        for (line, conditional) in flags {
+            if conditional {
+                optional.insert((module.path.clone(), line));
             }
         }
     }
@@ -755,6 +765,13 @@ mod tests {
             deferred: false,
             relative_level: 0,
         };
+        let dynamic = |line, optional, platform_guarded| crate::parser::DynamicImport {
+            module: "pkg".to_owned(),
+            line,
+            optional,
+            platform_guarded,
+            deferred: false,
+        };
         let parse = ParseSummary {
             modules: vec![crate::parser::ParsedModule {
                 path: FILE.to_owned(),
@@ -764,12 +781,17 @@ mod tests {
                     import(3, false, true),
                     import(4, true, true),
                 ],
+                dynamic_imports: vec![
+                    dynamic(5, false, false),
+                    dynamic(6, true, false),
+                    dynamic(7, false, true),
+                ],
                 ..crate::parser::ParsedModule::default()
             }],
         };
         assert_eq!(
             collect_optional_imports(&parse),
-            HashSet::from([2, 3, 4].map(|line| (FILE.to_owned(), line)))
+            HashSet::from([2, 3, 4, 6, 7].map(|line| (FILE.to_owned(), line)))
         );
     }
 }
