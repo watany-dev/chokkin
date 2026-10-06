@@ -40,7 +40,7 @@ pub fn emit_issues(
     let matcher = IgnoreMatcher::build(config, parse, resolution);
     let confidence_floor = effective_confidence_floor(config, overrides, strict);
 
-    let mut candidates = chk001_candidates(&unreachable.unreachable);
+    let mut candidates = chk001_candidates(&unreachable.unreachable, strict);
     candidates.extend(deps.candidates.clone());
     candidates.extend_from_slice(symbols);
 

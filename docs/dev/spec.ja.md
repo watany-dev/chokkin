@@ -729,6 +729,8 @@ namespace package fragments
 plugin-marked files
 ```
 
+test tree（`tests/` と root の `test/`）の配下で、path に `data` / `fixtures` / `testdata` / `test_data` の directory を含む file はテストの入力データ（black の `tests/data/cases/*.py` など）とみなし、到達しなくても CHK001 にしない（`sources::is_test_data_path`、#593）。test から import されていれば通常どおり到達扱いになる。除外するのは CHK001 の候補だけで、`--strict` では従来どおり報告する。
+
 `unused_file` のconfidenceはこう決める。
 
 ```text
