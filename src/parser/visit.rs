@@ -1295,6 +1295,7 @@ def f():
     importlib.import_module(\"func_lib\")
 
 LOADERS = {\"pg\": lambda: importlib.import_module(\"lambda_lib\")}
+importlib.import_module(\"after_lambda_lib\")
 ",
         );
         let flags: Vec<(&str, bool, bool, bool)> = parsed
@@ -1317,6 +1318,7 @@ LOADERS = {\"pg\": lambda: importlib.import_module(\"lambda_lib\")}
                 ("win_lib", false, true, false),
                 ("func_lib", false, false, true),
                 ("lambda_lib", false, false, true),
+                ("after_lambda_lib", false, false, false),
             ]
         );
     }

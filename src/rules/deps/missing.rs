@@ -765,6 +765,13 @@ mod tests {
             deferred: false,
             relative_level: 0,
         };
+        let dynamic = |line, optional, platform_guarded| crate::parser::DynamicImport {
+            module: "pkg".to_owned(),
+            line,
+            optional,
+            platform_guarded,
+            deferred: false,
+        };
         let parse = ParseSummary {
             modules: vec![crate::parser::ParsedModule {
                 path: FILE.to_owned(),
@@ -774,12 +781,17 @@ mod tests {
                     import(3, false, true),
                     import(4, true, true),
                 ],
+                dynamic_imports: vec![
+                    dynamic(5, false, false),
+                    dynamic(6, true, false),
+                    dynamic(7, false, true),
+                ],
                 ..crate::parser::ParsedModule::default()
             }],
         };
         assert_eq!(
             collect_optional_imports(&parse),
-            HashSet::from([2, 3, 4].map(|line| (FILE.to_owned(), line)))
+            HashSet::from([2, 3, 4, 6, 7].map(|line| (FILE.to_owned(), line)))
         );
     }
 }
