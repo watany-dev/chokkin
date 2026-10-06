@@ -29,3 +29,12 @@ def solve():
 
 def load_toolz():
     return importlib.import_module("toolz")
+
+
+def load_heavy():
+    from acme import heavy
+
+    return heavy
+
+
+from acme import shared

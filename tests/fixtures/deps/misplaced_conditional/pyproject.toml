@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = ["requests"]
 
 [dependency-groups]
-dev = ["polars", "sympy", "toolz", "xarray"]
+dev = ["attrs", "dask", "polars", "sympy", "toolz", "xarray"]
 
 [project.scripts]
 acme-cli = "acme.main:main"
