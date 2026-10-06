@@ -9,7 +9,7 @@ use crate::sources::{LayoutInfo, infer_layout};
 
 /// Returns `true` when `import_root` matches a first-party package.
 #[must_use]
-pub fn is_first_party_import(
+pub(crate) fn is_first_party_import(
     import_root: &str,
     layout: &LayoutInfo,
     metadata: &ProjectMetadata,
@@ -39,7 +39,7 @@ pub fn is_first_party_import(
 
 /// Returns `true` when `import_root` matches a resolved workspace member.
 #[must_use]
-pub fn is_workspace_import(
+pub(super) fn is_workspace_import(
     import_root: &str,
     members: &[ResolvedWorkspaceMember],
     workspace: Option<&UvWorkspaceHint>,
@@ -70,7 +70,10 @@ pub fn is_workspace_import(
 /// The local tree is read at resolve time (never cached) so it cannot go
 /// stale; a tree without packages falls back to the distribution name.
 #[must_use]
-pub fn path_source_imports(root: &Path, uv: &UvToolSettings) -> BTreeMap<String, Vec<String>> {
+pub(super) fn path_source_imports(
+    root: &Path,
+    uv: &UvToolSettings,
+) -> BTreeMap<String, Vec<String>> {
     let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for source in &uv.sources {
         let UvSourceKind::Path(path) = &source.kind else {

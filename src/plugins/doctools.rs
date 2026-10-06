@@ -13,7 +13,7 @@ use super::util::{origin_for_file, push_binary};
 
 /// Extract static Sphinx, `MkDocs`, and Alembic hints.
 #[must_use]
-pub fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
+pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(plugin);
     match plugin {
         PluginId::Sphinx => extract_sphinx(ctx.root.path.as_path(), &mut contrib),

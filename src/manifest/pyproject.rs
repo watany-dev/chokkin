@@ -19,7 +19,7 @@ use super::wheel::parse_wheel_targets;
 
 /// Partial extraction result from `pyproject.toml`.
 #[derive(Debug, Default)]
-pub struct PyprojectExtraction {
+pub(super) struct PyprojectExtraction {
     /// Project metadata.
     pub metadata: ProjectMetadata,
     /// Declared dependencies.
@@ -40,7 +40,10 @@ pub struct PyprojectExtraction {
 
 /// Extract manifest data from `pyproject.toml`.
 #[allow(clippy::too_many_lines)]
-pub fn extract_pyproject(root: &Path, path: &Path) -> Result<PyprojectExtraction, ManifestError> {
+pub(super) fn extract_pyproject(
+    root: &Path,
+    path: &Path,
+) -> Result<PyprojectExtraction, ManifestError> {
     let contents = read_to_string(path)?;
     let table: toml::Table =
         toml::from_str(&contents).map_err(|source| ManifestError::InvalidToml {

@@ -14,7 +14,7 @@ use super::warnings::ManifestWarning;
 
 /// Result of parsing one or more requirements files.
 #[derive(Debug, Default)]
-pub struct RequirementsExtraction {
+pub(super) struct RequirementsExtraction {
     /// Parsed dependencies.
     pub dependencies: Vec<DeclaredDependency>,
     /// Version constraints from `-c` files (not dependency declarations).
@@ -45,7 +45,7 @@ struct RequirementsParseContext<'a> {
 }
 
 /// Parse a root-level requirements file by conventional name.
-pub fn extract_requirements_file(
+pub(super) fn extract_requirements_file(
     root: &Path,
     filename: &str,
     default_context: &DependencyContext,
@@ -62,7 +62,7 @@ pub fn extract_requirements_file(
 
 /// Parse a requirements file that `setup.py` reads, keeping what was parsed
 /// before an unresolvable include; the flag is `false` when parsing stopped early.
-pub fn extract_requirements_path(
+pub(super) fn extract_requirements_path(
     root: &Path,
     path: &Path,
     default_context: &DependencyContext,
@@ -277,7 +277,7 @@ fn push_editable_dependency(
 
 /// Distribution a requirements-file line declares, read the way [`extract_requirements_file`]
 /// reads it; `None` for blank, option, and opaque (nameless) lines.
-pub fn requirements_line_distribution(line: &str) -> Option<String> {
+pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
     let trimmed = strip_comment(line).trim();
     if let Some(editable) = editable_flag_value(trimmed) {
         return extract_egg_name(editable);

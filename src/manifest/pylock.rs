@@ -14,7 +14,7 @@ use super::types::LockfileGraph;
 ///
 /// `[[packages]].dependencies` is optional in PEP 751; packages without it
 /// still become graph nodes so "listed in the lock" stays observable.
-pub fn extract_pylock(path: &Path) -> Result<LockfileGraph, ManifestError> {
+pub(super) fn extract_pylock(path: &Path) -> Result<LockfileGraph, ManifestError> {
     let table = read_lock_table(path)?;
     let mut edges = BTreeMap::new();
     for package in array_tables(&table, "packages") {

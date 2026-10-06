@@ -10,7 +10,7 @@
 
 use std::fmt::Write as _;
 
-use chokkin::extract_ignores;
+use chokkin::internals::extract_ignores;
 use proptest::prelude::*;
 
 fn code() -> impl Strategy<Value = String> {
@@ -104,7 +104,7 @@ proptest! {
 mod parse_file_props {
     use std::fs;
 
-    use chokkin::{
+    use chokkin::internals::{
         FileContext, ImportKind, LayoutInfo, ProjectLayout, ProjectRoot, RootMarker, TargetVersion,
         parse_file,
     };
@@ -294,7 +294,7 @@ mod source_bytes_props {
     use std::fmt::Write as _;
     use std::fs;
 
-    use chokkin::{
+    use chokkin::internals::{
         FileContext, LayoutInfo, ParsedModule, ProjectLayout, ProjectRoot, RootMarker,
         TargetVersion, parse_file,
     };

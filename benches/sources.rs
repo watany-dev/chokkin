@@ -11,7 +11,7 @@ use std::hint::black_box;
 use std::path::Path;
 use std::time::Duration;
 
-use chokkin::{
+use chokkin::internals::{
     LoadedConfig, LoadedManifest, ProjectRoot, discover_project_root, discover_sources,
     extract_manifest, load_config,
 };

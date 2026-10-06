@@ -26,8 +26,10 @@ The compatibility surface is:
 - existing CHK rule IDs and their default severities.
 
 Human-readable prose and formatting are not machine-readable contracts. The
-Rust library API remains pre-1.0 and is monitored by `cargo-semver-checks`, but
-this ADR does not freeze it before v1.0.
+Rust library API is not part of the surface: chokkin ships as a CLI (and
+wheel), the library only keeps `main.rs` a thin dispatcher, and its modules are
+crate-private (`chokkin::internals` exists for tests and benches only). It is
+not semver-checked and may change in any release.
 
 ### Breaking changes
 

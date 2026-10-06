@@ -41,7 +41,7 @@ pub(super) fn write_manifest(path: &Path, rel: &str, bytes: &[u8]) -> Result<(),
 /// # Errors
 ///
 /// Returns the underlying I/O error when the temp file, write, or rename fails.
-pub fn atomic_write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing parent directory"))?;

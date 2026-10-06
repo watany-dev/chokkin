@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use chokkin::{
+use chokkin::internals::{
     FileContext, FileKind, ModuleOrigin, ProjectRoot, RootMarker, build_graph_skeleton,
     discover_project_root, discover_sources, extract_manifest, load_config,
 };
@@ -15,7 +15,12 @@ fn sources_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn pipeline_inputs(name: &str) -> (chokkin::LoadedManifest, chokkin::DiscoveredSources) {
+fn pipeline_inputs(
+    name: &str,
+) -> (
+    chokkin::internals::LoadedManifest,
+    chokkin::internals::DiscoveredSources,
+) {
     let path = sources_fixture(name);
     let root = discover_project_root(&path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone()),
@@ -85,5 +90,8 @@ fn duplicate_files_are_rejected() {
         sources.files.push(first.clone());
     }
     let error = build_graph_skeleton(&manifest, &sources).expect_err("duplicate");
-    assert!(matches!(error, chokkin::GraphError::DuplicateFile { .. }));
+    assert!(matches!(
+        error,
+        chokkin::internals::GraphError::DuplicateFile { .. }
+    ));
 }

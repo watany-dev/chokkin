@@ -18,7 +18,7 @@ pub struct FixOptions {
 
 /// Member manifest metadata available to workspace-aware fixes.
 #[derive(Debug, Clone, Copy)]
-pub struct WorkspaceFixManifest<'a> {
+pub(crate) struct WorkspaceFixManifest<'a> {
     /// Stable workspace member id.
     pub id: &'a str,
     /// Member directory path relative to the project root.

@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::Path;
 
-use chokkin::{
+use chokkin::internals::{
     ConfigSources, DiscoveredSources, LoadedConfig, ProjectRoot, RootMarker, default_config,
     discover_sources, extract_manifest,
 };

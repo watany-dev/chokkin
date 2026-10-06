@@ -126,6 +126,9 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
     the variant gains `label` (#503).
   - `SymbolDef` gains `used_in_module` (#540).
   - `plugins::PytestImportSettings` gains `testpaths` (#544).
+- The Rust library is no longer a public API: chokkin ships as a CLI, every
+  pipeline module is crate-private, and `cargo-semver-checks` is dropped from
+  CI. ADR 0004 now excludes the library from the compatibility surface.
 
 ### Fixed
 - A non-UTF-8 Python source no longer aborts the whole analysis with exit 2.

@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chokkin::{
+use chokkin::internals::{
     FileContext, PluginExtractRequest, PluginId, PluginsWarning, ProjectRoot, RootMarker,
     discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
     load_config, parse_project_sources_with_cache, resolve_target_version,
@@ -29,11 +29,11 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     }
 }
 
-fn extract_fixture(name: &str) -> chokkin::PluginHints {
+fn extract_fixture(name: &str) -> chokkin::internals::PluginHints {
     extract_at(&fixture(name))
 }
 
-fn extract_at(path: &Path) -> chokkin::PluginHints {
+fn extract_at(path: &Path) -> chokkin::internals::PluginHints {
     let root = discover_project_root(path).unwrap_or_else(|_| project_root_at(path));
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
@@ -52,7 +52,9 @@ fn extract_at(path: &Path) -> chokkin::PluginHints {
     .expect("extract plugin hints")
 }
 
-fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
+fn pytest_contrib(
+    hints: &chokkin::internals::PluginHints,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -60,7 +62,9 @@ fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution 
         .expect("pytest contribution")
 }
 
-fn django_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
+fn django_contrib(
+    hints: &chokkin::internals::PluginHints,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -68,7 +72,9 @@ fn django_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution 
         .expect("django contribution")
 }
 
-fn fastapi_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
+fn fastapi_contrib(
+    hints: &chokkin::internals::PluginHints,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -76,7 +82,10 @@ fn fastapi_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution
         .expect("fastapi contribution")
 }
 
-fn plugin_contrib(hints: &chokkin::PluginHints, plugin: PluginId) -> &chokkin::PluginContribution {
+fn plugin_contrib(
+    hints: &chokkin::internals::PluginHints,
+    plugin: PluginId,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -84,7 +93,7 @@ fn plugin_contrib(hints: &chokkin::PluginHints, plugin: PluginId) -> &chokkin::P
         .expect("plugin contribution")
 }
 
-fn entry_paths(contrib: &chokkin::PluginContribution) -> Vec<&str> {
+fn entry_paths(contrib: &chokkin::internals::PluginContribution) -> Vec<&str> {
     contrib
         .entries
         .iter()
@@ -534,7 +543,7 @@ fn partial_settings_warns() {
     );
 }
 
-fn extract_fixture_from_deps(name: &str) -> chokkin::PluginHints {
+fn extract_fixture_from_deps(name: &str) -> chokkin::internals::PluginHints {
     extract_at(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/deps")

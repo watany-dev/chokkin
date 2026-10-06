@@ -9,14 +9,14 @@ use super::warnings::ManifestWarning;
 
 /// Returns `true` when `path` resolves under `root`.
 #[must_use]
-pub fn path_is_within_root(root: &Path, path: &Path) -> bool {
+pub(crate) fn path_is_within_root(root: &Path, path: &Path) -> bool {
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let canonical_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     canonical_path.starts_with(&canonical_root)
 }
 
 /// Read a manifest file as UTF-8 text.
-pub fn read_to_string(path: &Path) -> Result<String, ManifestError> {
+pub(crate) fn read_to_string(path: &Path) -> Result<String, ManifestError> {
     std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
         path: path.to_path_buf(),
         source,
@@ -26,7 +26,7 @@ pub fn read_to_string(path: &Path) -> Result<String, ManifestError> {
 /// Read a manifest file as UTF-8 or the PEP 263 coding it declares.
 ///
 /// `None` when the bytes cannot be decoded; the caller skips the file.
-pub fn read_text(path: &Path) -> Result<Option<String>, ManifestError> {
+pub(crate) fn read_text(path: &Path) -> Result<Option<String>, ManifestError> {
     let bytes = std::fs::read(path).map_err(|source| ManifestError::Io {
         path: path.to_path_buf(),
         source,
@@ -35,7 +35,7 @@ pub fn read_text(path: &Path) -> Result<Option<String>, ManifestError> {
 }
 
 /// Context for pushing a parsed dependency declaration.
-pub struct DependencyPush<'a> {
+pub(crate) struct DependencyPush<'a> {
     /// Target dependency list.
     pub dependencies: &'a mut Vec<DeclaredDependency>,
     /// Warning sink.
@@ -53,7 +53,7 @@ pub struct DependencyPush<'a> {
 }
 
 /// Parse `raw` and append either a dependency or a non-fatal warning.
-pub fn push_dependency(push: DependencyPush<'_>) {
+pub(crate) fn push_dependency(push: DependencyPush<'_>) {
     let origin = DependencyOrigin {
         file: push.file.to_owned(),
         line: push.line,

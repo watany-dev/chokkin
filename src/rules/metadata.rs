@@ -4,7 +4,7 @@ use super::types::{RuleId, Severity};
 
 /// Short human-readable title for a rule.
 #[must_use]
-pub fn rule_title(rule: RuleId) -> &'static str {
+pub(crate) fn rule_title(rule: RuleId) -> &'static str {
     match rule {
         RuleId::Chk001 => "unused file",
         RuleId::Chk002 => "unused dependency",
@@ -21,7 +21,7 @@ pub fn rule_title(rule: RuleId) -> &'static str {
 
 /// Longer help text for SARIF and documentation consumers.
 #[must_use]
-pub fn rule_help_text(rule: RuleId) -> &'static str {
+pub(crate) fn rule_help_text(rule: RuleId) -> &'static str {
     match rule {
         RuleId::Chk001 => {
             "A Python file is not reachable from any configured entry root in app mode."
@@ -52,7 +52,7 @@ pub fn rule_help_text(rule: RuleId) -> &'static str {
 
 /// Stable help URI for SARIF rule metadata.
 #[must_use]
-pub fn rule_help_uri(rule: RuleId) -> String {
+pub(crate) fn rule_help_uri(rule: RuleId) -> String {
     format!(
         "https://github.com/watany-dev/chokkin/blob/main/docs/dev/spec.ja.md#{}",
         rule.as_code().to_ascii_lowercase()
@@ -61,7 +61,7 @@ pub fn rule_help_uri(rule: RuleId) -> String {
 
 /// Default severity before config overrides (§3).
 #[must_use]
-pub fn default_rule_severity(rule: RuleId) -> Severity {
+pub(crate) fn default_rule_severity(rule: RuleId) -> Severity {
     match rule {
         RuleId::Chk002 | RuleId::Chk003 | RuleId::Chk004 => Severity::Error,
         RuleId::Chk001

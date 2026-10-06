@@ -11,14 +11,6 @@ homepage = "https://github.com/watany-dev/chokkin"
 keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
 categories = ["command-line-utilities", "development-tools"]
 
-# Pre-alpha (0.1.x): library API is still evolving; report expansion but do not block CI.
-[package.metadata.cargo-semver-checks.lints]
-constructible_struct_adds_field = "warn"
-function_parameter_count_changed = "warn"
-enum_variant_added = "warn"
-struct_marked_non_exhaustive = "warn"
-enum_marked_non_exhaustive = "warn"
-
 [dependencies]
 # Minimal features: help/version output is hand-rolled in main.rs (USAGE), so
 # clap only needs parsing + error rendering; dropping the default
@@ -77,6 +69,9 @@ harness = false
 unsafe_code = "forbid"
 non_ascii_idents = "deny"
 unused_must_use = "deny"
+# Crate-internal items stay `pub(crate)` so `dead_code` catches unused ones;
+# the CLI is the product, the library API is not a contract (ADR 0004).
+unreachable_pub = "warn"
 unused_extern_crates = "warn"
 unused_import_braces = "warn"
 trivial_numeric_casts = "warn"
@@ -91,6 +86,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
+# Contradicts rustc `unreachable_pub` (see [lints.rust]).
+redundant_pub_crate = "allow"
 
 # Restrictions: never in production code (relaxed for tests via clippy.toml).
 unwrap_used = "deny"

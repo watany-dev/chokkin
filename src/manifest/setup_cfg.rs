@@ -11,7 +11,7 @@ use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.cfg`.
 #[derive(Debug, Default)]
-pub struct SetupCfgExtraction {
+pub(super) struct SetupCfgExtraction {
     /// Project metadata.
     pub metadata: ProjectMetadata,
     /// Declared dependencies.
@@ -23,7 +23,10 @@ pub struct SetupCfgExtraction {
 }
 
 /// Extract manifest data from `setup.cfg`.
-pub fn extract_setup_cfg(root: &Path, path: &Path) -> Result<SetupCfgExtraction, ManifestError> {
+pub(super) fn extract_setup_cfg(
+    root: &Path,
+    path: &Path,
+) -> Result<SetupCfgExtraction, ManifestError> {
     let rel = rel_to_root(root, path);
     let mut result = SetupCfgExtraction::default();
     let Some(contents) = read_text(path)? else {

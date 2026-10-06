@@ -7,12 +7,12 @@
     clippy::indexing_slicing
 )]
 
-use chokkin::config::ProjectMode;
-use chokkin::{
-    Confidence, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject, RenderContext,
-    ReporterId, RuleId, RuntimeOverrides, Severity, apply_baseline, issue_fingerprint,
-    render_issues, write_baseline,
+use chokkin::internals::ProjectMode;
+use chokkin::internals::{
+    Confidence, Issue, IssueLocation, IssueReport, IssueSubject, ReporterId, RuleId, Severity,
+    apply_baseline, issue_fingerprint, write_baseline,
 };
+use chokkin::{ExitStatus, RenderContext, RuntimeOverrides, render_issues};
 use proptest::prelude::*;
 use tempfile::TempDir;
 

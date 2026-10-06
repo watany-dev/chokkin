@@ -114,13 +114,6 @@ pub struct PluginHints {
 }
 
 impl PluginHints {
-    /// Iterate all plugin entry roots.
-    pub fn entries(&self) -> impl Iterator<Item = &PluginEntry> {
-        self.contributions
-            .iter()
-            .flat_map(|contrib| contrib.entries.iter())
-    }
-
     /// Iterate all module references.
     pub fn module_refs(&self) -> impl Iterator<Item = &ModuleReference> {
         self.contributions

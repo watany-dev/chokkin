@@ -8,6 +8,7 @@ mod types;
 pub use build::build_graph_skeleton;
 pub use edges::add_parsed_imports;
 pub use error::GraphError;
-pub use types::{
-    DistributionId, FileId, FileNode, GraphEdge, ModuleId, ModuleNode, ModuleOrigin, ProjectGraph,
-};
+#[cfg(test)]
+pub(crate) use types::FileNode;
+pub(crate) use types::{FileId, ModuleId};
+pub use types::{GraphEdge, ModuleOrigin, ProjectGraph};

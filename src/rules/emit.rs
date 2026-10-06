@@ -155,7 +155,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
                 file = Some(import_file.clone());
                 line = Some(*import_line);
             },
-            Origin::Binary(origin) | Origin::Config(origin) => {
+            Origin::Binary(origin) => {
                 file = Some(origin.file.clone());
                 line = origin.line;
             },

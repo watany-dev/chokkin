@@ -6,7 +6,7 @@ use ruff_python_ast::Expr;
 
 /// Returns `true` when `expr` is `TYPE_CHECKING` (or `typing.TYPE_CHECKING`), aliases included.
 #[must_use]
-pub fn is_type_checking_test(
+pub(super) fn is_type_checking_test(
     expr: &Expr,
     typing_aliases: &HashSet<String>,
     type_checking_names: &HashSet<String>,

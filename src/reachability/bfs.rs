@@ -15,7 +15,7 @@ use super::types::{ReachPredecessor, TraceStep, UsedModule};
 
 /// Result of a BFS traversal.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BfsOutcome {
+pub(super) struct BfsOutcome {
     /// Files reached from entry roots, plugin refs, framework globs, and imports.
     pub reachable: IndexSet<FileId>,
     /// Shortest-path predecessors for trace reconstruction.
@@ -116,7 +116,7 @@ impl<'a> BfsState<'a> {
 /// plugin refs has finished, so a file those reach keeps its import trace;
 /// the imports of the seeded files are then followed like any other file's.
 #[allow(clippy::too_many_arguments)]
-pub fn run_reachability_bfs(
+pub(super) fn run_reachability_bfs(
     graph: &ProjectGraph,
     entry: &EntryPlan,
     plugins: &PluginHints,

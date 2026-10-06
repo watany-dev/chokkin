@@ -28,7 +28,7 @@ use super::types::{
 };
 
 /// Mutable parse state accumulated while visiting one module.
-pub struct ModuleVisitor<'a> {
+pub(super) struct ModuleVisitor<'a> {
     path: &'a str,
     layout: &'a LayoutInfo,
     lines: &'a LineIndex,
@@ -50,7 +50,7 @@ pub struct ModuleVisitor<'a> {
 
 impl<'a> ModuleVisitor<'a> {
     /// Create a visitor for `path` with empty output.
-    pub fn new(
+    pub(super) fn new(
         path: &'a str,
         layout: &'a LayoutInfo,
         file_context: FileContext,
@@ -82,7 +82,7 @@ impl<'a> ModuleVisitor<'a> {
 
     /// Consume the visitor and return the accumulated parse result.
     #[must_use]
-    pub fn into_parsed(mut self) -> ParsedModule {
+    pub(super) fn into_parsed(mut self) -> ParsedModule {
         let runs_commands = self
             .parsed
             .imports
@@ -110,7 +110,7 @@ impl<'a> ModuleVisitor<'a> {
     ///
     /// `__all__` is read first because [`Self::record_symbol`] consults the export
     /// list to decide whether an underscore-prefixed symbol is public.
-    pub fn visit_module(&mut self, stmts: &[Stmt]) {
+    pub(super) fn visit_module(&mut self, stmts: &[Stmt]) {
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.visit_body(stmts);
     }

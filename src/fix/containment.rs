@@ -11,7 +11,7 @@ use super::error::FixError;
 /// # Errors
 ///
 /// Returns [`FixError::Unsupported`] when `file` escapes the project root.
-pub fn resolve_contained_path(root: &Path, file: &str) -> Result<PathBuf, FixError> {
+pub(super) fn resolve_contained_path(root: &Path, file: &str) -> Result<PathBuf, FixError> {
     if Path::new(file).is_absolute() {
         return Err(FixError::Unsupported {
             detail: format!("absolute fix target `{file}` is not allowed"),

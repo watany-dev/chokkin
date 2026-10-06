@@ -73,7 +73,7 @@ pub(super) struct SetupCall {
 }
 
 impl SetupCall {
-    pub fn keyword(&self, name: &str) -> Option<&Value> {
+    pub(super) fn keyword(&self, name: &str) -> Option<&Value> {
         self.keywords
             .iter()
             .find(|(keyword, _)| keyword == name)

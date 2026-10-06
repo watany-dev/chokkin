@@ -10,7 +10,7 @@ use super::types::{EntryOrigin, EntryPlan, EntryRoot};
 ///
 /// A script is run directly, so files it imports are reachable even when no
 /// other entry reaches them.
-pub fn add_script_roots(
+pub(crate) fn add_script_roots(
     plan: &mut EntryPlan,
     scripts: &[InlineScript],
     sources: &DiscoveredSources,

@@ -47,7 +47,7 @@ struct ScriptBlock {
 ///
 /// Returns `None` when the file has no valid block. Multiple `script` blocks
 /// or broken TOML push a warning, and the file stays an ordinary source.
-pub fn parse_inline_script(
+pub(super) fn parse_inline_script(
     path: &str,
     text: &str,
     warnings: &mut Vec<ManifestWarning>,
@@ -76,7 +76,7 @@ pub fn parse_inline_script(
 ///
 /// Uses the same validity rules as [`parse_inline_script`], so the parser and
 /// the resolver agree on which files are scripts.
-pub fn inline_script_target(text: &str) -> Option<TargetVersion> {
+pub(crate) fn inline_script_target(text: &str) -> Option<TargetVersion> {
     parse_inline_script("", text, &mut Vec::new())?.target_version
 }
 

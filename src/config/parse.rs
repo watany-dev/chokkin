@@ -45,14 +45,14 @@ enum UvMembers {
 }
 
 /// Read and parse a standalone `.chokkin.toml` or `chokkin.toml` file.
-pub fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError> {
+pub(super) fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError> {
     let partial = parse_toml::<PartialConfig>(path)?;
     validate(path, &partial)?;
     Ok(partial)
 }
 
 /// `[tool.chokkin]` and the uv hints that shape workspace members.
-pub struct PyProjectConfig {
+pub(super) struct PyProjectConfig {
     pub partial: PartialConfig,
     pub uv_workspace: Option<UvWorkspaceHint>,
     /// `[tool.uv.sources]` path entries as written, keyed by distribution name;
@@ -61,7 +61,7 @@ pub struct PyProjectConfig {
 }
 
 /// Read `[tool.chokkin]` from `pyproject.toml` with its `[tool.uv]` member hints.
-pub fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, ConfigError> {
+pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, ConfigError> {
     let PyProject {
         tool: PyProjectTool { chokkin, uv },
     } = parse_toml::<PyProject>(path)?;

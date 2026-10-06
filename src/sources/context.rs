@@ -7,7 +7,7 @@ use super::types::FileContext;
 /// `path` must already be in normalized forward-slash form (as produced by the
 /// source file walk).
 #[must_use]
-pub fn assign_file_context(path: &str) -> FileContext {
+pub(crate) fn assign_file_context(path: &str) -> FileContext {
     if is_test_path(path) {
         return FileContext::Test;
     }
@@ -45,7 +45,7 @@ fn is_test_path(path: &str) -> bool {
 /// `test/fixtures/demo/setup.py`): tests read these as files rather than
 /// import them, so being unreachable is expected (#593).
 #[must_use]
-pub fn is_test_data_path(path: &str) -> bool {
+pub(crate) fn is_test_data_path(path: &str) -> bool {
     let Some((dirs, _)) = path.rsplit_once('/') else {
         return false;
     };

@@ -13,7 +13,7 @@ use super::error::ConfigError;
 use super::types::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
 
 /// Resolve workspace member directories below a project root.
-pub fn resolve_workspace_members(
+pub(super) fn resolve_workspace_members(
     root: &ProjectRoot,
     config: &ChokkinConfig,
     uv_workspace: Option<&UvWorkspaceHint>,
@@ -156,7 +156,7 @@ const AUTO_MEMBER_MAX_DEPTH: usize = 4;
 /// Directories are pruned the way source discovery prunes them (`exclude`
 /// globs and, when `respect_gitignore`, `.gitignore`), so paths left out of
 /// analysis never become members.
-pub fn detect_nested_members(
+pub(crate) fn detect_nested_members(
     root: &ProjectRoot,
     exclude: &GlobSet,
     respect_gitignore: bool,

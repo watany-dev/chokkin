@@ -31,7 +31,7 @@ use super::warnings::PluginsWarning;
 const LIST_FIELDS: &[&str] = &["INSTALLED_APPS", "MIDDLEWARE"];
 
 /// Extract Django-related plugin hints.
-pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
+pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Django);
     let mut warnings = Vec::new();
     let root = ctx.root.path.as_path();

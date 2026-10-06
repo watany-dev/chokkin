@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chokkin::{
+use chokkin::internals::{
     DiscoveredSources, FileContext, FileKind, ProjectLayout, ProjectRoot, RootMarker, SourcesError,
     SourcesWarning, discover_project_root, discover_sources, extract_manifest, load_config,
 };

@@ -11,7 +11,7 @@ use super::types::{EntryCandidate, EntryRoot};
 /// Merge candidates with the same `EntrySpec.path`, combining origins and symbols.
 /// The result is sorted by path.
 #[must_use]
-pub fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<EntryRoot> {
+pub(super) fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<EntryRoot> {
     let mut merged: BTreeMap<String, EntryRoot> = BTreeMap::new();
 
     for candidate in candidates {

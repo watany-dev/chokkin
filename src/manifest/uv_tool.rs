@@ -9,7 +9,7 @@ use super::warnings::ManifestWarning;
 
 /// What `[tool.uv]` contributes to a manifest.
 #[derive(Debug, Default)]
-pub struct UvToolExtraction {
+pub(super) struct UvToolExtraction {
     /// Legacy `dev-dependencies`, declared under the `dev` group like uv does.
     pub dependencies: Vec<DeclaredDependency>,
     /// `constraint-dependencies` and `override-dependencies`.
@@ -20,7 +20,7 @@ pub struct UvToolExtraction {
 
 /// Read `[tool.uv]` from a parsed `pyproject.toml`.
 #[must_use]
-pub fn extract_uv_tool(
+pub(super) fn extract_uv_tool(
     table: &toml::Table,
     rel: &str,
     warnings: &mut Vec<ManifestWarning>,

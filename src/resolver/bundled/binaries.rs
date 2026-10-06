@@ -2,7 +2,7 @@
 #![allow(clippy::doc_markdown)]
 
 /// Bundled CLI binary name to distribution name.
-pub static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
+pub(crate) static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
     ("alembic", "alembic"),
     ("autopep8", "autopep8"),
     ("bandit", "bandit"),

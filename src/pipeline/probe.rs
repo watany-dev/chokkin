@@ -70,7 +70,7 @@ pub struct WorkspaceMemberInputs {
 ///
 /// # Errors
 ///
-/// Returns [`ProbeError`] when a pipeline step fails fatally.
+/// Returns `ProbeError` when a pipeline step fails fatally.
 pub fn probe_project(
     start: &Path,
     project_root_override: Option<&Path>,
@@ -84,7 +84,7 @@ pub fn probe_project(
 /// # Errors
 ///
 /// Returns [`ProbeError`] when a pipeline step fails fatally.
-pub fn probe_project_with_cache(
+pub(super) fn probe_project_with_cache(
     start: &Path,
     project_root_override: Option<&Path>,
     overrides: &RuntimeOverrides,

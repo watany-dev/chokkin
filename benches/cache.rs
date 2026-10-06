@@ -7,7 +7,7 @@ mod support;
 use std::hint::black_box;
 use std::time::Duration;
 
-use chokkin::{
+use chokkin::internals::{
     CacheOptions, discover_project_root, discover_sources, extract_manifest, load_config,
     parse_project_sources_with_cache, resolve_target_version,
 };
