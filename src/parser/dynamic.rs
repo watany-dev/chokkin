@@ -148,6 +148,21 @@ fn leftmost_str(expr: &Expr) -> Option<&str> {
     }
 }
 
+/// Module names a `pytest_plugins = …` value makes pytest import: a string,
+/// or the string elements of a list or tuple.
+#[must_use]
+pub fn pytest_plugin_names(value: &Expr) -> Vec<(&str, &Expr)> {
+    let elts: &[Expr] = match value {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => std::slice::from_ref(value),
+    };
+    elts.iter()
+        .filter_map(|elt| str_constant(elt).map(|name| (name, elt)))
+        .filter(|(name, _)| name.split('.').all(|part| !part.is_empty()))
+        .collect()
+}
+
 /// What a `[sys.executable, …]` argument list runs in this interpreter's
 /// environment.
 #[derive(Debug, PartialEq, Eq)]

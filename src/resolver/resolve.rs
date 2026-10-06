@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
-use crate::parser::{ImportContext, ParseSummary};
+use crate::parser::{ImportContext, ParseSummary, import_context_for_file};
 use crate::plugins::ModuleReference;
 use crate::sources::{DiscoveredFile, DiscoveredSources};
 
@@ -141,6 +141,47 @@ pub fn resolve_imports_for_analysis(
                 &mut warnings,
                 &mut root_cache,
             ));
+        }
+        if module.pytest_plugins.is_empty() {
+            continue;
+        }
+        // A plugin name nothing resolves is a distribution missing from the
+        // environment, not a broken import in this file.
+        let plugin_context = sources
+            .files
+            .iter()
+            .find(|file| file.path == module.path)
+            .map_or(ImportContext::Test, |file| {
+                import_context_for_file(file.context)
+            });
+        for plugin in &module.pytest_plugins {
+            let mut site_warnings = Vec::new();
+            imports.push(resolve_import_site(
+                &plugin.module,
+                &plugin.module,
+                &module.path,
+                plugin.line,
+                plugin_context,
+                false,
+                false,
+                file_stdlib,
+                sources,
+                manifest,
+                config,
+                workspace_members,
+                &import_map,
+                &venv_index.imports,
+                scoped,
+                &pytest_paths,
+                &local_modules,
+                &mut site_warnings,
+                &mut root_cache,
+            ));
+            warnings.extend(
+                site_warnings
+                    .into_iter()
+                    .filter(|warning| !matches!(warning, ResolveWarning::UnresolvedImport { .. })),
+            );
         }
     }
 

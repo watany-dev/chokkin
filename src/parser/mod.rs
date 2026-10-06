@@ -20,6 +20,7 @@ pub use error::ParseError;
 pub use ignores::extract_ignores;
 pub use parse::{parse_file, parse_project_sources_with_cache};
 pub use relative::resolve_relative_import;
+pub(crate) use types::import_context_for_file;
 pub use types::{
     AttributeAccess, DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind,
     ImportRef, ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,

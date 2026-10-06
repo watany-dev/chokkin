@@ -178,6 +178,9 @@ pub struct ParsedModule {
     /// literal prefix (`import_module("pkg.commands." + name)`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dynamic_import_prefixes: Vec<DynamicImport>,
+    /// Module names a module-level `pytest_plugins` lists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pytest_plugins: Vec<DynamicImport>,
     /// Attribute accesses for `import module; module.name` symbol tracking.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_accesses: Vec<AttributeAccess>,

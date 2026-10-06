@@ -493,7 +493,10 @@ pytest pluginの例。
   (pytestのtest discoveryに相当。conftest.pyはtest filesをimportしないため、
    test file自体をrootにしないとtest内のimportが依存使用として数えられない)
 conftest.py をentryにする
-pytest_plugins = ["..."] をmodule referenceにする
+[tool.pytest.ini_options] の pytest_plugins = ["..."] をmodule referenceにする
+Python sourceのmodule-level pytest_plugins = "..." / [...] / (...) の文字列literalを
+  そのfileからのimportにする (conftest以外も対象。pluginとして読み込まれたmoduleの
+  pytest_pluginsも有効なため。解決できない名前はunresolved警告にしない)
 [tool.pytest.ini_options] を読む (testpaths / python_files があれば上記globを上書き。
   testpaths の "." はrootdirとして扱う)
 pytest command usageをbinary usageにする

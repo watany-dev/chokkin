@@ -254,6 +254,7 @@ mod tests {
                 }],
                 dynamic_imports: Vec::new(),
                 dynamic_import_prefixes: Vec::new(),
+                pytest_plugins: Vec::new(),
                 attribute_accesses: Vec::new(),
                 symbols: Vec::new(),
                 exports: Vec::new(),
