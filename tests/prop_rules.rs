@@ -3,7 +3,7 @@
 //! The reference model mirrors `docs/dev/formal/deps_rules_z3.py` (S1/S2,
 //! W1–W3) extended with the post-v0.6.0 decisions in
 //! `src/rules/deps/missing.rs`: a lock edge from a declared distribution makes
-//! even an optional import CHK004 (#504), and a locked-only distribution is a
+//! even an optional import CHK004 (#504, as a warning per #582), and a locked-only distribution is a
 //! Likely CHK004.
 
 #![allow(
@@ -284,7 +284,7 @@ fn expected_for(name: &str, dep: Dep, has_lock: bool, strict: bool) -> Vec<Key> 
             }
             if dep.optional {
                 out.push(if dep.hub_edge {
-                    key("CHK004", &site, "error", "certain")
+                    key("CHK004", &site, "warning", "certain")
                 } else if strict {
                     key("CHK003", &site, "warning", "likely")
                 } else {
