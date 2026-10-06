@@ -646,6 +646,7 @@ mod tests {
         let root = project_root(dir.path());
         let mut manifest = empty_manifest(&root);
         manifest.sources.pyproject_toml = true;
+        manifest.sources.pyproject_project_table = true;
         let report = issue_report(missing_dependency_issue("pyyaml"));
 
         let fix_report = apply_fixes_with_workspace(
@@ -680,6 +681,7 @@ mod tests {
         };
         let mut member_manifest = empty_manifest(&member_root);
         member_manifest.sources.pyproject_toml = true;
+        member_manifest.sources.pyproject_project_table = true;
         let workspace_manifest = WorkspaceFixManifest {
             id: "api",
             path: "services/api",

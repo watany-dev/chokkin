@@ -54,6 +54,7 @@ pub fn extract_manifest(
         uv = extracted.uv;
         warnings.extend(extracted.warnings);
         sources.pyproject_toml = true;
+        sources.pyproject_project_table = extracted.has_project_table;
     }
 
     // Manifest whose runtime dependencies could not be read, if any.
