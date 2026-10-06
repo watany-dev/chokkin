@@ -41,6 +41,23 @@ fn is_test_path(path: &str) -> bool {
         || ends_with_ignore_ascii_case(file_name, "_test.pyi")
 }
 
+/// Whether `path` is input data under a test tree (`tests/data/case.py`,
+/// `test/fixtures/demo/setup.py`): tests read these as files rather than
+/// import them, so being unreachable is expected (#593).
+#[must_use]
+pub fn is_test_data_path(path: &str) -> bool {
+    let Some((dirs, _)) = path.rsplit_once('/') else {
+        return false;
+    };
+    let mut dirs = dirs.split('/');
+    let in_test_tree = if path.starts_with("test/") {
+        dirs.next().is_some()
+    } else {
+        dirs.any(|dir| dir == "tests")
+    };
+    in_test_tree && dirs.any(|dir| matches!(dir, "data" | "fixtures" | "testdata" | "test_data"))
+}
+
 fn has_py_or_pyi_extension(file_name: &str) -> bool {
     std::path::Path::new(file_name)
         .extension()
@@ -136,6 +153,33 @@ mod tests {
             FileContext::Runtime
         );
         assert_eq!(assign_file_context("acme/tests.py"), FileContext::Runtime);
+    }
+
+    #[test]
+    fn data_dirs_under_a_test_tree_are_test_data() {
+        for path in [
+            "tests/data/cases/allow_empty_first_line.py",
+            "tests/fixtures/projects/demo/demo.py",
+            "test/mitmproxy/data/addonscripts/addon.py",
+            "pkg/tests/testdata/sample.py",
+            "tests/unit/test_data/input.py",
+        ] {
+            assert!(is_test_data_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn data_dirs_outside_a_test_tree_are_not_test_data() {
+        for path in [
+            "acme/data/loader.py",
+            "fixtures/tests/helper.py",
+            "tests/test_data.py",
+            "tests/conftest.py",
+            "django/test/data/x.py",
+            "data.py",
+        ] {
+            assert!(!is_test_data_path(path), "{path}");
+        }
     }
 
     #[test]

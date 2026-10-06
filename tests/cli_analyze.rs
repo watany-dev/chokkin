@@ -1144,3 +1144,39 @@ fn binary_notebooks_are_entry_roots() {
         .collect();
     assert_eq!(orphans, ["acme/orphan.py"], "{issues:?}");
 }
+
+/// black's `tests/data/cases/*.py`: tests read these as files, so an orphan
+/// there is expected; a fixture module imported by conftest stays reachable
+/// (#593).
+#[test]
+fn binary_unreachable_test_data_is_reported_only_in_strict_mode() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/cli.py", "def main():\n    pass\n"),
+        ("tests/__init__.py", ""),
+        (
+            "tests/conftest.py",
+            "from tests.fixtures.helpers import make\n",
+        ),
+        ("tests/fixtures/__init__.py", ""),
+        ("tests/fixtures/helpers.py", "def make():\n    pass\n"),
+        ("tests/data/case.py", "x = 1\n"),
+        ("tests/orphan.py", ""),
+    ]);
+    let orphans = |extra: &[&str]| -> Vec<String> {
+        issue_keys(&json_issues(project.path(), extra))
+            .into_iter()
+            .filter(|(code, _)| code == "CHK001")
+            .map(|(_, target)| target)
+            .collect()
+    };
+    assert_eq!(orphans(&[]), ["tests/orphan.py"]);
+    assert_eq!(
+        orphans(&["--strict"]),
+        ["tests/data/case.py", "tests/orphan.py"]
+    );
+}
