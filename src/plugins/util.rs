@@ -13,7 +13,7 @@ use crate::manifest::literals::LiteralScan;
 use crate::manifest::util::{path_is_within_root, read_to_string};
 use crate::parser::{ParseSeverity, ParsedModule};
 use crate::path_util::rel_to_root;
-use crate::sources::{build_glob_set, path_to_module};
+use crate::sources::path_to_module;
 
 use super::context::PluginContext;
 use super::error::PluginsError;
@@ -346,21 +346,6 @@ pub fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -> Vec<S
         }
     }
     globs
-}
-
-/// Match discovered file paths against glob patterns.
-pub fn match_paths_against_globs(paths: &[String], patterns: &[String]) -> Vec<String> {
-    let Ok(glob_matcher) = build_glob_set(patterns) else {
-        return Vec::new();
-    };
-    let mut hits: Vec<String> = paths
-        .iter()
-        .filter(|path| glob_matcher.is_match(path))
-        .cloned()
-        .collect();
-    hits.sort();
-    hits.dedup();
-    hits
 }
 
 /// Convert a dotted module path to a root-relative `.py` file path.

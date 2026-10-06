@@ -6,15 +6,16 @@ use std::path::Path;
 
 use crate::config::PluginId;
 use crate::path_util::rel_to_root;
-use crate::sources::FileContext;
+use crate::sources::{FileContext, build_glob_set};
+use globset::GlobSet;
 
 use super::context::PluginContext;
 use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
 };
 use super::util::{
-    IniSection, match_paths_against_globs, origin_for_file, parse_path_list,
-    pytest_options_from_pyproject, pytest_test_globs, read_ini_section, read_pyproject_table,
+    IniSection, origin_for_file, parse_path_list, pytest_options_from_pyproject, pytest_test_globs,
+    read_ini_section, read_pyproject_table,
 };
 use super::warnings::PluginsWarning;
 
@@ -98,35 +99,25 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         label: "pytest defaults".to_owned(),
     });
 
-    let globs = pytest_test_globs(&testpaths, &python_files);
-    let source_paths: Vec<String> = ctx
-        .sources
-        .files
-        .iter()
-        .map(|file| file.path.clone())
-        .collect();
-    let mut test_files = match_paths_against_globs(&source_paths, &globs);
+    let root_globs = build_glob_set(&pytest_test_globs(&testpaths, &python_files)).ok();
     // Members' suites are collected by passing their directory to pytest
     // (airflow's `providers/*/tests`), so the root `testpaths` does not limit
     // them while `python_files` still applies.
-    let member_tests: Vec<String> = ctx
-        .sources
-        .files
-        .iter()
-        .filter(|file| {
-            file.context == FileContext::Test && ctx.sources.layout.member_for(&file.path).is_some()
-        })
-        .map(|file| file.path.clone())
-        .collect();
-    test_files.extend(match_paths_against_globs(
-        &member_tests,
-        &pytest_test_globs(&[], &python_files),
-    ));
-    test_files.sort();
-    test_files.dedup();
-    for path in test_files {
+    let member_globs = build_glob_set(&pytest_test_globs(&[], &python_files)).ok();
+    let matches =
+        |globs: &Option<GlobSet>, path: &str| globs.as_ref().is_some_and(|set| set.is_match(path));
+    let test_files = ctx.sources.files.iter().filter(|file| {
+        matches(&root_globs, &file.path)
+            || (file.context == FileContext::Test
+                && ctx.sources.layout.member_for(&file.path).is_some()
+                && matches(&member_globs, &file.path))
+    });
+    for file in test_files {
         contrib.entries.push(PluginEntry {
-            spec: crate::config::EntrySpec { path, symbol: None },
+            spec: crate::config::EntrySpec {
+                path: file.path.clone(),
+                symbol: None,
+            },
             context: FileContext::Test,
             origin: origin.clone(),
         });
@@ -345,6 +336,25 @@ mod tests {
                 pythonpath: Vec::new(),
                 importlib: true,
                 testpaths: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn import_settings_read_native_tool_pytest_table() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[tool.pytest]\npythonpath = [\"src\"]\ntestpaths = [\"tests\"]\naddopts = [\"--import-mode=importlib\"]\n",
+        )
+        .expect("write pyproject");
+        assert_eq!(
+            import_settings(root),
+            PytestImportSettings {
+                pythonpath: vec!["src".to_owned()],
+                importlib: true,
+                testpaths: vec!["tests".to_owned()],
             }
         );
     }
