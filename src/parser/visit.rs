@@ -578,8 +578,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                         }
                     } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
                         if let Some(module) = module_prefix(call) {
-                            let dynamic = self.dynamic_import(module, call);
-                            self.parsed.dynamic_import_prefixes.push(dynamic);
+                            let line = self.line_number(call);
+                            self.parsed.dynamic_import_prefixes.push(DynamicImport {
+                                module,
+                                line,
+                                ..DynamicImport::default()
+                            });
                         }
                         self.parsed.has_opaque_dynamic_import = true;
                     }
@@ -603,7 +607,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             },
             _ => {},
         }
+        let lambda = matches!(expr, Expr::Lambda(_));
+        if lambda {
+            self.function_depth += 1;
+        }
         walk_expr(self, expr);
+        if lambda {
+            self.function_depth -= 1;
+        }
     }
 }
 
@@ -1223,6 +1234,8 @@ if sys.platform == \"win32\":
 
 def f():
     importlib.import_module(\"func_lib\")
+
+LOADERS = {\"pg\": lambda: importlib.import_module(\"lambda_lib\")}
 ",
         );
         let flags: Vec<(&str, bool, bool, bool)> = parsed
@@ -1244,6 +1257,7 @@ def f():
                 ("try_lib", true, false, false),
                 ("win_lib", false, true, false),
                 ("func_lib", false, false, true),
+                ("lambda_lib", false, false, true),
             ]
         );
     }
