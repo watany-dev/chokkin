@@ -221,6 +221,10 @@ pub struct LockfileSource {
 pub struct ManifestSources {
     /// `pyproject.toml` contributed project metadata or dependencies.
     pub pyproject_toml: bool,
+    /// `pyproject.toml` has a `[project]` table; without one, `--add-missing`
+    /// must not create it (setup.py / setup.cfg own the declarations).
+    #[serde(default)]
+    pub pyproject_project_table: bool,
     /// Root-relative requirements file paths that contributed.
     pub requirements_files: Vec<String>,
     /// Root-relative requirements include/constraint paths that were probed
