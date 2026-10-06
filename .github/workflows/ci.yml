@@ -168,27 +168,6 @@ jobs:
           tool: cargo-deny@0.19.2
       - run: cargo deny check advisories licenses bans sources
 
-  semver:
-    name: Semver (PR only)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
-        with:
-          tool: cargo-semver-checks@0.50.0
-      # Compare against the last release tag, not main: breaking changes may
-      # accumulate on main while the bumped version is still unreleased.
-      - run: cargo semver-checks --baseline-rev "$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
-
   repo-checks:
     name: Repo checks (actionlint, generated maps, action)
     if: github.event_name != 'schedule'

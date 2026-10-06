@@ -2,7 +2,7 @@
 
 /// Parsed metadata fields used by the resolver.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DistMetadata {
+pub(super) struct DistMetadata {
     /// Distribution `Name` field.
     pub name: Option<String>,
     /// PEP 794 `Import-Name` values.
@@ -13,7 +13,7 @@ pub struct DistMetadata {
 
 /// Parse selected metadata fields from a `METADATA` file body.
 #[must_use]
-pub fn parse_metadata(contents: &str) -> DistMetadata {
+pub(super) fn parse_metadata(contents: &str) -> DistMetadata {
     let mut metadata = DistMetadata::default();
     for line in contents.lines() {
         if let Some((key, value)) = line.split_once(':') {

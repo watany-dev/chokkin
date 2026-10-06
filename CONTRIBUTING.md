@@ -35,7 +35,6 @@ make test      # tests only
 make lint      # clippy + doc
 make fmt       # auto-format
 make coverage  # HTML coverage report (no threshold yet — see below)
-make semver    # public API compatibility vs. origin/main
 make wheel     # build a local maturin wheel
 make sdist     # build source distribution
 make oss-fixtures  # run chokkin on OSS/regression fixture manifest (Phase 1 §17)

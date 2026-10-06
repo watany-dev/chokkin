@@ -18,7 +18,7 @@ use super::types::{
 };
 
 /// Apply safe automatic fixes with workspace member manifest context.
-pub fn apply_fixes_with_workspace(
+pub(crate) fn apply_fixes_with_workspace(
     report: &IssueReport,
     root: &ProjectRoot,
     manifest: &LoadedManifest,

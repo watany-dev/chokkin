@@ -20,7 +20,7 @@ pub enum DependencyContext {
     OptionalExtra(String),
     /// `setup.cfg` `extras_require`.
     SetupExtra(String),
-    /// `[build-system].requires`; stored in [`ProjectMetadata::build_requires`].
+    /// `[build-system].requires`; stored in `ProjectMetadata::build_requires`.
     Build,
 }
 
@@ -179,7 +179,7 @@ pub struct LockfileGraph {
     pub extras: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
-/// Lockfile formats read into [`LockfileGraph`].
+/// Lockfile formats read into `LockfileGraph`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LockfileKind {

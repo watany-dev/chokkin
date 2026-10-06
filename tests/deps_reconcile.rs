@@ -2,18 +2,20 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chokkin::rules::deps::reconcile_with_context;
-use chokkin::rules::{DependencyRuleContext, RuleContext};
-use chokkin::{
+use chokkin::internals::reconcile_with_context;
+use chokkin::internals::{
     Confidence, GraphEdge, ModuleOrigin, PluginExtractRequest, ProjectRoot, RootMarker, RuleId,
-    RuntimeOverrides, Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports,
+    ScopedDeclarations, Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports,
     analyze_reachability, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
     discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
-    load_config, parse_project_sources_with_cache, probe_project, resolve_imports,
+    load_config, parse_project_sources_with_cache, resolve_imports_for_analysis,
     resolve_target_version,
 };
+use chokkin::internals::{DependencyRuleContext, RuleContext};
+use chokkin::{RuntimeOverrides, probe_project};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -22,15 +24,15 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 struct DepsInputs {
-    manifest: chokkin::LoadedManifest,
-    config: chokkin::ChokkinConfig,
-    sources: chokkin::DiscoveredSources,
-    plugins: chokkin::PluginHints,
-    parse: chokkin::ParseSummary,
-    graph: chokkin::ProjectGraph,
-    resolution: chokkin::ResolutionIndex,
-    reachability: chokkin::ReachabilityReport,
-    workspace_inputs: Vec<chokkin::WorkspaceMemberInputs>,
+    manifest: chokkin::internals::LoadedManifest,
+    config: chokkin::internals::ChokkinConfig,
+    sources: chokkin::internals::DiscoveredSources,
+    plugins: chokkin::internals::PluginHints,
+    parse: chokkin::internals::ParseSummary,
+    graph: chokkin::internals::ProjectGraph,
+    resolution: chokkin::internals::ResolutionIndex,
+    reachability: chokkin::internals::ReachabilityReport,
+    workspace_inputs: Vec<chokkin::internals::WorkspaceMemberInputs>,
 }
 
 fn load_deps(path: &Path, production: bool) -> DepsInputs {
@@ -63,13 +65,15 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     for reference in &plugin_refs {
         let _ = graph.intern_module(reference.module.clone(), ModuleOrigin::Unknown);
     }
-    let resolution = resolve_imports(
+    let resolution = resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
+        &BTreeMap::new(),
+        &ScopedDeclarations::default(),
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     let reachability =
@@ -92,21 +96,21 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     }
 }
 
-fn reconcile_fixture(name: &str) -> chokkin::DependencyReport {
+fn reconcile_fixture(name: &str) -> chokkin::internals::DependencyReport {
     reconcile_fixture_with_strict(name, false)
 }
 
-fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::DependencyReport {
+fn reconcile_fixture_with_strict(name: &str, strict: bool) -> chokkin::internals::DependencyReport {
     reconcile_inputs(&load_deps(&fixture(name), false), strict)
 }
 
-fn reconcile_production_fixture(name: &str, strict: bool) -> chokkin::DependencyReport {
+fn reconcile_production_fixture(name: &str, strict: bool) -> chokkin::internals::DependencyReport {
     let mut inputs = load_deps(&fixture(name), true);
     inputs.config.production = true;
     reconcile_inputs(&inputs, strict)
 }
 
-fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::DependencyReport {
+fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::internals::DependencyReport {
     let workspace_boundaries = inputs
         .workspace_inputs
         .iter()
@@ -135,18 +139,18 @@ fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::DependencyRep
 }
 
 /// Matches `IssueSubject::Distribution` only; CHK003/CHK004 carry `Import` subjects.
-fn has_dist_rule(report: &chokkin::DependencyReport, rule: RuleId, name: &str) -> bool {
+fn has_dist_rule(report: &chokkin::internals::DependencyReport, rule: RuleId, name: &str) -> bool {
     report.candidates.iter().any(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
-                chokkin::IssueSubject::Distribution { name: dist } if dist == name
+                chokkin::internals::IssueSubject::Distribution { name: dist } if dist == name
             )
     })
 }
 
 /// CHK003/CHK004/CHK005 rules reported for `name`, which §10 keeps exclusive.
-fn rules_mentioning(report: &chokkin::DependencyReport, name: &str) -> Vec<RuleId> {
+fn rules_mentioning(report: &chokkin::internals::DependencyReport, name: &str) -> Vec<RuleId> {
     report
         .candidates
         .iter()
@@ -161,15 +165,15 @@ fn rules_mentioning(report: &chokkin::DependencyReport, name: &str) -> Vec<RuleI
 }
 
 fn candidate_for_distribution<'a>(
-    report: &'a chokkin::DependencyReport,
+    report: &'a chokkin::internals::DependencyReport,
     rule: RuleId,
     name: &str,
-) -> Option<&'a chokkin::IssueCandidate> {
+) -> Option<&'a chokkin::internals::IssueCandidate> {
     report.candidates.iter().find(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
-                chokkin::IssueSubject::Distribution { name: dist } if dist == name
+                chokkin::internals::IssueSubject::Distribution { name: dist } if dist == name
             )
     })
 }
@@ -289,9 +293,18 @@ fn lockfile_formats_match_uv_lock_chk004() {
     assert_eq!(expected.len(), 1);
     assert!(expected[0].0.contains("urllib3"));
     for (name, kind) in [
-        ("transitive_urllib3_pylock", chokkin::LockfileKind::Pylock),
-        ("transitive_urllib3_poetry", chokkin::LockfileKind::Poetry),
-        ("transitive_urllib3_pdm", chokkin::LockfileKind::Pdm),
+        (
+            "transitive_urllib3_pylock",
+            chokkin::internals::LockfileKind::Pylock,
+        ),
+        (
+            "transitive_urllib3_poetry",
+            chokkin::internals::LockfileKind::Poetry,
+        ),
+        (
+            "transitive_urllib3_pdm",
+            chokkin::internals::LockfileKind::Pdm,
+        ),
     ] {
         let inputs = load_deps(&fixture(name), false);
         let source = inputs.manifest.sources.lockfile.expect(name);
@@ -387,13 +400,13 @@ fn misplaced_confidence_follows_the_strongest_import() {
     let xarray = candidate_for_distribution(&report, RuleId::Chk005, "xarray").expect("xarray");
     assert!(matches!(
         xarray.origins.as_slice(),
-        [chokkin::Origin::Import { line: 15, .. }]
+        [chokkin::internals::Origin::Import { line: 15, .. }]
     ));
     // An equally strong later import keeps the first origin.
     let sympy = candidate_for_distribution(&report, RuleId::Chk005, "sympy").expect("sympy");
     assert!(matches!(
         sympy.origins.as_slice(),
-        [chokkin::Origin::Import { line: 19, .. }]
+        [chokkin::internals::Origin::Import { line: 19, .. }]
     ));
 }
 
@@ -561,7 +574,7 @@ fn platform_guard_import_marks_tzdata_used() {
     assert!(report.used_distributions.contains("tzdata"));
 }
 
-fn assert_used(report: &chokkin::DependencyReport, names: &[&str]) {
+fn assert_used(report: &chokkin::internals::DependencyReport, names: &[&str]) {
     for name in names {
         assert!(
             !has_dist_rule(report, RuleId::Chk002, name),
@@ -654,7 +667,7 @@ fn uv_path_source_resolves_without_venv() {
     let inputs = load_deps(&fixture("uv_path_source"), false);
     assert!(!inputs.resolution.warnings.iter().any(|warning| matches!(
         warning,
-        chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "mylib"
+        chokkin::internals::ResolveWarning::UnresolvedImport { import, .. } if import == "mylib"
     )));
     let report = reconcile_fixture("uv_path_source");
     assert_eq!(rules_mentioning(&report, "mylib"), []);
@@ -693,9 +706,9 @@ fn path_source_is_used_through_its_member_tree() {
         &fixture("uv_path_source_renamed_module"),
         None,
         &RuntimeOverrides::default(),
-        chokkin::AnalyzeOptions {
-            cache: chokkin::CacheOptions::disabled(),
-            ..chokkin::AnalyzeOptions::default()
+        chokkin::internals::AnalyzeOptions {
+            cache: chokkin::internals::CacheOptions::disabled(),
+            ..chokkin::internals::AnalyzeOptions::default()
         },
     )
     .expect("analyze");
@@ -774,11 +787,11 @@ fn include_group_is_checked_once_under_its_declaring_group() {
     let boto3 = unused[0];
     assert!(matches!(
         &boto3.subject,
-        chokkin::IssueSubject::Distribution { name } if name == "boto3"
+        chokkin::internals::IssueSubject::Distribution { name } if name == "boto3"
     ));
     assert!(matches!(
         boto3.origins.as_slice(),
-        [chokkin::Origin::Manifest(origin)] if origin.label == "dependency-groups.Shared_Libs[1]"
+        [chokkin::internals::Origin::Manifest(origin)] if origin.label == "dependency-groups.Shared_Libs[1]"
     ));
     assert!(
         boto3
@@ -818,7 +831,7 @@ fn library_public_modules_use_dependencies_without_other_entry_roots() {
             .collect::<Vec<_>>();
         assert_eq!(
             unused,
-            Vec::<&chokkin::IssueCandidate>::new(),
+            Vec::<&chokkin::internals::IssueCandidate>::new(),
             "strict={strict}"
         );
     }
@@ -839,7 +852,7 @@ fn dev_group_declaration_does_not_hide_unused_setup_py_runtime_declaration() {
         assert!(
             matches!(
                 httpx.origins.as_slice(),
-                [chokkin::Origin::Manifest(origin)] if origin.file == "setup.py"
+                [chokkin::internals::Origin::Manifest(origin)] if origin.file == "setup.py"
             ),
             "strict={strict}: {:?}",
             httpx.origins

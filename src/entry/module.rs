@@ -6,7 +6,7 @@ use crate::sources::{LayoutInfo, ProjectLayout};
 
 /// Resolve a dotted module name to a root-relative `.py` path present in `known_paths`.
 #[must_use]
-pub fn resolve_module_to_path(
+pub(super) fn resolve_module_to_path(
     module: &str,
     layout: &LayoutInfo,
     known_paths: &BTreeSet<String>,

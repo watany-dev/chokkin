@@ -16,7 +16,7 @@ use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.py`.
 #[derive(Debug, Default)]
-pub struct SetupPyExtraction {
+pub(super) struct SetupPyExtraction {
     /// Project metadata when statically available.
     pub metadata: ProjectMetadata,
     /// Declared dependencies.
@@ -37,7 +37,10 @@ pub struct SetupPyExtraction {
 }
 
 /// Extract manifest data from `setup.py` without executing Python.
-pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, ManifestError> {
+pub(super) fn extract_setup_py(
+    root: &Path,
+    path: &Path,
+) -> Result<SetupPyExtraction, ManifestError> {
     let rel = rel_to_root(root, path);
     let mut result = SetupPyExtraction::default();
     let Some(contents) = read_text(path)? else {

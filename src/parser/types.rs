@@ -235,7 +235,7 @@ pub struct ParseSummary {
 
 /// Map file context to the default import context.
 #[must_use]
-pub const fn import_context_for_file(file_context: FileContext) -> ImportContext {
+pub(crate) const fn import_context_for_file(file_context: FileContext) -> ImportContext {
     match file_context {
         FileContext::Test => ImportContext::Test,
         FileContext::Runtime | FileContext::Docs | FileContext::Dev => ImportContext::Runtime,

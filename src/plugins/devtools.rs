@@ -15,7 +15,7 @@ use super::util::{origin_for_file, push_binary, read_pyproject_table};
 
 /// Extract static dev-tool config hints.
 #[must_use]
-pub fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
+pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(plugin);
     match plugin {
         PluginId::Tox => extract_file_or_tool_table(

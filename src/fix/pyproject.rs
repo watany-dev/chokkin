@@ -40,7 +40,7 @@ fn load_doc(path: &std::path::Path) -> Result<LoadedDoc<'_>, FixError> {
 }
 
 /// Remove the entry for `distribution` at a manifest label.
-pub fn remove_by_label(
+pub(super) fn remove_by_label(
     path: &std::path::Path,
     label: &str,
     distribution: &str,
@@ -60,7 +60,7 @@ pub fn remove_by_label(
 }
 
 /// Move a dependency from a dev group into `[project].dependencies`.
-pub fn move_group_to_runtime(
+pub(super) fn move_group_to_runtime(
     path: &std::path::Path,
     from_label: &str,
     distribution: &str,
@@ -83,7 +83,10 @@ pub fn move_group_to_runtime(
 }
 
 /// Add a runtime dependency to `[project].dependencies`.
-pub fn add_runtime_dependency(path: &std::path::Path, raw: &str) -> Result<String, FixError> {
+pub(super) fn add_runtime_dependency(
+    path: &std::path::Path,
+    raw: &str,
+) -> Result<String, FixError> {
     let mut loaded = load_doc(path)?;
     let (rel, doc) = (loaded.rel, &mut loaded.doc);
 

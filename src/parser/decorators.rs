@@ -9,7 +9,7 @@ use ruff_python_ast::Expr;
 /// Normalize a decorator expression to a dotted name (`app.route`,
 /// `functools.lru_cache`), or `None` when it has no static name.
 #[must_use]
-pub fn normalize_decorator(expr: &Expr) -> Option<String> {
+pub(super) fn normalize_decorator(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Name(name) => Some(name.id.to_string()),
         Expr::Attribute(attribute) => {

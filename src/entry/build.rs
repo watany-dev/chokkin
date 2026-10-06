@@ -69,7 +69,7 @@ pub fn build_entry_roots(
 ///
 /// The root manifest never names a member's `[project.scripts]`, so without
 /// this every file of an app member is an orphan (#488).
-pub fn add_member_manifest_roots<'a>(
+pub(crate) fn add_member_manifest_roots<'a>(
     plan: &mut EntryPlan,
     root_sources: &DiscoveredSources,
     members: impl IntoIterator<Item = (&'a str, &'a LoadedManifest, &'a DiscoveredSources)>,

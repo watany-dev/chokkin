@@ -8,7 +8,7 @@ use super::types::{IssueCandidate, RuleId, Severity};
 ///
 /// Returns `None` when the rule is configured as `off`.
 #[must_use]
-pub fn resolve_issue_severity(
+pub(super) fn resolve_issue_severity(
     rule: RuleId,
     candidate_severity: Severity,
     config: &ChokkinConfig,
@@ -26,7 +26,7 @@ pub fn resolve_issue_severity(
 
 /// Apply severity overrides to a candidate, returning `None` when disabled.
 #[must_use]
-pub fn apply_severity_override(
+pub(super) fn apply_severity_override(
     candidate: IssueCandidate,
     config: &ChokkinConfig,
 ) -> Option<IssueCandidate> {

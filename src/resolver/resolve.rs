@@ -18,32 +18,6 @@ use super::types::{
 };
 use super::venv::load_venv_index;
 
-/// Resolve parsed imports and plugin module references to origins and distributions.
-///
-/// `workspace_members` marks cross-member imports as first-party so workspace
-/// packages do not become false missing-dependency findings.
-#[must_use]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub fn resolve_imports(
-    config: &ChokkinConfig,
-    manifest: &LoadedManifest,
-    sources: &DiscoveredSources,
-    parse: &ParseSummary,
-    plugin_refs: &[ModuleReference],
-    workspace_members: &[ResolvedWorkspaceMember],
-) -> ResolutionIndex {
-    resolve_imports_for_analysis(
-        config,
-        manifest,
-        sources,
-        parse,
-        plugin_refs,
-        workspace_members,
-        &BTreeMap::new(),
-        &ScopedDeclarations::default(),
-    )
-}
-
 /// Distributions declared outside the root manifest, for the files they cover.
 #[derive(Debug, Default)]
 pub struct ScopedDeclarations {
@@ -53,12 +27,14 @@ pub struct ScopedDeclarations {
     pub members: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// [`resolve_imports`] with per-file stdlib ranges for PEP 723 scripts, also
-/// resolving an unmapped root through the script block or member manifest
-/// owning the file.
+/// Resolve parsed imports and plugin module references to origins and distributions.
 ///
+/// Uses per-file stdlib ranges for PEP 723 scripts and resolves an unmapped
+/// root through the script block or member manifest owning the file.
 /// A script's `requires-python` decides which modules are stdlib for the
 /// imports in that file; every other file uses the project range.
+/// `workspace_members` marks cross-member imports as first-party so workspace
+/// packages do not become false missing-dependency findings.
 #[must_use]
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn resolve_imports_for_analysis(

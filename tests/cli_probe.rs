@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use chokkin::internals::{PluginId, ProjectLayout};
 use chokkin::{
-    ExitStatus, PluginId, ProjectLayout, RuntimeOverrides, probe_project, write_probe_report,
-    write_probe_warnings,
+    ExitStatus, RuntimeOverrides, probe_project, write_probe_report, write_probe_warnings,
 };
 
 fn fixture_path(name: &str) -> PathBuf {

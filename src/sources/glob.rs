@@ -14,7 +14,7 @@ const MANDATORY_EXCLUDES: &[&str] = &[
 ];
 
 /// Build a glob matcher from pattern strings.
-pub fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
+pub(crate) fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
     let mut builder = GlobSetBuilder::new();
     let mut compiled = Vec::with_capacity(patterns.len());
     for pattern in patterns {
@@ -36,7 +36,7 @@ pub fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
 /// `.venv`, `.chokkin`, `build`, `dist`, and `__pycache__` are always excluded even when
 /// the user replaces `config.exclude`.
 #[must_use]
-pub fn effective_exclude(config_exclude: &[String]) -> Vec<String> {
+pub(super) fn effective_exclude(config_exclude: &[String]) -> Vec<String> {
     let mut patterns = config_exclude.to_vec();
     for mandatory in MANDATORY_EXCLUDES {
         if !patterns.iter().any(|pattern| pattern == *mandatory) {

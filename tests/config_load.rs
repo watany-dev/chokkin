@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chokkin::{
+use chokkin::internals::{
     Confidence, ConfigError, PluginId, ProjectMode, ProjectRoot, RootMarker, default_config,
     discover_project_root, load_config,
 };
@@ -28,7 +28,7 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     }
 }
 
-fn load_fixture(name: &str) -> chokkin::LoadedConfig {
+fn load_fixture(name: &str) -> chokkin::internals::LoadedConfig {
     let path = fixture(name);
     let root = discover_project_root(&path).expect("discover root");
     load_config(&root).expect("load config")

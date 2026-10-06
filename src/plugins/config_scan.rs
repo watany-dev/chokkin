@@ -17,7 +17,7 @@ use super::{task_files, tool_plugins};
 
 /// Output from config scanning.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct ConfigScanResult {
+pub(super) struct ConfigScanResult {
     /// CLI binaries referenced from configuration.
     pub binary_usages: Vec<BinaryUsage>,
     /// Distributions used without a distinct CLI name (themes, tox extras, etc.).
@@ -38,7 +38,7 @@ const SCRIPT_DIRS: [&str; 2] = ["scripts", "bin"];
 /// Every existing candidate is listed, not only the ones a scan read, so a
 /// cache entry is invalidated when a candidate appears after it was written.
 #[must_use]
-pub fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
+pub(super) fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = MKDOCS_CONFIG_NAMES
         .into_iter()
         .chain([PRE_COMMIT_CONFIG, TOX_CONFIG])
@@ -53,7 +53,7 @@ pub fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
 
 /// Scan project configuration for dev-tool / CLI usage.
 #[must_use]
-pub fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
+pub(super) fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     let root = ctx.root.path.as_path();
     let mut result = ConfigScanResult::default();
     let mut seen_binaries: HashSet<(String, String)> = HashSet::new();
@@ -719,7 +719,7 @@ mod tests {
             marker: RootMarker::PyProjectToml,
         };
         let manifest = empty_manifest(root.clone());
-        let config = crate::default_config();
+        let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
             layout: LayoutInfo {
@@ -796,7 +796,7 @@ mod tests {
             path: dir,
             marker: RootMarker::PyProjectToml,
         };
-        let config = crate::default_config();
+        let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
             layout: LayoutInfo {
@@ -845,7 +845,7 @@ mod tests {
             path: dir,
             marker: RootMarker::PyProjectToml,
         };
-        let config = crate::default_config();
+        let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
             layout: LayoutInfo {
@@ -925,7 +925,7 @@ mod tests {
                 opaque: false,
                 included_via: Vec::new(),
             });
-        let config = crate::default_config();
+        let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
             layout: LayoutInfo {
@@ -995,7 +995,7 @@ mod tests {
                 opaque: false,
                 included_via: Vec::new(),
             });
-        let config = crate::default_config();
+        let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
             layout: LayoutInfo {

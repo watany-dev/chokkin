@@ -2,18 +2,20 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chokkin::rules::deps::reconcile_with_context;
-use chokkin::rules::symbols::analyze_with_context;
-use chokkin::rules::{DependencyRuleContext, RuleContext};
-use chokkin::{
-    Confidence, ExitStatus, PluginExtractRequest, ProjectRoot, ResolutionIndex, RootMarker, RuleId,
-    RuntimeOverrides, SeverityLevel, add_parsed_imports, analyze_reachability,
+use chokkin::internals::analyze_with_context;
+use chokkin::internals::reconcile_with_context;
+use chokkin::internals::{
+    Confidence, ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolutionIndex, RootMarker,
+    RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports, analyze_reachability,
     apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
     discover_sources, emit_issues, extract_manifest, extract_plugin_hints_with_parse, load_config,
-    parse_project_sources_with_cache, resolve_imports, resolve_target_version,
+    parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
 };
+use chokkin::internals::{DependencyRuleContext, RuleContext};
+use chokkin::{ExitStatus, RuntimeOverrides};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -22,11 +24,11 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 struct EmitInputs {
-    config: chokkin::ChokkinConfig,
-    parse: chokkin::ParseSummary,
-    reachability: chokkin::ReachabilityReport,
-    deps: chokkin::DependencyReport,
-    symbols: Vec<chokkin::IssueCandidate>,
+    config: chokkin::internals::ChokkinConfig,
+    parse: chokkin::internals::ParseSummary,
+    reachability: chokkin::internals::ReachabilityReport,
+    deps: chokkin::internals::DependencyReport,
+    symbols: Vec<chokkin::internals::IssueCandidate>,
 }
 
 fn load_emit(path: &Path) -> EmitInputs {
@@ -64,15 +66,17 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(reference.module.clone(), ModuleOrigin::Unknown);
     }
-    let resolution = resolve_imports(
+    let resolution = resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
+        &BTreeMap::new(),
+        &ScopedDeclarations::default(),
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     let reachability = analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, false)
@@ -166,12 +170,12 @@ fn config_ignore_suppresses_matching_issue() {
 #[test]
 fn likely_unused_dependency_hidden_when_confidence_is_certain() {
     let inputs = load_emit_with_strict_deps(&fixture("marker_pywin32"), true);
-    let is_likely_pywin32 = |issue: &chokkin::Issue| {
+    let is_likely_pywin32 = |issue: &chokkin::internals::Issue| {
         issue.rule == RuleId::Chk002
             && issue.confidence == Confidence::Likely
             && matches!(
                 &issue.subject,
-                chokkin::IssueSubject::Distribution { name } if name == "pywin32"
+                chokkin::internals::IssueSubject::Distribution { name } if name == "pywin32"
             )
     };
 
@@ -184,7 +188,10 @@ fn likely_unused_dependency_hidden_when_confidence_is_certain() {
     assert!(!report.issues.iter().any(is_likely_pywin32));
 }
 
-fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> chokkin::IssueReport {
+fn emit_with_config(
+    inputs: &EmitInputs,
+    config: &chokkin::internals::ChokkinConfig,
+) -> chokkin::internals::IssueReport {
     emit_issues(
         &inputs.reachability,
         &inputs.deps,
@@ -198,9 +205,9 @@ fn emit_with_config(inputs: &EmitInputs, config: &chokkin::ChokkinConfig) -> cho
 
 fn emit_with_config_and_overrides(
     inputs: &EmitInputs,
-    config: &chokkin::ChokkinConfig,
+    config: &chokkin::internals::ChokkinConfig,
     overrides: &RuntimeOverrides,
-) -> chokkin::IssueReport {
+) -> chokkin::internals::IssueReport {
     emit_issues(
         &inputs.reachability,
         &inputs.deps,
@@ -243,7 +250,7 @@ fn severity_info_downgrades_exit_code_in_default_mode() {
         .iter()
         .find(|issue| issue.rule == RuleId::Chk002)
         .expect("CHK002 should still be reported");
-    assert_eq!(chk002.severity, chokkin::Severity::Info);
+    assert_eq!(chk002.severity, chokkin::internals::Severity::Info);
     assert_eq!(report.exit_status, ExitStatus::Success);
 }
 
@@ -268,7 +275,7 @@ fn severity_warning_counts_toward_exit_only_in_strict_mode() {
         .iter()
         .find(|issue| issue.rule == RuleId::Chk002)
         .expect("CHK002 should still be reported");
-    assert_eq!(chk002.severity, chokkin::Severity::Warning);
+    assert_eq!(chk002.severity, chokkin::internals::Severity::Warning);
     assert_eq!(default_report.exit_status, ExitStatus::Success);
     assert_eq!(strict_report.exit_status, ExitStatus::IssuesFound);
 }
@@ -296,8 +303,11 @@ fn severity_error_upgrade_counts_toward_exit_in_default_mode() {
         .iter()
         .find(|issue| issue.rule == RuleId::Chk002)
         .expect("CHK002");
-    assert_eq!(warning_issue.severity, chokkin::Severity::Warning);
-    assert_eq!(error_issue.severity, chokkin::Severity::Error);
+    assert_eq!(
+        warning_issue.severity,
+        chokkin::internals::Severity::Warning
+    );
+    assert_eq!(error_issue.severity, chokkin::internals::Severity::Error);
     assert_eq!(warning_report.exit_status, ExitStatus::Success);
     assert_eq!(error_report.exit_status, ExitStatus::IssuesFound);
 }

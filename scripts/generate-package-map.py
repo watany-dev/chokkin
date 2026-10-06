@@ -164,7 +164,7 @@ def render_packages(packages: dict[str, list[str]]) -> str:
         "#![allow(clippy::doc_markdown)]",
         "",
         "/// Bundled distribution to import names (PyPI top packages + curated mismatches).",
-        f"pub static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[",
+        f"pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[",
     ]
     for dist, imports in packages.items():
         import_list = ", ".join(f'"{name}"' for name in imports)
@@ -184,7 +184,7 @@ def render_binaries(entries: list[dict[str, str]]) -> str:
         "#![allow(clippy::doc_markdown)]",
         "",
         "/// Bundled CLI binary name to distribution name.",
-        "pub static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[",
+        "pub(crate) static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[",
     ]
     for entry in sorted(entries, key=lambda item: item["binary"]):
         lines.append(f'    ("{entry["binary"]}", "{normalize(entry["distribution"])}"),')

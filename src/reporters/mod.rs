@@ -13,7 +13,6 @@ mod types;
 pub(crate) use default::config_label;
 pub use default::config_label_from_sources;
 pub use fix::render_fix_report;
-pub use format::format_subject;
 pub use types::{FileCounts, RenderContext, ReporterId};
 
 use crate::rules::IssueReport;

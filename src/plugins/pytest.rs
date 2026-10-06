@@ -20,7 +20,7 @@ use super::util::{
 use super::warnings::PluginsWarning;
 
 /// Extract pytest-related plugin hints.
-pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
+pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Pytest);
     let mut warnings = Vec::new();
     let root = ctx.root.path.as_path();
@@ -181,7 +181,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
 
 /// The `sys.path` settings pytest applies while importing tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PytestImportSettings {
+pub(crate) struct PytestImportSettings {
     /// `pythonpath` entries, relative to the project root.
     pub pythonpath: Vec<String>,
     /// `--import-mode=importlib` in `addopts`: test and conftest directories
@@ -197,7 +197,7 @@ pub struct PytestImportSettings {
 /// the first of `pyproject.toml`, `tox.ini` and `setup.cfg` with a pytest
 /// section.
 #[must_use]
-pub fn import_settings(root: &Path) -> PytestImportSettings {
+pub(crate) fn import_settings(root: &Path) -> PytestImportSettings {
     for file in ["pytest.ini", ".pytest.ini"] {
         let path = root.join(file);
         if path.is_file() {

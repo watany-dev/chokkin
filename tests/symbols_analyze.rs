@@ -2,16 +2,17 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chokkin::rules::RuleContext;
-use chokkin::rules::symbols::analyze_with_context;
-use chokkin::{
-    Confidence, PluginExtractRequest, ProjectRoot, RootMarker, RuleId, Severity,
-    add_parsed_imports, analyze_reachability, apply_resolution_to_graph, build_entry_roots,
-    build_graph_skeleton, discover_project_root, discover_sources, extract_manifest,
-    extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
-    resolve_imports, resolve_target_version,
+use chokkin::internals::RuleContext;
+use chokkin::internals::analyze_with_context;
+use chokkin::internals::{
+    Confidence, PluginExtractRequest, ProjectRoot, RootMarker, RuleId, ScopedDeclarations,
+    Severity, add_parsed_imports, analyze_reachability, apply_resolution_to_graph,
+    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
+    extract_manifest, extract_plugin_hints_with_parse, load_config,
+    parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -21,14 +22,14 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 struct SymbolInputs {
-    manifest: chokkin::LoadedManifest,
-    sources: chokkin::DiscoveredSources,
-    plugins: chokkin::PluginHints,
-    parse: chokkin::ParseSummary,
-    graph: chokkin::ProjectGraph,
-    resolution: chokkin::ResolutionIndex,
-    reachability: chokkin::ReachabilityReport,
-    entry: chokkin::EntryPlan,
+    manifest: chokkin::internals::LoadedManifest,
+    sources: chokkin::internals::DiscoveredSources,
+    plugins: chokkin::internals::PluginHints,
+    parse: chokkin::internals::ParseSummary,
+    graph: chokkin::internals::ProjectGraph,
+    resolution: chokkin::internals::ResolutionIndex,
+    reachability: chokkin::internals::ReachabilityReport,
+    entry: chokkin::internals::EntryPlan,
 }
 
 fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
@@ -59,15 +60,20 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     }
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     for reference in &plugin_refs {
-        let _ = graph.intern_module(reference.module.clone(), chokkin::ModuleOrigin::Unknown);
+        let _ = graph.intern_module(
+            reference.module.clone(),
+            chokkin::internals::ModuleOrigin::Unknown,
+        );
     }
-    let resolution = resolve_imports(
+    let resolution = resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
+        &BTreeMap::new(),
+        &ScopedDeclarations::default(),
     );
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     let reachability =
@@ -86,7 +92,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     }
 }
 
-fn analyze_fixture(name: &str) -> Vec<chokkin::IssueCandidate> {
+fn analyze_fixture(name: &str) -> Vec<chokkin::internals::IssueCandidate> {
     let inputs = load_symbols(&fixture(name), false);
     analyze_with_context(
         &RuleContext {
@@ -104,23 +110,23 @@ fn analyze_fixture(name: &str) -> Vec<chokkin::IssueCandidate> {
 }
 
 fn find_symbol<'a>(
-    report: &'a [chokkin::IssueCandidate],
+    report: &'a [chokkin::internals::IssueCandidate],
     rule: RuleId,
     module: &str,
     name: &str,
-) -> Option<&'a chokkin::IssueCandidate> {
+) -> Option<&'a chokkin::internals::IssueCandidate> {
     report.iter().find(|candidate| {
         candidate.rule == rule
             && matches!(
                 &candidate.subject,
-                chokkin::IssueSubject::Symbol { module: m, name: n }
+                chokkin::internals::IssueSubject::Symbol { module: m, name: n }
                     if m == module && n == name
             )
     })
 }
 
 fn has_symbol_rule(
-    report: &[chokkin::IssueCandidate],
+    report: &[chokkin::internals::IssueCandidate],
     rule: RuleId,
     module: &str,
     name: &str,
@@ -149,7 +155,7 @@ fn unused_public_function_emits_chk006() {
             candidate.rule == RuleId::Chk006
                 && matches!(
                     &candidate.subject,
-                    chokkin::IssueSubject::Symbol { name, .. } if name == "dead_api"
+                    chokkin::internals::IssueSubject::Symbol { name, .. } if name == "dead_api"
                 )
         })
         .expect("dead_api candidate");
@@ -236,12 +242,12 @@ fn reexport_source_module_is_resolved_once() {
                 candidate.rule == RuleId::Chk007
                     && matches!(
                         &candidate.subject,
-                        chokkin::IssueSubject::Symbol { name: n, .. } if n == name
+                        chokkin::internals::IssueSubject::Symbol { name: n, .. } if n == name
                     )
             })
             .expect("CHK007 candidate");
         match candidate.origins.first() {
-            Some(chokkin::Origin::Import { module, .. }) => module.clone(),
+            Some(chokkin::internals::Origin::Import { module, .. }) => module.clone(),
             other => panic!("unexpected origin: {other:?}"),
         }
     };
@@ -262,7 +268,7 @@ fn unresolved_import_emits_chk010() {
                 candidate.rule == RuleId::Chk010
                     && matches!(
                         &candidate.subject,
-                        chokkin::IssueSubject::Import { module, .. } if module == root
+                        chokkin::internals::IssueSubject::Import { module, .. } if module == root
                     )
             }),
             "expected CHK010 for {root}"
@@ -279,7 +285,7 @@ fn library_mode_downgrades_chk006_to_info() {
             candidate.rule == RuleId::Chk006
                 && matches!(
                     &candidate.subject,
-                    chokkin::IssueSubject::Symbol { name, .. } if name == "unused_public"
+                    chokkin::internals::IssueSubject::Symbol { name, .. } if name == "unused_public"
                 )
         })
         .expect("unused_public candidate");
@@ -296,7 +302,7 @@ fn library_mode_unshipped_package_keeps_chk006_warning() {
                 candidate.rule == RuleId::Chk006
                     && matches!(
                         &candidate.subject,
-                        chokkin::IssueSubject::Symbol { name, .. } if name == symbol
+                        chokkin::internals::IssueSubject::Symbol { name, .. } if name == symbol
                     )
             })
             .map(|candidate| candidate.severity)
@@ -406,7 +412,7 @@ fn relative_package_import_counts_as_external_reference() {
     ));
 }
 
-fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::IssueCandidate> {
+fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::internals::IssueCandidate> {
     let temp = tempfile::TempDir::new().expect("tempdir");
     for (file, text) in files {
         let path = temp.path().join(file);
@@ -529,7 +535,7 @@ fn chk006_message_names_the_symbol_kind() {
                 candidate.rule == RuleId::Chk006
                     && matches!(
                         &candidate.subject,
-                        chokkin::IssueSubject::Symbol { name: n, .. } if n == name
+                        chokkin::internals::IssueSubject::Symbol { name: n, .. } if n == name
                     )
             })
             .unwrap_or_else(|| panic!("{name} candidate"));

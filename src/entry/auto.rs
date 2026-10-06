@@ -20,7 +20,7 @@ const EXACT_PATH_ENTRIES: &[&str] = &["docs/conf.py", "alembic/env.py"];
 
 /// Collect auto-detected entry candidates from discovered files (§8).
 #[must_use]
-pub fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandidate> {
+pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandidate> {
     let mut candidates = Vec::new();
     let layout = &sources.layout;
 

@@ -5,7 +5,7 @@ use ruff_python_parser::Parsed;
 
 /// Result of reading a Python list literal for string elements.
 #[derive(Debug)]
-pub struct LiteralScan {
+pub(crate) struct LiteralScan {
     /// String elements in source order.
     pub values: Vec<String>,
     /// `false` when the list also holds non-string elements.
@@ -13,14 +13,14 @@ pub struct LiteralScan {
 }
 
 /// Parse Python source without executing it; `None` on a syntax error.
-pub fn parse_module(contents: &str) -> Option<Suite> {
+pub(crate) fn parse_module(contents: &str) -> Option<Suite> {
     ruff_python_parser::parse_module(contents)
         .ok()
         .map(Parsed::into_suite)
 }
 
 /// Value of the first top-level `name = ...` assignment.
-pub fn assigned_value<'a>(stmts: &'a [Stmt], name: &str) -> Option<&'a Expr> {
+pub(crate) fn assigned_value<'a>(stmts: &'a [Stmt], name: &str) -> Option<&'a Expr> {
     stmts.iter().find_map(|stmt| {
         let Stmt::Assign(assign) = stmt else {
             return None;
@@ -34,7 +34,7 @@ pub fn assigned_value<'a>(stmts: &'a [Stmt], name: &str) -> Option<&'a Expr> {
 }
 
 /// The string when `expr` is a string literal.
-pub fn string_value(expr: &Expr) -> Option<String> {
+pub(crate) fn string_value(expr: &Expr) -> Option<String> {
     if let Expr::StringLiteral(literal) = expr {
         Some(literal.value.to_str().to_owned())
     } else {
@@ -43,7 +43,7 @@ pub fn string_value(expr: &Expr) -> Option<String> {
 }
 
 /// The string elements when `expr` is a list literal.
-pub fn string_list(expr: &Expr) -> Option<LiteralScan> {
+pub(crate) fn string_list(expr: &Expr) -> Option<LiteralScan> {
     let Expr::List(list) = expr else {
         return None;
     };

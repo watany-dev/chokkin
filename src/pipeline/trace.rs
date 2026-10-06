@@ -8,19 +8,22 @@ use crate::reachability::{ModuleIndex, ReachabilityReport, TracePath, TraceStep,
 use crate::sources::DiscoveredSources;
 
 /// Normalize a user-supplied path for graph lookup.
-pub fn normalize_trace_path(path: &str) -> String {
+pub(super) fn normalize_trace_path(path: &str) -> String {
     path.replace('\\', "/").trim_start_matches("./").to_owned()
 }
 
 /// Find a file id for a root-relative trace target.
-pub fn file_id_for_trace(graph: &ProjectGraph, target: &str) -> Option<crate::graph::FileId> {
+pub(super) fn file_id_for_trace(
+    graph: &ProjectGraph,
+    target: &str,
+) -> Option<crate::graph::FileId> {
     let normalized = normalize_trace_path(target);
     graph.file_id(&normalized)
 }
 
 /// Format a reachability trace as a tree for CLI output.
 #[must_use]
-pub fn format_trace(path: &TracePath) -> String {
+pub(super) fn format_trace(path: &TracePath) -> String {
     let mut out = String::from("Trace path:\n");
     for (index, step) in path.steps.iter().enumerate() {
         let prefix = if index + 1 == path.steps.len() {

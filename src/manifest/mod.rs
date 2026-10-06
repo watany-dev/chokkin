@@ -27,15 +27,16 @@ pub use error::ManifestError;
 pub(crate) use extract::requires_python_max_minor;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub(crate) use lockfile::lockfile_candidates;
-pub use pep508_util::normalize_distribution_name;
+pub(crate) use pep508_util::normalize_distribution_name;
 pub(crate) use pep508_util::pep508_distribution_name;
 pub(crate) use requirements::requirements_line_distribution;
-pub use script::{
-    InlineScript, discover_inline_scripts, inline_script_target, parse_inline_script,
+pub use script::discover_inline_scripts;
+pub(crate) use script::{InlineScript, inline_script_target};
+pub(crate) use types::{
+    DeclaredDependency, LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, UvSourceKind,
+    UvToolSettings, WheelTargets,
 };
-pub use types::{
-    DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, LoadedManifest,
-    LockfileGraph, LockfileKind, LockfileSource, ManifestSources, PackageFind, ProjectMetadata,
-    UvSource, UvSourceKind, UvToolSettings, WheelTargets,
-};
+pub use types::{DependencyContext, DependencyOrigin, LoadedManifest, LockfileKind};
+#[cfg(test)]
+pub(crate) use types::{EntryPointDecl, LockfileSource, UvSource};
 pub use warnings::ManifestWarning;

@@ -9,7 +9,10 @@ use crate::sources::is_test_data_path;
 ///
 /// Unreachable test data is skipped unless `strict`.
 #[must_use]
-pub fn chk001_candidates(unreachable: &[UnreachableFile], strict: bool) -> Vec<IssueCandidate> {
+pub(super) fn chk001_candidates(
+    unreachable: &[UnreachableFile],
+    strict: bool,
+) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
     for file in unreachable {

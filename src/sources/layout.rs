@@ -43,7 +43,7 @@ const LIB_DIR: &str = "lib";
 /// name, then the `[tool.uv.sources]` path that provides this project, and
 /// a guessed directory last.
 #[must_use]
-pub fn infer_layout(
+pub(crate) fn infer_layout(
     root: &Path,
     metadata: &ProjectMetadata,
     uv: &UvToolSettings,
@@ -377,7 +377,7 @@ fn normalized_project_names(name: &str) -> Vec<String> {
 /// under the inferred layout (outside `src/` and outside every package), and
 /// callers treat imports from it as unresolved rather than inventing a name.
 #[must_use]
-pub fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
+pub(crate) fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> {
     if let Some((member, rest)) = layout.member_for(path) {
         return path_to_module(rest, &member.layout)
             .or_else(|| namespace_module_name(rest, &member.layout));
