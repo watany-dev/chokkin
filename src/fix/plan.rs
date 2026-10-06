@@ -202,6 +202,13 @@ fn plan_add_missing_to_manifest(
             "missing dependency insertion currently supports non-Poetry pyproject.toml manifests",
         ));
     }
+    if !manifest.sources.pyproject_project_table {
+        return Err(skipped(
+            issue,
+            SkippedReason::UnsupportedTarget,
+            "pyproject.toml has no [project] table; dependencies are declared in setup.py/setup.cfg",
+        ));
+    }
     if manifest
         .metadata
         .dynamic
@@ -487,6 +494,7 @@ mod tests {
     fn plans_chk003_add_missing_for_pyproject() {
         let mut manifest = manifest_with(Vec::new());
         manifest.sources.pyproject_toml = true;
+        manifest.sources.pyproject_project_table = true;
         let issue = Issue {
             rule: RuleId::Chk003,
             severity: Severity::Error,
@@ -534,12 +542,31 @@ mod tests {
                 file: "pyproject.toml".to_owned(),
             }]
         );
+
+        // #581: requests keeps only `[tool.*]` in pyproject.toml and declares
+        // dependencies in setup.py.
+        manifest.sources.pyproject_project_table = false;
+        manifest.sources.setup_py = true;
+        let (actions, skipped) = plan_fixes(
+            &report,
+            &manifest,
+            &[],
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        );
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+        assert!(skipped[0].detail.contains("no [project] table"));
     }
 
     #[test]
     fn deduplicates_chk003_add_missing_actions() {
         let mut manifest = manifest_with(Vec::new());
         manifest.sources.pyproject_toml = true;
+        manifest.sources.pyproject_project_table = true;
         let issue = Issue {
             rule: RuleId::Chk003,
             severity: Severity::Error,

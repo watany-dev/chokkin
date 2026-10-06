@@ -54,6 +54,7 @@ pub fn extract_manifest(
         uv = extracted.uv;
         warnings.extend(extracted.warnings);
         sources.pyproject_toml = true;
+        sources.pyproject_project_table = extracted.has_project_table;
     }
 
     // Manifest whose runtime dependencies could not be read, if any.
@@ -265,7 +266,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v5".to_owned(),
+            unit_version: "manifest-extract-v6".to_owned(),
         },
         inputs,
     })
