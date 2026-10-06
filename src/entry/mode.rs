@@ -84,7 +84,9 @@ fn has_clear_app_signals(manifest: &LoadedManifest, candidates: &[EntryCandidate
 }
 
 fn is_library_project(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
-    if manifest.metadata.name.is_none() {
+    // requests sets `name=about["__title__"]` from an `exec`ed file, so a
+    // static `setup()` call stands in for an unreadable name (#586).
+    if manifest.metadata.name.is_none() && !manifest.sources.setup_py_call {
         return false;
     }
 
@@ -231,6 +233,17 @@ mod tests {
             &mut warnings,
         );
         assert_eq!(mode, ProjectMode::App);
+    }
+
+    #[test]
+    fn library_mode_for_setup_py_without_static_name() {
+        let mut manifest = empty_manifest();
+        manifest.sources.setup_py_call = true;
+        let mut config = default_config();
+        config.mode = ProjectMode::Auto;
+        let mut warnings = Vec::new();
+        let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[], &mut warnings);
+        assert_eq!(mode, ProjectMode::Library);
     }
 
     #[test]

@@ -25,6 +25,9 @@ pub struct SetupPyExtraction {
     pub warnings: Vec<ManifestWarning>,
     /// Whether static parsing succeeded.
     pub parsed: bool,
+    /// A `setup()` call was found statically, even if its keywords were not
+    /// all readable.
+    pub setup_call: bool,
     /// `install_requires` could not be fully read (no static `setup()` call,
     /// or a value the evaluator cannot follow).
     pub runtime_unknown: bool,
@@ -54,6 +57,7 @@ pub fn extract_setup_py(root: &Path, path: &Path) -> Result<SetupPyExtraction, M
             .push(ManifestWarning::SetupPyNotStatic { file: rel });
         return Ok(result);
     };
+    result.setup_call = true;
     result
         .files_missing
         .extend(call.probed_missing.iter().cloned());
@@ -454,6 +458,17 @@ if __name__ == "__main__":
         let result = extract("from setuptools import setup\nsetup_kwargs = {}\n", &[]);
         assert!(result.runtime_unknown);
         assert!(!result.parsed);
+        assert!(!result.setup_call);
+    }
+
+    #[test]
+    fn setup_call_is_found_when_name_is_not_static() {
+        let result = extract(
+            "from setuptools import setup\nabout = {}\nexec(open(\"src/acme/__version__.py\").read(), about)\nsetup(name=about[\"__title__\"], packages=[\"acme\"], package_dir={\"\": \"src\"})\n",
+            &[],
+        );
+        assert!(result.setup_call);
+        assert_eq!(result.metadata.name, None);
     }
 
     fn extract_bytes(contents: &[u8]) -> SetupPyExtraction {

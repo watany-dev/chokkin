@@ -419,8 +419,9 @@ discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry �
 console_scripts / manage.py / asgi.py / wsgi.py / app.py がある
   -> app mode
 
-[project] name があり、src/<package>/__init__.py または
-root直下の <package>/__init__.py (flat layout) があり、明確なentryがない
+[project] name (または静的に見つかる setup.py の setup() 呼び出し) があり、
+src/<package>/__init__.py または root直下の <package>/__init__.py
+(flat layout) があり、明確なentryがない
   -> library mode
 
 複数 pyproject.toml / tool.uv.workspace.members がある
@@ -429,6 +430,8 @@ root直下の <package>/__init__.py (flat layout) があり、明確なentryが�
 いずれにも該当しない
   -> app mode。ただしunused_fileのconfidence上限をlikelyに落とす
 ```
+
+setup.py の `setup()` 呼び出しで name を代用するのは、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になるため (#586)。
 
 自動検出したworkspace member（§5、#488）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。
 

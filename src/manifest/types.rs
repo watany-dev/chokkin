@@ -234,6 +234,10 @@ pub struct ManifestSources {
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).
     pub setup_py: bool,
+    /// `setup.py` has a statically found `setup()` call, even when `name`
+    /// could not be read (`name=about["__title__"]`, #586).
+    #[serde(default)]
+    pub setup_py_call: bool,
     /// `uv.lock` contributed. Kept for library API compatibility; mirrors
     /// `lockfile` having [`LockfileKind::Uv`].
     pub uv_lock: bool,
