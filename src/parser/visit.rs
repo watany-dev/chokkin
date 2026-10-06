@@ -35,6 +35,8 @@ pub struct ModuleVisitor<'a> {
     try_depth: u32,
     platform_guard_depth: u32,
     module_level: bool,
+    /// Module-level names set to `True` inside a `try` body (`has_x = True`).
+    try_flags: HashSet<String>,
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
@@ -61,6 +63,7 @@ impl<'a> ModuleVisitor<'a> {
             try_depth: 0,
             platform_guard_depth: 0,
             module_level: true,
+            try_flags: HashSet::new(),
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
@@ -112,6 +115,7 @@ impl<'a> ModuleVisitor<'a> {
     fn visit_branch<'ast>(&mut self, test: Option<&'ast Expr>, body: &'ast [Stmt]) {
         let was_type_checking = self.in_type_checking;
         let was_platform_guard = self.platform_guard_depth;
+        let was_try_depth = self.try_depth;
         if let Some(test) = test {
             self.visit_expr(test);
             if is_type_checking_test(test, &self.typing_aliases, &self.type_checking_names) {
@@ -120,10 +124,18 @@ impl<'a> ModuleVisitor<'a> {
             if is_platform_guard_test(test) {
                 self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
             }
+            // `if has_x:` only runs when the guarded `try` import succeeded.
+            if self.module_level
+                && let Expr::Name(name) = test
+                && self.try_flags.contains(name.id.as_str())
+            {
+                self.try_depth = self.try_depth.saturating_add(1);
+            }
         }
         self.visit_body(body);
         self.in_type_checking = was_type_checking;
         self.platform_guard_depth = was_platform_guard;
+        self.try_depth = was_try_depth;
     }
 
     fn visit_decorators(&mut self, decorators: &[Decorator]) {
@@ -435,6 +447,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 }
             },
             Stmt::Try(try_stmt) => {
+                if self.module_level {
+                    self.try_flags.extend(true_flags(&try_stmt.body));
+                }
                 self.try_depth = self.try_depth.saturating_add(1);
                 self.visit_body(&try_stmt.body);
                 self.try_depth = self.try_depth.saturating_sub(1);
@@ -445,7 +460,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                     }
                     self.visit_body(&handler.body);
                 }
+                // `else:` runs only when the `try` body raised nothing, so its
+                // imports are as optional as the body's.
+                self.try_depth = self.try_depth.saturating_add(1);
                 self.visit_body(&try_stmt.orelse);
+                self.try_depth = self.try_depth.saturating_sub(1);
                 self.visit_body(&try_stmt.finalbody);
             },
             Stmt::With(with_stmt) => {
@@ -613,6 +632,21 @@ fn subscript_name(expr: &Expr) -> Option<&str> {
         Expr::Attribute(attribute) => Some(attribute.attr.as_str()),
         _ => None,
     }
+}
+
+/// Names a `try` body assigns the literal `True` (`has_x = True`).
+fn true_flags(body: &[Stmt]) -> impl Iterator<Item = String> + '_ {
+    body.iter().filter_map(|stmt| {
+        let Stmt::Assign(assign) = stmt else {
+            return None;
+        };
+        let ([Expr::Name(name)], Expr::BooleanLiteral(value)) =
+            (assign.targets.as_slice(), &*assign.value)
+        else {
+            return None;
+        };
+        value.value.then(|| name.id.to_string())
+    })
 }
 
 fn alias_as_name(alias: &Alias) -> Option<String> {
@@ -1053,6 +1087,59 @@ g = lambda x=utils.G: x
                 .decorator_sites
                 .iter()
                 .any(|site| site.name == "app.route" && site.line == 4)
+        );
+    }
+
+    fn optional_by_module(parsed: &ParsedModule) -> Vec<(&str, bool)> {
+        parsed
+            .imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.optional))
+            .collect()
+    }
+
+    /// #580: requests' `help.py` imports `cryptography` in `else:` and its
+    /// `compat.py` guards `simplejson` behind a flag set in the `try` body.
+    #[test]
+    fn try_else_and_flag_guarded_imports_are_optional() {
+        let parsed = visit_source(
+            "try:\n    from urllib3.contrib import pyopenssl\nexcept ImportError:\n    import fallback_lib\nelse:\n    import cryptography\nfinally:\n    import finally_lib\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("urllib3.contrib", true),
+                ("fallback_lib", false),
+                ("cryptography", true),
+                ("finally_lib", false),
+            ]
+        );
+
+        let parsed = visit_source(
+            "try:\n    import simplejson as json\n    has_simplejson = True\nexcept ImportError:\n    import json\n    has_simplejson = False\n\nif has_simplejson:\n    from simplejson import JSONDecodeError\nelse:\n    from json import JSONDecodeError\nif other_flag:\n    import other_lib\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("simplejson", true),
+                ("json", false),
+                ("simplejson", true),
+                ("json", false),
+                ("other_lib", false),
+            ]
+        );
+    }
+
+    /// Only module-level flags guard imports: a function-local `if` may read
+    /// a shadowing local.
+    #[test]
+    fn flag_guard_is_limited_to_module_level() {
+        let parsed = visit_source(
+            "try:\n    import ujson\n    has_ujson = True\nexcept ImportError:\n    has_ujson = False\n\ndef f(has_ujson):\n    if has_ujson:\n        import inner_lib\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [("ujson", true), ("inner_lib", false)]
         );
     }
 
