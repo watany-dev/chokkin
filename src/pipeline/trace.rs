@@ -249,6 +249,7 @@ mod tests {
                     context: crate::parser::ImportContext::Runtime,
                     optional: false,
                     platform_guarded: false,
+                    deferred: false,
                     relative_level: 0,
                 }],
                 dynamic_imports: Vec::new(),

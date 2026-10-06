@@ -367,6 +367,31 @@ fn misplaced_pytest_emits_chk005() {
 }
 
 #[test]
+fn misplaced_confidence_follows_the_strongest_import() {
+    let report = reconcile_fixture("misplaced_conditional");
+    let summary = |name: &str| {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        (candidate.severity, candidate.confidence)
+    };
+    assert_eq!(summary("polars"), (Severity::Info, Confidence::Likely));
+    assert_eq!(summary("sympy"), (Severity::Warning, Confidence::Likely));
+    // The function-local import comes first; the later top-level one decides.
+    assert_eq!(summary("xarray"), (Severity::Warning, Confidence::Certain));
+    let xarray = candidate_for_distribution(&report, RuleId::Chk005, "xarray").expect("xarray");
+    assert!(matches!(
+        xarray.origins.as_slice(),
+        [chokkin::Origin::Import { line: 13, .. }]
+    ));
+    // An equally strong later import keeps the first origin.
+    let sympy = candidate_for_distribution(&report, RuleId::Chk005, "sympy").expect("sympy");
+    assert!(matches!(
+        sympy.origins.as_slice(),
+        [chokkin::Origin::Import { line: 17, .. }]
+    ));
+}
+
+#[test]
 fn unlisted_pytest_binary_emits_chk008() {
     let report = reconcile_fixture("unlisted_pytest");
     let binary = report

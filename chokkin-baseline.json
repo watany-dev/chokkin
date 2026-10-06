@@ -149,6 +149,11 @@
       "target": "tests/fixtures/deps/marker_pywin32/src/acme/main.py"
     },
     {
+      "fingerprint": "CHK001:tests/fixtures/deps/misplaced_conditional/src/acme/main.py",
+      "code": "CHK001",
+      "target": "tests/fixtures/deps/misplaced_conditional/src/acme/main.py"
+    },
+    {
       "fingerprint": "CHK001:tests/fixtures/deps/misplaced_pytest/src/acme/main.py",
       "code": "CHK001",
       "target": "tests/fixtures/deps/misplaced_pytest/src/acme/main.py"
