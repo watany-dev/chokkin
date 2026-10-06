@@ -608,12 +608,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                         }
                     } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
                         if let Some(module) = module_prefix(call) {
-                            let line = self.line_number(call);
-                            self.parsed.dynamic_import_prefixes.push(DynamicImport {
-                                module,
-                                line,
-                                ..DynamicImport::default()
-                            });
+                            let prefix = self.dynamic_import(module, call);
+                            self.parsed.dynamic_import_prefixes.push(prefix);
                         }
                         self.parsed.has_opaque_dynamic_import = true;
                     }
@@ -1321,6 +1317,26 @@ importlib.import_module(\"after_lambda_lib\")
                 ("after_lambda_lib", false, false, false),
             ]
         );
+    }
+
+    /// #610: a prefixed loader call inside a function is deferred as well.
+    #[test]
+    fn dynamic_import_prefixes_record_function_flag() {
+        let parsed = visit_source(
+            "import importlib
+
+importlib.import_module(\"top.\" + name)
+
+def f(name):
+    importlib.import_module(f\"func.{name}\")
+",
+        );
+        let flags: Vec<(&str, bool)> = parsed
+            .dynamic_import_prefixes
+            .iter()
+            .map(|prefix| (prefix.module.as_str(), prefix.deferred))
+            .collect();
+        assert_eq!(flags, [("top", false), ("func", true)]);
     }
 
     #[test]

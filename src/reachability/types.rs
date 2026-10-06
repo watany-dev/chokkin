@@ -91,6 +91,9 @@ pub(super) struct ReachPredecessor {
 pub struct ReachabilityReport {
     /// Files reachable from entry roots or framework globs.
     pub reachable: IndexSet<FileId>,
+    /// Reachable files that some path reaches without passing a
+    /// function-local or `TYPE_CHECKING` import (#610).
+    pub eager: IndexSet<FileId>,
     /// Candidate unused files with confidence metadata.
     pub unreachable: Vec<UnreachableFile>,
     /// Stdlib and third-party modules seen during traversal (Step 10 input).
