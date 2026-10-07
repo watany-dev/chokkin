@@ -283,9 +283,12 @@ fn resolve_import_site(
             .or_else(|| root_loose_match(&root_name, manifest))
             .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
             // A root that reachability maps to a file is local, even beside a
-            // member's declared package (`devel-common/src/docs/`, #612).
+            // member's declared package (`devel-common/src/docs/`, #612), and so
+            // is a namespace or script-sibling fallback (#589).
             .or_else(|| {
-                indexed_roots.contains(&root_name).then_some(RootResolution {
+                (indexed_roots.contains(&root_name)
+                    || pytest_paths.provides_fallback(file, &root_name))
+                .then_some(RootResolution {
                     origin: ModuleOrigin::FirstParty,
                     distribution: None,
                     confidence: ResolveConfidence::Certain,
