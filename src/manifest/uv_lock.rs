@@ -80,13 +80,11 @@ fn lock_graph(lock: UvLock) -> LockfileGraph {
     graph
 }
 
-/// Where the items of a multi-line array go.
 enum ArrayTarget {
     Dependencies,
     Extra(String),
 }
 
-/// Which table the scanner is in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Table {
     Package,
@@ -201,7 +199,6 @@ fn single_line_strings(contents: &str) -> bool {
         && memchr::memmem::find(bytes, b"'''").is_none()
 }
 
-/// A top-level table header, `None` for a repeat or a `package` table.
 fn top_table<'a>(header: &'a str, seen: &mut Vec<&'a str>) -> Option<Table> {
     if header.split('.').next() == Some("package") || seen.contains(&header) {
         return None;
@@ -226,7 +223,6 @@ fn package_table<'a>(sub: &'a str, seen: &mut Vec<&'a str>) -> Option<Table> {
     })
 }
 
-/// Record a graph key's one-line value, or the array its `[` line opens.
 fn graph_value(
     package: &mut UvPackage,
     table: Table,

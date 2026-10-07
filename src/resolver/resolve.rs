@@ -532,9 +532,8 @@ fn local_modules(
     let mut modules = BTreeSet::new();
     for file in files {
         let file = file.path.replace('\\', "/");
-        // Import roots are the project root, `src/`, and each member directory
-        // or its `src/` among the file's ancestors: hash lookups per ancestor,
-        // not a prefix test against every member (#592).
+        // Member roots by hash lookup per ancestor, not a prefix test against
+        // every member (#592).
         let mut starts = vec![0];
         if file.starts_with("src/") {
             starts.push("src/".len());
