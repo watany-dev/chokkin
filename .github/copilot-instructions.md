@@ -1,6 +1,6 @@
 # GitHub Copilot instructions for chokkin
 
-See [AGENTS.md](../AGENTS.md) for full project context. Key points for Copilot:
+See [AGENTS.md](../AGENTS.md) for the coding rules. Key points for Copilot:
 
 - `chokkin` is a Rust binary distributed as a Python wheel (maturin `bin` bindings).
   Implementation is in `src/lib.rs`; `src/main.rs` is argument dispatch only.
