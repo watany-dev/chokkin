@@ -263,7 +263,7 @@ fn scan_array_item(item: &str) -> Option<UvDependency> {
     let inner = item.strip_prefix("{ ")?.strip_suffix(" }")?;
     if let Some(rest) = inner.strip_prefix("name = \"") {
         let (name, rest) = rest.split_once('"')?;
-        if name.contains('\\') || !(rest.is_empty() || rest.starts_with(", ")) {
+        if !(rest.is_empty() || rest.starts_with(", ")) {
             return None;
         }
         return Some(UvDependency::Table {
@@ -295,10 +295,10 @@ fn skip_array(mut rest: &str) -> Option<&str> {
     }
 }
 
-/// The contents of a basic string uv writes: no escapes, no inner quotes.
+/// The contents of a basic string uv writes: no inner quotes.
 fn quoted(value: &str) -> Option<&str> {
     let inner = value.strip_prefix('"')?.strip_suffix('"')?;
-    (!inner.contains(['"', '\\'])).then_some(inner)
+    (!inner.contains('"')).then_some(inner)
 }
 
 /// A one-line value of a key the graph ignores.

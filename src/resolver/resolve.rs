@@ -707,11 +707,24 @@ mod tests {
                 file("acme/core.py"),
                 file("src/pkg/stub.pyi"),
                 file("packages/api/src/api/views.py"),
+                file("packages\\api\\plugins\\plug\\hooks.py"),
                 file("README.md"),
             ],
-            &[member("api", "packages/api")],
+            &[
+                member("api", "packages/api"),
+                member("plugins", "packages/api/plugins"),
+            ],
         );
-        for expected in ["acme", "acme.core", "pkg", "pkg.stub", "api", "api.views"] {
+        for expected in [
+            "acme",
+            "acme.core",
+            "pkg",
+            "pkg.stub",
+            "api",
+            "api.views",
+            "plug.hooks",
+            "plugins.plug.hooks",
+        ] {
             assert!(modules.contains(expected), "{expected}: {modules:?}");
         }
     }
