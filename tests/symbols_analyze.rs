@@ -909,3 +909,42 @@ fn library_mode_symbol_used_by_root_conftest_or_testpaths_is_not_chk006() {
         "unreferenced"
     ));
 }
+
+#[test]
+fn repeated_unresolved_import_emits_one_chk010_per_file() {
+    let report = analyze_fixture("repeated_unresolved");
+    let chk010 = |path: &str| {
+        report
+            .iter()
+            .filter(|candidate| {
+                candidate.rule == RuleId::Chk010
+                    && matches!(
+                        &candidate.subject,
+                        chokkin::internals::IssueSubject::Import { module, file, .. }
+                            if module == "lazypkg" && file == path
+                    )
+            })
+            .collect::<Vec<_>>()
+    };
+    let main = chk010("src/acme/main.py");
+    assert_eq!(main.len(), 1, "{main:?}");
+    // The runtime imports outrank the `TYPE_CHECKING` one on line 4, as both
+    // severity and anchor.
+    assert!(matches!(
+        &main[0].subject,
+        chokkin::internals::IssueSubject::Import { line: 8, .. }
+    ));
+    assert_eq!(main[0].severity, Severity::Warning);
+    assert!(
+        main[0]
+            .explain
+            .details
+            .contains(&"also imported at lines 4, 14".to_owned()),
+        "{:?}",
+        main[0].explain.details
+    );
+
+    let types = chk010("src/acme/types.py");
+    assert_eq!(types.len(), 1, "{types:?}");
+    assert_eq!(types[0].severity, Severity::Info);
+}
