@@ -31,6 +31,10 @@ inputs:
     description: Extra CLI arguments, whitespace-separated (e.g. "--production --confidence likely").
     required: false
     default: ""
+  cache:
+    description: Set to "true" to read and write chokkin's .chokkin/ cache. Off by default so cache files committed in a pull request cannot change the result.
+    required: false
+    default: "false"
 
 outputs:
   sarif-file:
@@ -52,12 +56,15 @@ runs:
         CHOKKIN_BASELINE: ${{ inputs.baseline }}
         CHOKKIN_SARIF: ${{ inputs.sarif-file }}
         CHOKKIN_ARGS: ${{ inputs.args }}
+        CHOKKIN_CACHE: ${{ inputs.cache }}
       run: |
         set -euo pipefail -f
         spec=chokkin
         [ "$CHOKKIN_VERSION" = latest ] || spec="chokkin@$CHOKKIN_VERSION"
         cmd=(uvx "$spec" --no-exit-code --reporter sarif)
         [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
+        # A repeated --no-cache is a usage error.
+        [ "$CHOKKIN_CACHE" = true ] || [[ " $CHOKKIN_ARGS " == *" --no-cache "* ]] || cmd+=(--no-cache)
         # shellcheck disable=SC2206
         cmd+=($CHOKKIN_ARGS)
         mkdir -p "$(dirname "$CHOKKIN_SARIF")"
@@ -71,12 +78,15 @@ runs:
         CHOKKIN_BASELINE: ${{ inputs.baseline }}
         CHOKKIN_REPORTER: ${{ inputs.reporter }}
         CHOKKIN_ARGS: ${{ inputs.args }}
+        CHOKKIN_CACHE: ${{ inputs.cache }}
       run: |
         set -euo pipefail -f
         spec=chokkin
         [ "$CHOKKIN_VERSION" = latest ] || spec="chokkin@$CHOKKIN_VERSION"
         cmd=(uvx "$spec" --reporter "$CHOKKIN_REPORTER")
         [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
+        # A repeated --no-cache is a usage error.
+        [ "$CHOKKIN_CACHE" = true ] || [[ " $CHOKKIN_ARGS " == *" --no-cache "* ]] || cmd+=(--no-cache)
         # shellcheck disable=SC2206
         cmd+=($CHOKKIN_ARGS)
         "${cmd[@]}"

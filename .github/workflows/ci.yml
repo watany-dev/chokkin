@@ -213,7 +213,9 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           SARIF: ${{ steps.chokkin.outputs.sarif-file }}
-        run: jq -e '.version == "2.1.0"' "$SARIF"
+        run: |
+          jq -e '.version == "2.1.0"' "$SARIF"
+          test ! -e "$RUNNER_TEMP/demo/.chokkin"
 
   zizmor:
     name: Zizmor

@@ -79,6 +79,9 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   `google-genai` (`google.genai`) (#590).
 
 ### Changed
+- The GitHub Action passes `--no-cache` unless the new `cache: "true"`
+  input is set, so `.chokkin/` cache files committed in a pull request
+  cannot change the result.
 - Members of a declared workspace (`[tool.uv.workspace]` /
   `[tool.chokkin.workspaces]`) that name a distribution and have no app
   entry are scored like libraries, as auto-detected members already were:

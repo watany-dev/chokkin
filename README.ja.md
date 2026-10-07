@@ -281,6 +281,7 @@ jobs:
 | `reporter` | `github` | 判定用 run の reporter |
 | `sarif-file` | — | SARIF の出力先(判定 run が失敗しても書き出す) |
 | `args` | — | 追加の CLI 引数(例: `--production --confidence likely`) |
+| `cache` | `false` | `true` で `.chokkin/` キャッシュを読み書きする。PR に含まれるキャッシュで結果が変わらないよう既定は無効 |
 
 action を使わない場合は `uvx` でバージョンを固定します。
 
