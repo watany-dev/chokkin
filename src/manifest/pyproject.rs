@@ -497,11 +497,9 @@ fn extract_uv_dynamic_versioning_hook(
     else {
         return;
     };
-    let is_dynamic = |field: &str| result.metadata.dynamic.iter().any(|item| item == field);
-    let (dynamic_deps, dynamic_optional) = (
-        is_dynamic("dependencies"),
-        is_dynamic("optional-dependencies"),
-    );
+    let dynamic = &result.metadata.dynamic;
+    let dynamic_deps = dynamic.iter().any(|field| field == "dependencies");
+    let dynamic_optional = dynamic.iter().any(|field| field == "optional-dependencies");
 
     if dynamic_deps && let Some(deps) = hook.get("dependencies").and_then(Value::as_array) {
         push_templated_array(
@@ -546,14 +544,12 @@ fn push_templated_array(
             line: None,
             label: label.clone(),
         };
-        let parsed = render_templates(raw).and_then(|rendered| {
-            let dep = parse_pep508_requirement(&rendered, context.clone(), origin).ok()?;
-            Some((dep, rendered != raw))
-        });
+        let parsed = render_templates(raw)
+            .and_then(|rendered| parse_pep508_requirement(&rendered, context.clone(), origin).ok());
         match parsed {
-            Some((mut dep, templated)) => {
+            Some(mut dep) => {
                 // The rendered version is a placeholder, not the real one.
-                if templated {
+                if raw.contains("{{") {
                     dep.specifier = None;
                 }
                 result.dependencies.push(dep);
@@ -571,13 +567,24 @@ fn push_templated_array(
 }
 
 /// Replace every `{{ ... }}` with a version that parses as PEP 440. `None`
-/// when a template is part of the distribution name, which cannot be guessed.
+/// when a template sits outside the version (name, extras, URL or marker),
+/// where no placeholder can stand in for it.
 fn render_templates(raw: &str) -> Option<String> {
-    let trimmed = raw.trim_start();
-    let name_len = trimmed
+    let Some(first) = raw.find("{{") else {
+        return Some(raw.to_owned());
+    };
+    let head = raw[..first].trim_start();
+    let name_len = head
         .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
-        .unwrap_or(trimmed.len());
-    if name_len == 0 || trimmed[name_len..].starts_with("{{") {
+        .unwrap_or(head.len());
+    let in_version = name_len > 0
+        && name_len < head.len()
+        && !head.contains(['@', ':', '/'])
+        && head.matches('[').count() == head.matches(']').count()
+        && !raw
+            .split_once(';')
+            .is_some_and(|(_, marker)| marker.contains("{{"));
+    if !in_version {
         return None;
     }
     let mut rendered = String::with_capacity(raw.len());
@@ -794,16 +801,26 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_uv_dynamic_versioning_entry_warns_with_the_raw_text() {
-        let result = extract(
-            "[project]\nname = \"x\"\ndynamic = [\"dependencies\"]\n[tool.hatch.metadata.hooks.uv-dynamic-versioning]\ndependencies = [\"{{ name }}-core\", \"core-{{ name }}\"]\n",
-        )
+    fn templates_outside_the_version_warn_with_the_raw_text() {
+        let entries = [
+            "{{ name }}-core",
+            "core-{{ name }}",
+            "core[{{ extra }}]",
+            "core @ https://example.com/core-{{ version }}.whl",
+            "https://example.com/core-{{ version }}.whl",
+            "core>=1; python_version >= '{{ python }}'",
+        ];
+        let array = entries
+            .iter()
+            .map(|entry| format!("{entry:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let result = extract(&format!(
+            "[project]\nname = \"x\"\ndynamic = [\"dependencies\"]\n[tool.hatch.metadata.hooks.uv-dynamic-versioning]\ndependencies = [{array}]\n"
+        ))
         .expect("valid pyproject");
         assert_eq!(result.dependencies, []);
-        for (index, raw) in ["{{ name }}-core", "core-{{ name }}"]
-            .into_iter()
-            .enumerate()
-        {
+        for (index, raw) in entries.into_iter().enumerate() {
             assert!(
                 result
                     .warnings

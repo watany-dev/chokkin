@@ -73,8 +73,9 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
 - When `[project].dynamic` lists `dependencies` or `optional-dependencies`,
   the arrays of `[tool.hatch.metadata.hooks.uv-dynamic-versioning]` are read
   as runtime dependencies and extras. A `{{ version }}` template in the
-  version clears the specifier; one in the name is reported as an invalid
-  requirement. The bundled map gains `py-key-value-aio` (`key_value`) and
+  version clears the specifier; one in the name, extras, URL or marker is
+  reported as an invalid requirement. `--fix` removes unused entries from
+  those arrays. The bundled map gains `py-key-value-aio` (`key_value`) and
   `google-genai` (`google.genai`) (#590).
 
 ### Changed
