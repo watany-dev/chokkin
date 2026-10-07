@@ -720,6 +720,51 @@ fn binary_production_keeps_members_shipped_through_groups_or_nesting() {
     );
 }
 
+/// A member only dev groups reference still ships when its classifiers, given
+/// or dynamic, mark it as published, like airflow's `airflow-ctl`, but not
+/// when they opt out of upload (#621).
+#[test]
+fn binary_production_keeps_published_members_only_dev_groups_reference() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[dependency-groups]\ndev = [\"ctl\", \"dyn\", \"helpers\"]\n\n[tool.uv.workspace]\nmembers = [\"ctl\", \"dyn\", \"helpers\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("main.py", "print(1)\n"),
+        (
+            "ctl/pyproject.toml",
+            "[project]\nname = \"acme-ctl\"\nversion = \"0.1.0\"\nclassifiers = [\"Framework :: Acme\"]\n",
+        ),
+        ("ctl/src/acme_ctl/__init__.py", ""),
+        ("ctl/src/acme_ctl/orphan.py", ""),
+        (
+            "dyn/pyproject.toml",
+            "[project]\nname = \"dyn\"\nversion = \"0.1.0\"\ndynamic = [\"classifiers\"]\n",
+        ),
+        ("dyn/src/dyn/__init__.py", ""),
+        ("dyn/src/dyn/orphan.py", ""),
+        (
+            "helpers/pyproject.toml",
+            "[project]\nname = \"helpers\"\nversion = \"0.1.0\"\nclassifiers = [\"Framework :: Acme\", \"Private :: Do Not Upload\"]\n",
+        ),
+        ("helpers/src/helpers/__init__.py", ""),
+        ("helpers/src/helpers/orphan.py", ""),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--production"]));
+    for orphan in ["ctl/src/acme_ctl/orphan.py", "dyn/src/dyn/orphan.py"] {
+        assert!(
+            keys.iter()
+                .any(|key| key == &("CHK001".to_owned(), orphan.to_owned())),
+            "{orphan}: {keys:?}"
+        );
+    }
+    assert!(
+        keys.iter()
+            .all(|(_, target)| !target.starts_with("helpers/")),
+        "{keys:?}"
+    );
+}
+
 /// starlette imports `JSONResponse` from `starlette.responses`, not the
 /// package root, so `--production` must keep the tests, and the modules only
 /// they reach, as evidence of API use. A private module's name, and one only

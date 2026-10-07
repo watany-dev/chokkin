@@ -182,7 +182,8 @@ fn auto_detect_members(
 /// `devel-common`: they never ship, so `--production` treats them like tests
 /// (#613). Runtime references count only from the root and the members it
 /// ships, because airflow's test and docs members, which nothing references,
-/// depend on `devel-common` at runtime. An unreferenced member stays.
+/// depend on `devel-common` at runtime. An unreferenced member stays, and so
+/// does one published on its own, like airflow's `airflow-ctl` (#621).
 fn drop_dev_only_members(
     sources: &mut DiscoveredSources,
     workspace_members: &mut Vec<ResolvedWorkspaceMember>,
@@ -220,7 +221,9 @@ fn drop_dev_only_members(
     }
     let dev_only: BTreeSet<&str> = dev_referenced
         .difference(&shipped)
-        .map(|&index| workspace_inputs[index].member.path.as_str())
+        .map(|&index| &workspace_inputs[index])
+        .filter(|input| !is_published(&input.manifest))
+        .map(|input| input.member.path.as_str())
         .collect();
     if dev_only.is_empty() {
         return;
@@ -238,6 +241,21 @@ fn drop_dev_only_members(
     let dev_only: BTreeSet<String> = dev_only.into_iter().map(str::to_owned).collect();
     workspace_inputs.retain(|input| !dev_only.contains(&input.member.path));
     workspace_members.retain(|member| !dev_only.contains(&member.path));
+}
+
+/// Classifiers mark a member as a distribution of its own, unless it opts out
+/// of upload the way airflow's private members do. Console scripts do not:
+/// dev helpers declare them too.
+fn is_published(manifest: &LoadedManifest) -> bool {
+    let metadata = &manifest.metadata;
+    if metadata.dynamic.iter().any(|item| item == "classifiers") {
+        return true;
+    }
+    let classifiers = &metadata.classifiers;
+    !classifiers.is_empty()
+        && !classifiers
+            .iter()
+            .any(|classifier| classifier.trim() == "Private :: Do Not Upload")
 }
 
 fn activate_plugins(
