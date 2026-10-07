@@ -295,20 +295,16 @@ fn plan_remove_duplicate(
         .collect();
     // Only a declaration another one implies is safe to drop; a sibling extra
     // with its own specifier or marker stays (#629).
-    let duplicates = crate::rules::deps::duplicate_declarations(&declarations);
-    if duplicates.len() < 2 {
-        return Err(skipped(
-            issue,
-            SkippedReason::Ambiguous,
-            "expected multiple declarations for duplicate fix",
-        ));
-    }
-
-    let to_remove = duplicates
-        .iter()
+    let to_remove = crate::rules::deps::duplicate_declarations(&declarations)
+        .into_iter()
         .max_by_key(|dep| removal_priority(&dep.context))
-        .copied()
-        .ok_or_else(|| skipped(issue, SkippedReason::Ambiguous, "no removable duplicate"))?;
+        .ok_or_else(|| {
+            skipped(
+                issue,
+                SkippedReason::Ambiguous,
+                "expected multiple declarations for duplicate fix",
+            )
+        })?;
 
     Ok(Some(FixAction::RemoveDependency {
         rule: issue.rule,
