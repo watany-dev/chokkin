@@ -265,9 +265,10 @@ fn expected_for(name: &str, dep: Dep, has_lock: bool, strict: bool) -> Vec<Key> 
         };
         out.push(key("CHK002", name, "error", confidence));
     }
-    // A dev group or extra repeats only a runtime declaration; groups and
-    // extras never duplicate each other (#555).
-    if dep.runtime.is_some() && (dep.dev || dep.extra) {
+    // A dev group or extra repeats only a runtime declaration with the same
+    // (here: no) marker; groups and extras never duplicate each other (#555,
+    // #629).
+    if dep.runtime == Some(false) && (dep.dev || dep.extra) {
         out.push(key("CHK009", name, "warning", "certain"));
     }
 

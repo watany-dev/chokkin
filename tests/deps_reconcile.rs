@@ -187,6 +187,8 @@ fn unused_boto3_emits_chk002() {
     assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
 
+/// starlette imports `python_multipart` itself to parse forms, so a project
+/// that uses starlette never imports the parser it has to declare.
 #[test]
 fn missing_yaml_emits_chk003() {
     let report = reconcile_fixture("missing_yaml");
@@ -446,6 +448,21 @@ fn group_declaration_with_extra_extras_is_not_a_duplicate() {
     assert_eq!(
         duplicate.message,
         "requests is declared in multiple contexts: group:dev, runtime"
+    );
+}
+
+/// #629: a group or extra with its own specifier or marker is not a duplicate.
+#[test]
+fn group_or_extra_with_its_own_constraint_is_not_a_duplicate() {
+    let report = reconcile_fixture("duplicate_constraints");
+    for name in ["click", "requests", "rich"] {
+        assert!(!has_dist_rule(&report, RuleId::Chk009, name), "{name}");
+    }
+    let duplicate =
+        candidate_for_distribution(&report, RuleId::Chk009, "httpx").expect("httpx duplicate");
+    assert_eq!(
+        duplicate.message,
+        "httpx is declared in multiple contexts: optional:http, runtime"
     );
 }
 

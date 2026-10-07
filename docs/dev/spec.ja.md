@@ -638,16 +638,26 @@ metapackage (wheel target が一致する file を持たない、または hatch
   -> dependency group は配布しないので従来どおり判定する
 ```
 
-CHK009 (duplicate_dependency) は、同じ distribution の宣言のうち片方が他方を冗長にする組だけを報告する (#494, #507)。
+CHK009 (duplicate_dependency) は、同じ distribution の宣言のうち片方が他方を冗長にする組だけを報告する (#494, #507, #629)。
 
 ```text
-同じ context に同じ marker で 2 回 (dependency-groups.test に pytest が 2 つ)
+同じ context に同じ marker・同じ specifier・同じ extras で 2 回 (dependency-groups.test に pytest が 2 つ)
   -> CHK009 "pytest is declared more than once in group:test"
+  -> specifier が違う場合 (pytest>=7 と pytest>=8) は両方が制約なので報告しない
+  -> extras が違う場合 (httpx と httpx[http2]) も片方を消すと extras を失うので報告しない
 runtime 宣言と group / optional extra / build の宣言
   -> CHK009 "requests is declared in multiple contexts: group:dev, runtime"
-  -> ただし group / extra 側が runtime 宣言に無い extras を足す場合
-     (runtime: streamlit、dev: streamlit[auth,charts]) は runtime 宣言の refinement なので報告しない
-     (extras は PEP 503 正規化で比較し、runtime 宣言すべての extras の和集合に含まれるかで見る)
+  -> group / extra 側が runtime 宣言から導けるときだけ報告する。次の場合は refinement なので報告しない
+     - runtime 宣言に無い extras を足す (runtime: streamlit、dev: streamlit[auth,charts])
+       (extras は PEP 503 正規化で比較し、同じ marker の runtime 宣言すべての extras の和集合に
+       含まれるかで見る。runtime: celery と celery[redis]; sys_platform == 'linux' に対する
+       dev: celery[redis] は報告しない)
+     - marker が runtime 宣言と違う (runtime: requests>=2; python_version >= '3.10'、legacy: requests>=2)
+     - specifier が空でも runtime 宣言と同じでもない (runtime: click>=7、mcp: click!=8.3.0。
+       runtime: rich、lint: rich>=13.0)。狭い・緩いの PEP 440 包含判定はしない
+       (runtime より緩い pydantic>=2.0 も報告しない)
+  -> specifier は `,` で区切った各 specifier の集合で比べる (`<9,>=7.0` と `>=7.0, <9` は同じ)。
+     marker は記述どおりの文字列で比べる
 extra 同士 (s3 と sqs の両方に boto3)、group 同士 (dev と test の両方に pytest)、group と extra、build と group
   -> 報告しない。extra は独立に install されるものなので両方に必要なら両方に書く
 project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言、opaque な宣言
@@ -657,7 +667,7 @@ project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言�
   -> include 側の context が違っても 1 つの宣言なので報告しない
 ```
 
-origin と `--explain` の details には重複に関与した宣言だけを出す。context の label は `runtime` / `group:<name>` / `optional:<extra>` / `build` で、setup.py の `extras_require` も `optional:` にそろえる。
+origin と `--explain` の details には重複に関与した宣言だけを出す。`--fix` もこの関与した宣言の中からだけ削除対象を 1 つ選ぶ (runtime と他 context の組では runtime 宣言を残す)。同じ distribution を別の制約で持つ兄弟の extra (http: httpx と pinned: httpx!=0.28.0 のうち pinned) は消さない。context の label は `runtime` / `group:<name>` / `optional:<extra>` / `build` で、setup.py の `extras_require` も `optional:` にそろえる。
 
 `TYPE_CHECKING` 配下のimportはtype contextにする。`import typing as t` や
 `from typing import TYPE_CHECKING as TC` の alias も静的に追跡し、runtime dependency

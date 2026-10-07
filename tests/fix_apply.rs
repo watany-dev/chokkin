@@ -217,6 +217,37 @@ fn fix_removes_several_unused_lines_from_one_requirements_file() {
     );
 }
 
+/// #629: CHK009 --fix only drops a declaration the runtime one implies, and
+/// never a sibling extra with its own specifier or marker.
+#[test]
+fn fix_removes_only_duplicates_the_runtime_declaration_implies() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("duplicate_constraints"), temp.path()).expect("copy fixture");
+    let pyproject = temp.path().join("pyproject.toml");
+    let before = std::fs::read_to_string(&pyproject).expect("read pyproject");
+
+    let report = analyze_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    let fix_report = report.fix.expect("fix report");
+    assert_eq!(fix_report.applied.len(), 1, "{:?}", fix_report.applied);
+    assert_eq!(fix_report.applied[0].rule, RuleId::Chk009);
+
+    let after = std::fs::read_to_string(&pyproject).expect("read pyproject after fix");
+    assert_eq!(
+        after,
+        before.replace(r#"http = ["httpx"]"#, "http = []"),
+        "{after}"
+    );
+}
+
 fn copy_dir_recursive(source: &Path, dest: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(source)? {
