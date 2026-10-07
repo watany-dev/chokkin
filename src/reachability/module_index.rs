@@ -41,13 +41,19 @@ impl ModuleIndex {
 
     /// Resolve `module` as imported from the file at `from_path`: pytest's
     /// `sys.path` entries for a test file come first, as prepend mode puts
-    /// them ahead of everything else.
+    /// them ahead of everything else; a module beside a script comes last.
     #[must_use]
     pub(crate) fn resolve_from(&self, from_path: &str, module: &str) -> Option<FileId> {
+        let file_at = |path: &str| self.path_to_file.get(path).copied();
         self.pytest
             .resolve(from_path, module)
-            .and_then(|path| self.path_to_file.get(path).copied())
+            .and_then(file_at)
             .or_else(|| self.resolve(module))
+            .or_else(|| {
+                self.pytest
+                    .resolve_sibling(from_path, module)
+                    .and_then(file_at)
+            })
     }
 
     /// Modules strictly inside package `prefix`, sorted by name.

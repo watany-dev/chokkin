@@ -908,6 +908,52 @@ fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
     );
 }
 
+/// fastapi's `docs_src/` and urllib3's `dummyserver/` sit at the root,
+/// outside the source globs, and airflow's prek scripts import a module
+/// beside them (#589).
+#[test]
+fn binary_resolves_root_dirs_from_tests_and_script_siblings() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme.run:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        // A runtime module runs under its package name, not as a script.
+        (
+            "src/acme/run.py",
+            "from helpers import console\n\n\ndef main() -> None:\n    console()\n",
+        ),
+        ("src/acme/helpers.py", "def console() -> None:\n    pass\n"),
+        ("docs_src/tutorial001/__init__.py", ""),
+        ("docs_src/tutorial001/app.py", "APP = 1\n"),
+        ("dummyserver/__init__.py", ""),
+        ("dummyserver/server.py", "PORT = 1\n"),
+        // `tests/__init__.py` makes the root the tests' basedir.
+        ("tests/__init__.py", ""),
+        (
+            "tests/test_tutorial.py",
+            "from docs_src.tutorial001.app import APP\nfrom dummyserver.server import PORT\n\n\ndef test_app() -> None:\n    assert APP and PORT\n",
+        ),
+        ("scripts/ci/prek/__init__.py", ""),
+        (
+            "scripts/ci/prek/check_thing.py",
+            "from common_utils import console\n\nconsole()\n",
+        ),
+        (
+            "scripts/ci/prek/common_utils.py",
+            "def console() -> None:\n    pass\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    let unresolved: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK010")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unresolved, ["src/acme/run.py:helpers"], "{keys:?}");
+}
+
 /// airflow: `[tool.pytest]` (pytest 9) adds `example_*.py`, and the root
 /// `testpaths` does not cover the member suites passed to pytest by path (#603).
 #[test]
