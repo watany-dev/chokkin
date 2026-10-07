@@ -225,6 +225,18 @@ mod tests {
             Some("azure-identity")
         );
         assert_eq!(
+            first("snowflake.snowpark.functions").as_deref(),
+            Some("snowflake-snowpark-python")
+        );
+        assert_eq!(
+            first("snowflake.connector.cursor").as_deref(),
+            Some("snowflake-connector-python")
+        );
+        assert_eq!(
+            first("snowflake.sqlalchemy").as_deref(),
+            Some("snowflake-sqlalchemy")
+        );
+        assert_eq!(
             first("opentelemetry.exporter.otlp.proto.grpc.trace_exporter").as_deref(),
             Some("opentelemetry-exporter-otlp-proto-grpc")
         );
@@ -263,6 +275,11 @@ mod tests {
             ("dns", "dnspython"),
             ("pkg_resources", "setuptools"),
             ("vertexai", "google-cloud-aiplatform"),
+            ("googleapiclient", "google-api-python-client"),
+            ("kiota_abstractions", "microsoft-kiota-abstractions"),
+            ("kiota_http", "microsoft-kiota-http"),
+            ("opensearchpy", "opensearch-py"),
+            ("key_value", "py-key-value-aio"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),
