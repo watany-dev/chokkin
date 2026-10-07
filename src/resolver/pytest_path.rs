@@ -6,21 +6,24 @@
 //! test or conftest therefore import under top-level names (`from lifecycle
 //! import X`), which neither the layout nor the module index knows about.
 //!
-//! Two more `sys.path` entries live here (#589): the project root for tests,
-//! which reaches root directories the source globs never walk (`docs_src/`,
-//! a src-layout project's `dummyserver/`), and, as a fallback, a non-test
-//! file's own directory, which `python path/to/script.py` puts first.
+//! Two more lookups live here (#589): root directories the source globs never
+//! walk (`docs_src/`, a src-layout project's `dummyserver/`) for tests whose
+//! basedir is the root, and, as a fallback, a script's own directory, which
+//! `python path/to/script.py` puts first.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::plugins::{PytestImportSettings, pytest_import_settings};
-use crate::sources::{DiscoveredSources, FileContext, FileKind};
+use crate::sources::{DiscoveredSources, FileContext, FileKind, path_to_module};
 
 /// Extra import directories that apply to test-context files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PytestImportPaths {
     files: HashSet<String>,
+    /// Non-test files run as scripts: Dev/Docs files, or runtime files that
+    /// map to no module name.
+    scripts: HashSet<String>,
     /// Every directory holding a discovered file, at any depth.
     dirs: HashSet<String>,
     /// Test-context file → the directories on `sys.path` while it runs, in
@@ -90,15 +93,25 @@ impl PytestImportPaths {
                 }
             }
             file_dirs.extend(pythonpath.iter().cloned());
-            // `python -m pytest` and IDE runners start from the root.
-            file_dirs.push(String::new());
             let mut seen = HashSet::new();
             file_dirs.retain(|dir| seen.insert(dir.clone()));
             search.insert(file.path.clone(), file_dirs);
         }
 
+        let scripts = sources
+            .files
+            .iter()
+            .filter(|file| match file.context {
+                FileContext::Test => false,
+                FileContext::Runtime => path_to_module(&file.path, &sources.layout).is_none(),
+                FileContext::Docs | FileContext::Dev => true,
+            })
+            .map(|file| file.path.clone())
+            .collect();
+
         Self {
             files,
+            scripts,
             dirs,
             search,
             root_modules: HashSet::new(),
@@ -116,17 +129,14 @@ impl PytestImportPaths {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
             if path.is_dir() {
-                if is_identifier(&name) {
-                    if path.join("__init__.py").is_file() {
-                        self.root_modules.insert(name);
-                    } else {
-                        self.root_namespaces.insert(name);
-                    }
+                if path.join("__init__.py").is_file() {
+                    self.root_modules.insert(name);
+                } else {
+                    self.root_namespaces.insert(name);
                 }
             } else if let Some(stem) = name
                 .strip_suffix(".py")
                 .or_else(|| name.strip_suffix(".pyi"))
-                .filter(|stem| is_identifier(stem))
             {
                 self.root_modules.insert(stem.to_owned());
             }
@@ -151,14 +161,14 @@ impl PytestImportPaths {
         if self.search.contains_key(file) {
             self.root_namespaces.contains(root)
         } else {
-            self.files.contains(file) && self.has_module(parent_dir(file), root)
+            self.scripts.contains(file) && self.has_module(parent_dir(file), root)
         }
     }
 
-    /// The module beside non-test `file` that `module` names, if any.
+    /// The module beside script `file` that `module` names, if any.
     #[must_use]
     pub(crate) fn resolve_sibling(&self, file: &str, module: &str) -> Option<&str> {
-        if self.search.contains_key(file) || !self.files.contains(file) {
+        if !self.scripts.contains(file) {
             return None;
         }
         self.find_module(parent_dir(file), module)
@@ -201,14 +211,6 @@ fn basedir(path: &str, files: &HashSet<String>) -> String {
         dir = parent_dir(dir);
     }
     dir.to_owned()
-}
-
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|first| first == '_' || first.is_alphabetic())
-        && chars.all(|c| c == '_' || c.is_alphanumeric())
 }
 
 fn parent_dir(path: &str) -> &str {
@@ -383,7 +385,13 @@ mod tests {
         }
         std::fs::write(temp.path().join("dummyserver/__init__.py"), "").expect("write");
         std::fs::write(temp.path().join("rootmod.py"), "").expect("write");
-        let files = ["src/acme/__init__.py", "tests/unit/test_core.py"];
+        let files = [
+            "src/acme/__init__.py",
+            "tests/__init__.py",
+            "tests/unit/__init__.py",
+            "tests/unit/test_core.py",
+            "tests/other/test_other.py",
+        ];
         let paths =
             PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
                 .with_root_entries(temp.path());
@@ -393,15 +401,19 @@ mod tests {
         // A namespace portion loses to a regular package anywhere on the path.
         assert!(!paths.provides_root(test, "docs_src"));
         assert!(paths.provides_fallback(test, "docs_src"));
+        // A test whose basedir is not the root does not see root entries.
+        assert!(!paths.provides_root("tests/other/test_other.py", "dummyserver"));
         // Runtime code does not run with the root on its path.
         assert!(!paths.provides_root("src/acme/__init__.py", "dummyserver"));
         assert!(!paths.provides_fallback("src/acme/__init__.py", "docs_src"));
     }
 
     #[test]
-    fn non_test_files_fall_back_to_modules_beside_them() {
+    fn scripts_fall_back_to_modules_beside_them() {
         let files = [
             "src/acme/__init__.py",
+            "src/acme/run.py",
+            "src/acme/helpers.py",
             "scripts/ci/prek/__init__.py",
             "scripts/ci/prek/check.py",
             "scripts/ci/prek/common_utils.py",
@@ -420,6 +432,9 @@ mod tests {
             Some("scripts/ci/prek/common_utils.py")
         );
         assert!(!paths.provides_root(script, "common_utils"));
+        // A runtime module imports by its package name, not its directory.
+        assert!(!paths.provides_fallback("src/acme/run.py", "helpers"));
+        assert_eq!(paths.resolve_sibling("src/acme/run.py", "helpers"), None);
         // Tests follow pytest's rules, not the script fallback.
         assert!(paths.provides_root("tests/e2e/test_x.py", "helpers"));
         assert!(!paths.provides_fallback("tests/pkg/test_y.py", "helpers"));

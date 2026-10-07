@@ -916,23 +916,21 @@ fn binary_resolves_root_dirs_from_tests_and_script_siblings() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme.cli.run:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme.run:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
         ),
         ("src/acme/__init__.py", ""),
-        ("src/acme/cli/__init__.py", ""),
+        // A runtime module runs under its package name, not as a script.
         (
-            "src/acme/cli/run.py",
+            "src/acme/run.py",
             "from helpers import console\n\n\ndef main() -> None:\n    console()\n",
         ),
-        (
-            "src/acme/cli/helpers.py",
-            "def console() -> None:\n    pass\n",
-        ),
-        ("src/acme/cli/stale.py", "X = 1\n"),
+        ("src/acme/helpers.py", "def console() -> None:\n    pass\n"),
         ("docs_src/tutorial001/__init__.py", ""),
         ("docs_src/tutorial001/app.py", "APP = 1\n"),
         ("dummyserver/__init__.py", ""),
         ("dummyserver/server.py", "PORT = 1\n"),
+        // `tests/__init__.py` makes the root the tests' basedir.
+        ("tests/__init__.py", ""),
         (
             "tests/test_tutorial.py",
             "from docs_src.tutorial001.app import APP\nfrom dummyserver.server import PORT\n\n\ndef test_app() -> None:\n    assert APP and PORT\n",
@@ -948,13 +946,12 @@ fn binary_resolves_root_dirs_from_tests_and_script_siblings() {
         ),
     ]);
     let keys = issue_keys(&json_issues(project.path(), &[]));
-    assert!(keys.iter().all(|(code, _)| code != "CHK010"), "{keys:?}");
-    let unused_file = |path: &str| {
-        keys.iter()
-            .any(|(code, target)| code == "CHK001" && target == path)
-    };
-    assert!(!unused_file("src/acme/cli/helpers.py"), "{keys:?}");
-    assert!(unused_file("src/acme/cli/stale.py"), "{keys:?}");
+    let unresolved: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK010")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unresolved, ["src/acme/run.py:helpers"], "{keys:?}");
 }
 
 /// airflow: `[tool.pytest]` (pytest 9) adds `example_*.py`, and the root
