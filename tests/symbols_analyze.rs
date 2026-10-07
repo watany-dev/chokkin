@@ -277,6 +277,38 @@ fn unresolved_import_emits_chk010() {
 }
 
 #[test]
+fn type_checking_unresolved_import_is_info() {
+    let report = analyze_fixture("type_checking_unresolved");
+    let chk010 = |root: &str| {
+        report
+            .iter()
+            .filter(|candidate| {
+                candidate.rule == RuleId::Chk010
+                    && matches!(
+                        &candidate.subject,
+                        chokkin::internals::IssueSubject::Import { module, .. } if module == root
+                    )
+            })
+            .map(|candidate| (candidate.severity, candidate.confidence))
+            .collect::<Vec<_>>()
+    };
+    // Only the runtime `import _typeshed` is broken; the `TYPE_CHECKING` one
+    // resolves to typeshed's stubs (#584).
+    assert_eq!(
+        chk010("_typeshed"),
+        vec![(Severity::Warning, Confidence::Likely)]
+    );
+    assert_eq!(
+        chk010("typeonlypkg"),
+        vec![(Severity::Info, Confidence::Likely)]
+    );
+    assert_eq!(
+        chk010("runtimeonlypkg"),
+        vec![(Severity::Warning, Confidence::Likely)]
+    );
+}
+
+#[test]
 fn library_mode_downgrades_chk006_to_info() {
     let report = analyze_fixture("library_mode");
     let unused = report

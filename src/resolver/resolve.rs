@@ -234,12 +234,9 @@ fn resolve_import_site(
     root_cache: &mut RootCache,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
-    // pytest puts the test's basedir on `sys.path` ahead of site-packages, so
-    // a local module there shadows any distribution of the same name.
-    let pytest_local = !stdlib.contains(&root_name) && pytest_paths.provides_root(file, &root_name);
-    let core = if pytest_local {
+    let core = if let Some(origin) = site_origin(&root_name, file, context, stdlib, pytest_paths) {
         RootResolution {
-            origin: ModuleOrigin::FirstParty,
+            origin,
             distribution: None,
             confidence: ResolveConfidence::Certain,
         }
@@ -304,6 +301,7 @@ fn resolve_import_site(
             import: root_name.clone(),
             file: file.to_owned(),
             line,
+            context,
         });
     }
 
@@ -320,6 +318,25 @@ fn resolve_import_site(
         distribution: core.distribution,
         confidence: core.confidence,
     }
+}
+
+/// Origin fixed by the import site itself, before any root lookup.
+fn site_origin(
+    root_name: &str,
+    file: &str,
+    context: ImportContext,
+    stdlib: StdlibRange,
+    pytest_paths: &PytestImportPaths,
+) -> Option<ModuleOrigin> {
+    // `_typeshed` exists only in typeshed's stubs: a checker resolves it, the
+    // interpreter never does, so only a runtime import of it is broken (#584).
+    if context == ImportContext::Type && root_name == "_typeshed" {
+        return Some(ModuleOrigin::Stdlib);
+    }
+    // pytest puts the test's basedir on `sys.path` ahead of site-packages, so
+    // a local module there shadows any distribution of the same name.
+    (!stdlib.contains(root_name) && pytest_paths.provides_root(file, root_name))
+        .then_some(ModuleOrigin::FirstParty)
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]

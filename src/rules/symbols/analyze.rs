@@ -6,7 +6,7 @@ use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
 use crate::graph::ProjectGraph;
 use crate::manifest::LoadedManifest;
-use crate::parser::{ParseSummary, ParsedModule};
+use crate::parser::{ImportContext, ParseSummary, ParsedModule};
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
@@ -322,7 +322,13 @@ fn detect_unresolved_imports(
     let mut reported = HashSet::new();
 
     for warning in &resolution.warnings {
-        let ResolveWarning::UnresolvedImport { import, file, line } = warning else {
+        let ResolveWarning::UnresolvedImport {
+            import,
+            file,
+            line,
+            context,
+        } = warning
+        else {
             continue;
         };
         if !reachable.contains(file.as_str()) {
@@ -347,7 +353,12 @@ fn detect_unresolved_imports(
                 line: *line,
                 distribution: None,
             },
-            severity: Severity::Warning,
+            // A `TYPE_CHECKING` import never runs; it stays reported for typos.
+            severity: if *context == ImportContext::Type {
+                Severity::Info
+            } else {
+                Severity::Warning
+            },
             confidence: Confidence::Likely,
             message,
             workspace_member: None,
