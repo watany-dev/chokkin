@@ -16,7 +16,7 @@ use super::context::{
 use super::missing::{
     WorkspaceDeclaredIndex, collect_optional_imports, governing_declarations, member_declarations,
 };
-use super::used::{DeclaredIndex, eager_paths};
+use super::used::{DeclaredIndex, file_paths};
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
 #[allow(clippy::too_many_lines)]
@@ -39,7 +39,8 @@ pub(super) fn detect_misplaced_dependencies(
         ..
     } = *context;
     let strengths = import_strengths(context.parse);
-    let eager = eager_paths(graph, reachability);
+    let eager = file_paths(graph, &reachability.eager);
+    let certain = file_paths(graph, &reachability.certain);
     let mut candidates: Vec<(IssueCandidate, ImportStrength)> = Vec::new();
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
 
@@ -109,6 +110,10 @@ pub(super) fn detect_misplaced_dependencies(
         // function-local import would (#610).
         if !eager.contains(import.file.as_str()) {
             strength = strength.min(ImportStrength::Deferred);
+        } else if !certain.contains(import.file.as_str()) {
+            // Likewise a file loaded only past an optional import may be
+            // missing at runtime without breaking the package (#614).
+            strength = ImportStrength::Optional;
         }
         let report_key = (
             workspace_member.unwrap_or_default().to_owned(),
@@ -169,10 +174,11 @@ pub(super) fn detect_misplaced_dependencies(
 /// imports work without it until the code path runs (#583).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ImportStrength {
-    /// `try`/`except ImportError` or platform-guarded.
+    /// `try`/`except ImportError`, `suppress(ImportError)` or
+    /// platform-guarded, or in a file loaded only past such an import.
     Optional,
-    /// Only inside a function body, or in a file loaded only from one or
-    /// from a `TYPE_CHECKING` block.
+    /// Only inside a function body, or in a file runtime code loads only
+    /// from one or from a `TYPE_CHECKING` block.
     Deferred,
     TopLevel,
 }
@@ -183,10 +189,10 @@ impl ImportStrength {
             Self::TopLevel => return candidate,
             Self::Optional => {
                 candidate.severity = Severity::Info;
-                "imported only under try/except ImportError or a platform guard"
+                "imported only under try/except ImportError or a platform guard, or by modules loaded only that way"
             },
             Self::Deferred => {
-                "imported only inside functions or by modules loaded only from inside functions or TYPE_CHECKING blocks"
+                "imported only inside functions or by modules runtime code loads only from inside functions or TYPE_CHECKING blocks"
             },
         };
         candidate.confidence = Confidence::Likely;

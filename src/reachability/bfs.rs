@@ -4,11 +4,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use indexmap::{IndexMap, IndexSet};
 
+use crate::config::ProjectMode;
 use crate::entry::EntryPlan;
 use crate::graph::{FileId, GraphEdge, ModuleId, ModuleOrigin, ProjectGraph};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::PluginHints;
 use crate::resolver::import_root;
+use crate::sources::FileContext;
 
 use super::module_index::ModuleIndex;
 use super::types::{ReachPredecessor, TraceStep, UsedModule};
@@ -24,8 +26,12 @@ pub(super) struct BfsOutcome {
     pub used_modules: Vec<UsedModule>,
     /// Reachable files that some path reaches without passing a
     /// function-local or `TYPE_CHECKING` import, so they load as soon as
-    /// their entry does.
+    /// their entry does. Imports out of test, docs and dev files reach only
+    /// library files: loading from those says nothing about runtime (#614).
     pub eager: IndexSet<FileId>,
+    /// Eager files that some path reaches without passing an optional
+    /// (`try`/`suppress(ImportError)` or platform-guarded) import either.
+    pub certain: IndexSet<FileId>,
 }
 
 /// One import site on a file: the module it names and the line it sits on.
@@ -56,6 +62,9 @@ struct BfsState<'a> {
     dynamic_sites: HashSet<ImportSiteRef>,
     /// Import lines not followed in this walk.
     skipped_lines: HashSet<FileLine>,
+    /// When set, imports out of test, docs and dev files reach only library
+    /// files, which outside callers may import directly.
+    runtime_entry: Option<&'a EntryPlan>,
 }
 
 impl<'a> BfsState<'a> {
@@ -64,6 +73,7 @@ impl<'a> BfsState<'a> {
         parse: &ParseSummary,
         module_index: &'a ModuleIndex,
         skipped_lines: HashSet<FileLine>,
+        runtime_entry: Option<&'a EntryPlan>,
     ) -> Self {
         Self {
             graph,
@@ -77,7 +87,17 @@ impl<'a> BfsState<'a> {
             used_modules: Vec::new(),
             dynamic_sites: build_dynamic_sites(graph, parse),
             skipped_lines,
+            runtime_entry,
         }
+    }
+
+    fn follows(&self, from: FileId, target: FileId) -> bool {
+        let Some(entry) = self.runtime_entry else {
+            return true;
+        };
+        let file = |id| self.graph.file(id);
+        file(from).is_none_or(|node| node.context == FileContext::Runtime)
+            || file(target).is_some_and(|node| entry.mode_for(&node.path) == ProjectMode::Library)
     }
 
     /// Mark `file_id` reached; `step` is only built for a file seen the first time.
@@ -100,6 +120,7 @@ impl<'a> BfsState<'a> {
             predecessors: self.predecessors,
             used_modules: self.used_modules,
             eager: IndexSet::new(),
+            certain: IndexSet::new(),
         }
     }
 
@@ -124,6 +145,7 @@ pub(super) fn run_reachability_bfs(
     module_index: &ModuleIndex,
     framework: Vec<(FileId, ReachPredecessor)>,
 ) -> BfsOutcome {
+    let (lazy, optional) = conditional_lines(graph, parse);
     let eager = walk(
         graph,
         entry,
@@ -131,7 +153,21 @@ pub(super) fn run_reachability_bfs(
         parse,
         module_index,
         framework.clone(),
-        build_lazy_lines(graph, parse),
+        lazy.clone(),
+        Some(entry),
+    )
+    .reachable;
+    let mut skipped = optional;
+    skipped.extend(lazy);
+    let certain = walk(
+        graph,
+        entry,
+        plugins,
+        parse,
+        module_index,
+        framework.clone(),
+        skipped,
+        Some(entry),
     )
     .reachable;
     let mut outcome = walk(
@@ -142,22 +178,25 @@ pub(super) fn run_reachability_bfs(
         module_index,
         framework,
         HashSet::new(),
+        None,
     );
     outcome.eager = eager;
+    outcome.certain = certain;
     outcome
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk(
-    graph: &ProjectGraph,
+fn walk<'a>(
+    graph: &'a ProjectGraph,
     entry: &EntryPlan,
     plugins: &PluginHints,
     parse: &ParseSummary,
-    module_index: &ModuleIndex,
+    module_index: &'a ModuleIndex,
     framework: Vec<(FileId, ReachPredecessor)>,
     skipped_lines: HashSet<FileLine>,
+    runtime_entry: Option<&'a EntryPlan>,
 ) -> BfsOutcome {
-    let mut state = BfsState::new(graph, parse, module_index, skipped_lines);
+    let mut state = BfsState::new(graph, parse, module_index, skipped_lines, runtime_entry);
 
     for root in &entry.roots {
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
@@ -225,7 +264,7 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
 
     let submodules = state.submodule_imports.remove(&file_id).unwrap_or_default();
     for (target, module, line) in submodules {
-        if state.skipped_lines.contains(&(file_id, line)) {
+        if state.skipped_lines.contains(&(file_id, line)) || !state.follows(file_id, target) {
             continue;
         }
         state.enqueue_file(target, Some(file_id), || TraceStep::Import { module, line });
@@ -233,7 +272,7 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
 
     let prefixed = state.prefix_imports.remove(&file_id).unwrap_or_default();
     for (target, module, line) in prefixed {
-        if state.skipped_lines.contains(&(file_id, line)) {
+        if state.skipped_lines.contains(&(file_id, line)) || !state.follows(file_id, target) {
             continue;
         }
         state.enqueue_file(target, Some(file_id), || TraceStep::DynamicImport {
@@ -261,6 +300,9 @@ fn enqueue_import(
         let Some(target) = state.module_index.resolve_from(from_path, name) else {
             continue;
         };
+        if !state.follows(from_file, target) {
+            continue;
+        }
         state.enqueue_file(target, Some(from_file), || {
             let module = name.to_owned();
             if dynamic {
@@ -372,33 +414,49 @@ fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<Im
     sites
 }
 
-/// Lines whose import does not run when the file loads: function-local
-/// imports and `TYPE_CHECKING` blocks. Neither shares a line with an import
-/// that does, so the line alone identifies the site.
-fn build_lazy_lines(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<FileLine> {
-    let mut lines = HashSet::new();
+/// Lines whose import may not run when the file loads: lazy ones
+/// (function-local imports and `TYPE_CHECKING` blocks) and optional ones
+/// (under `try`/`suppress(ImportError)` or a platform guard). None of these
+/// shares a line with an import outside it, so the line alone identifies the
+/// site.
+fn conditional_lines(
+    graph: &ProjectGraph,
+    parse: &ParseSummary,
+) -> (HashSet<FileLine>, HashSet<FileLine>) {
+    let mut lazy = HashSet::new();
+    let mut optional = HashSet::new();
     for module in &parse.modules {
         let Some(file_id) = graph.file_id(&module.path) else {
             continue;
         };
-        let static_lines = module
-            .imports
-            .iter()
-            .filter(|import| import.deferred || import.context == ImportContext::Type)
-            .map(|import| import.line);
-        let dynamic_lines = module
+        let static_sites = module.imports.iter().map(|import| {
+            (
+                import.line,
+                import.deferred || import.context == ImportContext::Type,
+                import.optional || import.platform_guarded,
+            )
+        });
+        let dynamic_sites = module
             .dynamic_imports
             .iter()
             .chain(&module.dynamic_import_prefixes)
-            .filter(|dynamic| dynamic.deferred)
-            .map(|dynamic| dynamic.line);
-        lines.extend(
-            static_lines
-                .chain(dynamic_lines)
-                .map(|line| (file_id, line)),
-        );
+            .map(|dynamic| {
+                (
+                    dynamic.line,
+                    dynamic.deferred,
+                    dynamic.optional || dynamic.platform_guarded,
+                )
+            });
+        for (line, is_lazy, is_optional) in static_sites.chain(dynamic_sites) {
+            if is_lazy {
+                lazy.insert((file_id, line));
+            }
+            if is_optional {
+                optional.insert((file_id, line));
+            }
+        }
     }
-    lines
+    (lazy, optional)
 }
 
 #[cfg(test)]
@@ -814,5 +872,76 @@ mod tests {
         let [main_id, _, _, c_id] = PATHS.map(|path| graph.file_id(path).expect(path));
         assert_eq!(outcome.reachable.len(), 4);
         assert_eq!(outcome.eager, IndexSet::from([main_id, c_id]));
+    }
+
+    /// #614: a test importing a module says nothing about whether runtime
+    /// code loads it, unless the module is a library's, which callers may
+    /// import directly.
+    #[test]
+    fn eager_set_follows_test_imports_only_into_library_files() {
+        let root = test_root();
+        let modules = vec![parsed("src/acme/main.py", &[("acme.a", 1)], &[])];
+        let mut graph = ProjectGraph::new(root.clone());
+        for path in PATHS {
+            let context = if path == "src/acme/main.py" {
+                FileContext::Test
+            } else {
+                FileContext::Runtime
+            };
+            graph
+                .intern_file(FileNode {
+                    path: path.to_owned(),
+                    context,
+                    kind: FileKind::Python,
+                })
+                .expect("file");
+        }
+        graph.intern_module("acme.a".to_owned(), ModuleOrigin::FirstParty);
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        add_parsed_imports(&mut graph, main_id, &modules[0]).expect("import edges");
+        let a_id = graph.file_id("src/acme/a.py").expect("a");
+        let parse = ParseSummary { modules };
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+
+        for (mode, eager) in [
+            (ProjectMode::App, IndexSet::from([main_id])),
+            (ProjectMode::Library, IndexSet::from([main_id, a_id])),
+        ] {
+            let entry = EntryPlan {
+                mode,
+                ..entry_plan()
+            };
+            let outcome = run_reachability_bfs(
+                &graph,
+                &entry,
+                &no_plugins(),
+                &parse,
+                &module_index,
+                Vec::new(),
+            );
+            assert_eq!(outcome.reachable, IndexSet::from([main_id, a_id]));
+            assert_eq!(outcome.eager, eager, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn certain_set_excludes_files_reached_only_through_optional_imports() {
+        let root = test_root();
+        // a.py is imported under `try`/`suppress(ImportError)`, b.py under a
+        // platform guard; c.py is reached optionally and from main.py too.
+        let mut main = parsed(
+            "src/acme/main.py",
+            &[("acme.a", 3), ("acme.b", 5), ("acme.c", 1)],
+            &[],
+        );
+        main.imports[0].optional = true;
+        main.imports[1].platform_guarded = true;
+        let modules = vec![main, parsed("src/acme/a.py", &[("acme.c", 1)], &[])];
+        let graph = graph_with_imports(root.clone(), &modules);
+        let outcome = run_bfs(&graph, &root, modules, Vec::new());
+
+        let [main_id, _, _, c_id] = PATHS.map(|path| graph.file_id(path).expect(path));
+        assert_eq!(outcome.eager.len(), 4);
+        assert_eq!(outcome.certain, IndexSet::from([main_id, c_id]));
     }
 }

@@ -42,6 +42,7 @@ mod tests {
         let report = ReachabilityReport {
             reachable: IndexSet::new(),
             eager: IndexSet::new(),
+            certain: IndexSet::new(),
             unreachable: Vec::new(),
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),
@@ -106,6 +107,7 @@ mod tests {
         let report = ReachabilityReport {
             reachable: IndexSet::from([main, mid, child]),
             eager: IndexSet::new(),
+            certain: IndexSet::new(),
             unreachable: Vec::new(),
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use indexmap::IndexSet;
 
 use crate::config::{Confidence, ProjectMode};
-use crate::graph::{ModuleOrigin, ProjectGraph};
+use crate::graph::{FileId, ModuleOrigin, ProjectGraph};
 use crate::manifest::{LoadedManifest, LockfileGraph, normalize_distribution_name};
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
@@ -64,13 +64,12 @@ pub(super) fn reachable_paths<'g>(
         .collect()
 }
 
-/// Paths of [`ReachabilityReport::eager`].
-pub(super) fn eager_paths<'g>(
+/// Paths of `files`, such as [`ReachabilityReport::eager`].
+pub(super) fn file_paths<'g>(
     graph: &'g ProjectGraph,
-    reachability: &ReachabilityReport,
+    files: &IndexSet<FileId>,
 ) -> HashSet<&'g str> {
-    reachability
-        .eager
+    files
         .iter()
         .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.as_str()))
         .collect()

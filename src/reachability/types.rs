@@ -92,8 +92,12 @@ pub struct ReachabilityReport {
     /// Files reachable from entry roots or framework globs.
     pub reachable: IndexSet<FileId>,
     /// Reachable files that some path reaches without passing a
-    /// function-local or `TYPE_CHECKING` import (#610).
+    /// function-local or `TYPE_CHECKING` import (#610). Imports out of test,
+    /// docs and dev files reach only library files here (#614).
     pub eager: IndexSet<FileId>,
+    /// Eager files that some path reaches without passing an optional
+    /// import either (#614).
+    pub certain: IndexSet<FileId>,
     /// Candidate unused files with confidence metadata.
     pub unreachable: Vec<UnreachableFile>,
     /// Stdlib and third-party modules seen during traversal (Step 10 input).

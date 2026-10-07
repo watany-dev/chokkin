@@ -87,6 +87,7 @@ pub fn analyze_reachability(
     Ok(ReachabilityReport {
         reachable,
         eager: bfs.eager,
+        certain: bfs.certain,
         unreachable,
         used_modules: bfs.used_modules,
         framework_used: framework.files,
