@@ -527,6 +527,20 @@ fn map_alias_import_resolves_to_python_multipart() {
 }
 
 #[test]
+fn runtime_peer_is_used_when_its_provider_is() {
+    let report = reconcile_fixture("runtime_peer");
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
+    assert!(report.used_distributions.contains("python-multipart"));
+}
+
+#[test]
+fn runtime_peer_is_unused_when_its_provider_is() {
+    let report = reconcile_fixture("runtime_peer_unused_provider");
+    assert!(has_dist_rule(&report, RuleId::Chk002, "starlette"));
+    assert!(has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
+}
+
+#[test]
 fn self_extra_dependency_is_not_unused() {
     let report = reconcile_fixture("self_extra");
     assert!(!has_dist_rule(&report, RuleId::Chk002, "self-extra"));
