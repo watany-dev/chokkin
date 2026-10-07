@@ -1,15 +1,16 @@
 //! CHK009 duplicate dependency declaration detection.
 //!
-//! A declaration is a duplicate when it repeats another one for the same
-//! distribution either in the same context (the same list twice, with the
-//! same marker) or in a group / extra while the distribution is already a
-//! runtime dependency. Groups and extras do not duplicate each other: a
-//! distribution needed by two extras is listed under both, and dependency
-//! groups are installed independently (#494). A group or extra declaration
-//! that adds extras the runtime declaration lacks (`streamlit[auth]` for a
-//! runtime `streamlit`) refines it rather than repeating it (#507), and the
-//! project's own self-referential extras (`all = ["pkg[a,b]"]`) are never
-//! duplicates.
+//! A declaration is a duplicate when another one for the same distribution
+//! already implies it: the same requirement repeated in the same context, or
+//! a group / extra declaration that the runtime declaration fully covers.
+//! Groups and extras do not duplicate each other: a distribution needed by two
+//! extras is listed under both, and dependency groups are installed
+//! independently (#494). A group or extra declaration that adds extras the
+//! runtime declaration lacks (`streamlit[auth]` for a runtime `streamlit`)
+//! refines it rather than repeating it (#507), and so does one with its own
+//! marker or version specifier (`click!=8.3.0` for a runtime `click>=7`):
+//! removing it would change what gets installed (#629). The project's own
+//! self-referential extras (`all = ["pkg[a,b]"]`) are never duplicates.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,25 +43,18 @@ pub(super) fn detect_duplicate_dependencies(
         .collect()
 }
 
-fn duplicate_declarations<'a>(
+/// The declarations of one distribution that repeat another one; `--fix`
+/// removes from these only.
+pub(crate) fn duplicate_declarations<'a>(
     declarations: &[&'a DeclaredDependency],
 ) -> Vec<&'a DeclaredDependency> {
-    let runtime_extras: BTreeSet<String> = declarations
-        .iter()
-        .filter(|dep| dep.context == DependencyContext::Runtime)
-        .flat_map(|dep| {
-            dep.extras
-                .iter()
-                .map(|extra| normalize_distribution_name(extra))
-        })
-        .collect();
     declarations
         .iter()
         .copied()
         .filter(|dep| {
             declarations
                 .iter()
-                .any(|other| duplicates(dep, other, &runtime_extras))
+                .any(|other| duplicates(dep, other, declarations))
         })
         .collect()
 }
@@ -68,27 +62,54 @@ fn duplicate_declarations<'a>(
 fn duplicates(
     a: &DeclaredDependency,
     b: &DeclaredDependency,
-    runtime_extras: &BTreeSet<String>,
+    declarations: &[&DeclaredDependency],
 ) -> bool {
     // The same line reached twice (`requirements-dev.txt` including
     // `requirements.txt`, which is also read on its own) is one declaration,
     // even when the include gives it another context. This also keeps a
     // declaration from duplicating itself.
-    if a.origin == b.origin {
+    if a.origin == b.origin || a.marker != b.marker {
         return false;
     }
     if a.context == b.context {
-        return a.marker == b.marker;
+        return specifier_set(a) == specifier_set(b) && extra_set(a) == extra_set(b);
     }
-    let refinement = match (&a.context, &b.context) {
-        (DependencyContext::Runtime, _) => b,
-        (_, DependencyContext::Runtime) => a,
+    let (runtime, refinement) = match (&a.context, &b.context) {
+        (DependencyContext::Runtime, _) => (a, b),
+        (_, DependencyContext::Runtime) => (b, a),
         _ => return false,
     };
-    refinement
-        .extras
+    // No PEP 440 containment check: only a bare or identical specifier is
+    // known to add nothing to the runtime one.
+    let specifier = specifier_set(refinement);
+    if !specifier.is_empty() && specifier != specifier_set(runtime) {
+        return false;
+    }
+    // Extras may be spread over several runtime declarations, but only ones
+    // installed under the same marker cover the refinement.
+    let runtime_extras: BTreeSet<String> = declarations
         .iter()
-        .all(|extra| runtime_extras.contains(&normalize_distribution_name(extra)))
+        .filter(|dep| dep.context == DependencyContext::Runtime && dep.marker == refinement.marker)
+        .flat_map(|dep| extra_set(dep))
+        .collect();
+    extra_set(refinement).is_subset(&runtime_extras)
+}
+
+fn extra_set(dep: &DeclaredDependency) -> BTreeSet<String> {
+    dep.extras
+        .iter()
+        .map(|extra| normalize_distribution_name(extra))
+        .collect()
+}
+
+/// `<9, >=7.0` and `>=7.0,<9` are the same constraint.
+fn specifier_set(dep: &DeclaredDependency) -> BTreeSet<&str> {
+    dep.specifier
+        .iter()
+        .flat_map(|specifier| specifier.split(','))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect()
 }
 
 fn candidate(name: &str, involved: &[&DeclaredDependency]) -> IssueCandidate {
@@ -171,6 +192,11 @@ mod tests {
 
     fn with_marker(mut dep: DeclaredDependency, marker: &str) -> DeclaredDependency {
         dep.marker = Some(marker.to_owned());
+        dep
+    }
+
+    fn with_specifier(mut dep: DeclaredDependency, specifier: &str) -> DeclaredDependency {
+        dep.specifier = Some(specifier.to_owned());
         dep
     }
 
@@ -319,6 +345,38 @@ mod tests {
     }
 
     #[test]
+    fn extras_must_match_in_the_same_context_and_marker() {
+        assert_eq!(
+            messages(&[
+                dep("httpx", group("dev")),
+                with_extras(at("httpx", group("dev"), "pyproject.toml", 9), &["http2"]),
+                dep("celery", DependencyContext::Runtime),
+                with_marker(
+                    with_extras(
+                        at("celery", DependencyContext::Runtime, "runtime", 2),
+                        &["redis"]
+                    ),
+                    "sys_platform == 'linux'"
+                ),
+                with_extras(dep("celery", group("dev")), &["redis"]),
+            ]),
+            Vec::<String>::new()
+        );
+        // Extras spread over runtime declarations under one marker still cover.
+        assert_eq!(
+            messages(&[
+                with_extras(dep("kombu", DependencyContext::Runtime), &["redis"]),
+                with_extras(
+                    at("kombu", DependencyContext::Runtime, "runtime", 2),
+                    &["sqs"]
+                ),
+                with_extras(dep("kombu", group("dev")), &["redis", "sqs"]),
+            ]),
+            ["kombu is declared in multiple contexts: group:dev, runtime"]
+        );
+    }
+
+    #[test]
     fn only_the_duplicating_declarations_are_reported() {
         let found = detect(&[
             dep("kombu", DependencyContext::Runtime),
@@ -331,5 +389,51 @@ mod tests {
             "kombu is declared in multiple contexts: optional:plain, runtime"
         );
         assert_eq!(found[0].origins.len(), 2);
+    }
+
+    #[test]
+    fn group_or_extra_with_its_own_constraint_is_not_a_duplicate() {
+        // #629: each of these changes what gets installed when removed.
+        assert_eq!(
+            messages(&[
+                with_specifier(dep("click", DependencyContext::Runtime), ">=7"),
+                with_specifier(dep("click", extra("mcp")), "!=8.3.0"),
+                with_marker(
+                    with_specifier(dep("requests", DependencyContext::Runtime), ">=2"),
+                    "python_version >= '3.10'"
+                ),
+                with_specifier(dep("requests", extra("legacy")), ">=2"),
+                dep("rich", DependencyContext::Runtime),
+                with_specifier(dep("rich", group("lint")), ">=13.0"),
+                with_specifier(dep("pytest", group("test")), ">=7"),
+                with_specifier(at("pytest", group("test"), "pyproject.toml", 9), ">=8"),
+            ]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn bare_or_identical_specifier_still_duplicates_the_runtime_one() {
+        assert_eq!(
+            messages(&[
+                with_specifier(dep("fastapi", DependencyContext::Runtime), "<1"),
+                with_specifier(dep("fastapi", extra("genai")), "<1"),
+                with_specifier(dep("click", DependencyContext::Runtime), "<9, >=7.0"),
+                with_specifier(dep("click", group("dev")), ">=7.0,<9"),
+                with_specifier(dep("aiohttp", DependencyContext::Runtime), "<4"),
+                dep("aiohttp", extra("http")),
+                with_marker(
+                    dep("numpy", DependencyContext::Runtime),
+                    "sys_platform == 'linux'"
+                ),
+                with_marker(dep("numpy", group("dev")), "sys_platform == 'linux'"),
+            ]),
+            [
+                "aiohttp is declared in multiple contexts: optional:http, runtime",
+                "click is declared in multiple contexts: group:dev, runtime",
+                "fastapi is declared in multiple contexts: optional:genai, runtime",
+                "numpy is declared in multiple contexts: group:dev, runtime",
+            ]
+        );
     }
 }

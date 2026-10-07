@@ -293,7 +293,10 @@ fn plan_remove_duplicate(
         .iter()
         .filter(|dep| dep.name == *name && !dep.opaque)
         .collect();
-    if declarations.len() < 2 {
+    // Only a declaration another one implies is safe to drop; a sibling extra
+    // with its own specifier or marker stays (#629).
+    let duplicates = crate::rules::deps::duplicate_declarations(&declarations);
+    if duplicates.len() < 2 {
         return Err(skipped(
             issue,
             SkippedReason::Ambiguous,
@@ -301,7 +304,7 @@ fn plan_remove_duplicate(
         ));
     }
 
-    let to_remove = declarations
+    let to_remove = duplicates
         .iter()
         .max_by_key(|dep| removal_priority(&dep.context))
         .copied()

@@ -449,6 +449,21 @@ fn group_declaration_with_extra_extras_is_not_a_duplicate() {
     );
 }
 
+/// #629: a group or extra with its own specifier or marker is not a duplicate.
+#[test]
+fn group_or_extra_with_its_own_constraint_is_not_a_duplicate() {
+    let report = reconcile_fixture("duplicate_constraints");
+    for name in ["click", "requests", "rich"] {
+        assert!(!has_dist_rule(&report, RuleId::Chk009, name), "{name}");
+    }
+    let duplicate =
+        candidate_for_distribution(&report, RuleId::Chk009, "httpx").expect("httpx duplicate");
+    assert_eq!(
+        duplicate.message,
+        "httpx is declared in multiple contexts: optional:http, runtime"
+    );
+}
+
 /// #494: extras and groups do not duplicate each other and the project's own
 /// extras are never duplicates; only the same list twice is.
 #[test]

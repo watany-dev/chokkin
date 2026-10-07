@@ -1,0 +1,16 @@
+[project]
+name = "duplicate-constraints"
+version = "0.1.0"
+dependencies = ["click>=7", "requests>=2; python_version >= '3.10'", "rich", "httpx<1"]
+
+[project.optional-dependencies]
+mcp = ["click!=8.3.0"]
+legacy = ["requests>=2"]
+http = ["httpx"]
+pinned = ["httpx!=0.28.0"]
+
+[dependency-groups]
+lint = ["rich>=13.0"]
+
+[project.scripts]
+acme-cli = "acme.main:main"
