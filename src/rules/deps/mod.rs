@@ -10,4 +10,6 @@ mod script;
 mod unused;
 mod used;
 
+pub(crate) use context::{DeclarationBucket, declaration_buckets};
+
 pub use reconcile::reconcile_with_context;

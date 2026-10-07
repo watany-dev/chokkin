@@ -1,5 +1,6 @@
 //! Project probe orchestration (pipeline steps 1–4).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,17 +8,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::VERSION;
 use crate::cache::CacheOptions;
 use crate::config::{
-    ChokkinConfig, ConfigSources, LoadedConfig, ResolvedWorkspaceMember, RuntimeOverrides,
-    TargetVersion, apply_overrides, detect_nested_members, load_config,
+    ChokkinConfig, ConfigSources, DependencyGroupsConfig, LoadedConfig, ResolvedWorkspaceMember,
+    RuntimeOverrides, TargetVersion, apply_overrides, detect_nested_members, load_config,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
-    InlineScript, LoadedManifest, discover_inline_scripts, extract_manifest_with_cache,
-    resolve_target_version,
+    DeclaredDependency, InlineScript, LoadedManifest, discover_inline_scripts,
+    extract_manifest_with_cache, normalize_distribution_name, resolve_target_version,
 };
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
+use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredSources, FileContext, FileKind, MemberLayout, build_glob_set, discover_sources,
 };
@@ -106,8 +108,17 @@ pub fn probe_project_with_cache(
     // The manifest cache lives under each member root; an undeclared monorepo
     // would gain hundreds of untracked `.chokkin/` directories.
     let member_cache = if auto_members > 0 { None } else { cache };
-    let workspace_inputs =
+    let mut workspace_inputs =
         collect_workspace_inputs(&root, &loaded.workspace_members, overrides, member_cache)?;
+    if loaded.effective.production {
+        drop_dev_only_members(
+            &mut sources,
+            &mut loaded.workspace_members,
+            &mut workspace_inputs,
+            &manifest,
+            &loaded.effective.dependencies,
+        );
+    }
     sources.layout.members = workspace_inputs
         .iter()
         .map(|input| MemberLayout {
@@ -163,6 +174,69 @@ fn auto_detect_members(
     loaded.workspace_members =
         detect_nested_members(&loaded.root, &exclude, loaded.effective.respect_gitignore)?;
     Ok(loaded.workspace_members.len())
+}
+
+/// Drop members that only dependency groups pull in, such as airflow's
+/// `devel-common`: they never ship, so `--production` treats them like tests
+/// (#613). Runtime references count only from the root and the members it
+/// ships, because airflow's test and docs members, which nothing references,
+/// depend on `devel-common` at runtime. An unreferenced member stays.
+fn drop_dev_only_members(
+    sources: &mut DiscoveredSources,
+    workspace_members: &mut Vec<ResolvedWorkspaceMember>,
+    workspace_inputs: &mut Vec<WorkspaceMemberInputs>,
+    manifest: &LoadedManifest,
+    groups: &DependencyGroupsConfig,
+) {
+    let names: BTreeMap<String, usize> = workspace_inputs
+        .iter()
+        .enumerate()
+        .filter(|(_, input)| !input.member.path.is_empty() && input.member.path != ".")
+        .filter_map(|(index, input)| {
+            let name = input.manifest.metadata.name.as_deref()?;
+            Some((normalize_distribution_name(name), index))
+        })
+        .collect();
+    let is_dev = |dep: &DeclaredDependency| {
+        declaration_buckets(dep, groups)
+            .iter()
+            .all(|bucket| matches!(bucket, DeclarationBucket::Dev | DeclarationBucket::Type))
+    };
+    let mut shipped = BTreeSet::new();
+    let mut dev_referenced = BTreeSet::new();
+    let mut pending = vec![manifest];
+    while let Some(current) = pending.pop() {
+        for dep in &current.dependencies {
+            let Some(&index) = names.get(&normalize_distribution_name(&dep.name)) else {
+                continue;
+            };
+            if is_dev(dep) {
+                dev_referenced.insert(index);
+            } else if shipped.insert(index) {
+                pending.push(&workspace_inputs[index].manifest);
+            }
+        }
+    }
+    let dev_only: BTreeSet<&str> = dev_referenced
+        .difference(&shipped)
+        .map(|&index| workspace_inputs[index].member.path.as_str())
+        .collect();
+    if dev_only.is_empty() {
+        return;
+    }
+    // A file belongs to its innermost member, so a shipped member nested in a
+    // dropped one keeps its files.
+    sources.files.retain(|file| {
+        workspace_inputs
+            .iter()
+            .map(|input| input.member.path.as_str())
+            .filter(|member| Path::new(&file.path).starts_with(member))
+            .max_by_key(|member| member.len())
+            .is_none_or(|member| !dev_only.contains(member))
+    });
+    let dev_only: BTreeSet<String> = dev_only.into_iter().map(str::to_owned).collect();
+    workspace_inputs.retain(|input| !dev_only.contains(&input.member.path));
+    workspace_members.retain(|member| !dev_only.contains(&member.path));
 }
 
 fn activate_plugins(

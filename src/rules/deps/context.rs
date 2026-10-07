@@ -24,7 +24,7 @@ pub(super) enum UsageContext {
 
 /// Broad declaration bucket for context matching (CHK005 / CHK010).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) enum DeclarationBucket {
+pub enum DeclarationBucket {
     /// `[project.dependencies]` and runtime groups.
     Runtime,
     /// Dev / test dependency groups.
@@ -80,7 +80,7 @@ fn group_bucket(name: &str, groups: &DependencyGroupsConfig) -> DeclarationBucke
 /// Buckets a declaration counts toward: its own context plus every group that
 /// pulls it in through PEP 735 `include-group`.
 #[must_use]
-pub(super) fn declaration_buckets(
+pub fn declaration_buckets(
     dep: &DeclaredDependency,
     groups: &DependencyGroupsConfig,
 ) -> BTreeSet<DeclarationBucket> {

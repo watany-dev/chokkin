@@ -594,6 +594,114 @@ fn binary_in_package_tests_and_vendored_code_are_not_reported() {
     assert_eq!(flagged, ["CHK006:acme/core.py:dead"], "{keys:?}");
 }
 
+/// A workspace member only dependency groups pull in (airflow's
+/// `devel-common`) never ships, so `--production` drops it like the tests
+/// that import it, while the default run still reaches it from `conftest.py`
+/// (#613).
+#[test]
+fn binary_production_drops_members_only_dev_groups_reference() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"core\"]\n\n[dependency-groups]\ndev = [\"helpers\"]\n\n[tool.uv.sources]\ncore = { workspace = true }\nhelpers = { workspace = true }\n\n[tool.uv.workspace]\nmembers = [\"core\", \"e2e\", \"helpers\"]\n",
+        ),
+        ("main.py", "import core\n\nprint(core)\n"),
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n\n[dependency-groups]\ndev = [\"helpers\"]\n",
+        ),
+        ("core/src/core/__init__.py", ""),
+        // Nothing references this test member, so its runtime dependency on
+        // `helpers` does not ship `helpers`.
+        (
+            "e2e/pyproject.toml",
+            "[project]\nname = \"e2e\"\nversion = \"0.1.0\"\ndependencies = [\"helpers\"]\n",
+        ),
+        ("core/src/core/orphan.py", ""),
+        (
+            "helpers/pyproject.toml",
+            "[project]\nname = \"helpers\"\nversion = \"0.1.0\"\ndependencies = [\"pytest\"]\n\n[project.scripts]\nbuild-docs = \"helpers.docs:main\"\n",
+        ),
+        ("helpers/src/helpers/__init__.py", ""),
+        (
+            "helpers/src/helpers/docs.py",
+            "def main() -> None:\n    pass\n",
+        ),
+        ("helpers/src/helpers/fixtures.py", "import pytest\n"),
+        (
+            "helpers/src/helpers/plugin.py",
+            "from helpers import fixtures\n",
+        ),
+        (
+            "tests/conftest.py",
+            "from helpers import plugin\n\nprint(plugin)\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--production"][..]] {
+        let keys = issue_keys(&json_issues(project.path(), extra));
+        assert!(
+            keys.iter()
+                .all(|(_, target)| !target.starts_with("helpers/")),
+            "{extra:?}: {keys:?}"
+        );
+        assert!(
+            keys.iter()
+                .any(|key| key == &("CHK001".to_owned(), "core/src/core/orphan.py".to_owned())),
+            "{extra:?}: {keys:?}"
+        );
+    }
+}
+
+/// A member a runtime group pulls in through `include-group`, and a shipped
+/// member nested inside a dev-only one, both stay under `--production` (#613).
+#[test]
+fn binary_production_keeps_members_shipped_through_groups_or_nesting() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"runtime-lib\"]\n\n[dependency-groups]\nbase = [\"lib\"]\nserver = [{ include-group = \"base\" }]\ndev = [\"tools\"]\n\n[tool.uv.workspace]\nmembers = [\"lib\", \"tools\", \"tools/runtime-lib\"]\n",
+        ),
+        (
+            "main.py",
+            "import lib\nimport runtime_lib\n\nprint(lib, runtime_lib)\n",
+        ),
+        (
+            "lib/pyproject.toml",
+            "[project]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+        ),
+        ("lib/src/lib/__init__.py", ""),
+        ("lib/src/lib/orphan.py", ""),
+        (
+            "tools/pyproject.toml",
+            "[project]\nname = \"tools\"\nversion = \"0.1.0\"\n",
+        ),
+        ("tools/src/tools/__init__.py", ""),
+        ("tools/src/tools/orphan.py", ""),
+        (
+            "tools/runtime-lib/pyproject.toml",
+            "[project]\nname = \"runtime-lib\"\nversion = \"0.1.0\"\n",
+        ),
+        ("tools/runtime-lib/src/runtime_lib/__init__.py", ""),
+        ("tools/runtime-lib/src/runtime_lib/orphan.py", ""),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--production"]));
+    for orphan in [
+        "lib/src/lib/orphan.py",
+        "tools/runtime-lib/src/runtime_lib/orphan.py",
+    ] {
+        assert!(
+            keys.iter()
+                .any(|key| key == &("CHK001".to_owned(), orphan.to_owned())),
+            "{orphan}: {keys:?}"
+        );
+    }
+    assert!(
+        keys.iter()
+            .all(|(_, target)| !target.starts_with("tools/src/")),
+        "{keys:?}"
+    );
+}
+
 fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     let temp = tempfile::TempDir::new().expect("tempdir");
     for (file, text) in files {
