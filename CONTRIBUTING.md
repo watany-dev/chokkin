@@ -56,7 +56,7 @@ at the Phase 1 (v0.1 MVP) milestone. See `docs/dev/ci-porting-notes.md`.
 - Use `std::path` APIs — chokkin ships cross-platform wheels.
 - Never execute the analyzed project's Python code (static analysis only).
 
-See [AGENTS.md](./AGENTS.md) for the full architecture overview.
+See [docs/dev/spec.ja.md](./docs/dev/spec.ja.md) for the full architecture and [AGENTS.md](./AGENTS.md) for coding rules.
 
 ## Pull requests
 
