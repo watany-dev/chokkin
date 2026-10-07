@@ -193,7 +193,6 @@ fn drop_dev_only_members(
     let names: BTreeMap<String, usize> = workspace_inputs
         .iter()
         .enumerate()
-        .filter(|(_, input)| !input.member.path.is_empty() && input.member.path != ".")
         .filter_map(|(index, input)| {
             let name = input.manifest.metadata.name.as_deref()?;
             Some((normalize_distribution_name(name), index))
