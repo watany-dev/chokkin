@@ -667,6 +667,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn merged_import_location_is_the_first_import_origin() {
+        let mut import = bare_candidate(
+            RuleId::Chk010,
+            IssueSubject::Import {
+                module: "lazypkg".to_owned(),
+                file: "src/app.py".to_owned(),
+                line: 8,
+                distribution: None,
+            },
+            "",
+        );
+        import.origins = [8, 4, 14]
+            .into_iter()
+            .map(|line| Origin::Import {
+                file: "src/app.py".to_owned(),
+                line,
+                module: "lazypkg".to_owned(),
+            })
+            .collect();
+
+        let location = location_from_candidate(&import);
+        assert_eq!(location.file.as_deref(), Some("src/app.py"));
+        assert_eq!(location.line, Some(8));
+    }
+
     mod props {
         use super::*;
         use crate::config::Confidence;

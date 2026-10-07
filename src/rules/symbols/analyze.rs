@@ -348,6 +348,15 @@ fn detect_unresolved_imports(
         .collect()
 }
 
+// Anchor at a real runtime line: line 0 is a plugin reference with no
+// position, and a `TYPE_CHECKING` import is the one that never fails.
+fn anchor_line(lines: &[(u32, ImportContext)]) -> Option<u32> {
+    lines
+        .iter()
+        .min_by_key(|(line, context)| (*context == ImportContext::Type, *line == 0, *line))
+        .map(|(line, _)| *line)
+}
+
 fn unresolved_import_candidate(
     file: &str,
     import: &str,
@@ -355,11 +364,7 @@ fn unresolved_import_candidate(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> Option<IssueCandidate> {
-    // Anchor at a real runtime line: line 0 is a plugin reference with no
-    // position, and a `TYPE_CHECKING` import is the one that never fails.
-    let &(line, _) = lines
-        .iter()
-        .min_by_key(|(line, context)| (*context == ImportContext::Type, *line == 0, *line))?;
+    let line = anchor_line(lines)?;
     let type_only = lines
         .iter()
         .all(|(_, context)| *context == ImportContext::Type);
@@ -429,5 +434,21 @@ fn symbol_kind_label(kind: crate::parser::SymbolKind) -> &'static str {
         crate::parser::SymbolKind::Function => "function",
         crate::parser::SymbolKind::Class => "class",
         crate::parser::SymbolKind::Variable => "constant",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anchor_prefers_runtime_then_positioned_then_earliest_line() {
+        use ImportContext::{Runtime, Type};
+
+        assert_eq!(anchor_line(&[]), None);
+        assert_eq!(anchor_line(&[(4, Type), (8, Runtime)]), Some(8));
+        assert_eq!(anchor_line(&[(0, Runtime), (8, Runtime)]), Some(8));
+        assert_eq!(anchor_line(&[(14, Runtime), (8, Runtime)]), Some(8));
+        assert_eq!(anchor_line(&[(0, Runtime), (4, Type)]), Some(0));
     }
 }
