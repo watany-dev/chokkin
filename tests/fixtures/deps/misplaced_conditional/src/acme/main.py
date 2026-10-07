@@ -38,3 +38,8 @@ def load_heavy():
 
 
 from acme import shared
+
+from contextlib import suppress
+
+with suppress(ImportError):
+    from acme import optional_io

@@ -393,8 +393,11 @@ fn misplaced_confidence_follows_the_strongest_import() {
     assert_eq!(summary("toolz"), (Severity::Warning, Confidence::Likely));
     // heavy.py is loaded only from inside a function, so its top-level
     // import is deferred; shared.py is also imported at module level (#610).
+    // The test file importing both at module level loads nothing at runtime.
     assert_eq!(summary("dask"), (Severity::Warning, Confidence::Likely));
     assert_eq!(summary("attrs"), (Severity::Warning, Confidence::Certain));
+    // optional_io.py is loaded only under `suppress(ImportError)` (#614).
+    assert_eq!(summary("pyarrow"), (Severity::Info, Confidence::Likely));
     // The function-local import comes first; the later top-level one decides.
     assert_eq!(summary("xarray"), (Severity::Warning, Confidence::Certain));
     let xarray = candidate_for_distribution(&report, RuleId::Chk005, "xarray").expect("xarray");

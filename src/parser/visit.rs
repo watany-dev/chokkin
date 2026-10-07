@@ -523,7 +523,17 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 for item in &with_stmt.items {
                     self.visit_expr(&item.context_expr);
                 }
+                let suppresses = with_stmt
+                    .items
+                    .iter()
+                    .any(|item| suppresses_import_error(&item.context_expr));
+                if suppresses {
+                    self.try_depth = self.try_depth.saturating_add(1);
+                }
                 self.visit_body(&with_stmt.body);
+                if suppresses {
+                    self.try_depth = self.try_depth.saturating_sub(1);
+                }
             },
             Stmt::Match(match_stmt) => {
                 self.visit_expr(&match_stmt.subject);
@@ -701,6 +711,31 @@ fn true_flags(body: &[Stmt]) -> impl Iterator<Item = String> + '_ {
             return None;
         };
         value.value.then(|| name.id.to_string())
+    })
+}
+
+/// `suppress(...)` / `contextlib.suppress(...)` swallowing a failed import
+/// (#614).
+fn suppresses_import_error(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let is_suppress = match &*call.func {
+        Expr::Name(name) => name.id.as_str() == "suppress",
+        Expr::Attribute(attribute) => {
+            attribute.attr.as_str() == "suppress"
+                && matches!(&*attribute.value, Expr::Name(module) if module.id.as_str() == "contextlib")
+        },
+        _ => false,
+    };
+    if !is_suppress {
+        return false;
+    }
+    call.arguments.args.iter().any(|arg| {
+        matches!(
+            subscript_name(arg),
+            Some("ImportError" | "ModuleNotFoundError" | "Exception" | "BaseException")
+        )
     })
 }
 
@@ -1210,6 +1245,27 @@ g = lambda x=utils.G: x
                 ("simplejson", true),
                 ("json", false),
                 ("other_lib", false),
+            ]
+        );
+    }
+
+    /// #614: mlflow registers optional dataset constructors under
+    /// `with suppress(ImportError):`.
+    #[test]
+    fn suppress_import_error_bodies_are_optional() {
+        let parsed = visit_source(
+            "import contextlib\nfrom contextlib import suppress\n\nwith suppress(ImportError):\n    import polars\nwith contextlib.suppress(KeyError, ModuleNotFoundError):\n    import pandas\nwith suppress(KeyError):\n    import yaml\nwith self.suppress(Exception):\n    import tomli\nwith open(path):\n    import toml\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("contextlib", false),
+                ("contextlib", false),
+                ("polars", true),
+                ("pandas", true),
+                ("yaml", false),
+                ("tomli", false),
+                ("toml", false),
             ]
         );
     }
