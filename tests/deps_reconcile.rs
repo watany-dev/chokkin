@@ -190,19 +190,6 @@ fn unused_boto3_emits_chk002() {
 /// starlette imports `python_multipart` itself to parse forms, so a project
 /// that uses starlette never imports the parser it has to declare.
 #[test]
-fn form_parser_is_used_through_starlette() {
-    let report = reconcile_fixture("form_parser_companion");
-    assert!(!has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
-    assert!(!has_dist_rule(&report, RuleId::Chk002, "starlette"));
-}
-
-#[test]
-fn form_parser_is_unused_without_a_framework() {
-    let report = reconcile_fixture("form_parser_without_framework");
-    assert!(has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
-}
-
-#[test]
 fn missing_yaml_emits_chk003() {
     let report = reconcile_fixture("missing_yaml");
     let yaml = report
@@ -554,6 +541,20 @@ fn map_alias_import_resolves_to_python_multipart() {
     let report = reconcile_fixture("map_alias");
     assert!(!has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
     assert!(report.used_distributions.contains("python-multipart"));
+}
+
+#[test]
+fn runtime_peer_is_used_when_its_provider_is() {
+    let report = reconcile_fixture("runtime_peer");
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
+    assert!(report.used_distributions.contains("python-multipart"));
+}
+
+#[test]
+fn runtime_peer_is_unused_when_its_provider_is() {
+    let report = reconcile_fixture("runtime_peer_unused_provider");
+    assert!(has_dist_rule(&report, RuleId::Chk002, "starlette"));
+    assert!(has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
 }
 
 #[test]

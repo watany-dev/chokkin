@@ -140,7 +140,7 @@ fn reconcile_project(
     }
     mark_pytest_plugin_distributions(resolution, &mut used);
 
-    mark_used_through_another_distribution(&declared, &mut used);
+    mark_companion_distributions(&declared, &mut used);
 
     let mut candidates = Vec::new();
     let evidence = UnusedEvidenceContext {
@@ -232,12 +232,13 @@ fn workspace_declared_indices<'a>(
         .collect()
 }
 
-/// Mark declared distributions that are used whenever another used one is:
-/// `types-*` stubs of a used runtime package, and [`RUNTIME_COMPANIONS`].
-fn mark_used_through_another_distribution(
-    declared: &DeclaredIndex<'_>,
-    used: &mut IndexSet<String>,
-) {
+/// Distributions another library imports lazily at runtime, so the project
+/// declares them without importing them: starlette's `request.form()` imports
+/// `python_multipart` only when called.
+const RUNTIME_PEERS: &[(&str, &[&str])] = &[("python-multipart", &["starlette", "fastapi"])];
+
+/// Mark `types-*` stubs and [`RUNTIME_PEERS`] used when the package they serve is.
+fn mark_companion_distributions(declared: &DeclaredIndex<'_>, used: &mut IndexSet<String>) {
     for name in declared.keys() {
         if let Some(runtime) = runtime_for_stub(name)
             && used.contains(&normalize_distribution_name(runtime))
@@ -245,17 +246,13 @@ fn mark_used_through_another_distribution(
             used.insert(name.clone());
         }
     }
-    for (companion, hosts) in RUNTIME_COMPANIONS {
-        if declared.contains_key(*companion) && hosts.iter().any(|host| used.contains(*host)) {
-            used.insert((*companion).to_owned());
+    for (peer, providers) in RUNTIME_PEERS {
+        if declared.contains_key(*peer) && providers.iter().any(|provider| used.contains(*provider))
+        {
+            used.insert((*peer).to_owned());
         }
     }
 }
-
-/// Distributions a used framework imports on the project's behalf, never
-/// imported by the project itself: starlette (and `FastAPI` on top of it) parses
-/// `request.form()` / `Form(...)` with `python_multipart`.
-const RUNTIME_COMPANIONS: &[(&str, &[&str])] = &[("python-multipart", &["starlette", "fastapi"])];
 
 /// Map a `types-*` stub name to its runtime package when the pattern is known.
 fn runtime_for_stub(stub_name: &str) -> Option<&str> {

@@ -626,9 +626,11 @@ stub package (types-* / *-stubs)
   -> 対応するruntime packageの使用があればtype contextでused扱い
   -> runtime package自体が未使用なら、stubも併せてunused報告する
 
-framework が代わりに import する配布物 (python-multipart)
-  -> starlette / FastAPI が request.form() / Form(...) の中で python_multipart を import する
-  -> 宣言済みで、starlette か fastapi が used なら used 扱い (CHK002 にしない)
+runtime peer (例: python-multipart)
+  -> 他の library が実行時に遅延 import するので、project 自身は import しない
+     (starletteの request.form() が python_multipart を読む)
+  -> 同梱の表で対応する provider (starlette / fastapi) の使用があればused扱い
+  -> provider自体が未使用なら、peerも併せてunused報告する
 
 metapackage (wheel target が一致する file を持たない、または hatch の bypass-selection)
   -> 配布する依存そのものが中身なので、import されなくても未使用ではない

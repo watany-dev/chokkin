@@ -147,6 +147,9 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   matching (#585).
 
 ### Fixed
+- A declared `python-multipart` counts as used when `starlette` or `fastapi`
+  is, since starlette imports it only inside `request.form()`, so it is no
+  longer reported as CHK002.
 - A non-UTF-8 Python source no longer aborts the whole analysis with exit 2.
   A file with a PEP 263 `latin-1` / `cp1252` declaration (CPython aliases
   included) is decoded; any other file is skipped with a warning and is never
