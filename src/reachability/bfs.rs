@@ -935,6 +935,47 @@ mod tests {
         }
     }
 
+    /// A file is queued again only when its class improves; reaching it
+    /// again at the same or a weaker class leaves the queue alone.
+    #[test]
+    fn file_is_queued_again_only_when_its_class_improves() {
+        let root = test_root();
+        let graph = graph_with_imports(root.clone(), &[]);
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let entry = entry_plan();
+        let adjacency = Adjacency {
+            file_imports: HashMap::new(),
+            submodule_imports: HashMap::new(),
+            prefix_imports: HashMap::new(),
+            dynamic_sites: HashSet::new(),
+            lazy: HashSet::new(),
+            optional: HashSet::new(),
+        };
+        let mut state = BfsState {
+            graph: &graph,
+            module_index: &module_index,
+            entry: &entry,
+            adjacency: &adjacency,
+            queue: VecDeque::new(),
+            reached: IndexMap::new(),
+            predecessors: IndexMap::new(),
+            used_modules: Vec::new(),
+        };
+        let file_id = graph.file_id(PATHS[1]).expect("a.py");
+        let step = || TraceStep::File {
+            file: file_id,
+            path: PATHS[1].to_owned(),
+        };
+
+        state.enqueue_file(file_id, None, Reach::Eager, step);
+        state.enqueue_file(file_id, None, Reach::Eager, step);
+        state.enqueue_file(file_id, None, Reach::Reachable, step);
+        assert_eq!(state.queue.len(), 1);
+        state.enqueue_file(file_id, None, Reach::Certain, step);
+        assert_eq!(state.queue.len(), 2);
+        assert_eq!(state.reached[&file_id].class, Reach::Certain);
+    }
+
     /// #614: a test importing a module says nothing about whether runtime
     /// code loads it, unless the module is a library's, which callers may
     /// import directly.
