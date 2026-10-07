@@ -594,6 +594,86 @@ fn binary_in_package_tests_and_vendored_code_are_not_reported() {
     assert_eq!(flagged, ["CHK006:acme/core.py:dead"], "{keys:?}");
 }
 
+/// starlette imports `JSONResponse` from `starlette.responses`, not the
+/// package root, so `--production` must keep the tests, and the modules only
+/// they reach, as evidence of API use. A private module's name, and one only
+/// an orphaned private module imports, stay reported (#588).
+#[test]
+fn binary_production_library_keeps_public_module_names_used_by_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"library\"\n",
+        ),
+        (
+            "acme/__init__.py",
+            "from acme import _utils, responses\n\n__all__ = [\"_utils\", \"responses\"]\n",
+        ),
+        (
+            "acme/responses.py",
+            "class JSONResponse:\n    pass\n\n\nclass HTMLResponse:\n    pass\n\n\nclass Unused:\n    pass\n\n\nclass Orphaned:\n    pass\n",
+        ),
+        (
+            "acme/templating.py",
+            "from acme.responses import HTMLResponse\n\n\nclass Template(HTMLResponse):\n    pass\n",
+        ),
+        ("acme/_utils.py", "def collapse() -> None:\n    pass\n"),
+        // Orphaned private module: its import is not an outside caller.
+        ("acme/_legacy.py", "from acme.responses import Unused\n"),
+        // Without `--production`, a public module nothing reaches is not a
+        // caller either.
+        ("acme/plugins.py", "from acme.responses import Orphaned\n"),
+        (
+            "tests/test_responses.py",
+            "from acme._utils import collapse\nfrom acme.responses import JSONResponse\nfrom acme.templating import Template\n\n\ndef test_json() -> None:\n    collapse()\n    JSONResponse()\n    Template()\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--production"][..]] {
+        let keys = issue_keys(&json_issues(project.path(), extra));
+        let flagged: Vec<_> = keys
+            .iter()
+            .filter(|(code, _)| code == "CHK006")
+            .map(|(_, target)| target.as_str())
+            .collect();
+        let expected: &[&str] = if extra.is_empty() {
+            &["acme/responses.py:Orphaned", "acme/responses.py:Unused"]
+        } else {
+            &["acme/_utils.py:collapse", "acme/responses.py:Unused"]
+        };
+        assert_eq!(flagged, expected, "{extra:?}: {keys:?}");
+    }
+}
+
+/// A library member's tests are kept as API evidence under an app root too.
+#[test]
+fn binary_production_library_member_keeps_names_used_by_its_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("main.py", "import acme_lib\n\nprint(acme_lib)\n"),
+        (
+            "libs/acme-lib/pyproject.toml",
+            "[project]\nname = \"acme-lib\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "libs/acme-lib/acme_lib/__init__.py",
+            "from acme_lib import responses\n\n__all__ = [\"responses\"]\n",
+        ),
+        (
+            "libs/acme-lib/acme_lib/responses.py",
+            "class JSONResponse:\n    pass\n",
+        ),
+        (
+            "libs/acme-lib/tests/test_responses.py",
+            "from acme_lib.responses import JSONResponse\n\n\ndef test_json() -> None:\n    JSONResponse()\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--production"]));
+    assert!(keys.iter().all(|(code, _)| code != "CHK006"), "{keys:?}");
+}
+
 fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     let temp = tempfile::TempDir::new().expect("tempdir");
     for (file, text) in files {
