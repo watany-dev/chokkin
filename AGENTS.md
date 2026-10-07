@@ -186,8 +186,9 @@ make oss-metrics ARGS=--gate    # same, but non-zero exit on any §17 miss
 scripts/run-oss-fixture.sh --build   # in-repo regression skeleton (no network)
 ```
 
-- `scripts/oss-clones.manifest` — the 20-project set (pinned tags; resolved
-  SHAs land in `target/oss-clones/clones.lock.tsv`).
+- `scripts/oss-clones.manifest` — the 20-project set (pinned by commit SHA,
+  release tags in comments; checked-out SHAs land in
+  `target/oss-clones/clones.lock.tsv`).
 - `scripts/oss-fixtures.labels.tsv` — labels keyed by `(slug, code, target)`
   for CHK001–CHK010 findings (`fp` / `tp` are ground truth; `deferred` is
   heuristic triage awaiting validation);
