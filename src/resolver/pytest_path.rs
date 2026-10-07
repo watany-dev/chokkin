@@ -21,8 +21,7 @@ use crate::sources::{DiscoveredSources, FileContext, FileKind, path_to_module};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PytestImportPaths {
     files: HashSet<String>,
-    /// Non-test files run as scripts: Dev/Docs files, or runtime files that
-    /// map to no module name.
+    /// Non-test files run as scripts, with their own directory on `sys.path`.
     scripts: HashSet<String>,
     /// Every directory holding a discovered file, at any depth.
     dirs: HashSet<String>,
@@ -165,7 +164,6 @@ impl PytestImportPaths {
         }
     }
 
-    /// The module beside script `file` that `module` names, if any.
     #[must_use]
     pub(crate) fn resolve_sibling(&self, file: &str, module: &str) -> Option<&str> {
         if !self.scripts.contains(file) {
