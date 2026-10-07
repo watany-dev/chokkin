@@ -24,6 +24,46 @@ API token — authentication is handled entirely by OIDC. Release actions in
 `.github/workflows/release.yml` are SHA-pinned; bump tags by resolving the
 commit SHA and updating the inline comment.
 
+## Repository settings checklist
+
+These live in the GitHub and PyPI settings, not in the repository, so review
+them when a maintainer, workflow, or job name changes.
+
+**`main` branch ruleset** (Settings → Rules → Rulesets):
+
+- Restrict deletions and block force pushes.
+- Require a pull request before merging, with review from Code Owners
+  (`.github/CODEOWNERS`). A PR author cannot approve their own PR, so while
+  there is a single maintainer, add them to the bypass list (for pull requests
+  only) or no maintainer PR can merge.
+- Require status checks to pass, with the branch up to date. The jobs that
+  cover `make check` (fmt, clippy, test, deny, machete):
+  - `Lint (fmt, clippy, doc, machete)`
+  - `Test (ubuntu-24.04)`, `Test (macos-14)`, `Test (windows-latest)`
+  - `Security (cargo-deny)`
+
+  Also worth requiring: `MSRV (1.96) + chokkin baseline` and
+  `Repo checks (actionlint, generated maps, action)`. A renamed job drops out
+  of the required list silently, so update the ruleset in the same PR.
+
+**`pypi-chokkin` environment** (Settings → Environments):
+
+- Deployment branches and tags: selected tags only, pattern `v*`.
+- Required reviewers: the maintainer. "Prevent self-review" would block the
+  only maintainer, so leave it off until there is a second one.
+
+**Releases** (Settings → General → Releases): enable immutable releases.
+`release.yml` uploads every asset in the `gh release create` call, so it works
+with them unchanged. Releases up to v0.7.0 were published before this was
+enabled and are still mutable.
+
+**PyPI** (pypi.org account and the `chokkin` project):
+
+- Two-factor authentication is on for every owner and maintainer.
+- The only publisher is the Trusted Publisher above; no API tokens exist for
+  the project (Account settings → API tokens), and none are stored as GitHub
+  secrets.
+
 ## Generated resolver maps
 
 Bundled maps (`src/resolver/bundled/`) and stdlib lists (`src/resolver/stdlib/`)

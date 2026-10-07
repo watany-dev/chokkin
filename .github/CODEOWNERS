@@ -1,0 +1,3 @@
+# Required review from code owners is enforced by the main branch ruleset;
+# see "Repository settings checklist" in docs/dev/ci-porting-notes.md.
+* @watany-dev

@@ -85,4 +85,5 @@ before tagging, not in the release commit.
 Before publishing the first release, a PyPI Trusted Publisher must be
 registered at pypi.org (repo: `watany-dev/chokkin`, workflow: `release.yml`,
 environment: `pypi-chokkin`). See `docs/dev/ci-porting-notes.md` for the full setup
-checklist.
+checklist, and its "Repository settings checklist" for the branch ruleset,
+environment reviewers, immutable releases, and PyPI account settings.
