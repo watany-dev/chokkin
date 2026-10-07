@@ -404,11 +404,15 @@ fn unresolved_import_candidate(
         confidence: Confidence::Likely,
         message,
         workspace_member: None,
-        origins: vec![Origin::Import {
-            file: file.to_owned(),
-            line,
-            module: import.to_owned(),
-        }],
+        // Every site, anchor first, so an inline ignore must cover them all.
+        origins: std::iter::once(line)
+            .chain(others.iter().copied())
+            .map(|line| Origin::Import {
+                file: file.to_owned(),
+                line,
+                module: import.to_owned(),
+            })
+            .collect(),
         explain: ExplainData {
             summary: if first_party {
                 format!("`{import}` looks like a first-party import but is unresolved")

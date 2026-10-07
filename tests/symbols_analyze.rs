@@ -935,6 +935,15 @@ fn repeated_unresolved_import_emits_one_chk010_per_file() {
         chokkin::internals::IssueSubject::Import { line: 8, .. }
     ));
     assert_eq!(main[0].severity, Severity::Warning);
+    let origin_lines = main[0]
+        .origins
+        .iter()
+        .map(|origin| match origin {
+            chokkin::internals::Origin::Import { line, .. } => *line,
+            other => panic!("unexpected origin: {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(origin_lines, vec![8, 4, 14]);
     assert!(
         main[0]
             .explain

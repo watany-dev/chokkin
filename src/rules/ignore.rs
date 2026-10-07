@@ -72,7 +72,7 @@ impl IgnoreMatcher {
         if self.matches_config(candidate.rule, &candidate.subject, file.as_deref()) {
             return Some(SuppressReason::Config);
         }
-        self.matches_directives(candidate.rule, file.as_deref(), candidate_line(candidate))
+        self.matches_directives(candidate.rule, file.as_deref(), &candidate_lines(candidate))
     }
 }
 
@@ -103,41 +103,48 @@ impl IgnoreMatcher {
         &self,
         rule: RuleId,
         file: Option<&str>,
-        line: Option<u32>,
+        lines: &[u32],
     ) -> Option<SuppressReason> {
         let directives = self.directives.get(file?)?;
 
         let code = rule.as_code();
-        for directive in directives {
-            if !directive.codes.iter().any(|entry| entry == code) {
-                continue;
-            }
-            if directive.file_level {
-                return Some(SuppressReason::FileLevel);
-            }
-            if line == Some(directive.line) {
-                return Some(SuppressReason::Inline);
-            }
+        let matching = directives
+            .iter()
+            .filter(|directive| directive.codes.iter().any(|entry| entry == code));
+        if matching.clone().any(|directive| directive.file_level) {
+            return Some(SuppressReason::FileLevel);
         }
-        None
+        // A merged CHK010 covers several import lines; ignoring one of them
+        // must not hide the others.
+        let ignored = |line: &u32| matching.clone().any(|directive| directive.line == *line);
+        (!lines.is_empty() && lines.iter().all(ignored)).then_some(SuppressReason::Inline)
     }
 }
 
-fn candidate_line(candidate: &IssueCandidate) -> Option<u32> {
-    for origin in &candidate.origins {
-        if let Origin::Import { line, .. } = origin {
-            return Some(*line);
-        }
+fn candidate_lines(candidate: &IssueCandidate) -> Vec<u32> {
+    let imports = candidate
+        .origins
+        .iter()
+        .filter_map(|origin| match origin {
+            Origin::Import { line, .. } => Some(*line),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !imports.is_empty() {
+        return imports;
     }
     match &candidate.subject {
-        IssueSubject::Import { line, .. } => Some(*line),
-        IssueSubject::ScriptDistribution { .. } => {
-            candidate.origins.iter().find_map(|origin| match origin {
+        IssueSubject::Import { line, .. } => vec![*line],
+        IssueSubject::ScriptDistribution { .. } => candidate
+            .origins
+            .iter()
+            .filter_map(|origin| match origin {
                 Origin::Manifest(origin) => origin.line,
                 _ => None,
             })
-        },
-        _ => None,
+            .take(1)
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -653,6 +660,10 @@ mod tests {
     }
 
     fn directive_matcher(path: &str, directive: IgnoreDirective) -> IgnoreMatcher {
+        directives_matcher(path, vec![directive])
+    }
+
+    fn directives_matcher(path: &str, ignores: Vec<IgnoreDirective>) -> IgnoreMatcher {
         let mut parse = ParseSummary::default();
         parse.modules.push(crate::parser::ParsedModule {
             path: path.to_owned(),
@@ -664,7 +675,7 @@ mod tests {
             symbols: Vec::new(),
             exports: Vec::new(),
             used_import_bindings: Vec::new(),
-            ignores: vec![directive],
+            ignores,
             has_opaque_dynamic_import: false,
             runs_python_file: false,
             shell_commands: Vec::new(),
@@ -808,6 +819,37 @@ mod tests {
             let matcher = config_matcher(RuleId::Chk006, &[pattern]);
             assert!(!suppressed_by_config(&matcher, &unused), "{pattern}");
         }
+    }
+
+    /// A CHK010 merged over several import lines is silenced only when every
+    /// line carries the directive (#585).
+    #[test]
+    fn inline_ignore_needs_every_merged_import_line() {
+        let directive = |line| IgnoreDirective {
+            file_level: false,
+            codes: vec!["CHK010".to_owned()],
+            line,
+        };
+        let origin = |line| Origin::Import {
+            file: APP.to_owned(),
+            line,
+            module: "legacy".to_owned(),
+        };
+        let unresolved = candidate(
+            RuleId::Chk010,
+            unresolved_import("legacy"),
+            vec![origin(7), origin(12)],
+        );
+
+        assert_eq!(
+            directive_matcher(APP, directive(7)).matches_candidate(&unresolved),
+            None
+        );
+        assert_eq!(
+            directives_matcher(APP, vec![directive(7), directive(12)])
+                .matches_candidate(&unresolved),
+            Some(SuppressReason::Inline)
+        );
     }
 
     /// Without an import origin, the inline line comes from the import subject.

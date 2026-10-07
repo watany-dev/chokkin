@@ -147,14 +147,16 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
     for origin in &candidate.origins {
         match origin {
             Origin::Manifest(origin) => manifest = Some(origin.clone()),
+            // A merged CHK010 lists its anchor import first.
             Origin::Import {
                 file: import_file,
                 line: import_line,
                 ..
-            } => {
+            } if file.is_none() => {
                 file = Some(import_file.clone());
                 line = Some(*import_line);
             },
+            Origin::Import { .. } => {},
             Origin::Binary(origin) => {
                 file = Some(origin.file.clone());
                 line = origin.line;

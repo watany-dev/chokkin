@@ -133,7 +133,9 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   import line. The issue points at the first import that runs (the first
   `TYPE_CHECKING` one when none does), and `explain` lists the other lines
   ("also imported at lines …"). It is a warning when any of those imports
-  runs, and info only when all sit under `TYPE_CHECKING`. The
+  runs, and info only when all sit under `TYPE_CHECKING`. An inline
+  `# chokkin: ignore[CHK010]` silences it only when every one of those lines
+  carries the directive. The
   fingerprint (`CHK010:<file>:<module>`) is unchanged, so baselines keep
   matching (#585).
 
