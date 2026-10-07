@@ -32,13 +32,3 @@ updates:
     groups:
       pip-minor-and-patch:
         update-types: [minor, patch]
-
-  - package-ecosystem: pip
-    directory: /.github/requirements
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      semgrep:
-        patterns: ["*"]
