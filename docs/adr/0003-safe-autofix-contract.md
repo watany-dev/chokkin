@@ -77,4 +77,4 @@ The contract is covered by existing tests:
 
 - `src/fix/`
 - `docs/dev/spec.ja.md` §13
-- `docs/dev/plans/phase-3x-v0.4-reliability-contract.md` §6
+- `docs/dev/plans/phase-3x-v0.4-reliability-contract.md` §6 (removed in #639; see git history at `5611257`)

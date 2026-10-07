@@ -81,4 +81,4 @@ external plugins ship, their outputs will be folded into the existing graph laye
 
 - `docs/dev/spec.ja.md` §9, §16 v1.0 list
 - `src/plugins/extract.rs` — current built-in orchestration
-- `docs/dev/plans/phase-2-v0.2-adoption.md` §5 — Phase 3 handoff
+- `docs/dev/plans/phase-2-v0.2-adoption.md` §5 — Phase 3 handoff (removed in #639; see git history at `5611257`)

@@ -1517,3 +1517,4 @@ Knip的な体験は「だいたい当たる静的解析」ではなく、「設�
 - PEP 751 pylock.toml: <https://peps.python.org/pep-0751/>
 - PEP 810 Explicit lazy imports: <https://peps.python.org/pep-0810/>
 - ロードマップのギャップ分析: [`roadmap-gap-analysis.ja.md`](./roadmap-gap-analysis.ja.md)
+- 完了済みの設計プラン (`docs/dev/plans/`) は #639 で削除した。設計の正は本書。履歴は commit `5611257` 時点の git 履歴で辿れる。

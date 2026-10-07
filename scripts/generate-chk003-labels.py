@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate CHK003 triage labels from oss-metrics findings.tsv.
 
-Heuristic triage for Step 0 volume (see docs/dev/plans/phase-3x-step0-chk003-measurement.md).
+Heuristic triage for Step 0 volume (see docs/dev/plans/phase-3x-step0-chk003-measurement.md
+in git history at 5611257; removed in #639).
 Re-run after `make oss-metrics` when the OSS clone set or chokkin version changes.
 
 Usage:
