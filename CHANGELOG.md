@@ -129,6 +129,15 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
 - The Rust library is no longer a public API: chokkin ships as a CLI, every
   pipeline module is crate-private, and `cargo-semver-checks` is dropped from
   CI. ADR 0004 now excludes the library from the compatibility surface.
+- CHK010 reports an unresolved module once per file instead of once per
+  import line. The issue points at the first import that runs (the first
+  `TYPE_CHECKING` one when none does), and `explain` lists the other lines
+  ("also imported at lines …"). It is a warning when any of those imports
+  runs, and info only when all sit under `TYPE_CHECKING`. An inline
+  `# chokkin: ignore[CHK010]` silences it only when every one of those lines
+  carries the directive. The
+  fingerprint (`CHK010:<file>:<module>`) is unchanged, so baselines keep
+  matching (#585).
 
 ### Fixed
 - A non-UTF-8 Python source no longer aborts the whole analysis with exit 2.

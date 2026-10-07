@@ -1,6 +1,6 @@
 //! Symbol usage analysis orchestration (pipeline step 11).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
@@ -318,9 +318,9 @@ fn detect_unresolved_imports(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> Vec<IssueCandidate> {
-    let mut candidates = Vec::new();
-    let mut reported = HashSet::new();
-
+    // One issue per (file, module): lazy imports inside functions repeat the
+    // same unresolved module many times in one file and bury the rest.
+    let mut sites: HashMap<(&str, &str), Vec<(u32, ImportContext)>> = HashMap::new();
     for warning in &resolution.warnings {
         let ResolveWarning::UnresolvedImport {
             import,
@@ -334,54 +334,99 @@ fn detect_unresolved_imports(
         if !reachable.contains(file.as_str()) {
             continue;
         }
-        if !reported.insert((file.clone(), *line, import.clone())) {
-            continue;
-        }
-
-        let first_party = is_first_party_import(import, &sources.layout, &manifest.metadata);
-        let message = if first_party {
-            format!("import `{import}` in `{file}:{line}` does not resolve to a first-party module")
-        } else {
-            format!("import `{import}` in `{file}:{line}` could not be resolved")
-        };
-
-        candidates.push(IssueCandidate {
-            rule: RuleId::Chk010,
-            subject: IssueSubject::Import {
-                module: import.clone(),
-                file: file.clone(),
-                line: *line,
-                distribution: None,
-            },
-            // A `TYPE_CHECKING` import never runs; it stays reported for typos.
-            severity: if *context == ImportContext::Type {
-                Severity::Info
-            } else {
-                Severity::Warning
-            },
-            confidence: Confidence::Likely,
-            message,
-            workspace_member: None,
-            origins: vec![Origin::Import {
-                file: file.clone(),
-                line: *line,
-                module: import.clone(),
-            }],
-            explain: ExplainData {
-                summary: if first_party {
-                    format!("`{import}` looks like a first-party import but is unresolved")
-                } else {
-                    format!("`{import}` is not stdlib, first-party, or a known third-party package")
-                },
-                details: vec![
-                    "check for typos in first-party module names".to_owned(),
-                    "third-party packages may be missing from dependency declarations".to_owned(),
-                ],
-            },
-        });
+        sites
+            .entry((file.as_str(), import.as_str()))
+            .or_default()
+            .push((*line, *context));
     }
 
-    candidates
+    sites
+        .into_iter()
+        .filter_map(|((file, import), lines)| {
+            unresolved_import_candidate(file, import, &lines, manifest, sources)
+        })
+        .collect()
+}
+
+// Anchor at a real runtime line: line 0 is a plugin reference with no
+// position, and a `TYPE_CHECKING` import is the one that never fails.
+fn anchor_line(lines: &[(u32, ImportContext)]) -> Option<u32> {
+    lines
+        .iter()
+        .min_by_key(|(line, context)| (*context == ImportContext::Type, *line == 0, *line))
+        .map(|(line, _)| *line)
+}
+
+fn unresolved_import_candidate(
+    file: &str,
+    import: &str,
+    lines: &[(u32, ImportContext)],
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+) -> Option<IssueCandidate> {
+    let line = anchor_line(lines)?;
+    let type_only = lines
+        .iter()
+        .all(|(_, context)| *context == ImportContext::Type);
+    let others = lines
+        .iter()
+        .map(|(other, _)| *other)
+        .filter(|other| *other != line && *other != 0)
+        .collect::<BTreeSet<_>>();
+    let first_party = is_first_party_import(import, &sources.layout, &manifest.metadata);
+    let message = if first_party {
+        format!("import `{import}` in `{file}:{line}` does not resolve to a first-party module")
+    } else {
+        format!("import `{import}` in `{file}:{line}` could not be resolved")
+    };
+    let mut details = vec![
+        "check for typos in first-party module names".to_owned(),
+        "third-party packages may be missing from dependency declarations".to_owned(),
+    ];
+    if !others.is_empty() {
+        let others = others
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        details.push(format!("also imported at lines {others}"));
+    }
+
+    Some(IssueCandidate {
+        rule: RuleId::Chk010,
+        subject: IssueSubject::Import {
+            module: import.to_owned(),
+            file: file.to_owned(),
+            line,
+            distribution: None,
+        },
+        // A `TYPE_CHECKING` import never runs; it stays reported for typos.
+        severity: if type_only {
+            Severity::Info
+        } else {
+            Severity::Warning
+        },
+        confidence: Confidence::Likely,
+        message,
+        workspace_member: None,
+        // Every site, anchor first, so an inline ignore must cover them all.
+        origins: std::iter::once(line)
+            .chain(others.iter().copied())
+            .map(|line| Origin::Import {
+                file: file.to_owned(),
+                line,
+                module: import.to_owned(),
+            })
+            .collect(),
+        explain: ExplainData {
+            summary: if first_party {
+                format!("`{import}` looks like a first-party import but is unresolved")
+            } else {
+                format!("`{import}` is not stdlib, first-party, or a known third-party package")
+            },
+            details,
+        },
+    })
 }
 
 fn symbol_kind_label(kind: crate::parser::SymbolKind) -> &'static str {
@@ -389,5 +434,21 @@ fn symbol_kind_label(kind: crate::parser::SymbolKind) -> &'static str {
         crate::parser::SymbolKind::Function => "function",
         crate::parser::SymbolKind::Class => "class",
         crate::parser::SymbolKind::Variable => "constant",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anchor_prefers_runtime_then_positioned_then_earliest_line() {
+        use ImportContext::{Runtime, Type};
+
+        assert_eq!(anchor_line(&[]), None);
+        assert_eq!(anchor_line(&[(4, Type), (8, Runtime)]), Some(8));
+        assert_eq!(anchor_line(&[(0, Runtime), (8, Runtime)]), Some(8));
+        assert_eq!(anchor_line(&[(14, Runtime), (8, Runtime)]), Some(8));
+        assert_eq!(anchor_line(&[(0, Runtime), (4, Type)]), Some(0));
     }
 }
