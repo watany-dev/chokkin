@@ -68,7 +68,6 @@ struct Visit {
     followed: Option<Reach>,
 }
 
-/// The import sites of every file, built once for the walk.
 struct Adjacency {
     file_imports: HashMap<FileId, Vec<ImportSite>>,
     submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
@@ -94,7 +93,6 @@ struct BfsState<'a> {
 }
 
 impl BfsState<'_> {
-    /// The class an import on `line` of `from` passes on to `target`.
     /// Imports out of test, docs and dev files only count for library files,
     /// which outside callers may import directly.
     fn edge_class(&self, from: FileId, class: Reach, line: u32, target: FileId) -> Reach {
@@ -249,9 +247,8 @@ pub(super) fn run_reachability_bfs(
     state.finish()
 }
 
-/// Follow the imports of `file_id` at `class`. Stdlib and third-party uses
-/// are recorded only on the `first` visit; later visits only pass on a
-/// better class to files already reached.
+/// Stdlib and third-party uses are recorded only on the `first` visit; later
+/// visits only pass on a better class to files already reached.
 fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId, class: Reach, first: bool) {
     let graph = state.graph;
     let adjacency = state.adjacency;
