@@ -197,6 +197,12 @@ fn form_parser_is_used_through_starlette() {
 }
 
 #[test]
+fn form_parser_is_unused_without_a_framework() {
+    let report = reconcile_fixture("form_parser_without_framework");
+    assert!(has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
+}
+
+#[test]
 fn missing_yaml_emits_chk003() {
     let report = reconcile_fixture("missing_yaml");
     let yaml = report
