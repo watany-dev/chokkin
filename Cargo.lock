@@ -211,6 +211,7 @@ dependencies = [
  "ignore",
  "indexmap",
  "jsonschema",
+ "memchr",
  "proptest",
  "regex",
  "ruff_python_ast",
