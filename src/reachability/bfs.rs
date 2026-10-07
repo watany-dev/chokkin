@@ -47,91 +47,142 @@ type ImportSiteRef = (FileId, ModuleId, u32);
 /// A file and one of its lines.
 type FileLine = (FileId, u32);
 
+/// How surely a reached file loads, ordered weakest first. A file's class is
+/// the best any path to it gives; an edge passes on at most its source's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Reach {
+    /// Reached only through a lazy import, or out of a test, docs or dev
+    /// file into a non-library file.
+    Reachable,
+    /// Reached without lazy imports, but only through optional ones.
+    Eager,
+    /// Reached through imports that always run.
+    Certain,
+}
+
+/// A reached file: its best class so far and the class its imports were last
+/// followed at, if they have been.
+#[derive(Debug, Clone, Copy)]
+struct Visit {
+    class: Reach,
+    followed: Option<Reach>,
+}
+
+struct Adjacency {
+    file_imports: HashMap<FileId, Vec<ImportSite>>,
+    submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
+    prefix_imports: HashMap<FileId, Vec<SubmoduleSite>>,
+    dynamic_sites: HashSet<ImportSiteRef>,
+    /// Function-local and `TYPE_CHECKING` import lines.
+    lazy: HashSet<FileLine>,
+    /// `try`/`suppress(ImportError)` and platform-guarded import lines.
+    optional: HashSet<FileLine>,
+}
+
 struct BfsState<'a> {
     // Shared, so module and file names can be borrowed for the whole walk and
     // copied only into the steps of newly reached files.
     graph: &'a ProjectGraph,
     module_index: &'a ModuleIndex,
-    file_imports: HashMap<FileId, Vec<ImportSite>>,
-    submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
-    prefix_imports: HashMap<FileId, Vec<SubmoduleSite>>,
+    entry: &'a EntryPlan,
+    adjacency: &'a Adjacency,
     queue: VecDeque<FileId>,
-    reachable: IndexSet<FileId>,
+    reached: IndexMap<FileId, Visit>,
     predecessors: IndexMap<FileId, ReachPredecessor>,
     used_modules: Vec<UsedModule>,
-    dynamic_sites: HashSet<ImportSiteRef>,
-    /// Import lines not followed in this walk.
-    skipped_lines: HashSet<FileLine>,
-    /// When set, imports out of test, docs and dev files reach only library
-    /// files, which outside callers may import directly.
-    runtime_entry: Option<&'a EntryPlan>,
 }
 
-impl<'a> BfsState<'a> {
-    fn new(
-        graph: &'a ProjectGraph,
-        parse: &ParseSummary,
-        module_index: &'a ModuleIndex,
-        skipped_lines: HashSet<FileLine>,
-        runtime_entry: Option<&'a EntryPlan>,
-    ) -> Self {
-        Self {
-            graph,
-            module_index,
-            file_imports: build_file_import_adjacency(graph),
-            submodule_imports: build_submodule_imports(graph, parse, module_index),
-            prefix_imports: build_prefix_imports(graph, parse, module_index),
-            queue: VecDeque::new(),
-            reachable: IndexSet::new(),
-            predecessors: IndexMap::new(),
-            used_modules: Vec::new(),
-            dynamic_sites: build_dynamic_sites(graph, parse),
-            skipped_lines,
-            runtime_entry,
+impl BfsState<'_> {
+    /// Imports out of test, docs and dev files only count for library files,
+    /// which outside callers may import directly.
+    fn edge_class(&self, from: FileId, class: Reach, line: u32, target: FileId) -> Reach {
+        if class == Reach::Reachable || self.adjacency.lazy.contains(&(from, line)) {
+            return Reach::Reachable;
+        }
+        let file = |id| self.graph.file(id);
+        let runtime = file(from).is_none_or(|node| node.context == FileContext::Runtime)
+            || file(target)
+                .is_some_and(|node| self.entry.mode_for(&node.path) == ProjectMode::Library);
+        if !runtime {
+            Reach::Reachable
+        } else if self.adjacency.optional.contains(&(from, line)) {
+            class.min(Reach::Eager)
+        } else {
+            class
         }
     }
 
-    fn follows(&self, from: FileId, target: FileId) -> bool {
-        let Some(entry) = self.runtime_entry else {
-            return true;
-        };
-        let file = |id| self.graph.file(id);
-        file(from).is_none_or(|node| node.context == FileContext::Runtime)
-            || file(target).is_some_and(|node| entry.mode_for(&node.path) == ProjectMode::Library)
-    }
-
-    /// Mark `file_id` reached; `step` is only built for a file seen the first time.
+    /// Mark `file_id` reached at `class`; `step` is only built for a file
+    /// seen the first time. A file reached again at a better class is
+    /// queued again so its imports pass that class on.
     fn enqueue_file(
         &mut self,
         file_id: FileId,
         from: Option<FileId>,
+        class: Reach,
         step: impl FnOnce() -> TraceStep,
     ) {
-        if self.reachable.insert(file_id) {
-            self.predecessors
-                .insert(file_id, ReachPredecessor { from, step: step() });
-            self.queue.push_back(file_id);
+        match self.reached.entry(file_id) {
+            indexmap::map::Entry::Vacant(vacant) => {
+                vacant.insert(Visit {
+                    class,
+                    followed: None,
+                });
+                self.predecessors
+                    .insert(file_id, ReachPredecessor { from, step: step() });
+                self.queue.push_back(file_id);
+            },
+            indexmap::map::Entry::Occupied(mut occupied) => {
+                let visit = occupied.get_mut();
+                if class > visit.class {
+                    visit.class = class;
+                    self.queue.push_back(file_id);
+                }
+            },
         }
     }
 
     fn finish(self) -> BfsOutcome {
+        let at_least = |floor: Reach| -> IndexSet<FileId> {
+            self.reached
+                .iter()
+                .filter(|(_, visit)| visit.class >= floor)
+                .map(|(file_id, _)| *file_id)
+                .collect()
+        };
+        let eager = at_least(Reach::Eager);
+        let certain = at_least(Reach::Certain);
         BfsOutcome {
-            reachable: self.reachable,
+            reachable: self.reached.keys().copied().collect(),
             predecessors: self.predecessors,
             used_modules: self.used_modules,
-            eager: IndexSet::new(),
-            certain: IndexSet::new(),
+            eager,
+            certain,
         }
     }
 
     fn drain(&mut self) {
         while let Some(file_id) = self.queue.pop_front() {
-            record_file_imports(self, file_id);
+            let visit = &mut self.reached[&file_id];
+            let first = visit.followed.is_none();
+            if visit
+                .followed
+                .is_some_and(|followed| followed >= visit.class)
+            {
+                continue;
+            }
+            visit.followed = Some(visit.class);
+            let class = visit.class;
+            record_file_imports(self, file_id, class, first);
         }
     }
 }
 
 /// Run BFS from entry roots through first-party import edges.
+///
+/// One walk computes every set: each file carries the best [`Reach`] class
+/// some path gives it, and is followed again only when that class improves,
+/// so no file is followed more than three times.
 ///
 /// Framework-glob files are seeded after the walk from the entry roots and
 /// plugin refs has finished, so a file those reach keeps its import trace;
@@ -146,63 +197,30 @@ pub(super) fn run_reachability_bfs(
     framework: Vec<(FileId, ReachPredecessor)>,
 ) -> BfsOutcome {
     let (lazy, optional) = conditional_lines(graph, parse);
-    let eager = walk(
+    let adjacency = Adjacency {
+        file_imports: build_file_import_adjacency(graph),
+        submodule_imports: build_submodule_imports(graph, parse, module_index),
+        prefix_imports: build_prefix_imports(graph, parse, module_index),
+        dynamic_sites: build_dynamic_sites(graph, parse),
+        lazy,
+        optional,
+    };
+    let mut state = BfsState {
         graph,
-        entry,
-        plugins,
-        parse,
         module_index,
-        framework.clone(),
-        lazy.clone(),
-        Some(entry),
-    )
-    .reachable;
-    let mut skipped = optional;
-    skipped.extend(lazy);
-    let certain = walk(
-        graph,
         entry,
-        plugins,
-        parse,
-        module_index,
-        framework.clone(),
-        skipped,
-        Some(entry),
-    )
-    .reachable;
-    let mut outcome = walk(
-        graph,
-        entry,
-        plugins,
-        parse,
-        module_index,
-        framework,
-        HashSet::new(),
-        None,
-    );
-    outcome.eager = eager;
-    outcome.certain = certain;
-    outcome
-}
-
-#[allow(clippy::too_many_arguments)]
-fn walk<'a>(
-    graph: &'a ProjectGraph,
-    entry: &EntryPlan,
-    plugins: &PluginHints,
-    parse: &ParseSummary,
-    module_index: &'a ModuleIndex,
-    framework: Vec<(FileId, ReachPredecessor)>,
-    skipped_lines: HashSet<FileLine>,
-    runtime_entry: Option<&'a EntryPlan>,
-) -> BfsOutcome {
-    let mut state = BfsState::new(graph, parse, module_index, skipped_lines, runtime_entry);
+        adjacency: &adjacency,
+        queue: VecDeque::new(),
+        reached: IndexMap::new(),
+        predecessors: IndexMap::new(),
+        used_modules: Vec::new(),
+    };
 
     for root in &entry.roots {
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
             continue;
         };
-        state.enqueue_file(file_id, None, || TraceStep::File {
+        state.enqueue_file(file_id, None, Reach::Certain, || TraceStep::File {
             file: file_id,
             path: root.spec.path.clone(),
         });
@@ -213,7 +231,7 @@ fn walk<'a>(
             let Some(target) = state.module_index.resolve(name) else {
                 continue;
             };
-            state.enqueue_file(target, None, || TraceStep::PluginRef {
+            state.enqueue_file(target, None, Reach::Certain, || TraceStep::PluginRef {
                 module: name.to_owned(),
                 label: label.to_owned(),
             });
@@ -222,34 +240,33 @@ fn walk<'a>(
     state.drain();
 
     for (file_id, ReachPredecessor { from, step }) in framework {
-        state.enqueue_file(file_id, from, || step);
+        state.enqueue_file(file_id, from, Reach::Certain, || step);
     }
     state.drain();
 
     state.finish()
 }
 
-fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
+/// Stdlib and third-party uses are recorded only on the `first` visit; later
+/// visits only pass on a better class to files already reached.
+fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId, class: Reach, first: bool) {
     let graph = state.graph;
-    // Taking the adjacency list out of the map avoids cloning it. Each file is
-    // enqueued at most once, so it is never visited again after this.
-    let imports = state.file_imports.remove(&file_id).unwrap_or_default();
+    let adjacency = state.adjacency;
     let source_path = graph.file(file_id).map_or("", |node| node.path.as_str());
 
-    for (module_id, line) in imports {
-        if state.skipped_lines.contains(&(file_id, line)) {
-            continue;
-        }
+    for &(module_id, line) in adjacency.file_imports.get(&file_id).into_iter().flatten() {
         let Some(module_node) = graph.module(module_id) else {
             continue;
         };
         let name = module_node.name.as_str();
         match module_node.origin {
             ModuleOrigin::FirstParty => {
-                let dynamic = state.dynamic_sites.contains(&(file_id, module_id, line));
-                enqueue_import(state, file_id, name, line, dynamic);
+                let dynamic = adjacency
+                    .dynamic_sites
+                    .contains(&(file_id, module_id, line));
+                enqueue_import(state, file_id, class, name, line, dynamic);
             },
-            origin @ (ModuleOrigin::Stdlib | ModuleOrigin::ThirdParty) => {
+            origin @ (ModuleOrigin::Stdlib | ModuleOrigin::ThirdParty) if first => {
                 state.used_modules.push(UsedModule {
                     full_module: name.to_owned(),
                     import_root: import_root(name).to_owned(),
@@ -258,26 +275,28 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
                     line,
                 });
             },
-            ModuleOrigin::Unknown => {},
+            ModuleOrigin::Stdlib | ModuleOrigin::ThirdParty | ModuleOrigin::Unknown => {},
         }
     }
 
-    let submodules = state.submodule_imports.remove(&file_id).unwrap_or_default();
-    for (target, module, line) in submodules {
-        if state.skipped_lines.contains(&(file_id, line)) || !state.follows(file_id, target) {
-            continue;
-        }
-        state.enqueue_file(target, Some(file_id), || TraceStep::Import { module, line });
+    for (target, module, line) in adjacency
+        .submodule_imports
+        .get(&file_id)
+        .into_iter()
+        .flatten()
+    {
+        let edge = state.edge_class(file_id, class, *line, *target);
+        state.enqueue_file(*target, Some(file_id), edge, || TraceStep::Import {
+            module: module.clone(),
+            line: *line,
+        });
     }
 
-    let prefixed = state.prefix_imports.remove(&file_id).unwrap_or_default();
-    for (target, module, line) in prefixed {
-        if state.skipped_lines.contains(&(file_id, line)) || !state.follows(file_id, target) {
-            continue;
-        }
-        state.enqueue_file(target, Some(file_id), || TraceStep::DynamicImport {
-            module,
-            line,
+    for (target, module, line) in adjacency.prefix_imports.get(&file_id).into_iter().flatten() {
+        let edge = state.edge_class(file_id, class, *line, *target);
+        state.enqueue_file(*target, Some(file_id), edge, || TraceStep::DynamicImport {
+            module: module.clone(),
+            line: *line,
         });
     }
 }
@@ -285,9 +304,11 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
 /// Importing `pkg.sub.mod` runs `pkg/__init__.py` and `pkg/sub/__init__.py`
 /// before `mod`, so every dotted prefix that resolves is reached from the
 /// same site.
+#[allow(clippy::too_many_arguments)]
 fn enqueue_import(
     state: &mut BfsState<'_>,
     from_file: FileId,
+    class: Reach,
     module: &str,
     line: u32,
     dynamic: bool,
@@ -300,10 +321,8 @@ fn enqueue_import(
         let Some(target) = state.module_index.resolve_from(from_path, name) else {
             continue;
         };
-        if !state.follows(from_file, target) {
-            continue;
-        }
-        state.enqueue_file(target, Some(from_file), || {
+        let edge = state.edge_class(from_file, class, line, target);
+        state.enqueue_file(target, Some(from_file), edge, || {
             let module = name.to_owned();
             if dynamic {
                 TraceStep::DynamicImport { module, line }
@@ -572,7 +591,15 @@ mod tests {
         first_party: &[&str],
         modules: &[ParsedModule],
     ) -> ProjectGraph {
-        let mut graph = ProjectGraph::new(root);
+        fill_graph(ProjectGraph::new(root), paths, first_party, modules)
+    }
+
+    fn fill_graph(
+        mut graph: ProjectGraph,
+        paths: &[&str],
+        first_party: &[&str],
+        modules: &[ParsedModule],
+    ) -> ProjectGraph {
         for path in paths {
             graph
                 .intern_file(FileNode {
@@ -872,6 +899,81 @@ mod tests {
         let [main_id, _, _, c_id] = PATHS.map(|path| graph.file_id(path).expect(path));
         assert_eq!(outcome.reachable.len(), 4);
         assert_eq!(outcome.eager, IndexSet::from([main_id, c_id]));
+    }
+
+    /// #627: a file first reached lazily or optionally is followed again
+    /// once a later path reaches it surely, so the files it imports are
+    /// upgraded too, while its trace and its stdlib uses are kept from the
+    /// first visit.
+    #[test]
+    fn upgraded_class_is_passed_on_to_files_already_reached() {
+        let root = test_root();
+        for weaken in [
+            (|import: &mut ImportRef| import.deferred = true) as fn(&mut ImportRef),
+            |import| import.optional = true,
+        ] {
+            let mut main = parsed("src/acme/main.py", &[("acme.a", 1), ("acme.b", 2)], &[]);
+            weaken(&mut main.imports[0]);
+            let modules = vec![
+                main,
+                parsed("src/acme/a.py", &[("acme.c", 1), ("os", 2)], &[]),
+                parsed("src/acme/b.py", &[("acme.a", 1)], &[]),
+            ];
+            let mut graph = ProjectGraph::new(root.clone());
+            graph.intern_module("os".to_owned(), ModuleOrigin::Stdlib);
+            let graph = fill_graph(graph, &PATHS, &["acme.a", "acme.b", "acme.c"], &modules);
+            let outcome = run_bfs(&graph, &root, modules, Vec::new());
+
+            let [main_id, a_id, b_id, c_id] = PATHS.map(|path| graph.file_id(path).expect(path));
+            let all = IndexSet::from([main_id, a_id, b_id, c_id]);
+            assert_eq!(outcome.reachable, all);
+            assert_eq!(outcome.eager, all);
+            assert_eq!(outcome.certain, all);
+            assert_eq!(reached_from(&outcome, a_id), Some(main_id));
+            assert_eq!(reached_from(&outcome, c_id), Some(a_id));
+            assert_eq!(outcome.used_modules.len(), 1);
+        }
+    }
+
+    /// A file is queued again only when its class improves; reaching it
+    /// again at the same or a weaker class leaves the queue alone.
+    #[test]
+    fn file_is_queued_again_only_when_its_class_improves() {
+        let root = test_root();
+        let graph = graph_with_imports(root.clone(), &[]);
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let entry = entry_plan();
+        let adjacency = Adjacency {
+            file_imports: HashMap::new(),
+            submodule_imports: HashMap::new(),
+            prefix_imports: HashMap::new(),
+            dynamic_sites: HashSet::new(),
+            lazy: HashSet::new(),
+            optional: HashSet::new(),
+        };
+        let mut state = BfsState {
+            graph: &graph,
+            module_index: &module_index,
+            entry: &entry,
+            adjacency: &adjacency,
+            queue: VecDeque::new(),
+            reached: IndexMap::new(),
+            predecessors: IndexMap::new(),
+            used_modules: Vec::new(),
+        };
+        let file_id = graph.file_id(PATHS[1]).expect("a.py");
+        let step = || TraceStep::File {
+            file: file_id,
+            path: PATHS[1].to_owned(),
+        };
+
+        state.enqueue_file(file_id, None, Reach::Eager, step);
+        state.enqueue_file(file_id, None, Reach::Eager, step);
+        state.enqueue_file(file_id, None, Reach::Reachable, step);
+        assert_eq!(state.queue.len(), 1);
+        state.enqueue_file(file_id, None, Reach::Certain, step);
+        assert_eq!(state.queue.len(), 2);
+        assert_eq!(state.reached[&file_id].class, Reach::Certain);
     }
 
     /// #614: a test importing a module says nothing about whether runtime
