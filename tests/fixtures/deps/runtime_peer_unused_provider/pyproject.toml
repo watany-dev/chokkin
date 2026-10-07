@@ -1,0 +1,7 @@
+[project]
+name = "runtime-peer-unused-provider"
+version = "0.1.0"
+dependencies = ["starlette", "python-multipart"]
+
+[project.scripts]
+runtime-peer-unused-provider-cli = "acme.main:main"

@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 
+use indexmap::IndexSet;
+
 use crate::config::Confidence;
 use crate::manifest::{
     DeclaredDependency, DependencyContext, InlineScript, LoadedManifest,
@@ -23,8 +25,8 @@ use super::missing::{WorkspaceDeclaredIndex, detect_missing_dependencies};
 use super::script::{detect_script_dependency_issues, is_script_third_party};
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
 use super::used::{
-    build_declared_index, build_import_declared_index, collect_used_distributions, has_lockfile,
-    mark_pytest_plugin_distributions, mark_self_referential_distribution,
+    DeclaredIndex, build_declared_index, build_import_declared_index, collect_used_distributions,
+    has_lockfile, mark_pytest_plugin_distributions, mark_self_referential_distribution,
     mark_workspace_source_distributions, reachable_paths, usage_paths,
 };
 
@@ -138,14 +140,7 @@ fn reconcile_project(
     }
     mark_pytest_plugin_distributions(resolution, &mut used);
 
-    // types-* stubs are considered used when their runtime package is used.
-    for name in declared.keys() {
-        if let Some(runtime) = runtime_for_stub(name)
-            && used.contains(&normalize_distribution_name(runtime))
-        {
-            used.insert(name.clone());
-        }
-    }
+    mark_companion_distributions(&declared, &mut used);
 
     let mut candidates = Vec::new();
     let evidence = UnusedEvidenceContext {
@@ -235,6 +230,28 @@ fn workspace_declared_indices<'a>(
             }
         })
         .collect()
+}
+
+/// Distributions another library imports lazily at runtime, so the project
+/// declares them without importing them: starlette's `request.form()` imports
+/// `python_multipart` only when called.
+const RUNTIME_PEERS: &[(&str, &[&str])] = &[("python-multipart", &["starlette", "fastapi"])];
+
+/// Mark `types-*` stubs and [`RUNTIME_PEERS`] used when the package they serve is.
+fn mark_companion_distributions(declared: &DeclaredIndex<'_>, used: &mut IndexSet<String>) {
+    for name in declared.keys() {
+        if let Some(runtime) = runtime_for_stub(name)
+            && used.contains(&normalize_distribution_name(runtime))
+        {
+            used.insert(name.clone());
+        }
+    }
+    for (peer, providers) in RUNTIME_PEERS {
+        if declared.contains_key(*peer) && providers.iter().any(|provider| used.contains(*provider))
+        {
+            used.insert((*peer).to_owned());
+        }
+    }
 }
 
 /// Map a `types-*` stub name to its runtime package when the pattern is known.
