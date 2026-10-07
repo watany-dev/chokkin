@@ -63,6 +63,8 @@ pub enum ResolveWarning {
         file: String,
         /// 1-based line number.
         line: u32,
+        /// Context of the import statement.
+        context: ImportContext,
     },
     /// Project `.venv` metadata could not be read.
     VenvUnreadable {
