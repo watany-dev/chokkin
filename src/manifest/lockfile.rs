@@ -18,7 +18,7 @@ use super::uv_lock::extract_uv_lock;
 
 /// Existing lockfiles directly under `root`, highest priority first
 /// (`uv.lock` > `pylock.toml` > `pylock.<name>.toml` > `poetry.lock` > `pdm.lock`).
-pub fn lockfile_candidates(root: &Path) -> Vec<(LockfileKind, PathBuf)> {
+pub(crate) fn lockfile_candidates(root: &Path) -> Vec<(LockfileKind, PathBuf)> {
     let mut found = Vec::new();
     push_if_file(&mut found, LockfileKind::Uv, root.join("uv.lock"));
     push_if_file(&mut found, LockfileKind::Pylock, root.join("pylock.toml"));

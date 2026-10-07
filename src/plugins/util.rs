@@ -13,7 +13,7 @@ use crate::manifest::literals::LiteralScan;
 use crate::manifest::util::{path_is_within_root, read_to_string};
 use crate::parser::{ParseSeverity, ParsedModule};
 use crate::path_util::rel_to_root;
-use crate::sources::{build_glob_set, path_to_module};
+use crate::sources::path_to_module;
 
 use super::context::PluginContext;
 use super::error::PluginsError;
@@ -22,7 +22,7 @@ use super::types::{
 };
 
 /// INI section key-value pairs.
-pub type IniSection = BTreeMap<String, String>;
+pub(super) type IniSection = BTreeMap<String, String>;
 
 /// Line of the earliest decorator in `module` whose normalized name and call
 /// form match.
@@ -56,7 +56,7 @@ fn decorator_line(
 }
 
 /// Push a module reference for each Python source with a matching decorator.
-pub fn push_decorated_modules(
+pub(super) fn push_decorated_modules(
     ctx: &PluginContext<'_>,
     contrib: &mut PluginContribution,
     is_decorator: fn(&str, bool) -> bool,
@@ -91,7 +91,11 @@ fn push_decorated_module(
 }
 
 /// Push a symbol reference when `value` parses as `module:symbol`.
-pub fn push_symbol_ref(contrib: &mut PluginContribution, value: &str, origin: ReferenceOrigin) {
+pub(super) fn push_symbol_ref(
+    contrib: &mut PluginContribution,
+    value: &str,
+    origin: ReferenceOrigin,
+) {
     if let Some((module, symbol)) = parse_module_symbol(value) {
         contrib.symbol_refs.push(SymbolReference {
             module,
@@ -102,7 +106,7 @@ pub fn push_symbol_ref(contrib: &mut PluginContribution, value: &str, origin: Re
 }
 
 /// Record a CLI binary usage.
-pub fn push_binary(contrib: &mut PluginContribution, binary: &str, origin: ReferenceOrigin) {
+pub(super) fn push_binary(contrib: &mut PluginContribution, binary: &str, origin: ReferenceOrigin) {
     contrib.binary_usages.push(BinaryUsage {
         binary: binary.to_owned(),
         origin,
@@ -213,13 +217,16 @@ fn skip_string(chars: &mut CharIndices<'_>, quote: char) -> Option<()> {
 }
 
 /// Split a normalized decorator name into its receiver and final attribute.
-pub fn decorator_suffix(name: &str) -> (Option<&str>, &str) {
+pub(super) fn decorator_suffix(name: &str) -> (Option<&str>, &str) {
     name.rsplit_once('.')
         .map_or((None, name), |(receiver, suffix)| (Some(receiver), suffix))
 }
 
 /// Read a single INI section from a config file.
-pub fn read_ini_section(path: &Path, section_name: &str) -> Result<IniSection, PluginsError> {
+pub(super) fn read_ini_section(
+    path: &Path,
+    section_name: &str,
+) -> Result<IniSection, PluginsError> {
     let contents = read_to_string(path).map_err(manifest_io_error)?;
     Ok(parse_ini_section(&contents, section_name))
 }
@@ -235,7 +242,7 @@ fn manifest_io_error(error: ManifestError) -> PluginsError {
 }
 
 /// Read `pyproject.toml` as a TOML table.
-pub fn read_pyproject_table(path: &Path) -> Result<toml::Table, PluginsError> {
+pub(super) fn read_pyproject_table(path: &Path) -> Result<toml::Table, PluginsError> {
     let contents = read_to_string(path).map_err(manifest_io_error)?;
     toml::from_str(&contents).map_err(|source| PluginsError::InvalidConfig {
         path: rel_to_root(path.parent().unwrap_or(path), path),
@@ -244,7 +251,7 @@ pub fn read_pyproject_table(path: &Path) -> Result<toml::Table, PluginsError> {
 }
 
 /// Parse one INI section from file contents.
-pub fn parse_ini_section(contents: &str, section_name: &str) -> IniSection {
+pub(super) fn parse_ini_section(contents: &str, section_name: &str) -> IniSection {
     let mut in_section = false;
     let mut section = IniSection::new();
 
@@ -279,19 +286,29 @@ fn split_ini_assignment(line: &str) -> Option<(&str, &str)> {
     Some((key, value))
 }
 
-/// Return the `[tool.pytest.ini_options]` table when present.
-pub fn pytest_ini_options_from_pyproject(table: &toml::Table) -> Option<&toml::Table> {
-    table
+/// Return the pytest options table in `pyproject.toml` with its label.
+///
+/// pytest ≥ 9 reads native `[tool.pytest]` when it holds keys besides
+/// `ini_options` (and rejects using both), else `[tool.pytest.ini_options]`.
+pub(super) fn pytest_options_from_pyproject(
+    table: &toml::Table,
+) -> Option<(&toml::Table, &'static str)> {
+    let pytest = table
         .get("tool")
         .and_then(Value::as_table)
         .and_then(|tool| tool.get("pytest"))
+        .and_then(Value::as_table)?;
+    if pytest.keys().any(|key| key != "ini_options") {
+        return Some((pytest, "tool.pytest"));
+    }
+    pytest
+        .get("ini_options")
         .and_then(Value::as_table)
-        .and_then(|pytest| pytest.get("ini_options"))
-        .and_then(Value::as_table)
+        .map(|options| (options, "tool.pytest.ini_options"))
 }
 
 /// Return the `[tool.uvicorn]` table when present.
-pub fn uvicorn_tool_from_pyproject(table: &toml::Table) -> Option<&toml::Table> {
+pub(super) fn uvicorn_tool_from_pyproject(table: &toml::Table) -> Option<&toml::Table> {
     table
         .get("tool")
         .and_then(Value::as_table)
@@ -300,7 +317,7 @@ pub fn uvicorn_tool_from_pyproject(table: &toml::Table) -> Option<&toml::Table> 
 }
 
 /// Parse a comma- or newline-separated pytest path list.
-pub fn parse_path_list(value: &str) -> Vec<String> {
+pub(super) fn parse_path_list(value: &str) -> Vec<String> {
     value
         .split([',', '\n'])
         .map(str::trim)
@@ -310,7 +327,7 @@ pub fn parse_path_list(value: &str) -> Vec<String> {
 }
 
 /// Build test file glob patterns from pytest options.
-pub fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -> Vec<String> {
+pub(super) fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -> Vec<String> {
     let file_patterns = if python_files.is_empty() {
         vec!["test_*.py".to_owned(), "*_test.py".to_owned()]
     } else {
@@ -340,28 +357,13 @@ pub fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -> Vec<S
     globs
 }
 
-/// Match discovered file paths against glob patterns.
-pub fn match_paths_against_globs(paths: &[String], patterns: &[String]) -> Vec<String> {
-    let Ok(glob_matcher) = build_glob_set(patterns) else {
-        return Vec::new();
-    };
-    let mut hits: Vec<String> = paths
-        .iter()
-        .filter(|path| glob_matcher.is_match(path))
-        .cloned()
-        .collect();
-    hits.sort();
-    hits.dedup();
-    hits
-}
-
 /// Convert a dotted module path to a root-relative `.py` file path.
-pub fn module_to_py_path(module: &str) -> String {
+pub(super) fn module_to_py_path(module: &str) -> String {
     format!("{}.py", module.replace('.', "/"))
 }
 
 /// Extract `DJANGO_SETTINGS_MODULE` from `manage.py`.
-pub fn extract_django_settings_module(contents: &str) -> Option<String> {
+pub(super) fn extract_django_settings_module(contents: &str) -> Option<String> {
     DJANGO_SETTINGS_RE
         .captures(contents)
         .and_then(|caps| caps.get(1))
@@ -369,7 +371,7 @@ pub fn extract_django_settings_module(contents: &str) -> Option<String> {
 }
 
 /// Parse `module:symbol` from a uvicorn-style target string.
-pub fn parse_module_symbol(value: &str) -> Option<(String, String)> {
+pub(crate) fn parse_module_symbol(value: &str) -> Option<(String, String)> {
     let trimmed = value.trim();
     let (module, symbol) = trimmed.split_once(':')?;
     if module.is_empty() || symbol.is_empty() {
@@ -379,7 +381,7 @@ pub fn parse_module_symbol(value: &str) -> Option<(String, String)> {
 }
 
 /// Parse `uvicorn pkg.module:app` from a script target string.
-pub fn parse_uvicorn_script_target(value: &str) -> Option<(String, String)> {
+pub(crate) fn parse_uvicorn_script_target(value: &str) -> Option<(String, String)> {
     UVICORN_SCRIPT_RE.captures(value).and_then(|caps| {
         let module = caps.get(1)?.as_str().to_owned();
         let symbol = caps.get(2)?.as_str().to_owned();
@@ -400,13 +402,20 @@ static UVICORN_SCRIPT_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Check whether a distribution name appears in manifest dependencies.
-pub fn manifest_has_dependency(manifest: &crate::manifest::LoadedManifest, name: &str) -> bool {
+pub(super) fn manifest_has_dependency(
+    manifest: &crate::manifest::LoadedManifest,
+    name: &str,
+) -> bool {
     let needle = name.to_ascii_lowercase();
     manifest.dependencies.iter().any(|dep| dep.name == needle)
 }
 
 /// Build a reference origin for a config file.
-pub fn origin_for_file(root: &Path, path: &Path, label: impl Into<String>) -> ReferenceOrigin {
+pub(super) fn origin_for_file(
+    root: &Path,
+    path: &Path,
+    label: impl Into<String>,
+) -> ReferenceOrigin {
     ReferenceOrigin {
         file: rel_to_root(root, path),
         line: None,
@@ -415,7 +424,7 @@ pub fn origin_for_file(root: &Path, path: &Path, label: impl Into<String>) -> Re
 }
 
 /// Collect partial-parse field names from list literal scans.
-pub fn partial_fields(scans: &BTreeMap<String, LiteralScan>) -> Vec<String> {
+pub(super) fn partial_fields(scans: &BTreeMap<String, LiteralScan>) -> Vec<String> {
     scans
         .iter()
         .filter(|(_, scan)| !scan.complete)
@@ -424,7 +433,7 @@ pub fn partial_fields(scans: &BTreeMap<String, LiteralScan>) -> Vec<String> {
 }
 
 /// Find `settings.py` candidates under the project root (depth ≤ 4).
-pub fn find_settings_candidates(root: &Path) -> Vec<String> {
+pub(super) fn find_settings_candidates(root: &Path) -> Vec<String> {
     let mut candidates = Vec::new();
     collect_settings_files(root, root, 0, &mut candidates);
     candidates.sort();
@@ -461,7 +470,7 @@ fn collect_settings_files(root: &Path, current: &Path, depth: usize, out: &mut V
 }
 
 /// Choose the best `settings.py` candidate when multiple exist.
-pub fn choose_settings_path(
+pub(super) fn choose_settings_path(
     candidates: &[String],
     preferred_module: Option<&str>,
     project_name: Option<&str>,
@@ -537,6 +546,29 @@ mod tests {
             section.get("testpaths").map(String::as_str),
             Some("integration")
         );
+    }
+
+    #[test]
+    fn pytest_options_prefer_native_table_over_ini_options() {
+        let label = |text: &str| {
+            let table: toml::Table = toml::from_str(text).expect("toml");
+            pytest_options_from_pyproject(&table).map(|(_, label)| label)
+        };
+        assert_eq!(
+            label("[tool.pytest.ini_options]\ntestpaths = [\"t\"]\n"),
+            Some("tool.pytest.ini_options")
+        );
+        assert_eq!(
+            label("[tool.pytest]\ntestpaths = [\"t\"]\n"),
+            Some("tool.pytest")
+        );
+        assert_eq!(
+            label(
+                "[tool.pytest]\nminversion = \"9.0\"\n[tool.pytest.ini_options]\ntestpaths = \"t\"\n"
+            ),
+            Some("tool.pytest")
+        );
+        assert_eq!(label("[tool.ruff]\n"), None);
     }
 
     #[test]

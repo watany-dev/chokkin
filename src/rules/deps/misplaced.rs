@@ -16,7 +16,7 @@ use super::context::{
 use super::missing::{
     WorkspaceDeclaredIndex, collect_optional_imports, governing_declarations, member_declarations,
 };
-use super::used::DeclaredIndex;
+use super::used::{DeclaredIndex, eager_paths};
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
 #[allow(clippy::too_many_lines)]
@@ -34,9 +34,12 @@ pub(super) fn detect_misplaced_dependencies(
     let RuleContext {
         resolution,
         sources,
+        reachability,
+        graph,
         ..
     } = *context;
     let strengths = import_strengths(context.parse);
+    let eager = eager_paths(graph, reachability);
     let mut candidates: Vec<(IssueCandidate, ImportStrength)> = Vec::new();
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
 
@@ -97,10 +100,16 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         }
 
-        let strength = strengths
+        let mut strength = strengths
             .get(&(import.file.clone(), import.line))
             .copied()
             .unwrap_or(ImportStrength::TopLevel);
+        // A file loaded only from inside functions (or never, past
+        // `TYPE_CHECKING`) runs its top-level imports no earlier than a
+        // function-local import would (#610).
+        if !eager.contains(import.file.as_str()) {
+            strength = strength.min(ImportStrength::Deferred);
+        }
         let report_key = (
             workspace_member.unwrap_or_default().to_owned(),
             distribution.clone(),
@@ -162,7 +171,8 @@ pub(super) fn detect_misplaced_dependencies(
 enum ImportStrength {
     /// `try`/`except ImportError` or platform-guarded.
     Optional,
-    /// Only inside a function body.
+    /// Only inside a function body, or in a file loaded only from one or
+    /// from a `TYPE_CHECKING` block.
     Deferred,
     TopLevel,
 }
@@ -175,7 +185,9 @@ impl ImportStrength {
                 candidate.severity = Severity::Info;
                 "imported only under try/except ImportError or a platform guard"
             },
-            Self::Deferred => "imported only inside functions",
+            Self::Deferred => {
+                "imported only inside functions or by modules loaded only from inside functions or TYPE_CHECKING blocks"
+            },
         };
         candidate.confidence = Confidence::Likely;
         candidate.explain.details.push(detail.to_owned());
@@ -187,11 +199,21 @@ fn import_strengths(parse: &ParseSummary) -> HashMap<(String, u32), ImportStreng
     let optional = collect_optional_imports(parse);
     let mut strengths = HashMap::new();
     for module in &parse.modules {
-        for import in &module.imports {
-            let key = (module.path.clone(), import.line);
+        let sites = module
+            .imports
+            .iter()
+            .map(|import| (import.line, import.deferred))
+            .chain(
+                module
+                    .dynamic_imports
+                    .iter()
+                    .map(|dynamic| (dynamic.line, dynamic.deferred)),
+            );
+        for (line, deferred) in sites {
+            let key = (module.path.clone(), line);
             let strength = if optional.contains(&key) {
                 ImportStrength::Optional
-            } else if import.deferred {
+            } else if deferred {
                 ImportStrength::Deferred
             } else {
                 ImportStrength::TopLevel

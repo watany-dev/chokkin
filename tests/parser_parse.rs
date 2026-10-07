@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use chokkin::{
+use chokkin::internals::{
     FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout, ProjectRoot,
     RootMarker, TargetVersion, parse_file, parse_project_sources_with_cache,
 };
@@ -15,7 +15,7 @@ fn spike_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn parse_fixture(name: &str) -> chokkin::ParsedModule {
+fn parse_fixture(name: &str) -> chokkin::internals::ParsedModule {
     let path = spike_fixture(name);
     let root = ProjectRoot {
         path: path.parent().expect("parent").to_path_buf(),
@@ -39,7 +39,7 @@ fn parse_fixture(name: &str) -> chokkin::ParsedModule {
     .expect("parse")
 }
 
-fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::ParsedModule {
+fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::internals::ParsedModule {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/parse")
         .join(dir);
@@ -205,7 +205,7 @@ fn parse_project_sources_fixture_suite() {
     let mut files = Vec::new();
     collect_py_files(&base, &base, &mut files);
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    let sources = chokkin::DiscoveredSources {
+    let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
@@ -284,7 +284,7 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
         path: temp.path().to_path_buf(),
         marker: RootMarker::PyProjectToml,
     };
-    let sources = chokkin::DiscoveredSources {
+    let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
@@ -295,15 +295,15 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
             members: Vec::new(),
         },
         effective_globs: Vec::new(),
-        files: vec![chokkin::DiscoveredFile {
+        files: vec![chokkin::internals::DiscoveredFile {
             path: "src/app.py".to_owned(),
-            kind: chokkin::FileKind::Python,
+            kind: chokkin::internals::FileKind::Python,
             context: FileContext::Runtime,
         }],
         warnings: Vec::new(),
     };
     let target = TargetVersion::default_py311();
-    let cache = chokkin::CacheOptions::default();
+    let cache = chokkin::internals::CacheOptions::default();
 
     parse_project_sources_with_cache(&root, &sources, &target, Some(&cache)).expect("first parse");
     // Same size as the first source, so a matching mtime leaves only the
@@ -327,7 +327,7 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
     );
 }
 
-fn warns_type_alias(summary: &chokkin::ParseSummary) -> bool {
+fn warns_type_alias(summary: &chokkin::internals::ParseSummary) -> bool {
     summary
         .modules
         .first()
@@ -346,7 +346,7 @@ fn parse_cache_follows_pep723_block_edits() {
         path: temp.path().to_path_buf(),
         marker: RootMarker::PyProjectToml,
     };
-    let sources = chokkin::DiscoveredSources {
+    let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
@@ -357,15 +357,15 @@ fn parse_cache_follows_pep723_block_edits() {
             members: Vec::new(),
         },
         effective_globs: Vec::new(),
-        files: vec![chokkin::DiscoveredFile {
+        files: vec![chokkin::internals::DiscoveredFile {
             path: "scripts/run.py".to_owned(),
-            kind: chokkin::FileKind::Python,
+            kind: chokkin::internals::FileKind::Python,
             context: FileContext::Dev,
         }],
         warnings: Vec::new(),
     };
     let target = TargetVersion::default_py311();
-    let cache = chokkin::CacheOptions::default();
+    let cache = chokkin::internals::CacheOptions::default();
     let body = "type Alias = int\n";
     let block =
         |requires: &str| format!("# /// script\n# requires-python = \"{requires}\"\n# ///\n{body}");
@@ -420,7 +420,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
         path: root_path.to_path_buf(),
         marker: RootMarker::PyProjectToml,
     };
-    let sources = chokkin::DiscoveredSources {
+    let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
@@ -431,9 +431,9 @@ fn parse_project_sources_extracts_notebook_code_cells() {
             members: Vec::new(),
         },
         effective_globs: Vec::new(),
-        files: vec![chokkin::DiscoveredFile {
+        files: vec![chokkin::internals::DiscoveredFile {
             path: "analysis.ipynb".to_owned(),
-            kind: chokkin::FileKind::Notebook,
+            kind: chokkin::internals::FileKind::Notebook,
             context: FileContext::Runtime,
         }],
         warnings: Vec::new(),
@@ -468,7 +468,7 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
         path: root_path.to_path_buf(),
         marker: RootMarker::PyProjectToml,
     };
-    let sources = chokkin::DiscoveredSources {
+    let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Unknown,
@@ -479,9 +479,9 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
             members: Vec::new(),
         },
         effective_globs: Vec::new(),
-        files: vec![chokkin::DiscoveredFile {
+        files: vec![chokkin::internals::DiscoveredFile {
             path: "broken.ipynb".to_owned(),
-            kind: chokkin::FileKind::Notebook,
+            kind: chokkin::internals::FileKind::Notebook,
             context: FileContext::Runtime,
         }],
         warnings: Vec::new(),
@@ -508,7 +508,7 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
 fn collect_py_files(
     dir: &std::path::Path,
     base: &std::path::Path,
-    out: &mut Vec<chokkin::DiscoveredFile>,
+    out: &mut Vec<chokkin::internals::DiscoveredFile>,
 ) {
     let entries = std::fs::read_dir(dir).expect("read dir");
     for entry in entries.filter_map(Result::ok) {
@@ -523,9 +523,9 @@ fn collect_py_files(
                 .expect("strip")
                 .to_string_lossy()
                 .replace('\\', "/");
-            out.push(chokkin::DiscoveredFile {
+            out.push(chokkin::internals::DiscoveredFile {
                 path: rel,
-                kind: chokkin::FileKind::Python,
+                kind: chokkin::internals::FileKind::Python,
                 context: FileContext::Runtime,
             });
         }
@@ -544,13 +544,13 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
     for index in 0..8 {
         let path = format!("src/mod_{index}.py");
         std::fs::write(temp.path().join(&path), "import requests\n").expect("write source");
-        files.push(chokkin::DiscoveredFile {
+        files.push(chokkin::internals::DiscoveredFile {
             path,
-            kind: chokkin::FileKind::Python,
+            kind: chokkin::internals::FileKind::Python,
             context: FileContext::Runtime,
         });
     }
-    let sources = chokkin::DiscoveredSources {
+    let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
@@ -565,7 +565,7 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
         warnings: Vec::new(),
     };
     let target = TargetVersion::default_py311();
-    let cache_options = chokkin::CacheOptions::default();
+    let cache_options = chokkin::internals::CacheOptions::default();
 
     let cold = parse_project_sources_with_cache(&root, &sources, &target, Some(&cache_options))
         .expect("cold parse");
@@ -625,18 +625,18 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
         inferred_globs: Vec::new(),
         members: Vec::new(),
     };
-    let discovered = |path: &str| chokkin::DiscoveredFile {
+    let discovered = |path: &str| chokkin::internals::DiscoveredFile {
         path: path.to_owned(),
-        kind: chokkin::FileKind::Python,
+        kind: chokkin::internals::FileKind::Python,
         context: FileContext::Runtime,
     };
     for path in ["src/kept.py", "src/gone.py"] {
         std::fs::write(temp.path().join(path), "import requests\n").expect("write source");
     }
     let target = TargetVersion::default_py311();
-    let cache_options = chokkin::CacheOptions::default();
+    let cache_options = chokkin::internals::CacheOptions::default();
 
-    let both = chokkin::DiscoveredSources {
+    let both = chokkin::internals::DiscoveredSources {
         root: root.clone(),
         layout,
         effective_globs: Vec::new(),
@@ -646,7 +646,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
     parse_project_sources_with_cache(&root, &both, &target, Some(&cache_options))
         .expect("first parse");
 
-    let one = chokkin::DiscoveredSources {
+    let one = chokkin::internals::DiscoveredSources {
         files: vec![discovered("src/kept.py")],
         ..both
     };

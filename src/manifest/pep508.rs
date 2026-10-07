@@ -24,7 +24,7 @@ pub(super) struct Requirement {
 
 /// PEP 440 comparison operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Operator {
+pub(super) enum Operator {
     Equal,
     EqualStar,
     NotEqual,
@@ -39,7 +39,7 @@ pub enum Operator {
 
 /// One PEP 440 version specifier such as `>=3.10`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VersionSpecifier {
+pub(super) struct VersionSpecifier {
     pub operator: Operator,
     /// Release segments (`3.10.1` -> `[3, 10, 1]`), saturating at `u64::MAX`
     /// since PEP 440 allows segments of any size.
@@ -175,7 +175,7 @@ fn has_url_scheme(url: &str) -> bool {
 }
 
 /// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`).
-pub fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
+pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
     input.split(',').map(parse_version_specifier).collect()
 }
 

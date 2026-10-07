@@ -7,8 +7,9 @@
     clippy::indexing_slicing
 )]
 
-use chokkin::cache::{CacheKeyHasher, stable_hex_hash, stable_list_hash};
-use chokkin::{SourceFingerprint, parse_cli_args};
+use chokkin::internals::SourceFingerprint;
+use chokkin::internals::{CacheKeyHasher, stable_hex_hash, stable_list_hash};
+use chokkin::parse_cli_args;
 use proptest::prelude::*;
 use tempfile::TempDir;
 

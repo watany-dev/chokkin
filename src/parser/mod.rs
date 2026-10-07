@@ -16,11 +16,13 @@ mod types;
 mod visit;
 
 pub(crate) use encoding::decode_python_source;
-pub use error::ParseError;
+pub(crate) use error::ParseError;
 pub use ignores::extract_ignores;
 pub use parse::{parse_file, parse_project_sources_with_cache};
-pub use relative::resolve_relative_import;
-pub use types::{
-    AttributeAccess, DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind,
-    ImportRef, ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,
-};
+#[cfg(test)]
+pub(crate) use relative::resolve_relative_import;
+pub(crate) use types::import_context_for_file;
+#[cfg(test)]
+pub(crate) use types::{DynamicImport, ImportRef};
+pub(crate) use types::{IgnoreDirective, SymbolDef, SymbolKind};
+pub use types::{ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule};

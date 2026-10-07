@@ -32,6 +32,7 @@ pub fn add_parsed_imports(
         parsed
             .dynamic_imports
             .iter()
+            .chain(&parsed.pytest_plugins)
             .map(|i| (i.module.as_str(), i.line)),
     );
 
@@ -87,17 +88,21 @@ mod tests {
                 DynamicImport {
                     module: "plugins.a".to_owned(),
                     line: 5,
+                    ..DynamicImport::default()
                 },
                 DynamicImport {
                     module: String::new(),
                     line: 6,
+                    ..DynamicImport::default()
                 },
                 DynamicImport {
                     module: "os".to_owned(),
                     line: 7,
+                    ..DynamicImport::default()
                 },
             ],
             dynamic_import_prefixes: Vec::new(),
+            pytest_plugins: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),

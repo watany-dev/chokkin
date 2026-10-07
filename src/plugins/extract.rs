@@ -203,7 +203,7 @@ mod tests {
             path: root_path,
             marker: crate::discovery::RootMarker::PyProjectToml,
         };
-        let mut config = crate::default_config();
+        let mut config = crate::config::default_config();
         config.plugins.insert(PluginId::Pytest, false);
         config.plugins.insert(PluginId::Django, false);
         config.plugins.insert(PluginId::Fastapi, false);
@@ -263,7 +263,7 @@ mod tests {
         };
         let loaded = LoadedConfig {
             root: root.clone(),
-            effective: crate::default_config(),
+            effective: crate::config::default_config(),
             sources: crate::config::ConfigSources {
                 dot_chokkin_toml: None,
                 chokkin_toml: None,

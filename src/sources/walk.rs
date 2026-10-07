@@ -19,7 +19,7 @@ const LARGE_PROJECT_THRESHOLD: usize = 10_000;
 const GITIGNORE_PATH: &str = ".gitignore";
 
 /// Options for [`collect_files`].
-pub struct CollectOptions<'a> {
+pub(super) struct CollectOptions<'a> {
     /// Project root directory.
     pub root: &'a Path,
     /// Globs selecting project files.
@@ -39,7 +39,7 @@ pub struct CollectOptions<'a> {
 }
 
 /// Load `.gitignore` from the project root when present.
-pub fn load_gitignore(root: &Path) -> (Option<Gitignore>, Option<SourcesWarning>) {
+pub(super) fn load_gitignore(root: &Path) -> (Option<Gitignore>, Option<SourcesWarning>) {
     let gitignore_path = root.join(".gitignore");
     if !gitignore_path.is_file() {
         return (None, None);
@@ -140,7 +140,7 @@ fn configure_walker(
 }
 
 /// Collect Python-related files under `root`.
-pub fn collect_files(
+pub(super) fn collect_files(
     options: &CollectOptions<'_>,
 ) -> Result<(Vec<DiscoveredFile>, Vec<SourcesWarning>), SourcesError> {
     let root = options.root.to_path_buf();
@@ -229,7 +229,7 @@ pub fn collect_files(
 
 /// Validate configured entry paths.
 #[must_use]
-pub fn validate_entries(root: &Path, entries: &[EntrySpec]) -> Vec<SourcesWarning> {
+pub(super) fn validate_entries(root: &Path, entries: &[EntrySpec]) -> Vec<SourcesWarning> {
     let mut warnings = Vec::new();
     for entry in entries {
         let path = root.join(&entry.path);
@@ -251,7 +251,7 @@ pub fn validate_entries(root: &Path, entries: &[EntrySpec]) -> Vec<SourcesWarnin
 
 /// Add a large-project warning when the threshold is exceeded.
 #[must_use]
-pub fn large_project_warning(file_count: usize) -> Option<SourcesWarning> {
+pub(super) fn large_project_warning(file_count: usize) -> Option<SourcesWarning> {
     if file_count > LARGE_PROJECT_THRESHOLD {
         Some(SourcesWarning::LargeProject { file_count })
     } else {

@@ -12,7 +12,7 @@ use super::util::{
 };
 
 /// Extract Celery app references from static command configuration.
-pub fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
+pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(PluginId::Celery);
     let root = ctx.root.path.as_path();
 

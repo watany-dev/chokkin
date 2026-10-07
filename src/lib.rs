@@ -1,105 +1,94 @@
 //! `chokkin` finds unused files, dependencies, and public symbols in Python
 //! projects by building a project-wide reachability graph.
 //!
-//! Pipeline steps 1–5 ([`discovery`], [`config`], [`manifest`], [`sources`],
-//! [`plugins`]) are available as library APIs. Steps 1–4 also run via
-//! [`pipeline::probe_project`]; the full pipeline runs via
-//! [`pipeline::analyze_project`]. Step 6 ([`parser`]) parses Python sources.
-//! Step 7 ([`resolver`]) resolves imports to stdlib / first-party / third-party
-//! distributions. Step 8 ([`entry`]) builds entry roots for reachability.
-//! Step 9 ([`reachability`]) computes reachable files from entry roots.
-//! Step 10 ([`rules`]) reconciles declared dependencies against usage.
-//! Step 11 ([`rules`]) analyzes public symbol usage and unresolved imports.
-//! Step 12 ([`rules`]) emits filtered issues with exit status.
-//! Step 13 ([`fix`]) applies safe manifest edits when requested.
+//! chokkin ships as a CLI; the library exists to keep `main.rs` a thin
+//! dispatcher and is not a public API (ADR 0004). Pipeline modules are
+//! crate-private so rustc's `dead_code` lint covers them.
 //! See `docs/dev/spec.ja.md` for the full specification.
 
-pub mod baseline;
-pub mod cache;
-pub mod cli;
-pub mod config;
-pub mod discovery;
-pub mod entry;
-pub mod fix;
-pub mod graph;
-pub mod init;
-pub mod manifest;
-pub mod parser;
+mod baseline;
+mod cache;
+mod cli;
+mod config;
+mod discovery;
+mod entry;
+mod fix;
+mod graph;
+mod init;
+mod manifest;
+mod parser;
 mod path_util;
-pub mod pipeline;
-pub mod plugins;
-pub mod reachability;
-pub mod reporters;
-pub mod resolver;
-pub mod rules;
-pub mod sources;
+mod pipeline;
+mod plugins;
+mod reachability;
+mod reporters;
+mod resolver;
+mod rules;
+mod sources;
 
-pub use baseline::{
-    BaselineEntry, BaselineError, BaselineFile, BaselineReport, apply_baseline, write_baseline,
-};
-pub use cache::{
-    CacheKeyContext, CacheOptions, DEFAULT_CACHE_DIR, ParseCacheBundle, ParseCacheKey,
-    SCAN_CACHE_SCHEMA_VERSION, ScanCacheKey, ScanCacheRecord, ScanInputFingerprints,
-    SourceFingerprint,
-};
+pub use baseline::BaselineReport;
 pub use cli::{CliArgs, parse_cli_args};
-pub use config::{
-    ChokkinConfig, Confidence, ConfigError, ConfigSources, DependencyGroupsConfig, EntrySpec,
-    LoadedConfig, PluginId, ProjectMode, RuntimeOverrides, SeverityLevel, TargetVersion,
-    UvWorkspaceHint, WorkspaceOverride, apply_overrides, default_config, load_config,
-};
-pub use discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
-pub use entry::{EntryOrigin, EntryPlan, EntryRoot, EntryWarning, build_entry_roots};
-pub use fix::{AppliedFix, FixError, FixOptions, FixReport, SkippedFix, SkippedReason};
-pub use graph::{
-    DistributionId, FileId, FileNode, GraphEdge, GraphError, ModuleId, ModuleNode, ModuleOrigin,
-    ProjectGraph, add_parsed_imports, build_graph_skeleton,
-};
-pub use init::{InitError, InitReport, init_project};
-pub use manifest::{
-    DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, InlineScript,
-    LoadedManifest, LockfileGraph, LockfileKind, LockfileSource, ManifestError, ManifestSources,
-    ManifestWarning, PackageFind, ProjectMetadata, UvSource, UvSourceKind, UvToolSettings,
-    WheelTargets, discover_inline_scripts, extract_manifest, extract_manifest_with_cache,
-    resolve_target_version,
-};
-pub use parser::{
-    DecoratorSite, DynamicImport, IgnoreDirective, ImportContext, ImportKind, ImportRef,
-    ParseDiagnostic, ParseError, ParseSeverity, ParseSummary, ParsedModule, SymbolDef, SymbolKind,
-    extract_ignores, parse_file, parse_project_sources_with_cache,
-};
+pub use config::RuntimeOverrides;
+pub use init::init_project;
 pub use pipeline::{
-    AnalysisReport, AnalyzeError, AnalyzeOptions, ProbeError, ProbeReport, ProbeWarning,
-    WorkspaceMemberInputs, analyze_project, probe_project, trace_output, write_probe_report,
+    AnalysisReport, analyze_project, probe_project, trace_output, write_probe_report,
     write_probe_warnings,
 };
-pub use plugins::{
-    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginActivation, PluginActivationReason,
-    PluginContribution, PluginEntry, PluginExtractRequest, PluginHints, PluginsError,
-    PluginsWarning, ReferenceOrigin, SymbolReference, extract_plugin_hints_with_parse,
-};
-pub use reachability::{
-    ReachabilityError, ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule,
-    analyze_reachability, apply_public_surface, path_to_module, trace_to_file,
-};
-pub use reporters::{
-    FileCounts, RenderContext, ReporterId, config_label_from_sources, format_subject,
-    render_fix_report, render_issues,
-};
-pub use resolver::{
-    ResolutionIndex, ResolveConfidence, ResolveWarning, ResolvedImport, apply_resolution_to_graph,
-    import_root, resolve_imports,
-};
-pub use rules::{
-    DependencyReport, ExplainData, Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, Origin, RuleId, Severity, SuppressReason, SuppressedIssue,
-    WorkspaceDependencyBoundary, emit_issues, explain_issue, issue_fingerprint,
-    issue_stable_target,
-};
-pub use sources::{
-    DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, MemberLayout,
-    ProjectLayout, PublicSurface, SourcesError, SourcesWarning, discover_sources,
-};
+pub use reporters::{RenderContext, config_label_from_sources, render_fix_report, render_issues};
+pub use rules::explain_issue;
+
+/// Items re-exported only for `tests/` and `benches/`; not a stable API.
+#[doc(hidden)]
+pub mod internals {
+    pub use crate::baseline::{apply_baseline, write_baseline};
+    pub use crate::cache::{
+        CacheKeyHasher, CacheOptions, SourceFingerprint, stable_hex_hash, stable_list_hash,
+    };
+    pub use crate::config::{
+        ChokkinConfig, Confidence, ConfigError, ConfigSources, EntrySpec, LoadedConfig, PluginId,
+        ProjectMode, SeverityLevel, TargetVersion, default_config, load_config,
+    };
+    pub use crate::discovery::{DiscoveryError, ProjectRoot, RootMarker, discover_project_root};
+    pub use crate::entry::{EntryOrigin, EntryPlan, EntryWarning, build_entry_roots};
+    pub use crate::graph::{
+        GraphEdge, GraphError, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
+    };
+    pub use crate::manifest::{
+        DependencyContext, DependencyOrigin, LoadedManifest, LockfileKind, ManifestError,
+        ManifestWarning, discover_inline_scripts, extract_manifest, extract_manifest_with_cache,
+        resolve_target_version,
+    };
+    pub use crate::parser::{
+        ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule, extract_ignores,
+        parse_file, parse_project_sources_with_cache,
+    };
+    pub use crate::pipeline::{AnalyzeOptions, WorkspaceMemberInputs};
+    pub use crate::plugins::{
+        PluginContribution, PluginExtractRequest, PluginHints, PluginsWarning,
+        extract_plugin_hints_with_parse,
+    };
+    pub use crate::reachability::{
+        ReachabilityReport, TracePath, TraceStep, UsedModule, analyze_reachability,
+        apply_public_surface, trace_to_file,
+    };
+    pub use crate::reporters::{FileCounts, ReporterId};
+    pub use crate::resolver::{
+        ImportMap, ResolutionIndex, ResolveConfidence, ResolveWarning, ScopedDeclarations,
+        StdlibRange, VenvIndex, apply_resolution_to_graph, build_binary_map, import_root,
+        resolve_imports_for_analysis,
+    };
+    pub use crate::rules::deps::reconcile_with_context;
+    pub use crate::rules::symbols::analyze_with_context;
+    pub use crate::rules::{
+        DependencyReport, DependencyRuleContext, Issue, IssueCandidate, IssueLocation, IssueReport,
+        IssueSubject, IssueSummary, Origin, RuleContext, RuleId, Severity, SuppressReason,
+        SuppressedIssue, WorkspaceDependencyBoundary, emit_issues, issue_fingerprint,
+    };
+    pub use crate::sources::{
+        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
+        PublicSurface, SourcesError, SourcesWarning, discover_sources,
+    };
+}
 
 /// The version of chokkin, taken from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

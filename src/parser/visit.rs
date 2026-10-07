@@ -4,7 +4,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, Decorator, ExceptHandler, Expr, Identifier, Stmt, StmtImport, StmtImportFrom,
+    Alias, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt, StmtImport,
+    StmtImportFrom,
 };
 use ruff_text_size::Ranged;
 
@@ -13,7 +14,8 @@ use crate::sources::{FileContext, LayoutInfo};
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
 use super::dynamic::{
-    LiteralTarget, LoaderNames, PythonRun, command_word, literal_target, module_prefix, python_run,
+    LiteralTarget, LoaderNames, PythonRun, command_word, literal_target, module_prefix,
+    pytest_plugin_names, python_run,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -26,7 +28,7 @@ use super::types::{
 };
 
 /// Mutable parse state accumulated while visiting one module.
-pub struct ModuleVisitor<'a> {
+pub(super) struct ModuleVisitor<'a> {
     path: &'a str,
     layout: &'a LayoutInfo,
     lines: &'a LineIndex,
@@ -48,7 +50,7 @@ pub struct ModuleVisitor<'a> {
 
 impl<'a> ModuleVisitor<'a> {
     /// Create a visitor for `path` with empty output.
-    pub fn new(
+    pub(super) fn new(
         path: &'a str,
         layout: &'a LayoutInfo,
         file_context: FileContext,
@@ -80,7 +82,7 @@ impl<'a> ModuleVisitor<'a> {
 
     /// Consume the visitor and return the accumulated parse result.
     #[must_use]
-    pub fn into_parsed(mut self) -> ParsedModule {
+    pub(super) fn into_parsed(mut self) -> ParsedModule {
         let runs_commands = self
             .parsed
             .imports
@@ -108,7 +110,7 @@ impl<'a> ModuleVisitor<'a> {
     ///
     /// `__all__` is read first because [`Self::record_symbol`] consults the export
     /// list to decide whether an underscore-prefixed symbol is public.
-    pub fn visit_module(&mut self, stmts: &[Stmt]) {
+    pub(super) fn visit_module(&mut self, stmts: &[Stmt]) {
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.visit_body(stmts);
     }
@@ -196,6 +198,32 @@ impl<'a> ModuleVisitor<'a> {
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
             None => {},
+        }
+    }
+
+    fn dynamic_import(&self, module: String, call: &ExprCall) -> DynamicImport {
+        DynamicImport {
+            module,
+            line: self.line_number(call),
+            optional: self.try_depth > 0,
+            platform_guarded: self.platform_guard_depth > 0,
+            deferred: self.function_depth > 0,
+        }
+    }
+
+    /// pytest imports the modules a module-level `pytest_plugins` names, in
+    /// a conftest or in a module it loaded as a plugin.
+    fn record_pytest_plugins(&mut self, target: &str, value: &Expr) {
+        if target != "pytest_plugins" {
+            return;
+        }
+        for (module, literal) in pytest_plugin_names(value) {
+            let line = self.line_number(literal);
+            self.parsed.pytest_plugins.push(DynamicImport {
+                module: module.to_owned(),
+                line,
+                ..DynamicImport::default()
+            });
         }
     }
 
@@ -412,6 +440,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                                 line,
                                 &[],
                             );
+                            self.record_pytest_plugins(name.id.as_str(), &assign.value);
                         }
                     }
                 }
@@ -426,6 +455,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 {
                     let line = self.line_number(ann_assign);
                     self.record_symbol(name.id.to_string(), SymbolKind::Variable, line, &[]);
+                    if let Some(value) = &ann_assign.value {
+                        self.record_pytest_plugins(name.id.as_str(), value);
+                    }
                 }
                 self.visit_expr(&ann_assign.target);
                 self.visit_annotation(&ann_assign.annotation);
@@ -445,7 +477,15 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 }
                 self.visit_expr(&alias.value);
             },
-            Stmt::AugAssign(aug_assign) => self.visit_expr(&aug_assign.value),
+            Stmt::AugAssign(aug_assign) => {
+                if self.module_level
+                    && matches!(aug_assign.op, Operator::Add)
+                    && let Expr::Name(name) = &*aug_assign.target
+                {
+                    self.record_pytest_plugins(name.id.as_str(), &aug_assign.value);
+                }
+                self.visit_expr(&aug_assign.value);
+            },
             Stmt::Return(return_stmt) => {
                 if let Some(value) = &return_stmt.value {
                     self.visit_expr(value);
@@ -560,20 +600,16 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                     {
                         match target {
                             LiteralTarget::Module(module) => {
-                                let line = self.line_number(call);
-                                self.parsed
-                                    .dynamic_imports
-                                    .push(DynamicImport { module, line });
+                                let dynamic = self.dynamic_import(module, call);
+                                self.parsed.dynamic_imports.push(dynamic);
                             },
                             LiteralTarget::Opaque => self.parsed.has_opaque_dynamic_import = true,
                             LiteralTarget::Nothing => {},
                         }
                     } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
                         if let Some(module) = module_prefix(call) {
-                            let line = self.line_number(call);
-                            self.parsed
-                                .dynamic_import_prefixes
-                                .push(DynamicImport { module, line });
+                            let prefix = self.dynamic_import(module, call);
+                            self.parsed.dynamic_import_prefixes.push(prefix);
                         }
                         self.parsed.has_opaque_dynamic_import = true;
                     }
@@ -597,7 +633,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             },
             _ => {},
         }
+        let lambda = matches!(expr, Expr::Lambda(_));
+        if lambda {
+            self.function_depth += 1;
+        }
         walk_expr(self, expr);
+        if lambda {
+            self.function_depth -= 1;
+        }
     }
 }
 
@@ -797,6 +840,35 @@ mod tests {
         assert_eq!(parsed.dynamic_imports[0].module, "acme.plugins");
         assert_eq!(parsed.dynamic_imports[0].line, 2);
         assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    #[test]
+    fn extracts_pytest_plugins_literals() {
+        let modules = |source: &str| {
+            visit_source(source)
+                .pytest_plugins
+                .iter()
+                .map(|dynamic| (dynamic.module.clone(), dynamic.line))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            modules("pytest_plugins = [\n    \"tests.optional\",\n    name,\n    \"\",\n]\n"),
+            [("tests.optional".to_owned(), 2)]
+        );
+        assert_eq!(
+            modules("pytest_plugins = (\"a.b\", \"c\")\n"),
+            [("a.b".to_owned(), 1), ("c".to_owned(), 1)]
+        );
+        assert_eq!(
+            modules("pytest_plugins: str = \"a.b\"\n"),
+            [("a.b".to_owned(), 1)]
+        );
+        assert_eq!(
+            modules("pytest_plugins = [\"a\"]\npytest_plugins += [\"b\"]\n"),
+            [("a".to_owned(), 1), ("b".to_owned(), 2)]
+        );
+        assert_eq!(modules("def f():\n    pytest_plugins = [\"a.b\"]\n"), []);
+        assert_eq!(modules("plugins = [\"a.b\"]\n"), []);
     }
 
     #[test]
@@ -1198,6 +1270,73 @@ cmd = [sys.executable, \"-m\", \"top_run_lib\"]
                 ("top_run_lib", false),
             ]
         );
+    }
+
+    /// #599: dynamic imports carry the same strength flags as static ones.
+    #[test]
+    fn dynamic_imports_record_try_guard_and_function_flags() {
+        let parsed = visit_source(
+            "import importlib
+import sys
+
+importlib.import_module(\"top_lib\")
+try:
+    importlib.import_module(\"try_lib\")
+except ImportError:
+    pass
+if sys.platform == \"win32\":
+    __import__(\"win_lib\")
+
+def f():
+    importlib.import_module(\"func_lib\")
+
+LOADERS = {\"pg\": lambda: importlib.import_module(\"lambda_lib\")}
+importlib.import_module(\"after_lambda_lib\")
+",
+        );
+        let flags: Vec<(&str, bool, bool, bool)> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| {
+                (
+                    dynamic.module.as_str(),
+                    dynamic.optional,
+                    dynamic.platform_guarded,
+                    dynamic.deferred,
+                )
+            })
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("top_lib", false, false, false),
+                ("try_lib", true, false, false),
+                ("win_lib", false, true, false),
+                ("func_lib", false, false, true),
+                ("lambda_lib", false, false, true),
+                ("after_lambda_lib", false, false, false),
+            ]
+        );
+    }
+
+    /// #610: a prefixed loader call inside a function is deferred as well.
+    #[test]
+    fn dynamic_import_prefixes_record_function_flag() {
+        let parsed = visit_source(
+            "import importlib
+
+importlib.import_module(\"top.\" + name)
+
+def f(name):
+    importlib.import_module(f\"func.{name}\")
+",
+        );
+        let flags: Vec<(&str, bool)> = parsed
+            .dynamic_import_prefixes
+            .iter()
+            .map(|prefix| (prefix.module.as_str(), prefix.deferred))
+            .collect();
+        assert_eq!(flags, [("top", false), ("func", true)]);
     }
 
     #[test]

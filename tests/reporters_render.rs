@@ -2,11 +2,11 @@
 
 #![allow(clippy::expect_used)]
 
-use chokkin::{
-    Confidence, DependencyOrigin, ExitStatus, Issue, IssueLocation, IssueReport, IssueSubject,
-    IssueSummary, ProjectMode, RenderContext, ReporterId, RuleId, Severity, SuppressReason,
-    SuppressedIssue, render_issues,
+use chokkin::internals::{
+    Confidence, DependencyOrigin, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
+    ProjectMode, ReporterId, RuleId, Severity, SuppressReason, SuppressedIssue,
 };
+use chokkin::{ExitStatus, RenderContext, render_issues};
 
 fn context() -> RenderContext {
     RenderContext {

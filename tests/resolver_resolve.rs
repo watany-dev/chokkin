@@ -5,11 +5,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chokkin::resolver::StdlibRange;
-use chokkin::{
+use chokkin::internals::StdlibRange;
+use chokkin::internals::{
     ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolveConfidence, RootMarker,
-    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
-    load_config, parse_project_sources_with_cache, resolve_imports, resolve_target_version,
+    ScopedDeclarations, discover_project_root, discover_sources, extract_manifest,
+    extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
+    resolve_imports_for_analysis, resolve_target_version,
 };
 
 fn resolver_fixture(name: &str) -> PathBuf {
@@ -18,11 +19,11 @@ fn resolver_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn resolve_fixture(name: &str) -> chokkin::ResolutionIndex {
+fn resolve_fixture(name: &str) -> chokkin::internals::ResolutionIndex {
     resolve_path(&resolver_fixture(name))
 }
 
-fn resolve_path(path: &Path) -> chokkin::ResolutionIndex {
+fn resolve_path(path: &Path) -> chokkin::internals::ResolutionIndex {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
@@ -42,13 +43,15 @@ fn resolve_path(path: &Path) -> chokkin::ResolutionIndex {
     })
     .expect("plugins");
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
-    resolve_imports(
+    resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
         &sources,
         &parse,
         &plugin_refs,
         &loaded.workspace_members,
+        &BTreeMap::new(),
+        &ScopedDeclarations::default(),
     )
 }
 
@@ -157,7 +160,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
     loaded.effective.target_version = Some(target.clone());
     let sources = discover_sources(&root, &loaded, &manifest).expect("sources");
     let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
-    let (scripts, warnings) = chokkin::discover_inline_scripts(
+    let (scripts, warnings) = chokkin::internals::discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),
     );
@@ -170,7 +173,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
             Some((script.path.clone(), range))
         })
         .collect();
-    let index = chokkin::resolver::resolve_imports_for_analysis(
+    let index = chokkin::internals::resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
         &sources,
@@ -178,7 +181,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
         &[],
         &loaded.workspace_members,
         &script_targets,
-        &chokkin::resolver::ScopedDeclarations::default(),
+        &chokkin::internals::ScopedDeclarations::default(),
     );
     let tomllib_in = |file: &str| {
         index
@@ -278,7 +281,12 @@ fn ambiguous_namespace_import_warns_once() {
     let ambiguous = index
         .warnings
         .iter()
-        .filter(|warning| matches!(warning, chokkin::ResolveWarning::AmbiguousImport { .. }))
+        .filter(|warning| {
+            matches!(
+                warning,
+                chokkin::internals::ResolveWarning::AmbiguousImport { .. }
+            )
+        })
         .count();
     assert_eq!(ambiguous, 1, "{:?}", index.warnings);
 }
@@ -399,7 +407,7 @@ fn normalized_root_resolves_only_through_a_declared_or_locked_name() {
     assert_eq!(root("e2e_config"), (ModuleOrigin::Unknown, None));
     assert!(index.warnings.iter().any(|warning| matches!(
         warning,
-        chokkin::ResolveWarning::UnresolvedImport { import, .. } if import == "e2e_config"
+        chokkin::internals::ResolveWarning::UnresolvedImport { import, .. } if import == "e2e_config"
     )));
 }
 
@@ -448,4 +456,31 @@ fn affixed_declared_name_resolves_as_maybe() {
     assert_eq!(root("gadget").1.as_deref(), Some("pygadget"));
     assert_eq!(root("doohickey").1.as_deref(), Some("python-doohickey"));
     assert_eq!(root("gizmo").0, ModuleOrigin::Unknown);
+}
+
+#[test]
+fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
+    let index = resolve_path(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/reachability/pytest_plugins_var"),
+    );
+    let context = |file: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == "pytest_asyncio" && resolved.file == file)
+            .map(|resolved| resolved.context)
+    };
+    assert_eq!(
+        context("tests/conftest.py"),
+        Some(chokkin::internals::ImportContext::Test)
+    );
+    assert_eq!(
+        context("src/acme/__init__.py"),
+        Some(chokkin::internals::ImportContext::Runtime)
+    );
+    assert!(!index.warnings.iter().any(|warning| matches!(
+        warning,
+        chokkin::internals::ResolveWarning::UnresolvedImport { import, .. } if import == "pytest_asyncio"
+    )));
 }

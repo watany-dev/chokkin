@@ -2,7 +2,7 @@
 
 #![allow(clippy::expect_used)]
 
-use chokkin::extract_ignores;
+use chokkin::internals::extract_ignores;
 
 #[test]
 fn inline_ignore_requires_code_on_same_line() {

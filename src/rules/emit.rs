@@ -40,7 +40,7 @@ pub fn emit_issues(
     let matcher = IgnoreMatcher::build(config, parse, resolution);
     let confidence_floor = effective_confidence_floor(config, overrides, strict);
 
-    let mut candidates = chk001_candidates(&unreachable.unreachable);
+    let mut candidates = chk001_candidates(&unreachable.unreachable, strict);
     candidates.extend(deps.candidates.clone());
     candidates.extend_from_slice(symbols);
 
@@ -155,7 +155,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
                 file = Some(import_file.clone());
                 line = Some(*import_line);
             },
-            Origin::Binary(origin) | Origin::Config(origin) => {
+            Origin::Binary(origin) => {
                 file = Some(origin.file.clone());
                 line = origin.line;
             },

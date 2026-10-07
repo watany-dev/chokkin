@@ -13,10 +13,17 @@ use super::util::{origin_for_file, push_binary};
 
 /// Extract static Sphinx, `MkDocs`, and Alembic hints.
 #[must_use]
-pub fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
+pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(plugin);
     match plugin {
-        PluginId::Sphinx => extract_sphinx(ctx.root.path.as_path(), &mut contrib),
+        PluginId::Sphinx => {
+            let root = ctx.root.path.as_path();
+            extract_sphinx(root, root, &mut contrib);
+            // Monorepos keep docs per member (`providers/*/docs/conf.py`).
+            for member in &ctx.sources.layout.members {
+                extract_sphinx(root, &root.join(&member.path), &mut contrib);
+            }
+        },
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
         PluginId::Alembic => extract_alembic(ctx.root.path.as_path(), &mut contrib),
         _ => {},
@@ -25,8 +32,8 @@ pub fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution 
     contrib
 }
 
-fn extract_sphinx(root: &Path, contrib: &mut PluginContribution) {
-    let conf = root.join("docs").join("conf.py");
+fn extract_sphinx(root: &Path, dir: &Path, contrib: &mut PluginContribution) {
+    let conf = dir.join("docs").join("conf.py");
     if conf.is_file() {
         push_entry(contrib, root, &conf, FileContext::Docs, "docs/conf.py");
         push_binary(

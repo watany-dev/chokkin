@@ -113,6 +113,7 @@ pub fn extract_manifest(
             kept_source,
             "setup.py",
         );
+        sources.setup_py_dynamic_name = extracted.dynamic_name;
         if extracted.parsed {
             dependencies.extend(extracted.dependencies);
             sources.setup_py = true;
@@ -320,7 +321,7 @@ pub fn resolve_target_version(config: &ChokkinConfig, manifest: &LoadedManifest)
 }
 
 /// Effective lower bound of `requires-python`: the highest `>=`/`>`/`~=`/`==` release.
-pub fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
+pub(super) fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
     let specifiers = parse_version_specifiers(specifier)?;
     let (major, minor) = specifiers
         .iter()
@@ -348,7 +349,7 @@ pub fn infer_target_version_from_requires_python(specifier: &str) -> Option<Targ
 
 /// Highest Python 3 minor `requires-python` allows, from `<`/`<=`/`==`/`~=`
 /// bounds. `None` when no bound caps the 3.x minor (or the specifier is invalid).
-pub fn requires_python_max_minor(specifier: &str) -> Option<u32> {
+pub(crate) fn requires_python_max_minor(specifier: &str) -> Option<u32> {
     let specifiers = parse_version_specifiers(specifier)?;
     specifiers
         .iter()

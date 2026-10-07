@@ -140,7 +140,7 @@ MVPでは以下のrule IDを固定する。
 |`CHK007`|`unused_reexport`      |`__init__.py` などの再exportが内部から参照されない               |library: info / app: warning|
 |`CHK008`|`unlisted_binary`      |tox/nox/pre-commit/CI等で使うCLIが依存宣言されていない           |warning                     |
 |`CHK009`|`duplicate_dependency` |同じcontext内、またはruntimeとgroup/extra/buildに重複宣言されている|warning                     |
-|`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |warning                     |
+|`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |`TYPE_CHECKING`: info / それ以外: warning|
 
 PEP 723 script (`# /// script` block を持つ `.py`) の CHK002 / CHK003 は project manifest ではなく script block の `dependencies` に対して判定し、subject を `script:<root 相対 path>:<distribution>` とする (例: `CHK003:script:scripts/tool.py:pyyaml`)。JSON では `path` に script、`distribution` に distribution 名を入れ、`target` / baseline fingerprint / `[tool.chokkin.ignore]` / `--explain` は同じ `script:` 形式を受け付ける。詳細は §10。
 
@@ -332,6 +332,8 @@ File reaches File
 
 実装（`src/graph/`）が edge として保持するのは `File imports Module` と `Distribution provides Module` だけで、entry/plugin/file からの到達は step 9 の BFS がその場で計算する（`ReachPredecessor` に最短経路を残す）。
 
+step 9 は関数本体の import（`deferred`。文字列 prefix の動的 import も含む）と `TYPE_CHECKING` 配下の import を辿らない BFS ももう 1 回走らせ、その到達集合を `ReachabilityReport::eager` に置く。eager に入らない reachable file は、関数が呼ばれるまで読み込まれないか、実行時には読み込まれない (#610)。
+
 処理順は固定する。
 
 ```text
@@ -373,6 +375,8 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 8. 最後に import root を PEP 503 `normalize_distribution_name` で正規化し、manifest の宣言依存か lockfile の package(import したファイルの PEP 723 script block・所属 workspace member の manifest / lockfile も含む)に同じ正規化名があればその distribution とみなす(confidence `Likely`。`import foo_bar` と宣言 `Foo_Bar` など)。完全一致しなければ、正規化した宣言名・lock 名から接頭辞 `python-` / `py-` / `py` と接尾辞 `-python` / `-py` / `py` を外した名前と比べ、一致すればその distribution とみなす(confidence `Maybe`。`import docket` と宣言 `pydocket`、`import discord` と lock `discord-py` など)。それでも一致しなければ推測はせず `Unknown`(CHK010)にする。綴りだけでは third-party と決めない(#361)
 ```
 
+`TYPE_CHECKING` 配下の `_typeshed` は typeshed にしか無い型専用モジュールなので、上の手順より先に stdlib とみなす。runtime の `_typeshed` は今まで通り CHK010 になる。`TYPE_CHECKING` 配下で解決できない import は実行されないため、CHK010 を info に下げて typo 検出のためだけに残す(#584)。
+
 PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root と first-party の import root(project 同梱の script が `uv run` で index から自 project を入れるケース)も、block が同名を宣言していれば使用とみなす。`[sys.executable, <file>, ...]` で別 file を実行する script は、子 process が block の環境を共有し import を追えないため script の CHK002 を出さない。`subprocess` を import する script では、複数語の文字列 literal(`"ruff format ..."`)の先頭語をコマンド名とみなし、同名の宣言依存を使用として数える。
 
 `google` / `opentelemetry` / `databricks` のように複数 distribution が共有する namespace package は root だけでは決まらないため、root が third-party / unknown に分類された import は、user map と bundled map の dotted key(`google.protobuf`、`opentelemetry.sdk` など、2 segment 以上)を import 先の module 名(`from a.b import c` は `a.b.c`)に対して最長一致で引き、見つかればその distribution で上書きする。first-party root(`poetry` に対する `poetry.core` など)も、一致した dotted module が import 可能な位置(project root・`src/`・各 workspace member の直下または `src/`)に無い場合に限り同様に上書きする。`tests/fixtures/vendor/poetry/core/` のような深い位置のファイルは import できないため数えない。
@@ -409,7 +413,7 @@ scripts/**/*.py
 **/*.ipynb
 ```
 
-単独ファイル名でのentry推定(`main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` / `noxfile.py`)は**project root直下、およびsrc layoutのpackage直下のみ**を対象にする。任意の深さで同名ファイルをentry扱いすると、unused file検出が事実上無効化されるため。`__main__.py` と `conftest.py` は全階層で有効。`docs/conf.py` と `alembic/env.py` は記載のpathに限定する。
+単独ファイル名でのentry推定(`main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` / `noxfile.py`)は**project root直下、およびsrc layoutのpackage直下のみ**を対象にする。任意の深さで同名ファイルをentry扱いすると、unused file検出が事実上無効化されるため。`__main__.py` と `conftest.py` は全階層で有効。`docs/conf.py`（root と各 workspace member 直下）と `alembic/env.py` は記載のpathに限定する。
 
 discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry にする（rule `auto:**/*.ipynb`、#514）。notebook は cell 単位で直接実行され他の file から import されないため、PEP 723 script と同じく root としてしか使われない。そのため notebook 自身は CHK001 にならず、notebook からだけ import される module も到達可能になる。app 判定（`has_clear_app_signals`）は file 名で見るため、notebook があっても mode は変わらない。
 
@@ -419,8 +423,9 @@ discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry �
 console_scripts / manage.py / asgi.py / wsgi.py / app.py がある
   -> app mode
 
-[project] name があり、src/<package>/__init__.py または
-root直下の <package>/__init__.py (flat layout) があり、明確なentryがない
+[project] name (または setup.py の setup() に静的に読めない name) があり、
+src/<package>/__init__.py または root直下の <package>/__init__.py
+(flat layout) があり、明確なentryがない
   -> library mode
 
 複数 pyproject.toml / tool.uv.workspace.members がある
@@ -430,7 +435,9 @@ root直下の <package>/__init__.py (flat layout) があり、明確なentryが�
   -> app mode。ただしunused_fileのconfidence上限をlikelyに落とす
 ```
 
-自動検出したworkspace member（§5、#488）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。
+setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
+
+workspace member（§5。宣言済み・自動検出とも、#488 / #587）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。代わりにmember自身のwheel target（member manifest、パスはmember相対）から求めたpublic surfaceを使い、その外にある未到達file（`scripts/release.py` 等）はCHK001をapp mode相当のconfidenceに戻す（`apply_member_surfaces`、#587）。入れ子のmemberでは最も深いmemberのsurfaceで判定する。
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 
@@ -491,8 +498,15 @@ pytest pluginの例。
    test file自体をrootにしないとtest内のimportが依存使用として数えられない)
 conftest.py をentryにする
 pytest_plugins = ["..."] をmodule referenceにする
-[tool.pytest.ini_options] を読む (testpaths / python_files があれば上記globを上書き。
-  testpaths の "." はrootdirとして扱う)
+Python sourceのmodule-level pytest_plugins = "..." / [...] / (...) の文字列literalを
+  そのfileからのimportにする (conftest以外も対象。pluginとして読み込まれたmoduleの
+  pytest_pluginsも有効なため。解決できない名前はunresolved警告にしない)
+[tool.pytest] (pytest ≥ 9 の native table) または [tool.pytest.ini_options] を読む
+  (ini_options 以外のキーがあれば [tool.pytest] を優先。testpaths / python_files が
+   あれば上記globを上書き。testpaths の "." はrootdirとして扱う)
+workspace member 内の test context の file には testpaths に関係なく python_files を
+  適用する (member の suite はディレクトリを明示して pytest に渡すため。airflow の
+  providers/*/tests/**/example_*.py)
 pytest command usageをbinary usageにする
 ```
 
@@ -541,7 +555,7 @@ contextは依存だけでなく**file側にも割り当てる**。CHK005(misplac
 ```text
 src/** / flat layoutのpackage/** / [project.scripts]到達file -> runtime
 **/tests/** / root直下の test/** / conftest.py / *_test.py / test_*.py -> test
-docs/**                                                     -> docs
+docs/** / workspace member直下の docs/**                    -> docs
 noxfile.py / 各tool設定が参照するscript                      -> dev
 scripts/**                                                  -> dev (設定で変更可)
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
@@ -560,7 +574,7 @@ package 内の `tests/`（`pandas/tests/`）も test context とし、test conte
 
 `tests` / `scripts` / `docs` / `build` / `dist` / `examples` / `benchmarks` / `e2e*` などは本体候補にしない。`package_root` が `src` 以外 (`lib` など) のときは `--probe` の Layout 行に `root: lib` を出し、module 名は `package_root` からの相対 path で決める。`path` source が本体を持つ場合、その package への import は first-party だが、CHK001 では `workspace = true` source と同じくその依存を used として数える。
 
-pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。
+pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest]` / `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。
 
 判定例。
 
@@ -592,7 +606,7 @@ src/ で import urllib3
 
 判定の優先順位を固定する。宣言されていないimportは、**lockfileの推移閉包で解決できればCHK004、できなければCHK003**とする。lockfileが存在しない場合(requirements.txtのみの環境など)はtransitive判定が不可能なため、CHK004はCHK003に縮退し、その旨をmessageに含める。CHK004のevidenceは2種類に分ける。宣言依存からlockfileのedgeで到達できる場合は「transitive edge」(Certain)、lockfileにpackageとしては載っているが宣言依存から到達できない場合は「lockにあるが未宣言」(Likely)とし、messageとexplain detailで区別する。
 
-CHK005 は distribution 単位で 1 件にまとめ、その distribution の runtime import をすべて見てから confidence を決める。最初に見つかった import では決めない。トップレベルの import (class body を含む) が 1 つでもあれば warning / Certain。どれも関数本体の中 (`ImportRef.deferred`) なら warning / Likely。どれも optional / platform-guarded なら info / Likely とする。関数内の import は関数が呼ばれるまで実行されず、optional な import は「入っていれば使う」ものなので、どちらも runtime 必須とは言い切れない。`--fix` の MoveToRuntime は Certain だけが対象なので、こうした依存を runtime に昇格させない (#583)。origin には confidence を決めた import を出す。
+CHK005 は distribution 単位で 1 件にまとめ、その distribution の runtime import をすべて見てから confidence を決める。最初に見つかった import では決めない。トップレベルの import (class body を含む) が 1 つでもあれば warning / Certain。どれも関数本体の中 (`ImportRef.deferred`) なら warning / Likely。どれも optional / platform-guarded なら info / Likely とする。関数内の import は関数が呼ばれるまで実行されず、optional な import は「入っていれば使う」ものなので、どちらも runtime 必須とは言い切れない。`--fix` の MoveToRuntime は Certain だけが対象なので、こうした依存を runtime に昇格させない (#583)。import 元の file が `ReachabilityReport::eager` に入らない場合は、トップレベルの import でも関数内と同じ扱いにする。関数内や `TYPE_CHECKING` 配下からしか読み込まれないモジュールの import は、そのモジュールが読み込まれるまで実行されないため (#610)。origin には confidence を決めた import を出す。
 
 environment markerとextrasの扱いも定める。
 
@@ -725,6 +739,8 @@ vendored code (`vendored` 設定、§5)
 namespace package fragments
 plugin-marked files
 ```
+
+test tree（`tests/` と root の `test/`）の配下で、path に `data` / `fixtures` / `testdata` / `test_data` の directory を含む file はテストの入力データ（black の `tests/data/cases/*.py` など）とみなし、到達しなくても CHK001 にしない（`sources::is_test_data_path`、#593）。test から import されていれば通常どおり到達扱いになる。除外するのは CHK001 の候補だけで、`--strict` では従来どおり報告する。
 
 `unused_file` のconfidenceはこう決める。
 
@@ -1431,7 +1447,7 @@ R-06 で binary / plugin usage の情報源を拡充した。共通の command �
 
 Flask/Celery は `src/plugins/flask.rs` と `src/plugins/celery.rs` で初期実装し、`.flaskenv` の `FLASK_APP`、script内の `flask --app`、`project.scripts` / scripts / bin にある `celery -A` / `celery --app` から symbol reference と binary usage を出す。Flask は literal route decorators (`@app.route("/")`, `@bp.get(...)` など、receiver 付きの呼び出し形のみ。bare の `@app.route` は対象外)、Celery は literal task decorators (`@shared_task`, `@app.task` など) を持つ module を module reference として扱う。step 6 の parse 結果の decorator site を使い、構文エラー（`ParseSeverity::Error`）のある module では行単位のテキスト走査にフォールバックするが、どちらも同じ正規化名と判定関数で判定する。
 
-Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
+Sphinx/MkDocs/Alembic は `src/plugins/doctools.rs` で初期実装し、`docs/conf.py` と `alembic/env.py` を plugin entry にし、`mkdocs.yml` / `mkdocs.yaml`、`docs/conf.py`、`alembic.ini` から binary usage を出す。Sphinx `extensions = [...]` の literal string は module reference として扱う。Sphinx は root に加え各 workspace member の `docs/conf.py` も同じく扱い、binary usage の origin はその member の conf.py にする (#612)。member の docs 配下は member が probe 末尾で確定してから docs context に付け替え (`apply_member_docs_context`)、`--production` では root の `docs/` と同様に解析対象から外す。member の宣言 package 外でも reachability が file に対応付ける import root（`devel-common/src/docs/`）は first-party に解決する。MkDocs は static config scan で `material` theme と既知 plugin (`mkdocstrings`, `autorefs` など) を used distribution として扱う。
 
 notebook parsing は v0.2 plugin 拡充の初期実装として、source discovery が `.ipynb` を `FileKind::Notebook` として拾い、parser が `cells[].cell_type == "code"` の `source` だけを連結して既存の Python static parser に渡す。markdown/raw cell と outputs は無視し、notebook JSON が壊れている場合は per-file warning diagnostic に留める。
 

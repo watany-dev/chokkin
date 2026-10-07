@@ -6,7 +6,7 @@ use crate::parser::{ImportKind, ParsedModule, SymbolDef};
 
 /// Rules-local symbol identifier (distinct from graph `SymbolId` if added later).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SymbolId {
+pub(super) struct SymbolId {
     /// Dotted module name.
     pub module: String,
     /// Symbol name within the module.
@@ -16,7 +16,7 @@ pub struct SymbolId {
 impl SymbolId {
     /// Creates a symbol id from module and name parts.
     #[must_use]
-    pub fn new(module: impl Into<String>, name: impl Into<String>) -> Self {
+    pub(super) fn new(module: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
             module: module.into(),
             name: name.into(),

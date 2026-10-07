@@ -4,4 +4,5 @@ mod store;
 mod types;
 
 pub use store::{apply_baseline, write_baseline};
-pub use types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
+pub(crate) use types::BaselineError;
+pub use types::BaselineReport;

@@ -22,13 +22,13 @@ mod util;
 mod warnings;
 
 pub(crate) use enablers::{EnablerScope, resolve_plugin_activations};
-pub use enablers::{PluginActivation, PluginActivationReason};
-pub use error::PluginsError;
+pub(crate) use enablers::{PluginActivation, PluginActivationReason};
+pub(crate) use error::PluginsError;
 pub use extract::{PluginExtractRequest, extract_plugin_hints_with_parse};
-pub use pytest::{PytestImportSettings, import_settings as pytest_import_settings};
-pub use types::{
-    BinaryUsage, FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry, PluginHints,
-    ReferenceOrigin, SymbolReference,
-};
-pub use util::{parse_module_symbol, parse_uvicorn_script_target};
+pub(crate) use pytest::{PytestImportSettings, import_settings as pytest_import_settings};
+#[cfg(test)]
+pub(crate) use types::{BinaryUsage, FrameworkUsedGlob};
+pub(crate) use types::{ModuleReference, ReferenceOrigin};
+pub use types::{PluginContribution, PluginHints};
+pub(crate) use util::{parse_module_symbol, parse_uvicorn_script_target};
 pub use warnings::PluginsWarning;

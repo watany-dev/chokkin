@@ -8,7 +8,10 @@ use super::write::{read_manifest, write_manifest};
 
 /// Remove a dependency from `setup.cfg` `install_requires` or extras.
 #[allow(clippy::too_many_lines)]
-pub fn remove_dependency(path: &std::path::Path, distribution: &str) -> Result<String, FixError> {
+pub(super) fn remove_dependency(
+    path: &std::path::Path,
+    distribution: &str,
+) -> Result<String, FixError> {
     let (rel, contents) = read_manifest(path, "setup.cfg")?;
 
     let target = normalize_distribution_name(distribution);

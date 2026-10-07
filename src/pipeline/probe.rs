@@ -21,7 +21,8 @@ use crate::plugins::{
 };
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
-    DiscoveredSources, FileContext, FileKind, MemberLayout, build_glob_set, discover_sources,
+    DiscoveredSources, FileContext, FileKind, MemberLayout, apply_member_docs_context,
+    build_glob_set, discover_sources,
 };
 
 use super::error::ProbeError;
@@ -72,7 +73,7 @@ pub struct WorkspaceMemberInputs {
 ///
 /// # Errors
 ///
-/// Returns [`ProbeError`] when a pipeline step fails fatally.
+/// Returns `ProbeError` when a pipeline step fails fatally.
 pub fn probe_project(
     start: &Path,
     project_root_override: Option<&Path>,
@@ -86,7 +87,7 @@ pub fn probe_project(
 /// # Errors
 ///
 /// Returns [`ProbeError`] when a pipeline step fails fatally.
-pub fn probe_project_with_cache(
+pub(super) fn probe_project_with_cache(
     start: &Path,
     project_root_override: Option<&Path>,
     overrides: &RuntimeOverrides,
@@ -126,6 +127,7 @@ pub fn probe_project_with_cache(
             layout: input.sources.layout.clone(),
         })
         .collect();
+    apply_member_docs_context(&mut sources, loaded.effective.production);
     let (scripts, script_warnings) = discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),

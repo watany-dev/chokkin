@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chokkin::{
+use chokkin::internals::{
     FileContext, PluginExtractRequest, PluginId, PluginsWarning, ProjectRoot, RootMarker,
     discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
     load_config, parse_project_sources_with_cache, resolve_target_version,
@@ -29,11 +29,11 @@ fn project_root_at(path: &Path) -> ProjectRoot {
     }
 }
 
-fn extract_fixture(name: &str) -> chokkin::PluginHints {
+fn extract_fixture(name: &str) -> chokkin::internals::PluginHints {
     extract_at(&fixture(name))
 }
 
-fn extract_at(path: &Path) -> chokkin::PluginHints {
+fn extract_at(path: &Path) -> chokkin::internals::PluginHints {
     let root = discover_project_root(path).unwrap_or_else(|_| project_root_at(path));
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
@@ -52,7 +52,9 @@ fn extract_at(path: &Path) -> chokkin::PluginHints {
     .expect("extract plugin hints")
 }
 
-fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
+fn pytest_contrib(
+    hints: &chokkin::internals::PluginHints,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -60,7 +62,9 @@ fn pytest_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution 
         .expect("pytest contribution")
 }
 
-fn django_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
+fn django_contrib(
+    hints: &chokkin::internals::PluginHints,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -68,7 +72,9 @@ fn django_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution 
         .expect("django contribution")
 }
 
-fn fastapi_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution {
+fn fastapi_contrib(
+    hints: &chokkin::internals::PluginHints,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -76,7 +82,10 @@ fn fastapi_contrib(hints: &chokkin::PluginHints) -> &chokkin::PluginContribution
         .expect("fastapi contribution")
 }
 
-fn plugin_contrib(hints: &chokkin::PluginHints, plugin: PluginId) -> &chokkin::PluginContribution {
+fn plugin_contrib(
+    hints: &chokkin::internals::PluginHints,
+    plugin: PluginId,
+) -> &chokkin::internals::PluginContribution {
     hints
         .contributions
         .iter()
@@ -84,7 +93,7 @@ fn plugin_contrib(hints: &chokkin::PluginHints, plugin: PluginId) -> &chokkin::P
         .expect("plugin contribution")
 }
 
-fn entry_paths(contrib: &chokkin::PluginContribution) -> Vec<&str> {
+fn entry_paths(contrib: &chokkin::internals::PluginContribution) -> Vec<&str> {
     contrib
         .entries
         .iter()
@@ -133,6 +142,54 @@ fn pytest_respects_testpaths() {
     assert!(paths.contains(&"tests/unit/test_unit.py"));
     assert!(!paths.contains(&"tests/test_top.py"));
     assert!(!paths.contains(&"src/acme/test_in_src.py"));
+}
+
+#[test]
+fn pytest_searches_rootdir_when_no_testpaths_exist() {
+    // airflow sets `testpaths = ["tests"]` without a root `tests/`; pytest then
+    // collects from the rootdir instead.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.pytest]\ntestpaths = [\"tests\"]\n",
+    )
+    .expect("write pyproject");
+    for rel in ["acme/__init__.py", "acme/test_in_pkg.py"] {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, "").expect("write file");
+    }
+
+    let hints = extract_at(root);
+    let paths = entry_paths(pytest_contrib(&hints));
+    assert!(paths.contains(&"acme/test_in_pkg.py"));
+}
+
+#[test]
+fn pytest_reads_native_tool_pytest_table() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.pytest]\npython_files = [\"example_*.py\"]\n",
+    )
+    .expect("write pyproject");
+    for rel in ["acme/__init__.py", "tests/system/example_x.py"] {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, "").expect("write file");
+    }
+
+    let hints = extract_at(root);
+    let contrib = pytest_contrib(&hints);
+    let entry = contrib
+        .entries
+        .iter()
+        .find(|entry| entry.spec.path == "tests/system/example_x.py")
+        .expect("example_x.py entry");
+    assert_eq!(entry.context, FileContext::Test);
+    assert_eq!(entry.origin.label, "tool.pytest");
 }
 
 #[test]
@@ -486,7 +543,7 @@ fn partial_settings_warns() {
     );
 }
 
-fn extract_fixture_from_deps(name: &str) -> chokkin::PluginHints {
+fn extract_fixture_from_deps(name: &str) -> chokkin::internals::PluginHints {
     extract_at(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/deps")

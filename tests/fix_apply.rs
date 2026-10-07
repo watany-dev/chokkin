@@ -4,7 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use chokkin::{AnalyzeOptions, ExitStatus, RuleId, RuntimeOverrides, analyze_project};
+use chokkin::internals::{AnalyzeOptions, RuleId};
+use chokkin::{ExitStatus, RuntimeOverrides, analyze_project};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -103,11 +104,11 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
     )
     .expect("analyze with fix");
     let fix_report = report.fix.expect("fix report");
-    let subjects = |rule_fixes: Vec<&chokkin::IssueSubject>| {
+    let subjects = |rule_fixes: Vec<&chokkin::internals::IssueSubject>| {
         let mut names: Vec<String> = rule_fixes
             .into_iter()
             .filter_map(|subject| match subject {
-                chokkin::IssueSubject::Distribution { name } => Some(name.clone()),
+                chokkin::internals::IssueSubject::Distribution { name } => Some(name.clone()),
                 _ => None,
             })
             .collect();
@@ -123,7 +124,7 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
                 .map(|fix| &fix.subject)
                 .collect()
         ),
-        ["xarray"]
+        ["attrs", "xarray"]
     );
     assert_eq!(
         subjects(
@@ -134,7 +135,7 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
                 .map(|fix| &fix.subject)
                 .collect()
         ),
-        ["polars", "sympy"]
+        ["dask", "polars", "sympy", "toolz"]
     );
 }
 

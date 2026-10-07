@@ -11,7 +11,6 @@ mod types;
 mod write;
 
 pub(crate) use apply::apply_fixes_with_workspace;
-pub use error::FixError;
 pub(crate) use types::WorkspaceFixManifest;
-pub use types::{AppliedFix, FixOptions, FixReport, SkippedFix, SkippedReason};
+pub(crate) use types::{FixOptions, FixReport};
 pub(crate) use write::atomic_write;

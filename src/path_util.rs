@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 /// Render a path without Windows' verbatim prefix.
 #[must_use]
-pub fn display_path(path: &Path) -> String {
+pub(crate) fn display_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
         return format!(r"\\{rest}");
@@ -15,7 +15,7 @@ pub fn display_path(path: &Path) -> String {
 
 /// Normalize a root-relative path to forward-slash form.
 #[must_use]
-pub fn normalize_rel_path(path: &Path) -> String {
+pub(crate) fn normalize_rel_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     if raw.contains('\\') {
         raw.replace('\\', "/")
@@ -27,13 +27,13 @@ pub fn normalize_rel_path(path: &Path) -> String {
 /// `path` relative to `root` in forward-slash form; paths outside `root` are
 /// kept whole.
 #[must_use]
-pub fn rel_to_root(root: &Path, path: &Path) -> String {
+pub(crate) fn rel_to_root(root: &Path, path: &Path) -> String {
     normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
 /// Join root-relative `/`-separated paths, where `""` is the root.
 #[must_use]
-pub fn join_rel(base: &str, rel: &str) -> String {
+pub(crate) fn join_rel(base: &str, rel: &str) -> String {
     if base.is_empty() {
         rel.to_owned()
     } else {
@@ -48,7 +48,10 @@ pub fn join_rel(base: &str, rel: &str) -> String {
 ///
 /// Returns the I/O error from canonicalizing the existing ancestor, including when
 /// a `..` sits below a missing directory and so cannot be resolved.
-pub fn resolve_under_root(canonical_root: &Path, path: &Path) -> io::Result<Option<PathBuf>> {
+pub(crate) fn resolve_under_root(
+    canonical_root: &Path,
+    path: &Path,
+) -> io::Result<Option<PathBuf>> {
     let mut ancestor = path;
     let mut missing = Vec::new();
     while !ancestor.exists() {

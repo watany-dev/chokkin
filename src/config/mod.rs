@@ -9,10 +9,13 @@ mod workspace;
 
 pub use defaults::default_config;
 pub use error::ConfigError;
-pub use load::{apply_overrides, load_config};
+pub(crate) use load::apply_overrides;
+pub use load::load_config;
+#[cfg(test)]
+pub(crate) use types::WorkspaceOverride;
 pub use types::{
-    ChokkinConfig, Confidence, ConfigSources, DependencyGroupsConfig, EntrySpec, LoadedConfig,
-    PluginId, ProjectMode, ResolvedWorkspaceMember, RuntimeOverrides, SeverityLevel, TargetVersion,
-    UvWorkspaceHint, WorkspaceOverride,
+    ChokkinConfig, Confidence, ConfigSources, EntrySpec, LoadedConfig, PluginId, ProjectMode,
+    RuntimeOverrides, SeverityLevel, TargetVersion,
 };
-pub use workspace::detect_nested_members;
+pub(crate) use types::{DependencyGroupsConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
+pub(crate) use workspace::detect_nested_members;

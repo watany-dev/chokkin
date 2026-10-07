@@ -7,9 +7,10 @@ mod module_index;
 mod trace;
 mod types;
 
-pub use crate::sources::path_to_module;
+pub(crate) use build::apply_member_surfaces;
 pub use build::{analyze_reachability, apply_public_surface};
-pub use error::ReachabilityError;
-pub use module_index::ModuleIndex;
+pub(crate) use error::ReachabilityError;
+pub(crate) use module_index::ModuleIndex;
 pub use trace::trace_to_file;
-pub use types::{ReachabilityReport, TracePath, TraceStep, UnreachableFile, UsedModule};
+pub(crate) use types::UnreachableFile;
+pub use types::{ReachabilityReport, TracePath, TraceStep, UsedModule};

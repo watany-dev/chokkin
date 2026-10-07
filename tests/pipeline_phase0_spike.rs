@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use chokkin::{
+use chokkin::internals::{
     GraphEdge, ProjectRoot, RootMarker, add_parsed_imports, build_graph_skeleton,
     discover_project_root, discover_sources, extract_manifest, load_config, parse_file,
     resolve_target_version,

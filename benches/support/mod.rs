@@ -16,7 +16,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 /// Write `content` to `root/rel`, creating parent directories as needed.
-pub fn write(root: &Path, rel: &str, content: &str) {
+pub(crate) fn write(root: &Path, rel: &str, content: &str) {
     let path = root.join(rel);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create fixture dir");
@@ -30,7 +30,7 @@ fn module_body(index: u64) -> String {
 
 /// A src-layout project with `n_files` Python modules spread over
 /// subpackages, plus tests, scripts, docs, and a `.gitignore`.
-pub fn synth_src_project(n_files: u64) -> TempDir {
+pub(crate) fn synth_src_project(n_files: u64) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let root = temp.path();
 
@@ -69,7 +69,7 @@ pub fn synth_src_project(n_files: u64) -> TempDir {
 
 /// A flat-layout project: one package directory with `n_files` modules.
 /// Exercises the per-file flat-package prefix check in context assignment.
-pub fn synth_flat_project(n_files: u64) -> TempDir {
+pub(crate) fn synth_flat_project(n_files: u64) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let root = temp.path();
 
@@ -97,7 +97,7 @@ pub fn synth_flat_project(n_files: u64) -> TempDir {
 /// A project declaring dependencies only through `requirements.txt`
 /// (`n_lines` requirement lines, comments, markers, extras, and one
 /// recursive `-r` include).
-pub fn synth_requirements_project(n_lines: u64) -> TempDir {
+pub(crate) fn synth_requirements_project(n_lines: u64) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let root = temp.path();
 
@@ -123,7 +123,7 @@ pub fn synth_requirements_project(n_lines: u64) -> TempDir {
 
 /// A project whose dependencies come from a statically parseable
 /// `setup.py` with `n_deps` entries in `install_requires`.
-pub fn synth_setup_py_project(n_deps: u64) -> TempDir {
+pub(crate) fn synth_setup_py_project(n_deps: u64) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let root = temp.path();
 
@@ -140,7 +140,7 @@ pub fn synth_setup_py_project(n_deps: u64) -> TempDir {
 
 /// A project whose dependencies come from a `setup.cfg` with `n_deps`
 /// `install_requires` lines.
-pub fn synth_setup_cfg_project(n_deps: u64) -> TempDir {
+pub(crate) fn synth_setup_cfg_project(n_deps: u64) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let root = temp.path();
 
@@ -157,7 +157,7 @@ pub fn synth_setup_cfg_project(n_deps: u64) -> TempDir {
 
 /// A pyproject-based project with `n_deps` runtime dependencies plus
 /// optional-dependency groups and console entry points.
-pub fn synth_pyproject_project(n_deps: u64) -> TempDir {
+pub(crate) fn synth_pyproject_project(n_deps: u64) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let root = temp.path();
 
@@ -183,7 +183,7 @@ pub fn synth_pyproject_project(n_deps: u64) -> TempDir {
 }
 
 /// Source files of approximately 2 KiB with imports, symbols and expressions.
-pub fn synth_realistic_project(n_files: u64) -> TempDir {
+pub(crate) fn synth_realistic_project(n_files: u64) -> TempDir {
     let project = synth_src_project(n_files);
     let mut entries = String::new();
     for index in 0..n_files {
@@ -212,7 +212,7 @@ pub fn synth_realistic_project(n_files: u64) -> TempDir {
 /// A monorepo whose root holds `n_members` nested packages, each with its own
 /// `pyproject.toml` and a `uv.lock` carrying per-package `sdist`/`wheels`
 /// lines, the shape of `llama_index`'s integrations tree (#513).
-pub fn synth_workspace_project(n_members: u64) -> TempDir {
+pub(crate) fn synth_workspace_project(n_members: u64) -> TempDir {
     let temp = TempDir::new().expect("tempdir");
     let root = temp.path();
     write(

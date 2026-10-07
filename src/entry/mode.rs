@@ -11,7 +11,7 @@ const APP_ENTRY_FILE_NAMES: &[&str] = &["manage.py", "asgi.py", "wsgi.py", "app.
 
 /// Resolve effective project mode from config, manifest, and discovered entries.
 #[must_use]
-pub fn resolve_project_mode(
+pub(super) fn resolve_project_mode(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
@@ -45,9 +45,8 @@ pub fn resolve_project_mode(
 /// Namespace packages (`llama_index`) have no `__init__.py`, so unlike root
 /// mode resolution no package is required.
 #[must_use]
-pub fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
-    manifest.metadata.name.is_some()
-        && !has_clear_app_signals(manifest, &detect_auto_entries(sources))
+pub(crate) fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
+    names_distribution(manifest) && !has_clear_app_signals(manifest, &detect_auto_entries(sources))
 }
 
 fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> Option<usize> {
@@ -83,8 +82,14 @@ fn has_clear_app_signals(manifest: &LoadedManifest, candidates: &[EntryCandidate
     })
 }
 
+/// requests sets `name=about["__title__"]` from an `exec`ed file; the name
+/// is unreadable but still declared (#586).
+fn names_distribution(manifest: &LoadedManifest) -> bool {
+    manifest.metadata.name.is_some() || manifest.sources.setup_py_dynamic_name
+}
+
 fn is_library_project(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
-    if manifest.metadata.name.is_none() {
+    if !names_distribution(manifest) {
         return false;
     }
 
@@ -266,6 +271,8 @@ mod tests {
         sources.files[0].path = "llama_index/llms/openai/base.py".to_owned();
         let mut manifest = empty_manifest();
         assert!(!is_library_member(&manifest, &sources));
+        manifest.sources.setup_py_dynamic_name = true;
+        assert!(is_library_member(&manifest, &sources));
         manifest.metadata.name = Some("llama-index-llms-openai".to_owned());
         assert!(is_library_member(&manifest, &sources));
         sources.files[0].path = "manage.py".to_owned();

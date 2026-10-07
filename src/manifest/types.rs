@@ -20,7 +20,7 @@ pub enum DependencyContext {
     OptionalExtra(String),
     /// `setup.cfg` `extras_require`.
     SetupExtra(String),
-    /// `[build-system].requires`; stored in [`ProjectMetadata::build_requires`].
+    /// `[build-system].requires`; stored in `ProjectMetadata::build_requires`.
     Build,
 }
 
@@ -179,7 +179,7 @@ pub struct LockfileGraph {
     pub extras: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
-/// Lockfile formats read into [`LockfileGraph`].
+/// Lockfile formats read into `LockfileGraph`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LockfileKind {
@@ -234,6 +234,10 @@ pub struct ManifestSources {
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).
     pub setup_py: bool,
+    /// `setup.py` passes a `name` that cannot be read statically
+    /// (`name=about["__title__"]`, #586).
+    #[serde(default)]
+    pub setup_py_dynamic_name: bool,
     /// `uv.lock` contributed. Kept for library API compatibility; mirrors
     /// `lockfile` having [`LockfileKind::Uv`].
     pub uv_lock: bool,

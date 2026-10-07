@@ -3,13 +3,22 @@
 use crate::config::{Confidence, ProjectMode};
 use crate::reachability::UnreachableFile;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Severity};
+use crate::sources::is_test_data_path;
 
 /// Build CHK001 candidates from unreachable files.
+///
+/// Unreachable test data is skipped unless `strict`.
 #[must_use]
-pub fn chk001_candidates(unreachable: &[UnreachableFile]) -> Vec<IssueCandidate> {
+pub(super) fn chk001_candidates(
+    unreachable: &[UnreachableFile],
+    strict: bool,
+) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
     for file in unreachable {
+        if !strict && is_test_data_path(&file.path) {
+            continue;
+        }
         let confidence = file.max_confidence;
         let severity = chk001_severity(file.mode, confidence);
 
@@ -45,6 +54,28 @@ fn chk001_severity(mode: ProjectMode, confidence: Confidence) -> Severity {
 mod tests {
     use super::*;
     use crate::config::ProjectMode;
+    use crate::graph::FileId;
+
+    #[test]
+    fn unreachable_test_data_is_reported_only_in_strict_mode() {
+        let unreachable = ["tests/data/case.py", "src/legacy.py"].map(|path| UnreachableFile {
+            file: FileId(0),
+            path: path.to_owned(),
+            max_confidence: Confidence::Certain,
+            mode: ProjectMode::App,
+        });
+        let paths = |strict| {
+            chk001_candidates(&unreachable, strict)
+                .into_iter()
+                .map(|candidate| match candidate.subject {
+                    IssueSubject::File { path } => path,
+                    other => panic!("unexpected subject {other:?}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(false), ["src/legacy.py"]);
+        assert_eq!(paths(true), ["tests/data/case.py", "src/legacy.py"]);
+    }
 
     #[test]
     fn only_library_maybe_is_downgraded_to_warning() {

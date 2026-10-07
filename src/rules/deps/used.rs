@@ -64,6 +64,18 @@ pub(super) fn reachable_paths<'g>(
         .collect()
 }
 
+/// Paths of [`ReachabilityReport::eager`].
+pub(super) fn eager_paths<'g>(
+    graph: &'g ProjectGraph,
+    reachability: &ReachabilityReport,
+) -> HashSet<&'g str> {
+    reachability
+        .eager
+        .iter()
+        .filter_map(|file_id| graph.file(*file_id).map(|node| node.path.as_str()))
+        .collect()
+}
+
 /// Reachable files plus library orphans an outside caller may import: the
 /// files whose imports keep a declared dependency from reading as unused.
 ///

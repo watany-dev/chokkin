@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
-use crate::parser::{ImportContext, ParseSummary};
+use crate::parser::{ImportContext, ParseSummary, import_context_for_file};
 use crate::plugins::ModuleReference;
-use crate::sources::{DiscoveredFile, DiscoveredSources};
+use crate::sources::{DiscoveredFile, DiscoveredSources, path_to_module};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
 use super::maps::{ImportMap, build_binary_map};
@@ -18,32 +18,6 @@ use super::types::{
 };
 use super::venv::load_venv_index;
 
-/// Resolve parsed imports and plugin module references to origins and distributions.
-///
-/// `workspace_members` marks cross-member imports as first-party so workspace
-/// packages do not become false missing-dependency findings.
-#[must_use]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub fn resolve_imports(
-    config: &ChokkinConfig,
-    manifest: &LoadedManifest,
-    sources: &DiscoveredSources,
-    parse: &ParseSummary,
-    plugin_refs: &[ModuleReference],
-    workspace_members: &[ResolvedWorkspaceMember],
-) -> ResolutionIndex {
-    resolve_imports_for_analysis(
-        config,
-        manifest,
-        sources,
-        parse,
-        plugin_refs,
-        workspace_members,
-        &BTreeMap::new(),
-        &ScopedDeclarations::default(),
-    )
-}
-
 /// Distributions declared outside the root manifest, for the files they cover.
 #[derive(Debug, Default)]
 pub struct ScopedDeclarations {
@@ -53,12 +27,14 @@ pub struct ScopedDeclarations {
     pub members: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// [`resolve_imports`] with per-file stdlib ranges for PEP 723 scripts, also
-/// resolving an unmapped root through the script block or member manifest
-/// owning the file.
+/// Resolve parsed imports and plugin module references to origins and distributions.
 ///
+/// Uses per-file stdlib ranges for PEP 723 scripts and resolves an unmapped
+/// root through the script block or member manifest owning the file.
 /// A script's `requires-python` decides which modules are stdlib for the
 /// imports in that file; every other file uses the project range.
+/// `workspace_members` marks cross-member imports as first-party so workspace
+/// packages do not become false missing-dependency findings.
 #[must_use]
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn resolve_imports_for_analysis(
@@ -86,6 +62,7 @@ pub fn resolve_imports_for_analysis(
     let mut root_cache: RootCache = BTreeMap::new();
     let pytest_paths = PytestImportPaths::build(sources);
     let local_modules = local_modules(&sources.files, workspace_members);
+    let indexed_roots = indexed_roots(sources);
 
     for module in &parse.modules {
         let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
@@ -115,6 +92,7 @@ pub fn resolve_imports_for_analysis(
                 scoped,
                 &pytest_paths,
                 &local_modules,
+                &indexed_roots,
                 &mut warnings,
                 &mut root_cache,
             ));
@@ -126,6 +104,43 @@ pub fn resolve_imports_for_analysis(
                 &module.path,
                 dynamic.line,
                 ImportContext::Runtime,
+                dynamic.optional,
+                dynamic.platform_guarded,
+                file_stdlib,
+                sources,
+                manifest,
+                config,
+                workspace_members,
+                &import_map,
+                &venv_index.imports,
+                scoped,
+                &pytest_paths,
+                &local_modules,
+                &indexed_roots,
+                &mut warnings,
+                &mut root_cache,
+            ));
+        }
+        if module.pytest_plugins.is_empty() {
+            continue;
+        }
+        // A plugin name nothing resolves is a distribution missing from the
+        // environment, not a broken import in this file.
+        let plugin_context = sources
+            .files
+            .iter()
+            .find(|file| file.path == module.path)
+            .map_or(ImportContext::Test, |file| {
+                import_context_for_file(file.context)
+            });
+        for plugin in &module.pytest_plugins {
+            let mut site_warnings = Vec::new();
+            imports.push(resolve_import_site(
+                &plugin.module,
+                &plugin.module,
+                &module.path,
+                plugin.line,
+                plugin_context,
                 false,
                 false,
                 file_stdlib,
@@ -138,9 +153,15 @@ pub fn resolve_imports_for_analysis(
                 scoped,
                 &pytest_paths,
                 &local_modules,
-                &mut warnings,
+                &indexed_roots,
+                &mut site_warnings,
                 &mut root_cache,
             ));
+            warnings.extend(
+                site_warnings
+                    .into_iter()
+                    .filter(|warning| !matches!(warning, ResolveWarning::UnresolvedImport { .. })),
+            );
         }
     }
 
@@ -163,6 +184,7 @@ pub fn resolve_imports_for_analysis(
             scoped,
             &pytest_paths,
             &local_modules,
+            &indexed_roots,
             &mut warnings,
             &mut root_cache,
         ));
@@ -207,16 +229,14 @@ fn resolve_import_site(
     scoped: &ScopedDeclarations,
     pytest_paths: &PytestImportPaths,
     local_modules: &BTreeSet<String>,
+    indexed_roots: &BTreeSet<String>,
     warnings: &mut Vec<ResolveWarning>,
     root_cache: &mut RootCache,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
-    // pytest puts the test's basedir on `sys.path` ahead of site-packages, so
-    // a local module there shadows any distribution of the same name.
-    let pytest_local = !stdlib.contains(&root_name) && pytest_paths.provides_root(file, &root_name);
-    let core = if pytest_local {
+    let core = if let Some(origin) = site_origin(&root_name, file, context, stdlib, pytest_paths) {
         RootResolution {
-            origin: ModuleOrigin::FirstParty,
+            origin,
             distribution: None,
             confidence: ResolveConfidence::Certain,
         }
@@ -262,6 +282,15 @@ fn resolve_import_site(
         scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
             .or_else(|| root_loose_match(&root_name, manifest))
             .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
+            // A root that reachability maps to a file is local, even beside a
+            // member's declared package (`devel-common/src/docs/`, #612).
+            .or_else(|| {
+                indexed_roots.contains(&root_name).then_some(RootResolution {
+                    origin: ModuleOrigin::FirstParty,
+                    distribution: None,
+                    confidence: ResolveConfidence::Certain,
+                })
+            })
             .unwrap_or(core)
     } else {
         core
@@ -272,6 +301,7 @@ fn resolve_import_site(
             import: root_name.clone(),
             file: file.to_owned(),
             line,
+            context,
         });
     }
 
@@ -288,6 +318,25 @@ fn resolve_import_site(
         distribution: core.distribution,
         confidence: core.confidence,
     }
+}
+
+/// Origin fixed by the import site itself, before any root lookup.
+fn site_origin(
+    root_name: &str,
+    file: &str,
+    context: ImportContext,
+    stdlib: StdlibRange,
+    pytest_paths: &PytestImportPaths,
+) -> Option<ModuleOrigin> {
+    // `_typeshed` exists only in typeshed's stubs: a checker resolves it, the
+    // interpreter never does, so only a runtime import of it is broken (#584).
+    if context == ImportContext::Type && root_name == "_typeshed" {
+        return Some(ModuleOrigin::Stdlib);
+    }
+    // pytest puts the test's basedir on `sys.path` ahead of site-packages, so
+    // a local module there shadows any distribution of the same name.
+    (!stdlib.contains(root_name) && pytest_paths.provides_root(file, root_name))
+        .then_some(ModuleOrigin::FirstParty)
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -499,6 +548,17 @@ fn local_modules(
         }
     }
     modules
+}
+
+/// Import roots of the modules [`path_to_module`] names, the same names
+/// reachability resolves to files.
+fn indexed_roots(sources: &DiscoveredSources) -> BTreeSet<String> {
+    sources
+        .files
+        .iter()
+        .filter_map(|file| path_to_module(&file.path, &sources.layout))
+        .map(|module| import_root(&module).to_owned())
+        .collect()
 }
 
 fn workspace_member_for_file(

@@ -17,7 +17,7 @@ use crate::parser::ParsedModule;
 use crate::path_util::rel_to_root;
 
 /// Default cache directory name below the project root.
-pub const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
+pub(crate) const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
 
 /// Cache configuration for analysis runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -546,11 +546,11 @@ fn hash_fingerprints(hasher: &mut CacheKeyHasher, label: &str, fingerprints: &[S
 }
 
 /// Schema version for scan cache records.
-pub const SCAN_CACHE_SCHEMA_VERSION: &str = "scan-record-v1";
+pub(crate) const SCAN_CACHE_SCHEMA_VERSION: &str = "scan-record-v1";
 
 /// JSON envelope for config/manifest scan cache records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScanCacheRecord<T> {
+pub(crate) struct ScanCacheRecord<T> {
     /// Key used to validate this record.
     pub key: ScanCacheKey,
     /// Schema version for the scan cache payload.

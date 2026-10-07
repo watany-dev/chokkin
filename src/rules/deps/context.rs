@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use crate::config::{ChokkinConfig, DependencyGroupsConfig};
 use crate::manifest::{DeclaredDependency, DependencyContext};
 use crate::parser::ImportContext;
-use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
+use crate::sources::{DiscoveredSources, FileContext, assign_layout_file_context};
 
 /// Which side of a dependency declaration or usage we classify.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,7 +24,7 @@ pub(super) enum UsageContext {
 
 /// Broad declaration bucket for context matching (CHK005 / CHK010).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum DeclarationBucket {
+pub(crate) enum DeclarationBucket {
     /// `[project.dependencies]` and runtime groups.
     Runtime,
     /// Dev / test dependency groups.
@@ -80,7 +80,7 @@ fn group_bucket(name: &str, groups: &DependencyGroupsConfig) -> DeclarationBucke
 /// Buckets a declaration counts toward: its own context plus every group that
 /// pulls it in through PEP 735 `include-group`.
 #[must_use]
-pub fn declaration_buckets(
+pub(crate) fn declaration_buckets(
     dep: &DeclaredDependency,
     groups: &DependencyGroupsConfig,
 ) -> BTreeSet<DeclarationBucket> {
@@ -162,7 +162,10 @@ fn file_context(file: &str, sources: &DiscoveredSources) -> FileContext {
         .binary_search_by(|candidate| candidate.path.as_str().cmp(file))
         .ok()
         .and_then(|index| sources.files.get(index))
-        .map_or_else(|| assign_file_context(file), |found| found.context)
+        .map_or_else(
+            || assign_layout_file_context(file, &sources.layout),
+            |found| found.context,
+        )
 }
 
 /// Whether a declaration is considered directly declared for the usage context.

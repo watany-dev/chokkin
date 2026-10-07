@@ -7,7 +7,7 @@ use crate::parser::ParseSummary;
 use crate::sources::DiscoveredSources;
 
 /// Read-only inputs for plugin extractors.
-pub struct PluginContext<'a> {
+pub(super) struct PluginContext<'a> {
     /// Discovered project root.
     pub root: &'a ProjectRoot,
     /// Effective chokkin configuration.

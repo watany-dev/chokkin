@@ -64,12 +64,21 @@ fn is_zero_level(level: &u8) -> bool {
 }
 
 /// A literal dynamic import (`importlib.import_module("…")` or `__import__("…")`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicImport {
     /// Resolved module name from a string literal.
     pub module: String,
     /// 1-based source line.
     pub line: u32,
+    /// Same as [`ImportRef::optional`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+    /// Same as [`ImportRef::platform_guarded`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub platform_guarded: bool,
+    /// Same as [`ImportRef::deferred`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deferred: bool,
 }
 
 /// Attribute access against an imported module binding (`module.attr`).
@@ -178,6 +187,9 @@ pub struct ParsedModule {
     /// literal prefix (`import_module("pkg.commands." + name)`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dynamic_import_prefixes: Vec<DynamicImport>,
+    /// Module names a module-level `pytest_plugins` lists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pytest_plugins: Vec<DynamicImport>,
     /// Attribute accesses for `import module; module.name` symbol tracking.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_accesses: Vec<AttributeAccess>,
@@ -223,7 +235,7 @@ pub struct ParseSummary {
 
 /// Map file context to the default import context.
 #[must_use]
-pub const fn import_context_for_file(file_context: FileContext) -> ImportContext {
+pub(crate) const fn import_context_for_file(file_context: FileContext) -> ImportContext {
     match file_context {
         FileContext::Test => ImportContext::Test,
         FileContext::Runtime | FileContext::Docs | FileContext::Dev => ImportContext::Runtime,

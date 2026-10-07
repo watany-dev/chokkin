@@ -32,7 +32,7 @@ use super::visit::ModuleVisitor;
 ///
 /// # Errors
 ///
-/// Returns [`ParseError::Io`] when the file cannot be read.
+/// Returns `ParseError::Io` when the file cannot be read.
 pub fn parse_file(
     root: &ProjectRoot,
     path: &str,
@@ -186,7 +186,7 @@ fn push_notebook_cell_source(source: &Value, extracted: &mut String) {
 ///
 /// # Errors
 ///
-/// Returns [`ParseError::Io`] when a source file cannot be read.
+/// Returns `ParseError::Io` when a source file cannot be read.
 pub fn parse_project_sources_with_cache(
     root: &ProjectRoot,
     sources: &DiscoveredSources,
@@ -471,7 +471,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v18".to_owned(),
+        unit_version: "parse-v22".to_owned(),
     }
 }
 

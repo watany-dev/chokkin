@@ -7,7 +7,7 @@ use super::write::{read_manifest, write_manifest};
 
 /// Remove the dependency line at `line` if it names `distribution`, or every line naming it
 /// when no line number is known.
-pub fn remove_dependency_line(
+pub(super) fn remove_dependency_line(
     path: &std::path::Path,
     distribution: &str,
     line: Option<u32>,

@@ -69,7 +69,7 @@ Summary: 8 issues
 | `CHK007` | `unused_reexport`       | re-export (e.g. in `__init__.py`) not referenced internally               | library: info / app: warning  |
 | `CHK008` | `unlisted_binary`       | CLI used by tox/nox/pre-commit/CI without a declared dependency           | warning                       |
 | `CHK009` | `duplicate_dependency`  | declared twice in one context, or in runtime and a group/extra            | warning                       |
-| `CHK010` | `unresolved_import`     | import that resolves to neither first-party, third-party, nor stdlib      | warning                       |
+| `CHK010` | `unresolved_import`     | import that resolves to neither first-party, third-party, nor stdlib      | `TYPE_CHECKING`: info / else: warning |
 
 Because any module top-level name is importable in Python, `unused_export` starts out as a preview rule (info-level in library mode) rather than a hard error. In library mode, a name its own module reads (a TypeVar, a type alias, a helper) is not reported either, since outside callers can reach it through the module's API.
 
@@ -192,7 +192,7 @@ The root `.chokkin/` directory is reserved for analyzer data and is always exclu
 
 - **app mode** — there's a clear entry (`console_scripts`, `manage.py`, `asgi.py`, `wsgi.py`, `app.py`). Unused files are reported aggressively.
 - **library mode** — a `[project] name` with a package and no clear entry. Public modules may be imported by external users, so unused files/exports are reported at low confidence (or as info). For serious unused-file detection in a library, declare `entry` explicitly.
-- **workspace mode** — multiple `pyproject.toml` files or `tool.uv.workspace.members`. Each member is analyzed separately (per-member `[tool.chokkin.workspaces.<name>]` config is supported), sharing the workspace lockfile. Without a workspace declaration (llama_index-style monorepos), nested `pyproject.toml` files up to four directories deep that declare a `[project]` name become members automatically; hidden, build, and test directories and `exclude` globs are skipped, a warning reports the member count, and `--no-auto-workspace` turns this off. A detected member that names a distribution and has no app entry is scored like a library: its unreachable files drop to `maybe` and its tests are not reported.
+- **workspace mode** — multiple `pyproject.toml` files or `tool.uv.workspace.members`. Each member is analyzed separately (per-member `[tool.chokkin.workspaces.<name>]` config is supported), sharing the workspace lockfile. Without a workspace declaration (llama_index-style monorepos), nested `pyproject.toml` files up to four directories deep that declare a `[project]` name become members automatically; hidden, build, and test directories and `exclude` globs are skipped, a warning reports the member count, and `--no-auto-workspace` turns this off. A member (declared or detected) that names a distribution and has no app entry is scored like a library: its unreachable files drop to `maybe` and its tests are not reported, except files its own wheel targets leave out (such as `docs/conf.py`), which keep app scoring.
 
 ### Dependency contexts
 

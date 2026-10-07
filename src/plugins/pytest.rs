@@ -6,20 +6,21 @@ use std::path::Path;
 
 use crate::config::PluginId;
 use crate::path_util::rel_to_root;
-use crate::sources::FileContext;
+use crate::sources::{FileContext, build_glob_set};
+use globset::GlobSet;
 
 use super::context::PluginContext;
 use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
 };
 use super::util::{
-    IniSection, match_paths_against_globs, origin_for_file, parse_path_list,
-    pytest_ini_options_from_pyproject, pytest_test_globs, read_ini_section, read_pyproject_table,
+    IniSection, origin_for_file, parse_path_list, pytest_options_from_pyproject, pytest_test_globs,
+    read_ini_section, read_pyproject_table,
 };
 use super::warnings::PluginsWarning;
 
 /// Extract pytest-related plugin hints.
-pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
+pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Pytest);
     let mut warnings = Vec::new();
     let root = ctx.root.path.as_path();
@@ -34,13 +35,9 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     if pyproject_path.is_file() {
         match read_pyproject_table(&pyproject_path) {
             Ok(table) => {
-                if let Some(options) = pytest_ini_options_from_pyproject(&table) {
+                if let Some((options, label)) = pytest_options_from_pyproject(&table) {
                     has_explicit_config = true;
-                    config_origin = Some(origin_for_file(
-                        root,
-                        &pyproject_path,
-                        "tool.pytest.ini_options",
-                    ));
+                    config_origin = Some(origin_for_file(root, &pyproject_path, label));
                     testpaths = str_list(options, "testpaths");
                     python_files = str_list(options, "python_files");
                 }
@@ -102,16 +99,36 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
         label: "pytest defaults".to_owned(),
     });
 
-    let globs = pytest_test_globs(&testpaths, &python_files);
-    let source_paths: Vec<String> = ctx
+    let matches =
+        |globs: &Option<GlobSet>, path: &str| globs.as_ref().is_some_and(|set| set.is_match(path));
+    // pytest searches from the rootdir when no `testpaths` entry exists
+    // (airflow's root `tests`).
+    let under_testpaths = build_glob_set(&pytest_test_globs(&testpaths, &["*".to_owned()])).ok();
+    if !ctx
         .sources
         .files
         .iter()
-        .map(|file| file.path.clone())
-        .collect();
-    for path in match_paths_against_globs(&source_paths, &globs) {
+        .any(|file| matches(&under_testpaths, &file.path))
+    {
+        testpaths.clear();
+    }
+    let root_globs = build_glob_set(&pytest_test_globs(&testpaths, &python_files)).ok();
+    // Members' suites are collected by passing their directory to pytest
+    // (airflow's `providers/*/tests`), so the root `testpaths` does not limit
+    // them while `python_files` still applies.
+    let member_globs = build_glob_set(&pytest_test_globs(&[], &python_files)).ok();
+    let test_files = ctx.sources.files.iter().filter(|file| {
+        matches(&root_globs, &file.path)
+            || (file.context == FileContext::Test
+                && ctx.sources.layout.member_for(&file.path).is_some()
+                && matches(&member_globs, &file.path))
+    });
+    for file in test_files {
         contrib.entries.push(PluginEntry {
-            spec: crate::config::EntrySpec { path, symbol: None },
+            spec: crate::config::EntrySpec {
+                path: file.path.clone(),
+                symbol: None,
+            },
             context: FileContext::Test,
             origin: origin.clone(),
         });
@@ -135,7 +152,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
     }
 
     if let Some(table) = pyproject_table.as_ref()
-        && let Some(options) = pytest_ini_options_from_pyproject(table)
+        && let Some((options, _)) = pytest_options_from_pyproject(table)
         && let Some(plugins) = options.get("pytest_plugins")
     {
         let plugin_modules = collect_pytest_plugins(plugins);
@@ -164,7 +181,7 @@ pub fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarni
 
 /// The `sys.path` settings pytest applies while importing tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PytestImportSettings {
+pub(crate) struct PytestImportSettings {
     /// `pythonpath` entries, relative to the project root.
     pub pythonpath: Vec<String>,
     /// `--import-mode=importlib` in `addopts`: test and conftest directories
@@ -180,7 +197,7 @@ pub struct PytestImportSettings {
 /// the first of `pyproject.toml`, `tox.ini` and `setup.cfg` with a pytest
 /// section.
 #[must_use]
-pub fn import_settings(root: &Path) -> PytestImportSettings {
+pub(crate) fn import_settings(root: &Path) -> PytestImportSettings {
     for file in ["pytest.ini", ".pytest.ini"] {
         let path = root.join(file);
         if path.is_file() {
@@ -211,7 +228,7 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
         return None;
     }
     let table = read_pyproject_table(path).ok()?;
-    let options = pytest_ini_options_from_pyproject(&table)?;
+    let (options, _) = pytest_options_from_pyproject(&table)?;
     let addopts = options
         .get("addopts")
         .map_or_else(Vec::new, |value| match value {
@@ -330,6 +347,25 @@ mod tests {
                 pythonpath: Vec::new(),
                 importlib: true,
                 testpaths: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn import_settings_read_native_tool_pytest_table() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[tool.pytest]\npythonpath = [\"src\"]\ntestpaths = [\"tests\"]\naddopts = [\"--import-mode=importlib\"]\n",
+        )
+        .expect("write pyproject");
+        assert_eq!(
+            import_settings(root),
+            PytestImportSettings {
+                pythonpath: vec!["src".to_owned()],
+                importlib: true,
+                testpaths: vec!["tests".to_owned()],
             }
         );
     }

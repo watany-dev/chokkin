@@ -6,7 +6,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use crate::entry::EntryPlan;
 use crate::graph::{FileId, GraphEdge, ModuleId, ModuleOrigin, ProjectGraph};
-use crate::parser::ParseSummary;
+use crate::parser::{ImportContext, ParseSummary};
 use crate::plugins::PluginHints;
 use crate::resolver::import_root;
 
@@ -15,13 +15,17 @@ use super::types::{ReachPredecessor, TraceStep, UsedModule};
 
 /// Result of a BFS traversal.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BfsOutcome {
+pub(super) struct BfsOutcome {
     /// Files reached from entry roots, plugin refs, framework globs, and imports.
     pub reachable: IndexSet<FileId>,
     /// Shortest-path predecessors for trace reconstruction.
     pub predecessors: IndexMap<FileId, ReachPredecessor>,
     /// Stdlib and third-party modules encountered.
     pub used_modules: Vec<UsedModule>,
+    /// Reachable files that some path reaches without passing a
+    /// function-local or `TYPE_CHECKING` import, so they load as soon as
+    /// their entry does.
+    pub eager: IndexSet<FileId>,
 }
 
 /// One import site on a file: the module it names and the line it sits on.
@@ -33,6 +37,9 @@ type SubmoduleSite = (FileId, String, u32);
 
 /// An import site tagged with the file it appears in.
 type ImportSiteRef = (FileId, ModuleId, u32);
+
+/// A file and one of its lines.
+type FileLine = (FileId, u32);
 
 struct BfsState<'a> {
     // Shared, so module and file names can be borrowed for the whole walk and
@@ -47,10 +54,17 @@ struct BfsState<'a> {
     predecessors: IndexMap<FileId, ReachPredecessor>,
     used_modules: Vec<UsedModule>,
     dynamic_sites: HashSet<ImportSiteRef>,
+    /// Import lines not followed in this walk.
+    skipped_lines: HashSet<FileLine>,
 }
 
 impl<'a> BfsState<'a> {
-    fn new(graph: &'a ProjectGraph, parse: &ParseSummary, module_index: &'a ModuleIndex) -> Self {
+    fn new(
+        graph: &'a ProjectGraph,
+        parse: &ParseSummary,
+        module_index: &'a ModuleIndex,
+        skipped_lines: HashSet<FileLine>,
+    ) -> Self {
         Self {
             graph,
             module_index,
@@ -62,6 +76,7 @@ impl<'a> BfsState<'a> {
             predecessors: IndexMap::new(),
             used_modules: Vec::new(),
             dynamic_sites: build_dynamic_sites(graph, parse),
+            skipped_lines,
         }
     }
 
@@ -84,6 +99,7 @@ impl<'a> BfsState<'a> {
             reachable: self.reachable,
             predecessors: self.predecessors,
             used_modules: self.used_modules,
+            eager: IndexSet::new(),
         }
     }
 
@@ -100,7 +116,7 @@ impl<'a> BfsState<'a> {
 /// plugin refs has finished, so a file those reach keeps its import trace;
 /// the imports of the seeded files are then followed like any other file's.
 #[allow(clippy::too_many_arguments)]
-pub fn run_reachability_bfs(
+pub(super) fn run_reachability_bfs(
     graph: &ProjectGraph,
     entry: &EntryPlan,
     plugins: &PluginHints,
@@ -108,7 +124,40 @@ pub fn run_reachability_bfs(
     module_index: &ModuleIndex,
     framework: Vec<(FileId, ReachPredecessor)>,
 ) -> BfsOutcome {
-    let mut state = BfsState::new(graph, parse, module_index);
+    let eager = walk(
+        graph,
+        entry,
+        plugins,
+        parse,
+        module_index,
+        framework.clone(),
+        build_lazy_lines(graph, parse),
+    )
+    .reachable;
+    let mut outcome = walk(
+        graph,
+        entry,
+        plugins,
+        parse,
+        module_index,
+        framework,
+        HashSet::new(),
+    );
+    outcome.eager = eager;
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk(
+    graph: &ProjectGraph,
+    entry: &EntryPlan,
+    plugins: &PluginHints,
+    parse: &ParseSummary,
+    module_index: &ModuleIndex,
+    framework: Vec<(FileId, ReachPredecessor)>,
+    skipped_lines: HashSet<FileLine>,
+) -> BfsOutcome {
+    let mut state = BfsState::new(graph, parse, module_index, skipped_lines);
 
     for root in &entry.roots {
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
@@ -149,6 +198,9 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
     let source_path = graph.file(file_id).map_or("", |node| node.path.as_str());
 
     for (module_id, line) in imports {
+        if state.skipped_lines.contains(&(file_id, line)) {
+            continue;
+        }
         let Some(module_node) = graph.module(module_id) else {
             continue;
         };
@@ -173,11 +225,17 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId) {
 
     let submodules = state.submodule_imports.remove(&file_id).unwrap_or_default();
     for (target, module, line) in submodules {
+        if state.skipped_lines.contains(&(file_id, line)) {
+            continue;
+        }
         state.enqueue_file(target, Some(file_id), || TraceStep::Import { module, line });
     }
 
     let prefixed = state.prefix_imports.remove(&file_id).unwrap_or_default();
     for (target, module, line) in prefixed {
+        if state.skipped_lines.contains(&(file_id, line)) {
+            continue;
+        }
         state.enqueue_file(target, Some(file_id), || TraceStep::DynamicImport {
             module,
             line,
@@ -298,7 +356,7 @@ fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<Im
         let Some(file_id) = graph.file_id(&module.path) else {
             continue;
         };
-        for dynamic in &module.dynamic_imports {
+        for dynamic in module.dynamic_imports.iter().chain(&module.pytest_plugins) {
             let also_static = module
                 .imports
                 .iter()
@@ -312,6 +370,35 @@ fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<Im
         }
     }
     sites
+}
+
+/// Lines whose import does not run when the file loads: function-local
+/// imports and `TYPE_CHECKING` blocks. Neither shares a line with an import
+/// that does, so the line alone identifies the site.
+fn build_lazy_lines(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<FileLine> {
+    let mut lines = HashSet::new();
+    for module in &parse.modules {
+        let Some(file_id) = graph.file_id(&module.path) else {
+            continue;
+        };
+        let static_lines = module
+            .imports
+            .iter()
+            .filter(|import| import.deferred || import.context == ImportContext::Type)
+            .map(|import| import.line);
+        let dynamic_lines = module
+            .dynamic_imports
+            .iter()
+            .chain(&module.dynamic_import_prefixes)
+            .filter(|dynamic| dynamic.deferred)
+            .map(|dynamic| dynamic.line);
+        lines.extend(
+            static_lines
+                .chain(dynamic_lines)
+                .map(|line| (file_id, line)),
+        );
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -356,6 +443,7 @@ mod tests {
                 .map(|(module, line)| DynamicImport {
                     module: (*module).to_owned(),
                     line: *line,
+                    ..DynamicImport::default()
                 })
                 .collect(),
             ..ParsedModule::default()
@@ -532,6 +620,7 @@ mod tests {
             dynamic_import_prefixes: vec![DynamicImport {
                 module: "acme".to_owned(),
                 line: 4,
+                ..DynamicImport::default()
             }],
             ..ParsedModule::default()
         }];
@@ -704,5 +793,26 @@ mod tests {
         assert!(matches!(a_step.step, TraceStep::Import { line: 1, .. }));
         assert!(matches!(c_step.step, TraceStep::PluginRef { .. }));
         assert_eq!(b_from.from, Some(c_id));
+    }
+
+    #[test]
+    fn eager_set_excludes_files_reached_only_through_imports_that_do_not_run() {
+        let root = test_root();
+        // a.py is imported inside a function, b.py under TYPE_CHECKING; c.py
+        // is reached lazily through a.py and at module level from main.py.
+        let mut main = parsed(
+            "src/acme/main.py",
+            &[("acme.a", 3), ("acme.b", 5), ("acme.c", 1)],
+            &[],
+        );
+        main.imports[0].deferred = true;
+        main.imports[1].context = ImportContext::Type;
+        let modules = vec![main, parsed("src/acme/a.py", &[("acme.c", 1)], &[])];
+        let graph = graph_with_imports(root.clone(), &modules);
+        let outcome = run_bfs(&graph, &root, modules, Vec::new());
+
+        let [main_id, _, _, c_id] = PATHS.map(|path| graph.file_id(path).expect(path));
+        assert_eq!(outcome.reachable.len(), 4);
+        assert_eq!(outcome.eager, IndexSet::from([main_id, c_id]));
     }
 }

@@ -12,7 +12,7 @@ use crate::sources::build_glob_set;
 
 /// Compiled ignore matchers for config and source directives.
 #[derive(Debug)]
-pub struct IgnoreMatcher {
+pub(super) struct IgnoreMatcher {
     config: BTreeMap<RuleId, Vec<String>>,
     directives: BTreeMap<String, Vec<IgnoreDirective>>,
     // CHK008 carries the binary name, but §18 names the (already normalized)
@@ -28,7 +28,7 @@ impl IgnoreMatcher {
     /// `resolution` supplies the binary → distribution names that CHK008
     /// ignores match against (§18); pass `ResolutionIndex::default()` when it is
     /// not available.
-    pub fn build(
+    pub(super) fn build(
         config: &ChokkinConfig,
         parse: &ParseSummary,
         resolution: &ResolutionIndex,
@@ -61,7 +61,7 @@ impl IgnoreMatcher {
     }
 
     /// Why a pre-issue candidate is suppressed, or `None` when it is not.
-    pub fn matches_candidate(&self, candidate: &IssueCandidate) -> Option<SuppressReason> {
+    pub(super) fn matches_candidate(&self, candidate: &IssueCandidate) -> Option<SuppressReason> {
         let file = file_path_for(&candidate.subject, &candidate.origins);
         if file
             .as_deref()
@@ -464,6 +464,7 @@ mod tests {
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
             dynamic_import_prefixes: Vec::new(),
+            pytest_plugins: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
@@ -515,6 +516,7 @@ mod tests {
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
             dynamic_import_prefixes: Vec::new(),
+            pytest_plugins: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),
@@ -657,6 +659,7 @@ mod tests {
             imports: Vec::new(),
             dynamic_imports: Vec::new(),
             dynamic_import_prefixes: Vec::new(),
+            pytest_plugins: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
             exports: Vec::new(),

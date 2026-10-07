@@ -603,7 +603,7 @@ fn binary_production_drops_members_only_dev_groups_reference() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"core\"]\n\n[dependency-groups]\ndev = [\"helpers\"]\n\n[tool.uv.sources]\ncore = { workspace = true }\nhelpers = { workspace = true }\n\n[tool.uv.workspace]\nmembers = [\"core\", \"e2e\", \"helpers\"]\n",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"core\"]\n\n[dependency-groups]\ndev = [\"helpers\"]\n\n[tool.uv.sources]\ncore = { workspace = true }\nhelpers = { workspace = true }\n\n[tool.uv.workspace]\nmembers = [\"core\", \"e2e\", \"helpers\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
         ),
         ("main.py", "import core\n\nprint(core)\n"),
         (
@@ -659,7 +659,7 @@ fn binary_production_keeps_members_shipped_through_groups_or_nesting() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"runtime-lib\"]\n\n[dependency-groups]\nbase = [\"lib\"]\nserver = [{ include-group = \"base\" }]\ndev = [\"tools\"]\n\n[tool.uv.workspace]\nmembers = [\"lib\", \"tools\", \"tools/runtime-lib\"]\n",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"runtime-lib\"]\n\n[dependency-groups]\nbase = [\"lib\"]\nserver = [{ include-group = \"base\" }]\ndev = [\"tools\"]\n\n[tool.uv.workspace]\nmembers = [\"lib\", \"tools\", \"tools/runtime-lib\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
         ),
         (
             "main.py",
@@ -700,6 +700,86 @@ fn binary_production_keeps_members_shipped_through_groups_or_nesting() {
             .all(|(_, target)| !target.starts_with("tools/src/")),
         "{keys:?}"
     );
+}
+
+/// starlette imports `JSONResponse` from `starlette.responses`, not the
+/// package root, so `--production` must keep the tests, and the modules only
+/// they reach, as evidence of API use. A private module's name, and one only
+/// an orphaned private module imports, stay reported (#588).
+#[test]
+fn binary_production_library_keeps_public_module_names_used_by_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"library\"\n",
+        ),
+        (
+            "acme/__init__.py",
+            "from acme import _utils, responses\n\n__all__ = [\"_utils\", \"responses\"]\n",
+        ),
+        (
+            "acme/responses.py",
+            "class JSONResponse:\n    pass\n\n\nclass HTMLResponse:\n    pass\n\n\nclass Unused:\n    pass\n\n\nclass Orphaned:\n    pass\n",
+        ),
+        (
+            "acme/templating.py",
+            "from acme.responses import HTMLResponse\n\n\nclass Template(HTMLResponse):\n    pass\n",
+        ),
+        ("acme/_utils.py", "def collapse() -> None:\n    pass\n"),
+        // Orphaned private module: its import is not an outside caller.
+        ("acme/_legacy.py", "from acme.responses import Unused\n"),
+        // Without `--production`, a public module nothing reaches is not a
+        // caller either.
+        ("acme/plugins.py", "from acme.responses import Orphaned\n"),
+        (
+            "tests/test_responses.py",
+            "from acme._utils import collapse\nfrom acme.responses import JSONResponse\nfrom acme.templating import Template\n\n\ndef test_json() -> None:\n    collapse()\n    JSONResponse()\n    Template()\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--production"][..]] {
+        let keys = issue_keys(&json_issues(project.path(), extra));
+        let flagged: Vec<_> = keys
+            .iter()
+            .filter(|(code, _)| code == "CHK006")
+            .map(|(_, target)| target.as_str())
+            .collect();
+        let expected: &[&str] = if extra.is_empty() {
+            &["acme/responses.py:Orphaned", "acme/responses.py:Unused"]
+        } else {
+            &["acme/_utils.py:collapse", "acme/responses.py:Unused"]
+        };
+        assert_eq!(flagged, expected, "{extra:?}: {keys:?}");
+    }
+}
+
+/// A library member's tests are kept as API evidence under an app root too.
+#[test]
+fn binary_production_library_member_keeps_names_used_by_its_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("main.py", "import acme_lib\n\nprint(acme_lib)\n"),
+        (
+            "libs/acme-lib/pyproject.toml",
+            "[project]\nname = \"acme-lib\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "libs/acme-lib/acme_lib/__init__.py",
+            "from acme_lib import responses\n\n__all__ = [\"responses\"]\n",
+        ),
+        (
+            "libs/acme-lib/acme_lib/responses.py",
+            "class JSONResponse:\n    pass\n",
+        ),
+        (
+            "libs/acme-lib/tests/test_responses.py",
+            "from acme_lib.responses import JSONResponse\n\n\ndef test_json() -> None:\n    JSONResponse()\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--production"]));
+    assert!(keys.iter().all(|(code, _)| code != "CHK006"), "{keys:?}");
 }
 
 fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -761,6 +841,50 @@ fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
     assert!(
         keys.iter()
             .any(|(code, target)| code == "CHK010" && target.ends_with("lifecycle")),
+        "{keys:?}"
+    );
+}
+
+/// airflow: `[tool.pytest]` (pytest 9) adds `example_*.py`, and the root
+/// `testpaths` does not cover the member suites passed to pytest by path (#603).
+#[test]
+fn binary_pytest_native_python_files_cover_app_member_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"providers/*\"]\n\n[tool.pytest]\ntestpaths = [\"tests\"]\npython_files = [\"test_*.py\", \"example_*.py\"]\n",
+        ),
+        (
+            "providers/foo/pyproject.toml",
+            "[project]\nname = \"foo\"\nversion = \"0.1.0\"\n\n[project.scripts]\nfoo = \"foo.main:main\"\n",
+        ),
+        ("providers/foo/src/foo/__init__.py", ""),
+        (
+            "providers/foo/src/foo/main.py",
+            "def main() -> None:\n    pass\n",
+        ),
+        ("providers/foo/src/foo/example_unused.py", "X = 1\n"),
+        ("providers/foo/tests/system/example_dag.py", "DAG = 1\n"),
+        ("providers/foo/tests/system/helpers.py", "X = 1\n"),
+        // An existing `testpaths`, so pytest does not fall back to the rootdir.
+        ("tests/test_root.py", ""),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--include", "CHK001"]));
+    let reported = |path: &str| {
+        keys.iter()
+            .any(|(code, target)| code == "CHK001" && target == path)
+    };
+    assert!(
+        !reported("providers/foo/tests/system/example_dag.py"),
+        "{keys:?}"
+    );
+    assert!(
+        reported("providers/foo/tests/system/helpers.py"),
+        "{keys:?}"
+    );
+    // `python_files` reaches member tests only, not runtime modules.
+    assert!(
+        reported("providers/foo/src/foo/example_unused.py"),
         "{keys:?}"
     );
 }
@@ -870,33 +994,120 @@ fn binary_undeclared_monorepo_members_are_auto_detected() {
     assert!(!project.path().join("llama-index-core/.chokkin").exists());
 }
 
-/// Library scoring is only for detected members; a declared member keeps the
-/// root's mode, so its orphans stay certain.
+/// A declared member without an app entry ships its own wheel, so its
+/// orphans are library-scored like a detected member's, even when only its
+/// tests reach them and `--production` drops the tests. Files its wheel does
+/// not ship keep app scoring (#587).
 #[test]
-fn binary_declared_workspace_member_is_not_scored_as_library() {
+fn binary_declared_workspace_library_member_is_scored_as_library() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[project.scripts]\napi-cli = \"api.main:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"providers/*\", \"core\"]\n",
         ),
         (
-            "services/api/pyproject.toml",
-            "[project]\nname = \"api\"\nversion = \"0.1.0\"\n",
+            "providers/google/pyproject.toml",
+            "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\n\n[project.entry-points.apache_airflow_provider]\nprovider_info = \"airflow.providers.google.get_provider_info:get_provider_info\"\n\n[tool.flit.module]\nname = \"airflow.providers.google\"\n",
         ),
-        ("services/api/src/api/__init__.py", ""),
+        // Outside the member's wheel, so no outside caller imports it.
+        ("providers/google/scripts/release.py", "VERSION = \"1\"\n"),
+        // Namespace package: no `src/airflow/__init__.py`.
         (
-            "services/api/src/api/main.py",
-            "from . import helper\nfrom api import util\n\n\ndef main() -> None:\n    helper.run()\n    util.run()\n",
+            "providers/google/src/airflow/providers/google/__init__.py",
+            "",
         ),
-        ("services/api/src/api/helper.py", "def run():\n    pass\n"),
-        ("services/api/src/api/util.py", "def run():\n    pass\n"),
-        ("services/api/src/api/orphan.py", ""),
+        (
+            "providers/google/src/airflow/providers/google/hooks.py",
+            "def hook():\n    pass\n",
+        ),
+        (
+            "providers/google/tests/test_hooks.py",
+            "from airflow.providers.google.hooks import hook\n\n\ndef test_hook():\n    hook()\n",
+        ),
+        // App member: its console script keeps app scoring.
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n\n[project.scripts]\ncore = \"core.main:main\"\n",
+        ),
+        ("core/src/core/__init__.py", ""),
+        ("core/src/core/main.py", "def main():\n    pass\n"),
+        ("core/src/core/orphan.py", ""),
+    ]);
+    let hooks = "providers/google/src/airflow/providers/google/hooks.py";
+    for extra in [&[][..], &["--production"][..]] {
+        let issues = json_issues(project.path(), extra);
+        assert_eq!(
+            certain_chk001(&issues),
+            [
+                "core/src/core/orphan.py",
+                "providers/google/scripts/release.py"
+            ],
+            "{extra:?}: {issues:?}"
+        );
+        assert!(
+            issues.iter().all(|issue| !(issue["code"] == "CHK001"
+                && issue["target"] == hooks
+                && issue["severity"] == "error")),
+            "{extra:?}: {issues:?}"
+        );
+    }
+}
+
+/// Monorepos keep Sphinx docs per member: each member's `docs/conf.py` is a
+/// docs entry, so it and the shared modules it imports stay reachable even
+/// with no root `docs/conf.py`, and `--production` drops it like root docs
+/// (#612).
+#[test]
+fn binary_member_sphinx_conf_is_a_docs_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"core\", \"providers/*\", \"devel-common\"]\n",
+        ),
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n\n[project.scripts]\ncore = \"core.main:main\"\n",
+        ),
+        ("core/src/core/__init__.py", ""),
+        ("core/src/core/main.py", "def main():\n    pass\n"),
+        ("core/src/core/orphan.py", ""),
+        (
+            "providers/google/pyproject.toml",
+            "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.flit.module]\nname = \"google_provider\"\n",
+        ),
+        ("providers/google/src/google_provider/__init__.py", ""),
+        (
+            "providers/google/docs/conf.py",
+            "from docs.provider_conf import *\n\nextensions = [\"sphinx_exts.redirects\"]\n",
+        ),
+        // The wheel ships `tests_common`; `docs` and `sphinx_exts` sit beside it.
+        (
+            "devel-common/pyproject.toml",
+            "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"devel-common\"\nversion = \"0.1.0\"\n\n[tool.flit.module]\nname = \"tests_common\"\n",
+        ),
+        ("devel-common/src/tests_common/__init__.py", ""),
+        ("devel-common/src/docs/__init__.py", ""),
+        (
+            "devel-common/src/docs/provider_conf.py",
+            "project = \"provider\"\n",
+        ),
+        ("devel-common/src/sphinx_exts/__init__.py", ""),
+        (
+            "devel-common/src/sphinx_exts/redirects.py",
+            "def setup(app):\n    pass\n",
+        ),
     ]);
     let issues = json_issues(project.path(), &[]);
-    // Imports inside the member resolve against its own `src/` layout.
     assert_eq!(
         certain_chk001(&issues),
-        ["services/api/src/api/orphan.py"],
+        ["core/src/core/orphan.py"],
+        "{issues:?}"
+    );
+    let issues = json_issues(project.path(), &["--production"]);
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue["target"] != "providers/google/docs/conf.py"),
         "{issues:?}"
     );
 }
@@ -1226,4 +1437,40 @@ fn binary_notebooks_are_entry_roots() {
         .map(|(_, target)| target)
         .collect();
     assert_eq!(orphans, ["acme/orphan.py"], "{issues:?}");
+}
+
+/// black's `tests/data/cases/*.py`: tests read these as files, so an orphan
+/// there is expected; a fixture module imported by conftest stays reachable
+/// (#593).
+#[test]
+fn binary_unreachable_test_data_is_reported_only_in_strict_mode() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/cli.py", "def main():\n    pass\n"),
+        ("tests/__init__.py", ""),
+        (
+            "tests/conftest.py",
+            "from tests.fixtures.helpers import make\n",
+        ),
+        ("tests/fixtures/__init__.py", ""),
+        ("tests/fixtures/helpers.py", "def make():\n    pass\n"),
+        ("tests/data/case.py", "x = 1\n"),
+        ("tests/orphan.py", ""),
+    ]);
+    let orphans = |extra: &[&str]| -> Vec<String> {
+        issue_keys(&json_issues(project.path(), extra))
+            .into_iter()
+            .filter(|(code, _)| code == "CHK001")
+            .map(|(_, target)| target)
+            .collect()
+    };
+    assert_eq!(orphans(&[]), ["tests/orphan.py"]);
+    assert_eq!(
+        orphans(&["--strict"]),
+        ["tests/data/case.py", "tests/orphan.py"]
+    );
 }
