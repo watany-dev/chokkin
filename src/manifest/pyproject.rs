@@ -577,8 +577,7 @@ fn render_templates(raw: &str) -> Option<String> {
     let name_len = head
         .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
         .unwrap_or(head.len());
-    let in_version = name_len > 0
-        && name_len < head.len()
+    let in_version = name_len < head.len()
         && !head.contains(['@', ':', '/'])
         && head.matches('[').count() == head.matches(']').count()
         && !raw
@@ -804,6 +803,7 @@ mod tests {
     fn templates_outside_the_version_warn_with_the_raw_text() {
         let entries = [
             "{{ name }}-core",
+            ">={{ version }}",
             "core-{{ name }}",
             "core[{{ extra }}]",
             "core @ https://example.com/core-{{ version }}.whl",
