@@ -187,6 +187,15 @@ fn unused_boto3_emits_chk002() {
     assert!(!has_dist_rule(&report, RuleId::Chk002, "requests"));
 }
 
+/// starlette imports `python_multipart` itself to parse forms, so a project
+/// that uses starlette never imports the parser it has to declare.
+#[test]
+fn form_parser_is_used_through_starlette() {
+    let report = reconcile_fixture("form_parser_companion");
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "python-multipart"));
+    assert!(!has_dist_rule(&report, RuleId::Chk002, "starlette"));
+}
+
 #[test]
 fn missing_yaml_emits_chk003() {
     let report = reconcile_fixture("missing_yaml");
