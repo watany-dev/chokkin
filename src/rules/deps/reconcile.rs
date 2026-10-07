@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 
+use indexmap::IndexSet;
+
 use crate::config::Confidence;
 use crate::manifest::{
     DeclaredDependency, DependencyContext, InlineScript, LoadedManifest,
@@ -23,8 +25,8 @@ use super::missing::{WorkspaceDeclaredIndex, detect_missing_dependencies};
 use super::script::{detect_script_dependency_issues, is_script_third_party};
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
 use super::used::{
-    build_declared_index, build_import_declared_index, collect_used_distributions, has_lockfile,
-    mark_pytest_plugin_distributions, mark_self_referential_distribution,
+    DeclaredIndex, build_declared_index, build_import_declared_index, collect_used_distributions,
+    has_lockfile, mark_pytest_plugin_distributions, mark_self_referential_distribution,
     mark_workspace_source_distributions, reachable_paths, usage_paths,
 };
 
@@ -138,14 +140,7 @@ fn reconcile_project(
     }
     mark_pytest_plugin_distributions(resolution, &mut used);
 
-    // types-* stubs are considered used when their runtime package is used.
-    for name in declared.keys() {
-        if let Some(runtime) = runtime_for_stub(name)
-            && used.contains(&normalize_distribution_name(runtime))
-        {
-            used.insert(name.clone());
-        }
-    }
+    mark_used_through_another_distribution(&declared, &mut used);
 
     let mut candidates = Vec::new();
     let evidence = UnusedEvidenceContext {
@@ -236,6 +231,31 @@ fn workspace_declared_indices<'a>(
         })
         .collect()
 }
+
+/// Mark declared distributions that are used whenever another used one is:
+/// `types-*` stubs of a used runtime package, and [`RUNTIME_COMPANIONS`].
+fn mark_used_through_another_distribution(
+    declared: &DeclaredIndex<'_>,
+    used: &mut IndexSet<String>,
+) {
+    for name in declared.keys() {
+        if let Some(runtime) = runtime_for_stub(name)
+            && used.contains(&normalize_distribution_name(runtime))
+        {
+            used.insert(name.clone());
+        }
+    }
+    for (companion, hosts) in RUNTIME_COMPANIONS {
+        if declared.contains_key(*companion) && hosts.iter().any(|host| used.contains(*host)) {
+            used.insert((*companion).to_owned());
+        }
+    }
+}
+
+/// Distributions a used framework imports on the project's behalf, never
+/// imported by the project itself: starlette (and `FastAPI` on top of it) parses
+/// `request.form()` / `Form(...)` with `python_multipart`.
+const RUNTIME_COMPANIONS: &[(&str, &[&str])] = &[("python-multipart", &["starlette", "fastapi"])];
 
 /// Map a `types-*` stub name to its runtime package when the pattern is known.
 fn runtime_for_stub(stub_name: &str) -> Option<&str> {
