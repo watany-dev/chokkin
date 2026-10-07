@@ -728,7 +728,7 @@ fn binary_production_keeps_published_members_only_dev_groups_reference() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[dependency-groups]\ndev = [\"ctl\", \"dyn\", \"helpers\"]\n\n[tool.uv.workspace]\nmembers = [\"ctl\", \"dyn\", \"helpers\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[dependency-groups]\ndev = [\"acme-ctl\", \"dyn\", \"helpers\"]\n\n[tool.uv.workspace]\nmembers = [\"ctl\", \"dyn\", \"helpers\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
         ),
         ("main.py", "print(1)\n"),
         (
