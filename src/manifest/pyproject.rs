@@ -8,6 +8,7 @@ use crate::path_util::rel_to_root;
 
 use super::dependency_groups::extract_dependency_groups;
 use super::error::ManifestError;
+use super::pep508_util::parse_pep508_requirement;
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ProjectMetadata,
     UvToolSettings,
@@ -96,6 +97,8 @@ pub(super) fn extract_pyproject(
                 &mut result.warnings,
             );
         }
+
+        extract_uv_dynamic_versioning_hook(&table, &rel, &mut result);
 
         if let Some(scripts) = project.get("scripts").and_then(Value::as_table) {
             push_entry_point_table(
@@ -476,6 +479,121 @@ fn extract_hatch_dependencies(
     }
 }
 
+/// The uv-dynamic-versioning metadata hook fills the `dynamic` fields from
+/// static arrays, only rendering templates such as `{{ version }}` in them.
+fn extract_uv_dynamic_versioning_hook(
+    table: &toml::Table,
+    rel: &str,
+    result: &mut PyprojectExtraction,
+) {
+    const HOOK: &str = "tool.hatch.metadata.hooks.uv-dynamic-versioning";
+    let Some(hook) = table
+        .get("tool")
+        .and_then(|tool| tool.get("hatch"))
+        .and_then(|hatch| hatch.get("metadata"))
+        .and_then(|metadata| metadata.get("hooks"))
+        .and_then(|hooks| hooks.get("uv-dynamic-versioning"))
+        .and_then(Value::as_table)
+    else {
+        return;
+    };
+    let is_dynamic = |field: &str| result.metadata.dynamic.iter().any(|item| item == field);
+    let (dynamic_deps, dynamic_optional) = (
+        is_dynamic("dependencies"),
+        is_dynamic("optional-dependencies"),
+    );
+
+    if dynamic_deps && let Some(deps) = hook.get("dependencies").and_then(Value::as_array) {
+        push_templated_array(
+            deps,
+            rel,
+            &DependencyContext::Runtime,
+            &format!("{HOOK}.dependencies"),
+            result,
+        );
+    }
+    if dynamic_optional
+        && let Some(optional) = hook.get("optional-dependencies").and_then(Value::as_table)
+    {
+        for (extra, deps) in optional {
+            if let Some(deps) = deps.as_array() {
+                push_templated_array(
+                    deps,
+                    rel,
+                    &DependencyContext::OptionalExtra(extra.clone()),
+                    &format!("{HOOK}.optional-dependencies.{extra}"),
+                    result,
+                );
+            }
+        }
+    }
+}
+
+fn push_templated_array(
+    deps: &[Value],
+    rel: &str,
+    context: &DependencyContext,
+    label_prefix: &str,
+    result: &mut PyprojectExtraction,
+) {
+    for (index, dep) in deps.iter().enumerate() {
+        let Some(raw) = dep.as_str() else {
+            continue;
+        };
+        let label = format!("{label_prefix}[{index}]");
+        let origin = DependencyOrigin {
+            file: rel.to_owned(),
+            line: None,
+            label: label.clone(),
+        };
+        let parsed = render_templates(raw).and_then(|rendered| {
+            let dep = parse_pep508_requirement(&rendered, context.clone(), origin).ok()?;
+            Some((dep, rendered != raw))
+        });
+        match parsed {
+            Some((mut dep, templated)) => {
+                // The rendered version is a placeholder, not the real one.
+                if templated {
+                    dep.specifier = None;
+                }
+                result.dependencies.push(dep);
+            },
+            None => result
+                .warnings
+                .push(ManifestWarning::InvalidRequirementLine {
+                    file: rel.to_owned(),
+                    line: None,
+                    label,
+                    raw: raw.to_owned(),
+                }),
+        }
+    }
+}
+
+/// Replace every `{{ ... }}` with a version that parses as PEP 440. `None`
+/// when a template is part of the distribution name, which cannot be guessed.
+fn render_templates(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_start();
+    let name_len = trimmed
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        .unwrap_or(trimmed.len());
+    if name_len == 0 || trimmed[name_len..].starts_with("{{") {
+        return None;
+    }
+    let mut rendered = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find("{{") {
+        let Some(len) = rest[start..].find("}}") else {
+            break;
+        };
+        rendered.push_str(&rest[..start]);
+        rendered.push('0');
+        rest = &rest[start + len + 2..];
+    }
+    rendered.push_str(rest);
+    Some(rendered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +738,85 @@ mod tests {
             dep.name == "ruff"
                 && matches!(&dep.context, DependencyContext::Group(group) if group == "dev")
         }));
+    }
+
+    #[test]
+    fn extracts_uv_dynamic_versioning_hook_fields_listed_in_dynamic() {
+        let result = extract(
+            "[project]\nname = \"x\"\ndynamic = [\"version\", \"dependencies\", \"optional-dependencies\"]\n[tool.hatch.metadata.hooks.uv-dynamic-versioning]\ndependencies = [\"x-core[cli]=={{ version }}\", \"rich>=13\"]\n[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]\nclip = [\"pyperclip>=1.9\"]\n",
+        )
+        .expect("valid pyproject");
+        let deps: Vec<_> = result
+            .dependencies
+            .iter()
+            .map(|dep| {
+                (
+                    dep.name.as_str(),
+                    dep.specifier.as_deref(),
+                    &dep.context,
+                    dep.origin.label.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            deps,
+            vec![
+                (
+                    "x-core",
+                    None,
+                    &DependencyContext::Runtime,
+                    "tool.hatch.metadata.hooks.uv-dynamic-versioning.dependencies[0]",
+                ),
+                (
+                    "rich",
+                    Some(">=13"),
+                    &DependencyContext::Runtime,
+                    "tool.hatch.metadata.hooks.uv-dynamic-versioning.dependencies[1]",
+                ),
+                (
+                    "pyperclip",
+                    Some(">=1.9"),
+                    &DependencyContext::OptionalExtra("clip".to_owned()),
+                    "tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies.clip[0]",
+                ),
+            ]
+        );
+        assert_eq!(result.dependencies[0].extras, vec!["cli".to_owned()]);
+    }
+
+    #[test]
+    fn uv_dynamic_versioning_hook_needs_the_field_in_dynamic() {
+        let result = extract(
+            "[project]\nname = \"x\"\ndynamic = [\"version\"]\n[tool.hatch.metadata.hooks.uv-dynamic-versioning]\ndependencies = [\"rich\"]\n[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]\nclip = [\"pyperclip\"]\n",
+        )
+        .expect("valid pyproject");
+        assert_eq!(result.dependencies, []);
+    }
+
+    #[test]
+    fn unparseable_uv_dynamic_versioning_entry_warns_with_the_raw_text() {
+        let result = extract(
+            "[project]\nname = \"x\"\ndynamic = [\"dependencies\"]\n[tool.hatch.metadata.hooks.uv-dynamic-versioning]\ndependencies = [\"{{ name }}-core\", \"core-{{ name }}\"]\n",
+        )
+        .expect("valid pyproject");
+        assert_eq!(result.dependencies, []);
+        for (index, raw) in ["{{ name }}-core", "core-{{ name }}"]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(
+                result
+                    .warnings
+                    .contains(&ManifestWarning::InvalidRequirementLine {
+                        file: "pyproject.toml".to_owned(),
+                        line: None,
+                        label: format!(
+                            "tool.hatch.metadata.hooks.uv-dynamic-versioning.dependencies[{index}]"
+                        ),
+                        raw: raw.to_owned(),
+                    })
+            );
+        }
     }
 
     mod props {

@@ -1537,3 +1537,27 @@ fn binary_unreachable_test_data_is_reported_only_in_strict_mode() {
         ["tests/data/case.py", "tests/orphan.py"]
     );
 }
+
+/// fastmcp declares its extras through the uv-dynamic-versioning metadata hook
+/// (#590): they must count as declared, not leave imports unresolved or
+/// declared only in the dev group.
+#[test]
+fn uv_dynamic_versioning_hook_extras_count_as_declared() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\ndynamic = [\"version\", \"optional-dependencies\"]\ndependencies = []\n\n[dependency-groups]\ndev = [\"pyperclip>=1.9\"]\n\n[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]\nclient = [\"acme[clip]=={{ version }}\", \"py-key-value-aio>=0.4\"]\nclip = [\"pyperclip>=1.9\"]\n",
+        ),
+        (
+            "acme/__init__.py",
+            "import pyperclip\nfrom key_value.aio.stores.memory import MemoryStore\n",
+        ),
+    ]);
+
+    let keys = issue_keys(&json_issues(temp.path(), &["--no-cache"]));
+    assert!(
+        keys.iter()
+            .all(|(code, _)| !matches!(code.as_str(), "CHK003" | "CHK005" | "CHK010")),
+        "{keys:?}"
+    );
+}
