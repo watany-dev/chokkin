@@ -82,6 +82,9 @@ pub struct ProjectMetadata {
     pub requires_python: Option<String>,
     /// `[project].dynamic` entries, e.g. `dependencies`.
     pub dynamic: Vec<String>,
+    /// `[project].classifiers`.
+    #[serde(default)]
+    pub classifiers: Vec<String>,
     /// `[build-system].build-backend`.
     #[serde(default)]
     pub build_backend: Option<String>,

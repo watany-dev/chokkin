@@ -225,23 +225,26 @@ fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
         .get("requires-python")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let dynamic = project
-        .get("dynamic")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
+    let string_array = |key: &str| -> Vec<String> {
+        project
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     ProjectMetadata {
         name,
         version,
         requires_python,
-        dynamic,
+        dynamic: string_array("dynamic"),
+        classifiers: string_array("classifiers"),
         ..ProjectMetadata::default()
     }
 }
