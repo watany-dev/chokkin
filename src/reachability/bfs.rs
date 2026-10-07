@@ -928,7 +928,8 @@ mod tests {
     fn certain_set_excludes_files_reached_only_through_optional_imports() {
         let root = test_root();
         // a.py is imported under `try`/`suppress(ImportError)`, b.py under a
-        // platform guard; c.py is reached optionally and from main.py too.
+        // platform guard, and every file through an optional prefixed dynamic
+        // import; c.py is reached optionally and from main.py too.
         let mut main = parsed(
             "src/acme/main.py",
             &[("acme.a", 3), ("acme.b", 5), ("acme.c", 1)],
@@ -936,6 +937,12 @@ mod tests {
         );
         main.imports[0].optional = true;
         main.imports[1].platform_guarded = true;
+        main.dynamic_import_prefixes.push(DynamicImport {
+            module: "acme".to_owned(),
+            line: 7,
+            optional: true,
+            ..DynamicImport::default()
+        });
         let modules = vec![main, parsed("src/acme/a.py", &[("acme.c", 1)], &[])];
         let graph = graph_with_imports(root.clone(), &modules);
         let outcome = run_bfs(&graph, &root, modules, Vec::new());
