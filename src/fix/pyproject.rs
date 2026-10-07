@@ -223,7 +223,29 @@ fn remove_tool_label(
             distribution,
         ));
     }
-    None
+    remove_uv_dynamic_versioning_label(doc, label, distribution)
+}
+
+fn remove_uv_dynamic_versioning_label(
+    doc: &mut DocumentMut,
+    label: &str,
+    distribution: &str,
+) -> Option<Result<bool, FixError>> {
+    const HOOK: [&str; 5] = [
+        "tool",
+        "hatch",
+        "metadata",
+        "hooks",
+        "uv-dynamic-versioning",
+    ];
+    let rest = label.strip_prefix("tool.hatch.metadata.hooks.uv-dynamic-versioning.")?;
+    if let Some(index) = parse_indexed_label(rest, "dependencies") {
+        let path = [HOOK.as_slice(), &["dependencies"]].concat();
+        return Some(remove_array_index(doc, &path, index, distribution));
+    }
+    let (extra, index) = parse_group_label(rest, "optional-dependencies.")?;
+    let path = [HOOK.as_slice(), &["optional-dependencies", extra.as_str()]].concat();
+    Some(remove_array_index(doc, &path, index, distribution))
 }
 
 fn parse_indexed_label(label: &str, prefix: &str) -> Option<usize> {
@@ -593,6 +615,39 @@ dependencies = ["pytest>=8", "coverage>=7"]
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("pytest"));
         assert!(updated.contains("coverage"));
+    }
+
+    #[test]
+    fn removes_uv_dynamic_versioning_hook_dependencies() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            r#"
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = ["rich>=13", "x-core=={{ version }}"]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+clip = ["pyperclip>=1.9", "httpx"]
+"#,
+        )
+        .expect("write");
+
+        for (label, distribution) in [
+            (
+                "tool.hatch.metadata.hooks.uv-dynamic-versioning.dependencies[0]",
+                "rich",
+            ),
+            (
+                "tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies.clip[0]",
+                "pyperclip",
+            ),
+        ] {
+            remove_by_label(&path, label, distribution).expect("remove");
+        }
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert!(!updated.contains("rich") && !updated.contains("pyperclip"));
+        assert!(updated.contains("x-core") && updated.contains("httpx"));
     }
 
     #[test]

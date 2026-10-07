@@ -524,6 +524,19 @@
       "imports": [
         "docket"
       ]
+    },
+    {
+      "distribution": "py-key-value-aio",
+      "imports": [
+        "key_value"
+      ]
+    },
+    {
+      "distribution": "google-genai",
+      "imports": [
+        "google",
+        "google.genai"
+      ]
     }
   ],
   "auto_packages": [
