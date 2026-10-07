@@ -102,6 +102,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("gevent", &["gevent"]),
     ("gitpython", &["git"]),
     ("google-api-core", &["google", "google.api_core"]),
+    ("google-api-python-client", &["googleapiclient"]),
     ("google-auth", &["google", "google.auth", "google.oauth2"]),
     (
         "google-cloud-aiplatform",
@@ -156,6 +157,20 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("matplotlib-inline", &["matplotlib_inline"]),
     ("mccabe", &["mccabe"]),
     ("mdurl", &["mdurl"]),
+    ("microsoft-kiota-abstractions", &["kiota_abstractions"]),
+    (
+        "microsoft-kiota-authentication-azure",
+        &["kiota_authentication_azure"],
+    ),
+    ("microsoft-kiota-http", &["kiota_http"]),
+    (
+        "microsoft-kiota-serialization-json",
+        &["kiota_serialization_json"],
+    ),
+    (
+        "microsoft-kiota-serialization-text",
+        &["kiota_serialization_text"],
+    ),
     ("mistune", &["mistune"]),
     ("more-itertools", &["more_itertools"]),
     ("msgpack", &["msgpack"]),
@@ -177,6 +192,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("odfpy", &["odf"]),
     ("opencv-python", &["cv2"]),
     ("openpyxl", &["openpyxl"]),
+    ("opensearch-py", &["opensearchpy"]),
     ("opentelemetry-api", &["opentelemetry"]),
     (
         "opentelemetry-exporter-otlp-proto-common",
@@ -288,6 +304,18 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("six", &["six"]),
     ("slack-sdk", &["slack", "slack_sdk"]),
     ("sniffio", &["sniffio"]),
+    (
+        "snowflake-connector-python",
+        &["snowflake", "snowflake.connector"],
+    ),
+    (
+        "snowflake-snowpark-python",
+        &["snowflake", "snowflake.snowpark"],
+    ),
+    (
+        "snowflake-sqlalchemy",
+        &["snowflake", "snowflake.sqlalchemy"],
+    ),
     ("sortedcontainers", &["sortedcontainers"]),
     ("soupsieve", &["soupsieve"]),
     ("sqlalchemy", &["sqlalchemy"]),

@@ -191,6 +191,8 @@ lock_unused_pdm	CHK004	src/acme/main.py:urllib3	tp	-	recall sentinel (R-03): url
 uv_dev_dependencies_unused	CHK002	boto3	tp	-	recall sentinel (R-04): unused runtime dep next to [tool.uv] dev-dependencies and a constraint on the same name
 build_plugin_declared	CHK002	hatch-vcs	tp	-	recall sentinel (R-05): build plugin declared as a runtime dep in a project with build-system
 
+airflow	CHK004	hashicorp:providers/hashicorp/src/airflow/providers/hashicorp/_internal_client/vault_client.py:googleapiclient.discovery	tp	-	googleapiclient maps to google-api-python-client (#591); hashicorp reaches it only through the google provider extra
+llama_index	CHK003	llama-index-readers-snowflake:llama-index-integrations/readers/llama-index-readers-snowflake/llama_index/readers/snowflake/base.py:snowflake.sqlalchemy	tp	-	snowflake.sqlalchemy maps to snowflake-sqlalchemy (#591); the reader declares only llama-index-core
 # --- CHK003 OSS corpus (auto-generated from target/oss-metrics/findings.tsv) ---
 # Regenerate: python3 scripts/generate-chk003-labels.py target/oss-metrics/findings.tsv
 anyio	CHK003	src/anyio/_core/_fileio.py:_typeshed	deferred	dev-context	deferred: verify test/docs/typing dependency policy

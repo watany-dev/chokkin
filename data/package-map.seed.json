@@ -537,6 +537,69 @@
         "google",
         "google.genai"
       ]
+    },
+    {
+      "distribution": "google-api-python-client",
+      "imports": [
+        "googleapiclient"
+      ]
+    },
+    {
+      "distribution": "microsoft-kiota-abstractions",
+      "imports": [
+        "kiota_abstractions"
+      ]
+    },
+    {
+      "distribution": "microsoft-kiota-http",
+      "imports": [
+        "kiota_http"
+      ]
+    },
+    {
+      "distribution": "microsoft-kiota-serialization-json",
+      "imports": [
+        "kiota_serialization_json"
+      ]
+    },
+    {
+      "distribution": "microsoft-kiota-serialization-text",
+      "imports": [
+        "kiota_serialization_text"
+      ]
+    },
+    {
+      "distribution": "microsoft-kiota-authentication-azure",
+      "imports": [
+        "kiota_authentication_azure"
+      ]
+    },
+    {
+      "distribution": "opensearch-py",
+      "imports": [
+        "opensearchpy"
+      ]
+    },
+    {
+      "distribution": "snowflake-connector-python",
+      "imports": [
+        "snowflake",
+        "snowflake.connector"
+      ]
+    },
+    {
+      "distribution": "snowflake-snowpark-python",
+      "imports": [
+        "snowflake",
+        "snowflake.snowpark"
+      ]
+    },
+    {
+      "distribution": "snowflake-sqlalchemy",
+      "imports": [
+        "snowflake",
+        "snowflake.sqlalchemy"
+      ]
     }
   ],
   "auto_packages": [
