@@ -1211,3 +1211,4 @@ pdm	CHK002	virtualenv	fp	-	run with [sys.executable, "-m", "virtualenv"]
 mitmproxy	CHK002	hyperframe	fp	-	imported by test/ helpers; test usage satisfies a runtime declaration (§10), reported only while the root test/ was not scanned
 mitmproxy	CHK002	msgpack	tp	-	never imported; the msgpack contentview is in mitmproxy_rs
 llama_index	CHK002	script:docs/scripts/prepare_for_build.py:pyaml	tp	-	PEP 723 block declares pyaml but the script imports yaml (PyYAML) only
+mcp-python-sdk	CHK002	python-multipart	fp	-	starlette's request.form() in server/auth handlers imports python_multipart at runtime; never imported directly
