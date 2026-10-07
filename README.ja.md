@@ -260,16 +260,18 @@ jobs:
   chokkin:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: watany-dev/chokkin@v0.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: watany-dev/chokkin@9341c0b9d678b39b075df0eea440dbc87a1b605a # v0.6.0
         with:
           baseline: chokkin-baseline.json
           sarif-file: chokkin.sarif
-      - uses: github/codeql-action/upload-sarif@v4
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         if: always()
         with:
           sarif_file: chokkin.sarif
 ```
+
+上の例のように、action はタグをコメントに残してフルコミット SHA で固定してください。タグは付け替えられますが SHA は変わらず、Dependabot は両方を更新します。
 
 | Input | Default | 説明 |
 | --- | --- | --- |
@@ -279,11 +281,12 @@ jobs:
 | `reporter` | `github` | 判定用 run の reporter |
 | `sarif-file` | — | SARIF の出力先(判定 run が失敗しても書き出す) |
 | `args` | — | 追加の CLI 引数(例: `--production --confidence likely`) |
+| `cache` | `false` | `true` で `.chokkin/` キャッシュを読み書きする。PR に含まれるキャッシュで結果が変わらないよう既定は無効 |
 
 action を使わない場合は `uvx` でバージョンを固定します。
 
 ```yaml
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uvx chokkin@0.6.0 --baseline chokkin-baseline.json --reporter github
 ```
 

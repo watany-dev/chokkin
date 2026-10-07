@@ -262,16 +262,19 @@ jobs:
   chokkin:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: watany-dev/chokkin@v0.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: watany-dev/chokkin@9341c0b9d678b39b075df0eea440dbc87a1b605a # v0.6.0
         with:
           baseline: chokkin-baseline.json
           sarif-file: chokkin.sarif
-      - uses: github/codeql-action/upload-sarif@v4
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         if: always()
         with:
           sarif_file: chokkin.sarif
 ```
+
+Pin the action to a full commit SHA with the tag as a comment, as above: a tag
+can be moved, a SHA cannot, and Dependabot still bumps both.
 
 | Input | Default | Description |
 | --- | --- | --- |
@@ -281,11 +284,12 @@ jobs:
 | `reporter` | `github` | Reporter for the gating run |
 | `sarif-file` | — | Also write SARIF here (written even when the gating run fails) |
 | `args` | — | Extra CLI arguments, e.g. `--production --confidence likely` |
+| `cache` | `false` | `true` reads and writes the `.chokkin/` cache; off so cache files in a PR cannot change the result |
 
 Without the action, pin the version with `uvx`:
 
 ```yaml
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uvx chokkin@0.6.0 --baseline chokkin-baseline.json --reporter github
 ```
 

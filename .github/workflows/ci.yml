@@ -213,7 +213,9 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           SARIF: ${{ steps.chokkin.outputs.sarif-file }}
-        run: jq -e '.version == "2.1.0"' "$SARIF"
+        run: |
+          jq -e '.version == "2.1.0"' "$SARIF"
+          test ! -e "$RUNNER_TEMP/demo/.chokkin"
 
   zizmor:
     name: Zizmor
@@ -249,7 +251,9 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install Semgrep
-        run: pip install --no-cache-dir semgrep==1.166.0
+        # Every transitive dependency is pinned by hash; regenerate with the
+        # command at the top of the requirements file.
+        run: pip install --no-cache-dir --require-hashes -r .github/requirements/semgrep.txt
       - name: Run Semgrep
         # Non-blocking: report findings to code scanning rather than failing the build.
         run: semgrep scan --config p/default --sarif --output semgrep.sarif
