@@ -420,7 +420,7 @@ discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry �
 ただし、library projectではaggressiveにunused filesを出すと誤検知が増える。`mode = "auto"` の判定は次にする。
 
 ```text
-console_scripts / gui_scripts の参照先が自 package の外にある、
+gui_scripts がある、console_scripts の参照先が自 package の外にある、
 または package の外に runtime の manage.py / asgi.py / wsgi.py / app.py がある
 (workspace member では自 package を指す console_scripts も含む)
   -> app mode
@@ -437,7 +437,7 @@ src/<package>/__init__.py または root直下の <package>/__init__.py
   -> app mode。ただしunused_fileのconfidence上限をlikelyに落とす
 ```
 
-app signal は project 自身の package（`layout.packages`）の外にあるものに限る（#652）。`django-admin = "django.core.management:..."` や `httpx = "httpx:main"` のように、console / gui entry の参照先 module の先頭要素が自 package なら、CLI を同梱した library とみなして app signal にしない。`manage.py` 等のファイル名も、package 内の module（werkzeug の `src/werkzeug/wsgi.py`、mitmproxy の `mitmproxy/tools/web/app.py`）や test / docs / dev context の file（flask の `tests/test_apps/helloworld/wsgi.py`）は数えない。どちらも従来は library の公開 API を app mode の CHK006 certain にしていた。workspace member の判定（`is_library_member`）は file 名の基準だけを共有し、自 package を指す console / gui entry も app signal のままにする。monorepo は CLI を専用 member（airflow の `airflow-core`、llama_index の `llama-dev`）に分けるため、CLI を持つ member は app とみなす。
+app signal は project 自身の package（`layout.packages`）の外にあるものに限る（#652）。`django-admin = "django.core.management:..."` や `httpx = "httpx:main"` のように、console entry の参照先 module の先頭要素が自 package なら、CLI を同梱した library とみなして app signal にしない（GUI を同梱する library は想定しないため、gui entry は常に app signal）。`manage.py` 等のファイル名も、package 内の module（werkzeug の `src/werkzeug/wsgi.py`、mitmproxy の `mitmproxy/tools/web/app.py`）や test / docs / dev context の file（flask の `tests/test_apps/helloworld/wsgi.py`）は数えない。どちらも従来は library の公開 API を app mode の CHK006 certain にしていた。workspace member の判定（`is_library_member`）は file 名の基準だけを共有し、自 package を指す console entry も app signal のままにする。monorepo は CLI を専用 member（airflow の `airflow-core`、llama_index の `llama-dev`）に分けるため、CLI を持つ member は app とみなす。
 
 setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
 

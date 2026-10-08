@@ -2,6 +2,7 @@
 
 use crate::config::{ChokkinConfig, ProjectMode};
 use crate::manifest::LoadedManifest;
+use crate::resolver::import_root;
 use crate::sources::{DiscoveredSources, FileContext, LayoutInfo};
 
 use super::auto::detect_auto_entries;
@@ -68,7 +69,7 @@ fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> 
 /// A `wsgi.py` / `app.py` module of the project's own package (werkzeug)
 /// is a library feature, not an app signal; nor is a test fixture's
 /// `app.py`. With `own_cli_is_library`, neither is a CLI shipped inside the
-/// package (`django-admin`, `httpx`) (#652).
+/// package (`django-admin`, `httpx`) (#652); a GUI script always is.
 fn has_clear_app_signals(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
@@ -77,8 +78,9 @@ fn has_clear_app_signals(
 ) -> bool {
     let layout = &sources.layout;
     if manifest.entry_points.iter().any(|entry| {
-        (entry.group == "console" || entry.group == "gui")
-            && !(own_cli_is_library && targets_own_package(&entry.target, &layout.packages))
+        entry.group == "gui"
+            || (entry.group == "console"
+                && !(own_cli_is_library && targets_own_package(&entry.target, &layout.packages)))
     }) {
         return true;
     }
@@ -94,8 +96,7 @@ fn has_clear_app_signals(
 
 /// Whether a `module:attr` entry point target lives in one of `packages`.
 fn targets_own_package(target: &str, packages: &[String]) -> bool {
-    let module = target.split(':').next().unwrap_or(target).trim();
-    let top = module.split('.').next().unwrap_or(module);
+    let top = import_root(target.split(':').next().unwrap_or(target).trim());
     packages.iter().any(|package| package == top)
 }
 
@@ -286,6 +287,16 @@ mod tests {
         assert_eq!(auto_mode(&manifest, &[]), ProjectMode::Library);
         // `acme_cli` is not `acme`: the prefix alone is not the package.
         manifest.entry_points.push(console_script("acme_cli:main"));
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::App);
+    }
+
+    #[test]
+    fn gui_script_into_the_package_is_an_app() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        let mut gui = console_script("acme.gui:main");
+        gui.group = "gui".to_owned();
+        manifest.entry_points.push(gui);
         assert_eq!(auto_mode(&manifest, &[]), ProjectMode::App);
     }
 
