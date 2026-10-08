@@ -1064,6 +1064,14 @@ mlflow	CHK004	mlflow/protos/unity_catalog_prompt_messages_pb2_grpc.py:grpc._util
 mlflow	CHK004	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:grpc._utilities	tp	-	generated code try-imports grpc._utilities; grpcio is not declared but locked in uv.lock as a transitive (CHK004 since #504)
 mlflow	CHK003	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:unity_catalog_prompt_messages_pb2	fp	first-party	generated absolute import of the sibling mlflow/protos/unity_catalog_prompt_messages_pb2.py, not a distribution
 mlflow	CHK003	mlflow/pytest/plugin.py:_pytest.outcomes	deferred	dev-context	pytest plugin shipped in the package; pytest is only in a dependency group
+mlflow	CHK003	mlflow/diffusers/__init__.py:torch	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/genai/scorers/google_adk/utils.py:google.genai	tp	-	flavor import of user-installed google-genai: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/pydantic_ai/autolog.py:pydantic_ai	tp	-	flavor import of user-installed pydantic-ai: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/pydantic_ai/autolog_v2.py:pydantic_ai	tp	-	flavor import of user-installed pydantic-ai: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/pytorch/__init__.py:torch	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/pytorch/__init__.py:torch.export	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/pytorch/_lightning_autolog.py:torch	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/tracking/metric_value_conversion_utils.py:torch	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
 
 # R-01..R-07 corpus (#323): CHK002 on HEAD (tp verified by grep; fp rows cover findings the fixes should remove)
 airflow	CHK002	apache-airflow-core	fp	-	workspace member used through its member tree / entry points

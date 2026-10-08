@@ -9,6 +9,10 @@ findings (one per import line). A key gets one row; when its findings mix an
 optional try-import with a hard import, the hard import's verdict wins because
 info-severity findings are not hits (#656).
 
+Findings that already carry a label are skipped, so the output only holds new
+rows. A finding no heuristic matches is emitted as `deferred` with bucket `-`
+and counted on stderr; triage it by hand (#661).
+
 Usage:
   scripts/generate-chk003-labels.py findings.tsv >> scripts/oss-fixtures.labels.tsv
 """
@@ -16,6 +20,12 @@ Usage:
 import csv
 import sys
 from pathlib import Path
+
+UNCLASSIFIED = (
+    "deferred",
+    "-",
+    "deferred: unclassified by heuristic, needs manual triage",
+)
 
 
 def _classify(target: str, message: str) -> tuple[str, str, str] | None:
@@ -68,23 +78,29 @@ def _main() -> int:
         for row in reader:
             if len(row) < 7 or row[1] != "CHK003":
                 continue
-            slug, _code, target, _verdict, _bucket, _conf, message = row[:7]
+            slug, _code, target, label, _bucket, _conf, message = row[:7]
             if slug == "missing_yaml" and target == "src/acme/main.py:yaml":
+                continue
+            if label != "unknown":
                 continue
             verdict = _classify(target, message)
             if verdict is None:
-                print(
-                    f"unclassified CHK003: {slug}\t{target}\t{message}",
-                    file=sys.stderr,
-                )
-                return 1
+                verdict = UNCLASSIFIED
             prev = labels.get((slug, target))
             if prev is None or prev[0] == "info-expected":
                 labels[(slug, target)] = verdict
 
-    for (slug, target), (verdict, bucket, note) in sorted(labels.items()):
+    unclassified = 0
+    for (slug, target), label in sorted(labels.items()):
+        verdict, bucket, note = label
         print(f"{slug}\tCHK003\t{target}\t{verdict}\t{bucket}\t{note}")
-    print(f"# generated {len(labels)} CHK003 labels", file=sys.stderr)
+        if label is UNCLASSIFIED:
+            unclassified += 1
+            print(f"unclassified CHK003: {slug}\t{target}", file=sys.stderr)
+    print(
+        f"# generated {len(labels)} CHK003 labels ({unclassified} unclassified)",
+        file=sys.stderr,
+    )
     return 0
 
 
