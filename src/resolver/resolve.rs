@@ -1,6 +1,6 @@
 //! Import resolution orchestration.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
@@ -63,6 +63,7 @@ pub fn resolve_imports_for_analysis(
     let pytest_paths = PytestImportPaths::build(sources);
     let local_modules = local_modules(&sources.files, workspace_members);
     let indexed_roots = indexed_roots(sources);
+    let owners = MemberOwners::new(workspace_members);
 
     for module in &parse.modules {
         let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
@@ -87,6 +88,7 @@ pub fn resolve_imports_for_analysis(
                 manifest,
                 config,
                 workspace_members,
+                &owners,
                 &import_map,
                 &venv_index.imports,
                 scoped,
@@ -111,6 +113,7 @@ pub fn resolve_imports_for_analysis(
                 manifest,
                 config,
                 workspace_members,
+                &owners,
                 &import_map,
                 &venv_index.imports,
                 scoped,
@@ -148,6 +151,7 @@ pub fn resolve_imports_for_analysis(
                 manifest,
                 config,
                 workspace_members,
+                &owners,
                 &import_map,
                 &venv_index.imports,
                 scoped,
@@ -179,6 +183,7 @@ pub fn resolve_imports_for_analysis(
             manifest,
             config,
             workspace_members,
+            &owners,
             &import_map,
             &venv_index.imports,
             scoped,
@@ -224,6 +229,7 @@ fn resolve_import_site(
     manifest: &LoadedManifest,
     config: &ChokkinConfig,
     workspace_members: &[ResolvedWorkspaceMember],
+    owners: &MemberOwners<'_>,
     import_map: &ImportMap,
     venv_imports: &BTreeMap<String, Vec<String>>,
     scoped: &ScopedDeclarations,
@@ -274,7 +280,7 @@ fn resolve_import_site(
         }
     };
 
-    let workspace_member = workspace_member_for_file(file, workspace_members);
+    let workspace_member = owners.owner(file);
     // An exact name in the file's own script block or member manifest beats an
     // affixed root declaration (`pyfoo` must not take a script's `foo`).
     let core = if core.origin == ModuleOrigin::Unknown {
@@ -519,22 +525,30 @@ fn local_modules(
     files: &[DiscoveredFile],
     workspace_members: &[ResolvedWorkspaceMember],
 ) -> BTreeSet<String> {
-    let roots: Vec<String> = ["", "src/"]
-        .into_iter()
-        .map(str::to_owned)
-        .chain(
-            workspace_members
-                .iter()
-                .flat_map(|member| [format!("{}/", member.path), format!("{}/src/", member.path)]),
-        )
+    let members: HashSet<&str> = workspace_members
+        .iter()
+        .map(|member| member.path.as_str())
         .collect();
     let mut modules = BTreeSet::new();
     for file in files {
         let file = file.path.replace('\\', "/");
-        for rest in roots
-            .iter()
-            .filter_map(|root| file.strip_prefix(root.as_str()))
-        {
+        // Member roots by hash lookup per ancestor, not a prefix test against
+        // every member (#592).
+        let mut starts = vec![0];
+        if file.starts_with("src/") {
+            starts.push("src/".len());
+        }
+        for (slash, _) in file.match_indices('/') {
+            let dir = &file[..slash];
+            if members.contains(dir)
+                || dir
+                    .strip_suffix("/src")
+                    .is_some_and(|member| members.contains(member))
+            {
+                starts.push(slash + 1);
+            }
+        }
+        for rest in starts.into_iter().map(|start| &file[start..]) {
             let mut parts: Vec<&str> = rest.split('/').collect();
             let leaf = parts.pop().and_then(|leaf| {
                 leaf.strip_suffix(".py")
@@ -564,20 +578,34 @@ fn indexed_roots(sources: &DiscoveredSources) -> BTreeSet<String> {
         .collect()
 }
 
-fn workspace_member_for_file(
-    file: &str,
-    workspace_members: &[ResolvedWorkspaceMember],
-) -> Option<String> {
-    let normalized = file.replace('\\', "/");
-    workspace_members
-        .iter()
-        .filter(|member| {
-            normalized
-                .strip_prefix(member.path.as_str())
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-        })
-        .max_by_key(|member| member.path.len())
-        .map(|member| member.id.clone())
+/// Member ids by directory: a file's owner is a hash lookup per ancestor
+/// rather than a scan of every member for every import site (#592).
+struct MemberOwners<'a>(HashMap<&'a str, &'a str>);
+
+impl<'a> MemberOwners<'a> {
+    fn new(members: &'a [ResolvedWorkspaceMember]) -> Self {
+        Self(
+            members
+                .iter()
+                .map(|member| (member.path.as_str(), member.id.as_str()))
+                .collect(),
+        )
+    }
+
+    /// The member whose directory is the longest whole-directory prefix of `file`.
+    fn owner(&self, file: &str) -> Option<String> {
+        if self.0.is_empty() {
+            return None;
+        }
+        let normalized = file.replace('\\', "/");
+        let mut dir = normalized.as_str();
+        loop {
+            if let Some(id) = self.0.get(dir) {
+                return Some((*id).to_owned());
+            }
+            dir = &dir[..dir.rfind('/')?];
+        }
+    }
 }
 
 fn root_resolution_from_candidates(
@@ -654,7 +682,8 @@ mod tests {
             member("api", "packages/api"),
             member("plugins", "packages/api/plugins"),
         ];
-        let owner = |file: &str| workspace_member_for_file(file, &members);
+        let owners = MemberOwners::new(&members);
+        let owner = |file: &str| owners.owner(file);
         assert_eq!(owner("packages/api/app.py").as_deref(), Some("api"));
         assert_eq!(
             owner("packages\\api\\plugins\\x.py").as_deref(),
@@ -677,11 +706,24 @@ mod tests {
                 file("acme/core.py"),
                 file("src/pkg/stub.pyi"),
                 file("packages/api/src/api/views.py"),
+                file("packages\\api\\plugins\\plug\\hooks.py"),
                 file("README.md"),
             ],
-            &[member("api", "packages/api")],
+            &[
+                member("api", "packages/api"),
+                member("plugins", "packages/api/plugins"),
+            ],
         );
-        for expected in ["acme", "acme.core", "pkg", "pkg.stub", "api", "api.views"] {
+        for expected in [
+            "acme",
+            "acme.core",
+            "pkg",
+            "pkg.stub",
+            "api",
+            "api.views",
+            "plug.hooks",
+            "plugins.plug.hooks",
+        ] {
             assert!(modules.contains(expected), "{expected}: {modules:?}");
         }
     }

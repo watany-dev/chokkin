@@ -114,6 +114,10 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   auto-detected members' inputs are collected in parallel; a monorepo with
   ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488,
   #513).
+- Auto workspace detection walks the tree in parallel, `uv.lock` files in
+  uv's own layout are read without a TOML parser, and import resolution
+  finds a file's member by directory lookup instead of scanning every
+  member; llama_index (608 members) runs in ~1.45s instead of ~1.8s (#592).
 - Breaking changes for the Rust library API (the CLI, config keys, and JSON /
   SARIF output stay compatible):
   - `ChokkinConfig` / `PartialConfig` gain `vendored`, and `SuppressReason`

@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, WalkState};
 
 use crate::discovery::ProjectRoot;
 
@@ -180,25 +181,46 @@ pub(crate) fn detect_nested_members(
                 .is_ok_and(|rel| excluded.is_match(&rel) || excluded.is_match(format!("{rel}/**")));
             !skipped_name && !excluded
         })
-        .build();
-    let mut paths = BTreeSet::new();
-    for entry in walker {
-        let entry = entry.map_err(|error| ConfigError::Io {
+        .build_parallel();
+    // Parallel: on a 600-member monorepo the sequential walk spends most of
+    // its time compiling each member's `.gitignore` (#592).
+    let found = Mutex::new(Vec::new());
+    let failure = Mutex::new(None);
+    walker.run(|| {
+        Box::new(|entry| {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    failure
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .get_or_insert(error);
+                    return WalkState::Quit;
+                },
+            };
+            if entry.depth() >= 2
+                && entry.file_name() == "pyproject.toml"
+                && entry.file_type().is_some_and(|kind| kind.is_file())
+                && declares_project(entry.path())
+                && let Some(member_dir) = entry.path().parent()
+            {
+                found
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(member_dir.to_path_buf());
+            }
+            WalkState::Continue
+        })
+    });
+    if let Some(error) = failure.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        return Err(ConfigError::Io {
             path: root.path.clone(),
             source: io::Error::other(error),
-        })?;
-        if entry.depth() < 2
-            || entry.file_name() != "pyproject.toml"
-            || !entry.file_type().is_some_and(|kind| kind.is_file())
-        {
-            continue;
-        }
-        let Some(member_dir) = entry.path().parent() else {
-            continue;
-        };
-        if declares_project(entry.path()) {
-            paths.insert(relative_path(&root.path, member_dir)?);
-        }
+        });
+    }
+    let mut paths = BTreeSet::new();
+    for member_dir in found.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        paths.insert(relative_path(&root.path, &member_dir)?);
     }
     Ok(members_with_unique_ids(paths))
 }

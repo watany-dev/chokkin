@@ -24,6 +24,7 @@ clap = { version = "4", default-features = false, features = [
 globset = "0.4"
 ignore = "0.4"
 indexmap = "2"
+memchr = "2"
 regex = "1"
 # ruff crates break on every 0.0.x release: exact pins, bumped in lockstep (ADR 0001).
 ruff_python_ast = "=0.0.15"
