@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-08
+
+v0.7.2 is a fix release on top of v0.7.1. The JSON / baseline
+`schema_version` stays `"1"`, and fingerprints are unchanged, so baselines
+keep matching.
+
 ### Fixed
 - `[tool.uv.workspace] exclude` is honored: a directory it matches is no
   longer read as a workspace member even when `members` matches it, as in

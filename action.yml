@@ -10,7 +10,7 @@ inputs:
     description: chokkin version to run from PyPI (e.g. "0.6.0"), or "latest".
     required: false
     # Bumped together with Cargo.toml / pyproject.toml on each release.
-    default: "0.7.1"
+    default: "0.7.2"
   working-directory:
     description: Project root to analyze.
     required: false
