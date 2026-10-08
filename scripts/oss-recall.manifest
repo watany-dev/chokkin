@@ -1,4 +1,4 @@
-# Recall sentinels for scripts/oss-metrics.sh.
+# Recall sentinels for scripts/oss-metrics.py.
 #
 # In-repo fixtures that chokkin must keep reporting so the recall gate has true
 # positives to verify. Measured alongside OSS clones (no network). Every `tp`

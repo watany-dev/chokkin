@@ -3,7 +3,7 @@
 # docs/dev/oss-validation-report.md).
 #
 # Used by scripts/clone-oss-fixtures.sh to populate target/oss-clones/<slug>,
-# then by scripts/oss-metrics.sh to measure false-positive rate and cold-run
+# then by scripts/oss-metrics.py to measure false-positive rate and cold-run
 # speed against the §17 exit criteria.
 #
 # Tab-separated columns (lines starting with # and blank lines are ignored):

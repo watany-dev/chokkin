@@ -7,6 +7,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-08
+
+v0.7.1 is a fix release on top of v0.7.0. Over the 45-project corpus in
+`docs/dev/v0.7.1-release-validation.md` (measured at `4836b55`), the issue
+count falls from 12,328 to 10,023, mostly CHK001 and CHK010. The JSON / baseline `schema_version` stays
+`"1"`, and CHK010 fingerprints are unchanged, so baselines keep matching.
+
+### Added
+- When `[project].dynamic` lists `dependencies` or `optional-dependencies`,
+  the arrays of `[tool.hatch.metadata.hooks.uv-dynamic-versioning]` are read
+  as runtime dependencies and extras. A `{{ version }}` template in the
+  version clears the specifier; one in the name, extras, URL or marker is
+  reported as an invalid requirement. `--fix` removes unused entries from
+  those arrays. The bundled map gains `py-key-value-aio` (`key_value`) and
+  `google-genai` (`google.genai`) (#590).
+- pytest's native `[tool.pytest]` table (pytest ≥ 9) is read like
+  `[tool.pytest.ini_options]` for `testpaths`, `python_files`, `pythonpath`
+  and `addopts`; it wins when it holds keys other than `ini_options`. When no
+  `testpaths` entry exists, test files are collected from the rootdir, as
+  pytest does. `python_files` also applies to tests inside workspace members
+  regardless of the root `testpaths` (airflow
+  `providers/*/tests/**/example_*.py`) (#603).
+- Each workspace member's `docs/conf.py` is a Sphinx entry like the root one:
+  its `extensions` count as module references, it and the shared modules it
+  imports stay reachable, the member's `docs/` is docs context, and
+  `--production` leaves it out (#612).
+- Under the test tree (`tests/`, root `test/`), files below a `data`,
+  `fixtures`, `testdata` or `test_data` directory are treated as test input
+  (black `tests/data/cases/*.py`) and are no longer CHK001 when unreachable.
+  Test data that tests import stays reachable as before, and `--strict` still
+  reports it (#593).
+- The bundled map gains `google-api-python-client` (`googleapiclient`), the
+  `microsoft-kiota-*` packages (`kiota_abstractions`, `kiota_http`,
+  `kiota_serialization_json`, `kiota_serialization_text`,
+  `kiota_authentication_azure`), `opensearch-py` (`opensearchpy`), and
+  `snowflake-connector-python` / `snowflake-snowpark-python` /
+  `snowflake-sqlalchemy` (`snowflake.*`) (#591).
+
+### Changed
+- The GitHub Action passes `--no-cache` unless the new `cache: "true"`
+  input is set, so `.chokkin/` cache files committed in a pull request
+  cannot change the result. The `version` input defaults to this release.
+- Members of a declared workspace (`[tool.uv.workspace]` /
+  `[tool.chokkin.workspaces]`) that name a distribution and have no app
+  entry are scored like libraries, as auto-detected members already were:
+  their unreachable files are `maybe` CHK001 warnings, including under
+  `--production`. Files outside the member's own wheel targets (R-05), such
+  as `docs/conf.py`, keep app scoring. airflow's CHK001 count drops from
+  1,008 to 389 (1,867 to 509 with `--production`) (#587).
+- With `--production`, a workspace member that only dependency groups reference
+  (airflow `devel-common`) is dropped like tests. Its files and issues are not
+  reported, and `--probe` does not count it. A member stays when the root or a
+  shipped member depends on it at runtime, including through
+  `include-group`. It also stays when it is nested under a shipped member, or
+  when its `classifiers` (given or `dynamic`) mark it as published without
+  `Private :: Do Not Upload` (airflow `airflow-ctl`) (#613, #621).
+- CHK010 reports an unresolved module once per file instead of once per
+  import line. The issue points at the first import that runs (the first
+  `TYPE_CHECKING` one when none does), and `explain` lists the other lines
+  ("also imported at lines …"). It is a warning when any of those imports
+  runs, and info only when all sit under `TYPE_CHECKING`. An inline
+  `# chokkin: ignore[CHK010]` silences it only when every one of those lines
+  carries the directive. The fingerprint (`CHK010:<file>:<module>`) is
+  unchanged, so baselines keep matching (#584, #585).
+- An optional (`try:`) or platform-guarded import that CHK004 reports through a
+  lock edge is now a `warning` instead of an `error`, also with `--strict`.
+  The confidence stays `certain` (#582).
+- CHK005 now looks at every runtime import of a distribution, including
+  `importlib.import_module` / `__import__` calls, before it sets confidence.
+  Previously it used only the first import and was always warning/`certain`.
+  A top-level import keeps it warning/`certain`. If the distribution is only
+  imported inside functions or lambdas, CHK005 is warning/`likely`. If it is
+  only imported optionally or behind a platform guard, CHK005 is
+  info/`likely`. `--fix` moves only `certain` CHK005 dependencies to runtime
+  (#583, #599).
+- CHK005 treats a top-level import in a module that is only loaded from inside
+  functions or `TYPE_CHECKING` blocks like a function-local import
+  (warning/`likely`). `--fix` therefore no longer moves dev dependencies that
+  only lazily loaded modules use (#610).
+- CHK005 is no longer `certain` for an import reached only through an optional
+  import or from test, docs or dev files. Imports under
+  `with suppress(ImportError):` (also `contextlib.suppress`,
+  `ModuleNotFoundError`, `Exception`) are now optional, like `try:` imports
+  (#614).
+- `--fix --dry-run` labels its previews `planned` instead of `applied`, and
+  skipped fixes print their reason code (`file-removal-denied: …`) (#594).
+- Auto workspace detection walks the tree in parallel, `uv.lock` files in
+  uv's own layout are read without a TOML parser, and import resolution
+  finds a file's member by directory lookup instead of scanning every
+  member; llama_index (608 members) runs in ~1.45s instead of ~1.8s (#592).
+- The Rust library is no longer a public API: chokkin ships as a CLI, every
+  pipeline module is crate-private, and `cargo-semver-checks` is dropped from
+  CI. ADR 0004 now excludes the library from the compatibility surface.
+
+### Fixed
+- Imports in a `try` statement's `else:` clause, and imports under a
+  module-level `if has_x:` whose flag was set to `True` in the `try` body, are
+  treated as optional. Before, they were CHK003 error/`certain`, and
+  `--fix --add-missing` added e.g. `cryptography` to requests (#580).
+- `--fix --add-missing` skips a `pyproject.toml` that has no `[project]` table
+  and reports it as unsupported. Before, it created
+  `[project].dependencies`, which broke setuptools builds that declare
+  dependencies in `setup.py` / `setup.cfg` (#581).
+- A `setup.py` whose `setup()` passes a `name=` that cannot be read statically
+  (requests: `name=about["__title__"]`) counts as having a name. The project
+  (or workspace member) is now analyzed as a library instead of an app, so
+  `--production` no longer reports every file as CHK001 (#586).
+- A module-level `pytest_plugins = [...]` in conftests and plugin modules is
+  followed, including tuples, string values, annotated assignments and
+  `+=`. Plugin modules it names are reachable instead of CHK001. A plugin name
+  that does not resolve does not raise CHK010 (#606).
+- Tests whose basedir is the root resolve root-level directories that the
+  source globs skip (fastapi `docs_src/`, urllib3 `dummyserver/`). Scripts
+  outside packages resolve modules next to them
+  (`scripts/ci/prek/common_utils.py`). These imports are no longer CHK010
+  (#589).
+- `_typeshed` imported under `TYPE_CHECKING` resolves as stdlib, so it is no
+  longer CHK010 (#584).
+- Library analysis with `--production` (library mode or library workspace
+  members) still uses the tests, and the public modules only they reach, as
+  evidence of API use. Symbols in public modules that only tests import are
+  no longer CHK006 (starlette `starlette.responses`) (#588).
+- CHK009 no longer reports a group or extra declaration that adds its own
+  constraint: a different specifier (`click!=8.3.0` against runtime
+  `click>=7`, `pytest>=7` against `pytest>=8`), different extras, or a
+  different marker. Specifier order is ignored (`<9,>=7.0` equals
+  `>=7.0, <9`). `--fix` removes only a declaration involved in the duplicate
+  and keeps the runtime one (#629).
+- A declared `python-multipart` counts as used when `starlette` or `fastapi`
+  is, since starlette imports it only inside `request.form()`, so it is no
+  longer reported as CHK002.
+
+## [0.7.0] - 2026-10-06
+
 v0.7 targets accuracy on real OSS projects (#485). Over the 24 targets
 measured in #485 (20 projects, langchain split into 5 libraries), the issue
 count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
@@ -70,25 +204,8 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   holding non-fatal warnings, and `summary.files: {runtime,
   reachable_runtime}` with the number of runtime-context files and how many
   are reachable (#486, #495).
-- When `[project].dynamic` lists `dependencies` or `optional-dependencies`,
-  the arrays of `[tool.hatch.metadata.hooks.uv-dynamic-versioning]` are read
-  as runtime dependencies and extras. A `{{ version }}` template in the
-  version clears the specifier; one in the name, extras, URL or marker is
-  reported as an invalid requirement. `--fix` removes unused entries from
-  those arrays. The bundled map gains `py-key-value-aio` (`key_value`) and
-  `google-genai` (`google.genai`) (#590).
 
 ### Changed
-- The GitHub Action passes `--no-cache` unless the new `cache: "true"`
-  input is set, so `.chokkin/` cache files committed in a pull request
-  cannot change the result.
-- Members of a declared workspace (`[tool.uv.workspace]` /
-  `[tool.chokkin.workspaces]`) that name a distribution and have no app
-  entry are scored like libraries, as auto-detected members already were:
-  their unreachable files are `maybe` CHK001 warnings, including under
-  `--production`. Files outside the member's own wheel targets (R-05), such
-  as `docs/conf.py`, keep app scoring. airflow's CHK001 count drops from
-  1,008 to 389 (1,867 to 509 with `--production`) (#587).
 - `tests/` directories at any depth (`pandas/tests/`) are test context, and
   test-context files, including those a pytest config roots as tests, are no
   longer reported by CHK006 / CHK007 — they only count as referencers.
@@ -114,10 +231,6 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   auto-detected members' inputs are collected in parallel; a monorepo with
   ~600 member lockfiles (llama_index) probes in ~2s instead of ~9s (#488,
   #513).
-- Auto workspace detection walks the tree in parallel, `uv.lock` files in
-  uv's own layout are read without a TOML parser, and import resolution
-  finds a file's member by directory lookup instead of scanning every
-  member; llama_index (608 members) runs in ~1.45s instead of ~1.8s (#592).
 - Breaking changes for the Rust library API (the CLI, config keys, and JSON /
   SARIF output stay compatible):
   - `ChokkinConfig` / `PartialConfig` gain `vendored`, and `SuppressReason`
@@ -140,26 +253,11 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
     the variant gains `label` (#503).
   - `SymbolDef` gains `used_in_module` (#540).
   - `plugins::PytestImportSettings` gains `testpaths` (#544).
-- The Rust library is no longer a public API: chokkin ships as a CLI, every
-  pipeline module is crate-private, and `cargo-semver-checks` is dropped from
-  CI. ADR 0004 now excludes the library from the compatibility surface.
-- CHK010 reports an unresolved module once per file instead of once per
-  import line. The issue points at the first import that runs (the first
-  `TYPE_CHECKING` one when none does), and `explain` lists the other lines
-  ("also imported at lines …"). It is a warning when any of those imports
-  runs, and info only when all sit under `TYPE_CHECKING`. An inline
-  `# chokkin: ignore[CHK010]` silences it only when every one of those lines
-  carries the directive. The
-  fingerprint (`CHK010:<file>:<module>`) is unchanged, so baselines keep
-  matching (#585).
 
 ### Fixed
 - `[tool.uv.workspace] exclude` is honored: a directory it matches is no
   longer read as a workspace member even when `members` matches it, as in
   uv (#568).
-- A declared `python-multipart` counts as used when `starlette` or `fastapi`
-  is, since starlette imports it only inside `request.form()`, so it is no
-  longer reported as CHK002.
 - A non-UTF-8 Python source no longer aborts the whole analysis with exit 2.
   A file with a PEP 263 `latin-1` / `cp1252` declaration (CPython aliases
   included) is decoded; any other file is skipped with a warning and is never

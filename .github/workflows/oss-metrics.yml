@@ -10,6 +10,7 @@ on:
     paths:
       - .github/workflows/oss-metrics.yml
       - scripts/oss-*
+      - scripts/oss_corpus.py
       - scripts/clone-oss-fixtures.sh
 
 concurrency:
@@ -54,57 +55,21 @@ jobs:
       - name: Clone corpus
         run: scripts/clone-oss-fixtures.sh
       - name: Measure baseline
-        run: scripts/oss-metrics.sh -b target/baseline/release/chokkin -o target/oss-metrics-baseline
+        run: scripts/oss-metrics.py -b target/baseline/release/chokkin -o target/oss-metrics-baseline
       - name: Measure HEAD
         # The gate verdict is recorded and enforced in the last step so the
-        # report and artifacts are produced even when it fails.
+        # report and artifacts are produced even when it fails. --baseline
+        # adds the spec §17 Phase 4 CHK003 growth criterion to the gate.
         run: |
           status=0
-          scripts/oss-metrics.sh -o target/oss-metrics --gate || status=$?
+          scripts/oss-metrics.py -o target/oss-metrics --baseline target/oss-metrics-baseline --gate || status=$?
           echo "$status" >target/oss-metrics/gate.status
       - name: Report
-        env:
-          LC_ALL: C
         # The full scorecard lists every finding and outgrows the job summary
         # limit, so it only goes to the artifact.
         run: |
-          base=target/oss-metrics-baseline
-          head=target/oss-metrics
-          {
-            echo "# Before/after (${BASELINE_REV} vs HEAD)"
-            echo ""
-            echo "| Project | CHK002 base | CHK002 head | CHK003 base | CHK003 head |"
-            echo "|---|---:|---:|---:|---:|"
-            join -t $'\t' \
-              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' "$base/summary.tsv" | sort) \
-              <(awk -F'\t' 'NR>1 {print $1"\t"$7"\t"$8}' "$head/summary.tsv" | sort) |
-              awk -F'\t' '{printf "| %s | %s | %s | %s | %s |\n",$1,$2,$4,$3,$5}'
-            echo ""
-            echo "## CHK003 on HEAD only (slug, target)"
-            echo ""
-            echo '```tsv'
-            comm -13 \
-              <(awk -F'\t' 'NR>1 && $2=="CHK003" {print $1"\t"$3}' "$base/findings.tsv" | sort -u) \
-              <(awk -F'\t' 'NR>1 && $2=="CHK003" {print $1"\t"$3}' "$head/findings.tsv" | sort -u)
-            echo '```'
-            echo ""
-            echo "## Unclassified CHK002 on HEAD"
-            echo ""
-            echo '```tsv'
-            awk -F'\t' 'NR>1 && $2=="CHK002" && ($4=="unknown" || $4=="deferred")' "$head/findings.tsv"
-            echo '```'
-            echo ""
-            echo "## CHK002 fp on HEAD"
-            echo ""
-            echo '```tsv'
-            awk -F'\t' 'NR>1 && $2=="CHK002" && $4=="fp"' "$head/findings.tsv"
-            echo '```'
-            echo ""
-            awk -F'\t' 'NR>1 && $2=="CHK003" && ($4=="unknown" || $4=="deferred") {n++}
-              END {print "Unclassified CHK003 on HEAD: " n+0}' "$head/findings.tsv"
-            echo ""
-            sed -n '/## Exit criteria/,/## Per-rule/p' "$head/report.md" | sed '$d'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo "# Before/after (${BASELINE_REV} vs HEAD)"; echo ""; cat target/oss-metrics/compare.md; } |
+            tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -112,29 +77,10 @@ jobs:
           path: |
             target/oss-metrics/*.tsv
             target/oss-metrics/report.md
+            target/oss-metrics/compare.md
             target/oss-metrics-baseline/*.tsv
             target/oss-metrics-baseline/report.md
             target/oss-clones/clones.lock.tsv
           retention-days: 30
-      # Spec §17 Phase 4 exit criteria. oss-metrics.sh --gate covers FP rate,
-      # recall, crashes and cold-run time; the CHK003 count is compared here
-      # because the script only sees one build. Findings labelled `tp` are
-      # real missing dependencies HEAD newly detects, so they are not counted.
-      # Projects in scripts/oss-expectations.tsv are gated by their own floors.
       - name: Release gate
-        run: |
-          status="$(cat target/oss-metrics/gate.status)"
-          chk003() {
-            awk -F'\t' 'FILENAME==ARGV[1] { if (!/^#/) skip[$1]=1; next }
-              FILENAME==ARGV[2] { if ($2=="recall") skip[$1]=1; next }
-              FNR>1 && $2=="CHK003" && $4!="tp" && !($1 in skip) {n++}
-              END {print n+0}' scripts/oss-expectations.tsv "$1/summary.tsv" "$1/findings.tsv"
-          }
-          base="$(chk003 target/oss-metrics-baseline)"
-          head="$(chk003 target/oss-metrics)"
-          echo "CHK003 (excluding tp): baseline=${base} head=${head}"
-          if [[ "$head" -gt "$base" ]]; then
-            echo "CHK003 grew over ${BASELINE_REV}" >&2
-            status=1
-          fi
-          exit "$status"
+        run: exit "$(cat target/oss-metrics/gate.status)"

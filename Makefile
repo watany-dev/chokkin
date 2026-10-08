@@ -55,7 +55,7 @@ oss-clones:
 	scripts/clone-oss-fixtures.sh
 
 oss-metrics:
-	scripts/oss-metrics.sh --build $(ARGS)
+	scripts/oss-metrics.py --build $(ARGS)
 
 # oss-gate:   determinism (cold/warm/--no-cache byte-identical), JSON schema
 #             and crash gates over the corpus + recall sentinels (#342).

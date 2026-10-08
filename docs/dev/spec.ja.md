@@ -1121,7 +1121,7 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 ```
 
 検証ハーネスは `scripts/oss-clones.manifest` (20 project、commit SHA pinned) と
-`scripts/clone-oss-fixtures.sh` / `scripts/oss-metrics.sh` (`make oss-clones` /
+`scripts/clone-oss-fixtures.sh` / `scripts/oss-metrics.py` (`make oss-clones` /
 `make oss-metrics`)。`findings.tsv` は CHK001–CHK010 全 finding を JSON
 `target` キーで出力し、`report.md` に per-rule label coverage 表を載せる
 (Phase 3.x Step 0、2026-08-11 完了。棚卸しは `docs/dev/v0.3-stocktake-coverage.md`)。
