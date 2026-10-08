@@ -27,3 +27,6 @@ Issues = "https://github.com/watany-dev/chokkin/issues"
 [tool.maturin]
 bindings = "bin"
 strip = true
+
+[tool.chokkin.ignore]
+CHK001 = ["tests/fixtures/**", "docs/dev/formal/**"]
