@@ -1,20 +1,28 @@
-# Labels for CHK002 (unused dependency) / CHK003 (missing dependency) findings
-# on the §17 OSS validation set. `fp`/`tp` are ground truth; `deferred` records
-# heuristic triage that still needs validation.
+# Ground-truth labels for findings on the §17 OSS validation set. `fp`/`tp`
+# are ground truth; `info-expected` is ground truth for a finding that is only
+# correct at info severity; `deferred` records heuristic triage that still
+# needs validation.
 #
 # Tab-separated columns (lines starting with # and blank lines are ignored):
 #   slug          project slug from scripts/oss-clones.manifest
-#   code          CHK002 | CHK003 | CHK004 (CHK004 only on recall sentinels)
+#   code          CHK001 | CHK002 | CHK003 | CHK004 | CHK006 | CHK010
 #   target        stable JSON target field (was distribution for dep rules)
-#   verdict       fp | tp | deferred
-#   bucket        root-cause bucket for CHK003 fp or deferred; use - otherwise
+#   verdict       fp | tp | info-expected | deferred
+#   bucket        root-cause bucket for CHK003 fp, info-expected or deferred,
+#                 and for fp of the sampled rules; use - otherwise
 #   note          short justification (how it was verified)
 #
-# Bucket vocabulary (CHK003 fp/deferred): map-gap | workspace-boundary | optional-import |
+# Bucket vocabulary (CHK003): map-gap | workspace-boundary | optional-import |
 # dev-context | transitive-policy | metadata-gap | first-party
 #
-# scripts/oss-metrics.py matches findings on (slug, code, target).
-# Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
+# scripts/oss-metrics.py matches findings on (slug, code, target); one row per
+# key. Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
+# Info-severity findings are not hits: they never count as fp/tp, and an
+# `info-expected` label on a finding reported above info counts as fp.
+#
+# CHK001 / CHK004 / CHK006 / CHK010 carry a stratified sample (section at the
+# end, drawn by scripts/sample-precision-labels.py) to record per-rule
+# precision; CHK004 rows above it are recall sentinels.
 #
 # slug	code	target	verdict	bucket	note
 requests	CHK002	httpbin	fp	-	optional/conditional/platform-guarded runtime import not traced, or PDM/Hatch group unsupported in v0.1
@@ -208,19 +216,18 @@ anyio	CHK003	tests/test_sockets.py:_pytest.fixtures	deferred	dev-context	deferre
 anyio	CHK003	tests/test_sockets.py:_pytest.logging	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 anyio	CHK003	tests/test_sockets.py:_pytest.monkeypatch	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 anyio	CHK003	tests/test_sockets.py:_pytest.tmpdir	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-attrs	CHK003	src/attr/_compat.py:typing_extensions	fp	optional-import	auto: optional try-import not treated as hard missing dep
+attrs	CHK003	src/attr/_compat.py:typing_extensions	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 black	CHK003	scripts/check_pre_commit_rev_in_example.py:bs4	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	scripts/check_pre_commit_rev_in_example.py:yaml	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	scripts/check_version_in_basics_example.py:bs4	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	scripts/diff_shades_gha_helper.py:diff_shades	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	scripts/diff_shades_gha_helper.py:urllib3	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	scripts/fuzz.py:hypothesis	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-black	CHK003	scripts/fuzz.py:hypothesis	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	scripts/make_width_table.py:wcwidth	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	src/black/__init__.py:_black_version	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	src/black/cache.py:_black_version	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 black	CHK003	src/blackd/__init__.py:_black_version	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-black	CHK003	src/blackd/__init__.py:multidict	fp	optional-import	auto: optional try-import not treated as hard missing dep
+black	CHK003	src/blackd/__init__.py:multidict	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 black	CHK003	tests/conftest.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 black	CHK003	tests/test_black.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 black	CHK003	tests/test_blackd.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -251,130 +258,92 @@ click	CHK003	tests/test_testing.py:pytest	deferred	dev-context	deferred: verify 
 click	CHK003	tests/test_types.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 click	CHK003	tests/test_utils.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.ui	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.ui	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.wait	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admindocs/utils.py:docutils.core	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/contrib/admindocs/utils.py:docutils.nodes	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/contrib/admindocs/utils.py:docutils.parsers.rst.roles	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/contrib/admindocs/utils.py:docutils.core	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/contrib/admindocs/utils.py:docutils.nodes	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/contrib/admindocs/utils.py:docutils.parsers.rst.roles	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/contrib/gis/db/backends/postgis/adapter.py:psycopg2.extensions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/contrib/gis/shortcuts.py:numpy	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/contrib/gis/shortcuts.py:numpy	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/contrib/postgres/signals.py:psycopg.types	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/contrib/postgres/signals.py:psycopg2	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/contrib/postgres/signals.py:psycopg2.extras	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/core/files/images.py:PIL	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/core/management/color.py:colorama	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/core/validators.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/core/management/color.py:colorama	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/core/validators.py:PIL	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/db/backends/base/base.py:_thread	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/db/backends/oracle/oracledb_any.py:cx_Oracle	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/oracle/oracledb_any.py:cx_Oracle	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/db/backends/postgresql/operations.py:psycopg.types	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.postgres	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.datetime	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.json	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.range	fp	optional-import	auto: optional try-import not treated as hard missing dep
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.string	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.postgres	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.datetime	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.json	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.range	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.string	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg2	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg2.extras	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/db/models/fields/files.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/db/models/fields/files.py:PIL	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/forms/fields.py:PIL	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/template/backends/jinja2.py:jinja2	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/test/selenium.py:selenium	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	django/test/selenium.py:selenium.webdriver.common.desired_capabilities	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/test/utils.py:jinja2	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	django/test/utils.py:jinja2	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/utils/autoreload.py:__main__	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	tests/admin_docs/test_utils.py:docutils	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.common	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.common.exceptions	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.keys	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.common.keys	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.support.ui	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.webdriver.support.ui	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_history_view.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_nav_sidebar.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_password_form.py:selenium.common	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_password_form.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_password_form.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_related_object_lookups.py:selenium.webdriver.support.select	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.action_chains	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.keys	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.keys	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_skip_link_to_content.py:selenium.webdriver.common.keys	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/backends/mysql/test_schema.py:MySQLdb	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/contenttypes_tests/test_order_with_respect_to.py:order_with_respect_to.base_tests	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/forms_tests/field_tests/test_filefield.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/forms_tests/field_tests/test_filefield.py:PIL	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	tests/forms_tests/field_tests/test_floatfield.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/forms_tests/field_tests/test_imagefield.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/forms_tests/field_tests/test_imagefield.py:PIL	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	tests/forms_tests/field_tests/test_imagefield.py:PIL.BmpImagePlugin	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/forms_tests/tests/test_renderers.py:jinja2	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/forms_tests/tests/test_renderers.py:jinja2	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	tests/forms_tests/tests/test_widgets.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/i18n/test_extraction.py:admin_scripts.tests	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/invalid_models_tests/test_ordinary_fields.py:PIL	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/invalid_models_tests/test_ordinary_fields.py:PIL	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	tests/migrations/test_writer.py:custom_migration_operations.more_operations	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/migrations/test_writer.py:custom_migration_operations.operations	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/project_template/test_settings.py:test_settings	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/serializers/test_yaml.py:yaml	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/serializers/test_yaml.py:yaml	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	tests/sphinx/test_github_links.py:github_links	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/staticfiles_tests/test_management.py:admin_scripts.tests	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/template_backends/test_django.py:template_tests.test_response	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/template_backends/test_jinja2.py:jinja2	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/template_backends/test_jinja2.py:jinja2	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	tests/template_tests/syntax_tests/i18n/test_get_current_language.py:template_tests.utils	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/template_tests/syntax_tests/i18n/test_get_current_language_bidi.py:template_tests.utils	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/template_tests/syntax_tests/i18n/test_language.py:template_tests.utils	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/template_tests/syntax_tests/test_numpy.py:numpy	fp	optional-import	auto: optional try-import not treated as hard missing dep
+django	CHK003	tests/template_tests/syntax_tests/test_numpy.py:numpy	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	tests/test_runner/tests.py:admin_scripts.tests	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/view_tests/tests/test_i18n.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	tests/view_tests/tests/test_i18n.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-djangorestframework	CHK003	rest_framework/compat.py:inflection	fp	optional-import	auto: optional try-import not treated as hard missing dep
-djangorestframework	CHK003	rest_framework/compat.py:markdown	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:inflection	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+djangorestframework	CHK003	rest_framework/compat.py:markdown	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 djangorestframework	CHK003	rest_framework/compat.py:markdown.preprocessors	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-djangorestframework	CHK003	rest_framework/compat.py:pygments	fp	optional-import	auto: optional try-import not treated as hard missing dep
-djangorestframework	CHK003	rest_framework/compat.py:pygments.formatters	fp	optional-import	auto: optional try-import not treated as hard missing dep
-djangorestframework	CHK003	rest_framework/compat.py:pygments.lexers	fp	optional-import	auto: optional try-import not treated as hard missing dep
-djangorestframework	CHK003	rest_framework/compat.py:requests	fp	optional-import	auto: optional try-import not treated as hard missing dep
-djangorestframework	CHK003	rest_framework/compat.py:yaml	fp	optional-import	auto: optional try-import not treated as hard missing dep
-djangorestframework	CHK003	rest_framework/fields.py:pytz	fp	optional-import	auto: optional try-import not treated as hard missing dep
-djangorestframework	CHK003	tests/test_fields.py:pytz	fp	optional-import	auto: optional try-import not treated as hard missing dep
+djangorestframework	CHK003	rest_framework/compat.py:pygments	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+djangorestframework	CHK003	rest_framework/compat.py:pygments.formatters	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+djangorestframework	CHK003	rest_framework/compat.py:pygments.lexers	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+djangorestframework	CHK003	rest_framework/compat.py:requests	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+djangorestframework	CHK003	rest_framework/compat.py:yaml	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+djangorestframework	CHK003	rest_framework/fields.py:pytz	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+djangorestframework	CHK003	tests/test_fields.py:pytz	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 djangorestframework	CHK003	tests/test_relations.py:_pytest.monkeypatch	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	fastapi/_compat.py:pydantic_core	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-fastapi	CHK003	fastapi/_compat.py:pydantic_core	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-fastapi	CHK003	fastapi/_compat.py:pydantic_core	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-fastapi	CHK003	fastapi/_compat.py:pydantic_core.core_schema	fp	optional-import	auto: optional try-import not treated as hard missing dep
 fastapi	CHK003	fastapi/_compat.py:pydantic_core.core_schema	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-fastapi	CHK003	fastapi/concurrency.py:anyio	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 fastapi	CHK003	fastapi/concurrency.py:anyio	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 fastapi	CHK003	fastapi/dependencies/utils.py:anyio	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 fastapi	CHK003	tests/test_tutorial/test_additional_responses/test_tutorial001.py:docs_src.additional_responses.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -433,10 +402,7 @@ fastapi	CHK003	tests/test_tutorial/test_configure_swagger_ui/test_tutorial003.py
 fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001.py:docs_src.cookie_params.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an.py:docs_src.cookie_params.tutorial001_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py310.py:docs_src.cookie_params.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py310.py:docs_src.cookie_params.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py39.py:docs_src.cookie_params.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_an_py39.py:docs_src.cookie_params.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_py310.py:docs_src.cookie_params.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_cookie_params/test_tutorial001_py310.py:docs_src.cookie_params.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_cors/test_tutorial001.py:docs_src.cors.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_custom_docs_ui/test_tutorial001.py:docs_src.custom_docs_ui.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -479,19 +445,10 @@ fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008b.py:docs_s
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008b_an.py:docs_src.dependencies.tutorial008b_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008b_an_py39.py:docs_src.dependencies.tutorial008b_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c.py:docs_src.dependencies.tutorial008c	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c.py:docs_src.dependencies.tutorial008c	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an.py:docs_src.dependencies.tutorial008c_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an.py:docs_src.dependencies.tutorial008c_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an_py39.py:docs_src.dependencies.tutorial008c_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008c_an_py39.py:docs_src.dependencies.tutorial008c_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d.py:docs_src.dependencies.tutorial008d	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d.py:docs_src.dependencies.tutorial008d	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d.py:docs_src.dependencies.tutorial008d	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an.py:docs_src.dependencies.tutorial008d_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an.py:docs_src.dependencies.tutorial008d_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an.py:docs_src.dependencies.tutorial008d_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an_py39.py:docs_src.dependencies.tutorial008d_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an_py39.py:docs_src.dependencies.tutorial008d_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial008d_an_py39.py:docs_src.dependencies.tutorial008d_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial012.py:docs_src.dependencies.tutorial012	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_dependencies/test_tutorial012_an.py:docs_src.dependencies.tutorial012_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -527,8 +484,6 @@ fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002.py:docs_s
 fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an.py:docs_src.header_params.tutorial002_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an_py310.py:docs_src.header_params.tutorial002_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an_py39.py:docs_src.header_params.tutorial002_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_an_py39.py:docs_src.header_params.tutorial002_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_py310.py:docs_src.header_params.tutorial002_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial002_py310.py:docs_src.header_params.tutorial002_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial003.py:docs_src.header_params.tutorial003	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_header_params/test_tutorial003_an.py:docs_src.header_params.tutorial003_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -662,20 +617,8 @@ fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial003_py310.py:docs_
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005.py:docs_src.security.tutorial005	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an.py:docs_src.security.tutorial005_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py310.py:docs_src.security.tutorial005_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_an_py39.py:docs_src.security.tutorial005_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py310.py:docs_src.security.tutorial005_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial005_py39.py:docs_src.security.tutorial005_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial006.py:docs_src.security.tutorial006	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_security/test_tutorial006_an.py:docs_src.security.tutorial006_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -686,7 +629,6 @@ fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial00
 fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial002.py:docs_src.separate_openapi_schemas.tutorial002	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial002_py310.py:docs_src.separate_openapi_schemas.tutorial002_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_separate_openapi_schemas/test_tutorial002_py39.py:docs_src.separate_openapi_schemas.tutorial002_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_settings/test_app02.py:docs_src.settings.app02	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_settings/test_app02.py:docs_src.settings.app02	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_settings/test_tutorial001.py:docs_src.settings.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_settings/test_tutorial001_pv1.py:docs_src.settings.tutorial001_pv1	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -713,25 +655,7 @@ fastapi	CHK003	tests/test_tutorial/test_testing/test_tutorial003.py:docs_src.app
 fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001.py:docs_src.dependency_testing.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an.py:docs_src.dependency_testing.tutorial001_an	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py310.py:docs_src.dependency_testing.tutorial001_an_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_an_py39.py:docs_src.dependency_testing.tutorial001_an_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_testing_dependencies/test_tutorial001_py310.py:docs_src.dependency_testing.tutorial001_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial001.py:docs_src.websockets.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002.py:docs_src.websockets.tutorial002	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -741,14 +665,10 @@ fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002_an_py39.py:d
 fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial002_py310.py:docs_src.websockets.tutorial002_py310	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial003.py:docs_src.websockets.tutorial003	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial003_py39.py:docs_src.websockets.tutorial003_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-fastapi	CHK003	tests/test_tutorial/test_websockets/test_tutorial003_py39.py:docs_src.websockets.tutorial003_py39	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 fastapi	CHK003	tests/test_tutorial/test_wsgi/test_tutorial001.py:docs_src.wsgi.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	src/flask/app.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-flask	CHK003	src/flask/app.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	src/flask/cli.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-flask	CHK003	src/flask/cli.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-flask	CHK003	src/flask/cli.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-flask	CHK003	src/flask/cli.py:cryptography	fp	optional-import	auto: optional try-import not treated as hard missing dep
+flask	CHK003	src/flask/cli.py:cryptography	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 flask	CHK003	src/flask/config.py:typing_extensions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 flask	CHK003	src/flask/ctx.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	src/flask/json/tag.py:markupsafe	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
@@ -776,14 +696,13 @@ flask	CHK003	tests/test_json.py:pytest	deferred	dev-context	deferred: verify tes
 flask	CHK003	tests/test_json_tag.py:markupsafe	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	tests/test_json_tag.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	tests/test_logging.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-flask	CHK003	tests/test_reqctx.py:greenlet	fp	optional-import	auto: optional try-import not treated as hard missing dep
+flask	CHK003	tests/test_reqctx.py:greenlet	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 flask	CHK003	tests/test_reqctx.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	tests/test_templating.py:markupsafe	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	tests/test_templating.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	tests/test_testing.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	tests/test_user_error_handler.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 flask	CHK003	tests/test_views.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-httpx	CHK003	httpx/_transports/asgi.py:trio	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 httpx	CHK003	httpx/_transports/asgi.py:trio	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 httpx	CHK003	httpx/_transports/wsgi.py:_typeshed	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 httpx	CHK003	httpx/_transports/wsgi.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -821,39 +740,30 @@ jinja	CHK003	tests/test_security.py:pytest	deferred	dev-context	deferred: verify
 jinja	CHK003	tests/test_tests.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 jinja	CHK003	tests/test_utils.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 pluggy	CHK003	scripts/release.py:colorama	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-pluggy	CHK003	scripts/release.py:colorama	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 python-dotenv	CHK003	src/dotenv/ipython.py:IPython.core.magic	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 python-dotenv	CHK003	src/dotenv/ipython.py:IPython.core.magic_arguments	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 python-dotenv	CHK003	src/dotenv/main.py:__main__	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/__init__.py:charset_normalizer	fp	optional-import	auto: optional try-import not treated as hard missing dep
-requests	CHK003	src/requests/__init__.py:cryptography	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/__init__.py:charset_normalizer	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+requests	CHK003	src/requests/__init__.py:cryptography	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 requests	CHK003	src/requests/__init__.py:urllib3	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/__init__.py:urllib3.contrib	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/__init__.py:urllib3.contrib	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 requests	CHK003	src/requests/__init__.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/adapters.py:urllib3.contrib.socks	fp	optional-import	auto: optional try-import not treated as hard missing dep
-requests	CHK003	src/requests/adapters.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/adapters.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/adapters.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/adapters.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/adapters.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/adapters.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
+requests	CHK003	src/requests/adapters.py:urllib3.contrib.socks	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 requests	CHK003	src/requests/adapters.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/adapters.py:urllib3.poolmanager	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/adapters.py:urllib3.util	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/adapters.py:urllib3.util	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/adapters.py:urllib3.util.retry	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/adapters.py:urllib3.util.ssl_	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/certs.py:certifi	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/compat.py:simplejson	fp	optional-import	auto: optional try-import not treated as hard missing dep
 requests	CHK003	src/requests/compat.py:simplejson	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/cookies.py:dummy_threading	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/exceptions.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/help.py:OpenSSL	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/help.py:charset_normalizer	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/help.py:charset_normalizer	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 requests	CHK003	src/requests/help.py:cryptography	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/help.py:idna	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/help.py:urllib3	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-requests	CHK003	src/requests/help.py:urllib3.contrib	fp	optional-import	auto: optional try-import not treated as hard missing dep
+requests	CHK003	src/requests/help.py:urllib3.contrib	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 requests	CHK003	src/requests/models.py:idna	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/models.py:urllib3.exceptions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 requests	CHK003	src/requests/models.py:urllib3.fields	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
@@ -864,15 +774,14 @@ requests	CHK003	tests/conftest.py:BaseHTTPServer	deferred	dev-context	deferred: 
 requests	CHK003	tests/conftest.py:SimpleHTTPServer	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 requests	CHK003	tests/test_requests.py:urllib3	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 requests	CHK003	tests/test_requests.py:urllib3.util	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-requests	CHK003	tests/test_requests.py:urllib3.util	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 starlette	CHK003	tests/test_testclient.py:sniffio	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 structlog	CHK003	src/structlog/_greenlets.py:greenlet	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-structlog	CHK003	src/structlog/dev.py:better_exceptions	fp	optional-import	auto: optional try-import not treated as hard missing dep
-structlog	CHK003	src/structlog/dev.py:colorama	fp	optional-import	auto: optional try-import not treated as hard missing dep
-structlog	CHK003	tests/test_threadlocal.py:greenlet	fp	optional-import	auto: optional try-import not treated as hard missing dep
+structlog	CHK003	src/structlog/dev.py:better_exceptions	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+structlog	CHK003	src/structlog/dev.py:colorama	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+structlog	CHK003	tests/test_threadlocal.py:greenlet	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 tenacity	CHK003	tenacity/asyncio/__init__.py:sniffio	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 tenacity	CHK003	tenacity/asyncio/__init__.py:trio	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-tenacity	CHK003	tests/test_asyncio.py:trio	fp	optional-import	auto: optional try-import not treated as hard missing dep
+tenacity	CHK003	tests/test_asyncio.py:trio	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 typer	CHK003	scripts/deploy_docs_status.py:pydantic	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 typer	CHK003	scripts/deploy_docs_status.py:pydantic_settings	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 typer	CHK003	tests/test_completion/test_completion.py:docs_src.commands.index	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -1062,11 +971,8 @@ typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial00
 typer	CHK003	tests/test_tutorial/test_subcommands/test_name_help/test_tutorial008.py:docs_src.subcommands.name_help	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial001.py:docs_src.subcommands	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial001.py:docs_src.subcommands.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial001.py:docs_src.subcommands.tutorial001	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial002.py:docs_src.subcommands.tutorial002	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands.tutorial003	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands.tutorial003	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_subcommands/test_tutorial003.py:docs_src.subcommands.tutorial003	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_terminating/test_tutorial001.py:docs_src.terminating	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_terminating/test_tutorial002.py:docs_src.terminating	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -1082,58 +988,34 @@ typer	CHK003	tests/test_tutorial/test_testing/test_app03.py:docs_src.testing.app
 typer	CHK003	tests/test_tutorial/test_using_click/test_tutorial003.py:docs_src.using_click	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 typer	CHK003	tests/test_tutorial/test_using_click/test_tutorial004.py:docs_src.using_click	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/_internal.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/_internal.py:colorama	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/_internal.py:colorama	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 werkzeug	CHK003	src/werkzeug/datastructures/auth.py:typing_extensions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 werkzeug	CHK003	src/werkzeug/debug/__init__.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/debug/__init__.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/debug/__init__.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/exceptions.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/exceptions.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/formparser.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/http.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/middleware/dispatcher.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/dispatcher.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/dispatcher.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/http_proxy.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/http_proxy.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/middleware/http_proxy.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/middleware/lint.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/lint.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/lint.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/profiler.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/profiler.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/middleware/profiler.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/middleware/proxy_fix.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/proxy_fix.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/proxy_fix.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/shared_data.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/middleware/shared_data.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/middleware/shared_data.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/routing/exceptions.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/routing/map.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/routing/map.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/serving.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/serving.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/serving.py:colorama	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-werkzeug	CHK003	src/werkzeug/serving.py:cryptography	fp	optional-import	auto: optional try-import not treated as hard missing dep
-werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.backends	fp	optional-import	auto: optional try-import not treated as hard missing dep
-werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.backends	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives.asymmetric	fp	optional-import	auto: optional try-import not treated as hard missing dep
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives.asymmetric	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 werkzeug	CHK003	src/werkzeug/serving.py:cryptography.hazmat.primitives.asymmetric.rsa	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 werkzeug	CHK003	src/werkzeug/serving.py:cryptography.x509	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-werkzeug	CHK003	src/werkzeug/serving.py:cryptography.x509.oid	fp	optional-import	auto: optional try-import not treated as hard missing dep
-werkzeug	CHK003	src/werkzeug/test.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
+werkzeug	CHK003	src/werkzeug/serving.py:cryptography.x509.oid	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 werkzeug	CHK003	src/werkzeug/test.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/test.py:typing_extensions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 werkzeug	CHK003	src/werkzeug/utils.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/wrappers/request.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/wrappers/request.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/wrappers/response.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/wrappers/response.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/wrappers/response.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-werkzeug	CHK003	src/werkzeug/wsgi.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	src/werkzeug/wsgi.py:_typeshed.wsgi	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	tests/conftest.py:ephemeral_port_reserve	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 werkzeug	CHK003	tests/conftest.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -1214,3 +1096,196 @@ mitmproxy	CHK002	hyperframe	fp	-	imported by test/ helpers; test usage satisfies
 mitmproxy	CHK002	msgpack	tp	-	never imported; the msgpack contentview is in mitmproxy_rs
 llama_index	CHK002	script:docs/scripts/prepare_for_build.py:pyaml	tp	-	PEP 723 block declares pyaml but the script imports yaml (PyYAML) only
 mcp-python-sdk	CHK002	python-multipart	fp	-	starlette's request.form() in server/auth handlers imports python_multipart at runtime; never imported directly
+
+# --- Precision samples (#656) ---
+# Hand-labelled by reading the pinned clones (nothing executed). Drawn with
+#   scripts/sample-precision-labels.py --rule CODE >> scripts/oss-fixtures.labels.tsv
+# (50 per rule, at most 6 per project). When report.md shows stale labels after a
+# clone bump, delete those rows and rerun the script to top the sample back up.
+airflow	CHK001	airflow-core/src/airflow/migrations/versions/0059_3_0_0_remove_external_trigger_field.py	fp	framework-loaded	Alembic migration version in airflow migrations/versions; loaded by alembic script directory scan
+black	CHK001	src/blib2to3/pgen2/conv.py	tp	-	Obsolete pgen converter (docstring says so); no import of conv anywhere; its 'from pgen2 import' would not even resolve in black
+django	CHK001	tests/aggregation_regress/models.py	fp	framework-loaded	Django test app models.py; tests/runtests.py installs each tests/<app> as an app and Django loads models by convention
+fastapi	CHK001	fastapi/staticfiles.py	fp	library-public	Public re-export fastapi.staticfiles documented in tutorial docs (StaticFiles); users import it
+fastmcp	CHK001	examples/smart_home/src/smart_home/lights/models.py	fp	other	Imported via absolute import in examples/smart_home/src/smart_home/lights/server.py (src-layout example package)
+flask	CHK001	tests/typing/typing_route.py	fp	type-stub-or-generated	tests/typing listed in pyproject [tool.mypy] files; checked by mypy/pyright, not imported
+langchain	CHK001	.github/scripts/check_prerelease_dependencies.py	fp	script-entry	Run by .github/workflows/_release.yml: python .github/scripts/check_prerelease_dependencies.py
+llama_index	CHK001	llama-index-integrations/embeddings/llama-index-embeddings-heroku/examples/async_usage.py	fp	script-entry	Runnable example with __main__; package README points to ./examples runnable examples
+mitmproxy	CHK001	test/helper_tools/hunt_memory_leaks.py	fp	script-entry	unsure: mitmproxy addon (load hook) for manual leak hunting via -s; dev helper tool, not referenced anywhere
+mlflow	CHK001	tests/pyfunc/custom_model/mod1/mod4.py	fp	other	Imported relatively by custom_model/mod1/mod2/__init__.py (from .. import mod4); asserted in test_inferred_code_path.py
+pdm	CHK001	src/pdm/models/in_process/env_spec.py	fp	other	Run as subprocess script via _in_process_script("env_spec.py") in pdm/models/in_process/__init__.py
+poetry	CHK001	src/poetry/masonry/api.py	fp	library-public	Shipped back-compat build backend poetry.masonry.api (re-exports poetry.core.masonry.api) for users' pyproject build-backend
+uvicorn	CHK001	tests/importer/circular_import_a.py	fp	dynamic-import	Loaded via import_from_string("tests.importer.circular_import_a:bar") in tests/importer/test_importer.py
+virtualenv	CHK001	tests/unit/create/console_app/setup.py	fp	other	Test fixture: tests/unit/create/test_creator.py copies console_app dir and builds/installs it
+werkzeug	CHK001	tests/live_apps/reloader_app.py	fp	dynamic-import	Loaded by tests/live_apps/run.py import_module(f"{name}_app"); dev_server("reloader") in test_serving.py
+airflow	CHK001	providers/common/ai/hatch_build.py	fp	framework-loaded	Hatch custom build target: providers/common/ai/pyproject.toml [tool.hatch.build.targets.custom] path=./hatch_build.py
+black	CHK001	src/blib2to3/pgen2/literals.py	tp	-	Not imported anywhere in black/blib2to3 (rg literals/evalString); legacy lib2to3 helper unused by parser
+django	CHK001	tests/prefetch_related/models.py	fp	framework-loaded	Django test app models.py; tests/runtests.py installs each tests/<app> as an app and Django loads models by convention
+fastapi	CHK001	fastapi/middleware/trustedhost.py	fp	library-public	Public module fastapi.middleware.trustedhost documented in docs/en/docs/reference/middleware.md
+fastmcp	CHK001	docs/apps/demos/team-directory-reactive.py	fp	script-entry	Docs demo rendered via <PrefabDemoFrame demo="team-directory-reactive"> in docs/apps/quickstart.mdx
+flask	CHK001	tests/typing/typing_error_handler.py	fp	type-stub-or-generated	tests/typing listed in pyproject [tool.mypy] files; checked by mypy/pyright, not imported
+langchain	CHK001	.github/scripts/check_diff.py	fp	script-entry	Run by .github/workflows/check_diffs.yml and codspeed.yml: python .github/scripts/check_diff.py
+llama_index	CHK001	llama-index-integrations/embeddings/llama-index-embeddings-isaacus/examples/async_usage.py	fp	script-entry	Runnable example with __main__; package README points to ./examples runnable examples
+mitmproxy	CHK001	mitmproxy/utils/pyinstaller/hook-mitmproxy.py	fp	framework-loaded	PyInstaller hook; pyproject registers entry point hook-dirs = mitmproxy.utils.pyinstaller:hook_dirs
+mlflow	CHK001	tests/llama_index/sample_code/simple_workflow.py	fp	other	Model-from-code file referenced by path string in tests/llama_index/test_llama_index_autolog.py and model_export tests
+pdm	CHK001	src/pdm/pep582/sitecustomize.py	fp	other	Documented in docs/usage/pep582.md: added to sys.path so Python auto-imports sitecustomize at startup
+poetry	CHK001	src/poetry/console/events/console_events.py	tp	-	Empty (0-byte) file; no reference to poetry.console.events.console_events (code uses cleo.events.console_events)
+uvicorn	CHK001	tests/importer/raise_import_error.py	fp	dynamic-import	Loaded via import_from_string("tests.importer.raise_import_error:myattr") in test_importer.py
+virtualenv	CHK001	src/virtualenv/discovery/cached_py_info.py	fp	library-public	Backward-compat re-export virtualenv.discovery.cached_py_info (docstring; mentioned in changelog) for external users
+werkzeug	CHK001	tests/live_apps/streaming_app.py	fp	dynamic-import	Loaded by tests/live_apps/run.py import_module(f"{name}_app"); dev_server("streaming") in test_serving.py
+airflow	CHK001	airflow-core/src/airflow/migrations/versions/0101_3_2_0_ui_improvements_for_deadlines.py	fp	framework-loaded	Alembic migration version in airflow migrations/versions; loaded by alembic script directory scan
+django	CHK001	tests/forms_tests/field_tests/filepathfield_test_dir/c/f/g.py	fp	other	FilePathField test fixture: path listed in expected results in tests/forms_tests/field_tests/test_filepathfield.py
+fastapi	CHK001	fastapi/middleware/wsgi.py	fp	library-public	Public module fastapi.middleware.wsgi documented in docs/en/docs/reference/middleware.md
+fastmcp	CHK001	examples/atproto_mcp/src/atproto_mcp/_atproto/_profile.py	fp	other	Imported via 'from ._profile import get_profile_info' in _atproto/__init__.py; used by example server.py
+flask	CHK001	tests/typing/typing_app_decorators.py	fp	type-stub-or-generated	tests/typing listed in pyproject [tool.mypy] files; checked by mypy/pyright, not imported
+langchain	CHK001	.github/scripts/check_extras_sync.py	fp	script-entry	Referenced by .github/workflows/check_extras_sync.yml (path trigger + run step)
+llama_index	CHK001	llama-index-integrations/retrievers/llama-index-retrievers-galaxia/examples/example_1.py	fp	script-entry	Example script in integration package examples/ dir (top-level code meant to be run by users)
+mitmproxy	CHK001	test/helper_tools/inspect_dumpfile.py	fp	script-entry	unsure: standalone dev helper with click command and __main__ for inspecting dump files; not referenced anywhere
+mlflow	CHK001	tests/resources/example_virtualenv_no_python_env/entrypoint.py	fp	script-entry	Run via MLproject entry_points 'python entrypoint.py'; dir used by tests/projects/utils.py
+pdm	CHK001	src/pdm/models/in_process/parse_setup.py	fp	other	Run as subprocess script via _in_process_script("parse_setup.py") in pdm/models/in_process/__init__.py
+uvicorn	CHK001	tests/importer/circular_import_b.py	fp	dynamic-import	Imported by sibling circular_import_b (from .circular_import_a) and import_from_string in test_importer.py
+virtualenv	CHK001	src/virtualenv/activation/python/activate_this.py	fp	other	Template copied into venv bin by activation/python/__init__.py (yield "activate_this.py"); documented runpy usage
+werkzeug	CHK001	tests/live_apps/standard_app.py	fp	dynamic-import	Loaded by tests/live_apps/run.py import_module(f"{name}_app"); default dev_server("standard") in conftest
+airflow	CHK001	devel-common/src/sphinx_exts/docroles.py	fp	dynamic-import	Sphinx extension listed by name "docroles" in devel-common/src/docs/utils/conf_constants.py extensions
+django	CHK001	django/conf/locale/sr/formats.py	fp	dynamic-import	Locale formats loaded via import_module in django/utils/formats.py iter_format_modules
+fastapi	CHK001	fastapi/middleware/cors.py	fp	library-public	Public module fastapi.middleware.cors used in docs_src/cors/tutorial001.py and middleware reference docs
+fastmcp	CHK001	examples/apps/explorer/explorer_server.py	fp	script-entry	Example server with __main__; docstring says 'uv run python explorer_server.py'
+llama_index	CHK001	llama-index-integrations/tools/llama-index-tools-measurespace/examples/example.py	fp	script-entry	Example script in integration package examples/ dir (top-level await snippet meant to be run by users)
+mitmproxy	CHK001	test/helper_tools/memoryleak2.py	fp	script-entry	unsure: standalone __main__ memory-leak repro script in test/helper_tools; not referenced anywhere
+mlflow	CHK001	tests/llama_index/sample_code/basic_vector_store.py	fp	other	Model-from-code file referenced by path string in tests/llama_index/test_llama_index_model_export.py
+airflow	CHK004	snowflake:providers/snowflake/src/airflow/providers/snowflake/hooks/snowflake.py:sqlalchemy	tp	-	providers/snowflake/pyproject.toml deps/extras/groups lack sqlalchemy; only via snowflake-sqlalchemy/apache-airflow
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/utilities/inspect.py:pydantic_core	tp	-	fastmcp_slim/pyproject.toml deps+dynamic extras lack pydantic-core; only via pydantic
+llama_index	CHK004	llama-index-readers-chatgpt-plugin:llama-index-integrations/readers/llama-index-readers-chatgpt-plugin/llama_index/readers/chatgpt_plugin/base.py:requests	tp	-	member pyproject declares only llama-index-core; requests transitive
+mcp-python-sdk	CHK004	src/mcp/server/mcpserver/prompts/base.py:pydantic_core	tp	-	root dynamic deps (hatch hook) declare pydantic but not pydantic-core
+mitmproxy	CHK004	mitmproxy/contentviews/_view_http3.py:pylsqpack	tp	-	mitmproxy pyproject deps lack pylsqpack; comes via aioquic
+openai-python	CHK004	src/openai/_models.py:pydantic_core	tp	-	pyproject deps declare pydantic only; import guarded by try/TYPE_CHECKING but still undeclared
+pdm	CHK004	src/pdm/models/requirements.py:typing_extensions	tp	-	pdm pyproject deps lack typing-extensions; top-level import from transitive
+poetry	CHK004	src/poetry/utils/env/site_packages.py:importlib_metadata	tp	-	poetry pyproject lacks importlib-metadata; code comment admits it is transitive (Windows <3.12 path)
+pydantic	CHK004	pydantic/_internal/_core_utils.py:rich.pretty	tp	-	pydantic deps/extras/groups lack rich; lazy import in runtime helper
+streamlit	CHK004	streamlit:lib/streamlit/auth_util.py:joserfc.errors	tp	-	lib/pyproject.toml auth extra declares Authlib, not joserfc; joserfc via authlib in uv.lock
+airflow	CHK004	google:providers/google/src/airflow/providers/google/common/hooks/base_google.py:flask_babel	tp	-	providers/google pyproject lacks flask-babel; lazy import in form widgets, via apache-airflow/fab
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/client_models.py:mcp_types	tp	-	fastmcp_tasks dynamic deps: fastmcp-slim[server], cryptography, pydocket; mcp-types only via fastmcp-slim
+llama_index	CHK004	llama-index-indices-managed-lancedb:llama-index-integrations/indices/llama-index-indices-managed-lancedb/llama_index/indices/managed/lancedb/utils.py:httpx	tp	-	member deps (lancedb, pylance, ...) lack httpx; transitive
+mcp-python-sdk	CHK004	src/mcp/server/elicitation.py:pydantic_core	tp	-	root dynamic deps (hatch hook) declare pydantic but not pydantic-core
+mitmproxy	CHK004	mitmproxy/addons/maplocal.py:werkzeug.security	tp	-	mitmproxy deps declare flask, not werkzeug
+openai-python	CHK004	src/openai/_compat.py:pydantic_core	tp	-	pyproject deps declare pydantic only; import guarded by try/TYPE_CHECKING but still undeclared
+pdm	CHK004	src/pdm/cli/commands/base.py:typing_extensions	tp	-	pdm pyproject deps lack typing-extensions; top-level import from transitive
+pydantic	CHK004	pydantic/v1/env_settings.py:dotenv	tp	-	pydantic deps/extras lack python-dotenv; lazy try/except import in v1 env_settings
+streamlit	CHK004	streamlit:lib/streamlit/auth_util.py:joserfc.jwk	tp	-	lib/pyproject.toml auth extra declares Authlib, not joserfc; joserfc via authlib in uv.lock
+airflow	CHK004	airflow-core:airflow-core/src/airflow/jobs/triggerer_job_runner.py:anyio	tp	-	airflow-core/pyproject.toml has no anyio declaration; transitive
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/auth/jwt_issuer.py:cryptography.hazmat.primitives.kdf.hkdf	tp	-	fastmcp_slim deps and dynamic extras never list cryptography; via authlib/pyjwt
+llama_index	CHK004	llama-index-embeddings-openai-like:llama-index-integrations/embeddings/llama-index-embeddings-openai-like/llama_index/embeddings/openai_like/base.py:httpx	tp	-	member declares only llama-index-embeddings-openai; httpx transitive
+mcp-python-sdk	CHK004	src/mcp/server/mcpserver/server.py:pydantic_core	tp	-	root dynamic deps (hatch hook) declare pydantic but not pydantic-core
+pdm	CHK004	src/pdm/_types.py:typing_extensions	tp	-	pdm pyproject deps lack typing-extensions; top-level import from transitive
+streamlit	CHK004	streamlit:lib/streamlit/auth_util.py:joserfc	tp	-	lib/pyproject.toml auth extra declares Authlib, not joserfc; joserfc via authlib in uv.lock
+airflow	CHK004	trino:providers/trino/src/airflow/providers/trino/__init__.py:packaging.version	tp	-	providers/trino deps lack packaging; via apache-airflow
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/client.py:mcp_types.version	tp	-	fastmcp_tasks dynamic deps: fastmcp-slim[server], cryptography, pydocket; mcp-types only via fastmcp-slim
+llama_index	CHK004	llama-index-llms-cohere:llama-index-integrations/llms/llama-index-llms-cohere/llama_index/llms/cohere/utils.py:pydantic	tp	-	member declares cohere, llama-index-core; pydantic transitive
+mcp-python-sdk	CHK004	src/mcp/server/streamable_http.py:pydantic_core	tp	-	root dynamic deps (hatch hook) declare pydantic but not pydantic-core
+pdm	CHK004	src/pdm/installers/uninstallers.py:typing_extensions	tp	-	pdm pyproject deps lack typing-extensions; top-level import from transitive
+airflow	CHK004	fab:providers/fab/src/airflow/providers/fab/migrations/versions/0000_1_4_0_create_ab_tables_if_missing.py:sqlalchemy	tp	-	providers/fab declares flask-sqlalchemy etc. but not sqlalchemy
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/wire_production.py:mcp_types.methods	tp	-	fastmcp_tasks dynamic deps: fastmcp-slim[server], cryptography, pydocket; mcp-types only via fastmcp-slim
+llama_index	CHK004	llama-index-readers-microsoft-outlook-emails:llama-index-integrations/readers/llama-index-readers-microsoft-outlook-emails/llama_index/readers/microsoft_outlook_emails/base.py:requests	tp	-	member declares only llama-index-core; requests transitive
+mcp-python-sdk	CHK004	src/mcp/client/session.py:referencing.exceptions	tp	-	root dynamic deps declare jsonschema, not referencing; lazy import
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/elicitation.py:pydantic_core	tp	-	fastmcp_slim/pyproject.toml deps+dynamic extras lack pydantic-core; only via pydantic
+llama_index	CHK004	llama-index-postprocessor-ibm:llama-index-integrations/postprocessor/llama-index-postprocessor-ibm/llama_index/postprocessor/ibm/utils.py:pydantic	tp	-	member declares ibm-watsonx-ai, pyarrow, llama-index-core; pydantic transitive
+mcp-python-sdk	CHK004	src/mcp/server/mcpserver/resources/types.py:pydantic_core	tp	-	root dynamic deps (hatch hook) declare pydantic but not pydantic-core
+airflow	CHK006	airflow-core/src/airflow/api_fastapi/execution_api/routes/xcoms.py:head_xcom	tp	-	FastAPI route handler registered by @router.head decorator in same module; no other refs to head_xcom in repo
+black	CHK006	src/blib2to3/pgen2/parse.py:Results	tp	-	type alias in vendored blib2to3; no refs anywhere else (not even used in-module); black is a CLI tool
+django	CHK006	django/contrib/postgres/fields/ranges.py:FullyLessThan	tp	-	registered via @RangeField.register_lookup in same module; docs only document `fully_lt` lookup name, not the class
+fastapi	CHK006	fastapi/openapi/utils.py:generate_operation_id	fp	library-public-api	deprecated public function kept for backward compat in fastapi.openapi.utils (emits deprecation warning)
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/auth/providers/introspection.py:logger	tp	-	module-level logger in fastmcp auth provider; only used in-module (self.logger is separate)
+flask	CHK006	src/flask/app.py:T_template_test	tp	-	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy
+httpx	CHK006	httpx/_client.py:USE_CLIENT_DEFAULT	fp	external-reference	httpx/__init__.py does `from ._client import *` and lists USE_CLIENT_DEFAULT in __all__; documented in CHANGELOG
+mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:Operator	fp	library-public-api	in __all__ of mcp.shared.uri_template, which docs/servers/uri-templates.md documents as the public template engine module
+mitmproxy	CHK006	mitmproxy/addons/core.py:LISTEN_PORT	tp	-	constant unused anywhere (no refs in repo, not used in-module)
+mlflow	CHK006	mlflow/deployments/cli.py:optional_deployment_name	tp	-	click option defined but never applied; no refs in repo
+pdm	CHK006	src/pdm/signals.py:pre_invoke	fp	library-public-api	plugin signal documented in docs/usage/hooks.md for plugins to connect; emitted by name in core.py try_emit("pre_invoke")
+poetry	CHK006	src/poetry/console/commands/check.py:CheckCommand	fp	name-convention	poetry application.py loads poetry.console.commands.<name> via import_module + getattr "<Name>Command"
+uvicorn	CHK006	uvicorn/logging.py:AccessFormatter	fp	name-convention	referenced by dotted string "uvicorn.logging.AccessFormatter" in uvicorn/config.py LOGGING_CONFIG
+virtualenv	CHK006	src/virtualenv/info.py:IS_MAC_ARM64	tp	-	in virtualenv.info __all__ but no refs anywhere; info is an internal module, not documented API
+werkzeug	CHK006	src/werkzeug/exceptions.py:UnavailableForLegalReasons	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
+airflow	CHK006	airflow-ctl/src/airflowctl/ctl/cli_config.py:positive_int	tp	-	airflowctl cli_config.positive_int unused; refs found are to airflow.cli.cli_config (a different module) in core/providers
+black	CHK006	src/blib2to3/pgen2/token.py:ISNONTERMINAL	tp	-	blib2to3 vendored token helper, no refs anywhere in repo
+django	CHK006	django/utils/translation/trans_null.py:get_language	fp	name-convention	translation backend loaded dynamically; django.utils.translation Trans.__getattr__ does getattr(trans, name)
+fastapi	CHK006	fastapi/responses.py:UJSONResponse	fp	library-public-api	documented response class (docs custom-response.md); imported in docs_src/custom_response/tutorial001.py
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_code.py:check_claude_code_available	tp	-	CLI installer helper, no callers anywhere; only listed in auto-generated python-sdk docs page
+flask	CHK006	src/flask/json/__init__.py:dump	fp	external-reference	tests/test_json.py calls flask.json.dump; also documented in docs/api.rst (autofunction dump)
+httpx	CHK006	httpx/_api.py:post	fp	external-reference	httpx/__init__.py does `from ._api import *` (post in _api __all__); documented httpx.post
+mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:DEFAULT_MAX_TEMPLATE_LENGTH	fp	library-public-api	in __all__ of mcp.shared.uri_template, documented public module (docs/servers/uri-templates.md)
+mitmproxy	CHK006	mitmproxy/contentviews/_api.py:logger	tp	-	module logger in mitmproxy.contentviews._api, private module; other `logger` hits are unrelated module-level loggers
+mlflow	CHK006	mlflow/protos/unity_catalog_messages_pb2.py:PENDING_REGISTRATION	tp	-	unsure: generated protobuf enum constant; nothing imports it from unity_catalog_messages_pb2 (refs are strings/other pb2)
+pdm	CHK006	src/pdm/formats/pipfile.py:export	fp	external-reference	pdm.formats FORMATS dict maps to modules; cli/commands/export.py calls FORMATS[fmt].export(...) (module attr access)
+poetry	CHK006	src/poetry/console/commands/self/remove.py:SelfRemoveCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.remove and getattr "SelfRemoveCommand"
+uvicorn	CHK006	uvicorn/_types.py:HTTPResponseDebugEvent	tp	-	TypedDict in private uvicorn._types, no refs anywhere (not even in-module unions)
+virtualenv	CHK006	src/virtualenv/create/via_global_ref/builtin/graalpy/__init__.py:GraalPyPosix	fp	name-convention	registered as plugin entry point virtualenv.create graalpy-posix in pyproject.toml
+werkzeug	CHK006	src/werkzeug/test.py:encode_multipart	fp	library-public-api	unsure: public non-underscore function in werkzeug.test module (library); undocumented, no internal refs
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskDependencyCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+black	CHK006	src/blib2to3/pgen2/token.py:AMPEREQUAL	fp	name-convention	looked up by name: grammar.py opmap_raw string "&= AMPEREQUAL" -> getattr(token, name)
+django	CHK006	django/core/management/utils.py:get_command_line_option	fp	external-reference	imported in django/core/management/commands/test.py
+fastapi	CHK006	fastapi/exceptions.py:WebSocketErrorModel	tp	-	unsure: module constant in fastapi.exceptions unused anywhere and undocumented; legacy leftover
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/cursor.py:logger	tp	-	module logger in fastmcp cli/install/cursor.py; other hits are unrelated loggers
+flask	CHK006	src/flask/app.py:T_shell_context_processor	tp	-	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy
+httpx	CHK006	httpx/_api.py:options	fp	external-reference	httpx/__init__.py does `from ._api import *`; documented in docs/api.md as httpx.options
+mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:DEFAULT_MAX_VARIABLES	fp	library-public-api	in __all__ of mcp.shared.uri_template, documented public module (docs/servers/uri-templates.md)
+mitmproxy	CHK006	mitmproxy/proxy/mode_servers.py:DnsInstance	tp	-	registered via ServerInstance.__init_subclass__ registry in same module; no name refs elsewhere
+mlflow	CHK006	mlflow/store/db_migrations/versions/bd07f7e963c5_create_index_on_run_uuid.py:depends_on	fp	name-convention	alembic migration revision attribute read by alembic by name
+pdm	CHK006	src/pdm/cli/commands/search.py:Command	fp	name-convention	pdm core.py imports pdm.cli.commands.<name> and reads module.Command
+poetry	CHK006	src/poetry/console/commands/self/lock.py:SelfLockCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.lock and getattr "SelfLockCommand"
+uvicorn	CHK006	uvicorn/loops/asyncio.py:logger	tp	-	module logger in uvicorn.loops.asyncio, unused anywhere (not even in-module)
+virtualenv	CHK006	src/virtualenv/info.py:fs_path_id	tp	-	in virtualenv.info __all__ but no refs anywhere; info is an internal module
+werkzeug	CHK006	src/werkzeug/exceptions.py:HTTPVersionNotSupported	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskInstanceHistoryCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+black	CHK006	src/black/parsing.py:matches_grammar	tp	-	no refs anywhere in black repo; internal helper
+django	CHK006	django/conf/global_settings.py:EMAIL_PORT	fp	name-convention	Django default setting read via settings.EMAIL_PORT attribute lookup; documented in docs/ref/settings.txt
+fastmcp	CHK006	fastmcp_slim/fastmcp/telemetry.py:TRACE_STATE_KEY	tp	-	constant only used in-module in fastmcp.telemetry; no external refs
+flask	CHK006	src/flask/app.py:T_template_filter	tp	-	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy
+airflow	CHK010	scripts/tests/ci/prek/test_extract_permissions.py:extract_permissions	fp	first-party-missed	scripts/ci/prek/extract_permissions.py exists; test inserts PREK_DIR (scripts/ci/prek) into sys.path
+black	CHK010	src/blackd/__init__.py:_black_version	fp	generated	src/_black_version.py written by hatch-vcs (tool.hatch.build.hooks.vcs version-file)
+django	CHK010	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	tp	-	deliberately nonexistent package in Django test fixture bad_module.py
+djangorestframework	CHK010	tests/test_permissions.py:guardian	fp	declared-third-party	django-guardian in requirements/requirements-optionals.txt (via root requirements.txt -r)
+fastapi	CHK010	scripts/docs.py:mkdocs	tp	-	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt)
+fastmcp	CHK010	fastmcp_slim/fastmcp/utilities/docstring_parsing.py:griffe	fp	declared-third-party	griffelib (provides griffe) in fastmcp_slim/pyproject.toml server extra
+flask	CHK010	tests/test_cli.py:cliapp	fp	first-party-missed	tests/test_apps/cliapp/ exists; test_apps fixture does syspath_prepend(tests/test_apps)
+langchain	CHK010	libs/partners/huggingface/langchain_huggingface/llms/huggingface_pipeline.py:optimum	tp	-	undeclared third-party: optimum (optional OpenVINO backend, not in huggingface pyproject/uv.lock)
+llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain_community	tp	-	undeclared third-party: langchain-community (not in llama-index-core pyproject/uv.lock or root)
+mcp-python-sdk	CHK010	src/mcp/os/win32/utilities.py:win32con	fp	declared-third-party	pywin32 (provides win32con) declared with sys_platform=='win32' marker in pyproject; in uv.lock
+mlflow	CHK010	tests/catboost/test_catboost_model_export.py:catboost	fp	declared-third-party	catboost listed in requirements/extra-ml-requirements.txt
+openai-python	CHK010	tests/test_httpx_compat.py:httpx_aiohttp	tp	-	undeclared third-party: httpx-aiohttp (installed ad hoc by scripts/utils/validate-httpx2-wheel.py legacy lane; test skip-gated)
+pdm	CHK010	src/pdm/environments/base.py:pip	tp	-	undeclared third-party: pip (guarded try/except ImportError; not in pyproject or pdm.lock)
+poetry	CHK010	tests/conftest.py:jaraco	fp	declared-third-party	jaraco-classes declared in pyproject (jaraco namespace pkg) and in poetry.lock
+pydantic	CHK010	pydantic/v1/version.py:cython	tp	-	undeclared third-party: cython (guarded try/except to detect compiled build; not in pyproject/uv.lock)
+python-dotenv	CHK010	tests/test_zip_imports.py:child1	tp	-	child1 package created at test runtime inside a tmp zip; not in repo
+requests	CHK010	tests/compat.py:StringIO	fp	stdlib	unsure: Python 2 stdlib StringIO in py2/py3 try/except fallback; project requires >=3.8 so dead code
+sqlalchemy	CHK010	lib/sqlalchemy/testing/requirements.py:sqlalchemy-stubs	tp	-	undeclared third-party: sqlalchemy2-stubs (hyphenated sqlalchemy-stubs dir; __import__ probe, not declared anywhere)
+starlette	CHK010	starlette/_utils.py:exceptiongroup	tp	-	undeclared third-party: exceptiongroup (py<3.11 guarded; only transitive via anyio, not in pyproject)
+streamlit	CHK010	lib/streamlit/vendor/pympler/asizeof.py:_testcapi	fp	stdlib	_testcapi is a CPython private stdlib test module (guarded try)
+structlog	CHK010	src/structlog/twisted.py:zope	tp	-	undeclared third-party: zope.interface (only transitive via twisted, which is declared in extras)
+transformers	CHK010	src/transformers/quantizers/quantizer_bnb_4bit.py:bitsandbytes	tp	-	undeclared third-party: bitsandbytes (optional quantization backend, not in setup.py/pyproject)
+typer	CHK010	scripts/mkdocs_hooks.py:mkdocs	tp	-	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt)
+urllib3	CHK010	test/contrib/emscripten/test_emscripten.py:js	fp	other	js is a Pyodide runtime builtin module (test body runs in Pyodide via run_in_pyodide)
+virtualenv	CHK010	src/virtualenv/seed/wheels/acquire.py:pip	fp	other	unsure: not an import; argv [sys.executable, '-m', 'pip', 'download'] subprocess using host pip tool
+werkzeug	CHK010	tests/conftest.py:ephemeral_port_reserve	fp	declared-third-party	ephemeral-port-reserve in requirements/tests.in and tests.txt
+airflow	CHK010	scripts/ci/prek/check_shared_distributions_usage.py:tomllib	fp	stdlib	tomllib is stdlib 3.11+; script pins requires-python <3.11 and falls back in try/except
+black	CHK010	scripts/diff_shades_gha_helper.py:diff_shades	tp	-	undeclared third-party: diff-shades (pip-installed only in .github/workflows/diff_shades.yml)
+django	CHK010	tests/utils_tests/test_module_loading.py:egg_module	fp	first-party-missed	egg_module lives inside tests/utils_tests/eggs/test_egg.egg zip put on sys.path (static zip in repo)
+djangorestframework	CHK010	tests/conftest.py:guardian	fp	declared-third-party	django-guardian in requirements/requirements-optionals.txt (via root requirements.txt -r)
+fastapi	CHK010	scripts/mkdocs_hooks.py:material	fp	declared-third-party	mkdocs-material (provides material) in requirements-docs.txt
+fastmcp	CHK010	examples/atproto_mcp/src/atproto_mcp/__main__.py:atproto_mcp	fp	first-party-missed	examples/atproto_mcp/src/atproto_mcp is its own package (example has own pyproject, src layout)
+flask	CHK010	tests/test_instance_config.py:config_module_app	tp	-	config_module_app.py written to tmp_path at test runtime; not in repo
+langchain	CHK010	libs/langchain/langchain_classic/evaluation/loading.py:datasets	tp	-	undeclared third-party: datasets (optional, not in libs/langchain pyproject/uv.lock)
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-nvidia-tensorrt/llama_index/llms/nvidia_tensorrt/base.py:tensorrt_llm	tp	-	undeclared third-party: tensorrt-llm (not in integration pyproject)
+mcp-python-sdk	CHK010	src/mcp/os/win32/utilities.py:win32api	fp	declared-third-party	pywin32 (provides win32api) declared with sys_platform=='win32' marker in pyproject; in uv.lock
+mlflow	CHK010	tests/transformers/test_transformers_autolog.py:optuna	fp	declared-third-party	optuna listed in requirements/test-requirements.txt
+pdm	CHK010	src/pdm/core.py:uv	fp	other	not an import: [sys.executable, '-m', 'uv'] argv after importlib.metadata.distribution('uv') check
+poetry	CHK010	tests/test_helpers.py:jaraco	fp	declared-third-party	jaraco-classes declared in pyproject (jaraco namespace pkg) and in poetry.lock
+pydantic	CHK010	tests/test_forward_ref.py:module_1	tp	-	module_1 created at runtime by create_module fixture; not a real file
+requests	CHK010	src/requests/cookies.py:dummy_threading	fp	stdlib	dummy_threading is stdlib through 3.8; project python_requires>=3.8 (guarded fallback)
+sqlalchemy	CHK010	lib/sqlalchemy/dialects/sqlite/pysqlcipher.py:pysqlcipher3	tp	-	undeclared third-party: pysqlcipher3 (extra declares sqlcipher3_binary only; legacy fallback)
+streamlit	CHK010	lib/streamlit/elements/write.py:tensorflow	tp	-	undeclared third-party: tensorflow (not in streamlit manifests or uv.lock)
+structlog	CHK010	src/structlog/dev.py:better_exceptions	tp	-	undeclared third-party: better-exceptions (guarded optional import)
+transformers	CHK010	tests/utils/test_auto_docstring.py:check_docstrings	fp	first-party-missed	utils/check_docstrings.py exists; test inserts repo_root/utils into sys.path
+typer	CHK010	scripts/deploy_docs_status.py:pydantic_settings	fp	declared-third-party	pydantic-settings in requirements-github-actions.txt
+urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:js	fp	other	js is a Pyodide runtime builtin module (emscripten-only contrib)
+virtualenv	CHK010	tests/unit/seed/wheels/test_acquire.py:pip	fp	other	not an import: list literal [sys.executable,'-m','pip',...] in a test assertion
+werkzeug	CHK010	tests/conftest.py:xprocess	fp	declared-third-party	pytest-xprocess (provides xprocess) in requirements/tests.in and tests.txt
+airflow	CHK010	providers/google/tests/unit/google/cloud/triggers/test_gcs.py:gcloud	fp	declared-third-party	gcloud-aio-storage (gcloud.aio namespace) in providers/google/pyproject.toml

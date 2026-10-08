@@ -64,6 +64,24 @@ and prints a per-rule label-coverage table in `target/oss-metrics/report.md`.
 Full stocktake (CHK003 baseline, blind spots for CHK001/CHK004–010): see
 [`v0.3-stocktake-coverage.md`](./v0.3-stocktake-coverage.md).
 
+## Per-rule precision samples (#656, 2026-10-08)
+
+CHK001 / CHK004 / CHK006 / CHK010 now have a stratified hand-labelled sample
+(about 50 per rule, at most 6 per project, `scripts/sample-precision-labels.py`).
+Labels were set by reading the pinned clones; nothing was executed. Precision is
+recorded in `report.md` and has no threshold yet. Info-severity findings are not
+counted as hits: optional try-imports (CHK003) are labelled `info-expected`.
+
+| Rule | Sample | tp | fp | Precision | Main FP buckets |
+|---|---:|---:|---:|---:|---|
+| CHK001 | 50 | 3 | 47 | 6% | script-entry 13, other 11 (paths in strings, subprocess scripts), dynamic-import 8, framework-loaded 6, library-public 6, type-stub 3 |
+| CHK004 | 54 | 54 | 0 | 100% | — |
+| CHK006 | 50 | 25 | 25 | 50% | name-convention 10 (getattr / dotted strings / entry points), library-public-api 9, external-reference 6 (star re-export, `mod.name`) |
+| CHK010 | 50 | 21 | 29 | 42% | declared-third-party 14 (nested requirements files, import≠dist names, namespace pkgs, markers), first-party-missed 5, other 5, stdlib 4, generated 1 |
+
+CHK010 counts imports reachable only through a declared package's dependencies
+(`mkdocs` via mkdocs-material, `zope.interface` via twisted) as tp.
+
 ## Validation set (20 projects)
 
 Mix per §17 (library / app / server / framework / Django / FastAPI):

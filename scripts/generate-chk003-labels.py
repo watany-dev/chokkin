@@ -4,6 +4,11 @@
 Heuristic triage for Step 0 volume (see docs/dev/plans/phase-3x-step0-chk003-measurement.md).
 Re-run after `make oss-metrics` when the OSS clone set or chokkin version changes.
 
+Labels match on (slug, code, target), and one target can carry several
+findings (one per import line). A key gets one row; when its findings mix an
+optional try-import with a hard import, the hard import's verdict wins because
+info-severity findings are not hits (#656).
+
 Usage:
   scripts/generate-chk003-labels.py findings.tsv >> scripts/oss-fixtures.labels.tsv
 """
@@ -16,9 +21,9 @@ from pathlib import Path
 def _classify(target: str, message: str) -> tuple[str, str, str] | None:
     if message.startswith("optional try-import"):
         return (
-            "fp",
+            "info-expected",
             "optional-import",
-            "auto: optional try-import not treated as hard missing dep",
+            "auto: optional try-import, expected at info severity (#504)",
         )
     low = target.lower()
     if any(
@@ -56,7 +61,7 @@ def _main() -> int:
         print(f"findings file not found: {findings_path}", file=sys.stderr)
         return 2
 
-    rows: list[tuple[str, str, str, str, str, str]] = []
+    labels: dict[tuple[str, str], tuple[str, str, str]] = {}
     with findings_path.open(newline="") as handle:
         reader = csv.reader(handle, delimiter="\t")
         next(reader, None)
@@ -73,13 +78,13 @@ def _main() -> int:
                     file=sys.stderr,
                 )
                 return 1
-            v, bucket, note = verdict
-            rows.append((slug, "CHK003", target, v, bucket, note))
+            prev = labels.get((slug, target))
+            if prev is None or prev[0] == "info-expected":
+                labels[(slug, target)] = verdict
 
-    rows.sort(key=lambda item: (item[0], item[2]))
-    for slug, code, target, verdict, bucket, note in rows:
-        print(f"{slug}\t{code}\t{target}\t{verdict}\t{bucket}\t{note}")
-    print(f"# generated {len(rows)} CHK003 labels", file=sys.stderr)
+    for (slug, target), (verdict, bucket, note) in sorted(labels.items()):
+        print(f"{slug}\tCHK003\t{target}\t{verdict}\t{bucket}\t{note}")
+    print(f"# generated {len(labels)} CHK003 labels", file=sys.stderr)
     return 0
 
 

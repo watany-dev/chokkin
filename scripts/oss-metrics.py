@@ -36,6 +36,8 @@ Options:
 Outputs (under --output):
   <slug>.json     raw chokkin JSON report
   findings.tsv    every CHK001–CHK010 finding with ground-truth verdict
+                  (columns: slug code target verdict bucket confidence
+                  message severity)
   summary.tsv     per-project: size, exit, median_ms, totals, by-code counts
   report.md       human-readable §17 scorecard + per-rule label coverage
   expectations.tsv  this run's values for the --expect projects, in the
@@ -44,12 +46,25 @@ Outputs (under --output):
 
 Every timed run is cold: all .chokkin/ caches under the project (workspace
 members get their own) are removed before each run and again afterwards, so
-clones and fixtures are left as they were.
+clones and fixtures are left as they were. Runs also pass --no-cache, so no
+stale result can leak into the findings.
 
 False-positive accounting: each reported CHK002 finding is matched against the
 labels file on (slug, code, target). Verdict `fp` counts as a false positive;
 `tp` as a true positive; `deferred` and unlabeled findings are unclassified.
 The FP-rate gate cannot pass while CHK002 unclassified findings remain.
+
+Severity: a finding reported at severity `info` is not a hit. It is left out of
+every reported count, FP rate and precision denominator, and does not satisfy a
+`tp` label in the recall gate. Verdict `info-expected` labels a finding that is
+correct only at info severity (e.g. a CHK003 for an optional try-import, #504);
+reported at any other severity it counts as `fp`.
+
+Precision: every rule's precision tp / (tp + fp) over its labelled hits is
+recorded in report.md (record only, no threshold yet; #656). CHK001 / CHK004 /
+CHK006 / CHK010 labels are a per-project stratified sample drawn by
+scripts/sample-precision-labels.py, so their precision is a sample estimate.
+Labels whose finding no longer appears are listed as stale.
 
 Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
 separate recall gate measures in-repo sentinel fixtures (--recall manifest)
@@ -157,6 +172,17 @@ def expectation_misses(slug: str, report: dict, floor: tuple[int, dict[str, int]
     return misses
 
 
+def is_hit(severity: str) -> bool:
+    """A finding at info severity is not a hit."""
+    return severity != "info"
+
+
+def effective(verdict: str) -> str:
+    """An `info-expected` label on a hit means the finding lost its info
+    downgrade, so it counts as `fp`."""
+    return "fp" if verdict == "info-expected" else verdict
+
+
 def remove_caches(proj: Path) -> None:
     # Workspace members get their own .chokkin/ next to the project root's.
     for cache in list(proj.rglob(".chokkin")):
@@ -170,7 +196,7 @@ def timed_run(bin_path: Path, proj: Path, runs: int) -> tuple[subprocess.Complet
         for _ in range(runs):
             remove_caches(proj)
             start = time.monotonic()
-            run = oc.chokkin_raw(bin_path, proj)
+            run = oc.chokkin_raw(bin_path, proj, "--no-cache")
             times.append(int((time.monotonic() - start) * 1000))
     finally:
         remove_caches(proj)
@@ -206,7 +232,7 @@ def compare_md(base: Path, head: Path, report: list[str]) -> list[str]:
         1 for r in head_find if r[1] == "CHK003" and r[3] in ("unknown", "deferred")
     )
     start = report.index("## Exit criteria")
-    end = report.index("## Per-rule label coverage")
+    end = report.index("## Per-rule label coverage and precision")
     return [
         *oc.md_table(
             ["Project", "CHK002 base", "CHK002 head", "CHK003 base", "CHK003 head"],
@@ -280,7 +306,8 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     summary_rows: list[list] = []
     findings: list[list[str]] = []
-    reported: set[tuple[str, str, str]] = set()
+    reported: set[tuple[str, str, str]] = set()  # hits only
+    seen: set[tuple[str, str, str]] = set()  # every finding, incl. info
     expect_rows: list[list] = []
     crashes = config_errors = 0
     expect_misses: list[str] = []
@@ -303,11 +330,15 @@ def main() -> int:
         for issue in issues:
             target = issue.get("target")
             target = "?" if target is None else target
-            reported.add((slug, issue["code"], target))
+            severity = issue.get("severity") or "?"
+            seen.add((slug, issue["code"], target))
+            if is_hit(severity):
+                reported.add((slug, issue["code"], target))
             verdict, bucket = labels.get((slug, issue["code"], target), ("unknown", "-"))
             findings.append([
                 slug, issue["code"], tsv_field(target), verdict, bucket,
                 tsv_field(issue.get("confidence") or "?"), tsv_field(issue.get("message") or ""),
+                tsv_field(severity),
             ])
         by_code = {c: sum(1 for i in issues if i["code"] == c) for c in ("CHK002", "CHK003")}
         total = report.get("summary", {}).get("total", 0) if report else 0
@@ -336,12 +367,28 @@ def main() -> int:
         "summary.tsv", ["slug", "category", "size", "exit", "median_ms", "total", "CHK002", "CHK003"], summary_rows
     )
     findings_path = write_tsv(
-        "findings.tsv", ["slug", "code", "target", "verdict", "bucket", "confidence", "message"], findings
+        "findings.tsv", ["slug", "code", "target", "verdict", "bucket", "confidence", "message", "severity"],
+        findings,
     )
     write_tsv("expectations.tsv", ["# slug", "runtime_min", "counts"], expect_rows)
 
     def count(code: str, verdict: str | None = None) -> int:
-        return sum(1 for f in findings if f[1] == code and (verdict is None or f[3] == verdict))
+        return sum(
+            1 for f in findings
+            if f[1] == code and is_hit(f[7]) and (verdict is None or effective(f[3]) == verdict)
+        )
+
+    def info_count(code: str) -> int:
+        return sum(1 for f in findings if f[1] == code and f[7] == "info")
+
+    def precision(code: str) -> str:
+        tp, fp = count(code, "tp"), count(code, "fp")
+        return f"{100 * tp / (tp + fp):.1f}" if tp + fp else "n/a"
+
+    def stale(code: str) -> int:
+        # Labels of this rule whose finding is absent from the run: it was
+        # fixed, or a clone revision bump moved its target.
+        return sum(1 for (s, c, t), (v, _) in labels.items() if c == code and v != "deferred" and (s, c, t) not in seen)
 
     y002_total, y002_fp = count("CHK002"), count("CHK002", "fp")
     y002_unclassified = count("CHK002", "unknown") + count("CHK002", "deferred")
@@ -405,19 +452,26 @@ def main() -> int:
             ],
         ),
         "",
-        "## Per-rule label coverage",
+        "## Per-rule label coverage and precision",
         "",
-        "Coverage % = (tp + fp) / reported. Deferred triage is not ground truth.",
-        "Reported=0 means the rule",
-        "emitted nothing on this corpus — precision and recall are both unverified.",
+        "Reported counts hits (severity above info); Info is the info-severity",
+        "findings left out of every other column. Coverage % = (tp + fp) / reported.",
+        "Precision % = tp / (tp + fp), recorded only (no threshold yet). For",
+        "CHK001/CHK004/CHK006/CHK010 the labels are a stratified sample",
+        "(scripts/sample-precision-labels.py). Deferred triage is not ground truth.",
+        "Stale = labels whose finding is absent from this run. Reported=0 means the",
+        "rule emitted nothing on this corpus — precision and recall are both unverified.",
         "",
         *oc.md_table(
-            ["Rule", "Reported", "tp", "fp", "deferred", "unknown", "Coverage %"],
+            ["Rule", "Reported", "Info", "tp", "fp", "deferred", "unknown", "Coverage %", "Precision %", "Stale"],
             [
-                [c, count(c), count(c, "tp"), count(c, "fp"), count(c, "deferred"), count(c, "unknown"), coverage(c)]
+                [
+                    c, count(c), info_count(c), count(c, "tp"), count(c, "fp"), count(c, "deferred"),
+                    count(c, "unknown"), coverage(c), precision(c), stale(c),
+                ]
                 for c in ALL_RULES
             ],
-            "lrrrrrr",
+            "lrrrrrrrrr",
         ),
         "",
         "## CHK003 root-cause buckets",
@@ -442,7 +496,10 @@ def main() -> int:
         "## Findings (CHK001–CHK010)",
         "",
         *(
-            oc.md_table(["Project", "Code", "Target", "Verdict", "Bucket", "Confidence", "Message"], findings)
+            oc.md_table(
+                ["Project", "Code", "Target", "Verdict", "Bucket", "Confidence", "Severity", "Message"],
+                [[*f[:6], f[7], f[6]] for f in findings],
+            )
             if findings
             else ["_No findings across the set._"]
         ),
@@ -451,10 +508,10 @@ def main() -> int:
         "",
         "- FP rate denominator is reported CHK002 findings (user-facing precision).",
         "- CHK002 unclassified = unknown + deferred; both block the §17 FP gate.",
-        "- Recall gate counts every `tp` label (all rules, incl. sentinels).",
+        "- Recall gate counts every `tp` label (all rules, incl. sentinels); an info-severity finding does not satisfy it.",
         f"- CHK003 (missing dependency): {count('CHK003')} reported ({count('CHK003', 'fp')} FP, "
         f"{count('CHK003', 'tp')} tp, {count('CHK003', 'deferred')} deferred, "
-        f"{count('CHK003', 'unknown')} unknown) — informational, not a §17 gate.",
+        f"{count('CHK003', 'unknown')} unknown) plus {info_count('CHK003')} at info — informational, not a §17 gate.",
         "- Large-size projects are reported but excluded from the medium cold-run gate.",
     ]
     report_path = out / "report.md"
