@@ -32,7 +32,7 @@
 | bundled maps | [step-07](./step-07-import-resolution.md) §3.2–3.3 | 確定 | 🟡 seed あり |
 | wheel + PyPI release | spec §15, `release.yml` | 確定 | ✅ v0.1.0 |
 | **フル CLI + reporter** | [phase-1-cli-reporter.md](./phase-1-cli-reporter.md) | 確定 | ✅ |
-| OSS dogfooding + §17 gate | `scripts/oss-metrics.sh` | 確定 | ✅ 計測済み |
+| OSS dogfooding + §17 gate | `scripts/oss-metrics.py` | 確定 | ✅ 計測済み |
 | **v0.1 誤検知是正** | [phase-1.5-fp-remediation.md](./phase-1.5-fp-remediation.md) | 確定 | ✅ |
 | **v0.2 導入支援** | [phase-2-v0.2-adoption.md](./phase-2-v0.2-adoption.md) | 完了 | ✅ |
 | **v0.3 契約安定化** | spec §17 Phase 3 | 完了 | ✅ |

@@ -15,7 +15,7 @@
 # Bucket vocabulary (CHK003): map-gap | workspace-boundary | optional-import |
 # dev-context | transitive-policy | metadata-gap | first-party
 #
-# scripts/oss-metrics.sh matches findings on (slug, code, target); one row per
+# scripts/oss-metrics.py matches findings on (slug, code, target); one row per
 # key. Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
 # Info-severity findings are not hits: they never count as fp/tp, and an
 # `info-expected` label on a finding reported above info counts as fp.

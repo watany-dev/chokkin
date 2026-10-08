@@ -1,4 +1,4 @@
-# Regression floors for scripts/oss-metrics.sh --expect (#495).
+# Regression floors for scripts/oss-metrics.py --expect (#495).
 #
 # Tab-separated columns (lines starting with # are ignored):
 #   slug          project slug from scripts/oss-clones.manifest
@@ -8,7 +8,7 @@
 #   counts        per-rule issue counts of the last accepted run; a rule may
 #                 grow by at most max(5, count/5)
 #
-# Refresh: run scripts/oss-metrics.sh and copy the rows of
+# Refresh: run scripts/oss-metrics.py and copy the rows of
 # target/oss-metrics/expectations.tsv here once the new numbers are reviewed.
 #
 # slug	runtime_min	counts
