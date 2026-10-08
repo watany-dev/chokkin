@@ -30,6 +30,8 @@
 # Outputs (under --output):
 #   <slug>.json     raw chokkin JSON report
 #   findings.tsv    every CHK001–CHK010 finding with ground-truth verdict
+#                   (columns: slug code target verdict bucket confidence
+#                   message severity)
 #   summary.tsv     per-project: size, exit, median_ms, totals, by-code counts
 #   report.md       human-readable §17 scorecard + per-rule label coverage
 #   expectations.tsv  this run's values for the --expect projects, in the
@@ -39,6 +41,18 @@
 # labels file on (slug, code, target). Verdict `fp` counts as a false positive;
 # `tp` as a true positive; `deferred` and unlabeled findings are unclassified.
 # The FP-rate gate cannot pass while CHK002 unclassified findings remain.
+#
+# Severity: a finding reported at severity `info` is not a hit. It is left out
+# of every reported count, FP rate and precision denominator, and does not
+# satisfy a `tp` label in the recall gate. Verdict `info-expected` labels a
+# finding that is correct only at info severity (e.g. a CHK003 for an optional
+# try-import, #504); reported at any other severity it counts as `fp`.
+#
+# Precision: every rule's precision tp / (tp + fp) over its labelled hits is
+# recorded in report.md (record only, no threshold yet; #656). CHK001 / CHK004 /
+# CHK006 / CHK010 labels are a per-project stratified sample drawn by
+# scripts/sample-precision-labels.py, so their precision is a sample estimate.
+# Labels whose finding no longer appears are listed as stale.
 #
 # Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
 # separate recall gate measures in-repo sentinel fixtures (--recall manifest)
@@ -70,7 +84,7 @@ FP_GATE_PCT=5
 
 ALL_RULES=(CHK001 CHK002 CHK003 CHK004 CHK005 CHK006 CHK007 CHK008 CHK009 CHK010)
 
-usage() { sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,66p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -108,7 +122,7 @@ SUMMARY="$OUTPUT/summary.tsv"
 FINDINGS="$OUTPUT/findings.tsv"
 REPORT="$OUTPUT/report.md"
 printf 'slug\tcategory\tsize\texit\tmedian_ms\ttotal\tCHK002\tCHK003\n' >"$SUMMARY"
-printf 'slug\tcode\ttarget\tverdict\tbucket\tconfidence\tmessage\n' >"$FINDINGS"
+printf 'slug\tcode\ttarget\tverdict\tbucket\tconfidence\tmessage\tseverity\n' >"$FINDINGS"
 EXPECT_OUT="$OUTPUT/expectations.tsv"
 printf '# slug\truntime_min\tcounts\n' >"$EXPECT_OUT"
 
@@ -184,7 +198,10 @@ measure_one() {
   local times="" exit_code=0 start_ms end_ms i
   for ((i = 0; i < RUNS; i++)); do
     start_ms="$(date +%s%3N)"
-    "$CHOKKIN_BIN" --reporter json --no-exit-code "$proj" >"$json_out" 2>"$OUTPUT/$slug.stderr"
+    # --no-cache: a .chokkin/ left in the clone (or the sentinel fixture) by
+    # an earlier run must not turn a cold run into a warm one or leak stale
+    # results into the findings.
+    "$CHOKKIN_BIN" --reporter json --no-exit-code --no-cache "$proj" >"$json_out" 2>"$OUTPUT/$slug.stderr"
     exit_code=$?
     end_ms="$(date +%s%3N)"
     times+=" $((end_ms - start_ms))"
@@ -197,16 +214,17 @@ measure_one() {
     y002="$(jq -r '[.issues[]? | select(.code=="CHK002")] | length' "$json_out")"
     y003="$(jq -r '[.issues[]? | select(.code=="CHK003")] | length' "$json_out")"
 
-    local code target conf msg lookup verdict bucket
-    while IFS=$'\t' read -r code target conf msg; do
+    local code target conf msg sev lookup verdict bucket
+    while IFS=$'\t' read -r code target conf msg sev; do
       [[ -z "$code" ]] && continue
       lookup="$(label_lookup "$slug" "$code" "$target")"
       verdict="${lookup%%$'\t'*}"
       bucket="${lookup#*$'\t'}"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$slug" "$code" "$target" "$verdict" "$bucket" "$conf" "$msg" >>"$FINDINGS"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$slug" "$code" "$target" "$verdict" "$bucket" "$conf" "$msg" "$sev" >>"$FINDINGS"
     done < <(jq -r '.issues[]?
-                    | [.code, (.target // "?"), (.confidence // "?"), (.message // "")] | @tsv' "$json_out")
+                    | [.code, (.target // "?"), (.confidence // "?"), (.message // ""),
+                       (.severity // "?")] | @tsv' "$json_out")
   else
     echo "  non-JSON output (see $OUTPUT/$slug.stderr)" >&2
   fi
@@ -252,12 +270,39 @@ if [[ "$ran" -eq 0 ]]; then
   exit 2
 fi
 
+# Hits are findings above info severity; an `info-expected` label on a hit
+# means the finding lost its info downgrade, so it counts as `fp`.
+HIT_AWK='function hit() { return $8 != "info" }
+function effective() { return ($4 == "info-expected") ? "fp" : $4 }'
+
 verdict_count() {
-  awk -F'\t' -v c="$1" -v v="$2" 'NR>1 && $2==c && $4==v {n++} END{print n+0}' "$FINDINGS"
+  awk -F'\t' -v c="$1" -v v="$2" "$HIT_AWK"'
+    NR>1 && $2==c && hit() && effective()==v {n++} END{print n+0}' "$FINDINGS"
 }
 
 rule_reported() {
-  awk -F'\t' -v c="$1" 'NR>1 && $2==c {n++} END{print n+0}' "$FINDINGS"
+  awk -F'\t' -v c="$1" "$HIT_AWK"'NR>1 && $2==c && hit() {n++} END{print n+0}' "$FINDINGS"
+}
+
+rule_info() {
+  awk -F'\t' -v c="$1" 'NR>1 && $2==c && $8=="info" {n++} END{print n+0}' "$FINDINGS"
+}
+
+# tp / (tp + fp) over labelled hits, or n/a when none are labelled.
+precision_pct() {
+  awk -v t="$1" -v f="$2" 'BEGIN { if (t + f == 0) print "n/a"; else printf "%.1f", 100 * t / (t + f) }'
+}
+
+# Labels (tp/fp/info-expected) of this rule whose finding is absent from the
+# run: the finding was fixed, or a clone revision bump moved its target.
+stale_labels() {
+  [[ -f "$LABELS" ]] || { echo 0; return; }
+  awk -F'\t' -v c="$1" '
+    FILENAME == ARGV[1] { if (FNR > 1) seen[$1 "\t" $2 "\t" $3] = 1; next }
+    /^#/ || NF < 5 || $2 != c || $4 == "deferred" { next }
+    !(($1 "\t" $2 "\t" $3) in seen) { n++ }
+    END { print n+0 }
+  ' "$FINDINGS" "$LABELS"
 }
 
 y002_total="$(rule_reported CHK002)"
@@ -281,7 +326,7 @@ if [[ -f "$LABELS" ]]; then
     [[ -z "$lslug" ]] && continue
     tp_total=$((tp_total + 1))
     awk -F'\t' -v s="$lslug" -v c="$lcode" -v t="$ltarget" \
-      'NR>1 && $1==s && $2==c && $3==t {found=1} END{exit !found}' "$FINDINGS" ||
+      'NR>1 && $1==s && $2==c && $3==t && $8!="info" {found=1} END{exit !found}' "$FINDINGS" ||
       { tp_missed=$((tp_missed + 1)); missed+=("$lslug/$lcode/$ltarget"); }
   done < <(awk -F'\t' '/^#/ || NF<5 {next} $4=="tp" {print $1"\t"$2"\t"$3}' "$LABELS")
 fi
@@ -302,9 +347,9 @@ verdict() { [[ "$1" -eq 1 ]] && echo "✅ PASS" || echo "❌ FAIL"; }
 
 coverage_pct() {
   local code="$1"
-  awk -F'\t' -v c="$code" '
-    NR > 1 && $2 == c { reported++ }
-    NR > 1 && $2 == c && ($4 == "tp" || $4 == "fp") { classified++ }
+  awk -F'\t' -v c="$code" "$HIT_AWK"'
+    NR > 1 && $2 == c && hit() { reported++ }
+    NR > 1 && $2 == c && hit() && (effective() == "tp" || effective() == "fp") { classified++ }
     END {
       if (reported == 0) print "n/a"
       else printf "%.1f", 100 * classified / reported
@@ -343,22 +388,29 @@ coverage_pct() {
     echo "| Cold run, medium project | <= ${MEDIUM_GATE_MS} ms | over: ${medium_slow[*]} | $(verdict "$pass_speed") |"
   fi
   echo ""
-  echo "## Per-rule label coverage"
+  echo "## Per-rule label coverage and precision"
   echo ""
-  echo "Coverage % = (tp + fp) / reported. Deferred triage is not ground truth."
-  echo "Reported=0 means the rule"
-  echo "emitted nothing on this corpus — precision and recall are both unverified."
+  echo "Reported counts hits (severity above info); Info is the info-severity"
+  echo "findings left out of every other column. Coverage % = (tp + fp) / reported."
+  echo "Precision % = tp / (tp + fp), recorded only (no threshold yet). For"
+  echo "CHK001/CHK004/CHK006/CHK010 the labels are a stratified sample"
+  echo "(scripts/sample-precision-labels.py). Deferred triage is not ground truth."
+  echo "Stale = labels whose finding is absent from this run. Reported=0 means the"
+  echo "rule emitted nothing on this corpus — precision and recall are both unverified."
   echo ""
-  echo "| Rule | Reported | tp | fp | deferred | unknown | Coverage % |"
-  echo "|---|---:|---:|---:|---:|---:|---:|"
+  echo "| Rule | Reported | Info | tp | fp | deferred | unknown | Coverage % | Precision % | Stale |"
+  echo "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
   for code in "${ALL_RULES[@]}"; do
     rep="$(rule_reported "$code")"
+    info="$(rule_info "$code")"
     tp="$(verdict_count "$code" tp)"
     fp="$(verdict_count "$code" fp)"
     def="$(verdict_count "$code" deferred)"
     unk="$(verdict_count "$code" unknown)"
     cov="$(coverage_pct "$code")"
-    echo "| $code | $rep | $tp | $fp | $def | $unk | $cov |"
+    prec="$(precision_pct "$tp" "$fp")"
+    stale="$(stale_labels "$code")"
+    echo "| $code | $rep | $info | $tp | $fp | $def | $unk | $cov | $prec | $stale |"
   done
   echo ""
   echo "## CHK003 root-cause buckets"
@@ -396,17 +448,17 @@ coverage_pct() {
   if [[ "$finding_rows" -eq 0 ]]; then
     echo "_No findings across the set._"
   else
-    echo "| Project | Code | Target | Verdict | Bucket | Confidence | Message |"
-    echo "|---|---|---|---|---|---|---|"
-    awk -F'\t' 'NR>1 {printf "| %s | %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6,$7}' "$FINDINGS"
+    echo "| Project | Code | Target | Verdict | Bucket | Confidence | Severity | Message |"
+    echo "|---|---|---|---|---|---|---|---|"
+    awk -F'\t' 'NR>1 {printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n",$1,$2,$3,$4,$5,$6,$8,$7}' "$FINDINGS"
   fi
   echo ""
   echo "## Notes"
   echo ""
   echo "- FP rate denominator is reported CHK002 findings (user-facing precision)."
   echo "- CHK002 unclassified = unknown + deferred; both block the §17 FP gate."
-  echo "- Recall gate counts every \`tp\` label (all rules, incl. sentinels)."
-  echo "- CHK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_tp} tp, ${y003_deferred} deferred, ${y003_unknown} unknown) — informational, not a §17 gate."
+  echo "- Recall gate counts every \`tp\` label (all rules, incl. sentinels); an info-severity finding does not satisfy it."
+  echo "- CHK003 (missing dependency): ${y003_total} reported (${y003_fp} FP, ${y003_tp} tp, ${y003_deferred} deferred, ${y003_unknown} unknown) plus $(rule_info CHK003) at info — informational, not a §17 gate."
   echo "- Large-size projects are reported but excluded from the medium cold-run gate."
 } >"$REPORT"
 
