@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `[tool.uv.workspace] exclude` is honored: a directory it matches is no
+  longer read as a workspace member even when `members` matches it, as in
+  uv (#568).
+
 ## [0.7.1] - 2026-10-08
 
 v0.7.1 is a fix release on top of v0.7.0. Over the 45-project corpus in
@@ -255,9 +260,6 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   - `plugins::PytestImportSettings` gains `testpaths` (#544).
 
 ### Fixed
-- `[tool.uv.workspace] exclude` is honored: a directory it matches is no
-  longer read as a workspace member even when `members` matches it, as in
-  uv (#568).
 - A non-UTF-8 Python source no longer aborts the whole analysis with exit 2.
   A file with a PEP 263 `latin-1` / `cp1252` declaration (CPython aliases
   included) is decoded; any other file is skipped with a warning and is never
