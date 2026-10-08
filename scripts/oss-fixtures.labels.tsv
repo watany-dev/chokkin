@@ -13,7 +13,7 @@
 # Bucket vocabulary (CHK003 fp/deferred): map-gap | workspace-boundary | optional-import |
 # dev-context | transitive-policy | metadata-gap | first-party
 #
-# scripts/oss-metrics.sh matches findings on (slug, code, target).
+# scripts/oss-metrics.py matches findings on (slug, code, target).
 # Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
 #
 # slug	code	target	verdict	bucket	note

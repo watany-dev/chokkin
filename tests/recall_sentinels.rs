@@ -1,6 +1,6 @@
 //! Recall sentinels from `scripts/oss-recall.manifest` (#324).
 //!
-//! `scripts/oss-metrics.sh --gate` needs OSS clones, so CI would otherwise never
+//! `scripts/oss-metrics.py --gate` needs OSS clones, so CI would otherwise never
 //! notice a sentinel going silent. This replays its recall and CHK002 labelling
 //! checks on the in-repo fixtures only.
 
@@ -99,7 +99,7 @@ fn recall_sentinels_keep_every_tp_label_and_label_every_chk002() {
         .collect();
     assert!(missed.is_empty(), "missed tp: {missed:?}\nfound: {found:?}");
 
-    // oss-metrics.sh fails the FP gate on unlabelled or deferred CHK002.
+    // oss-metrics.py fails the FP gate on unlabelled or deferred CHK002.
     let unclassified: Vec<_> = found
         .iter()
         .filter(|(_, code, _)| code == "CHK002")

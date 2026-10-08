@@ -5,7 +5,7 @@ of 20 real OSS Python projects.
 
 - chokkin version: `0.3.0`
 - date: 2026-07-01 (re-measured for the v0.3 release)
-- harness: `scripts/clone-oss-fixtures.sh` + `scripts/oss-metrics.sh`
+- harness: `scripts/clone-oss-fixtures.sh` + `scripts/oss-metrics.py`
   (`make oss-metrics`)
 - validation set: `scripts/oss-clones.manifest` (pinned tags; resolved SHAs in
   `target/oss-clones/clones.lock.tsv`)
@@ -114,7 +114,7 @@ tag), built in a `git worktree` and compared with `main` on the same corpus:
 git worktree add ../chokkin-573ff37 573ff37
 cargo build --release --manifest-path ../chokkin-573ff37/Cargo.toml
 make oss-clones
-scripts/oss-metrics.sh -b ../chokkin-573ff37/target/release/chokkin -o target/oss-metrics-573ff37
+scripts/oss-metrics.py -b ../chokkin-573ff37/target/release/chokkin -o target/oss-metrics-573ff37
 make oss-metrics
 ```
 
