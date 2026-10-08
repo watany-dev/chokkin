@@ -35,6 +35,7 @@ struct UvTool {
 #[derive(Deserialize)]
 struct UvWorkspace {
     members: Option<UvMembers>,
+    exclude: Option<UvMembers>,
 }
 
 #[derive(Deserialize)]
@@ -42,6 +43,15 @@ struct UvWorkspace {
 enum UvMembers {
     One(String),
     Many(Vec<String>),
+}
+
+impl UvMembers {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            Self::One(member) => vec![member],
+            Self::Many(members) => members,
+        }
+    }
 }
 
 /// Read and parse a standalone `.chokkin.toml` or `chokkin.toml` file.
@@ -77,14 +87,16 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
             (!paths.is_empty()).then_some((name, paths))
         })
         .collect();
-    let uv_workspace = workspace
-        .and_then(|workspace| workspace.members)
-        .map(|members| match members {
-            UvMembers::One(member) => vec![member],
-            UvMembers::Many(members) => members,
+    let uv_workspace = workspace.and_then(|workspace| {
+        let members = workspace.members.map(UvMembers::into_vec)?;
+        (!members.is_empty()).then(|| UvWorkspaceHint {
+            members,
+            exclude: workspace
+                .exclude
+                .map(UvMembers::into_vec)
+                .unwrap_or_default(),
         })
-        .filter(|members| !members.is_empty())
-        .map(|members| UvWorkspaceHint { members });
+    });
     Ok(PyProjectConfig {
         partial,
         uv_workspace,
@@ -248,5 +260,22 @@ mod tests {
         assert!(
             matches!(err, ConfigError::Validation { ref field, .. } if field == "severity.chk001")
         );
+    }
+
+    #[test]
+    fn uv_workspace_hint_reads_exclude() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("pyproject.toml");
+        fs::write(
+            &path,
+            "[tool.uv.workspace]\nmembers = [\"packages/*\"]\nexclude = [\"packages/legacy\"]\n",
+        )
+        .expect("write");
+        let hint = parse_pyproject_config(&path)
+            .expect("parse")
+            .uv_workspace
+            .expect("hint");
+        assert_eq!(hint.members, ["packages/*"]);
+        assert_eq!(hint.exclude, ["packages/legacy"]);
     }
 }

@@ -154,6 +154,7 @@ mod tests {
     fn workspace_member_matches_basename() {
         let hint = UvWorkspaceHint {
             members: vec!["packages/billing".to_owned()],
+            exclude: Vec::new(),
         };
         assert!(is_workspace_import(
             "billing",

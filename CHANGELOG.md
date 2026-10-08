@@ -154,6 +154,9 @@ count falls from 63,606 with v0.6.0 to 9,287. The JSON / baseline
   matching (#585).
 
 ### Fixed
+- `[tool.uv.workspace] exclude` is honored: a directory it matches is no
+  longer read as a workspace member even when `members` matches it, as in
+  uv (#568).
 - A declared `python-multipart` counts as used when `starlette` or `fastapi`
   is, since starlette imports it only inside `request.form()`, so it is no
   longer reported as CHK002.

@@ -84,26 +84,9 @@ fn resolve_uv_members(
     root: &Path,
     hint: &UvWorkspaceHint,
 ) -> Result<Vec<ResolvedWorkspaceMember>, ConfigError> {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in &hint.members {
-        let normalized = normalize_relative_path(pattern);
-        // uv expands members one path component at a time: `packages/*`
-        // never reaches `packages/foo/tests/fixture/`.
-        let glob = GlobBuilder::new(&normalized)
-            .literal_separator(true)
-            .build()
-            .map_err(|source| ConfigError::Validation {
-                path: root.join("pyproject.toml"),
-                field: "tool.uv.workspace.members".to_owned(),
-                message: source.to_string(),
-            })?;
-        builder.add(glob);
-    }
-    let set = builder.build().map_err(|source| ConfigError::Validation {
-        path: root.join("pyproject.toml"),
-        field: "tool.uv.workspace.members".to_owned(),
-        message: source.to_string(),
-    })?;
+    let members = uv_member_globs(root, &hint.members, "members")?;
+    // uv drops an excluded directory even when `members` matches it (#568).
+    let exclude = uv_member_globs(root, &hint.exclude, "exclude")?;
 
     let mut paths = BTreeSet::new();
     for pyproject in find_pyprojects(root)? {
@@ -114,11 +97,30 @@ fn resolve_uv_members(
             continue;
         }
         let rel = relative_path(root, member_dir)?;
-        if set.is_match(&rel) {
+        if members.is_match(&rel) && !exclude.is_match(&rel) {
             paths.insert(rel);
         }
     }
     Ok(members_with_unique_ids(paths))
+}
+
+/// Compile `[tool.uv.workspace].<field>` patterns. uv expands them one path
+/// component at a time: `packages/*` never reaches `packages/foo/tests/fixture/`.
+fn uv_member_globs(root: &Path, patterns: &[String], field: &str) -> Result<GlobSet, ConfigError> {
+    let invalid = |source: globset::Error| ConfigError::Validation {
+        path: root.join("pyproject.toml"),
+        field: format!("tool.uv.workspace.{field}"),
+        message: source.to_string(),
+    };
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        let glob = GlobBuilder::new(&normalize_relative_path(pattern))
+            .literal_separator(true)
+            .build()
+            .map_err(invalid)?;
+        builder.add(glob);
+    }
+    builder.build().map_err(invalid)
 }
 
 /// Members named after their directory; a shared basename falls back to the
@@ -337,6 +339,7 @@ mod tests {
             &default_config(),
             Some(&UvWorkspaceHint {
                 members: vec!["services/*".to_owned()],
+                exclude: Vec::new(),
             }),
             &BTreeMap::new(),
         )
@@ -358,6 +361,7 @@ mod tests {
             &default_config(),
             Some(&UvWorkspaceHint {
                 members: vec![".venv/*".to_owned(), ".hidden/*".to_owned()],
+                exclude: Vec::new(),
             }),
             &BTreeMap::new(),
         )
@@ -372,6 +376,7 @@ mod tests {
             &default_config(),
             Some(&UvWorkspaceHint {
                 members: patterns.iter().map(|p| (*p).to_owned()).collect(),
+                exclude: Vec::new(),
             }),
             &BTreeMap::new(),
         )
@@ -395,6 +400,26 @@ mod tests {
             uv_members(temp.path(), &["packages/*"]),
             [("api".to_owned(), "packages/api".to_owned())]
         );
+    }
+
+    #[test]
+    fn uv_exclude_drops_matching_members() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for dir in ["packages/api", "packages/legacy", "packages/old-a"] {
+            write(temp.path(), &format!("{dir}/pyproject.toml"), "");
+        }
+        let members = resolve_workspace_members(
+            &root(temp.path()),
+            &default_config(),
+            Some(&UvWorkspaceHint {
+                members: vec!["packages/*".to_owned()],
+                exclude: vec!["packages/legacy".to_owned(), "./packages/old-*/".to_owned()],
+            }),
+            &BTreeMap::new(),
+        )
+        .expect("resolve");
+        let paths: Vec<_> = members.iter().map(|member| member.path.as_str()).collect();
+        assert_eq!(paths, ["packages/api"]);
     }
 
     #[test]
@@ -728,6 +753,7 @@ mod tests {
                 }
                 let hint = patterns.as_ref().map(|patterns| UvWorkspaceHint {
                     members: patterns.iter().map(|p| (*p).to_owned()).collect(),
+                    exclude: Vec::new(),
                 });
                 let sources: BTreeMap<String, Vec<String>> = sources
                     .into_iter()
