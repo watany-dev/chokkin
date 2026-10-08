@@ -94,7 +94,6 @@ fn has_clear_app_signals(
     })
 }
 
-/// Whether a `module:attr` entry point target lives in one of `packages`.
 fn targets_own_package(target: &str, packages: &[String]) -> bool {
     let top = import_root(target.split(':').next().unwrap_or(target).trim());
     packages.iter().any(|package| package == top)
