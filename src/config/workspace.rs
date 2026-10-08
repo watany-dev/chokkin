@@ -85,7 +85,6 @@ fn resolve_uv_members(
     hint: &UvWorkspaceHint,
 ) -> Result<Vec<ResolvedWorkspaceMember>, ConfigError> {
     let members = uv_member_globs(root, &hint.members, "members")?;
-    // uv drops an excluded directory even when `members` matches it (#568).
     let exclude = uv_member_globs(root, &hint.exclude, "exclude")?;
 
     let mut paths = BTreeSet::new();
@@ -104,8 +103,8 @@ fn resolve_uv_members(
     Ok(members_with_unique_ids(paths))
 }
 
-/// Compile `[tool.uv.workspace].<field>` patterns. uv expands them one path
-/// component at a time: `packages/*` never reaches `packages/foo/tests/fixture/`.
+/// uv expands workspace patterns one path component at a time: `packages/*`
+/// never reaches `packages/foo/tests/fixture/`.
 fn uv_member_globs(root: &Path, patterns: &[String], field: &str) -> Result<GlobSet, ConfigError> {
     let invalid = |source: globset::Error| ConfigError::Validation {
         path: root.join("pyproject.toml"),
