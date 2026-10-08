@@ -1128,6 +1128,18 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 誤検知の ground truth は `scripts/oss-fixtures.labels.tsv` に `fp`/`tp`/`deferred`
 で記録し、**CHK002** の未分類 (unknown + deferred) が残ると FP gate は通らない。
 最新の §17 CHK002 scorecard は `docs/dev/oss-validation-report.md` に残す。
+
+severity が `info` の finding (例: optional try-import の CHK003) はヒットとして
+数えない。期待どおり info になるものは `info-expected` ラベルで記録し、hit に昇格
+した場合は `fp` 扱いになる。CHK001 / CHK004 / CHK006 / CHK010 は件数が大きいため
+`scripts/sample-precision-labels.py` で project ごとに上限付きで層別サンプリング
+(rule あたり約 50 件、project あたり最大 6 件、順位は sha256(slug, code, target)
+で固定) し、人手で `tp`/`fp` を付ける。`report.md` は rule ごとの precision
+(tp / (tp + fp)) と、今回の findings に現れなくなった **stale** ラベル数を記録する
+(#656、閾値なしの記録のみ)。clone の revision を上げて stale が出たら該当行を
+消し、同スクリプトを再実行してサンプルを補充する。計測はキャッシュの影響を避ける
+ため `--no-cache` で行う。
+
 CHK001 の実世界 precision は opt-in の remove-and-test oracle
 (`scripts/oss-remove-and-test.py` / `make oss-oracle`) で測る。flag されたファイルを
 使い捨てコピーで削除し、project 自身の pytest を baseline と比較する。解析対象コードを
