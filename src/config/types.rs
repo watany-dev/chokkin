@@ -381,6 +381,10 @@ pub struct LoadedConfig {
 pub struct UvWorkspaceHint {
     /// Member glob patterns as written in `pyproject.toml`.
     pub members: Vec<String>,
+    /// `exclude` glob patterns; a directory they match is never a member,
+    /// even when `members` matches it (uv's precedence, #568).
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 /// Workspace member resolved relative to the project root.
