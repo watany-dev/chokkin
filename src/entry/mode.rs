@@ -2,7 +2,7 @@
 
 use crate::config::{ChokkinConfig, ProjectMode};
 use crate::manifest::LoadedManifest;
-use crate::sources::DiscoveredSources;
+use crate::sources::{DiscoveredSources, FileContext, LayoutInfo};
 
 use super::auto::detect_auto_entries;
 use super::types::{EntryCandidate, EntryWarning};
@@ -29,7 +29,7 @@ pub(super) fn resolve_project_mode(
         return ProjectMode::App;
     }
 
-    if has_clear_app_signals(manifest, candidates) {
+    if has_clear_app_signals(manifest, sources, candidates, true) {
         return ProjectMode::App;
     }
 
@@ -43,10 +43,13 @@ pub(super) fn resolve_project_mode(
 /// Whether a workspace member names a distribution and shows no app signal.
 ///
 /// Namespace packages (`llama_index`) have no `__init__.py`, so unlike root
-/// mode resolution no package is required.
+/// mode resolution no package is required. A monorepo splits its CLI into
+/// its own member (`airflow-core`, `llama-dev`), so a member's console
+/// script stays an app signal even when it targets the member's package.
 #[must_use]
 pub(crate) fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
-    names_distribution(manifest) && !has_clear_app_signals(manifest, &detect_auto_entries(sources))
+    names_distribution(manifest)
+        && !has_clear_app_signals(manifest, sources, &detect_auto_entries(sources), false)
 }
 
 fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> Option<usize> {
@@ -62,23 +65,44 @@ fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> 
     None
 }
 
-fn has_clear_app_signals(manifest: &LoadedManifest, candidates: &[EntryCandidate]) -> bool {
-    if manifest
-        .entry_points
-        .iter()
-        .any(|entry| entry.group == "console" || entry.group == "gui")
-    {
+/// A `wsgi.py` / `app.py` module of the project's own package (werkzeug)
+/// is a library feature, not an app signal; nor is a test fixture's
+/// `app.py`. With `own_cli_is_library`, neither is a CLI shipped inside the
+/// package (`django-admin`, `httpx`) (#652).
+fn has_clear_app_signals(
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+    candidates: &[EntryCandidate],
+    own_cli_is_library: bool,
+) -> bool {
+    let layout = &sources.layout;
+    if manifest.entry_points.iter().any(|entry| {
+        (entry.group == "console" || entry.group == "gui")
+            && !(own_cli_is_library && targets_own_package(&entry.target, &layout.packages))
+    }) {
         return true;
     }
 
     candidates.iter().any(|candidate| {
-        let file_name = candidate
-            .spec
-            .path
-            .rsplit('/')
-            .next()
-            .unwrap_or(candidate.spec.path.as_str());
+        let path = candidate.spec.path.as_str();
+        let file_name = path.rsplit('/').next().unwrap_or(path);
         APP_ENTRY_FILE_NAMES.contains(&file_name)
+            && candidate.context == FileContext::Runtime
+            && !in_package(path, layout)
+    })
+}
+
+/// Whether a `module:attr` entry point target lives in one of `packages`.
+fn targets_own_package(target: &str, packages: &[String]) -> bool {
+    let module = target.split(':').next().unwrap_or(target).trim();
+    let top = module.split('.').next().unwrap_or(module);
+    packages.iter().any(|package| package == top)
+}
+
+fn in_package(path: &str, layout: &LayoutInfo) -> bool {
+    layout.packages.iter().any(|package| {
+        path.strip_prefix(layout.package_dir(package).as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
     })
 }
 
@@ -203,24 +227,97 @@ mod tests {
         assert_eq!(mode, ProjectMode::Library);
     }
 
-    #[test]
-    fn app_mode_from_console_scripts() {
-        let mut manifest = empty_manifest();
-        manifest.entry_points.push(EntryPointDecl {
+    fn console_script(target: &str) -> EntryPointDecl {
+        EntryPointDecl {
             name: "acme-cli".to_owned(),
-            target: "acme.cli:main".to_owned(),
+            target: target.to_owned(),
             group: "console".to_owned(),
             origin: crate::manifest::DependencyOrigin {
                 file: "pyproject.toml".to_owned(),
                 label: "project.scripts.acme-cli".to_owned(),
                 line: None,
             },
-        });
+        }
+    }
+
+    fn auto_candidate(path: &str) -> EntryCandidate {
+        EntryCandidate {
+            spec: EntrySpec {
+                path: path.to_owned(),
+                symbol: None,
+            },
+            context: crate::sources::assign_file_context(path),
+            origin: EntryOrigin::Auto {
+                rule: "auto".to_owned(),
+            },
+        }
+    }
+
+    fn auto_mode(manifest: &LoadedManifest, candidates: &[EntryCandidate]) -> ProjectMode {
         let mut config = default_config();
         config.mode = ProjectMode::Auto;
         let mut warnings = Vec::new();
-        let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[], &mut warnings);
-        assert_eq!(mode, ProjectMode::App);
+        resolve_project_mode(
+            &config,
+            manifest,
+            &library_sources(),
+            candidates,
+            &mut warnings,
+        )
+    }
+
+    #[test]
+    fn app_mode_from_console_scripts_outside_the_package() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        manifest
+            .entry_points
+            .push(console_script("acme_server.cli:main"));
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::App);
+    }
+
+    #[test]
+    fn library_shipping_its_own_cli_stays_a_library() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        manifest.entry_points.push(console_script("acme.cli:main"));
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::Library);
+        manifest.entry_points[0].target = "acme".to_owned();
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::Library);
+        // `acme_cli` is not `acme`: the prefix alone is not the package.
+        manifest.entry_points.push(console_script("acme_cli:main"));
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::App);
+    }
+
+    #[test]
+    fn unnamed_project_with_its_own_cli_is_an_app() {
+        let mut manifest = empty_manifest();
+        manifest.entry_points.push(console_script("acme.cli:main"));
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::App);
+    }
+
+    #[test]
+    fn app_file_names_inside_the_package_are_not_app_signals() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        for path in [
+            "src/acme/wsgi.py",
+            "src/acme/tools/web/app.py",
+            "tests/test_apps/helloworld/wsgi.py",
+        ] {
+            assert_eq!(
+                auto_mode(&manifest, &[auto_candidate(path)]),
+                ProjectMode::Library,
+                "{path}"
+            );
+        }
+        for path in ["wsgi.py", "app.py", "deploy/asgi.py", "src/acme_web/app.py"] {
+            assert_eq!(
+                auto_mode(&manifest, &[auto_candidate(path)]),
+                ProjectMode::App,
+                "{path}"
+            );
+        }
     }
 
     #[test]
@@ -276,6 +373,18 @@ mod tests {
         manifest.metadata.name = Some("llama-index-llms-openai".to_owned());
         assert!(is_library_member(&manifest, &sources));
         sources.files[0].path = "manage.py".to_owned();
+        assert!(!is_library_member(&manifest, &sources));
+    }
+
+    #[test]
+    fn member_cli_in_its_own_package_is_an_app_member() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        let mut sources = library_sources();
+        assert!(is_library_member(&manifest, &sources));
+        sources.files[0].path = "src/acme/wsgi.py".to_owned();
+        assert!(is_library_member(&manifest, &sources));
+        manifest.entry_points.push(console_script("acme.cli:main"));
         assert!(!is_library_member(&manifest, &sources));
     }
 }

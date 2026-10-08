@@ -420,7 +420,9 @@ discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry �
 ただし、library projectではaggressiveにunused filesを出すと誤検知が増える。`mode = "auto"` の判定は次にする。
 
 ```text
-console_scripts / manage.py / asgi.py / wsgi.py / app.py がある
+console_scripts / gui_scripts の参照先が自 package の外にある、
+または package の外に runtime の manage.py / asgi.py / wsgi.py / app.py がある
+(workspace member では自 package を指す console_scripts も含む)
   -> app mode
 
 [project] name (または setup.py の setup() に静的に読めない name) があり、
@@ -435,9 +437,11 @@ src/<package>/__init__.py または root直下の <package>/__init__.py
   -> app mode。ただしunused_fileのconfidence上限をlikelyに落とす
 ```
 
+app signal は project 自身の package（`layout.packages`）の外にあるものに限る（#652）。`django-admin = "django.core.management:..."` や `httpx = "httpx:main"` のように、console / gui entry の参照先 module の先頭要素が自 package なら、CLI を同梱した library とみなして app signal にしない。`manage.py` 等のファイル名も、package 内の module（werkzeug の `src/werkzeug/wsgi.py`、mitmproxy の `mitmproxy/tools/web/app.py`）や test / docs / dev context の file（flask の `tests/test_apps/helloworld/wsgi.py`）は数えない。どちらも従来は library の公開 API を app mode の CHK006 certain にしていた。workspace member の判定（`is_library_member`）は file 名の基準だけを共有し、自 package を指す console / gui entry も app signal のままにする。monorepo は CLI を専用 member（airflow の `airflow-core`、llama_index の `llama-dev`）に分けるため、CLI を持つ member は app とみなす。
+
 setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
 
-workspace member（§5。宣言済み・自動検出とも、#488 / #587）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。代わりにmember自身のwheel target（member manifest、パスはmember相対）から求めたpublic surfaceを使い、その外にある未到達file（`scripts/release.py` 等）はCHK001をapp mode相当のconfidenceに戻す（`apply_member_surfaces`、#587）。入れ子のmemberでは最も深いmemberのsurfaceで判定する。
+workspace member（§5。宣言済み・自動検出とも、#488 / #587）は、`mode = "auto"` でrootがapp modeになったとき、member manifestに `[project].name` がありapp entry（console_scripts / package 外の manage.py 等）がなければ `EntryPlan.library_members` に入る。namespace package（`llama_index/`）は `__init__.py` を持たないため、root判定と違いpackageの存在は要求しない。そのmember配下のファイルはCHK001のconfidence・severity・test除外と、そこで定義・再exportされるsymbolのCHK006 / CHK007のseverityをlibrary modeで判定し（`EntryPlan::mode_for`、#515）、rootのwheel public surfaceによる引き上げの対象外にする。代わりにmember自身のwheel target（member manifest、パスはmember相対）から求めたpublic surfaceを使い、その外にある未到達file（`scripts/release.py` 等）はCHK001をapp mode相当のconfidenceに戻す（`apply_member_surfaces`、#587）。入れ子のmemberでは最も深いmemberのsurfaceで判定する。
 
 `app mode` ではunused filesを積極的に出す。`library mode` では、public moduleは外部利用され得るため、unused filesは `maybe` confidenceに落とし、デフォルトでは表示しないかinfo扱いにする。libraryで本気のunused file検出をしたい場合は、ユーザーに `entry` を明示させる。
 

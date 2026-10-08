@@ -114,7 +114,9 @@ fn fastapi_asgi_is_auto_detected() {
 
     let paths = entry_paths(&plan);
     assert!(paths.iter().any(|path| path.contains("asgi.py")));
-    assert_eq!(plan.mode, ProjectMode::App);
+    // `src/acme/asgi.py` is a module of the named package, like werkzeug's
+    // `wsgi.py`, so it stays an entry but no longer makes an app (#652).
+    assert_eq!(plan.mode, ProjectMode::Library);
 }
 
 #[test]

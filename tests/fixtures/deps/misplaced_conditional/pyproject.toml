@@ -8,3 +8,6 @@ dev = ["attrs", "dask", "polars", "pyarrow", "sympy", "toolz", "xarray"]
 
 [project.scripts]
 acme-cli = "acme.main:main"
+
+[tool.chokkin]
+mode = "app"

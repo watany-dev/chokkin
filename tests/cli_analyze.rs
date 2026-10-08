@@ -1531,7 +1531,7 @@ fn binary_notebooks_are_entry_roots() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n",
         ),
         ("acme/__init__.py", ""),
         ("acme/cli.py", "def main():\n    pass\n"),

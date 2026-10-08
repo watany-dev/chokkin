@@ -5,3 +5,6 @@ dependencies = []
 
 [project.scripts]
 acme-cli = "acme.main:main"
+
+[tool.chokkin]
+mode = "app"
