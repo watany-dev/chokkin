@@ -7,7 +7,7 @@ Pythonプロジェクトの余計なファイル・余計な依存・余計な�
 `chokkin` は、Pythonプロジェクト全体を対象とする reachability analyzer — Python 版の [Knip](https://knip.dev/) 体験を目指すツールです。manifest・ソースコード・各種ツール設定からプロジェクト全体のグラフを構築し、どこからも到達しないものを報告します。`uvx chokkin` で設定なしに実行でき、必要に応じて精密な設定と CI 運用に移行できます。
 
 > [!NOTE]
-> **Status: v0.6.0 released。** デフォルトで **フル分析パイプライン**（ステップ 1–13）が動き、未使用ファイル・依存・シンボルを built-in reporter（`default` / `compact` / `json` / `markdown` / `github` / `sarif`）で報告します。`--explain` / `--trace` / `--fix` / baseline filtering も利用可能です。ステップ 1–4 の概要だけ見る場合は `--probe` を使い、解決済み workspace member 数も確認できます。resolver は member 由来 import に印を付け、cross-member import を first-party として扱います。strict mode は member ごとの依存宣言を要求し、reporter は workspace finding に member id を出します。v0.4 は default CHK003 を runtime import 中心にし、conditional missing を info に保ち、alias 付き `TYPE_CHECKING` を認識します。さらに offline wheel metadata harvester と safe-autofix / semver 契約を追加しました。固定20プロジェクトで CHK003 は 964 件から 131 件へ減少し、unknown 0 のまま §17 gate は全合格です。v0.5 はモダンな Python packaging に追従し、PEP 735 `include-group`、PEP 723 inline script、`pylock.toml` / `poetry.lock` / `pdm.lock` による transitive 判定、`[tool.uv]` の sources / constraint / legacy dev-dependencies、build-system context と wheel target の public surface、binary / plugin usage 情報源の拡充、宣言依存からの plugin 自動有効化に対応しました。parser は `ruff_python_parser` に移行し、並列 parse と stat ベースの warm cache も入っています。v0.6 では `--fix` が古い行番号・配列 index を検出してエラーにし（誤った依存を削除しない）、requirements の改行コードを保ち、Rust library API を整理しました。**v0.1.0 から v0.6.0 までリリース済み**です。
+> **Status: v0.7.1 released。** デフォルトで **フル分析パイプライン**（ステップ 1–13）が動き、未使用ファイル・依存・シンボルを built-in reporter（`default` / `compact` / `json` / `markdown` / `github` / `sarif`）で報告します。`--explain` / `--trace` / `--fix` / baseline filtering も利用可能です。ステップ 1–4 の概要だけ見る場合は `--probe` を使い、解決済み workspace member 数も確認できます。resolver は member 由来 import に印を付け、cross-member import を first-party として扱います。strict mode は member ごとの依存宣言を要求し、reporter は workspace finding に member id を出します。v0.4 は default CHK003 を runtime import 中心にし、conditional missing を info に保ち、alias 付き `TYPE_CHECKING` を認識します。さらに offline wheel metadata harvester と safe-autofix / semver 契約を追加しました。固定20プロジェクトで CHK003 は 964 件から 131 件へ減少し、unknown 0 のまま §17 gate は全合格です。v0.5 はモダンな Python packaging に追従し、PEP 735 `include-group`、PEP 723 inline script、`pylock.toml` / `poetry.lock` / `pdm.lock` による transitive 判定、`[tool.uv]` の sources / constraint / legacy dev-dependencies、build-system context と wheel target の public surface、binary / plugin usage 情報源の拡充、宣言依存からの plugin 自動有効化に対応しました。parser は `ruff_python_parser` に移行し、並列 parse と stat ベースの warm cache も入っています。v0.6 では `--fix` が古い行番号・配列 index を検出してエラーにし（誤った依存を削除しない）、requirements の改行コードを保ち、Rust library API を整理しました。v0.7 は実 OSS での精度を狙い、workspace member の自動検出、build backend 設定からの package directory 決定、`setup.py` の静的評価、notebook と library package の entry root 化、vendored code の扱いにより、計測した 24 の OSS target で issue 数を 63,606 件から 9,287 件へ減らしました。**v0.1.0 から v0.7.1 までリリース済み**です。
 
 ## なぜ chokkin か
 
@@ -31,7 +31,7 @@ uvx chokkin
 設定は不要です。初回実行で manifest(`pyproject.toml` / `setup.cfg` / `setup.py` / `requirements*.txt` / `uv.lock`・`pylock.toml`・`poetry.lock`・`pdm.lock` のいずれか1つ)を探索し、layout(src/flat、tests、scripts、docs)と entry point を推定し、import graph を構築して宣言済み依存と照合します。
 
 ```text
-chokkin 0.6.0
+chokkin 0.7.1
 
 Project: acme-api
 Config : pyproject.toml
@@ -287,7 +287,7 @@ action を使わない場合は `uvx` でバージョンを固定します。
 
 ```yaml
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - run: uvx chokkin@0.6.0 --baseline chokkin-baseline.json --reporter github
+      - run: uvx chokkin@0.7.1 --baseline chokkin-baseline.json --reporter github
 ```
 
 ## インストール
