@@ -25,10 +25,7 @@ pub(crate) fn assign_file_context(path: &str) -> FileContext {
 /// `--production` dropped from the inventory.
 #[must_use]
 pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
-    match assign_file_context(path) {
-        FileContext::Runtime => member_context(path, layout).unwrap_or(FileContext::Runtime),
-        context => context,
-    }
+    layout_context(path, assign_file_context(path), layout)
 }
 
 /// Give `<member>/test/`, `<member>/docs/` and `<member>/examples/` files
@@ -38,16 +35,26 @@ pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> Fil
 pub(crate) fn apply_member_context(sources: &mut DiscoveredSources, production: bool) {
     let layout = &sources.layout;
     for file in &mut sources.files {
-        if file.context == FileContext::Runtime
-            && let Some(context) = member_context(&file.path, layout)
-        {
-            file.context = context;
-        }
+        file.context = layout_context(&file.path, file.context, layout);
     }
     if production {
         sources
             .files
             .retain(|file| file.context.is_included_in_production());
+    }
+}
+
+/// A member under root `examples/` (pydantic-ai's `examples/`) is runtime
+/// code of its own distribution, not an example of the root's.
+fn layout_context(path: &str, context: FileContext, layout: &LayoutInfo) -> FileContext {
+    let from_root_examples = context == FileContext::Dev && path.starts_with("examples/");
+    if context != FileContext::Runtime && !from_root_examples {
+        return context;
+    }
+    match member_context(path, layout) {
+        Some(context) => context,
+        None if layout.member_for(path).is_some() => FileContext::Runtime,
+        None => context,
     }
 }
 
@@ -229,13 +236,21 @@ mod tests {
     /// A root with the single member `providers/google`, holding `paths`
     /// after [`apply_member_context`].
     fn member_sources(paths: &[&str], production: bool) -> (DiscoveredSources, LayoutInfo) {
+        sources_with_member("providers/google", paths, production)
+    }
+
+    fn sources_with_member(
+        member: &str,
+        paths: &[&str],
+        production: bool,
+    ) -> (DiscoveredSources, LayoutInfo) {
         use crate::discovery::{ProjectRoot, RootMarker};
         use crate::sources::{DiscoveredFile, FileKind, MemberLayout};
 
         let layout = LayoutInfo::default;
         let mut root_layout = layout();
         root_layout.members = vec![MemberLayout {
-            path: "providers/google".to_owned(),
+            path: member.to_owned(),
             layout: layout(),
         }];
         let mut sources = DiscoveredSources {
@@ -341,6 +356,23 @@ mod tests {
             assign_layout_file_context(paths[0], &root_layout),
             FileContext::Dev
         );
+    }
+
+    #[test]
+    fn members_under_root_examples_keep_runtime_context() {
+        for member in ["examples", "examples/app"] {
+            let paths = [
+                format!("{member}/main.py"),
+                format!("{member}/examples/demo.py"),
+            ];
+            let paths = paths.each_ref().map(String::as_str);
+            let (all, root_layout) = sources_with_member(member, &paths, false);
+            assert_eq!(contexts(&all), [FileContext::Runtime, FileContext::Dev]);
+            assert_eq!(
+                assign_layout_file_context(paths[0], &root_layout),
+                FileContext::Runtime
+            );
+        }
     }
 
     #[test]

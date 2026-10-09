@@ -37,9 +37,12 @@ impl fmt::Display for ProbeWarning {
                 formatter,
                 "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
             ),
+            Self::NestedProjectsSkipped { count: 1 } => formatter.write_str(
+                "workspace: skipped 1 nested project that is not a workspace member (--no-auto-workspace keeps it)",
+            ),
             Self::NestedProjectsSkipped { count } => write!(
                 formatter,
-                "workspace: skipped {count} nested projects that are not workspace members"
+                "workspace: skipped {count} nested projects that are not workspace members (--no-auto-workspace keeps them)"
             ),
             Self::SkippedSource { path } => write!(
                 formatter,
@@ -210,10 +213,6 @@ mod tests {
                 "plugin: `django` extraction failed: boom",
             ),
             (
-                ProbeWarning::NestedProjectsSkipped { count: 4 },
-                "workspace: skipped 4 nested projects that are not workspace members",
-            ),
-            (
                 ProbeWarning::Sources(SourcesWarning::MissingEntryPath {
                     path: "x.py".to_owned(),
                 }),
@@ -294,6 +293,18 @@ mod tests {
         assert_eq!(
             warning(None).to_string(),
             "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @"
+        );
+    }
+
+    #[test]
+    fn nested_projects_skipped_agrees_in_number() {
+        assert_eq!(
+            ProbeWarning::NestedProjectsSkipped { count: 4 }.to_string(),
+            "workspace: skipped 4 nested projects that are not workspace members (--no-auto-workspace keeps them)"
+        );
+        assert_eq!(
+            ProbeWarning::NestedProjectsSkipped { count: 1 }.to_string(),
+            "workspace: skipped 1 nested project that is not a workspace member (--no-auto-workspace keeps it)"
         );
     }
 }

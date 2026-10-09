@@ -300,7 +300,7 @@ uv workspaceも読む。uvのworkspaceは複数packageをまとめて管理す�
 
 uv / chokkin のworkspace宣言がない場合（llama_indexのように数百の `pyproject.toml` を持つmonorepo、#488）は、Step 4のsource discovery後に `detect_nested_members` が確定rootから深さ4までの入れ子 `pyproject.toml` を探し、`[project].name` を持つものだけを `workspace_members` にする（`--no-auto-workspace` で無効）。root自身・tool設定だけの `pyproject.toml`・`exclude` globに一致するもの、隠しdirectoryと `venv` / `build` / `dist` / `node_modules` / `tests` / `fixtures` などの配下は対象外。member idはdirectory名で、重複したら相対pathにする。検出時は `AutoWorkspace` warningで件数を出す。以後は宣言されたworkspaceと同じく member別manifestで依存を判定する。
 
-workspace member でも member の祖先でもない入れ子 `pyproject.toml` が `[project].name` を持つ場合（fastmcp の `examples/smart_home/` など）は、自前の依存を持つ独立 project として、そのdirectory配下のfileを source inventory から外す（#694）。root の manifest はそれらの依存を記述していないため。`__init__.py` を持つdirectory（package内に置かれた `pyproject.toml`）は対象外。件数は `NestedProjectsSkipped` warning（`workspace: skipped N nested projects ...`）で出し、`--no-auto-workspace` では外さない。`load_config` ではなくprobeで行うのは、member manifest読込みが `load_config` を再帰的に呼ぶため。
+workspace member でも member の祖先でもない入れ子 `pyproject.toml` が `[project].name` を持つ場合（fastmcp の `examples/smart_home/` など）は、自前の依存を持つ独立 project として、そのdirectory配下のfileを source inventory から外す（#694）。root の manifest はそれらの依存を記述していないため。`__init__.py` を持つdirectory（package内に置かれた `pyproject.toml`）と、`tests` / `fixtures` などtest系directoryの配下（testがdataとして読むfixture project）は対象外。件数は `NestedProjectsSkipped` warning（`workspace: skipped N nested projects ... (--no-auto-workspace keeps them)`）で出し、`--no-auto-workspace` では外さない。`load_config` ではなくprobeで行うのは、member manifest読込みが `load_config` を再帰的に呼ぶため。
 
 `chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
 
@@ -576,7 +576,7 @@ examples/** / workspace member直下の examples/**          -> dev
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
 ```
 
-`examples/` は wheel に入らないデモなので dev とする (#681、#694)。import は CHK001 の到達性には効くが、CHK003 / CHK004 / CHK005 では dev 使用として扱う。runtime file の `if __name__ == "__main__":` ブロック内の import は dev context (`ImportContext::Dev`) とする。直接実行したときだけ通る dev script だから。ただし `__main__.py` (`python -m pkg`) と notebook (Jupyter は全 cell を `__main__` として実行する) では通常経路なので対象外。docs / test など runtime 以外の file では file の context を優先する (#681)。
+`examples/` は wheel に入らないデモなので dev とする (#681、#694)。import は CHK001 の到達性には効くが、CHK003 / CHK004 / CHK005 では dev 使用として扱う。ただし `examples/` 配下の workspace member（pydantic-ai の `examples/`）は独自 distribution の runtime code なので、member 内の位置で判定する。runtime file の `if __name__ == "__main__":` ブロック内の import は dev context (`ImportContext::Dev`) とする。直接実行したときだけ通る dev script だから。ただし `__main__.py` (`python -m pkg`) と notebook (Jupyter は全 cell を `__main__` として実行する) では通常経路なので対象外。docs / test など runtime 以外の file では file の context を優先する (#681)。
 
 root直下の `tests/` / `test/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。ただし参照元としては数えるため、tests/ からだけ import される symbol は CHK006 にしない (`__init__.py` の有無によらない、#410)。
 

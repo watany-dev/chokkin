@@ -256,6 +256,10 @@ pub(crate) fn nested_projects<'a>(
     for file in files {
         let dirs = file.match_indices('/').map(|(end, _)| &file[..end]);
         for dir in dirs {
+            // Test trees hold fixture projects the tests read as data.
+            if is_skipped_member_scan_dir(dir.rsplit('/').next().unwrap_or(dir)) {
+                break;
+            }
             let project = *checked.entry(dir).or_insert_with(|| {
                 let dir_path = root.join(dir);
                 !holds_member(dir)
@@ -575,7 +579,14 @@ mod tests {
     fn nested_projects_skip_members_their_parents_and_packages() {
         let temp = tempfile::tempdir().expect("tempdir");
         let project = "[project]\nname = \"pkg\"\n";
-        for dir in ["examples/app", "examples/app/inner", "libs/core", "pkg/sub"] {
+        for dir in [
+            "examples/app",
+            "examples/app/inner",
+            "libs/core",
+            "pkg/sub",
+            "tests",
+            "tests/fixtures/demo",
+        ] {
             write(temp.path(), &format!("{dir}/pyproject.toml"), project);
         }
         write(temp.path(), "libs/pyproject.toml", project);
@@ -591,6 +602,8 @@ mod tests {
             "libs/core/core.py",
             "pkg/sub/mod.py",
             "tools/run.py",
+            "tests/test_core.py",
+            "tests/fixtures/demo/app.py",
         ];
         assert_eq!(
             nested_projects(temp.path(), files, &members),
