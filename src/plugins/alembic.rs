@@ -296,6 +296,32 @@ mod tests {
     }
 
     #[test]
+    fn location_separators_follow_setting() {
+        let split = |setting, value: &str| -> Vec<String> {
+            value
+                .split(location_separators(setting))
+                .filter(|part| !part.is_empty())
+                .map(str::to_owned)
+                .collect()
+        };
+        let value = "a b,c:d;e\nf";
+        assert_eq!(split(None, value), ["a", "b", "c:d;e", "f"]);
+        assert_eq!(split(Some("os"), value), ["a b,c", "d", "e", "f"]);
+        assert_eq!(split(Some("colon"), value), ["a b,c", "d;e", "f"]);
+        assert_eq!(split(Some("semicolon"), value), ["a b,c:d", "e", "f"]);
+        assert_eq!(split(Some("newline"), value), ["a b,c:d;e", "f"]);
+        assert_eq!(split(Some("space"), value), ["a", "b,c:d;e", "f"]);
+    }
+
+    #[test]
+    fn is_identifier_accepts_python_names_only() {
+        assert!(is_identifier("acme_db2"));
+        assert!(!is_identifier(""));
+        assert!(!is_identifier("2db"));
+        assert!(!is_identifier("acme-db"));
+    }
+
+    #[test]
     fn strip_comment_drops_inline_note() {
         assert_eq!(strip_comment("os  # Use os.pathsep."), "os");
         assert_eq!(strip_comment("%(here)s/migrations"), "%(here)s/migrations");

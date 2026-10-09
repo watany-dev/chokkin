@@ -615,6 +615,44 @@ fn alembic_package_location_and_version_locations() {
     );
 }
 
+/// The origin points at the `script_location` line; `pkg:/dir` is an absolute
+/// path, not a package resource, so it resolves nowhere.
+#[test]
+fn alembic_ini_origin_line_and_absolute_package_dir() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"alembic\"]\n\n[tool.chokkin.plugins]\nalembic = true\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/alembic.ini",
+            "[alembic]\n# comment\nscript_location = %(here)s/migrations\n",
+        ),
+        ("src/acme/migrations/env.py", ""),
+    ] {
+        let path = root.join(file);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, text).expect("write fixture");
+    }
+    let hints = extract_at(root);
+    let contrib = plugin_contrib(&hints, PluginId::Alembic);
+    assert_eq!(entry_paths(contrib), ["src/acme/migrations/env.py"]);
+    assert_eq!(contrib.entries[0].origin.line, Some(3));
+
+    let paths = alembic_entries(&[
+        ("src/acme/__init__.py", ""),
+        (
+            "alembic.ini",
+            "[alembic]\nscript_location = acme:/migrations\n",
+        ),
+        ("src/acme/migrations/env.py", ""),
+    ]);
+    assert!(paths.is_empty(), "{paths:?}");
+}
+
 /// alembic 1.16 reads `[tool.alembic]` from `pyproject.toml`, relative paths
 /// fall back to the root, and with no config the fixed `alembic/env.py` stays.
 #[test]
