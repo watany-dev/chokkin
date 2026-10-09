@@ -410,10 +410,14 @@ conftest.py
 docs/conf.py
 alembic/env.py
 scripts/**/*.py
+examples/**/*.py
+docs/**/*.py
 **/*.ipynb
 ```
 
 単独ファイル名でのentry推定(`main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` / `noxfile.py`)は**project root直下、およびsrc layoutのpackage直下のみ**を対象にする。任意の深さで同名ファイルをentry扱いすると、unused file検出が事実上無効化されるため。`__main__.py` と `conftest.py` は全階層で有効。`docs/conf.py`（root と各 workspace member 直下）と `alembic/env.py` は記載のpathに限定する。
+
+`examples/**` と `docs/**` の `.py` は root 直下と各 workspace member 直下を entry にする（rule `auto:examples/**` / `auto:docs/**`、#666）。どちらも `python examples/foo.py` や `fastmcp run docs/demo.py` で直接実行する単体スクリプトの置き場で、どこからも import されないため。その layout の package 内（flat layout の `examples` package など）は対象外。
 
 discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry にする（rule `auto:**/*.ipynb`、#514）。notebook は cell 単位で直接実行され他の file から import されないため、PEP 723 script と同じく root としてしか使われない。そのため notebook 自身は CHK001 にならず、notebook からだけ import される module も到達可能になる。app 判定（`has_clear_app_signals`）は file 名で見るため、notebook があっても mode は変わらない。
 
