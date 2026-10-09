@@ -775,3 +775,28 @@ fn extra_requirements_files_only_declare_names() {
         extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
     assert!(second.sources.extra_requirements.contains("mkdocs"));
 }
+
+#[test]
+fn extra_requirements_files_keep_what_they_could_read() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(temp.path().join("requirements")).expect("create requirements dir");
+    for (name, contents) in [
+        // A broken include still keeps the names read before it.
+        ("requirements/broken.txt", "boto3\n-r missing.txt\n"),
+        // A readable file without names is still a requirements file.
+        ("requirements/empty.txt", "# nothing yet\n"),
+    ] {
+        std::fs::write(temp.path().join(name), contents).expect("write project file");
+    }
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest_with_cache(&root, &config, None).expect("extraction");
+    assert!(manifest.sources.extra_requirements.contains("boto3"));
+    assert!(
+        manifest
+            .sources
+            .requirements_files
+            .iter()
+            .any(|file| file.ends_with("empty.txt"))
+    );
+}
