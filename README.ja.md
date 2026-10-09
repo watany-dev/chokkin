@@ -69,7 +69,7 @@ Summary: 8 issues
 |`CHK007`|`unused_reexport`      |`__init__.py` などの再exportが内部から参照されない               |library: info / app: warning|
 |`CHK008`|`unlisted_binary`      |tox/nox/pre-commit/CI等で使うCLIが依存宣言されていない           |warning                     |
 |`CHK009`|`duplicate_dependency` |同じcontext内、またはruntimeとgroup/extraに重複宣言されている|warning                     |
-|`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |`TYPE_CHECKING`: info / それ以外: warning|
+|`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |`TYPE_CHECKING`・optional (`try` / `suppress(ImportError)`): info / それ以外: warning|
 
 Pythonではmodule top-levelの名前が原則import可能なため、`unused_export` は当初preview rule(library modeではinfo扱い)として提供します。library modeでは、定義元module自身が読んでいる名前 (TypeVar、型alias、helperなど) も外部の利用者がAPI経由で届き得るため報告しません。
 
