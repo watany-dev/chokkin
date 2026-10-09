@@ -82,6 +82,36 @@ counted as hits: optional try-imports (CHK003) are labelled `info-expected`.
 CHK010 counts imports reachable only through a declared package's dependencies
 (`mkdocs` via mkdocs-material, `zope.interface` via twisted) as tp.
 
+### Re-measurement at `8ebad05` (2026-10-09)
+
+`make oss-metrics` on main `8ebad05` (35 clones + 10 recall sentinels,
+`--gate` passes). Since the #656 sample, the default-filter hits dropped
+sharply (CHK001 300, CHK006 523 hits with 2,230 more at info, CHK010 662 hits
+with 222 at info), so 40 CHK001 / CHK006 labels went stale and were refilled.
+CHK003, CHK005, CHK007, CHK008 and CHK009 were sampled for the first time with
+the same script. Seven CHK010 `tp` labels on optional imports that #670 moved
+to info are now `info-expected`, and the mlflow protobuf CHK006 label that
+#669 removed was dropped.
+
+| Rule | Hits | Sample | tp | fp | Precision | Main FP buckets |
+|---|---:|---:|---:|---:|---:|---|
+| CHK001 | 300 | 29 | 2 | 27 | 7% | script-entry 14, other 5, framework-loaded 3, dynamic-import 3, library-public 2 |
+| CHK002 | 27 | 27 | 26 | 1 | 96% | — |
+| CHK003 | 170 | 20 (fresh) | 17 | 3 | 85% | map-gap 3 (`pydantic_ai` from pydantic-ai-slim). The earlier labels bring it to 42 / 45 (93%) |
+| CHK004 | 1,926 | 54 | 54 | 0 | 100% | — |
+| CHK005 | 44 | 24 | 8 | 16 | 33% | optional-import 13 (lazy or feature-gated imports), test-only-path 2 |
+| CHK006 | 523 | 30 | 13 | 17 | 43% | library-public-api 7, name-convention 4, external-reference 3, dynamic-import 3 |
+| CHK007 | 53 | 14 | 0 | 14 | 0% | library-public-api 11 (fastmcp / mcp / llama_index_instrumentation run in app mode, so `__all__` is not treated as API), external-reference 3 |
+| CHK008 | 113 | 50 | 7 | 43 | 14% | declared-elsewhere 21 (tox `deps` / `-r`, nox `session.install`, workspace members), isolated-env 11 (pre-commit hook repos), not-invoked 6 (config section only), ci-provided 3, transitive-provider 2 |
+| CHK009 | 12 | 11 | 0 | 11 | 0% | intentional-duplicate 11 (extras built by joining lists, generated extras, a lint group installed alone) |
+| CHK010 | 662 | 50 | 19 | 31 | 38% | declared-third-party 18, first-party-missed 8 (`sys.path` inserts, example packages), stdlib 2, other 2, generated 1 |
+
+Samples are capped at 6 per project, so CHK006 (5 projects with hits) and
+CHK007 (3 projects) have fewer than 50 labels, and a 30-label sample has a 95%
+interval of about ±18 points. Five CHK005 tp are imports that work only
+through another runtime dependency (`openai` via llama-index-llms-openai,
+`anyio` via starlette). Counting them as fp gives 3 / 24 (13%).
+
 ## Validation set (20 projects)
 
 Mix per §17 (library / app / server / framework / Django / FastAPI):
