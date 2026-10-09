@@ -1212,7 +1212,8 @@ mod tests {
             ".pre-commit-config.yaml",
             "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        entry: ruff check\n\
                  - repo: https://github.com/pre-commit/mirrors-mypy\n    hooks:\n      - id: mypy\n\
-                 - repo: local\n    hooks:\n      - id: mypy\n        entry: python -m mypy\n",
+                 - repo: local\n    hooks:\n      - id: mypy\n        entry: python -m mypy\n\
+                       - id: black\n        entry: black .\n",
         )]);
         assert_eq!(result.provided_binaries, ["mypy"]);
         let sections: Vec<_> = result
@@ -1222,6 +1223,8 @@ mod tests {
             .collect();
         assert!(sections.contains(&("mypy", true)));
         assert!(sections.contains(&("mypy", false)));
+        assert!(sections.contains(&("black", false)));
+        assert!(!sections.contains(&("black", true)));
         assert!(sections.contains(&("ruff", false)));
     }
 
