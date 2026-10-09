@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigSources;
 use crate::fix::atomic_write;
-use crate::manifest::{ManifestSources, lockfile_candidates};
+use crate::manifest::{ManifestSources, extra_requirements_candidates, lockfile_candidates};
 use crate::parser::ParsedModule;
 use crate::path_util::rel_to_root;
 
@@ -480,6 +480,8 @@ fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerpr
             paths.push(path);
         }
     }
+    // A new file under `requirements/` changes the key too.
+    paths.extend(extra_requirements_candidates(root));
     // Every present lockfile, not just the one read, so a new higher-priority
     // lockfile changes the key.
     paths.extend(lockfile_candidates(root).into_iter().map(|(_, path)| path));

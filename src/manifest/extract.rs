@@ -1,6 +1,7 @@
 //! Manifest extraction orchestration.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use crate::VERSION;
 use crate::cache::{
@@ -8,12 +9,16 @@ use crate::cache::{
 };
 use crate::config::{ChokkinConfig, LoadedConfig, TargetVersion};
 use crate::discovery::ProjectRoot;
+use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
 use super::lockfile::extract_lockfile;
 use super::pep508::{Operator, parse_version_specifiers};
+use super::pep508_util::normalize_distribution_name;
 use super::pyproject::extract_pyproject;
-use super::requirements::extract_requirements_file;
+use super::requirements::{
+    extra_requirements_candidates, extract_requirements_file, extract_requirements_path,
+};
 use super::setup_cfg::extract_setup_cfg;
 use super::setup_py::extract_setup_py;
 use super::types::{
@@ -163,6 +168,7 @@ pub fn extract_manifest(
         constraints.extend(extracted.constraints);
         warnings.extend(extracted.warnings);
     }
+    read_extra_requirements(root_path, &mut sources);
 
     // Only declarations from another source vouch for the runtime set; a
     // partially read setup.py may still hide the rest of it.
@@ -267,7 +273,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v8".to_owned(),
+            unit_version: "manifest-extract-v9".to_owned(),
         },
         inputs,
     })
@@ -284,6 +290,30 @@ fn manifest_inputs_for_payload(
             source,
         },
     )
+}
+
+/// Collect the names that requirements files outside the fixed root names
+/// declare, skipping files already read. Best effort: a broken file there only
+/// loses its names, never a warning or an error.
+fn read_extra_requirements(root: &Path, sources: &mut ManifestSources) {
+    for path in extra_requirements_candidates(root) {
+        if sources
+            .requirements_files
+            .contains(&rel_to_root(root, &path))
+        {
+            continue;
+        }
+        let (extracted, _) = extract_requirements_path(root, &path, &DependencyContext::Runtime);
+        sources.extra_requirements.extend(
+            extracted
+                .dependencies
+                .iter()
+                .filter(|dep| !dep.name.is_empty())
+                .map(|dep| normalize_distribution_name(&dep.name)),
+        );
+        sources.requirements_files.extend(extracted.files_read);
+        sources.requirements_missing.extend(extracted.files_missing);
+    }
 }
 
 /// When runtime deps are declared in pyproject/setup, root `requirements.txt` is dev tooling.

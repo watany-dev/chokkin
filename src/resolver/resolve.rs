@@ -300,6 +300,7 @@ fn resolve_import_site(
                     confidence: ResolveConfidence::Certain,
                 })
             })
+            .or_else(|| extra_requirements_match(&root_name, manifest))
             .unwrap_or(core)
     } else {
         core
@@ -442,6 +443,25 @@ fn root_loose_match(root_name: &str, manifest: &LoadedManifest) -> Option<RootRe
         &normalize_distribution_name(root_name),
         declared.chain(locked),
     )
+}
+
+/// A name declared only in a requirements file whose context is unknown
+/// (`requirements/tests.in`, #679) makes the root third-party, exactly or by
+/// affix. No distribution is attached, so CHK003–CHK005 never judge the
+/// import against a context the file does not give.
+fn extra_requirements_match(root_name: &str, manifest: &LoadedManifest) -> Option<RootResolution> {
+    let declared = &manifest.sources.extra_requirements;
+    let distribution = normalize_distribution_name(root_name);
+    let confidence = if declared.contains(&distribution) {
+        ResolveConfidence::Likely
+    } else {
+        loose_declared_match(&distribution, declared.iter().cloned())?.confidence
+    };
+    Some(RootResolution {
+        origin: ModuleOrigin::ThirdParty,
+        distribution: None,
+        confidence,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

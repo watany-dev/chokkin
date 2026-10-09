@@ -60,6 +60,39 @@ pub(super) fn extract_requirements_file(
     Ok(result)
 }
 
+/// Requirements files outside the fixed root names: root `*requirements*.txt`
+/// and `requirements*.in`, and `requirements/*.txt` / `requirements/*.in`
+/// (werkzeug `requirements/tests.in`, urllib3 `emscripten-requirements.txt`).
+/// Their context is not guessed, so they only declare names (#679).
+pub(crate) fn extra_requirements_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut paths = files_matching(root, |stem, ext| {
+        (ext == "txt" && stem.contains("requirements"))
+            || (ext == "in" && stem.starts_with("requirements"))
+    });
+    paths.extend(files_matching(&root.join("requirements"), |_, ext| {
+        ext == "txt" || ext == "in"
+    }));
+    paths
+}
+
+/// Files in `dir` whose `(stem, extension)` satisfy `matches`, sorted.
+fn files_matching(dir: &Path, matches: impl Fn(&str, &str) -> bool) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let stem = path.file_stem().and_then(|stem| stem.to_str());
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            stem.zip(ext).is_some_and(|(stem, ext)| matches(stem, ext)) && path.is_file()
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
 /// Parse a requirements file that `setup.py` reads, keeping what was parsed
 /// before an unresolvable include; the flag is `false` when parsing stopped early.
 pub(super) fn extract_requirements_path(

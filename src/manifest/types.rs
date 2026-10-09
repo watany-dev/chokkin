@@ -1,6 +1,6 @@
 //! Manifest extraction types.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -233,6 +233,12 @@ pub struct ManifestSources {
     /// Root-relative requirements include/constraint paths that were probed
     /// but did not exist; the manifest cache rechecks them on a hit.
     pub requirements_missing: Vec<String>,
+    /// Normalized names that requirements files outside the fixed root names
+    /// declare (`requirements/tests.in`, `emscripten-requirements.txt`).
+    /// Their context is unknown, so they only resolve imports (CHK010) and
+    /// never feed CHK001–CHK005 (#679).
+    #[serde(default)]
+    pub extra_requirements: BTreeSet<String>,
     /// `setup.cfg` contributed.
     pub setup_cfg: bool,
     /// `setup.py` contributed (static parse succeeded).

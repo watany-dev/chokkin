@@ -600,6 +600,92 @@
         "snowflake",
         "snowflake.sqlalchemy"
       ]
+    },
+    {
+      "distribution": "griffelib",
+      "imports": [
+        "griffe"
+      ]
+    },
+    {
+      "distribution": "llama-index-workflows",
+      "imports": [
+        "workflows"
+      ]
+    },
+    {
+      "distribution": "mkdocs-material",
+      "imports": [
+        "material"
+      ]
+    },
+    {
+      "distribution": "pytest-xprocess",
+      "imports": [
+        "xprocess"
+      ]
+    },
+    {
+      "distribution": "pywin32",
+      "imports": [
+        "pythoncom",
+        "pywintypes",
+        "win32api",
+        "win32com",
+        "win32con",
+        "win32event",
+        "win32file",
+        "win32gui",
+        "win32job",
+        "win32pipe",
+        "win32process",
+        "win32security",
+        "win32service",
+        "win32serviceutil",
+        "winerror"
+      ]
+    },
+    {
+      "distribution": "django-guardian",
+      "imports": [
+        "guardian"
+      ]
+    },
+    {
+      "distribution": "jaraco-classes",
+      "imports": [
+        "jaraco.classes"
+      ]
+    },
+    {
+      "distribution": "gcloud-aio-auth",
+      "imports": [
+        "gcloud.aio.auth"
+      ]
+    },
+    {
+      "distribution": "gcloud-aio-bigquery",
+      "imports": [
+        "gcloud.aio.bigquery"
+      ]
+    },
+    {
+      "distribution": "gcloud-aio-datastore",
+      "imports": [
+        "gcloud.aio.datastore"
+      ]
+    },
+    {
+      "distribution": "gcloud-aio-pubsub",
+      "imports": [
+        "gcloud.aio.pubsub"
+      ]
+    },
+    {
+      "distribution": "gcloud-aio-storage",
+      "imports": [
+        "gcloud.aio.storage"
+      ]
     }
   ],
   "auto_packages": [
