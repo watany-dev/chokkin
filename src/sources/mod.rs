@@ -11,7 +11,7 @@ mod walk;
 mod warnings;
 
 pub(crate) use context::{
-    apply_member_docs_context, assign_file_context, assign_layout_file_context, is_test_data_path,
+    apply_member_context, assign_file_context, assign_layout_file_context, is_test_data_path,
 };
 pub use discover::discover_sources;
 pub use error::SourcesError;

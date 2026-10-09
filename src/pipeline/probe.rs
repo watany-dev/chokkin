@@ -21,8 +21,7 @@ use crate::plugins::{
 };
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
-    DiscoveredSources, FileContext, FileKind, MemberLayout, apply_member_docs_context,
-    discover_sources,
+    DiscoveredSources, FileContext, FileKind, MemberLayout, apply_member_context, discover_sources,
 };
 
 use super::error::ProbeError;
@@ -127,7 +126,7 @@ pub(super) fn probe_project_with_cache(
             layout: input.sources.layout.clone(),
         })
         .collect();
-    apply_member_docs_context(&mut sources, loaded.effective.production);
+    apply_member_context(&mut sources, loaded.effective.production);
     let (scripts, script_warnings) = discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),

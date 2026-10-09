@@ -20,23 +20,27 @@ pub(crate) fn assign_file_context(path: &str) -> FileContext {
     FileContext::Runtime
 }
 
-/// [`assign_file_context`] that also knows `<member>/docs/` is docs, for
-/// files `--production` dropped from the inventory.
+/// [`assign_file_context`] that also knows `<member>/test/` is test and
+/// `<member>/docs/` is docs, for files `--production` dropped from the
+/// inventory.
 #[must_use]
 pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
     match assign_file_context(path) {
-        FileContext::Runtime if is_member_docs_path(path, layout) => FileContext::Docs,
+        FileContext::Runtime => member_context(path, layout).unwrap_or(FileContext::Runtime),
         context => context,
     }
 }
 
-/// Give `<member>/docs/` files the context root `docs/` gets. Members are
-/// detected after the walk, so this runs once they are known (#612).
-pub(crate) fn apply_member_docs_context(sources: &mut DiscoveredSources, production: bool) {
+/// Give `<member>/test/` and `<member>/docs/` files the context root `test/`
+/// and `docs/` get. Members are detected after the walk, so this runs once
+/// they are known (#612, #571).
+pub(crate) fn apply_member_context(sources: &mut DiscoveredSources, production: bool) {
     let layout = &sources.layout;
     for file in &mut sources.files {
-        if file.context == FileContext::Runtime && is_member_docs_path(&file.path, layout) {
-            file.context = FileContext::Docs;
+        if file.context == FileContext::Runtime
+            && let Some(context) = member_context(&file.path, layout)
+        {
+            file.context = context;
         }
     }
     if production {
@@ -46,15 +50,21 @@ pub(crate) fn apply_member_docs_context(sources: &mut DiscoveredSources, product
     }
 }
 
-fn is_member_docs_path(path: &str, layout: &LayoutInfo) -> bool {
-    layout
-        .member_for(path)
-        .is_some_and(|(_, rest)| rest.starts_with("docs/"))
+fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
+    let (_, rest) = layout.member_for(path)?;
+    if rest.starts_with("test/") {
+        Some(FileContext::Test)
+    } else if rest.starts_with("docs/") {
+        Some(FileContext::Docs)
+    } else {
+        None
+    }
 }
 
 /// `tests/` at any depth is test code (`pandas/tests/`), but only the root
-/// `test/` is: a `test` package inside a distribution is shipped API
-/// (`django.test`), as is `testing/` (`sqlalchemy.testing`).
+/// (and, via [`apply_member_context`], a member's) `test/` is: a `test`
+/// package inside a distribution is shipped API (`django.test`), as is
+/// `testing/` (`sqlalchemy.testing`).
 fn is_test_path(path: &str) -> bool {
     if path.starts_with("test/") {
         return true;
@@ -66,11 +76,12 @@ fn is_test_path(path: &str) -> bool {
     if file_name == "conftest.py" {
         return true;
     }
-    if file_name.starts_with("test_") && has_py_or_pyi_extension(file_name) {
-        return true;
-    }
-    ends_with_ignore_ascii_case(file_name, "_test.py")
-        || ends_with_ignore_ascii_case(file_name, "_test.pyi")
+    // pytest's `test_*.py` / `*_test.py` are case-sensitive (#570); only the
+    // extension is not, for case-insensitive file systems.
+    file_name.rsplit_once('.').is_some_and(|(stem, ext)| {
+        (ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
+            && (stem.starts_with("test_") || stem.ends_with("_test"))
+    })
 }
 
 /// Whether `path` is input data under a test tree (`tests/data/case.py`,
@@ -88,20 +99,6 @@ pub(crate) fn is_test_data_path(path: &str) -> bool {
         dirs.any(|dir| dir == "tests")
     };
     in_test_tree && dirs.any(|dir| matches!(dir, "data" | "fixtures" | "testdata" | "test_data"))
-}
-
-fn has_py_or_pyi_extension(file_name: &str) -> bool {
-    std::path::Path::new(file_name)
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
-}
-
-fn ends_with_ignore_ascii_case(value: &str, suffix: &str) -> bool {
-    if value.len() < suffix.len() {
-        return false;
-    }
-    let start = value.len() - suffix.len();
-    value.is_char_boundary(start) && value[start..].eq_ignore_ascii_case(suffix)
 }
 
 #[cfg(test)]
@@ -163,6 +160,18 @@ mod tests {
     }
 
     #[test]
+    fn test_prefix_and_suffix_are_case_sensitive() {
+        for path in [
+            "acme/Test_foo.py",
+            "acme/TEST_foo.py",
+            "acme/foo_TEST.py",
+            "acme/foo_Test.pyi",
+        ] {
+            assert_eq!(assign_file_context(path), FileContext::Runtime, "{path}");
+        }
+    }
+
+    #[test]
     fn singular_test_dir_is_test_context_only_at_root() {
         assert_eq!(
             assign_file_context("test/base/helpers.py"),
@@ -215,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn member_docs_files_get_docs_context() {
+    fn member_test_and_docs_files_get_root_contexts() {
         use crate::discovery::{ProjectRoot, RootMarker};
         use crate::sources::{DiscoveredFile, FileKind, LayoutInfo, MemberLayout, ProjectLayout};
 
@@ -252,10 +261,12 @@ mod tests {
             "providers/google/docs/tests/test_conf.py",
             "providers/google/src/docs/helper.py",
             "providers/other/docs/conf.py",
+            "providers/google/test/helpers.py",
+            "providers/google/src/test/client.py",
         ];
 
         let mut all = sources(paths.map(file).to_vec());
-        apply_member_docs_context(&mut all, false);
+        apply_member_context(&mut all, false);
         let contexts: Vec<_> = all.files.iter().map(|file| file.context).collect();
         assert_eq!(
             contexts,
@@ -263,12 +274,14 @@ mod tests {
                 FileContext::Docs,
                 FileContext::Test,
                 FileContext::Runtime,
+                FileContext::Runtime,
+                FileContext::Test,
                 FileContext::Runtime
             ]
         );
 
         let mut production = sources(paths.map(file).to_vec());
-        apply_member_docs_context(&mut production, true);
+        apply_member_context(&mut production, true);
         let kept: Vec<_> = production
             .files
             .iter()
@@ -278,7 +291,8 @@ mod tests {
             kept,
             [
                 "providers/google/src/docs/helper.py",
-                "providers/other/docs/conf.py"
+                "providers/other/docs/conf.py",
+                "providers/google/src/test/client.py"
             ]
         );
         assert_eq!(
@@ -287,6 +301,10 @@ mod tests {
         );
         assert_eq!(
             assign_layout_file_context(paths[1], &root_layout),
+            FileContext::Test
+        );
+        assert_eq!(
+            assign_layout_file_context(paths[4], &root_layout),
             FileContext::Test
         );
     }
@@ -385,12 +403,11 @@ mod tests {
 
         /// Spec §10 file-context rules, written from the directory list.
         fn model(dirs: &[&str], file: &str) -> FileContext {
-            let lower = file.to_ascii_lowercase();
             let test_file = file == "conftest.py"
-                || (file.starts_with("test_")
-                    && matches!(lower.rsplit_once('.'), Some((_, "py" | "pyi"))))
-                || lower.ends_with("_test.py")
-                || lower.ends_with("_test.pyi");
+                || file.rsplit_once('.').is_some_and(|(stem, ext)| {
+                    matches!(ext.to_ascii_lowercase().as_str(), "py" | "pyi")
+                        && (stem.starts_with("test_") || stem.ends_with("_test"))
+                });
             if dirs.first() == Some(&"test") || dirs.contains(&"tests") || test_file {
                 FileContext::Test
             } else if dirs.first() == Some(&"docs") {
