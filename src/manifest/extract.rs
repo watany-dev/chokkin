@@ -303,7 +303,13 @@ fn read_extra_requirements(root: &Path, sources: &mut ManifestSources) {
         {
             continue;
         }
-        let (extracted, _) = extract_requirements_path(root, &path, &DependencyContext::Runtime);
+        let (extracted, complete) =
+            extract_requirements_path(root, &path, &DependencyContext::Runtime);
+        // Unreadable: nothing to declare, and the scan cache could not
+        // fingerprint it.
+        if !complete && extracted.dependencies.is_empty() {
+            continue;
+        }
         sources.extra_requirements.extend(
             extracted
                 .dependencies

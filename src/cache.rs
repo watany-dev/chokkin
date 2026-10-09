@@ -464,28 +464,24 @@ fn manifest_input_fingerprints(
 
 fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerprint>> {
     let mut paths = Vec::new();
-    for filename in [
-        "pyproject.toml",
-        "setup.cfg",
-        "setup.py",
-        "requirements.txt",
-        "requirements-dev.txt",
-        "dev-requirements.txt",
-        "requirements-docs.txt",
-        "requirements-tests.txt",
-        "requirements-test.txt",
-    ] {
+    for filename in ["pyproject.toml", "setup.cfg", "setup.py"] {
         let path = root.join(filename);
         if path.is_file() {
             paths.push(path);
         }
     }
-    // A new file under `requirements/` changes the key too.
-    paths.extend(extra_requirements_candidates(root));
     // Every present lockfile, not just the one read, so a new higher-priority
     // lockfile changes the key.
     paths.extend(lockfile_candidates(root).into_iter().map(|(_, path)| path));
-    fingerprint_paths(root, paths)
+    let mut fingerprints = fingerprint_paths(root, paths)?;
+    // Every requirements file, fixed name or not, so a new one changes the
+    // key. Extraction skips an unreadable one, so it must not fail the key.
+    fingerprints.extend(extra_requirements_candidates(root).iter().map(|path| {
+        SourceFingerprint::from_absolute(root, path)
+            .unwrap_or_else(|_| SourceFingerprint::absent(root, path))
+    }));
+    fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(fingerprints)
 }
 
 fn fingerprint_paths(root: &Path, paths: Vec<PathBuf>) -> io::Result<Vec<SourceFingerprint>> {

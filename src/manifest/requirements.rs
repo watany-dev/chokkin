@@ -60,10 +60,10 @@ pub(super) fn extract_requirements_file(
     Ok(result)
 }
 
-/// Requirements files outside the fixed root names: root `*requirements*.txt`
-/// and `requirements*.in`, and `requirements/*.txt` / `requirements/*.in`
-/// (werkzeug `requirements/tests.in`, urllib3 `emscripten-requirements.txt`).
-/// Their context is not guessed, so they only declare names (#679).
+/// Root `*requirements*.txt` and `requirements*.in`, and `requirements/*.txt`
+/// / `requirements/*.in` (werkzeug `requirements/tests.in`, urllib3
+/// `emscripten-requirements.txt`). The fixed root names match too; the rest
+/// have no context to guess, so they only declare names (#679).
 pub(crate) fn extra_requirements_candidates(root: &Path) -> Vec<PathBuf> {
     let mut paths = files_matching(root, |stem, ext| {
         (ext == "txt" && stem.contains("requirements"))
