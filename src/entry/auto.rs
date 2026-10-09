@@ -308,7 +308,11 @@ mod tests {
             ..src_layout()
         };
         let sources = sources_with(&["examples/plugin/src/plugin/core.py"], &layout);
-        assert!(detect_auto_entries(&sources).is_empty());
+        let paths: Vec<_> = detect_auto_entries(&sources)
+            .into_iter()
+            .map(|entry| entry.spec.path)
+            .collect();
+        assert_eq!(paths, Vec::<String>::new());
     }
 
     #[test]
@@ -320,6 +324,10 @@ mod tests {
             ..src_layout()
         };
         let sources = sources_with(&["examples/demo.py", "src/acme/examples/demo.py"], &layout);
-        assert!(detect_auto_entries(&sources).is_empty());
+        let paths: Vec<_> = detect_auto_entries(&sources)
+            .into_iter()
+            .map(|entry| entry.spec.path)
+            .collect();
+        assert_eq!(paths, Vec::<String>::new());
     }
 }
