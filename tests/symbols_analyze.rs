@@ -309,6 +309,30 @@ fn type_checking_unresolved_import_is_info() {
 }
 
 #[test]
+fn optional_unresolved_import_is_info() {
+    let report = analyze_fixture("optional_unresolved");
+    let chk010 = |root: &str| {
+        report
+            .iter()
+            .filter(|candidate| candidate.rule == RuleId::Chk010)
+            .filter_map(|candidate| match &candidate.subject {
+                chokkin::internals::IssueSubject::Import { module, line, .. } if module == root => {
+                    Some((candidate.severity, *line))
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // A caught `ImportError` never breaks a run; the import stays reported
+    // for typos (#654). The `except` fallback itself can still fail.
+    assert_eq!(chk010("optionalpkg"), vec![(Severity::Info, 4)]);
+    assert_eq!(chk010("suppressedpkg"), vec![(Severity::Info, 9)]);
+    assert_eq!(chk010("fallbackpkg"), vec![(Severity::Warning, 6)]);
+    // One unguarded site keeps the warning and anchors the issue.
+    assert_eq!(chk010("mixedpkg"), vec![(Severity::Warning, 11)]);
+}
+
+#[test]
 fn library_mode_downgrades_chk006_to_info() {
     let report = analyze_fixture("library_mode");
     let unused = report

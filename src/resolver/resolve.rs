@@ -311,6 +311,7 @@ fn resolve_import_site(
             file: file.to_owned(),
             line,
             context,
+            optional,
         });
     }
 
