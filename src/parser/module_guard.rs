@@ -246,6 +246,7 @@ mod tests {
             "is_torch_available() or other",
             "not is_torch_available() and other",
             "find_spec('x') == None",
+            "~is_torch_available()",
         ] {
             assert_eq!(availability(source), None, "{source}");
         }
