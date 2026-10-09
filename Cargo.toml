@@ -1,6 +1,6 @@
 [package]
 name = "chokkin"
-version = "0.7.2"
+version = "0.7.3"
 edition = "2024"
 rust-version = "1.96"
 description = "Find unused files, dependencies, and public symbols in Python projects"

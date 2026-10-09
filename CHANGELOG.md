@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-10-09
+
+v0.7.3 is a fix release on top of v0.7.2 that targets false positives on
+real OSS projects. The JSON / baseline `schema_version` stays `"1"`, and
+fingerprints are unchanged, so baselines keep matching. Some CHK006 and
+CHK010 findings change severity or confidence, and some CHK001 / CHK004 /
+CHK006 findings go away.
+
+### Added
+- The alembic plugin reads `[alembic] script_location` / `version_locations`
+  from `alembic.ini` (root, each workspace member, and package directories)
+  and `[tool.alembic]` in `pyproject.toml`, and roots `<script_location>/env.py`
+  and the revision files under `versions/` as entries. Revisions in
+  subdirectories count only with `recursive_version_locations`. Those entry
+  files are left out of CHK006 / CHK007 and only count as references (#667).
+- CHK006 skips names that tools read by convention rather than by import:
+  protoc output (`*_pb2.py`, `*_pb2_grpc.py`) and a `modular_x.py` next to a
+  `modeling_x.py` (transformers codegen) are left out of CHK006 / CHK007, and
+  with the alembic plugin, `revision` / `down_revision` / `branch_labels` /
+  `depends_on` / `upgrade` / `downgrade` in a revision module count as used.
+  None of these affect CHK001 (#655).
+
+### Changed
+- `mode = "auto"` no longer treats a console script that targets the
+  project's own package (`django-admin`, `httpx`) as an app signal, nor a
+  `manage.py` / `asgi.py` / `wsgi.py` / `app.py` inside the package
+  (werkzeug `src/werkzeug/wsgi.py`) or in test / docs / dev context. Such
+  libraries are now analyzed in library mode, so their public API is no
+  longer CHK006 certain. GUI scripts stay an app signal, and a workspace
+  member's own console script still marks it as an app (#652).
+- CHK010 for an optional import (in a `try:` body or `else:`, or under
+  `with suppress(ImportError):`) is info instead of warning, like
+  `TYPE_CHECKING` imports. A fallback import in an `except ImportError:`
+  clause stays a warning (#654).
+
+### Fixed
+- `.py` files under `examples/` and `docs/` at the root and at each
+  workspace member root are entries (`auto:examples/**`, `auto:docs/**`), so
+  standalone example and docs scripts are no longer CHK001. Files inside a
+  package named `examples` are not affected (#666).
+- CHK004 uses a workspace member's own lockfile (`libs/core/uv.lock` in
+  langchain) for imports from that member, starting the transitive walk from
+  the member's declarations. The root lockfile is still checked from the
+  root's declarations, and the stronger evidence wins (#653).
+
 ## [0.7.2] - 2026-10-08
 
 v0.7.2 is a fix release on top of v0.7.1. The JSON / baseline
