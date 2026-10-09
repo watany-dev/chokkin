@@ -189,7 +189,7 @@ impl ImportStrength {
             Self::TopLevel => return candidate,
             Self::Optional => {
                 candidate.severity = Severity::Info;
-                "imported only under try/except ImportError or a platform guard, or by modules loaded only that way"
+                "imported only under try/except ImportError, a platform guard or a check that it is already imported, or by modules loaded only that way"
             },
             Self::Deferred => {
                 "imported only inside functions or by modules runtime code loads only from inside functions or TYPE_CHECKING blocks"

@@ -1,10 +1,22 @@
 [project]
 name = "misplaced-conditional"
 version = "0.1.0"
-dependencies = ["requests"]
+dependencies = ["requests", "sniffio"]
 
 [dependency-groups]
-dev = ["attrs", "dask", "polars", "pyarrow", "sympy", "toolz", "xarray"]
+dev = [
+    "attrs",
+    "cloudpickle",
+    "dask",
+    "polars",
+    "pyarrow",
+    "pyspark",
+    "rich",
+    "sympy",
+    "toolz",
+    "trio",
+    "xarray",
+]
 
 [project.scripts]
 acme-cli = "acme.main:main"

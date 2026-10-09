@@ -145,6 +145,7 @@ pub(super) fn usage_context_for_import(
     match import_context {
         ImportContext::Type => UsageContext::Type,
         ImportContext::Test => UsageContext::Test,
+        ImportContext::Dev => UsageContext::Dev,
         ImportContext::Runtime => match file_context(file, sources) {
             FileContext::Test => UsageContext::Test,
             FileContext::Docs => UsageContext::Docs,

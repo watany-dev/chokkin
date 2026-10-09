@@ -124,7 +124,7 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
                 .map(|fix| &fix.subject)
                 .collect()
         ),
-        ["attrs", "xarray"]
+        ["attrs", "cloudpickle", "xarray"]
     );
     assert_eq!(
         subjects(
@@ -135,7 +135,9 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
                 .map(|fix| &fix.subject)
                 .collect()
         ),
-        ["dask", "polars", "pyarrow", "sympy", "toolz"]
+        [
+            "dask", "polars", "pyarrow", "pyspark", "sympy", "toolz", "trio"
+        ]
     );
 }
 

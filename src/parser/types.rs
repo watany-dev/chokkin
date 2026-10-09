@@ -22,6 +22,8 @@ pub enum ImportContext {
     Type,
     /// Import in a test file (combined with file context in Step 10).
     Test,
+    /// Import in a runtime file's `if __name__ == "__main__":` block.
+    Dev,
 }
 
 /// One import statement extracted from a module.
