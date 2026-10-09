@@ -19,6 +19,7 @@ pub(crate) use glob::build_glob_set;
 pub(crate) use layout::infer_layout;
 pub(crate) use layout::path_to_module;
 pub use surface::PublicSurface;
+pub(crate) use surface::member_ships;
 pub(crate) use types::MemberLayout;
 pub use types::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,

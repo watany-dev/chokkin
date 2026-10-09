@@ -272,19 +272,27 @@ fn run_analysis_core(
     ) {
         apply_public_surface(&mut reachability, &surface, &entry);
     }
+    // CHK007 needs every member's surface, app members too (#678). A member
+    // without wheel targets ships nothing, so its surface is empty.
     let member_surfaces: Vec<_> = probe
         .workspace_inputs
         .iter()
-        .filter(|input| entry.library_members.contains(&input.member.path))
-        .filter_map(|input| {
+        .map(|input| {
             let surface = PublicSurface::resolve(
                 input.manifest.metadata.wheel_targets.as_ref(),
                 &input.sources.files,
-            )?;
-            Some((input.member.path.clone(), surface))
+            )
+            .unwrap_or_default();
+            (input.member.path.clone(), surface)
         })
         .collect();
-    apply_member_surfaces(&mut reachability, &member_surfaces);
+    let library_surfaces: Vec<_> = member_surfaces
+        .iter()
+        .filter(|(member, surface)| {
+            !surface.files.is_empty() && entry.library_members.contains(member)
+        })
+        .collect();
+    apply_member_surfaces(&mut reachability, &library_surfaces);
 
     let workspace_boundaries = probe
         .workspace_inputs
@@ -326,6 +334,7 @@ fn run_analysis_core(
         &entry,
         &plugins,
         &probe.manifest,
+        &member_surfaces,
         production_tests.as_deref(),
     );
 

@@ -109,6 +109,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &entry,
         &plugins,
         &manifest,
+        &[],
         None,
     );
 

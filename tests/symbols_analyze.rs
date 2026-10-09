@@ -105,6 +105,7 @@ fn analyze_fixture(name: &str) -> Vec<chokkin::internals::IssueCandidate> {
         &inputs.entry,
         &inputs.plugins,
         &inputs.manifest,
+        &[],
         None,
     )
 }
@@ -226,6 +227,7 @@ fn reexport_imported_from_package_is_not_chk007() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.manifest,
+        &[],
         None,
     );
     assert!(!has_symbol_rule(&report, RuleId::Chk007, "acme", "foo"));
@@ -413,6 +415,7 @@ fn star_import_in_init_is_not_a_reexport() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.manifest,
+        &[],
         None,
     );
     assert!(!has_symbol_rule(&report, RuleId::Chk007, "acme", "*"));
@@ -452,6 +455,7 @@ fn relative_package_import_counts_as_external_reference() {
         &inputs.entry,
         &inputs.plugins,
         &inputs.manifest,
+        &[],
         None,
     );
     for name in ["util", "other"] {
@@ -487,6 +491,7 @@ fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::internals::IssueCan
         &inputs.entry,
         &inputs.plugins,
         &inputs.manifest,
+        &[],
         None,
     )
 }

@@ -54,6 +54,25 @@ impl PublicSurface {
     }
 }
 
+/// Whether the innermost member of `surfaces` holding root-relative `path`
+/// ships it in its own wheel; `None` when no member holds it.
+///
+/// `surfaces` pairs each member's root-relative directory with its surface,
+/// whose paths are relative to that member.
+pub(crate) fn member_ships<'a>(
+    surfaces: impl IntoIterator<Item = &'a (String, PublicSurface)>,
+    path: &str,
+) -> Option<bool> {
+    surfaces
+        .into_iter()
+        .filter_map(|(member, surface)| {
+            let rel = path.strip_prefix(member.as_str())?.strip_prefix('/')?;
+            Some((member.len(), surface.contains(rel)))
+        })
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, ships)| ships)
+}
+
 enum PathTarget {
     /// A package directory or module file; matches itself and everything below.
     Prefix(String),
