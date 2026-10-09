@@ -767,7 +767,6 @@ fn subscript_name(expr: &Expr) -> Option<&str> {
     }
 }
 
-/// The `(test, body)` of each `if` / `elif` / `else` branch, in order.
 fn if_branches(if_stmt: &StmtIf) -> impl Iterator<Item = (Option<&Expr>, &[Stmt])> {
     std::iter::once((Some(&*if_stmt.test), if_stmt.body.as_slice())).chain(
         if_stmt
