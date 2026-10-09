@@ -22,6 +22,8 @@ struct AlembicConfig {
     dir: String,
     script_location: String,
     version_locations: Vec<String>,
+    /// `recursive_version_locations`: revisions in subdirectories load too.
+    recursive: bool,
     origin: ReferenceOrigin,
 }
 
@@ -39,22 +41,8 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
         );
     }
 
-    let configs = configs(ctx);
-    if configs.is_empty() {
-        let env = root.join(DEFAULT_ENV);
-        if env.is_file() {
-            push_entry(
-                &mut contrib,
-                rel_to_root(root, &env),
-                FileContext::Dev,
-                origin_for_file(root, &env, DEFAULT_ENV),
-            );
-        }
-        return contrib;
-    }
-
     let mut seen = BTreeSet::new();
-    for config in &configs {
+    for config in &configs(ctx) {
         let Some(script) = resolve_location(ctx, &config.dir, &config.script_location) else {
             continue;
         };
@@ -69,9 +57,12 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
         };
         let env = join_rel(&script, "env.py");
         for file in ctx.sources.python_files() {
-            let in_versions = versions
-                .iter()
-                .any(|dir| !dir.is_empty() && file.path.starts_with(&format!("{dir}/")));
+            let in_versions = versions.iter().any(|dir| {
+                file.path
+                    .strip_prefix(dir.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .is_some_and(|rest| config.recursive || !rest.contains('/'))
+            });
             if (file.path == env || in_versions) && seen.insert(file.path.clone()) {
                 push_entry(
                     &mut contrib,
@@ -81,6 +72,16 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
                 );
             }
         }
+    }
+
+    let env = root.join(DEFAULT_ENV);
+    if contrib.entries.is_empty() && env.is_file() {
+        push_entry(
+            &mut contrib,
+            DEFAULT_ENV.to_owned(),
+            FileContext::Dev,
+            origin_for_file(root, &env, DEFAULT_ENV),
+        );
     }
     contrib
 }
@@ -121,19 +122,31 @@ fn ini_config(root: &Path, dir: &str) -> Option<AlembicConfig> {
     let path = root.join(dir).join("alembic.ini");
     let contents = std::fs::read_to_string(&path).ok()?;
     let (index, script_location) = ini_value(&contents, "alembic", "script_location")?;
-    let version_locations = ini_value(&contents, "alembic", "version_locations")
-        .map(|(_, value)| {
-            strip_comment(&value)
-                .split([' ', '\t', '\n', ',', ';'])
+    let setting = |key: &str| {
+        ini_value(&contents, "alembic", key).map(|(_, value)| strip_comment(&value).to_owned())
+    };
+    let separators = location_separators(
+        setting("path_separator")
+            .or_else(|| setting("version_path_separator"))
+            .as_deref(),
+    );
+    let version_locations = setting("version_locations")
+        .map(|value| {
+            value
+                .split(separators)
+                .map(str::trim)
                 .filter(|part| !part.is_empty())
                 .map(str::to_owned)
                 .collect()
         })
         .unwrap_or_default();
+    let recursive = setting("recursive_version_locations")
+        .is_some_and(|value| ["true", "yes", "on", "1"].contains(&value.to_lowercase().as_str()));
     Some(AlembicConfig {
         dir: dir.to_owned(),
         script_location: strip_comment(&script_location).to_owned(),
         version_locations,
+        recursive,
         origin: ReferenceOrigin {
             file: rel_to_root(root, &path),
             line: u32::try_from(index + 1).ok(),
@@ -159,10 +172,15 @@ fn pyproject_config(root: &Path, dir: &str) -> Option<AlembicConfig> {
                 .collect()
         })
         .unwrap_or_default();
+    let recursive = alembic
+        .get("recursive_version_locations")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false);
     Some(AlembicConfig {
         dir: dir.to_owned(),
         script_location,
         version_locations,
+        recursive,
         origin: ReferenceOrigin {
             file: rel_to_root(root, &path),
             line: toml_key_line(&text, "tool.alembic", "script_location"),
@@ -171,29 +189,48 @@ fn pyproject_config(root: &Path, dir: &str) -> Option<AlembicConfig> {
     })
 }
 
+/// How `version_locations` splits, per `path_separator` (alembic 1.16) or
+/// the older `version_path_separator`; unset is the legacy space or comma.
+fn location_separators(setting: Option<&str>) -> &'static [char] {
+    match setting {
+        // `os.pathsep`: `:` on POSIX, `;` on Windows.
+        Some("os") => &[':', ';', '\n'],
+        Some("colon") => &[':', '\n'],
+        Some("semicolon") => &[';', '\n'],
+        Some("newline") => &['\n'],
+        Some("space") => &[' ', '\t', '\n'],
+        _ => &[' ', '\t', '\n', ','],
+    }
+}
+
 /// configparser keeps `value  # note`; alembic's own template writes those.
 fn strip_comment(value: &str) -> &str {
     value.find(" #").map_or(value, |end| &value[..end]).trim()
 }
 
 /// Root-relative directory a location names: `pkg.sub:dir` under the
-/// package, else a path from the config's directory (`%(here)s`), or from
-/// the root, where alembic is usually run, when that one is missing.
+/// package, else a path from the config's directory (`%(here)s`), or, for a
+/// bare relative path missing there, from the root, where alembic usually runs.
 fn resolve_location(ctx: &PluginContext<'_>, config_dir: &str, location: &str) -> Option<String> {
     let location = location.trim();
     if let Some((package, dir)) = location.split_once(':') {
-        if package.len() < 2 || !package.split('.').all(is_identifier) {
-            // A Windows drive letter or other absolute path.
+        // `C:\...` is an absolute Windows path, not a package resource.
+        if dir.starts_with(['/', '\\']) || !package.split('.').all(is_identifier) {
             return None;
         }
         return join_lexical(&package_dir(ctx, package)?, dir);
     }
+    let bases: &[&str] = if location.contains("%(here)s") {
+        &[config_dir]
+    } else {
+        &[config_dir, ""]
+    };
     let location = location.replace("%(here)s", ".");
     if location.starts_with(['/', '\\']) {
         return None;
     }
-    [config_dir, ""]
-        .into_iter()
+    bases
+        .iter()
         .filter_map(|base| join_lexical(base, &location))
         .find(|dir| ctx.root.path.join(dir).is_dir())
 }

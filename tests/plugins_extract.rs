@@ -531,28 +531,68 @@ fn alembic_entries(files: &[(&str, &str)]) -> Vec<String> {
 }
 
 /// `script_location` names the migration environment alembic loads by path,
-/// from an `alembic.ini` inside the package (#667).
+/// from an `alembic.ini` inside the package (#667); revisions in
+/// subdirectories load only with `recursive_version_locations`.
 #[test]
 fn alembic_ini_script_location_roots_env_and_revisions() {
-    let paths = alembic_entries(&[
-        ("src/acme/__init__.py", ""),
-        (
-            "src/acme/alembic.ini",
-            "[alembic]\nscript_location = %(here)s/migrations\n",
-        ),
-        ("src/acme/migrations/env.py", ""),
-        ("src/acme/migrations/utils.py", ""),
-        ("src/acme/migrations/versions/a1_init.py", ""),
-        ("src/acme/migrations/versions/2024/b2_next.py", ""),
-    ]);
+    let project = |ini: &str| {
+        alembic_entries(&[
+            ("src/acme/__init__.py", ""),
+            ("src/acme/alembic.ini", ini),
+            ("src/acme/migrations/env.py", ""),
+            ("src/acme/migrations/utils.py", ""),
+            ("src/acme/migrations/versions/a1_init.py", ""),
+            ("src/acme/migrations/versions/2024/b2_next.py", ""),
+        ])
+    };
     assert_eq!(
-        paths,
+        project("[alembic]\nscript_location = %(here)s/migrations\n"),
+        [
+            "src/acme/migrations/env.py",
+            "src/acme/migrations/versions/a1_init.py",
+        ]
+    );
+    assert_eq!(
+        project(
+            "[alembic]\nscript_location = %(here)s/migrations\nrecursive_version_locations = true\n"
+        ),
         [
             "src/acme/migrations/env.py",
             "src/acme/migrations/versions/2024/b2_next.py",
             "src/acme/migrations/versions/a1_init.py",
         ]
     );
+}
+
+/// `version_path_separator = os` splits `version_locations` on `:`.
+#[test]
+fn alembic_version_locations_follow_path_separator() {
+    let paths = alembic_entries(&[
+        (
+            "alembic.ini",
+            "[alembic]\nscript_location = db\nversion_path_separator = os  # Use os.pathsep.\nversion_locations = db/a:db/b\n",
+        ),
+        ("db/env.py", ""),
+        ("db/a/a1_init.py", ""),
+        ("db/b/b2_next.py", ""),
+    ]);
+    assert_eq!(paths, ["db/a/a1_init.py", "db/b/b2_next.py", "db/env.py"]);
+}
+
+/// A config whose `script_location` resolves nowhere keeps the fixed
+/// `alembic/env.py`; `%(here)s` never falls back to the root.
+#[test]
+fn alembic_unresolved_location_keeps_default_env() {
+    let paths = alembic_entries(&[
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/alembic.ini",
+            "[alembic]\nscript_location = %(here)s/db\n",
+        ),
+        ("db/env.py", ""),
+        ("alembic/env.py", ""),
+    ]);
+    assert_eq!(paths, ["alembic/env.py"]);
 }
 
 /// `pkg:dir` resolves under the package; `version_locations` replaces
