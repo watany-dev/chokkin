@@ -78,6 +78,7 @@ fn is_alembic_revision(module: &ParsedModule) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::{SymbolDef, SymbolKind};
 
     #[test]
     fn protoc_output_and_modular_sources_are_codegen() {
@@ -103,5 +104,40 @@ mod tests {
         ] {
             assert!(!is_codegen_file(path, &files), "{path}");
         }
+    }
+
+    fn module(path: &str, names: &[&str]) -> ParsedModule {
+        ParsedModule {
+            path: path.to_owned(),
+            symbols: names
+                .iter()
+                .map(|name| SymbolDef {
+                    name: (*name).to_owned(),
+                    kind: SymbolKind::Variable,
+                    line: 1,
+                    is_public: true,
+                    decorators: Vec::new(),
+                    in_type_checking: false,
+                    used_in_module: false,
+                })
+                .collect(),
+            ..ParsedModule::default()
+        }
+    }
+
+    #[test]
+    fn alembic_revision_needs_versions_dir_and_both_revision_names() {
+        let both = ["revision", "down_revision", "upgrade"];
+        assert!(is_alembic_revision(&module("db/versions/a1.py", &both)));
+        assert!(is_alembic_revision(&module("db/versions/sub/a1.py", &both)));
+        assert!(!is_alembic_revision(&module("db/revisions/a1.py", &both)));
+        assert!(!is_alembic_revision(&module(
+            "db/versions/a1.py",
+            &["revision", "upgrade"]
+        )));
+        assert!(!is_alembic_revision(&module(
+            "db/versions/a1.py",
+            &["down_revision", "upgrade"]
+        )));
     }
 }
