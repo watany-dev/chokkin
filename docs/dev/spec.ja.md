@@ -139,7 +139,7 @@ MVPでは以下のrule IDを固定する。
 |`CHK006`|`unused_export`        |module外から参照されない公開シンボル                             |warning                     |
 |`CHK007`|`unused_reexport`      |`__init__.py` などの再exportが内部から参照されない               |library: info / app: warning|
 |`CHK008`|`unlisted_binary`      |tox/nox/pre-commit/CI等で使うCLIが依存宣言されていない           |warning                     |
-|`CHK009`|`duplicate_dependency` |同じcontext内、またはruntimeとgroup/extra/buildに重複宣言されている|warning                     |
+|`CHK009`|`duplicate_dependency` |同じcontext内、またはruntimeとgroup/extra/buildに重複宣言されている|同じcontext内: warning / runtimeとgroup/extra/build: info|
 |`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |`TYPE_CHECKING`・optional import・docs/dev context の file: info / それ以外: warning|
 
 PEP 723 script (`# /// script` block を持つ `.py`) の CHK002 / CHK003 は project manifest ではなく script block の `dependencies` に対して判定し、subject を `script:<root 相対 path>:<distribution>` とする (例: `CHK003:script:scripts/tool.py:pyyaml`)。JSON では `path` に script、`distribution` に distribution 名を入れ、`target` / baseline fingerprint / `[tool.chokkin.ignore]` / `--explain` は同じ `script:` 形式を受け付ける。詳細は §10。
@@ -663,7 +663,12 @@ CHK009 (duplicate_dependency) は、同じ distribution の宣言のうち片方
   -> specifier が違う場合 (pytest>=7 と pytest>=8) は両方が制約なので報告しない
   -> extras が違う場合 (httpx と httpx[http2]) も片方を消すと extras を失うので報告しない
 runtime 宣言と group / optional extra / build の宣言
-  -> CHK009 "requests is declared in multiple contexts: group:dev, runtime"
+  -> CHK009 "requests is declared in multiple contexts: group:dev, runtime" (info / likely、--fix しない)
+  -> group は単独で install されることがあり (CI の uv sync --only-group lint)、extras は
+     自動生成で他 package の extras を写すこともある。どちらも静的には区別できないので、
+     group 名で分けず一律に info にする (#696)
+  -> 同じ distribution に同じ context の重複もあれば、その重複だけを warning / certain で
+     報告する (runtime との重複は message に含めない)。--fix が消すのもその重複だけ
   -> group / extra 側が runtime 宣言から導けるときだけ報告する。次の場合は refinement なので報告しない
      - runtime 宣言に無い extras を足す (runtime: streamlit、dev: streamlit[auth,charts])
        (extras は PEP 503 正規化で比較し、同じ marker の runtime 宣言すべての extras の和集合に

@@ -267,9 +267,9 @@ fn expected_for(name: &str, dep: Dep, has_lock: bool, strict: bool) -> Vec<Key> 
     }
     // A dev group or extra repeats only a runtime declaration with the same
     // (here: no) marker; groups and extras never duplicate each other (#555,
-    // #629).
+    // #629). Repeating the runtime declaration is only info (#696).
     if dep.runtime == Some(false) && (dep.dev || dep.extra) {
-        out.push(key("CHK009", name, "warning", "certain"));
+        out.push(key("CHK009", name, "info", "likely"));
     }
 
     let site = format!("src/pkg/main.py:{}", module(name));

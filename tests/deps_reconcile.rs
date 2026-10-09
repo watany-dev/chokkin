@@ -442,7 +442,8 @@ fn duplicate_requests_emits_chk009() {
     let report = reconcile_fixture("duplicate_requests");
     let duplicate = candidate_for_distribution(&report, RuleId::Chk009, "requests")
         .expect("requests duplicate");
-    assert_eq!(duplicate.severity, Severity::Warning);
+    // #696: a dev group repeating the runtime declaration is only a hint.
+    assert_eq!(duplicate.severity, Severity::Info);
     assert!(duplicate.message.contains("runtime"));
     assert!(duplicate.message.contains("dev"));
 }
@@ -473,6 +474,13 @@ fn group_or_extra_with_its_own_constraint_is_not_a_duplicate() {
     assert_eq!(
         duplicate.message,
         "httpx is declared in multiple contexts: optional:http, runtime"
+    );
+    // #696: the same-context repeat is reported without the runtime one.
+    let duplicate =
+        candidate_for_distribution(&report, RuleId::Chk009, "anyio").expect("anyio duplicate");
+    assert_eq!(
+        duplicate.message,
+        "anyio is declared more than once in group:lint"
     );
 }
 

@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gcloud-aio-*` packages (`gcloud.aio.*`) (#679).
 
 ### Changed
+- CHK009 for a dependency group, extra or build requirement that repeats the
+  runtime declaration is info / likely instead of warning / certain, and
+  `--fix` no longer removes it: a group may be installed on its own
+  (`uv sync --only-group lint`) and generated extras may mirror another
+  package's. The same requirement twice in one context stays a warning
+  (#696).
 - Imports that only run once a package is known to be installed are
   optional (CHK010 / CHK003 info): the body of an `if` whose condition calls
   `importlib.util.find_spec(...)` or an `is_<name>_available()` helper, the

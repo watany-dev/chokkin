@@ -219,10 +219,10 @@ fn fix_removes_several_unused_lines_from_one_requirements_file() {
     );
 }
 
-/// #629: CHK009 --fix only drops a declaration the runtime one implies, and
-/// never a sibling extra with its own specifier or marker.
+/// #696: CHK009 --fix drops only a repeat in the same context; a group or
+/// extra declaration that repeats the runtime one stays as written.
 #[test]
-fn fix_removes_only_duplicates_the_runtime_declaration_implies() {
+fn fix_removes_only_the_same_context_repeat() {
     let temp = tempfile::tempdir().expect("tempdir");
     copy_dir_recursive(&fixture("duplicate_constraints"), temp.path()).expect("copy fixture");
     let pyproject = temp.path().join("pyproject.toml");
@@ -238,15 +238,13 @@ fn fix_removes_only_duplicates_the_runtime_declaration_implies() {
         },
     )
     .expect("analyze with fix");
-    let fix_report = report.fix.expect("fix report");
-    assert_eq!(fix_report.applied.len(), 1, "{:?}", fix_report.applied);
-    assert_eq!(fix_report.applied[0].rule, RuleId::Chk009);
-
-    let after = std::fs::read_to_string(&pyproject).expect("read pyproject after fix");
+    assert_eq!(report.fix.expect("fix report").applied.len(), 1);
     assert_eq!(
-        after,
-        before.replace(r#"http = ["httpx"]"#, "http = []"),
-        "{after}"
+        std::fs::read_to_string(&pyproject).expect("read pyproject after fix"),
+        before.replace(
+            r#"lint = ["rich>=13.0", "anyio", "anyio"]"#,
+            r#"lint = ["rich>=13.0", "anyio"]"#
+        )
     );
 }
 

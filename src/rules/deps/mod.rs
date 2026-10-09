@@ -11,6 +11,6 @@ mod unused;
 mod used;
 
 pub(crate) use context::{DeclarationBucket, declaration_buckets, file_context};
-pub(crate) use duplicate::duplicate_declarations;
+pub(crate) use duplicate::removable_duplicates;
 
 pub use reconcile::reconcile_with_context;
