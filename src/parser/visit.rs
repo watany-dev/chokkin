@@ -4,8 +4,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt, StmtImport,
-    StmtImportFrom,
+    Alias, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt, StmtIf,
+    StmtImport, StmtImportFrom,
 };
 use ruff_text_size::Ranged;
 
@@ -19,7 +19,10 @@ use super::dynamic::{
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
-use super::module_guard::{imported_module_guard, is_main_guard_test, runs_as_main};
+use super::module_guard::{
+    availability_test, checks_availability, imported_module_guard, is_main_guard_test,
+    raises_import_error, runs_as_main,
+};
 use super::platform_guard::is_platform_guard_test;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_test;
@@ -125,12 +128,16 @@ impl<'a> ModuleVisitor<'a> {
     }
 
     /// Visit one `if`/`elif`/`else` branch; `test` is `None` for `else`.
-    fn visit_branch<'ast>(&mut self, test: Option<&'ast Expr>, body: &'ast [Stmt]) {
+    /// `optional` marks a branch that only runs when a package is installed.
+    fn visit_branch<'ast>(&mut self, test: Option<&'ast Expr>, body: &'ast [Stmt], optional: bool) {
         let was_type_checking = self.in_type_checking;
         let was_platform_guard = self.platform_guard_depth;
         let was_try_depth = self.try_depth;
         let was_main_block = self.in_main_block;
         let guard_count = self.imported_guards.len();
+        if optional {
+            self.try_depth = self.try_depth.saturating_add(1);
+        }
         if let Some(test) = test {
             self.visit_expr(test);
             if is_type_checking_test(test, &self.typing_aliases, &self.type_checking_names) {
@@ -191,13 +198,20 @@ impl<'a> ModuleVisitor<'a> {
         }
         let saved = self.module_level;
         let saved_function_depth = self.function_depth;
+        let saved_try_depth = self.try_depth;
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
             self.function_depth += 1;
+            // A function that asks whether a package is installed treats the
+            // packages it imports as optional (#695).
+            if checks_availability(body) {
+                self.try_depth = self.try_depth.saturating_add(1);
+            }
         }
         self.visit_body(body);
         self.module_level = saved;
         self.function_depth = saved_function_depth;
+        self.try_depth = saved_try_depth;
     }
 
     /// `[sys.executable, "-m", "pkg"]` uses `pkg` without importing it. It is
@@ -431,6 +445,22 @@ impl<'a> ModuleVisitor<'a> {
 }
 
 impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
+    /// Statements after `if not is_x_available(): raise ImportError(...)`
+    /// only run with `x` installed (#695).
+    fn visit_body(&mut self, body: &'ast [Stmt]) {
+        let try_depth = self.try_depth;
+        for stmt in body {
+            self.visit_stmt(stmt);
+            if let Stmt::If(if_stmt) = stmt
+                && availability_test(&if_stmt.test) == Some(false)
+                && raises_import_error(&if_stmt.body)
+            {
+                self.try_depth = try_depth.saturating_add(1);
+            }
+        }
+        self.try_depth = try_depth;
+    }
+
     #[allow(clippy::too_many_lines)]
     fn visit_stmt(&mut self, stmt: &'ast Stmt) {
         match stmt {
@@ -526,9 +556,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             },
             Stmt::Expr(expr_stmt) => self.visit_expr(&expr_stmt.value),
             Stmt::If(if_stmt) => {
-                self.visit_branch(Some(&if_stmt.test), &if_stmt.body);
-                for clause in &if_stmt.elif_else_clauses {
-                    self.visit_branch(clause.test.as_ref(), &clause.body);
+                // `if find_spec("x"):` / `if is_x_available():` runs only with
+                // `x` installed, and so does every branch after
+                // `if not is_x_available():` (#695).
+                let mut after_missing = false;
+                for (test, body) in if_branches(if_stmt) {
+                    let installed = test.and_then(availability_test);
+                    self.visit_branch(test, body, after_missing || installed == Some(true));
+                    after_missing |= installed == Some(false);
                 }
             },
             Stmt::Try(try_stmt) => {
@@ -730,6 +765,16 @@ fn subscript_name(expr: &Expr) -> Option<&str> {
         Expr::Attribute(attribute) => Some(attribute.attr.as_str()),
         _ => None,
     }
+}
+
+/// The `(test, body)` of each `if` / `elif` / `else` branch, in order.
+fn if_branches(if_stmt: &StmtIf) -> impl Iterator<Item = (Option<&Expr>, &[Stmt])> {
+    std::iter::once((Some(&*if_stmt.test), if_stmt.body.as_slice())).chain(
+        if_stmt
+            .elif_else_clauses
+            .iter()
+            .map(|clause| (clause.test.as_ref(), clause.body.as_slice())),
+    )
 }
 
 /// Names a `try` body assigns the literal `True` (`has_x = True`).
@@ -1294,6 +1339,74 @@ g = lambda x=utils.G: x
                 ("yaml", false),
                 ("tomli", false),
                 ("toml", false),
+            ]
+        );
+    }
+
+    /// #695: transformers and `llama_index` import packages behind
+    /// `is_x_available()` / `find_spec()` checks.
+    #[test]
+    fn availability_checked_imports_are_optional() {
+        let parsed = visit_source(
+            "import importlib.util
+if is_torch_available():
+    import torch
+else:
+    import fallback_lib
+if importlib.util.find_spec('wandb') is not None:
+    import wandb
+import plain_lib
+
+def peft_model():
+    import before_lib
+    if importlib.util.find_spec('peft') is None:
+        raise ImportError('pip install peft')
+    from peft import AutoPeftModel
+
+def quanto():
+    if not is_optimum_quanto_available():
+        raise ImportError('pip install optimum-quanto')
+    elif is_quanto_greater('0.2.5'):
+        from optimum.quanto import qint2
+    else:
+        raise ImportError('upgrade')
+    import after_lib
+
+def other():
+    if version < 3:
+        raise ImportError('old')
+    import unguarded_lib
+
+if not is_y_available():
+    import y_fallback
+else:
+    import y
+if is_z_available():
+    raise ImportError('z conflicts')
+import after_positive
+
+if not is_x_available():
+    raise ImportError('pip install x')
+import x
+",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("importlib.util", false),
+                ("torch", true),
+                ("fallback_lib", false),
+                ("wandb", true),
+                ("plain_lib", false),
+                ("before_lib", true),
+                ("peft", true),
+                ("optimum.quanto", true),
+                ("after_lib", true),
+                ("unguarded_lib", false),
+                ("y_fallback", false),
+                ("y", true),
+                ("after_positive", false),
+                ("x", true),
             ]
         );
     }
