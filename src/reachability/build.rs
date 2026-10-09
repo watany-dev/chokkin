@@ -324,11 +324,8 @@ mod tests {
             root,
             layout: LayoutInfo {
                 layout: ProjectLayout::Flat,
-                package_root: String::new(),
                 packages: vec!["acme".to_owned()],
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             },
             effective_globs: Vec::new(),
             files: paths

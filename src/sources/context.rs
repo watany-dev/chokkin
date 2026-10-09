@@ -226,16 +226,9 @@ mod tests {
     #[test]
     fn member_test_and_docs_files_get_root_contexts() {
         use crate::discovery::{ProjectRoot, RootMarker};
-        use crate::sources::{DiscoveredFile, FileKind, LayoutInfo, MemberLayout, ProjectLayout};
+        use crate::sources::{DiscoveredFile, FileKind, LayoutInfo, MemberLayout};
 
-        let layout = || LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        };
+        let layout = || LayoutInfo::default();
         let file = |path: &str| DiscoveredFile {
             path: path.to_owned(),
             kind: FileKind::Python,
