@@ -507,7 +507,6 @@ fn alembic_plugin_records_env_entry() {
     );
 }
 
-/// Alembic entries for a project whose files are `(path, contents)`.
 fn alembic_entries(files: &[(&str, &str)]) -> Vec<String> {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let root = temp.path();

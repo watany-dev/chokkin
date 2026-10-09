@@ -27,7 +27,6 @@ struct AlembicConfig {
     origin: ReferenceOrigin,
 }
 
-/// Extract the alembic entries and binary usage.
 #[must_use]
 pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let root = ctx.root.path.as_path();
