@@ -95,6 +95,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 import oss_corpus as oc
@@ -222,62 +223,61 @@ def chk003_gate_count(out_dir: Path, expect_slugs: set[str]) -> int:
     )
 
 
-def report_issues(out_dir: Path, slug: str) -> dict[tuple[str, int], dict]:
-    """(fingerprint, occurrence) -> issue of one project's saved JSON report.
-    The occurrence index keeps findings that share a fingerprint apart."""
+def report_levels(out_dir: Path, slug: str) -> dict[tuple[str, str], Counter] | None:
+    """(code, fingerprint) -> Counter of `severity/confidence` in one project's
+    saved JSON report; None when the report is not JSON (crash). Import
+    fingerprints carry no line, so one fingerprint can cover several findings."""
     try:
         report = json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
-    keyed: dict[tuple[str, int], dict] = {}
-    seen: dict[str, int] = {}
-    for issue in report.get("issues", []) if isinstance(report, dict) else []:
-        fp = issue.get("fingerprint") or f"{issue['code']}:{issue.get('target')}"
-        n = seen[fp] = seen.get(fp, -1) + 1
-        keyed[(fp, n)] = issue
-    return keyed
+        return None
+    levels: dict[tuple[str, str], Counter] = {}
+    for issue in report.get("issues", []):
+        level = f"{issue.get('severity') or '?'}/{issue.get('confidence') or '?'}"
+        levels.setdefault((issue["code"], issue["fingerprint"]), Counter())[level] += 1
+    return levels
 
 
-def finding_diff(base: Path, head: Path) -> list[list[str]]:
+def finding_diff(base: Path, head: Path) -> tuple[list[list[str]], list[str]]:
     """NEW / GONE / CHANGED findings between two runs, keyed on (slug,
-    fingerprint). CHANGED means the severity or confidence moved, e.g. a
-    library-mode downgrade from warning to info."""
+    fingerprint), and the slugs whose report on either side is not JSON.
+    CHANGED means the severity or confidence moved, e.g. a library-mode
+    downgrade from warning to info."""
     slugs = sorted({r[0] for r in tsv_rows(base / "summary.tsv")} & {r[0] for r in tsv_rows(head / "summary.tsv")})
-    rows = []
-
-    def level(issue: dict) -> str:
-        return f"{issue.get('severity') or '?'}/{issue.get('confidence') or '?'}"
-
+    rows: list[list[str]] = []
+    skipped: list[str] = []
     for slug in slugs:
-        before, after = report_issues(base, slug), report_issues(head, slug)
-        for key in sorted(before.keys() | after.keys()):
-            b, a = before.get(key), after.get(key)
-            if b is None:
-                status, issue, old, new = "NEW", a, "-", level(a)
-            elif a is None:
-                status, issue, old, new = "GONE", b, level(b), "-"
-            elif level(b) != level(a):
-                status, issue, old, new = "CHANGED", a, level(b), level(a)
-            else:
-                continue
-            rows.append([status, slug, issue["code"], tsv_field(key[0]), old, new])
-    return rows
+        before, after = report_levels(base, slug), report_levels(head, slug)
+        if before is None or after is None:
+            skipped.append(slug)
+            continue
+        for code, fp in sorted(before.keys() | after.keys()):
+            b, a = before.get((code, fp), Counter()), after.get((code, fp), Counter())
+            # Findings whose level did not move cancel out; what is left pairs
+            # up as CHANGED and the surplus on either side is GONE or NEW.
+            old, new = sorted((b - a).elements()), sorted((a - b).elements())
+            pairs = [("CHANGED", o, n) for o, n in zip(old, new)]
+            pairs += [("GONE", o, "-") for o in old[len(new):]] + [("NEW", "-", n) for n in new[len(old):]]
+            rows += [[status, slug, code, tsv_field(fp), o, n] for status, o, n in pairs]
+    return rows, skipped
 
 
-def finding_diff_md(rows: list[list[str]]) -> list[str]:
+def finding_diff_md(rows: list[list[str]], skipped: list[str]) -> list[str]:
     """Per-rule and per-project NEW / GONE / CHANGED counts; the findings
     themselves go to finding-diff.tsv."""
     statuses = ["NEW", "GONE", "CHANGED"]
 
     def counts(col: int) -> list[list]:
-        keys = sorted({r[col] for r in rows})
-        return [[k, *(sum(1 for r in rows if r[col] == k and r[0] == s) for s in statuses)] for k in keys]
+        n = Counter((r[col], r[0]) for r in rows)
+        return [[k, *(n[(k, s)] for s in statuses)] for k in sorted({k for k, _ in n})]
 
+    lines = ["## Finding-level diff", ""]
+    if skipped:
+        lines += [f"Not diffed (non-JSON report): {' '.join(skipped)}", ""]
     if not rows:
-        return ["## Finding-level diff", "", "_No finding moved between baseline and HEAD._"]
+        return [*lines, "_No finding moved between baseline and HEAD._"]
     return [
-        "## Finding-level diff",
-        "",
+        *lines,
         "Keyed on (slug, fingerprint). CHANGED = severity or confidence moved.",
         "Every finding is listed in finding-diff.tsv.",
         "",
@@ -287,7 +287,7 @@ def finding_diff_md(rows: list[list[str]]) -> list[str]:
     ]
 
 
-def compare_md(base: Path, head: Path, report: list[str], diff: list[list[str]]) -> list[str]:
+def compare_md(base: Path, head: Path, report: list[str], diff: tuple[list[list[str]], list[str]]) -> list[str]:
     """Before/after summary for the CI job page; the full scorecard lists every
     finding and outgrows the job summary limit."""
     base_sum = {r[0]: r for r in tsv_rows(base / "summary.tsv")}
@@ -337,7 +337,7 @@ def compare_md(base: Path, head: Path, report: list[str], diff: list[list[str]])
         "",
         f"Unclassified CHK003 on HEAD: {unclassified_chk003}",
         "",
-        *finding_diff_md(diff),
+        *finding_diff_md(*diff),
         "",
         *report[start:end],
     ]
@@ -599,7 +599,7 @@ def main() -> int:
 
     if args.baseline:
         diff = finding_diff(args.baseline, out)
-        write_tsv("finding-diff.tsv", ["status", "slug", "code", "fingerprint", "before", "after"], diff)
+        write_tsv("finding-diff.tsv", ["status", "slug", "code", "fingerprint", "before", "after"], diff[0])
         compare = compare_md(args.baseline, out, lines, diff)
         (out / "compare.md").write_text("\n".join(compare) + "\n", encoding="utf-8")
         base_n = chk003_gate_count(args.baseline, set(expect))

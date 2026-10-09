@@ -7,14 +7,12 @@
 
 ## 1. バージョンごとにビルドを分ける
 
-baseline (前回の tag) と HEAD を、worktree も `CARGO_TARGET_DIR` もバージョンごとに
-分けてビルドする。
+baseline (前回の tag、例は v0.7.3) と HEAD を、worktree も `CARGO_TARGET_DIR` も
+バージョンごとに分けてビルドする。
 
 ```sh
 S=target/release-validation
-git worktree add "$S/wt-0.7.2" v0.7.2
 git worktree add "$S/wt-0.7.3" v0.7.3
-(cd "$S/wt-0.7.2" && CARGO_TARGET_DIR="$PWD/../target-072" cargo build --release --locked --bin chokkin)
 (cd "$S/wt-0.7.3" && CARGO_TARGET_DIR="$PWD/../target-073" cargo build --release --locked --bin chokkin)
 CARGO_TARGET_DIR="$S/target-head" cargo build --release --locked --bin chokkin
 
@@ -38,7 +36,7 @@ v0.7.3 の検証では HEAD のバイナリが v0.7.3 と同一 (md5 一致) に
 
 ```sh
 scripts/clone-oss-fixtures.sh
-BASE="$S/target-072/release/chokkin"
+BASE="$S/target-073/release/chokkin"
 HEAD="$S/target-head/release/chokkin"
 
 scripts/oss-metrics.py -b "$BASE" -o "$S/metrics/base" -r 1
@@ -63,7 +61,9 @@ checkout を測る。`--baseline` を付けた run は次を書く。
 | CHANGED | 両方にあり、severity か confidence が動いた (例: `warning/likely` → `info/likely`) |
 
 fingerprint は `CODE:stable-target` (行番号を含まない) なので、行がずれただけの
-finding は動いたことにならない。件数の増減をレポートに書くときは、rule 別件数の
+finding は動いたことにならない。同じ fingerprint を持つ finding が複数ある場合
+(同じファイルで同じ module を何度も import する CHK003 など) は、level が変わらない
+ものを相殺し、残りを CHANGED、余りを NEW / GONE として数える。件数の増減をレポートに書くときは、rule 別件数の
 表に加えて `finding-diff.tsv` から project ごとの内訳を引く。
 
 ```sh
@@ -87,9 +87,14 @@ scripts/oss-metrics.py -b "$HEAD" -o "$S/metrics/head-strict" -r 1 --strict --ba
 finding も出力に残る (info はもともと JSON に出る)。この run の `finding-diff.tsv`
 の GONE は降格では説明できない、本当に消えた finding になる。§2 の GONE のうち、
 ここで GONE に残らないものは降格。レポートには既定 run と strict run の GONE 件数を
-並べて書く。strict は dev / test context の CHK003 や marker 付き依存の CHK002 なども
-報告するので、この run の NEW は §2 の NEW より多くなる。NEW は §2 の方で見る。`--strict` の run は gate の基準 (expectations、CHK003
-growth) が既定の filter 前提なので `--gate` を付けず、出力先も既定 run と分ける。
+並べて書く。
+
+この run で見るのは GONE だけにする。strict は dev / test context の CHK003 や
+marker 付き依存の CHK002 を新たに報告し、一部の severity も上げる (marker 付き依存の
+CHK002 が warning → error など) ので、NEW と CHANGED、`compare.md` の CHK002 /
+CHK003 の表には strict 自体による差が混ざる。NEW / CHANGED は §2 の run で見る。
+gate の基準 (expectations、CHK003 growth) も既定の filter 前提なので `--gate` は
+付けず、出力先も既定 run と分ける。
 
 ## 4. レポートに残すもの
 
