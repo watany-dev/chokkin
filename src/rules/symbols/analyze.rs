@@ -343,7 +343,6 @@ fn detect_unresolved_imports(
         if !reachable.contains(file.as_str()) {
             continue;
         }
-        // A `TYPE_CHECKING` import never runs and an optional one is caught.
         let guarded = *context == ImportContext::Type || *optional;
         sites
             .entry((file.as_str(), import.as_str()))
