@@ -26,8 +26,11 @@ Options:
   -o, --output DIR      Report directory (default: target/oss-metrics)
   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
   -r, --runs N          Timed repetitions per project, median reported (default: 3)
-  --baseline DIR        --output of a baseline run; writes compare.md and adds
-                        the CHK003 growth criterion
+  --baseline DIR        --output of a baseline run; writes compare.md and
+                        finding-diff.tsv and adds the CHK003 growth criterion
+  --strict              Run chokkin with --strict, which also shows `maybe`
+                        findings, so a downgrade stays visible; use a separate
+                        --output
   --build               cargo build --release before running
   --clone               Run clone-oss-fixtures.sh first
   --gate                Exit non-zero if any criterion fails
@@ -43,6 +46,9 @@ Outputs (under --output):
   expectations.tsv  this run's values for the --expect projects, in the
                   --expect format (copy over the committed file to refresh)
   compare.md      before/after against --baseline (only with --baseline)
+  finding-diff.tsv  finding-level diff against --baseline, keyed on (slug,
+                  fingerprint): NEW / GONE / CHANGED (severity or
+                  confidence moved); only with --baseline
 
 Every timed run is cold: all .chokkin/ caches under the project (workspace
 members get their own) are removed before each run and again afterwards, so
@@ -89,6 +95,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 import oss_corpus as oc
@@ -109,6 +116,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-b", "--bin", type=Path, default=oc.DEFAULT_BIN)
     p.add_argument("-r", "--runs", type=int, default=3)
     p.add_argument("--baseline", type=Path)
+    p.add_argument("--strict", action="store_true")
     p.add_argument("--build", action="store_true")
     p.add_argument("--clone", action="store_true")
     p.add_argument("--gate", action="store_true")
@@ -189,14 +197,16 @@ def remove_caches(proj: Path) -> None:
         shutil.rmtree(cache, ignore_errors=True)
 
 
-def timed_run(bin_path: Path, proj: Path, runs: int) -> tuple[subprocess.CompletedProcess, int]:
+def timed_run(
+    bin_path: Path, proj: Path, runs: int, extra: tuple[str, ...]
+) -> tuple[subprocess.CompletedProcess, int]:
     """Cold runs: every .chokkin/ cache is removed before each and after the last."""
     times = []
     try:
         for _ in range(runs):
             remove_caches(proj)
             start = time.monotonic()
-            run = oc.chokkin_raw(bin_path, proj, "--no-cache")
+            run = oc.chokkin_raw(bin_path, proj, "--no-cache", *extra)
             times.append(int((time.monotonic() - start) * 1000))
     finally:
         remove_caches(proj)
@@ -213,7 +223,71 @@ def chk003_gate_count(out_dir: Path, expect_slugs: set[str]) -> int:
     )
 
 
-def compare_md(base: Path, head: Path, report: list[str]) -> list[str]:
+def report_levels(out_dir: Path, slug: str) -> dict[tuple[str, str], Counter] | None:
+    """(code, fingerprint) -> Counter of `severity/confidence` in one project's
+    saved JSON report; None when the report is not JSON (crash). Import
+    fingerprints carry no line, so one fingerprint can cover several findings."""
+    try:
+        report = json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    levels: dict[tuple[str, str], Counter] = {}
+    for issue in report.get("issues", []):
+        level = f"{issue.get('severity') or '?'}/{issue.get('confidence') or '?'}"
+        levels.setdefault((issue["code"], issue["fingerprint"]), Counter())[level] += 1
+    return levels
+
+
+def finding_diff(base: Path, head: Path) -> tuple[list[list[str]], list[str]]:
+    """NEW / GONE / CHANGED findings between two runs, keyed on (slug,
+    fingerprint), and the slugs whose report on either side is not JSON.
+    CHANGED means the severity or confidence moved, e.g. a library-mode
+    downgrade from warning to info."""
+    slugs = sorted({r[0] for r in tsv_rows(base / "summary.tsv")} & {r[0] for r in tsv_rows(head / "summary.tsv")})
+    rows: list[list[str]] = []
+    skipped: list[str] = []
+    for slug in slugs:
+        before, after = report_levels(base, slug), report_levels(head, slug)
+        if before is None or after is None:
+            skipped.append(slug)
+            continue
+        for code, fp in sorted(before.keys() | after.keys()):
+            b, a = before.get((code, fp), Counter()), after.get((code, fp), Counter())
+            # Findings whose level did not move cancel out; what is left pairs
+            # up as CHANGED and the surplus on either side is GONE or NEW.
+            old, new = sorted((b - a).elements()), sorted((a - b).elements())
+            pairs = [("CHANGED", o, n) for o, n in zip(old, new)]
+            pairs += [("GONE", o, "-") for o in old[len(new):]] + [("NEW", "-", n) for n in new[len(old):]]
+            rows += [[status, slug, code, tsv_field(fp), o, n] for status, o, n in pairs]
+    return rows, skipped
+
+
+def finding_diff_md(rows: list[list[str]], skipped: list[str]) -> list[str]:
+    """Per-rule and per-project NEW / GONE / CHANGED counts; the findings
+    themselves go to finding-diff.tsv."""
+    statuses = ["NEW", "GONE", "CHANGED"]
+
+    def counts(col: int) -> list[list]:
+        n = Counter((r[col], r[0]) for r in rows)
+        return [[k, *(n[(k, s)] for s in statuses)] for k in sorted({k for k, _ in n})]
+
+    lines = ["## Finding-level diff", ""]
+    if skipped:
+        lines += [f"Not diffed (non-JSON report): {' '.join(skipped)}", ""]
+    if not rows:
+        return [*lines, "_No finding moved between baseline and HEAD._"]
+    return [
+        *lines,
+        "Keyed on (slug, fingerprint). CHANGED = severity or confidence moved.",
+        "Every finding is listed in finding-diff.tsv.",
+        "",
+        *oc.md_table(["Rule", *statuses], counts(2), "lrrr"),
+        "",
+        *oc.md_table(["Project", *statuses], counts(1), "lrrr"),
+    ]
+
+
+def compare_md(base: Path, head: Path, report: list[str], diff: tuple[list[list[str]], list[str]]) -> list[str]:
     """Before/after summary for the CI job page; the full scorecard lists every
     finding and outgrows the job summary limit."""
     base_sum = {r[0]: r for r in tsv_rows(base / "summary.tsv")}
@@ -262,6 +336,8 @@ def compare_md(base: Path, head: Path, report: list[str]) -> list[str]:
         "```",
         "",
         f"Unclassified CHK003 on HEAD: {unclassified_chk003}",
+        "",
+        *finding_diff_md(*diff),
         "",
         *report[start:end],
     ]
@@ -315,7 +391,7 @@ def main() -> int:
 
     for slug, category, size, proj in targets:
         print(f"==> {slug} ({category}/{size})", flush=True)
-        run, median_ms = timed_run(args.bin, proj, args.runs)
+        run, median_ms = timed_run(args.bin, proj, args.runs, ("--strict",) if args.strict else ())
         (out / f"{slug}.json").write_bytes(run.stdout)
         (out / f"{slug}.stderr").write_bytes(run.stderr)
         try:
@@ -430,6 +506,7 @@ def main() -> int:
         f"- projects measured: {len(targets)}",
         f"- generated: {oc.utc_now()}",
         f"- timed runs per project (median): {args.runs}",
+        f"- strict: {'yes' if args.strict else 'no'}",
         "",
         "## Exit criteria",
         "",
@@ -521,7 +598,9 @@ def main() -> int:
     print("\n".join(lines[lines.index("## Exit criteria"):lines.index("## Per-project results")]))
 
     if args.baseline:
-        compare = compare_md(args.baseline, out, lines)
+        diff = finding_diff(args.baseline, out)
+        write_tsv("finding-diff.tsv", ["status", "slug", "code", "fingerprint", "before", "after"], diff[0])
+        compare = compare_md(args.baseline, out, lines, diff)
         (out / "compare.md").write_text("\n".join(compare) + "\n", encoding="utf-8")
         base_n = chk003_gate_count(args.baseline, set(expect))
         head_n = chk003_gate_count(out, set(expect))
