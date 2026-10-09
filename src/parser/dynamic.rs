@@ -6,7 +6,6 @@ use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator
 
 use super::relative::resolve_relative_name;
 
-/// A dynamic import loader function.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Loader {
     /// `importlib.import_module(name, package=None)`.
