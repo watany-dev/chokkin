@@ -287,7 +287,10 @@ fn is_dotted_identifier(module: &str) -> bool {
 mod tests {
     use ruff_python_ast::Expr;
 
-    use super::{PythonRun, command_word, module_prefix, python_run};
+    use super::{
+        LiteralTarget, Loader, LoaderNames, PythonRun, command_word, literal_target, module_prefix,
+        python_run,
+    };
 
     fn expr(source: &str) -> Expr {
         ruff_python_parser::parse_expression(source)
@@ -309,6 +312,50 @@ mod tests {
             panic!("expected a call");
         };
         module_prefix(&call)
+    }
+
+    fn target(source: &str, loader: Loader) -> Option<LiteralTarget> {
+        let Expr::Call(call) = expr(source) else {
+            panic!("expected a call");
+        };
+        literal_target(&call, loader, || Some("acme.core".to_owned()))
+    }
+
+    #[test]
+    fn recognizes_only_importlib_import_module_attributes() {
+        let names = LoaderNames::default();
+        assert!(matches!(
+            names.loader(&expr("importlib.import_module")),
+            Some(Loader::ImportModule)
+        ));
+        assert!(names.loader(&expr("importlib.reload")).is_none());
+        assert!(names.loader(&expr("other.import_module")).is_none());
+    }
+
+    #[test]
+    fn reads_the_caller_package_only_from_its_own_name() {
+        assert!(matches!(
+            target(r#"import_module(".sub", __package__)"#, Loader::ImportModule),
+            Some(LiteralTarget::Module(module)) if module == "acme.core.sub"
+        ));
+        assert!(matches!(
+            target(r#"import_module(".sub", base)"#, Loader::ImportModule),
+            Some(LiteralTarget::Opaque)
+        ));
+        assert!(matches!(
+            target(r#"__import__("sub", globals(), None, (), 1)"#, Loader::DunderImport),
+            Some(LiteralTarget::Module(module)) if module == "acme.core.sub"
+        ));
+        for globals in ["vars()", "globals(other)", "namespace"] {
+            let source = format!(r#"__import__("sub", {globals}, None, (), 1)"#);
+            assert!(
+                matches!(
+                    target(&source, Loader::DunderImport),
+                    Some(LiteralTarget::Opaque)
+                ),
+                "{source}"
+            );
+        }
     }
 
     #[test]
