@@ -356,7 +356,15 @@ fn plan_move_to_runtime(
     }
 
     let source = dev_only[0];
-    let raw = rebuild_requirement_string(source);
+    let raw = if source.origin.label.starts_with("tool.poetry.") {
+        // A Poetry constraint (`^1.2`) is not a PEP 440 specifier.
+        rebuild_requirement_string(&DeclaredDependency {
+            specifier: None,
+            ..(*source).clone()
+        })
+    } else {
+        rebuild_requirement_string(source)
+    };
 
     Ok(Some(FixAction::MoveToRuntime {
         name: name.clone(),
@@ -485,6 +493,56 @@ mod tests {
                 file: "pyproject.toml".to_owned(),
                 label: "project.dependencies[0]".to_owned(),
                 line: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn chk005_move_drops_a_poetry_constraint() {
+        let manifest = manifest_with(vec![DeclaredDependency {
+            name: "dulwich".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: Some("^1.2".to_owned()),
+            context: DependencyContext::Group("dev".to_owned()),
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "tool.poetry.group.dev.dependencies.dulwich".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        }]);
+        let issue = Issue {
+            rule: RuleId::Chk005,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "dev only".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: None,
+                line: None,
+                manifest: None,
+            },
+            subject: IssueSubject::Distribution {
+                name: "dulwich".to_owned(),
+            },
+            explain: None,
+        };
+        let report = IssueReport {
+            issues: vec![issue],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        assert_eq!(
+            actions,
+            vec![FixAction::MoveToRuntime {
+                name: "dulwich".to_owned(),
+                file: "pyproject.toml".to_owned(),
+                from_label: "tool.poetry.group.dev.dependencies.dulwich".to_owned(),
+                raw: "dulwich".to_owned(),
             }]
         );
     }

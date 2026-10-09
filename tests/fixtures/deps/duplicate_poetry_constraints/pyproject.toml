@@ -1,0 +1,12 @@
+[project]
+name = "duplicate-poetry-constraints"
+version = "0.1.0"
+dependencies = ["dulwich (>=0.25.0,<2)", "rich>=13", "requests"]
+
+[tool.poetry.group.test.dependencies]
+dulwich = ">=1.2.1"
+rich = { version = "^13.0" }
+requests = "*"
+
+[project.scripts]
+acme-cli = "acme.main:main"

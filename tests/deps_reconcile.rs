@@ -466,6 +466,21 @@ fn group_or_extra_with_its_own_constraint_is_not_a_duplicate() {
     );
 }
 
+/// #682: a Poetry group's version constraint is a specifier too.
+#[test]
+fn poetry_group_with_its_own_constraint_is_not_a_duplicate() {
+    let report = reconcile_fixture("duplicate_poetry_constraints");
+    for name in ["dulwich", "rich"] {
+        assert!(!has_dist_rule(&report, RuleId::Chk009, name), "{name}");
+    }
+    let duplicate = candidate_for_distribution(&report, RuleId::Chk009, "requests")
+        .expect("requests duplicate");
+    assert_eq!(
+        duplicate.message,
+        "requests is declared in multiple contexts: group:test, runtime"
+    );
+}
+
 /// #494: extras and groups do not duplicate each other and the project's own
 /// extras are never duplicates; only the same list twice is.
 #[test]

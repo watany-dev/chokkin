@@ -384,6 +384,7 @@ fn push_poetry_dependency(
         return;
     }
     let raw = poetry_requirement_name(name, value);
+    let pushed = dependencies.len();
     push_dependency(DependencyPush {
         dependencies,
         warnings,
@@ -393,6 +394,21 @@ fn push_poetry_dependency(
         label,
         line: None,
     });
+    if let Some(dep) = dependencies.get_mut(pushed) {
+        dep.specifier = poetry_version_constraint(value);
+    }
+}
+
+/// The Poetry constraint as written (`^0.1.7` is not PEP 440); CHK009 only
+/// compares it, so it is kept raw (#682). `*` and path/git sources have none.
+fn poetry_version_constraint(value: &Value) -> Option<String> {
+    let version = match value {
+        Value::String(version) => version.as_str(),
+        Value::Table(table) => table.get("version")?.as_str()?,
+        _ => return None,
+    }
+    .trim();
+    (!version.is_empty() && version != "*").then(|| version.to_owned())
 }
 
 fn poetry_requirement_name(name: &str, value: &Value) -> String {
@@ -744,6 +760,31 @@ mod tests {
             dep.name == "ruff"
                 && matches!(&dep.context, DependencyContext::Group(group) if group == "dev")
         }));
+    }
+
+    #[test]
+    fn keeps_poetry_version_constraints_as_written() {
+        let result = extract(
+            "[tool.poetry]\nname = \"x\"\n[tool.poetry.dependencies]\npython = \"^3.11\"\nrequests = \"^2.32\"\nhttpx = { version = \">=0.27\", extras = [\"http2\"] }\nany = \"*\"\nlocal = { path = \"../local\" }\n[tool.poetry.group.test.dependencies]\ndulwich = \">=1.2.1\"\nrich = \"~13.0\"\n",
+        )
+        .expect("valid pyproject");
+        let mut specifiers: Vec<_> = result
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.as_str(), dep.specifier.as_deref()))
+            .collect();
+        specifiers.sort_unstable();
+        assert_eq!(
+            specifiers,
+            vec![
+                ("any", None),
+                ("dulwich", Some(">=1.2.1")),
+                ("httpx", Some(">=0.27")),
+                ("local", None),
+                ("requests", Some("^2.32")),
+                ("rich", Some("~13.0")),
+            ]
+        );
     }
 
     #[test]
