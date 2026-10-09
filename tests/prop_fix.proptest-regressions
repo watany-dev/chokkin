@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc e3cdb2cf93f615dc4f7a6cc9ce1962005dbd754a1c166d3d3e63a970c298796e # shrinks to names = {"zzaaa", "zzaab"}
 cc e3de24ebb65257e3f514a2a3d1bf4b17e2b11409a0aa898549ed301e06725d36 # shrinks to names = {"zzaaa", "zzaab", "zzaac", "zzaad"}, used_mask = [false, false, false, false, false, false]
+cc 4c413c385315721412a58ff68ecc4f9d6c537823e4ed9c70b908cdc55d503a58 # shrinks to entries named "zzzdi" (unused) and "zzzdig" (used, comment above)
