@@ -161,7 +161,6 @@ impl<'a> ModuleVisitor<'a> {
         self.imported_guards.truncate(guard_count);
     }
 
-    /// Whether `module` (absolute) was checked as already imported.
     fn is_imported_guarded(&self, module: &str) -> bool {
         let root = module.split('.').next().unwrap_or(module);
         self.imported_guards.iter().any(|guard| guard == root)

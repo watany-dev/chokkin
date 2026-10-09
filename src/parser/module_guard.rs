@@ -56,7 +56,6 @@ fn is_dotted(expr: &Expr, receiver: &str, attr: &str) -> bool {
     )
 }
 
-/// `sniffio.current_async_library()`.
 fn is_async_library_call(expr: &Expr) -> bool {
     matches!(expr, Expr::Call(call)
         if call.arguments.is_empty() && is_dotted(&call.func, "sniffio", "current_async_library"))
