@@ -364,10 +364,14 @@ mod tests {
             let paths = [
                 format!("{member}/main.py"),
                 format!("{member}/examples/demo.py"),
+                format!("{member}/tests/test_main.py"),
             ];
             let paths = paths.each_ref().map(String::as_str);
             let (all, root_layout) = sources_with_member(member, &paths, false);
-            assert_eq!(contexts(&all), [FileContext::Runtime, FileContext::Dev]);
+            assert_eq!(
+                contexts(&all),
+                [FileContext::Runtime, FileContext::Dev, FileContext::Test]
+            );
             assert_eq!(
                 assign_layout_file_context(paths[0], &root_layout),
                 FileContext::Runtime
