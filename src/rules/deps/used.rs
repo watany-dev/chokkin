@@ -197,7 +197,10 @@ pub(super) fn mark_workspace_source_distributions(
         let Some(member_path) = member_path(manifest, boundary.manifest) else {
             continue;
         };
-        let provided = member_modules(&member_path, &context.sources.files);
+        // A root that inventories only its own package (`src/**`) misses the
+        // member's files, so the member's inventory supplies its tree (#559).
+        let mut provided = member_modules(&member_path, &context.sources.files);
+        provided.extend(member_modules("", boundary.files));
         pending.push((name, member_path, provided));
     }
 
@@ -616,6 +619,7 @@ mod tests {
             .map(|(name, member)| WorkspaceDependencyBoundary {
                 member_id: name,
                 manifest: member,
+                files: &[],
             })
             .collect();
         let import = |file: &str, module: &str| ResolvedImport {

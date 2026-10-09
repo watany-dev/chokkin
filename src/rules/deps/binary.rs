@@ -289,6 +289,7 @@ mod tests {
             &[WorkspaceDependencyBoundary {
                 member_id: "devel-common",
                 manifest: &member,
+                files: &[],
             }],
             &resolution(&[
                 ("coverage", "coverage"),

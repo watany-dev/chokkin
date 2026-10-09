@@ -8,6 +8,7 @@ use crate::config::Confidence;
 use crate::manifest::{DependencyOrigin, LoadedManifest};
 use crate::path_util::normalize_rel_path;
 use crate::plugins::ReferenceOrigin;
+use crate::sources::DiscoveredFile;
 
 /// CHK001–CHK010 rule identifiers (§3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -217,6 +218,9 @@ pub struct WorkspaceDependencyBoundary<'a> {
     pub member_id: &'a str,
     /// Manifest loaded from the workspace member root.
     pub manifest: &'a LoadedManifest,
+    /// Files discovered from the member root, relative to it. A root that
+    /// inventories only its own package misses them (#559).
+    pub files: &'a [DiscoveredFile],
 }
 
 /// Final issue location for reporters and `--explain`.
