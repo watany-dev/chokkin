@@ -29,9 +29,9 @@ fn is_example_notebook(path: &str) -> bool {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("ipynb"))
 }
 
-/// [`assign_file_context`] that also knows `<member>/docs/` is docs and
-/// `<member>/examples/*.ipynb` dev, for files `--production` dropped from
-/// the inventory.
+/// [`assign_file_context`] that also knows `<member>/test/` is test,
+/// `<member>/docs/` docs and `<member>/examples/*.ipynb` dev, for files
+/// `--production` dropped from the inventory.
 #[must_use]
 pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
     match assign_file_context(path) {
@@ -40,9 +40,10 @@ pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> Fil
     }
 }
 
-/// Give `<member>/docs/` and `<member>/examples/*.ipynb` files the context
-/// root `docs/` and `examples/*.ipynb` get. Members are detected after the
-/// walk, so this runs once they are known (#612, #681).
+/// Give `<member>/test/`, `<member>/docs/` and `<member>/examples/*.ipynb`
+/// files the context root `test/`, `docs/` and `examples/*.ipynb` get.
+/// Members are detected after the walk, so this runs once they are known
+/// (#612, #571, #681).
 pub(crate) fn apply_member_context(sources: &mut DiscoveredSources, production: bool) {
     let layout = &sources.layout;
     for file in &mut sources.files {
@@ -61,7 +62,9 @@ pub(crate) fn apply_member_context(sources: &mut DiscoveredSources, production: 
 
 fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
     let (_, rest) = layout.member_for(path)?;
-    if rest.starts_with("docs/") {
+    if rest.starts_with("test/") {
+        Some(FileContext::Test)
+    } else if rest.starts_with("docs/") {
         Some(FileContext::Docs)
     } else if is_example_notebook(rest) {
         Some(FileContext::Dev)
@@ -71,8 +74,9 @@ fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
 }
 
 /// `tests/` at any depth is test code (`pandas/tests/`), but only the root
-/// `test/` is: a `test` package inside a distribution is shipped API
-/// (`django.test`), as is `testing/` (`sqlalchemy.testing`).
+/// (and, via [`apply_member_context`], a member's) `test/` is: a `test`
+/// package inside a distribution is shipped API (`django.test`), as is
+/// `testing/` (`sqlalchemy.testing`).
 fn is_test_path(path: &str) -> bool {
     if path.starts_with("test/") {
         return true;
@@ -84,11 +88,12 @@ fn is_test_path(path: &str) -> bool {
     if file_name == "conftest.py" {
         return true;
     }
-    if file_name.starts_with("test_") && has_py_or_pyi_extension(file_name) {
-        return true;
-    }
-    ends_with_ignore_ascii_case(file_name, "_test.py")
-        || ends_with_ignore_ascii_case(file_name, "_test.pyi")
+    // pytest's `test_*.py` / `*_test.py` are case-sensitive (#570); only the
+    // extension is not, for case-insensitive file systems.
+    file_name.rsplit_once('.').is_some_and(|(stem, ext)| {
+        (ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
+            && (stem.starts_with("test_") || stem.ends_with("_test"))
+    })
 }
 
 /// Whether `path` is input data under a test tree (`tests/data/case.py`,
@@ -106,20 +111,6 @@ pub(crate) fn is_test_data_path(path: &str) -> bool {
         dirs.any(|dir| dir == "tests")
     };
     in_test_tree && dirs.any(|dir| matches!(dir, "data" | "fixtures" | "testdata" | "test_data"))
-}
-
-fn has_py_or_pyi_extension(file_name: &str) -> bool {
-    std::path::Path::new(file_name)
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
-}
-
-fn ends_with_ignore_ascii_case(value: &str, suffix: &str) -> bool {
-    if value.len() < suffix.len() {
-        return false;
-    }
-    let start = value.len() - suffix.len();
-    value.is_char_boundary(start) && value[start..].eq_ignore_ascii_case(suffix)
 }
 
 #[cfg(test)]
@@ -181,6 +172,18 @@ mod tests {
     }
 
     #[test]
+    fn test_prefix_and_suffix_are_case_sensitive() {
+        for path in [
+            "acme/Test_foo.py",
+            "acme/TEST_foo.py",
+            "acme/foo_TEST.py",
+            "acme/foo_Test.pyi",
+        ] {
+            assert_eq!(assign_file_context(path), FileContext::Runtime, "{path}");
+        }
+    }
+
+    #[test]
     fn singular_test_dir_is_test_context_only_at_root() {
         assert_eq!(
             assign_file_context("test/base/helpers.py"),
@@ -232,10 +235,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn member_docs_and_example_notebooks_get_root_context() {
+    /// A root with the single member `providers/google`, holding `paths`
+    /// after [`apply_member_context`].
+    fn member_sources(paths: &[&str], production: bool) -> (DiscoveredSources, LayoutInfo) {
         use crate::discovery::{ProjectRoot, RootMarker};
-        use crate::sources::{DiscoveredFile, FileKind, LayoutInfo, MemberLayout, ProjectLayout};
+        use crate::sources::{DiscoveredFile, FileKind, MemberLayout, ProjectLayout};
 
         let layout = || LayoutInfo {
             layout: ProjectLayout::Unknown,
@@ -245,63 +249,75 @@ mod tests {
             inferred_globs: Vec::new(),
             members: Vec::new(),
         };
-        let file = |path: &str| DiscoveredFile {
-            path: path.to_owned(),
-            kind: FileKind::Python,
-            context: assign_file_context(path),
-        };
         let mut root_layout = layout();
         root_layout.members = vec![MemberLayout {
             path: "providers/google".to_owned(),
             layout: layout(),
         }];
-        let sources = |files| DiscoveredSources {
+        let mut sources = DiscoveredSources {
             root: ProjectRoot {
                 path: std::path::PathBuf::from("/project"),
                 marker: RootMarker::PyProjectToml,
             },
             layout: root_layout.clone(),
             effective_globs: Vec::new(),
-            files,
+            files: paths
+                .iter()
+                .map(|path| DiscoveredFile {
+                    path: (*path).to_owned(),
+                    kind: FileKind::Python,
+                    context: assign_file_context(path),
+                })
+                .collect(),
             warnings: Vec::new(),
         };
+        apply_member_context(&mut sources, production);
+        (sources, root_layout)
+    }
+
+    fn contexts(sources: &DiscoveredSources) -> Vec<FileContext> {
+        sources.files.iter().map(|file| file.context).collect()
+    }
+
+    fn kept(sources: &DiscoveredSources) -> Vec<&str> {
+        sources
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn member_test_and_docs_files_get_root_contexts() {
         let paths = [
             "providers/google/docs/conf.py",
             "providers/google/docs/tests/test_conf.py",
             "providers/google/src/docs/helper.py",
             "providers/other/docs/conf.py",
-            "providers/google/examples/demo.ipynb",
-            "providers/google/examples/demo.py",
+            "providers/google/test/helpers.py",
+            "providers/google/src/test/client.py",
         ];
 
-        let mut all = sources(paths.map(file).to_vec());
-        apply_member_context(&mut all, false);
-        let contexts: Vec<_> = all.files.iter().map(|file| file.context).collect();
+        let (all, root_layout) = member_sources(&paths, false);
         assert_eq!(
-            contexts,
+            contexts(&all),
             [
                 FileContext::Docs,
                 FileContext::Test,
                 FileContext::Runtime,
                 FileContext::Runtime,
-                FileContext::Dev,
+                FileContext::Test,
                 FileContext::Runtime
             ]
         );
 
-        let mut production = sources(paths.map(file).to_vec());
-        apply_member_context(&mut production, true);
-        let kept: Vec<_> = production
-            .files
-            .iter()
-            .map(|file| file.path.as_str())
-            .collect();
+        let (production, _) = member_sources(&paths, true);
         assert_eq!(
-            kept,
+            kept(&production),
             [
                 "providers/google/src/docs/helper.py",
                 "providers/other/docs/conf.py",
-                "providers/google/examples/demo.py"
+                "providers/google/src/test/client.py"
             ]
         );
         assert_eq!(
@@ -314,6 +330,34 @@ mod tests {
         );
         assert_eq!(
             assign_layout_file_context(paths[4], &root_layout),
+            FileContext::Test
+        );
+    }
+
+    #[test]
+    fn member_example_notebooks_get_root_context() {
+        let paths = [
+            "providers/google/examples/demo.ipynb",
+            "providers/google/examples/demo.py",
+            "providers/google/src/examples/demo.ipynb",
+        ];
+
+        let (all, root_layout) = member_sources(&paths, false);
+        assert_eq!(
+            contexts(&all),
+            [FileContext::Dev, FileContext::Runtime, FileContext::Runtime]
+        );
+
+        let (production, _) = member_sources(&paths, true);
+        assert_eq!(
+            kept(&production),
+            [
+                "providers/google/examples/demo.py",
+                "providers/google/src/examples/demo.ipynb"
+            ]
+        );
+        assert_eq!(
+            assign_layout_file_context(paths[0], &root_layout),
             FileContext::Dev
         );
     }
@@ -425,12 +469,11 @@ mod tests {
 
         /// Spec §10 file-context rules, written from the directory list.
         fn model(dirs: &[&str], file: &str) -> FileContext {
-            let lower = file.to_ascii_lowercase();
             let test_file = file == "conftest.py"
-                || (file.starts_with("test_")
-                    && matches!(lower.rsplit_once('.'), Some((_, "py" | "pyi"))))
-                || lower.ends_with("_test.py")
-                || lower.ends_with("_test.pyi");
+                || file.rsplit_once('.').is_some_and(|(stem, ext)| {
+                    matches!(ext.to_ascii_lowercase().as_str(), "py" | "pyi")
+                        && (stem.starts_with("test_") || stem.ends_with("_test"))
+                });
             if dirs.first() == Some(&"test") || dirs.contains(&"tests") || test_file {
                 FileContext::Test
             } else if dirs.first() == Some(&"docs") {

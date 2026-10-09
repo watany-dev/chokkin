@@ -296,7 +296,8 @@ fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if skip_non_packages && is_non_package_dir(name) {
+        // `v1.0/` cannot be imported, so it has no module name to give (#569).
+        if name.contains('.') || (skip_non_packages && is_non_package_dir(name)) {
             continue;
         }
         if path.join("__init__.py").is_file() {
@@ -694,6 +695,27 @@ mod tests {
                 namespaces: false,
             }],
         }
+    }
+
+    #[test]
+    fn dotted_directories_are_not_package_candidates() {
+        let temp = tree(&["v1.0", "acme"]);
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &ProjectMetadata::default(),
+            &UvToolSettings::default(),
+        );
+        assert_eq!(layout.layout, ProjectLayout::Flat);
+        assert_eq!(layout.packages, vec!["acme".to_owned()]);
+        assert_eq!(warning, None);
+
+        let temp = tree(&["src/v1.0"]);
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &ProjectMetadata::default(),
+            &UvToolSettings::default(),
+        );
+        assert_eq!(layout.layout, ProjectLayout::Unknown);
     }
 
     #[test]
@@ -1155,12 +1177,17 @@ mod tests {
         /// `(package_root, packages, guessed)`.
         fn model_heuristic(tree: &Tree) -> Option<(String, Vec<String>, bool)> {
             let sorted = |set: &BTreeSet<&str>| {
-                let mut names: Vec<String> = set.iter().map(|&n| n.to_owned()).collect();
+                let mut names: Vec<String> = set
+                    .iter()
+                    .filter(|n| !n.contains('.'))
+                    .map(|&n| n.to_owned())
+                    .collect();
                 names.sort();
                 names
             };
-            if !tree.src.is_empty() {
-                return Some(("src".to_owned(), sorted(&tree.src), false));
+            let src = sorted(&tree.src);
+            if !src.is_empty() {
+                return Some(("src".to_owned(), src, false));
             }
             let skip = |name: &&str| NON_PACKAGE_DIRS.contains(name) || name.starts_with("e2e");
             let root: BTreeSet<&str> = tree.root.iter().copied().filter(|n| !skip(n)).collect();
@@ -1237,12 +1264,7 @@ mod tests {
                     let init = format!("{}/__init__.py", layout.package_dir(package));
                     prop_assert!(temp.path().join(&init).is_file(), "{init} missing");
                     prop_assert!(globs.is_match(&init), "{init} not selected by {:?}", layout.inferred_globs);
-                    // A dotted directory (`v1.0/`) is still chosen as a package
-                    // but has no importable module name; reported, not changed.
-                    if package.contains('.') {
-                        prop_assert_eq!(path_to_module(&init, &layout), None);
-                        continue;
-                    }
+                    prop_assert!(!package.contains('.'), "dotted package `{package}`");
                     prop_assert_eq!(path_to_module(&init, &layout), Some(package.clone()));
                     let module = format!("{}/mod.py", layout.package_dir(package));
                     prop_assert_eq!(path_to_module(&module, &layout), Some(format!("{package}.mod")));
