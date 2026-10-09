@@ -1,24 +1,33 @@
 //! `importlib.import_module` and `__import__` literal recognition.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use ruff_python_ast::{Alias, Expr, ExprCall, Operator};
+use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator};
 
 use super::relative::resolve_relative_name;
+
+/// A dynamic import loader function.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Loader {
+    /// `importlib.import_module(name, package=None)`.
+    ImportModule,
+    /// `__import__(name, globals=None, locals=None, fromlist=(), level=0)`.
+    DunderImport,
+}
 
 /// Names one module binds to the dynamic import loaders.
 pub(super) struct LoaderNames {
     /// Names bound to the `importlib` module.
     modules: HashSet<String>,
     /// Names bound directly to a loader function.
-    functions: HashSet<String>,
+    functions: HashMap<String, Loader>,
 }
 
 impl Default for LoaderNames {
     fn default() -> Self {
         Self {
             modules: HashSet::from(["importlib".to_owned()]),
-            functions: HashSet::from(["__import__".to_owned()]),
+            functions: HashMap::from([("__import__".to_owned(), Loader::DunderImport)]),
         }
     }
 }
@@ -37,23 +46,24 @@ impl LoaderNames {
     pub(super) fn record_import_from(&mut self, module: Option<&str>, alias: &Alias) {
         if module == Some("importlib") && alias.name.as_str() == "import_module" {
             let bound = alias.asname.as_ref().unwrap_or(&alias.name);
-            self.functions.insert(bound.to_string());
+            self.functions
+                .insert(bound.to_string(), Loader::ImportModule);
         }
     }
 
-    /// Whether `expr` names `importlib.import_module` or `__import__`, aliases included.
+    /// The loader `expr` names: `importlib.import_module` or `__import__`,
+    /// aliases included.
     #[must_use]
-    pub(super) fn is_loader(&self, expr: &Expr) -> bool {
+    pub(super) fn loader(&self, expr: &Expr) -> Option<Loader> {
         match expr {
-            Expr::Attribute(attribute) => {
-                attribute.attr.as_str() == "import_module"
-                    && matches!(
-                        &*attribute.value,
-                        Expr::Name(name) if self.modules.contains(name.id.as_str())
-                    )
-            },
-            Expr::Name(name) => self.functions.contains(name.id.as_str()),
-            _ => false,
+            Expr::Attribute(attribute) => (attribute.attr.as_str() == "import_module"
+                && matches!(
+                    &*attribute.value,
+                    Expr::Name(name) if self.modules.contains(name.id.as_str())
+                ))
+            .then_some(Loader::ImportModule),
+            Expr::Name(name) => self.functions.get(name.id.as_str()).copied(),
+            _ => None,
         }
     }
 }
@@ -71,38 +81,86 @@ pub(super) enum LiteralTarget {
 }
 
 /// Literal module name passed to a loader call, positionally or as `name=`,
-/// made absolute against `package=` the way `importlib.util.resolve_name` does.
+/// made absolute the way `loader` resolves it.
 ///
 /// `current_package` is the `__package__` of the calling module. Returns
 /// `None` when the name is not a literal.
 #[must_use]
 pub(super) fn literal_target(
     call: &ExprCall,
+    loader: Loader,
     current_package: impl FnOnce() -> Option<String>,
 ) -> Option<LiteralTarget> {
     let name = str_constant(module_argument(call)?)?;
-    let module = if name.starts_with('.') {
-        let package = match argument(call, 1, "package") {
-            None | Some(Expr::NoneLiteral(_)) => return Some(LiteralTarget::Nothing),
-            Some(Expr::Name(name)) if name.id.as_str() == "__package__" => current_package(),
-            Some(expr) => str_constant(expr).map(str::to_owned),
-        };
-        let Some(package) = package else {
-            return Some(LiteralTarget::Opaque);
-        };
-        match resolve_relative_name(name, &package) {
-            Some(module) => module,
-            None => return Some(LiteralTarget::Nothing),
-        }
-    } else {
-        name.to_owned()
+    let module = match loader {
+        Loader::ImportModule => import_module_name(call, name, current_package),
+        Loader::DunderImport => dunder_import_name(call, name, current_package),
     };
     // `importlib` does not require identifiers: a `tests/my-harness/` directory
     // imports as `tests.my-harness`. Only an empty segment can never resolve.
-    Some(if module.split('.').all(|part| !part.is_empty()) {
-        LiteralTarget::Module(module)
+    Some(match module {
+        Ok(module) if module.split('.').all(|part| !part.is_empty()) => {
+            LiteralTarget::Module(module)
+        },
+        Ok(_) => LiteralTarget::Nothing,
+        Err(target) => target,
+    })
+}
+
+/// `name` made absolute against `package=`, as `importlib.util.resolve_name` does.
+fn import_module_name(
+    call: &ExprCall,
+    name: &str,
+    current_package: impl FnOnce() -> Option<String>,
+) -> Result<String, LiteralTarget> {
+    if !name.starts_with('.') {
+        return Ok(name.to_owned());
+    }
+    let package = match argument(call, 1, "package") {
+        None | Some(Expr::NoneLiteral(_)) => return Err(LiteralTarget::Nothing),
+        Some(Expr::Name(name)) if name.id.as_str() == "__package__" => current_package(),
+        Some(expr) => str_constant(expr).map(str::to_owned),
+    };
+    let package = package.ok_or(LiteralTarget::Opaque)?;
+    resolve_relative_name(name, &package).ok_or(LiteralTarget::Nothing)
+}
+
+/// `name` made absolute `level=` packages up from the package of `globals`,
+/// as `importlib._bootstrap._resolve_name` does. A leading dot in `name` is
+/// not relative here: it leaves an empty segment.
+fn dunder_import_name(
+    call: &ExprCall,
+    name: &str,
+    current_package: impl FnOnce() -> Option<String>,
+) -> Result<String, LiteralTarget> {
+    let level = match argument(call, 4, "level") {
+        None => 0,
+        Some(Expr::NumberLiteral(ExprNumberLiteral {
+            value: Number::Int(level),
+            ..
+        })) => level.as_u8().ok_or(LiteralTarget::Nothing)?,
+        Some(_) => return Err(LiteralTarget::Opaque),
+    };
+    if level == 0 {
+        return Ok(name.to_owned());
+    }
+    let package = match argument(call, 1, "globals") {
+        None | Some(Expr::NoneLiteral(_)) => return Err(LiteralTarget::Nothing),
+        Some(Expr::Call(globals))
+            if globals.arguments.is_empty()
+                && matches!(&*globals.func, Expr::Name(name) if name.id.as_str() == "globals") =>
+        {
+            current_package()
+        },
+        Some(_) => None,
+    };
+    let package = package.ok_or(LiteralTarget::Opaque)?;
+    let base =
+        resolve_relative_name(&".".repeat(level.into()), &package).ok_or(LiteralTarget::Nothing)?;
+    Ok(if name.is_empty() {
+        base
     } else {
-        LiteralTarget::Nothing
+        format!("{base}.{name}")
     })
 }
 
@@ -313,7 +371,7 @@ mod tests {
         use ruff_python_ast::Expr;
 
         use super::expr;
-        use crate::parser::dynamic::{LiteralTarget, literal_target};
+        use crate::parser::dynamic::{LiteralTarget, Loader, literal_target};
 
         #[derive(Debug, Clone)]
         enum Package {
@@ -408,7 +466,7 @@ mod tests {
                     Package::Dunder(current) => current.clone(),
                     _ => None,
                 };
-                let got = match literal_target(&call, || current) {
+                let got = match literal_target(&call, Loader::ImportModule, || current) {
                     Some(LiteralTarget::Module(module)) => Outcome::Module(module),
                     Some(LiteralTarget::Opaque) => Outcome::Opaque,
                     Some(LiteralTarget::Nothing) => Outcome::Nothing,
