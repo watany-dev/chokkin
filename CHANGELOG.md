@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The bundled map gains `griffelib` (`griffe`), `llama-index-workflows`
+  (`workflows`), `mkdocs-material` (`material`), `pytest-xprocess`
+  (`xprocess`), `pywin32` (`win32api`, `win32com`, `pythoncom`,
+  `pywintypes` and the other `win32*` modules), `django-guardian`
+  (`guardian`), `jaraco-classes` (`jaraco.classes`) and the
+  `gcloud-aio-*` packages (`gcloud.aio.*`) (#679).
+
 ### Changed
+- CHK005 no longer counts these imports as runtime use: an import inside
+  `if "x" in sys.modules:` or `if sniffio.current_async_library() == "x":`
+  whose top-level module matches the condition (now info, like other
+  optional imports), an import in the `if __name__ == "__main__":` block of
+  a runtime file (now dev context; `__main__.py` and the main block of a
+  notebook keep their context), and notebooks under the root's or a
+  workspace member's `examples/` (now dev context) (#681).
 - CHK008 counts more places as declaring a tool: tox `deps`, literal
   `session.install("...")` arguments in `noxfile.py` (parsed, never run),
   workspace members' dependencies, requirements files outside the root names,
@@ -16,6 +31,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remote pre-commit hook covers its tool's config section (`[tool.mypy]`) but
   not commands in a Makefile or CI. Binaries of one distribution are reported
   once (#680).
+
+### Fixed
+- CHK007 no longer reports `__all__` re-exports in an `__init__.py` that a
+  wheel ships when the project or member is in app mode (a workspace root
+  with two or more members, or a member whose console script targets its
+  own package; mcp-python-sdk, fastmcp, llama_index). A file inside a
+  member's tree is judged by that member's wheel, else the root's. The mode
+  itself and CHK001 / CHK006 are unchanged (#678).
+- Imports declared only in requirements files outside the fixed root names
+  (`requirements/*.txt` / `*.in`, root `*requirements*.txt`,
+  `requirements*.in`) resolve as third-party instead of CHK010. These files
+  are used only for import resolution, so CHK001–CHK005 are unchanged, and
+  an unreadable one is skipped (#679).
+- Poetry dependency tables keep their version constraint (string value or
+  table `version`), so a group entry such as `dulwich = ">=1.2.1"` is no
+  longer CHK009 against the runtime one. Constraints that parse as PEP 440
+  are compared in the same form as PEP 508 specifiers; `^` / `~` are
+  compared as written, and `*` and path / git entries count as bare. A
+  CHK005 `--fix` move from a Poetry table keeps a valid PEP 440 constraint
+  and drops only Poetry-only syntax (#682).
+- Test and package detection follows Python and pytest: a singular
+  `test/` directly under a workspace member is test context like the
+  root's (#571), the `test_` prefix and `_test` suffix are case-sensitive as
+  in pytest (#570), and a directory whose name contains `.` (`v1.0/`) is
+  no longer a package candidate (#569).
 
 ## [0.7.3] - 2026-10-09
 
