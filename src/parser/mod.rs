@@ -8,6 +8,7 @@ mod error;
 mod exports;
 mod ignores;
 mod lines;
+mod module_guard;
 mod parse;
 mod platform_guard;
 mod relative;

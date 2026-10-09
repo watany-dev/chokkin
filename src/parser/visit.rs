@@ -19,6 +19,7 @@ use super::dynamic::{
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
+use super::module_guard::{imported_module_guard, is_main_guard_test, runs_as_main};
 use super::platform_guard::is_platform_guard_test;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_test;
@@ -36,6 +37,12 @@ pub(super) struct ModuleVisitor<'a> {
     in_type_checking: bool,
     try_depth: u32,
     platform_guard_depth: u32,
+    /// Top-level modules an enclosing branch checked are already imported
+    /// (`"x" in sys.modules`); imports of them are optional (#681).
+    imported_guards: Vec<String>,
+    /// Inside `if __name__ == "__main__":` of a module other than
+    /// `__main__.py`; its imports are dev context (#681).
+    in_main_block: bool,
     function_depth: u32,
     module_level: bool,
     /// Module-level names set to `True` inside a `try` body (`has_x = True`).
@@ -65,6 +72,8 @@ impl<'a> ModuleVisitor<'a> {
             in_type_checking: false,
             try_depth: 0,
             platform_guard_depth: 0,
+            imported_guards: Vec::new(),
+            in_main_block: false,
             function_depth: 0,
             module_level: true,
             try_flags: HashSet::new(),
@@ -120,6 +129,8 @@ impl<'a> ModuleVisitor<'a> {
         let was_type_checking = self.in_type_checking;
         let was_platform_guard = self.platform_guard_depth;
         let was_try_depth = self.try_depth;
+        let was_main_block = self.in_main_block;
+        let guard_count = self.imported_guards.len();
         if let Some(test) = test {
             self.visit_expr(test);
             if is_type_checking_test(test, &self.typing_aliases, &self.type_checking_names) {
@@ -127,6 +138,13 @@ impl<'a> ModuleVisitor<'a> {
             }
             if is_platform_guard_test(test) {
                 self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
+            }
+            self.imported_guards.extend(imported_module_guard(test));
+            // `python -m pkg` runs `pkg/__main__.py` as `__main__`, and Jupyter
+            // runs every cell as `__main__`, so there the block is the normal
+            // path.
+            if is_main_guard_test(test) && !runs_as_main(self.path) {
+                self.in_main_block = true;
             }
             // `if has_x:` only runs when the guarded `try` import succeeded.
             if self.module_level
@@ -140,6 +158,13 @@ impl<'a> ModuleVisitor<'a> {
         self.in_type_checking = was_type_checking;
         self.platform_guard_depth = was_platform_guard;
         self.try_depth = was_try_depth;
+        self.in_main_block = was_main_block;
+        self.imported_guards.truncate(guard_count);
+    }
+
+    fn is_imported_guarded(&self, module: &str) -> bool {
+        let root = module.split('.').next().unwrap_or(module);
+        self.imported_guards.iter().any(|guard| guard == root)
     }
 
     fn visit_decorators(&mut self, decorators: &[Decorator]) {
@@ -234,6 +259,7 @@ impl<'a> ModuleVisitor<'a> {
         let platform_guarded = self.platform_guard_depth > 0;
         let deferred = self.function_depth > 0;
         for alias in &import.names {
+            let optional = optional || self.is_imported_guarded(alias.name.as_str());
             self.loader_names.record_import(alias);
             if alias.name.as_str() == "typing" {
                 self.typing_aliases.insert(
@@ -266,6 +292,11 @@ impl<'a> ModuleVisitor<'a> {
         let deferred = self.function_depth > 0;
         let level = u8::try_from(import_from.level).unwrap_or(u8::MAX);
         let module_suffix = import_from.module.as_ref().map(ToString::to_string);
+        let optional = optional
+            || (level == 0
+                && module_suffix
+                    .as_deref()
+                    .is_some_and(|m| self.is_imported_guarded(m)));
 
         for alias in &import_from.names {
             // `from m import *` still loads `m`; it is kept with name `*` so
@@ -343,6 +374,8 @@ impl<'a> ModuleVisitor<'a> {
     fn current_import_context(&self) -> ImportContext {
         if self.in_type_checking {
             ImportContext::Type
+        } else if self.in_main_block && self.default_context == ImportContext::Runtime {
+            ImportContext::Dev
         } else {
             self.default_context
         }
@@ -763,10 +796,14 @@ mod tests {
     use crate::sources::ProjectLayout;
 
     fn visit_source(source: &str) -> ParsedModule {
+        visit_source_at("mod.py", source)
+    }
+
+    fn visit_source_at(path: &str, source: &str) -> ParsedModule {
         let module = ruff_python_parser::parse_module(source).expect("parse");
         let layout = LayoutInfo::default();
         let lines = LineIndex::new(source);
-        let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &lines);
+        let mut visitor = ModuleVisitor::new(path, &layout, FileContext::Runtime, &lines);
         visitor.visit_module(module.suite());
         visitor.into_parsed()
     }
@@ -1402,6 +1439,63 @@ def f(name):
         assert_eq!(find("typed_lib").context, ImportContext::Type);
         assert!(!find("typed_lib").platform_guarded);
         assert_eq!(find("plain_lib").context, ImportContext::Runtime);
+    }
+
+    /// #681: only imports of the module the branch checked are optional.
+    #[test]
+    fn already_imported_checks_make_matching_imports_optional() {
+        let parsed = visit_source(
+            "import sys, sniffio
+if \"pyspark\" in sys.modules:
+    from pyspark.sql import DataFrame
+    import pandas
+def create_event():
+    if sniffio.current_async_library() == \"trio\":
+        import trio
+    else:
+        import asyncio
+import trio_util
+",
+        );
+        let optional: Vec<(&str, bool)> = parsed
+            .imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.optional))
+            .collect();
+        assert_eq!(
+            optional,
+            [
+                ("sys", false),
+                ("sniffio", false),
+                ("pyspark.sql", true),
+                ("pandas", false),
+                ("trio", true),
+                ("asyncio", false),
+                ("trio_util", false),
+            ]
+        );
+    }
+
+    /// #681: a `__main__` block is dev context, except in `__main__.py`.
+    #[test]
+    fn main_block_imports_are_dev_context() {
+        let source = "import os\nif __name__ == \"__main__\":\n    import requests\nimport json\n";
+        let contexts = |path| {
+            visit_source_at(path, source)
+                .imports
+                .into_iter()
+                .map(|import| import.context)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            contexts("pkg/emoji.py"),
+            [
+                ImportContext::Runtime,
+                ImportContext::Dev,
+                ImportContext::Runtime
+            ]
+        );
+        assert_eq!(contexts("pkg/__main__.py"), [ImportContext::Runtime; 3]);
     }
 
     #[test]

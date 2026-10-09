@@ -14,15 +14,24 @@ pub(crate) fn assign_file_context(path: &str) -> FileContext {
     if path.starts_with("docs/") {
         return FileContext::Docs;
     }
-    if path.starts_with("scripts/") || path == "noxfile.py" {
+    if path.starts_with("scripts/") || path == "noxfile.py" || is_example_notebook(path) {
         return FileContext::Dev;
     }
     FileContext::Runtime
 }
 
-/// [`assign_file_context`] that also knows `<member>/test/` is test and
-/// `<member>/docs/` is docs, for files `--production` dropped from the
-/// inventory.
+/// A notebook under `examples/` demonstrates the package; no wheel ships it
+/// (#681).
+fn is_example_notebook(path: &str) -> bool {
+    path.starts_with("examples/")
+        && std::path::Path::new(path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ipynb"))
+}
+
+/// [`assign_file_context`] that also knows `<member>/test/` is test,
+/// `<member>/docs/` docs and `<member>/examples/*.ipynb` dev, for files
+/// `--production` dropped from the inventory.
 #[must_use]
 pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
     match assign_file_context(path) {
@@ -31,9 +40,10 @@ pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> Fil
     }
 }
 
-/// Give `<member>/test/` and `<member>/docs/` files the context root `test/`
-/// and `docs/` get. Members are detected after the walk, so this runs once
-/// they are known (#612, #571).
+/// Give `<member>/test/`, `<member>/docs/` and `<member>/examples/*.ipynb`
+/// files the context root `test/`, `docs/` and `examples/*.ipynb` get.
+/// Members are detected after the walk, so this runs once they are known
+/// (#612, #571, #681).
 pub(crate) fn apply_member_context(sources: &mut DiscoveredSources, production: bool) {
     let layout = &sources.layout;
     for file in &mut sources.files {
@@ -56,6 +66,8 @@ fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
         Some(FileContext::Test)
     } else if rest.starts_with("docs/") {
         Some(FileContext::Docs)
+    } else if is_example_notebook(rest) {
+        Some(FileContext::Dev)
     } else {
         None
     }
@@ -223,32 +235,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn member_test_and_docs_files_get_root_contexts() {
+    /// A root with the single member `providers/google`, holding `paths`
+    /// after [`apply_member_context`].
+    fn member_sources(paths: &[&str], production: bool) -> (DiscoveredSources, LayoutInfo) {
         use crate::discovery::{ProjectRoot, RootMarker};
-        use crate::sources::{DiscoveredFile, FileKind, LayoutInfo, MemberLayout};
+        use crate::sources::{DiscoveredFile, FileKind, MemberLayout};
 
-        let layout = || LayoutInfo::default();
-        let file = |path: &str| DiscoveredFile {
-            path: path.to_owned(),
-            kind: FileKind::Python,
-            context: assign_file_context(path),
-        };
+        let layout = LayoutInfo::default;
         let mut root_layout = layout();
         root_layout.members = vec![MemberLayout {
             path: "providers/google".to_owned(),
             layout: layout(),
         }];
-        let sources = |files| DiscoveredSources {
+        let mut sources = DiscoveredSources {
             root: ProjectRoot {
                 path: std::path::PathBuf::from("/project"),
                 marker: RootMarker::PyProjectToml,
             },
             layout: root_layout.clone(),
             effective_globs: Vec::new(),
-            files,
+            files: paths
+                .iter()
+                .map(|path| DiscoveredFile {
+                    path: (*path).to_owned(),
+                    kind: FileKind::Python,
+                    context: assign_file_context(path),
+                })
+                .collect(),
             warnings: Vec::new(),
         };
+        apply_member_context(&mut sources, production);
+        (sources, root_layout)
+    }
+
+    fn contexts(sources: &DiscoveredSources) -> Vec<FileContext> {
+        sources.files.iter().map(|file| file.context).collect()
+    }
+
+    fn kept(sources: &DiscoveredSources) -> Vec<&str> {
+        sources
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn member_test_and_docs_files_get_root_contexts() {
         let paths = [
             "providers/google/docs/conf.py",
             "providers/google/docs/tests/test_conf.py",
@@ -258,11 +291,9 @@ mod tests {
             "providers/google/src/test/client.py",
         ];
 
-        let mut all = sources(paths.map(file).to_vec());
-        apply_member_context(&mut all, false);
-        let contexts: Vec<_> = all.files.iter().map(|file| file.context).collect();
+        let (all, root_layout) = member_sources(&paths, false);
         assert_eq!(
-            contexts,
+            contexts(&all),
             [
                 FileContext::Docs,
                 FileContext::Test,
@@ -273,15 +304,9 @@ mod tests {
             ]
         );
 
-        let mut production = sources(paths.map(file).to_vec());
-        apply_member_context(&mut production, true);
-        let kept: Vec<_> = production
-            .files
-            .iter()
-            .map(|file| file.path.as_str())
-            .collect();
+        let (production, _) = member_sources(&paths, true);
         assert_eq!(
-            kept,
+            kept(&production),
             [
                 "providers/google/src/docs/helper.py",
                 "providers/other/docs/conf.py",
@@ -303,8 +328,49 @@ mod tests {
     }
 
     #[test]
+    fn member_example_notebooks_get_root_context() {
+        let paths = [
+            "providers/google/examples/demo.ipynb",
+            "providers/google/examples/demo.py",
+            "providers/google/src/examples/demo.ipynb",
+        ];
+
+        let (all, root_layout) = member_sources(&paths, false);
+        assert_eq!(
+            contexts(&all),
+            [FileContext::Dev, FileContext::Runtime, FileContext::Runtime]
+        );
+
+        let (production, _) = member_sources(&paths, true);
+        assert_eq!(
+            kept(&production),
+            [
+                "providers/google/examples/demo.py",
+                "providers/google/src/examples/demo.ipynb"
+            ]
+        );
+        assert_eq!(
+            assign_layout_file_context(paths[0], &root_layout),
+            FileContext::Dev
+        );
+    }
+
+    #[test]
     fn assigns_dev_context_for_scripts() {
         assert_eq!(assign_file_context("scripts/run.py"), FileContext::Dev);
+    }
+
+    #[test]
+    fn assigns_dev_context_only_for_example_notebooks() {
+        assert_eq!(assign_file_context("examples/demo.ipynb"), FileContext::Dev);
+        assert_eq!(
+            assign_file_context("examples/demo.py"),
+            FileContext::Runtime
+        );
+        assert_eq!(
+            assign_file_context("src/acme/examples/demo.ipynb"),
+            FileContext::Runtime
+        );
     }
 
     #[test]

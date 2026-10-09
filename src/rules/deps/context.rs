@@ -145,10 +145,12 @@ pub(super) fn usage_context_for_import(
     match import_context {
         ImportContext::Type => UsageContext::Type,
         ImportContext::Test => UsageContext::Test,
-        ImportContext::Runtime => match file_context(file, sources) {
+        ImportContext::Runtime | ImportContext::Dev => match file_context(file, sources) {
             FileContext::Test => UsageContext::Test,
             FileContext::Docs => UsageContext::Docs,
             FileContext::Dev => UsageContext::Dev,
+            // A `__main__` block only demotes a runtime file (#681).
+            FileContext::Runtime if import_context == ImportContext::Dev => UsageContext::Dev,
             FileContext::Runtime => UsageContext::Runtime,
         },
     }
@@ -426,6 +428,23 @@ mod tests {
             usage_context_for_import("src/acme/app.py", ImportContext::Runtime, &sources),
             UsageContext::Runtime
         );
+    }
+
+    /// #681: a `__main__` block is dev only in a runtime file.
+    #[test]
+    fn main_block_is_dev_only_in_runtime_files() {
+        let sources = empty_sources();
+        for (file, expected) in [
+            ("src/acme/app.py", UsageContext::Dev),
+            ("docs/examples/plot.py", UsageContext::Docs),
+            ("tests/test_app.py", UsageContext::Test),
+        ] {
+            assert_eq!(
+                usage_context_for_import(file, ImportContext::Dev, &sources),
+                expected,
+                "{file}"
+            );
+        }
     }
 
     #[test]

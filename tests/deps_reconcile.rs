@@ -407,6 +407,15 @@ fn misplaced_confidence_follows_the_strongest_import() {
         xarray.origins.as_slice(),
         [chokkin::internals::Origin::Import { line: 15, .. }]
     ));
+    // Only imports of the module an already-imported check names are
+    // optional; a `__main__` block is dev context (#681).
+    assert_eq!(summary("pyspark"), (Severity::Info, Confidence::Likely));
+    assert_eq!(summary("trio"), (Severity::Info, Confidence::Likely));
+    assert_eq!(
+        summary("cloudpickle"),
+        (Severity::Warning, Confidence::Certain)
+    );
+    assert!(candidate_for_distribution(&report, RuleId::Chk005, "rich").is_none());
     // An equally strong later import keeps the first origin.
     let sympy = candidate_for_distribution(&report, RuleId::Chk005, "sympy").expect("sympy");
     assert!(matches!(
