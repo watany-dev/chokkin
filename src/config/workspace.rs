@@ -233,6 +233,48 @@ fn is_skipped_member_scan_dir(name: &str) -> bool {
         )
 }
 
+/// Directories under `root` holding a `[project]` that is neither a
+/// workspace member, nor contains one, nor is a package (`llama_index` ships a
+/// stray `pyproject.toml` inside `premai/`), shallowest first: an example app with
+/// its own dependencies is an independent project the root manifest does
+/// not describe (#694).
+pub(crate) fn nested_projects<'a>(
+    root: &Path,
+    files: impl IntoIterator<Item = &'a str>,
+    members: &[ResolvedWorkspaceMember],
+) -> BTreeSet<String> {
+    let holds_member = |dir: &str| {
+        members.iter().any(|member| {
+            member
+                .path
+                .strip_prefix(dir)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+    };
+    let mut checked: BTreeMap<&str, bool> = BTreeMap::new();
+    let mut projects = BTreeSet::new();
+    for file in files {
+        let dirs = file.match_indices('/').map(|(end, _)| &file[..end]);
+        for dir in dirs {
+            // Test trees hold fixture projects the tests read as data.
+            if is_skipped_member_scan_dir(dir.rsplit('/').next().unwrap_or(dir)) {
+                break;
+            }
+            let project = *checked.entry(dir).or_insert_with(|| {
+                let dir_path = root.join(dir);
+                !holds_member(dir)
+                    && !dir_path.join("__init__.py").is_file()
+                    && declares_project(&dir_path.join("pyproject.toml"))
+            });
+            if project {
+                projects.insert(dir.to_owned());
+                break;
+            }
+        }
+    }
+    projects
+}
+
 /// A `pyproject.toml` that only configures tools (ruff, pytest) is not a
 /// distribution; unreadable ones are skipped rather than failing the run.
 fn declares_project(pyproject: &Path) -> bool {
@@ -530,6 +572,42 @@ mod tests {
                 ("core".to_owned(), "core".to_owned()),
                 ("openai".to_owned(), "integrations/llms/openai".to_owned()),
             ]
+        );
+    }
+
+    #[test]
+    fn nested_projects_skip_members_their_parents_and_packages() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = "[project]\nname = \"pkg\"\n";
+        for dir in [
+            "examples/app",
+            "examples/app/inner",
+            "libs/core",
+            "pkg/sub",
+            "tests",
+            "tests/fixtures/demo",
+        ] {
+            write(temp.path(), &format!("{dir}/pyproject.toml"), project);
+        }
+        write(temp.path(), "libs/pyproject.toml", project);
+        write(temp.path(), "pkg/sub/__init__.py", "");
+        write(temp.path(), "tools/pyproject.toml", "[tool.ruff]\n");
+        let members = [ResolvedWorkspaceMember {
+            id: "core".to_owned(),
+            path: "libs/core".to_owned(),
+            pyproject_toml: Some("libs/core/pyproject.toml".to_owned()),
+        }];
+        let files = [
+            "examples/app/inner/main.py",
+            "libs/core/core.py",
+            "pkg/sub/mod.py",
+            "tools/run.py",
+            "tests/test_core.py",
+            "tests/fixtures/demo/app.py",
+        ];
+        assert_eq!(
+            nested_projects(temp.path(), files, &members),
+            BTreeSet::from(["examples/app".to_owned()])
         );
     }
 

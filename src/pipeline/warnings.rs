@@ -18,6 +18,8 @@ pub enum ProbeWarning {
     Plugin(PluginsWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
     AutoWorkspace { member_count: usize },
+    /// Nested projects outside the workspace were left out of the analysis.
+    NestedProjectsSkipped { count: usize },
     /// A source that could not be decoded and was left out of the analysis.
     SkippedSource {
         /// Root-relative path of the source.
@@ -34,6 +36,13 @@ impl fmt::Display for ProbeWarning {
             Self::AutoWorkspace { member_count } => write!(
                 formatter,
                 "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
+            ),
+            Self::NestedProjectsSkipped { count: 1 } => formatter.write_str(
+                "workspace: skipped 1 nested project that is not a workspace member (--no-auto-workspace keeps it)",
+            ),
+            Self::NestedProjectsSkipped { count } => write!(
+                formatter,
+                "workspace: skipped {count} nested projects that are not workspace members (--no-auto-workspace keeps them)"
             ),
             Self::SkippedSource { path } => write!(
                 formatter,
@@ -284,6 +293,18 @@ mod tests {
         assert_eq!(
             warning(None).to_string(),
             "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @"
+        );
+    }
+
+    #[test]
+    fn nested_projects_skipped_agrees_in_number() {
+        assert_eq!(
+            ProbeWarning::NestedProjectsSkipped { count: 4 }.to_string(),
+            "workspace: skipped 4 nested projects that are not workspace members (--no-auto-workspace keeps them)"
+        );
+        assert_eq!(
+            ProbeWarning::NestedProjectsSkipped { count: 1 }.to_string(),
+            "workspace: skipped 1 nested project that is not a workspace member (--no-auto-workspace keeps it)"
         );
     }
 }

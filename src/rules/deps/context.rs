@@ -158,7 +158,7 @@ pub(super) fn usage_context_for_import(
 
 /// The context discovery gave `file` (pytest `testpaths` make it test),
 /// falling back to its path for a file outside the discovered set.
-fn file_context(file: &str, sources: &DiscoveredSources) -> FileContext {
+pub(crate) fn file_context(file: &str, sources: &DiscoveredSources) -> FileContext {
     sources
         .files
         .binary_search_by(|candidate| candidate.path.as_str().cmp(file))

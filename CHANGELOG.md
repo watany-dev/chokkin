@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gcloud-aio-*` packages (`gcloud.aio.*`) (#679).
 
 ### Changed
+- Every file under the root's or a workspace member's `examples/` is now
+  dev context, not only notebooks: its imports still make files reachable
+  (CHK001) but no longer raise CHK003 / CHK004 / CHK005, and `--production`
+  leaves it out. CHK010 in docs and dev files (`docs/`, `examples/`,
+  `scripts/`) is info instead of warning. A nested `pyproject.toml` with
+  `[project]` that is not a workspace member, contains none and is not a
+  package is an independent project: its files are left out of the
+  analysis with a `workspace: skipped N nested projects` warning
+  (`--no-auto-workspace` keeps them) (#694).
 - CHK005 no longer counts these imports as runtime use: an import inside
   `if "x" in sys.modules:` or `if sniffio.current_async_library() == "x":`
   whose top-level module matches the condition (now info, like other
