@@ -1194,7 +1194,6 @@ flask	CHK006	src/flask/json/__init__.py:dump	fp	external-reference	tests/test_js
 httpx	CHK006	httpx/_api.py:post	fp	external-reference	httpx/__init__.py does `from ._api import *` (post in _api __all__); documented httpx.post
 mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:DEFAULT_MAX_TEMPLATE_LENGTH	fp	library-public-api	in __all__ of mcp.shared.uri_template, documented public module (docs/servers/uri-templates.md)
 mitmproxy	CHK006	mitmproxy/contentviews/_api.py:logger	info-expected	library-public-api	module logger in mitmproxy.contentviews._api, private module; other `logger` hits are unrelated module-level loggers; library mode since #652 keeps the package's public API at info
-mlflow	CHK006	mlflow/protos/unity_catalog_messages_pb2.py:PENDING_REGISTRATION	tp	-	unsure: generated protobuf enum constant; nothing imports it from unity_catalog_messages_pb2 (refs are strings/other pb2)
 pdm	CHK006	src/pdm/formats/pipfile.py:export	fp	external-reference	pdm.formats FORMATS dict maps to modules; cli/commands/export.py calls FORMATS[fmt].export(...) (module attr access)
 poetry	CHK006	src/poetry/console/commands/self/remove.py:SelfRemoveCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.remove and getattr "SelfRemoveCommand"
 uvicorn	CHK006	uvicorn/_types.py:HTTPResponseDebugEvent	info-expected	library-public-api	TypedDict in private uvicorn._types, no refs anywhere (not even in-module unions); library mode since #652 keeps the package's public API at info
@@ -1232,13 +1231,13 @@ llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langcha
 mcp-python-sdk	CHK010	src/mcp/os/win32/utilities.py:win32con	fp	declared-third-party	pywin32 (provides win32con) declared with sys_platform=='win32' marker in pyproject; in uv.lock
 mlflow	CHK010	tests/catboost/test_catboost_model_export.py:catboost	fp	declared-third-party	catboost listed in requirements/extra-ml-requirements.txt
 openai-python	CHK010	tests/test_httpx_compat.py:httpx_aiohttp	tp	-	undeclared third-party: httpx-aiohttp (installed ad hoc by scripts/utils/validate-httpx2-wheel.py legacy lane; test skip-gated)
-pdm	CHK010	src/pdm/environments/base.py:pip	tp	-	undeclared third-party: pip (guarded try/except ImportError; not in pyproject or pdm.lock)
+pdm	CHK010	src/pdm/environments/base.py:pip	info-expected	optional-import	undeclared third-party: pip (guarded try/except ImportError; not in pyproject or pdm.lock); optional try-import, info since #654
 poetry	CHK010	tests/conftest.py:jaraco	fp	declared-third-party	jaraco-classes declared in pyproject (jaraco namespace pkg) and in poetry.lock
-pydantic	CHK010	pydantic/v1/version.py:cython	tp	-	undeclared third-party: cython (guarded try/except to detect compiled build; not in pyproject/uv.lock)
+pydantic	CHK010	pydantic/v1/version.py:cython	info-expected	optional-import	undeclared third-party: cython (guarded try/except to detect compiled build; not in pyproject/uv.lock); optional try-import, info since #654
 python-dotenv	CHK010	tests/test_zip_imports.py:child1	tp	-	child1 package created at test runtime inside a tmp zip; not in repo
 requests	CHK010	tests/compat.py:StringIO	fp	stdlib	unsure: Python 2 stdlib StringIO in py2/py3 try/except fallback; project requires >=3.8 so dead code
-sqlalchemy	CHK010	lib/sqlalchemy/testing/requirements.py:sqlalchemy-stubs	tp	-	undeclared third-party: sqlalchemy2-stubs (hyphenated sqlalchemy-stubs dir; __import__ probe, not declared anywhere)
-starlette	CHK010	starlette/_utils.py:exceptiongroup	tp	-	undeclared third-party: exceptiongroup (py<3.11 guarded; only transitive via anyio, not in pyproject)
+sqlalchemy	CHK010	lib/sqlalchemy/testing/requirements.py:sqlalchemy-stubs	info-expected	optional-import	undeclared third-party: sqlalchemy2-stubs (hyphenated sqlalchemy-stubs dir; __import__ probe, not declared anywhere); optional try-import, info since #654
+starlette	CHK010	starlette/_utils.py:exceptiongroup	info-expected	optional-import	undeclared third-party: exceptiongroup (py<3.11 guarded; only transitive via anyio, not in pyproject); optional try-import, info since #654
 streamlit	CHK010	lib/streamlit/vendor/pympler/asizeof.py:_testcapi	fp	stdlib	_testcapi is a CPython private stdlib test module (guarded try)
 structlog	CHK010	src/structlog/twisted.py:zope	tp	-	undeclared third-party: zope.interface (only transitive via twisted, which is declared in extras)
 transformers	CHK010	src/transformers/quantizers/quantizer_bnb_4bit.py:bitsandbytes	tp	-	undeclared third-party: bitsandbytes (optional quantization backend, not in setup.py/pyproject)
@@ -1253,8 +1252,8 @@ djangorestframework	CHK010	tests/conftest.py:guardian	fp	declared-third-party	dj
 fastapi	CHK010	scripts/mkdocs_hooks.py:material	fp	declared-third-party	mkdocs-material (provides material) in requirements-docs.txt
 fastmcp	CHK010	examples/atproto_mcp/src/atproto_mcp/__main__.py:atproto_mcp	fp	first-party-missed	examples/atproto_mcp/src/atproto_mcp is its own package (example has own pyproject, src layout)
 flask	CHK010	tests/test_instance_config.py:config_module_app	tp	-	config_module_app.py written to tmp_path at test runtime; not in repo
-langchain	CHK010	libs/langchain/langchain_classic/evaluation/loading.py:datasets	tp	-	undeclared third-party: datasets (optional, not in libs/langchain pyproject/uv.lock)
-llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-nvidia-tensorrt/llama_index/llms/nvidia_tensorrt/base.py:tensorrt_llm	tp	-	undeclared third-party: tensorrt-llm (not in integration pyproject)
+langchain	CHK010	libs/langchain/langchain_classic/evaluation/loading.py:datasets	info-expected	optional-import	undeclared third-party: datasets (optional, not in libs/langchain pyproject/uv.lock); optional try-import, info since #654
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-nvidia-tensorrt/llama_index/llms/nvidia_tensorrt/base.py:tensorrt_llm	info-expected	optional-import	undeclared third-party: tensorrt-llm (not in integration pyproject); optional try-import, info since #654
 mcp-python-sdk	CHK010	src/mcp/os/win32/utilities.py:win32api	fp	declared-third-party	pywin32 (provides win32api) declared with sys_platform=='win32' marker in pyproject; in uv.lock
 mlflow	CHK010	tests/transformers/test_transformers_autolog.py:optuna	fp	declared-third-party	optuna listed in requirements/test-requirements.txt
 pdm	CHK010	src/pdm/core.py:uv	fp	other	not an import: [sys.executable, '-m', 'uv'] argv after importlib.metadata.distribution('uv') check
@@ -1263,7 +1262,7 @@ pydantic	CHK010	tests/test_forward_ref.py:module_1	tp	-	module_1 created at runt
 requests	CHK010	src/requests/cookies.py:dummy_threading	fp	stdlib	dummy_threading is stdlib through 3.8; project python_requires>=3.8 (guarded fallback)
 sqlalchemy	CHK010	lib/sqlalchemy/dialects/sqlite/pysqlcipher.py:pysqlcipher3	tp	-	undeclared third-party: pysqlcipher3 (extra declares sqlcipher3_binary only; legacy fallback)
 streamlit	CHK010	lib/streamlit/elements/write.py:tensorflow	tp	-	undeclared third-party: tensorflow (not in streamlit manifests or uv.lock)
-structlog	CHK010	src/structlog/dev.py:better_exceptions	tp	-	undeclared third-party: better-exceptions (guarded optional import)
+structlog	CHK010	src/structlog/dev.py:better_exceptions	info-expected	optional-import	undeclared third-party: better-exceptions (guarded optional import); optional try-import, info since #654
 transformers	CHK010	tests/utils/test_auto_docstring.py:check_docstrings	fp	first-party-missed	utils/check_docstrings.py exists; test inserts repo_root/utils into sys.path
 typer	CHK010	scripts/deploy_docs_status.py:pydantic_settings	fp	declared-third-party	pydantic-settings in requirements-github-actions.txt
 urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:js	fp	other	js is a Pyodide runtime builtin module (emscripten-only contrib)
