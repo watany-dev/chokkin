@@ -197,7 +197,6 @@ struct PyprojectScan {
     /// Deepest member directory visited; `None` walks the whole tree.
     max_depth: Option<usize>,
     respect_gitignore: bool,
-    /// Directories excluded from analysis.
     exclude: GlobSet,
     skip_dir: fn(&str) -> bool,
     /// Keep only `pyproject.toml` files naming a `[project]`.
