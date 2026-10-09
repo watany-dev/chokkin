@@ -12,6 +12,7 @@ use crate::reachability::ReachabilityReport;
 use crate::resolver::is_first_party_import;
 use crate::resolver::{ResolutionIndex, ResolveWarning};
 use crate::rules::RuleContext;
+use crate::rules::deps::file_context;
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, sort_candidates,
 };
@@ -431,8 +432,13 @@ fn unresolved_import_candidate(
             distribution: None,
         },
         // A `TYPE_CHECKING` import never runs and an optional one falls back
-        // when missing; both stay reported for typos (#584, #654).
-        severity: if guarded_only {
+        // when missing; docs / examples / scripts run outside the installed
+        // package. All stay reported for typos (#584, #654, #694).
+        severity: if guarded_only
+            || matches!(
+                file_context(file, sources),
+                FileContext::Docs | FileContext::Dev
+            ) {
             Severity::Info
         } else {
             Severity::Warning

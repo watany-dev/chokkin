@@ -1724,3 +1724,55 @@ fn requirements_outside_fixed_names_declare_imports_for_chk010_only() {
         );
     }
 }
+
+#[test]
+fn binary_examples_feed_reachability_only_and_nested_projects_are_skipped() {
+    // #694: examples run outside the package, and a nested `[project]` that
+    // is not a workspace member has its own dependencies.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"packages/core\"]\n",
+        ),
+        (
+            "examples/demo.py",
+            "import yaml\nimport nosuchmodule_root\n",
+        ),
+        (
+            "examples/app/pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        ),
+        ("examples/app/server.py", "import nosuchmodule_app\n"),
+        (
+            "packages/core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "packages/core/examples/run.py",
+            "import nosuchmodule_member\n",
+        ),
+    ] {
+        let path = temp.path().join(file);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, text).expect("write fixture");
+    }
+    let issues = json_issues(temp.path(), &[]);
+    let summary = issues
+        .iter()
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default(),
+                issue["severity"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        [
+            ("examples/demo.py:nosuchmodule_root", "info"),
+            ("packages/core/examples/run.py:nosuchmodule_member", "info"),
+        ],
+        "{issues:#?}"
+    );
+}

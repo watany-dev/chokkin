@@ -10,6 +10,7 @@ use crate::cache::CacheOptions;
 use crate::config::{
     ChokkinConfig, ConfigSources, DependencyGroupsConfig, ResolvedWorkspaceMember,
     RuntimeOverrides, TargetVersion, apply_overrides, load_config, load_root_config,
+    nested_projects,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
@@ -104,6 +105,22 @@ pub(super) fn probe_project_with_cache(
     loaded.effective.target_version = Some(target_version);
 
     let mut sources = discover_sources(&root, &loaded, &manifest)?;
+    let nested = if overrides.no_auto_workspace == Some(true) {
+        BTreeSet::new()
+    } else {
+        nested_projects(
+            &root.path,
+            sources.files.iter().map(|file| file.path.as_str()),
+            &loaded.workspace_members,
+        )
+    };
+    sources.files.retain(|file| {
+        !nested.iter().any(|dir| {
+            file.path
+                .strip_prefix(dir.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    });
     let member_count = loaded.workspace_members.len();
     // The manifest cache lives under each member root; an undeclared monorepo
     // would gain hundreds of untracked `.chokkin/` directories.
@@ -135,6 +152,11 @@ pub(super) fn probe_project_with_cache(
     warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
     if loaded.auto_workspace {
         warnings.push(ProbeWarning::AutoWorkspace { member_count });
+    }
+    if !nested.is_empty() {
+        warnings.push(ProbeWarning::NestedProjectsSkipped {
+            count: nested.len(),
+        });
     }
     let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
 

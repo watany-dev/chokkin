@@ -18,6 +18,8 @@ pub enum ProbeWarning {
     Plugin(PluginsWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
     AutoWorkspace { member_count: usize },
+    /// Nested projects outside the workspace were left out of the analysis.
+    NestedProjectsSkipped { count: usize },
     /// A source that could not be decoded and was left out of the analysis.
     SkippedSource {
         /// Root-relative path of the source.
@@ -34,6 +36,10 @@ impl fmt::Display for ProbeWarning {
             Self::AutoWorkspace { member_count } => write!(
                 formatter,
                 "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
+            ),
+            Self::NestedProjectsSkipped { count } => write!(
+                formatter,
+                "workspace: skipped {count} nested projects that are not workspace members"
             ),
             Self::SkippedSource { path } => write!(
                 formatter,
@@ -202,6 +208,10 @@ mod tests {
                     detail: "boom".to_owned(),
                 }),
                 "plugin: `django` extraction failed: boom",
+            ),
+            (
+                ProbeWarning::NestedProjectsSkipped { count: 4 },
+                "workspace: skipped 4 nested projects that are not workspace members",
             ),
             (
                 ProbeWarning::Sources(SourcesWarning::MissingEntryPath {
