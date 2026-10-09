@@ -171,7 +171,12 @@ def render_packages(packages: dict[str, list[str]]) -> str:
         line = f'    ("{dist}", &[{import_list}]),'
         # rustfmt keeps a tuple element on one line up to 67 columns here.
         if len(line) > 67:
-            line = f'    (\n        "{dist}",\n        &[{import_list}],\n    ),'
+            imports_line = f"        &[{import_list}],"
+            # rustfmt's array_width (60) puts each import on its own line.
+            if len(import_list) > 60:
+                items = "".join(f'            "{name}",\n' for name in imports)
+                imports_line = f"        &[\n{items}        ],"
+            line = f'    (\n        "{dist}",\n{imports_line}\n    ),'
         lines.append(line)
     lines.append("];")
     lines.append("")

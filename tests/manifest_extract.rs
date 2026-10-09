@@ -736,3 +736,67 @@ fn uv_dev_dependencies_join_dev_group_in_every_format() {
     names.sort_unstable();
     assert_eq!(names, vec!["pytest", "ruff"]);
 }
+
+#[test]
+fn extra_requirements_files_only_declare_names() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(temp.path().join("requirements")).expect("create requirements dir");
+    for (name, contents) in [
+        ("requirements.txt", "requests\n"),
+        ("requirements-github-actions.txt", "pydantic_settings\n"),
+        ("requirements-lint.in", "ruff\n"),
+        ("requirements/tests.in", "Ephemeral_Port_Reserve\n"),
+        ("requirements/notes.md", "not-a-requirement\n"),
+        ("constraints.txt", "urllib3<3\n"),
+        // A root `.in` file counts only with the `requirements` prefix.
+        ("constraints.in", "boto3\n"),
+    ] {
+        std::fs::write(temp.path().join(name), contents).expect("write project file");
+    }
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert_eq!(dependency_names(&first), ["requests"]);
+    assert_eq!(
+        first
+            .sources
+            .extra_requirements
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["ephemeral-port-reserve", "pydantic-settings", "ruff"]
+    );
+
+    // A file added under `requirements/` invalidates the manifest cache.
+    std::fs::write(temp.path().join("requirements/docs.txt"), "mkdocs\n").expect("write docs");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    assert!(second.sources.extra_requirements.contains("mkdocs"));
+}
+
+#[test]
+fn extra_requirements_files_keep_what_they_could_read() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(temp.path().join("requirements")).expect("create requirements dir");
+    for (name, contents) in [
+        // A broken include still keeps the names read before it.
+        ("requirements/broken.txt", "boto3\n-r missing.txt\n"),
+        // A readable file without names is still a requirements file.
+        ("requirements/empty.txt", "# nothing yet\n"),
+    ] {
+        std::fs::write(temp.path().join(name), contents).expect("write project file");
+    }
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let manifest = extract_manifest_with_cache(&root, &config, None).expect("extraction");
+    assert!(manifest.sources.extra_requirements.contains("boto3"));
+    assert!(
+        manifest
+            .sources
+            .requirements_files
+            .iter()
+            .any(|file| file.ends_with("empty.txt"))
+    );
+}

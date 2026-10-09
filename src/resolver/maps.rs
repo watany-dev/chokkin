@@ -240,6 +240,14 @@ mod tests {
             first("opentelemetry.exporter.otlp.proto.grpc.trace_exporter").as_deref(),
             Some("opentelemetry-exporter-otlp-proto-grpc")
         );
+        assert_eq!(
+            first("jaraco.classes.properties").as_deref(),
+            Some("jaraco-classes")
+        );
+        assert_eq!(
+            first("gcloud.aio.storage").as_deref(),
+            Some("gcloud-aio-storage")
+        );
         assert_eq!(first("google"), None);
         assert_eq!(first("yaml.loader"), None);
     }
@@ -280,6 +288,13 @@ mod tests {
             ("kiota_http", "microsoft-kiota-http"),
             ("opensearchpy", "opensearch-py"),
             ("key_value", "py-key-value-aio"),
+            ("griffe", "griffelib"),
+            ("workflows", "llama-index-workflows"),
+            ("material", "mkdocs-material"),
+            ("xprocess", "pytest-xprocess"),
+            ("win32api", "pywin32"),
+            ("pywintypes", "pywin32"),
+            ("guardian", "django-guardian"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),

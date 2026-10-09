@@ -1678,3 +1678,49 @@ fn uv_dynamic_versioning_hook_extras_count_as_declared() {
         "{keys:?}"
     );
 }
+
+#[test]
+fn requirements_outside_fixed_names_declare_imports_for_chk010_only() {
+    // werkzeug `requirements/tests.in`, urllib3 `emscripten-requirements.txt`
+    // and mlflow `requirements/*-requirements.txt` (#679).
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        ),
+        (
+            "requirements/tests.in",
+            "ephemeral-port-reserve\n-r base.txt\n",
+        ),
+        ("requirements/base.txt", "zzwidget-py\n"),
+        ("requirements/ml-requirements.txt", "catboost\n"),
+        ("emscripten-requirements.txt", "pytest-pyodide\n"),
+        (
+            "acme/__init__.py",
+            "import requests\nimport catboost\n\nrequests.get(catboost)\n",
+        ),
+        (
+            "tests/test_app.py",
+            "import ephemeral_port_reserve\nimport pytest_pyodide\nimport zzwidget\nimport zzmissing\n",
+        ),
+    ]);
+
+    for args in [&["--no-cache"][..], &["--no-cache", "--strict"][..]] {
+        let keys = issue_keys(&json_issues(temp.path(), args));
+        let unresolved: Vec<&str> = keys
+            .iter()
+            .filter(|(code, _)| code == "CHK010")
+            .map(|(_, target)| target.as_str())
+            .collect();
+        assert_eq!(unresolved.len(), 1, "{keys:?}");
+        assert!(unresolved[0].ends_with("zzmissing"), "{keys:?}");
+        // The files give no context, so they neither declare nor leave unused.
+        assert!(
+            keys.iter().all(|(code, _)| !matches!(
+                code.as_str(),
+                "CHK001" | "CHK002" | "CHK003" | "CHK005"
+            )),
+            "{keys:?}"
+        );
+    }
+}
