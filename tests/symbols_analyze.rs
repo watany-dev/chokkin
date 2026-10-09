@@ -1016,6 +1016,39 @@ fn generated_code_and_alembic_revision_names_are_not_chk006() {
     );
 }
 
+/// Files alembic loads from `script_location` are never imported, so even
+/// names only a project's own tooling reads (airflow's `airflow_version`)
+/// are no API (#667).
+#[test]
+fn alembic_script_files_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            &format!("{LIBRARY_PYPROJECT}\n[tool.chokkin.plugins]\nalembic = true\n"),
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/alembic.ini",
+            "[alembic]\nscript_location = %(here)s/migrations\n",
+        ),
+        ("src/acme/migrations/__init__.py", ""),
+        (
+            "src/acme/migrations/env.py",
+            "def run_migrations_online():\n    pass\n",
+        ),
+        ("src/acme/migrations/versions/__init__.py", ""),
+        (
+            "src/acme/migrations/versions/a1_init.py",
+            &format!("{ALEMBIC_REVISION}acme_version = \"1.0\"\n"),
+        ),
+    ]);
+    let chk006: Vec<_> = report
+        .iter()
+        .filter(|candidate| candidate.rule == RuleId::Chk006)
+        .collect();
+    assert_eq!(chk006, Vec::<&chokkin::internals::IssueCandidate>::new());
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");

@@ -1,5 +1,6 @@
 //! Config / plugin extraction (pipeline step 5).
 
+mod alembic;
 mod celery;
 mod commands;
 mod config_scan;

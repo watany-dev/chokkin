@@ -507,6 +507,180 @@ fn alembic_plugin_records_env_entry() {
     );
 }
 
+fn alembic_entries(files: &[(&str, &str)]) -> Vec<String> {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"alembic\"]\n\n[tool.chokkin.plugins]\nalembic = true\n",
+    )
+    .expect("write pyproject");
+    for (file, text) in files {
+        let path = root.join(file);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, text).expect("write fixture");
+    }
+    let hints = extract_at(root);
+    let mut paths: Vec<String> = entry_paths(plugin_contrib(&hints, PluginId::Alembic))
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// `script_location` names the migration environment alembic loads by path,
+/// from an `alembic.ini` inside the package (#667); revisions in
+/// subdirectories load only with `recursive_version_locations`.
+#[test]
+fn alembic_ini_script_location_roots_env_and_revisions() {
+    let project = |ini: &str| {
+        alembic_entries(&[
+            ("src/acme/__init__.py", ""),
+            ("src/acme/alembic.ini", ini),
+            ("src/acme/migrations/env.py", ""),
+            ("src/acme/migrations/utils.py", ""),
+            ("src/acme/migrations/versions/a1_init.py", ""),
+            ("src/acme/migrations/versions/2024/b2_next.py", ""),
+        ])
+    };
+    assert_eq!(
+        project("[alembic]\nscript_location = %(here)s/migrations\n"),
+        [
+            "src/acme/migrations/env.py",
+            "src/acme/migrations/versions/a1_init.py",
+        ]
+    );
+    assert_eq!(
+        project(
+            "[alembic]\nscript_location = %(here)s/migrations\nrecursive_version_locations = true\n"
+        ),
+        [
+            "src/acme/migrations/env.py",
+            "src/acme/migrations/versions/2024/b2_next.py",
+            "src/acme/migrations/versions/a1_init.py",
+        ]
+    );
+}
+
+/// `version_path_separator = os` splits `version_locations` on `:`.
+#[test]
+fn alembic_version_locations_follow_path_separator() {
+    let paths = alembic_entries(&[
+        (
+            "alembic.ini",
+            "[alembic]\nscript_location = db\nversion_path_separator = os  # Use os.pathsep.\nversion_locations = db/a:db/b\n",
+        ),
+        ("db/env.py", ""),
+        ("db/a/a1_init.py", ""),
+        ("db/b/b2_next.py", ""),
+    ]);
+    assert_eq!(paths, ["db/a/a1_init.py", "db/b/b2_next.py", "db/env.py"]);
+}
+
+/// A config whose `script_location` resolves nowhere keeps the fixed
+/// `alembic/env.py`; `%(here)s` never falls back to the root.
+#[test]
+fn alembic_unresolved_location_keeps_default_env() {
+    let paths = alembic_entries(&[
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/alembic.ini",
+            "[alembic]\nscript_location = %(here)s/db\n",
+        ),
+        ("db/env.py", ""),
+        ("alembic/env.py", ""),
+    ]);
+    assert_eq!(paths, ["alembic/env.py"]);
+}
+
+/// `pkg:dir` resolves under the package; `version_locations` replaces
+/// `<script_location>/versions`.
+#[test]
+fn alembic_package_location_and_version_locations() {
+    let paths = alembic_entries(&[
+        ("src/acme/__init__.py", ""),
+        ("src/acme/db/__init__.py", ""),
+        (
+            "alembic.ini",
+            "[alembic]\nscript_location = acme.db:migrations\nversion_locations = %(here)s/src/acme/revs  # note\n",
+        ),
+        ("src/acme/db/migrations/env.py", ""),
+        ("src/acme/db/migrations/versions/a1_init.py", ""),
+        ("src/acme/revs/b2_next.py", ""),
+    ]);
+    assert_eq!(
+        paths,
+        ["src/acme/db/migrations/env.py", "src/acme/revs/b2_next.py"]
+    );
+}
+
+/// The origin points at the `script_location` line; `pkg:/dir` is an absolute
+/// path, not a package resource, so it resolves nowhere.
+#[test]
+fn alembic_ini_origin_line_and_absolute_package_dir() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"alembic\"]\n\n[tool.chokkin.plugins]\nalembic = true\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/alembic.ini",
+            "[alembic]\n# comment\nscript_location = %(here)s/migrations\n",
+        ),
+        ("src/acme/migrations/env.py", ""),
+    ] {
+        let path = root.join(file);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, text).expect("write fixture");
+    }
+    let hints = extract_at(root);
+    let contrib = plugin_contrib(&hints, PluginId::Alembic);
+    assert_eq!(entry_paths(contrib), ["src/acme/migrations/env.py"]);
+    assert_eq!(contrib.entries[0].origin.line, Some(3));
+
+    let paths = alembic_entries(&[
+        ("src/acme/__init__.py", ""),
+        (
+            "alembic.ini",
+            "[alembic]\nscript_location = acme:/migrations\n",
+        ),
+        ("src/acme/migrations/env.py", ""),
+    ]);
+    assert!(paths.is_empty(), "{paths:?}");
+}
+
+/// alembic 1.16 reads `[tool.alembic]` from `pyproject.toml`, relative paths
+/// fall back to the root, and with no config the fixed `alembic/env.py` stays.
+#[test]
+fn alembic_pyproject_location_and_default_env() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"alembic\"]\n\n[tool.chokkin.plugins]\nalembic = true\n\n[tool.alembic]\nscript_location = \"db\"\n",
+    )
+    .expect("write pyproject");
+    for file in ["db/env.py", "db/versions/a1_init.py", "alembic/env.py"] {
+        let path = root.join(file);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, "").expect("write fixture");
+    }
+    let hints = extract_at(root);
+    let contrib = plugin_contrib(&hints, PluginId::Alembic);
+    assert_eq!(
+        entry_paths(contrib),
+        ["db/env.py", "db/versions/a1_init.py"]
+    );
+    assert_eq!(contrib.entries[0].origin.line, Some(10));
+
+    let paths = alembic_entries(&[("alembic/env.py", "")]);
+    assert_eq!(paths, ["alembic/env.py"]);
+}
+
 #[test]
 fn full_pipeline_step5() {
     let hints = extract_fixture("django_manage");
