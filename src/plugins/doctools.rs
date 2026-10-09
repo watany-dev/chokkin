@@ -1,4 +1,4 @@
-//! Documentation and migration tool plugin extractors.
+//! Documentation tool plugin extractors.
 
 use std::path::Path;
 
@@ -11,7 +11,7 @@ use super::context::PluginContext;
 use super::types::{ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin};
 use super::util::{origin_for_file, push_binary};
 
-/// Extract static Sphinx, `MkDocs`, and Alembic hints.
+/// Extract static Sphinx and `MkDocs` hints.
 #[must_use]
 pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
     let mut contrib = PluginContribution::empty(plugin);
@@ -25,7 +25,6 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
             }
         },
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
-        PluginId::Alembic => extract_alembic(ctx.root.path.as_path(), &mut contrib),
         _ => {},
     }
 
@@ -67,21 +66,6 @@ fn extract_mkdocs(root: &Path, contrib: &mut PluginContribution) {
             push_binary(contrib, "mkdocs", origin_for_file(root, &path, name));
             return;
         }
-    }
-}
-
-fn extract_alembic(root: &Path, contrib: &mut PluginContribution) {
-    let env = root.join("alembic").join("env.py");
-    if env.is_file() {
-        push_entry(contrib, root, &env, FileContext::Dev, "alembic/env.py");
-    }
-    let ini = root.join("alembic.ini");
-    if ini.is_file() {
-        push_binary(
-            contrib,
-            "alembic",
-            origin_for_file(root, &ini, "alembic.ini"),
-        );
     }
 }
 

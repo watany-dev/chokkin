@@ -17,7 +17,7 @@ use crate::rules::types::{
 };
 use crate::sources::{DiscoveredSources, FileContext, PublicSurface, path_to_module};
 
-use super::conventions::{alembic_symbols, is_codegen_file};
+use super::conventions::{alembic_script_files, alembic_symbols, is_codegen_file};
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
@@ -55,6 +55,7 @@ pub fn analyze_with_context(
         .iter()
         .map(|file| file.path.as_str())
         .collect();
+    let alembic_files = alembic_script_files(plugins);
     let surface_modules: Vec<_> = reachable_modules
         .iter()
         .copied()
@@ -62,6 +63,7 @@ pub fn analyze_with_context(
             !sources.layout.in_local_package(&module.path)
                 && !test_files.contains(module.path.as_str())
                 && !is_codegen_file(&module.path, &all_files)
+                && !alembic_files.contains(module.path.as_str())
         })
         .collect();
 

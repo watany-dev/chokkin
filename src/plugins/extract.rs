@@ -15,6 +15,7 @@ use crate::manifest::LoadedManifest;
 use crate::parser::ParseSummary;
 use crate::sources::DiscoveredSources;
 
+use super::alembic;
 use super::celery;
 use super::config_scan;
 use super::context::PluginContext;
@@ -85,9 +86,8 @@ pub fn extract_plugin_hints_with_parse(
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
                 (devtools::extract(*plugin, &ctx), Vec::new())
             },
-            PluginId::Sphinx | PluginId::MkDocs | PluginId::Alembic => {
-                (doctools::extract(*plugin, &ctx), Vec::new())
-            },
+            PluginId::Sphinx | PluginId::MkDocs => (doctools::extract(*plugin, &ctx), Vec::new()),
+            PluginId::Alembic => (alembic::extract(&ctx), Vec::new()),
         };
         warnings.extend(plugin_warnings);
         contributions.push(contrib);
