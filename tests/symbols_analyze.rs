@@ -910,6 +910,88 @@ fn library_mode_symbol_used_by_root_conftest_or_testpaths_is_not_chk006() {
     ));
 }
 
+const ALEMBIC_REVISION: &str = "revision = \"a1\"\ndown_revision = None\nbranch_labels = None\ndepends_on = None\n\ndef upgrade():\n    pass\n\ndef downgrade():\n    pass\n\ndef helper():\n    pass\n";
+
+/// protoc output, a transformers `modular_*.py` beside its `modeling_*.py`,
+/// and alembic's revision attributes are read by tools, not imports (#655).
+#[test]
+fn generated_code_and_alembic_revision_names_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            &format!("{LIBRARY_PYPROJECT}\n[tool.chokkin.plugins]\nalembic = true\n"),
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/protos/__init__.py", ""),
+        ("src/acme/protos/svc_pb2.py", "AWS_URL = 1\n"),
+        (
+            "src/acme/protos/svc_pb2_grpc.py",
+            "class SvcStub:\n    pass\n",
+        ),
+        ("src/acme/bert/__init__.py", ""),
+        (
+            "src/acme/bert/modeling_bert.py",
+            "class BertModel:\n    pass\n",
+        ),
+        (
+            "src/acme/bert/modular_bert.py",
+            "class BertModel:\n    pass\n",
+        ),
+        ("src/acme/gpt/__init__.py", ""),
+        ("src/acme/gpt/modular_gpt.py", "class GptModel:\n    pass\n"),
+        ("src/acme/migrations/__init__.py", ""),
+        ("src/acme/migrations/versions/__init__.py", ""),
+        ("src/acme/migrations/versions/a1_init.py", ALEMBIC_REVISION),
+        ("src/acme/versions.py", "def upgrade():\n    pass\n"),
+        (
+            "conftest.py",
+            "import acme.protos.svc_pb2\nimport acme.protos.svc_pb2_grpc\nimport acme.bert.modeling_bert\nimport acme.bert.modular_bert\nimport acme.gpt.modular_gpt\nimport acme.migrations.versions.a1_init\nimport acme.versions\n",
+        ),
+    ]);
+    let quiet = [
+        ("acme.protos.svc_pb2", "AWS_URL"),
+        ("acme.protos.svc_pb2_grpc", "SvcStub"),
+        ("acme.bert.modular_bert", "BertModel"),
+        ("acme.migrations.versions.a1_init", "revision"),
+        ("acme.migrations.versions.a1_init", "down_revision"),
+        ("acme.migrations.versions.a1_init", "branch_labels"),
+        ("acme.migrations.versions.a1_init", "depends_on"),
+        ("acme.migrations.versions.a1_init", "upgrade"),
+        ("acme.migrations.versions.a1_init", "downgrade"),
+    ];
+    for (module, name) in quiet {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    let reported = [
+        ("acme.bert.modeling_bert", "BertModel"),
+        ("acme.gpt.modular_gpt", "GptModel"),
+        ("acme.migrations.versions.a1_init", "helper"),
+        ("acme.versions", "upgrade"),
+    ];
+    for (module, name) in reported {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+
+    // Without the alembic plugin, `versions/` is just a directory name.
+    let report = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/versions/__init__.py", ""),
+        ("src/acme/versions/a1_init.py", ALEMBIC_REVISION),
+        ("conftest.py", "import acme.versions.a1_init\n"),
+    ]);
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "acme.versions.a1_init", "upgrade"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");

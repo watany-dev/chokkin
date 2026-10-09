@@ -17,6 +17,7 @@ use crate::rules::types::{
 };
 use crate::sources::{DiscoveredSources, FileContext, PublicSurface, path_to_module};
 
+use super::conventions::{alembic_symbols, is_codegen_file};
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::collect_external_symbols;
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
@@ -49,12 +50,18 @@ pub fn analyze_with_context(
     // API surface: pytest calls their functions, so their symbols would all
     // read as unused. They still reference the symbols they import.
     let test_files = test_file_paths(sources, entry);
+    let all_files: HashSet<&str> = sources
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
     let surface_modules: Vec<_> = reachable_modules
         .iter()
         .copied()
         .filter(|module| {
             !sources.layout.in_local_package(&module.path)
                 && !test_files.contains(module.path.as_str())
+                && !is_codegen_file(&module.path, &all_files)
         })
         .collect();
 
@@ -66,8 +73,9 @@ pub fn analyze_with_context(
         &module_names,
         production_api_references(production_tests, parse, &reachable, sources),
     );
-    let external_symbols =
+    let mut external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
+    external_symbols.extend(alembic_symbols(plugins, &surface_modules, &module_names));
 
     let surface = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
     // A library member ships its own wheel, so its files are judged as a
