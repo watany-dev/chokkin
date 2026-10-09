@@ -521,6 +521,41 @@ mod tests {
         }
     }
 
+    /// Pins the strip and the scanner to the layout a real `uv lock` writes,
+    /// which the hand-written locks above only approximate (#560).
+    #[test]
+    fn real_uv_output_skips_artifacts_and_keeps_the_graph() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/manifest/uv_lock_real/uv.lock");
+        let contents = std::fs::read_to_string(path).expect("read fixture");
+        let full = toml_graph(&contents);
+
+        let stripped = strip_artifacts(&contents).expect("uv wheels layout");
+        assert_eq!(toml_graph(&stripped), full);
+        assert!(!stripped.contains("sdist = ") && !stripped.contains("wheels = "));
+        assert!(stripped.lines().count() * 2 < contents.lines().count());
+        assert_eq!(
+            scan_uv_layout(&contents).map(lock_graph),
+            Some(full.clone())
+        );
+
+        assert_eq!(
+            full.edges.get("requests"),
+            Some(&vec![
+                "certifi".to_owned(),
+                "charset-normalizer".to_owned(),
+                "idna".to_owned(),
+                "urllib3".to_owned(),
+            ])
+        );
+        assert_eq!(
+            full.extras
+                .get("acme")
+                .and_then(|extras| extras.get("socks")),
+            Some(&vec!["pysocks".to_owned()])
+        );
+    }
+
     #[test]
     fn rejects_invalid_toml() {
         let error = parse("[[package\n").expect_err("invalid TOML");
