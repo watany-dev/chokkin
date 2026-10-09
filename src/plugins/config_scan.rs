@@ -3,8 +3,11 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use ruff_python_ast::Expr;
+use ruff_python_ast::visitor::{Visitor, walk_expr};
 use serde::{Deserialize, Serialize};
 
+use crate::manifest::literals::{parse_module, string_value};
 use crate::manifest::{DependencyContext, normalize_distribution_name};
 use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
@@ -26,11 +29,20 @@ pub(super) struct ConfigScanResult {
     /// `plugins`, PDM `call`).
     #[serde(default)]
     pub module_refs: Vec<ModuleReference>,
+    /// Distributions tox `deps` and nox `session.install(...)` install, which
+    /// provide their binaries the way a manifest declaration does (#680).
+    #[serde(default)]
+    pub declared_distributions: Vec<String>,
+    /// Binaries remote pre-commit hooks install into pre-commit's own
+    /// environment (#680).
+    #[serde(default)]
+    pub provided_binaries: Vec<String>,
 }
 
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
 const PRE_COMMIT_CONFIG: &str = ".pre-commit-config.yaml";
 const TOX_CONFIG: &str = "tox.ini";
+const NOX_CONFIG: &str = "noxfile.py";
 const SCRIPT_DIRS: [&str; 2] = ["scripts", "bin"];
 
 /// Files [`scan_config`] may read beyond the config and manifest inputs.
@@ -41,7 +53,7 @@ const SCRIPT_DIRS: [&str; 2] = ["scripts", "bin"];
 pub(super) fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = MKDOCS_CONFIG_NAMES
         .into_iter()
-        .chain([PRE_COMMIT_CONFIG, TOX_CONFIG])
+        .chain([PRE_COMMIT_CONFIG, TOX_CONFIG, NOX_CONFIG])
         .map(|name| root.join(name))
         .filter(|path| path.is_file())
         .collect();
@@ -69,14 +81,21 @@ pub(super) fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     scan_mkdocs_config(root, &mut result, &mut seen_binaries);
     scan_pre_commit_config(root, &mut result, &mut seen_binaries, &known);
     scan_tox_config(root, ctx, &mut result, &mut seen_binaries, &known);
+    scan_noxfile(root, &mut result);
     scan_shell_scripts(root, &mut result, &mut seen_binaries, &known);
     let hits = task_files::scan(root, pyproject.as_ref(), &known);
     merge_hits(&mut result, &mut seen_binaries, hits);
     let hits = tool_plugins::scan(root, pyproject.as_ref());
     merge_hits(&mut result, &mut seen_binaries, hits);
 
-    result.used_distributions.sort();
-    result.used_distributions.dedup();
+    for list in [
+        &mut result.used_distributions,
+        &mut result.declared_distributions,
+        &mut result.provided_binaries,
+    ] {
+        list.sort();
+        list.dedup();
+    }
     result
 }
 
@@ -93,7 +112,15 @@ fn scan_pyproject_tools(
     };
     for key in tool.keys() {
         if let Some(binary) = tool_key_to_binary(key) {
-            push_binary(result, seen, binary, doc.origin("tool", key));
+            push_usage(
+                result,
+                seen,
+                BinaryUsage {
+                    binary: binary.to_owned(),
+                    origin: doc.origin("tool", key),
+                    config_section: true,
+                },
+            );
         }
     }
 }
@@ -104,7 +131,7 @@ fn merge_hits(
     hits: SourceHits,
 ) {
     for usage in hits.binaries {
-        push_binary(result, seen, &usage.binary, usage.origin);
+        push_usage(result, seen, usage);
     }
     for distribution in &hits.distributions {
         push_distribution(result, distribution);
@@ -269,7 +296,8 @@ fn scan_pre_commit_config(
         return;
     };
     // Only `repo: local` hooks run a command from the project's own
-    // environment; remote hooks install their tool into pre-commit's cache.
+    // environment; remote hooks install their tool into pre-commit's cache,
+    // which provides the binary their config sections refer to (#680).
     let mut local_repo = false;
     for (index, line) in contents.lines().enumerate() {
         let trimmed = strip_yaml_comment(line).trim();
@@ -280,7 +308,18 @@ fn scan_pre_commit_config(
         }
         if let Some(hook_id) = item.strip_prefix("id:") {
             if let Some(binary) = hook_id_to_binary(unquote_yaml_scalar(hook_id)) {
-                push_binary(result, seen, binary, origin.clone());
+                if !local_repo {
+                    result.provided_binaries.push(binary.to_owned());
+                }
+                push_usage(
+                    result,
+                    seen,
+                    BinaryUsage {
+                        binary: binary.to_owned(),
+                        origin: origin.clone(),
+                        config_section: !local_repo,
+                    },
+                );
             }
             continue;
         }
@@ -478,8 +517,72 @@ fn push_tox_extras(
 }
 
 fn push_tox_dependency(raw: &str, result: &mut ConfigScanResult) {
-    if let Some(name) = extract_requirement_name(raw) {
+    if let Some(name) = extract_requirement_name(strip_tox_factors(raw.trim())) {
         push_distribution(result, &name);
+        // `-r file`, `{[testenv]deps}` and paths are not distributions.
+        if is_distribution_name(&name) {
+            result.declared_distributions.push(name);
+        }
+    }
+}
+
+/// A PEP 508 project name (letters, digits, `-`, `_`, `.`).
+fn is_distribution_name(name: &str) -> bool {
+    name.starts_with(|ch: char| ch.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+/// Requirement literals passed to `session.install(...)` in `noxfile.py`.
+/// The file is parsed, never run; options (`-e`, `-r file`) and non-literal
+/// arguments are skipped.
+fn scan_noxfile(root: &Path, result: &mut ConfigScanResult) {
+    let Ok(contents) = std::fs::read_to_string(root.join(NOX_CONFIG)) else {
+        return;
+    };
+    let Some(suite) = parse_module(&contents) else {
+        return;
+    };
+    let mut visitor = SessionInstallVisitor::default();
+    visitor.visit_body(&suite);
+    let mut option_value = false;
+    for requirement in visitor.requirements {
+        // `"-r", "requirements.txt"`: the option's value is a path, not a name.
+        if std::mem::take(&mut option_value) {
+            continue;
+        }
+        if requirement.starts_with('-') {
+            option_value = matches!(
+                requirement.as_str(),
+                "-r" | "--requirement" | "-c" | "--constraint" | "-e" | "--editable"
+            );
+            continue;
+        }
+        if let Some(name) = extract_requirement_name(&requirement)
+            && is_distribution_name(&name)
+        {
+            result.declared_distributions.push(name);
+        }
+    }
+}
+
+#[derive(Default)]
+struct SessionInstallVisitor {
+    requirements: Vec<String>,
+}
+
+impl<'a> Visitor<'a> for SessionInstallVisitor {
+    fn visit_expr(&mut self, expr: &'a Expr) {
+        if let Expr::Call(call) = expr
+            && let Expr::Attribute(attribute) = &*call.func
+            && attribute.attr.as_str() == "install"
+            && matches!(&*attribute.value, Expr::Name(name) if name.id.as_str() == "session")
+        {
+            self.requirements
+                .extend(call.arguments.args.iter().filter_map(string_value));
+        }
+        walk_expr(self, expr);
     }
 }
 
@@ -489,7 +592,7 @@ fn extract_requirement_name(raw: &str) -> Option<String> {
         return None;
     }
     let end = trimmed
-        .find(['[', ';', '<', '>', '=', '!', ' '])
+        .find(['[', ';', '<', '>', '=', '!', '~', '@', ' '])
         .unwrap_or(trimmed.len());
     let name = trimmed.get(..end)?.trim();
     if name.is_empty() {
@@ -620,17 +723,35 @@ fn push_binary(
     binary: &str,
     origin: ReferenceOrigin,
 ) {
-    let key = (
-        binary.to_owned(),
-        format!("{}:{}", origin.file, origin.line.unwrap_or_default()),
+    push_usage(
+        result,
+        seen,
+        BinaryUsage {
+            binary: binary.to_owned(),
+            origin,
+            config_section: false,
+        },
     );
-    if !seen.insert(key) {
-        return;
+}
+
+fn push_usage(
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    usage: BinaryUsage,
+) {
+    let key = (
+        usage.binary.clone(),
+        // A remote and a local hook share an origin; keep both.
+        format!(
+            "{}:{}:{}",
+            usage.origin.file,
+            usage.origin.line.unwrap_or_default(),
+            usage.config_section
+        ),
+    );
+    if seen.insert(key) {
+        result.binary_usages.push(usage);
     }
-    result.binary_usages.push(BinaryUsage {
-        binary: binary.to_owned(),
-        origin,
-    });
 }
 
 fn push_distribution(result: &mut ConfigScanResult, distribution: &str) {
@@ -1082,6 +1203,50 @@ mod tests {
                 ("ruff".to_owned(), Some(5)),
                 ("black".to_owned(), None),
             ]
+        );
+    }
+
+    #[test]
+    fn remote_hooks_provide_their_binaries_to_config_sections_only() {
+        let result = scan_files(&[(
+            ".pre-commit-config.yaml",
+            "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        entry: ruff check\n\
+                 - repo: https://github.com/pre-commit/mirrors-mypy\n    hooks:\n      - id: mypy\n\
+                 - repo: local\n    hooks:\n      - id: mypy\n        entry: python -m mypy\n\
+                       - id: black\n        entry: black .\n",
+        )]);
+        assert_eq!(result.provided_binaries, ["mypy"]);
+        let sections: Vec<_> = result
+            .binary_usages
+            .iter()
+            .map(|usage| (usage.binary.as_str(), usage.config_section))
+            .collect();
+        assert!(sections.contains(&("mypy", true)));
+        assert!(sections.contains(&("mypy", false)));
+        assert!(sections.contains(&("black", false)));
+        assert!(!sections.contains(&("black", true)));
+        assert!(sections.contains(&("ruff", false)));
+    }
+
+    #[test]
+    fn tox_deps_and_nox_installs_declare_distributions() {
+        let result = scan_files(&[
+            (
+                "tox.ini",
+                "[testenv]\ndeps =\n    pytest>=7\n    -r requirements/test.txt\n    \
+                     {[base]deps}\n    Sphinx[docs]\n    py311: coverage\ncommands = pytest\n",
+            ),
+            (
+                "noxfile.py",
+                "import nox\n\n@nox.session\ndef lint(session):\n    \
+                     session.install(\"flake8\", \"-e\", \"tools\", \"black~=24.1\")\n    \
+                     session.install(\"-r\", \"requirements.txt\", \"isort@git+https://x\")\n    \
+                     session.run(\"flake8\")\n",
+            ),
+        ]);
+        assert_eq!(
+            result.declared_distributions,
+            ["black", "coverage", "flake8", "isort", "pytest", "sphinx"]
         );
     }
 }

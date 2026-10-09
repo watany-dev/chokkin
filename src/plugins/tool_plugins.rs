@@ -97,6 +97,7 @@ fn scan_mypy_ini(rel: &str, contents: &str, hits: &mut SourceHits) {
     hits.binaries.push(BinaryUsage {
         binary: "mypy".to_owned(),
         origin: origin_at(rel, header, "mypy"),
+        config_section: true,
     });
     if let Some((index, plugins)) = ini_value(contents, "mypy", "plugins") {
         push_mypy_plugins(hits, &plugins, &origin_at(rel, index, "mypy.plugins"));

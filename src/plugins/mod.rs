@@ -28,8 +28,8 @@ pub(crate) use error::PluginsError;
 pub use extract::{PluginExtractRequest, extract_plugin_hints_with_parse};
 pub(crate) use pytest::{PytestImportSettings, import_settings as pytest_import_settings};
 #[cfg(test)]
-pub(crate) use types::{BinaryUsage, FrameworkUsedGlob};
-pub(crate) use types::{ModuleReference, ReferenceOrigin};
+pub(crate) use types::FrameworkUsedGlob;
+pub(crate) use types::{BinaryUsage, ModuleReference, ReferenceOrigin};
 pub use types::{PluginContribution, PluginHints};
 pub(crate) use util::{parse_module_symbol, parse_uvicorn_script_target};
 pub use warnings::PluginsWarning;

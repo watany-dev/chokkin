@@ -18,7 +18,7 @@ use crate::rules::types::{
 use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::{DiscoveredSources, PublicSurface};
 
-use super::binary::detect_unlisted_binaries;
+use super::binary::{BinaryProviders, detect_unlisted_binaries};
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::detect_misplaced_dependencies;
 use super::missing::{WorkspaceDeclaredIndex, detect_missing_dependencies};
@@ -185,7 +185,8 @@ fn reconcile_project(
         &workspace_declared,
     ));
 
-    candidates.extend(detect_unlisted_binaries(&declared, resolution, plugins));
+    let providers = BinaryProviders::new(&declared, manifest, workspace_boundaries, plugins);
+    candidates.extend(detect_unlisted_binaries(&providers, resolution, plugins));
 
     candidates.extend(detect_duplicate_dependencies(
         &manifest.dependencies,
@@ -370,6 +371,8 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_declared_distributions: Vec::new(),
+            config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
@@ -421,6 +424,8 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_declared_distributions: Vec::new(),
+            config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
@@ -485,6 +490,8 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_declared_distributions: Vec::new(),
+            config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };
@@ -561,6 +568,8 @@ mod tests {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
             config_used_distributions: Vec::new(),
+            config_declared_distributions: Vec::new(),
+            config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
             warnings: Vec::new(),
         };

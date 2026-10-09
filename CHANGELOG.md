@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CHK008 counts more places as declaring a tool: tox `deps`, literal
+  `session.install("...")` arguments in `noxfile.py` (parsed, never run),
+  workspace members' dependencies, requirements files outside the root names,
+  the direct lockfile dependencies of all of these, and wrappers that ship a
+  tool (`mkdocs-material` → `mkdocs`, `pre-commit-uv` → `pre-commit`). A
+  remote pre-commit hook covers its tool's config section (`[tool.mypy]`) but
+  not commands in a Makefile or CI. Binaries of one distribution are reported
+  once (#680).
+
 ## [0.7.3] - 2026-10-09
 
 v0.7.3 is a fix release on top of v0.7.2 that targets false positives on

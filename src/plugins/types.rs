@@ -55,6 +55,11 @@ pub struct BinaryUsage {
     pub binary: String,
     /// Discovery origin.
     pub origin: ReferenceOrigin,
+    /// The usage is a tool's config section (`[tool.ruff]`, `[mypy]`) or a
+    /// remote pre-commit hook rather than a command run in the project's
+    /// environment, so a remote hook providing the binary covers it (#680).
+    #[serde(default)]
+    pub config_section: bool,
 }
 
 /// Glob of files treated as framework-used (excluded from unused-file candidates).
@@ -107,6 +112,12 @@ pub struct PluginHints {
     pub config_binary_usages: Vec<BinaryUsage>,
     /// Distributions used via config without a distinct CLI name.
     pub config_used_distributions: Vec<String>,
+    /// Distributions that tox `deps` and nox `session.install(...)` install
+    /// into their own environments; CHK008 counts them as declared (#680).
+    pub config_declared_distributions: Vec<String>,
+    /// Binaries remote pre-commit hooks install into pre-commit's own
+    /// environment; they cover `BinaryUsage::config_section` usages (#680).
+    pub config_provided_binaries: Vec<String>,
     /// Module references from generic config scanning (pytest `-p`, mypy plugins, PDM `call`).
     pub config_module_refs: Vec<ModuleReference>,
     /// Non-fatal warnings from plugin extraction.
