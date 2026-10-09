@@ -570,7 +570,7 @@ examples/**/*.ipynb / workspace member直下の examples/**/*.ipynb -> dev
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
 ```
 
-`examples/` の notebook は wheel に入らないデモなので dev とする (#681)。runtime file の `if __name__ == "__main__":` ブロック内の import は dev context (`ImportContext::Dev`) とする。直接実行したときだけ通る dev script だから。ただし `__main__.py` は `python -m pkg` の通常経路なので対象外 (#681)。
+`examples/` の notebook は wheel に入らないデモなので dev とする (#681)。runtime file の `if __name__ == "__main__":` ブロック内の import は dev context (`ImportContext::Dev`) とする。直接実行したときだけ通る dev script だから。ただし `__main__.py` (`python -m pkg`) と notebook (Jupyter は全 cell を `__main__` として実行する) では通常経路なので対象外。docs / test など runtime 以外の file では file の context を優先する (#681)。
 
 root直下の `tests/` / `test/` / `scripts/` / `docs/` に `__init__.py` があれば `tests.*` などとして first-party import に解決する (`LayoutInfo::local_packages`、#359)。context は上表のまま、flat layout の配布パッケージ候補には入れず、CHK006/CHK007 の対象にもしない。ただし参照元としては数えるため、tests/ からだけ import される symbol は CHK006 にしない (`__init__.py` の有無によらない、#410)。
 

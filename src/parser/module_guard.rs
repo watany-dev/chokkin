@@ -40,6 +40,17 @@ pub(super) fn is_main_guard_test(test: &Expr) -> bool {
     (is_name(left) && is_main(right)) || (is_main(left) && is_name(right))
 }
 
+/// Whether `path` always runs with `__name__ == "__main__"`: a package's
+/// `__main__.py` (`python -m pkg`) or a notebook.
+#[must_use]
+pub(super) fn runs_as_main(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.file_name().is_some_and(|name| name == "__main__.py")
+        || path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ipynb"))
+}
+
 fn string_literal(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::StringLiteral(literal) => Some(literal.value.to_str()),
@@ -115,5 +126,14 @@ mod tests {
         assert!(!is_main("__name__ != '__main__'"));
         assert!(!is_main("__name__ == 'pkg'"));
         assert!(!is_main("'pkg' == __name__"));
+    }
+
+    #[test]
+    fn main_runs_for_dunder_main_and_notebooks_only() {
+        assert!(runs_as_main("pkg/__main__.py"));
+        assert!(runs_as_main("__main__.py"));
+        assert!(runs_as_main("src/acme/report.ipynb"));
+        assert!(!runs_as_main("pkg/run__main__.py"));
+        assert!(!runs_as_main("pkg/cli.py"));
     }
 }

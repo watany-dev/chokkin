@@ -19,7 +19,7 @@ use super::dynamic::{
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
-use super::module_guard::{imported_module_guard, is_main_guard_test};
+use super::module_guard::{imported_module_guard, is_main_guard_test, runs_as_main};
 use super::platform_guard::is_platform_guard_test;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_test;
@@ -140,9 +140,10 @@ impl<'a> ModuleVisitor<'a> {
                 self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
             }
             self.imported_guards.extend(imported_module_guard(test));
-            // `python -m pkg` runs `pkg/__main__.py` as `__main__`, so its
-            // block is the module's normal path.
-            if is_main_guard_test(test) && !self.path.ends_with("__main__.py") {
+            // `python -m pkg` runs `pkg/__main__.py` as `__main__`, and Jupyter
+            // runs every cell as `__main__`, so there the block is the normal
+            // path.
+            if is_main_guard_test(test) && !runs_as_main(self.path) {
                 self.in_main_block = true;
             }
             // `if has_x:` only runs when the guarded `try` import succeeded.
