@@ -59,9 +59,12 @@ impl PublicSurface {
 ///
 /// `surfaces` pairs each member's root-relative directory with its surface,
 /// whose paths are relative to that member.
-pub(crate) fn member_ships(surfaces: &[(String, PublicSurface)], path: &str) -> Option<bool> {
+pub(crate) fn member_ships<'a>(
+    surfaces: impl IntoIterator<Item = &'a (String, PublicSurface)>,
+    path: &str,
+) -> Option<bool> {
     surfaces
-        .iter()
+        .into_iter()
         .filter_map(|(member, surface)| {
             let rel = path.strip_prefix(member.as_str())?.strip_prefix('/')?;
             Some((member.len(), surface.contains(rel)))

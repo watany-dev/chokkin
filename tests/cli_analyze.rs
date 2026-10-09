@@ -1468,12 +1468,12 @@ fn binary_library_member_symbols_use_library_mode() {
 /// mcp-python-sdk / fastmcp: a workspace root and a member with its own CLI
 /// resolve to app, yet each wheel ships its package's `__all__` as public
 /// API, so those re-exports are not CHK007. A name outside `__all__`, and an
-/// `__all__` no wheel ships, stay reported (#678).
+/// `__all__` its own member's wheel does not ship, stay reported (#678).
 #[test]
 fn binary_wheel_all_reexports_are_not_chk007_in_app_mode() {
     let hatch = "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
     let root = format!(
-        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\n[tool.uv.workspace]\nmembers = [\"src/acme-cli\", \"src/demo-app\"]\n"
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\", \"src/demo-app\"]\n\n[tool.uv.workspace]\nmembers = [\"src/acme-cli\", \"src/demo-app\"]\n"
     );
     let member = format!(
         "[project]\nname = \"acme-cli\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme-cli = \"acme_cli.main:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"acme_cli\"]\n"
@@ -1505,7 +1505,8 @@ fn binary_wheel_all_reexports_are_not_chk007_in_app_mode() {
             "src/acme-cli/acme_cli/main.py",
             "import acme_cli\n\n\ndef main():\n    print(acme_cli)\n",
         ),
-        // No wheel targets: nothing ships this `__all__`.
+        // No wheel targets of its own: nothing ships this `__all__`, even
+        // though the root's targets cover the member directory.
         (
             "src/demo-app/pyproject.toml",
             "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[project.scripts]\ndemo = \"demo.app:main\"\n",

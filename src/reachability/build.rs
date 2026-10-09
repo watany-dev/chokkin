@@ -128,12 +128,12 @@ pub fn apply_public_surface(
 /// surface, whose paths are relative to that member.
 pub(crate) fn apply_member_surfaces(
     report: &mut ReachabilityReport,
-    surfaces: &[(String, PublicSurface)],
+    surfaces: &[&(String, PublicSurface)],
 ) {
     let confidence =
         confidence_for_unreachable(ProjectMode::App, report.reached_opaque_dynamic_import);
     for file in &mut report.unreachable {
-        if member_ships(surfaces, &file.path) == Some(false) {
+        if member_ships(surfaces.iter().copied(), &file.path) == Some(false) {
             file.max_confidence = confidence;
         }
     }
@@ -567,8 +567,8 @@ mod tests {
         apply_member_surfaces(
             &mut report,
             &[
-                ("libs/core".to_owned(), surface("pkg/orphan.py")),
-                ("libs/core/plugins/x".to_owned(), surface("pkg/orphan.py")),
+                &("libs/core".to_owned(), surface("pkg/orphan.py")),
+                &("libs/core/plugins/x".to_owned(), surface("pkg/orphan.py")),
             ],
         );
 
