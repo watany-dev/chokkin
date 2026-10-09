@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::VERSION;
 use crate::cache::CacheOptions;
 use crate::config::{
-    ChokkinConfig, ConfigSources, DependencyGroupsConfig, LoadedConfig, ResolvedWorkspaceMember,
-    RuntimeOverrides, TargetVersion, apply_overrides, detect_nested_members, load_config,
+    ChokkinConfig, ConfigSources, DependencyGroupsConfig, ResolvedWorkspaceMember,
+    RuntimeOverrides, TargetVersion, apply_overrides, load_config, load_root_config,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
@@ -22,7 +22,7 @@ use crate::plugins::{
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredSources, FileContext, FileKind, MemberLayout, apply_member_docs_context,
-    build_glob_set, discover_sources,
+    discover_sources,
 };
 
 use super::error::ProbeError;
@@ -97,7 +97,7 @@ pub(super) fn probe_project_with_cache(
     let canonical_start = canonicalize_path(discovery_start)?;
 
     let root = discover_project_root(&canonical_start)?;
-    let mut loaded = load_config(&root)?;
+    let mut loaded = load_root_config(&root, overrides.no_auto_workspace != Some(true))?;
     apply_overrides(&mut loaded.effective, overrides);
 
     let manifest = extract_manifest_with_cache(&root, &loaded, cache)?;
@@ -105,10 +105,10 @@ pub(super) fn probe_project_with_cache(
     loaded.effective.target_version = Some(target_version);
 
     let mut sources = discover_sources(&root, &loaded, &manifest)?;
-    let auto_members = auto_detect_members(&mut loaded, overrides)?;
+    let member_count = loaded.workspace_members.len();
     // The manifest cache lives under each member root; an undeclared monorepo
     // would gain hundreds of untracked `.chokkin/` directories.
-    let member_cache = if auto_members > 0 { None } else { cache };
+    let member_cache = if loaded.auto_workspace { None } else { cache };
     let mut workspace_inputs =
         collect_workspace_inputs(&root, &loaded.workspace_members, overrides, member_cache)?;
     if loaded.effective.production {
@@ -134,10 +134,8 @@ pub(super) fn probe_project_with_cache(
     );
     let mut warnings = collect_warnings(&manifest, &sources);
     warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
-    if auto_members > 0 {
-        warnings.push(ProbeWarning::AutoWorkspace {
-            member_count: auto_members,
-        });
+    if loaded.auto_workspace {
+        warnings.push(ProbeWarning::AutoWorkspace { member_count });
     }
     let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
 
@@ -150,32 +148,11 @@ pub(super) fn probe_project_with_cache(
         sources,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
-        auto_workspace: auto_members > 0,
+        auto_workspace: loaded.auto_workspace,
         scripts,
         plugin_activations,
         warnings,
     })
-}
-
-/// Fill `loaded.workspace_members` from nested `pyproject.toml` files when
-/// the project declares no workspace, returning how many were found (#488).
-///
-/// Runs here rather than in `load_config` so member roots, which are loaded
-/// with `load_config` too, do not scan their own subtrees again.
-fn auto_detect_members(
-    loaded: &mut LoadedConfig,
-    overrides: &RuntimeOverrides,
-) -> Result<usize, ProbeError> {
-    if overrides.no_auto_workspace == Some(true)
-        || loaded.uv_workspace.is_some()
-        || !loaded.workspace_members.is_empty()
-    {
-        return Ok(0);
-    }
-    let exclude = build_glob_set(&loaded.effective.exclude)?;
-    loaded.workspace_members =
-        detect_nested_members(&loaded.root, &exclude, loaded.effective.respect_gitignore)?;
-    Ok(loaded.workspace_members.len())
 }
 
 /// Drop members that only dependency groups pull in, such as airflow's

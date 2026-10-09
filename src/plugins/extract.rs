@@ -217,6 +217,7 @@ mod tests {
             },
             uv_workspace: None,
             workspace_members: Vec::new(),
+            auto_workspace: false,
         };
         let sources = DiscoveredSources {
             root: root.clone(),
@@ -271,6 +272,7 @@ mod tests {
             },
             uv_workspace: None,
             workspace_members: Vec::new(),
+            auto_workspace: false,
         };
         let sources = DiscoveredSources {
             root: root.clone(),
