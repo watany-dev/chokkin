@@ -17,7 +17,13 @@ use super::used::DeclaredIndex;
 pub(super) struct WorkspaceDeclaredIndex<'a> {
     pub(super) member_id: &'a str,
     pub(super) declared: DeclaredIndex<'a>,
+    /// The member's own lockfile, when it has one (langchain's
+    /// `libs/core/uv.lock`, #653).
+    pub(super) lockfile: Option<&'a LockfileGraph>,
 }
+
+/// A lockfile and the declarations its edges are walked from.
+type LockScope<'i, 'a> = (&'i DeclaredIndex<'a>, &'i LockfileGraph);
 
 /// Detect missing and transitive-only dependency imports.
 pub(super) fn detect_missing_dependencies(
@@ -52,15 +58,20 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        let key = (distribution.clone(), import.file.clone(), import.line);
-        if !reported.insert(key) {
+        if !reported.insert((distribution.clone(), import.file.clone(), import.line)) {
             continue;
         }
 
         let usage = usage_context_for_import(&import.file, import.context, sources);
         let workspace_member = import.workspace_member.as_deref();
-        let member_entry = workspace_member
-            .and_then(|member_id| member_declarations(workspace_declared, member_id, distribution));
+        let boundary = workspace_member.and_then(|member_id| {
+            workspace_declared
+                .iter()
+                .find(|boundary| boundary.member_id == member_id)
+        });
+        let member_entry = boundary
+            .and_then(|boundary| boundary.declared.get(distribution))
+            .map(Vec::as_slice);
         let root_entry = declared.get(distribution).map(Vec::as_slice);
         let member_declared =
             member_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
@@ -99,27 +110,45 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        // A lock edge proves a transitive dependency, so wrapping the import in
-        // `try:` must not hide CHK004; a lock entry without an edge is too weak
-        // to override the optional relaxation (#504).
-        let transitive =
-            has_lockfile && is_transitive_only(distribution, declared, &resolution.transitive);
+        // A member's own lockfile is walked from the member's declarations
+        // (#653); the root's lockfile still counts from the root's.
+        let scopes = [
+            boundary.and_then(|boundary| Some((&boundary.declared, boundary.lockfile?))),
+            has_lockfile.then_some((declared, &resolution.transitive)),
+        ];
         let optional = optional_imports.contains(&(import.file.clone(), import.line));
-        candidates.push(if optional && !transitive {
-            optional_missing_candidate(import, distribution, strict)
-        } else {
-            let candidate = undeclared_candidate(
-                import,
-                distribution,
-                declared,
-                &resolution.transitive,
-                has_lockfile,
-            );
-            demote_optional_candidate(import, optional, candidate)
-        });
+        candidates.push(undeclared_candidate(
+            import,
+            distribution,
+            &scopes,
+            optional,
+            strict,
+        ));
     }
 
     candidates
+}
+
+/// §10: CHK004 when a lockfile accounts for the import, CHK003 otherwise.
+fn undeclared_candidate(
+    import: &ResolvedImport,
+    distribution: &str,
+    scopes: &[Option<LockScope<'_, '_>>],
+    optional: bool,
+    strict: bool,
+) -> IssueCandidate {
+    let evidence = lock_evidence(distribution, scopes);
+    // A lock edge proves a transitive dependency, so wrapping the import in
+    // `try:` must not hide CHK004; a lock entry without an edge is too weak
+    // to override the optional relaxation (#504).
+    if optional && evidence != Some(LockEvidence::TransitiveEdge) {
+        return optional_missing_candidate(import, distribution, strict);
+    }
+    let candidate = match evidence {
+        Some(evidence) => transitive_candidate(import, distribution, evidence),
+        None => missing_candidate(import, distribution, scopes.iter().any(Option::is_some)),
+    };
+    demote_optional_candidate(import, optional, candidate)
 }
 
 /// How the lockfile accounts for an undeclared import (CHK004 evidence).
@@ -132,24 +161,18 @@ enum LockEvidence {
     LockedOnly,
 }
 
-/// §10: CHK004 when the lockfile accounts for the import, CHK003 otherwise.
-fn undeclared_candidate(
-    import: &ResolvedImport,
-    distribution: &str,
-    declared: &DeclaredIndex<'_>,
-    transitive: &LockfileGraph,
-    has_lockfile: bool,
-) -> IssueCandidate {
-    if !has_lockfile {
-        return missing_candidate(import, distribution, false);
+/// The strongest CHK004 evidence any lockfile gives.
+fn lock_evidence(distribution: &str, scopes: &[Option<LockScope<'_, '_>>]) -> Option<LockEvidence> {
+    let mut scopes = scopes.iter().flatten();
+    if scopes
+        .clone()
+        .any(|(declared, lock)| is_transitive_only(distribution, declared, lock))
+    {
+        return Some(LockEvidence::TransitiveEdge);
     }
-    if is_transitive_only(distribution, declared, transitive) {
-        return transitive_candidate(import, distribution, LockEvidence::TransitiveEdge);
-    }
-    if transitive.edges.contains_key(distribution) {
-        return transitive_candidate(import, distribution, LockEvidence::LockedOnly);
-    }
-    missing_candidate(import, distribution, true)
+    scopes
+        .any(|(_, lock)| lock.edges.contains_key(distribution))
+        .then_some(LockEvidence::LockedOnly)
 }
 
 /// Declarations that decide between CHK003/CHK004/CHK005 for one import.
@@ -514,12 +537,30 @@ mod tests {
         strict: bool,
         workspace_declared: &[WorkspaceDeclaredIndex<'_>],
     ) -> Vec<IssueCandidate> {
+        detect_with_lock(
+            declared,
+            import,
+            Some(transitive),
+            strict,
+            workspace_declared,
+        )
+    }
+
+    /// `lockfile: None` runs the rule as if the root has no lockfile.
+    fn detect_with_lock(
+        declared: &DeclaredIndex<'_>,
+        import: ResolvedImport,
+        lockfile: Option<LockfileGraph>,
+        strict: bool,
+        workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+    ) -> Vec<IssueCandidate> {
+        let has_lockfile = lockfile.is_some();
         let config = default_config();
         let sources = sources();
         let resolution = ResolutionIndex {
             imports: vec![import],
             warnings: Vec::new(),
-            transitive,
+            transitive: lockfile.unwrap_or_default(),
             binary_resolutions: BTreeMap::new(),
             pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
@@ -539,7 +580,7 @@ mod tests {
                 strict,
             },
             &HashSet::from([FILE]),
-            true,
+            has_lockfile,
             workspace_declared,
         )
     }
@@ -708,10 +749,12 @@ mod tests {
         let member_only = [WorkspaceDeclaredIndex {
             member_id: "api",
             declared: with_requests(),
+            lockfile: None,
         }];
         let no_member = [WorkspaceDeclaredIndex {
             member_id: "api",
             declared: BTreeMap::new(),
+            lockfile: None,
         }];
 
         for strict in [false, true] {
@@ -733,6 +776,103 @@ mod tests {
             &no_member,
         );
         assert!(root_only.is_empty(), "{root_only:?}");
+    }
+
+    /// #653: a member's own lockfile decides CHK004 for its imports when the
+    /// root has none, walked from the member's declarations.
+    #[test]
+    fn member_lockfile_decides_transitive_for_member_import() {
+        let pydantic = declared_dep("pydantic");
+        let member_lock = LockfileGraph {
+            edges: BTreeMap::from([
+                ("pydantic".to_owned(), vec!["pydantic-core".to_owned()]),
+                ("pydantic-core".to_owned(), Vec::new()),
+            ]),
+            ..LockfileGraph::default()
+        };
+        let member_import = |member: &str| ResolvedImport {
+            workspace_member: Some(member.to_owned()),
+            ..runtime_import("pydantic-core")
+        };
+        let members = [
+            WorkspaceDeclaredIndex {
+                member_id: "core",
+                declared: BTreeMap::from([("pydantic".to_owned(), vec![&pydantic])]),
+                lockfile: Some(&member_lock),
+            },
+            WorkspaceDeclaredIndex {
+                member_id: "unlocked",
+                declared: BTreeMap::from([("pydantic".to_owned(), vec![&pydantic])]),
+                lockfile: None,
+            },
+        ];
+        let run = |member: &str| {
+            detect_with_lock(
+                &BTreeMap::new(),
+                member_import(member),
+                None,
+                false,
+                &members,
+            )
+        };
+
+        let locked = run("core");
+        assert_eq!(locked.len(), 1, "{locked:?}");
+        assert_eq!(locked[0].rule, RuleId::Chk004);
+        assert_eq!(locked[0].confidence, Confidence::Certain);
+
+        let unlocked = run("unlocked");
+        assert_eq!(unlocked.len(), 1, "{unlocked:?}");
+        assert_eq!(unlocked[0].rule, RuleId::Chk003);
+        assert!(unlocked[0].message.contains("no lockfile"));
+
+        let optional = detect_with_lock(
+            &BTreeMap::new(),
+            ResolvedImport {
+                optional: true,
+                ..member_import("core")
+            },
+            None,
+            false,
+            &members,
+        );
+        assert_eq!(optional.len(), 1, "{optional:?}");
+        assert_eq!(optional[0].rule, RuleId::Chk004);
+        assert_eq!(optional[0].severity, Severity::Warning);
+    }
+
+    /// #653: a member lockfile adds evidence; the root's lock edges from the
+    /// root's declarations still count.
+    #[test]
+    fn root_lockfile_still_counts_beside_member_lockfile() {
+        let requests = declared_dep("requests");
+        let root_lock = LockfileGraph {
+            edges: BTreeMap::from([
+                ("requests".to_owned(), vec!["urllib3".to_owned()]),
+                ("urllib3".to_owned(), Vec::new()),
+            ]),
+            ..LockfileGraph::default()
+        };
+        let member_lock = LockfileGraph::default();
+        let members = [WorkspaceDeclaredIndex {
+            member_id: "core",
+            declared: BTreeMap::new(),
+            lockfile: Some(&member_lock),
+        }];
+
+        let found = detect_with(
+            &BTreeMap::from([("requests".to_owned(), vec![&requests])]),
+            ResolvedImport {
+                workspace_member: Some("core".to_owned()),
+                ..runtime_import("urllib3")
+            },
+            root_lock,
+            false,
+            &members,
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, RuleId::Chk004);
+        assert_eq!(found[0].confidence, Confidence::Certain);
     }
 
     #[test]

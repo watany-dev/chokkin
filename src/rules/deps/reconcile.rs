@@ -218,15 +218,21 @@ fn workspace_declared_indices<'a>(
     workspace_boundaries
         .iter()
         .map(|boundary| {
-            // A uv workspace keeps one lockfile at the root for every member.
-            let lockfile = if boundary.manifest.sources.lockfile.is_some() {
-                &boundary.manifest.lockfile
-            } else {
-                &root.lockfile
-            };
+            // A uv workspace member reads the root's lockfile; a member with
+            // its own (langchain's `libs/core/uv.lock`) reads that (#653).
+            let own_lockfile = boundary
+                .manifest
+                .sources
+                .lockfile
+                .is_some()
+                .then_some(&boundary.manifest.lockfile);
             WorkspaceDeclaredIndex {
                 member_id: boundary.member_id,
-                declared: build_import_declared_index(boundary.manifest, lockfile),
+                declared: build_import_declared_index(
+                    boundary.manifest,
+                    own_lockfile.unwrap_or(&root.lockfile),
+                ),
+                lockfile: own_lockfile,
             }
         })
         .collect()
