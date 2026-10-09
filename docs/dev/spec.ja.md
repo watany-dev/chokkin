@@ -1348,6 +1348,8 @@ exit   : 追加した CLI flag・hint・reporter が JSON schema / SARIF / exit 
   - R-17 型文脈専用 export の区別 (Knip types 相当)
   - R-18 --watch と LSP の試作 (incremental 解析、--fix を code action で提供)
   - R-20 conda environment.yml / pixi.toml の pypi 依存
+  - R-21 duplicate exports (Knip duplicates 相当。同じ object の複数名再 export)
+  - R-22 循環 import (Knip cycles 相当、既定 off)
 非目標 : preview rule を default on にしない。JSON schema の rule 一覧には載せるが
          semver 契約 (ADR 0004) の安定対象に含めない
 ```
