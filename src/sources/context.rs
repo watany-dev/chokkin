@@ -239,16 +239,9 @@ mod tests {
     /// after [`apply_member_context`].
     fn member_sources(paths: &[&str], production: bool) -> (DiscoveredSources, LayoutInfo) {
         use crate::discovery::{ProjectRoot, RootMarker};
-        use crate::sources::{DiscoveredFile, FileKind, MemberLayout, ProjectLayout};
+        use crate::sources::{DiscoveredFile, FileKind, MemberLayout};
 
-        let layout = || LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        };
+        let layout = LayoutInfo::default;
         let mut root_layout = layout();
         root_layout.members = vec![MemberLayout {
             path: "providers/google".to_owned(),

@@ -394,10 +394,7 @@ mod tests {
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
                 package_root: "src".to_owned(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -652,10 +649,7 @@ mod tests {
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Src,
                 package_root: "src".to_owned(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             },
             effective_globs: Vec::new(),
             files: members
@@ -721,9 +715,7 @@ mod tests {
                 layout: crate::sources::ProjectLayout::Src,
                 package_root: "lib".to_owned(),
                 packages: vec!["streamlit".to_owned()],
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             },
             effective_globs: Vec::new(),
             files: Vec::new(),
@@ -777,11 +769,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo {
                 layout: crate::sources::ProjectLayout::Flat,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             },
             effective_globs: Vec::new(),
             files: Vec::new(),

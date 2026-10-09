@@ -801,14 +801,7 @@ mod tests {
 
     fn visit_source_at(path: &str, source: &str) -> ParsedModule {
         let module = ruff_python_parser::parse_module(source).expect("parse");
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        };
+        let layout = LayoutInfo::default();
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new(path, &layout, FileContext::Runtime, &lines);
         visitor.visit_module(module.suite());
@@ -1062,9 +1055,7 @@ mod tests {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new(

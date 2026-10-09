@@ -67,9 +67,7 @@ mod tests {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -128,11 +126,8 @@ mod tests {
     fn flat_layout_resolves_package_module() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
-            package_root: String::new(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         let paths = known(&["acme/foo.py"]);
         assert_eq!(
@@ -143,14 +138,7 @@ mod tests {
 
     #[test]
     fn workspace_member_src_layout_resolves_module_file() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        };
+        let layout = LayoutInfo::default();
         let paths = known(&["services/api/src/api/main.py"]);
         assert_eq!(
             resolve_module_to_path("api.main", &layout, &paths),
@@ -179,9 +167,7 @@ mod tests {
                         String::new()
                     },
                     packages: packages.into_iter().map(str::to_owned).collect(),
-                    local_packages: Vec::new(),
-                    inferred_globs: Vec::new(),
-                    members: Vec::new(),
+                    ..Default::default()
                 })
         }
 

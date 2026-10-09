@@ -100,9 +100,7 @@ mod tests {
                 layout: ProjectLayout::Src,
                 package_root: "src".to_owned(),
                 packages: vec!["acme".to_owned()],
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             },
             effective_globs: Vec::new(),
             files: Vec::new(),

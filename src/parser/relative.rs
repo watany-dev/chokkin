@@ -131,9 +131,7 @@ mod tests {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -181,12 +179,8 @@ mod tests {
         // `tests/` is walked under an Unknown layout but has no ModuleIndex
         // entry, so a name derived for it could never be looked up.
         let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             resolve_relative_import("tests/unit/test_core.py", &layout, 1, None, Some("helpers")),
@@ -215,14 +209,7 @@ mod tests {
 
     #[test]
     fn relative_import_under_unknown_layout_drops_src_prefix() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        };
+        let layout = LayoutInfo::default();
         assert_eq!(
             resolve_relative_import("src/acme/api/__init__.py", &layout, 1, Some("models"), None),
             Some("acme.api.models".to_owned())
@@ -316,11 +303,8 @@ mod tests {
         fn flat_layout(packages: Vec<String>) -> LayoutInfo {
             LayoutInfo {
                 layout: ProjectLayout::Flat,
-                package_root: String::new(),
                 packages,
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             }
         }
 
