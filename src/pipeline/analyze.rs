@@ -300,6 +300,7 @@ fn run_analysis_core(
         .map(|input| WorkspaceDependencyBoundary {
             member_id: &input.member.id,
             manifest: &input.manifest,
+            files: &input.sources.files,
         })
         .collect::<Vec<_>>();
 

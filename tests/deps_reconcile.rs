@@ -117,6 +117,7 @@ fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::internals::De
         .map(|input| WorkspaceDependencyBoundary {
             member_id: &input.member.id,
             manifest: &input.manifest,
+            files: &input.sources.files,
         })
         .collect::<Vec<_>>();
     reconcile_with_context(
@@ -757,11 +758,23 @@ fn path_source_reached_only_from_an_entry_point_is_used() {
 /// Issue #553: `acme-core` from a path source ships `acme.core`, not
 /// `acme_core`, so only its member tree can tie the import back to it. Runs
 /// the full pipeline: `load_deps` leaves member layouts out, and `acme`
-/// would then resolve without going through the member tree.
+/// would then resolve without going through the member tree. Issue #559: a
+/// src-layout root inventories only `src/**`, so the tree comes from the
+/// member's own files, for path and workspace sources alike.
 #[test]
-fn path_source_is_used_through_its_member_tree() {
-    let report = chokkin::analyze_project(
-        &fixture("uv_path_source_renamed_module"),
+fn source_dependency_is_used_through_its_member_tree() {
+    for name in [
+        "uv_path_source_renamed_module",
+        "uv_path_source_renamed_module_src_layout",
+        "uv_workspace_renamed_module_src_layout",
+    ] {
+        assert_eq!(analyze_issues(name), [], "{name}");
+    }
+}
+
+fn analyze_issues(name: &str) -> Vec<chokkin::internals::Issue> {
+    chokkin::analyze_project(
+        &fixture(name),
         None,
         &RuntimeOverrides::default(),
         chokkin::internals::AnalyzeOptions {
@@ -769,8 +782,9 @@ fn path_source_is_used_through_its_member_tree() {
             ..chokkin::internals::AnalyzeOptions::default()
         },
     )
-    .expect("analyze");
-    assert_eq!(report.issues.issues, []);
+    .expect("analyze")
+    .issues
+    .issues
 }
 
 /// Issue #508: the marker-scoped array form reads the same tree as a member.
