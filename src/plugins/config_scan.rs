@@ -686,7 +686,7 @@ mod tests {
         DependencyOrigin, LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata,
     };
     use crate::parser::ParseSummary;
-    use crate::sources::{DiscoveredSources, LayoutInfo, ProjectLayout};
+    use crate::sources::{DiscoveredSources, LayoutInfo};
 
     fn empty_manifest(root: ProjectRoot) -> LoadedManifest {
         LoadedManifest {
@@ -722,14 +722,7 @@ mod tests {
         let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
-            layout: LayoutInfo {
-                layout: ProjectLayout::Unknown,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
-            },
+            layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
@@ -799,14 +792,7 @@ mod tests {
         let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
-            layout: LayoutInfo {
-                layout: ProjectLayout::Unknown,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
-            },
+            layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
@@ -848,14 +834,7 @@ mod tests {
         let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
-            layout: LayoutInfo {
-                layout: ProjectLayout::Unknown,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
-            },
+            layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
@@ -928,14 +907,7 @@ mod tests {
         let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
-            layout: LayoutInfo {
-                layout: ProjectLayout::Unknown,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
-            },
+            layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
@@ -998,14 +970,7 @@ mod tests {
         let config = crate::config::default_config();
         let sources = DiscoveredSources {
             root: root.clone(),
-            layout: LayoutInfo {
-                layout: ProjectLayout::Unknown,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
-            },
+            layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),

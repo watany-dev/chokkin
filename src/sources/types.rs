@@ -6,13 +6,14 @@ use crate::discovery::ProjectRoot;
 use super::warnings::SourcesWarning;
 
 /// Detected project layout (§2, §8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ProjectLayout {
     /// `src/<package>/` tree.
     Src,
     /// `<package>/` at repository root.
     Flat,
     /// Could not infer src/flat; broad globs used.
+    #[default]
     Unknown,
 }
 
@@ -72,7 +73,7 @@ pub struct DiscoveredFile {
 }
 
 /// Layout inference result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LayoutInfo {
     /// Detected layout kind.
     pub layout: ProjectLayout,

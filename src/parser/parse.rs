@@ -537,7 +537,7 @@ mod tests {
 
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::sources::{FileContext, LayoutInfo, ProjectLayout};
+    use crate::sources::{FileContext, LayoutInfo};
 
     fn write_temp_py(dir: &Path, name: &str, contents: &str) -> ProjectRoot {
         fs::write(dir.join(name), contents).expect("write");
@@ -548,14 +548,7 @@ mod tests {
     }
 
     fn empty_layout() -> LayoutInfo {
-        LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        }
+        LayoutInfo::default()
     }
 
     #[test]

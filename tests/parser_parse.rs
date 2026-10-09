@@ -21,14 +21,7 @@ fn parse_fixture(name: &str) -> chokkin::internals::ParsedModule {
         path: path.parent().expect("parent").to_path_buf(),
         marker: RootMarker::PyProjectToml,
     };
-    let layout = LayoutInfo {
-        layout: ProjectLayout::Unknown,
-        package_root: String::new(),
-        packages: Vec::new(),
-        local_packages: Vec::new(),
-        inferred_globs: Vec::new(),
-        members: Vec::new(),
-    };
+    let layout = LayoutInfo::default();
     parse_file(
         &root,
         name,
@@ -52,18 +45,9 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::internals::ParsedModule 
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         },
-        _ => LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        },
+        _ => LayoutInfo::default(),
     };
     parse_file(
         &root,
@@ -211,9 +195,7 @@ fn parse_project_sources_fixture_suite() {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         },
         effective_globs: Vec::new(),
         files,
@@ -290,9 +272,7 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["app".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         },
         effective_globs: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
@@ -348,14 +328,7 @@ fn parse_cache_follows_pep723_block_edits() {
     };
     let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
-        layout: LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        },
+        layout: LayoutInfo::default(),
         effective_globs: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "scripts/run.py".to_owned(),
@@ -422,14 +395,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
     };
     let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
-        layout: LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        },
+        layout: LayoutInfo::default(),
         effective_globs: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "analysis.ipynb".to_owned(),
@@ -470,14 +436,7 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
     };
     let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
-        layout: LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        },
+        layout: LayoutInfo::default(),
         effective_globs: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "broken.ipynb".to_owned(),
@@ -555,10 +514,7 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
         layout: LayoutInfo {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         },
         effective_globs: Vec::new(),
         files,
@@ -620,10 +576,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
     let layout = LayoutInfo {
         layout: ProjectLayout::Src,
         package_root: "src".to_owned(),
-        packages: Vec::new(),
-        local_packages: Vec::new(),
-        inferred_globs: Vec::new(),
-        members: Vec::new(),
+        ..Default::default()
     };
     let discovered = |path: &str| chokkin::internals::DiscoveredFile {
         path: path.to_owned(),

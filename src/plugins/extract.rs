@@ -221,14 +221,7 @@ mod tests {
         };
         let sources = DiscoveredSources {
             root: root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Unknown,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
-            },
+            layout: crate::sources::LayoutInfo::default(),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
@@ -276,14 +269,7 @@ mod tests {
         };
         let sources = DiscoveredSources {
             root: root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Unknown,
-                package_root: String::new(),
-                packages: Vec::new(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
-            },
+            layout: crate::sources::LayoutInfo::default(),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),

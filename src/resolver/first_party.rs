@@ -121,8 +121,7 @@ mod tests {
             package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
             local_packages: vec!["tests".to_owned()],
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         for root in ["acme", "tests"] {
             assert!(is_first_party_import(
@@ -137,11 +136,7 @@ mod tests {
     fn metadata_name_matches_normalized_import_root() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         let metadata = ProjectMetadata {
             name: Some("my-package".to_owned()),

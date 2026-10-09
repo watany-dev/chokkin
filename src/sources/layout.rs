@@ -79,8 +79,7 @@ fn layout_info(package_root: &str, packages: Vec<String>) -> LayoutInfo {
         package_root: package_root.to_owned(),
         inferred_globs: default_globs(layout, package_root, &packages),
         packages,
-        local_packages: Vec::new(),
-        members: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -224,12 +223,8 @@ fn heuristic_layout(
     }
     let Some((base, packages)) = candidates.into_iter().next() else {
         let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
             inferred_globs: default_globs(ProjectLayout::Unknown, "", &[]),
-            members: Vec::new(),
+            ..Default::default()
         };
         return (layout, None);
     };
@@ -452,9 +447,7 @@ mod tests {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             path_to_module("src/acme/api/routes.py", &layout),
@@ -471,11 +464,8 @@ mod tests {
     fn path_to_module_rejects_dotted_components() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
-            package_root: String::new(),
             packages: vec!["pkg".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(path_to_module("pkg/foo.bar.py", &layout), None);
         assert_eq!(path_to_module("pkg/.hidden/x.py", &layout), None);
@@ -488,14 +478,7 @@ mod tests {
 
     #[test]
     fn path_to_module_unknown_layout_strips_src_prefix() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
-        };
+        let layout = LayoutInfo::default();
         assert_eq!(
             path_to_module("src/acme/api/__init__.py", &layout),
             Some("acme.api".to_owned())
@@ -507,11 +490,8 @@ mod tests {
     fn path_to_module_flat_layout_requires_known_package() {
         let layout = LayoutInfo {
             layout: ProjectLayout::Flat,
-            package_root: String::new(),
             packages: vec!["acme".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
-            members: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             path_to_module("acme/core.py", &layout),
@@ -533,22 +513,16 @@ mod tests {
                 }
                 .to_owned(),
                 packages: packages.iter().map(|&package| package.to_owned()).collect(),
-                local_packages: Vec::new(),
-                inferred_globs: Vec::new(),
-                members: Vec::new(),
+                ..Default::default()
             },
         };
         let layout = LayoutInfo {
-            layout: ProjectLayout::Unknown,
-            package_root: String::new(),
-            packages: Vec::new(),
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
             members: vec![
                 member("services/api", ProjectLayout::Src, &["api"]),
                 member("llama-dev", ProjectLayout::Flat, &["llama_dev"]),
                 member("llama-index-core", ProjectLayout::Unknown, &[]),
             ],
+            ..Default::default()
         };
         for (path, module) in [
             ("services/api/src/api/main.py", Some("api.main")),
@@ -576,8 +550,6 @@ mod tests {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             packages: vec!["prefect".to_owned()],
-            local_packages: Vec::new(),
-            inferred_globs: Vec::new(),
             members: vec![MemberLayout {
                 path: "src/integrations/prefect-aws".to_owned(),
                 layout: LayoutInfo {
@@ -589,6 +561,7 @@ mod tests {
                     members: Vec::new(),
                 },
             }],
+            ..Default::default()
         };
         let init = "src/integrations/prefect-aws/prefect_aws/__init__.py";
         assert_eq!(
@@ -1310,8 +1283,7 @@ mod tests {
                         package_root: package_root.to_owned(),
                         packages: packages.into_iter().map(str::to_owned).collect(),
                         local_packages: local.into_iter().map(str::to_owned).collect(),
-                        inferred_globs: Vec::new(),
-                        members: Vec::new(),
+                        ..Default::default()
                     }
                 })
         }
