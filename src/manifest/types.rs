@@ -236,7 +236,7 @@ pub struct ManifestSources {
     /// Normalized names that requirements files outside the fixed root names
     /// declare (`requirements/tests.in`, `emscripten-requirements.txt`).
     /// Their context is unknown, so they only resolve imports (CHK010) and
-    /// never feed CHK001–CHK005 (#679).
+    /// provide binaries (CHK008), and never feed CHK001–CHK005 (#679, #680).
     #[serde(default)]
     pub extra_requirements: BTreeSet<String>,
     /// `setup.cfg` contributed.

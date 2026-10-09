@@ -167,6 +167,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     contrib.binary_usages.push(BinaryUsage {
         binary: "pytest".to_owned(),
         origin,
+        config_section: false,
     });
 
     if !has_explicit_config

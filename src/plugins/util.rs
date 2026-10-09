@@ -110,6 +110,7 @@ pub(super) fn push_binary(contrib: &mut PluginContribution, binary: &str, origin
     contrib.binary_usages.push(BinaryUsage {
         binary: binary.to_owned(),
         origin,
+        config_section: false,
     });
 }
 

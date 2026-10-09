@@ -391,6 +391,8 @@ Core Metadata 2.5(PEP 794、2025年9月承認)には `Import-Name` と `Import-N
 
 binary名からdistribution名への逆引き(CHK008、binary usage判定)も同じ多層戦略にする。`.venv` があれば `entry_points.txt` / `RECORD` のscriptsを読み、なければbundled binary map、最後にuser定義の `[tool.chokkin.binary_map]` を使う。import名問題と同型の課題であり、専用のfallback dataが必要になる。
 
+CHK008 は binary usage の distribution が次のいずれかで提供されていれば出さない (#680)。root の宣言済み依存、root 直下以外の requirements file (`extra_requirements`)、tox `deps` と nox `session.install` のリテラル、各 workspace member の依存と requirements file、これらの lockfile 上の直接依存、宣言済み wrapper が提供する tool (`mkdocs-material` → `mkdocs`、`pre-commit-uv` → `pre-commit`)。さらに remote pre-commit hook の id は pre-commit が環境を用意するので、tool の config section (`[tool.mypy]` など) や hook 自体の usage は提供済みとするが、Makefile や CI の command 実行由来の usage は対象外のままにする。usage 自体は CHK002 の used 判定に残す。同じ distribution の binary は 1 件にまとめる。
+
 重要なのは、`uvx chokkin` はprojectの仮想環境ではなく、`chokkin` 自身の一時環境で動く点。project venv必須にしてはいけない。`.venv` があれば読む、なければmanifest/lockfile/bundled map/user mapだけで解析する設計にする。
 
 ## 8. entry point自動推定
@@ -540,9 +542,9 @@ CI/config pluginの例。
 
 ```text
 .github/workflows/*.yml の run: から python -m, uv run, pytest, mypy, ruff, alembic 等を拾う
-.pre-commit-config.yaml の hook id と、repo: local の hook の entry を拾う (remote hook は pre-commit が環境を用意する)
-tox.ini / pyproject [tool.tox] の commands / commands_pre / commands_post を拾う (deps / description / allowlist_externals は拾わない)
-noxfile.py の @nox.session をentry扱いにする
+.pre-commit-config.yaml の hook id と、repo: local の hook の entry を拾う (remote hook は pre-commit が環境を用意するので、その binary は CHK008 で提供済みとみなす)
+tox.ini / pyproject [tool.tox] の commands / commands_pre / commands_post を拾う (deps / description / allowlist_externals は command として拾わない。deps の distribution 名は CHK008 の宣言として数える)
+noxfile.py の @nox.session をentry扱いにし、session.install("...") の文字列リテラルを CHK008 の宣言として読む (parse のみで実行しない)
 ```
 
 ## 10. dependency判定仕様
@@ -1491,7 +1493,7 @@ tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として
 R-06 で binary / plugin usage の情報源を拡充した。共通の command 解析 (`\` 継続の結合、`;` `|` `&` と改行での分割、`@` `-` / `exec` `env` などの wrapper、`uv run` / `poetry run` などの runner、`python -m` の剥がし、`$…` や `{{…}}` で始まる語は変数展開として追わない、pip / uv などの環境管理ツールは binary 扱いしない、command 位置の先頭語だけを binary とみなし引数は読まない) は `src/plugins/commands.rs`、行番号付きで TOML / INI / YAML を読む補助は `src/plugins/config_text.rs` に置く。
 
 - `src/plugins/task_files.rs`: `[tool.pdm.scripts]` (文字列 / `cmd` 文字列・配列 / `shell` / `composite`、`call` は module reference、`_` は無視)、`GNUmakefile` / `makefile` / `Makefile` の tab 付き recipe 行、`justfile` / `Justfile` / `.justfile` の recipe 本体 (`sh` 以外の shebang recipe は除外)、`Dockerfile` / `Containerfile` / `*.Dockerfile` / `Dockerfile.*` の `RUN` / `CMD` / `ENTRYPOINT` (shell form と exec form)、`Procfile`、`.gitlab-ci.yml` の `script` / `before_script` / `after_script` (list・inline 配列・block scalar、`!reference` は無視)。Makefile / justfile の変数・include は追わない。
-- `src/plugins/config_scan.rs` (generic scanner): `tox.ini` / `[tool.tox]` は `commands*` キーの値だけを command として読み (`{envpython}` は python、`{envbindir}/x` は x、他の `{...}` 置換は落とす)、`deps` / `description` / `allowlist_externals` のような一覧の語は command ではないので拾わない。`.pre-commit-config.yaml` は hook `id` と `repo: local` の `entry` だけを読む。`scripts/` / `bin/` 配下は `.sh` 拡張子か sh 系 shebang を持つ file だけを shell script として command 解析し (`#` コメント以降は無視)、Python script は parser が読む。いずれも語が binary map にあるだけでは usage にしない (#494)。
+- `src/plugins/config_scan.rs` (generic scanner): `tox.ini` / `[tool.tox]` は `commands*` キーの値だけを command として読み (`{envpython}` は python、`{envbindir}/x` は x、他の `{...}` 置換は落とす)、`deps` / `description` / `allowlist_externals` のような一覧の語は command ではないので拾わない。`.pre-commit-config.yaml` は hook `id` と `repo: local` の `entry` だけを読む。`deps` の distribution 名 (`-r` や `{[env]deps}` 参照は除く) と `noxfile.py` の `session.install(...)` の文字列リテラル (`-` で始まる option は除く) は CHK008 の provider 宣言として集める。`scripts/` / `bin/` 配下は `.sh` 拡張子か sh 系 shebang を持つ file だけを shell script として command 解析し (`#` コメント以降は無視)、Python script は parser が読む。いずれも語が binary map にあるだけでは usage にしない (#494)。
 - `src/plugins/tool_plugins.rs`: pytest `addopts` (`[tool.pytest.ini_options]` / `pytest.ini` / `tox.ini [pytest]` / `setup.cfg [tool:pytest]`) の `-p mod` を module reference (`-p no:x` は無視)、`--cov` / `-n` / `--benchmark-*` などの plugin option を `src/plugins/plugin_map.rs` の表で distribution に対応づける。mypy `plugins` (`[tool.mypy]` / `mypy.ini` / `.mypy.ini` / `setup.cfg [mypy]`) は module reference (`mypy_django_plugin` → `django-stubs` などは表で対応づけ)、`[tool.ty]` / `ty.toml` / `[tool.pyright]` / `pyrightconfig.json` / `[tool.basedpyright]` は該当 type checker を used にする。
 - `.venv` の `pytest11` entry point を持つ distribution は pytest 自体が used のとき used とする (`ResolutionIndex.pytest_plugin_distributions`)。
 - 読むファイルはすべて config-scan cache key (`scan_input_paths`) に入り、`--explain` の evidence は `file:line` で origin を示す。

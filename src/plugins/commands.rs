@@ -40,6 +40,7 @@ impl SourceHits {
             self.binaries.push(BinaryUsage {
                 binary,
                 origin: origin.clone(),
+                config_section: false,
             });
         }
     }
