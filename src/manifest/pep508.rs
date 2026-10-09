@@ -100,14 +100,7 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
             }
             None
         } else {
-            let specifiers = parse_version_specifiers(spec)?;
-            Some(
-                specifiers
-                    .iter()
-                    .map(|specifier| specifier.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            )
+            Some(canonical_version_specifiers(spec)?)
         };
         (version, marker)
     };
@@ -177,6 +170,18 @@ fn has_url_scheme(url: &str) -> bool {
 /// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`).
 pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
     input.split(',').map(parse_version_specifier).collect()
+}
+
+/// A PEP 440 specifier set in the form `DeclaredDependency::specifier`
+/// stores (`>=3.10, <4`); `None` when it is not one.
+pub(crate) fn canonical_version_specifiers(input: &str) -> Option<String> {
+    Some(
+        parse_version_specifiers(input)?
+            .iter()
+            .map(|specifier| specifier.text.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {

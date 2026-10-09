@@ -666,8 +666,10 @@ runtime 宣言と group / optional extra / build の宣言
        (runtime より緩い pydantic>=2.0 も報告しない)
   -> specifier は `,` で区切った各 specifier の集合で比べる (`<9,>=7.0` と `>=7.0, <9` は同じ)。
      marker は記述どおりの文字列で比べる
-  -> Poetry の依存表は version 制約 (文字列値か table の `version`) を記述どおり specifier として比べ、
-     `^` / `~` は PEP 440 に変換しない。`*` と version の無い path / git 宣言は空とする (#682)
+  -> Poetry の依存表は version 制約 (文字列値か table の `version`) を specifier として比べる。
+     PEP 440 として読めるものは PEP 508 側と同じ形に正規化し、`^` / `~` などは記述どおり比べる
+     (PEP 440 に変換しない)。複数制約の配列は各 version を `||` でつなぐ。
+     `*` と version の無い path / git 宣言は空とする (#682)
 extra 同士 (s3 と sqs の両方に boto3)、group 同士 (dev と test の両方に pytest)、group と extra、build と group
   -> 報告しない。extra は独立に install されるものなので両方に必要なら両方に書く
 project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言、opaque な宣言
