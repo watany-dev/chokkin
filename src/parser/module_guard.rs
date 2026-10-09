@@ -101,6 +101,7 @@ mod tests {
             "'x' in modules",
             "sniffio.current_async_library() != 'trio'",
             "other() == 'trio'",
+            "'trio' == other()",
             "name in sys.modules",
         ] {
             assert_eq!(guard(source), None, "{source}");
@@ -113,5 +114,6 @@ mod tests {
         assert!(is_main("'__main__' == __name__"));
         assert!(!is_main("__name__ != '__main__'"));
         assert!(!is_main("__name__ == 'pkg'"));
+        assert!(!is_main("'pkg' == __name__"));
     }
 }
