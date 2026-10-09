@@ -374,6 +374,9 @@ pub struct LoadedConfig {
     pub uv_workspace: Option<UvWorkspaceHint>,
     /// Resolved workspace members discovered below the project root.
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
+    /// Whether `workspace_members` were inferred from nested `pyproject.toml`
+    /// files rather than declared (#488).
+    pub auto_workspace: bool,
 }
 
 /// Raw `[tool.uv.workspace]` members from `pyproject.toml` (unexpanded).

@@ -9,17 +9,24 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::{WalkBuilder, WalkState};
 
 use crate::discovery::ProjectRoot;
+use crate::sources::build_glob_set;
 
 use super::error::ConfigError;
 use super::types::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
 
-/// Resolve workspace member directories below a project root.
+/// Resolve workspace member directories below a project root, in precedence
+/// order: uv members, then path sources, then — only when neither uv nor the
+/// config declares anything and `auto_workspace` allows it — members inferred
+/// from nested `pyproject.toml` files (#488); config overrides win last.
+///
+/// Returns whether the members were inferred.
 pub(super) fn resolve_workspace_members(
     root: &ProjectRoot,
     config: &ChokkinConfig,
     uv_workspace: Option<&UvWorkspaceHint>,
     uv_path_sources: &BTreeMap<String, Vec<String>>,
-) -> Result<Vec<ResolvedWorkspaceMember>, ConfigError> {
+    auto_workspace: bool,
+) -> Result<(Vec<ResolvedWorkspaceMember>, bool), ConfigError> {
     let mut members = BTreeMap::new();
 
     if let Some(hint) = uv_workspace {
@@ -30,6 +37,16 @@ pub(super) fn resolve_workspace_members(
 
     for member in path_source_members(&root.path, uv_path_sources) {
         members.entry(member.path.clone()).or_insert(member);
+    }
+
+    let auto = auto_workspace
+        && uv_workspace.is_none()
+        && members.is_empty()
+        && config.workspaces.is_empty();
+    if auto {
+        for member in detect_nested_members(&root.path, config)? {
+            members.insert(member.path.clone(), member);
+        }
     }
 
     for (id, override_cfg) in &config.workspaces {
@@ -47,7 +64,8 @@ pub(super) fn resolve_workspace_members(
         );
     }
 
-    Ok(members.into_values().collect())
+    let auto = auto && !members.is_empty();
+    Ok((members.into_values().collect(), auto))
 }
 
 /// Issue #499: a path source that is its own project inside the root (`lib/`
@@ -88,14 +106,8 @@ fn resolve_uv_members(
     let exclude = uv_member_globs(root, &hint.exclude, "exclude")?;
 
     let mut paths = BTreeSet::new();
-    for pyproject in find_pyprojects(root)? {
-        let Some(member_dir) = pyproject.parent() else {
-            continue;
-        };
-        if member_dir == root {
-            continue;
-        }
-        let rel = relative_path(root, member_dir)?;
+    for member_dir in find_pyprojects(root, &PyprojectScan::UV)? {
+        let rel = relative_path(root, &member_dir)?;
         if members.is_match(&rel) && !exclude.is_match(&rel) {
             paths.insert(rel);
         }
@@ -148,38 +160,114 @@ fn members_with_unique_ids(paths: BTreeSet<String>) -> Vec<ResolvedWorkspaceMemb
         .collect()
 }
 
+/// Members implied by nested `pyproject.toml` files that declare a
+/// `[project]` name, for monorepos without a workspace declaration (#488).
+fn detect_nested_members(
+    root: &Path,
+    config: &ChokkinConfig,
+) -> Result<Vec<ResolvedWorkspaceMember>, ConfigError> {
+    // Source discovery reports an invalid glob; with no members the run gets there.
+    let Ok(exclude) = build_glob_set(&config.exclude) else {
+        return Ok(Vec::new());
+    };
+    // Auto-detection guesses, so it stays out of the paths source discovery
+    // prunes and out of test trees.
+    let scan = PyprojectScan {
+        max_depth: Some(AUTO_MEMBER_MAX_DEPTH),
+        respect_gitignore: config.respect_gitignore,
+        exclude,
+        skip_dir: is_skipped_member_scan_dir,
+        require_project: true,
+    };
+    let mut paths = BTreeSet::new();
+    for member_dir in find_pyprojects(root, &scan)? {
+        paths.insert(relative_path(root, &member_dir)?);
+    }
+    Ok(members_with_unique_ids(paths))
+}
+
 /// Deepest member directory auto-detection visits; `llama_index` keeps its
 /// integrations at `llama-index-integrations/<kind>/<package>`.
 const AUTO_MEMBER_MAX_DEPTH: usize = 4;
 
-/// Members implied by nested `pyproject.toml` files that declare a
-/// `[project]` name, for monorepos without a workspace declaration (#488).
-///
-/// Directories are pruned the way source discovery prunes them (`exclude`
-/// globs and, when `respect_gitignore`, `.gitignore`), so paths left out of
-/// analysis never become members.
-pub(crate) fn detect_nested_members(
-    root: &ProjectRoot,
-    exclude: &GlobSet,
+/// Which directories the `pyproject.toml` walk prunes. uv and auto-detection
+/// share the walk but never run together: auto-detection only happens when no
+/// uv workspace is declared.
+struct PyprojectScan {
+    /// Deepest member directory visited; `None` walks the whole tree.
+    max_depth: Option<usize>,
     respect_gitignore: bool,
-) -> Result<Vec<ResolvedWorkspaceMember>, ConfigError> {
-    let scan_root = root.path.clone();
-    let excluded = exclude.clone();
-    let walker = WalkBuilder::new(&root.path)
+    /// Directories excluded from analysis.
+    exclude: GlobSet,
+    skip_dir: fn(&str) -> bool,
+    /// Keep only `pyproject.toml` files naming a `[project]`.
+    require_project: bool,
+}
+
+impl PyprojectScan {
+    /// uv expands member globs over the whole tree, test and hidden
+    /// directories included; only tool directories are pruned.
+    const UV: Self = Self {
+        max_depth: None,
+        respect_gitignore: false,
+        exclude: GlobSet::empty(),
+        skip_dir: is_tool_dir,
+        require_project: false,
+    };
+}
+
+fn is_tool_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | ".venv" | "venv" | "__pycache__" | "target" | "node_modules"
+    )
+}
+
+/// Hidden directories never hold members; test trees hold fixture projects
+/// (chokkin's own `tests/fixtures/*/pyproject.toml`), not packages.
+fn is_skipped_member_scan_dir(name: &str) -> bool {
+    is_tool_dir(name)
+        || name.starts_with('.')
+        || matches!(
+            name,
+            "site-packages" | "build" | "dist" | "tests" | "test" | "fixtures" | "testdata"
+        )
+}
+
+/// A `pyproject.toml` that only configures tools (ruff, pytest) is not a
+/// distribution; unreadable ones are skipped rather than failing the run.
+fn declares_project(pyproject: &Path) -> bool {
+    std::fs::read_to_string(pyproject)
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .is_some_and(|table| {
+            table
+                .get("project")
+                .and_then(|project| project.get("name"))
+                .is_some_and(toml::Value::is_str)
+        })
+}
+
+/// Directories below `root` (not `root` itself) holding a `pyproject.toml`.
+fn find_pyprojects(root: &Path, scan: &PyprojectScan) -> Result<Vec<PathBuf>, ConfigError> {
+    let scan_root = root.to_path_buf();
+    let exclude = scan.exclude.clone();
+    let skip_dir = scan.skip_dir;
+    let require_project = scan.require_project;
+    let walker = WalkBuilder::new(root)
         .standard_filters(false)
-        .git_ignore(respect_gitignore)
+        .git_ignore(scan.respect_gitignore)
         .require_git(false)
-        .max_depth(Some(AUTO_MEMBER_MAX_DEPTH + 1))
+        .max_depth(scan.max_depth.map(|depth| depth + 1))
         .filter_entry(move |entry| {
             if entry.depth() == 0 {
                 return true;
             }
-            let skipped_name = entry
-                .file_name()
-                .to_str()
-                .is_some_and(is_skipped_member_scan_dir);
-            let excluded = relative_path(&scan_root, entry.path())
-                .is_ok_and(|rel| excluded.is_match(&rel) || excluded.is_match(format!("{rel}/**")));
+            let skipped_name = entry.file_name().to_str().is_some_and(skip_dir);
+            let excluded = !exclude.is_empty()
+                && relative_path(&scan_root, entry.path()).is_ok_and(|rel| {
+                    exclude.is_match(&rel) || exclude.is_match(format!("{rel}/**"))
+                });
             !skipped_name && !excluded
         })
         .build_parallel();
@@ -202,7 +290,7 @@ pub(crate) fn detect_nested_members(
             if entry.depth() >= 2
                 && entry.file_name() == "pyproject.toml"
                 && entry.file_type().is_some_and(|kind| kind.is_file())
-                && declares_project(entry.path())
+                && (!require_project || declares_project(entry.path()))
                 && let Some(member_dir) = entry.path().parent()
             {
                 found
@@ -215,76 +303,11 @@ pub(crate) fn detect_nested_members(
     });
     if let Some(error) = failure.into_inner().unwrap_or_else(PoisonError::into_inner) {
         return Err(ConfigError::Io {
-            path: root.path.clone(),
+            path: root.to_path_buf(),
             source: io::Error::other(error),
         });
     }
-    let mut paths = BTreeSet::new();
-    for member_dir in found.into_inner().unwrap_or_else(PoisonError::into_inner) {
-        paths.insert(relative_path(&root.path, &member_dir)?);
-    }
-    Ok(members_with_unique_ids(paths))
-}
-
-/// Hidden and tool directories never hold members; test trees hold fixture
-/// projects (chokkin's own `tests/fixtures/*/pyproject.toml`), not packages.
-fn is_skipped_member_scan_dir(name: &str) -> bool {
-    name.starts_with('.')
-        || matches!(
-            name,
-            "venv"
-                | "__pycache__"
-                | "target"
-                | "node_modules"
-                | "site-packages"
-                | "build"
-                | "dist"
-                | "tests"
-                | "test"
-                | "fixtures"
-                | "testdata"
-        )
-}
-
-/// A `pyproject.toml` that only configures tools (ruff, pytest) is not a
-/// distribution; unreadable ones are skipped rather than failing the run.
-fn declares_project(pyproject: &Path) -> bool {
-    std::fs::read_to_string(pyproject)
-        .ok()
-        .and_then(|text| text.parse::<toml::Table>().ok())
-        .is_some_and(|table| {
-            table
-                .get("project")
-                .and_then(|project| project.get("name"))
-                .is_some_and(toml::Value::is_str)
-        })
-}
-
-fn find_pyprojects(root: &Path) -> Result<Vec<PathBuf>, ConfigError> {
-    let walker = WalkBuilder::new(root)
-        .standard_filters(false)
-        .filter_entry(|entry| {
-            !matches!(
-                entry.file_name().to_str(),
-                Some(".git" | ".venv" | "venv" | "__pycache__" | "target" | "node_modules")
-            )
-        })
-        .build();
-    let mut out = Vec::new();
-    for entry in walker {
-        let entry = entry.map_err(|error| ConfigError::Io {
-            path: root.to_path_buf(),
-            source: io::Error::other(error),
-        })?;
-        if entry
-            .file_type()
-            .is_some_and(|file_type| file_type.is_file())
-            && entry.file_name() == "pyproject.toml"
-        {
-            out.push(entry.into_path());
-        }
-    }
-    Ok(out)
+    Ok(found.into_inner().unwrap_or_else(PoisonError::into_inner))
 }
 
 fn relative_path(root: &Path, path: &Path) -> Result<String, ConfigError> {
@@ -313,7 +336,7 @@ mod tests {
     use globset::Glob;
 
     use super::*;
-    use crate::config::default_config;
+    use crate::config::{WorkspaceOverride, default_config};
     use crate::discovery::RootMarker;
 
     fn root(path: &Path) -> ProjectRoot {
@@ -341,8 +364,10 @@ mod tests {
                 exclude: Vec::new(),
             }),
             &BTreeMap::new(),
+            false,
         )
-        .expect("resolve");
+        .expect("resolve")
+        .0;
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].id, "api");
         assert_eq!(members[0].path, "services/api");
@@ -363,8 +388,10 @@ mod tests {
                 exclude: Vec::new(),
             }),
             &BTreeMap::new(),
+            false,
         )
-        .expect("resolve");
+        .expect("resolve")
+        .0;
         let paths: Vec<_> = members.iter().map(|member| member.path.as_str()).collect();
         assert_eq!(paths, [".hidden/pkg"]);
     }
@@ -378,8 +405,10 @@ mod tests {
                 exclude: Vec::new(),
             }),
             &BTreeMap::new(),
+            false,
         )
         .expect("resolve")
+        .0
         .into_iter()
         .map(|member| (member.id, member.path))
         .collect()
@@ -415,8 +444,10 @@ mod tests {
                 exclude: vec!["packages/legacy".to_owned(), "./packages/old-*/".to_owned()],
             }),
             &BTreeMap::new(),
+            false,
         )
-        .expect("resolve");
+        .expect("resolve")
+        .0;
         let paths: Vec<_> = members.iter().map(|member| member.path.as_str()).collect();
         assert_eq!(paths, ["packages/api"]);
     }
@@ -457,11 +488,13 @@ mod tests {
     }
 
     fn detect(root_path: &Path, exclude: &[&str]) -> Vec<(String, String)> {
-        let mut builder = GlobSetBuilder::new();
-        for pattern in exclude {
-            builder.add(Glob::new(pattern).expect("glob"));
-        }
-        detect_nested_members(&root(root_path), &builder.build().expect("globset"), true)
+        let mut config = default_config();
+        config.exclude = exclude
+            .iter()
+            .map(|pattern| (*pattern).to_owned())
+            .collect();
+        config.respect_gitignore = true;
+        detect_nested_members(root_path, &config)
             .expect("detect")
             .into_iter()
             .map(|member| (member.id, member.path))
@@ -524,6 +557,120 @@ mod tests {
         );
     }
 
+    /// The walk is shared, but uv keeps its own pruning (#549): a glob reaches
+    /// members below the auto-detection depth limit, in test and build trees,
+    /// and in gitignored directories.
+    #[test]
+    fn uv_members_keep_uv_pruning_while_auto_detection_prunes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = "[project]\nname = \"pkg\"\n";
+        write(temp.path(), ".gitignore", "vendor/\n");
+        for dir in [
+            "a/b/c/d/deep",
+            "tests/fixture",
+            "build/out",
+            "vendor/lib",
+            "core",
+        ] {
+            write(temp.path(), &format!("{dir}/pyproject.toml"), project);
+        }
+        let mut uv = uv_members(
+            temp.path(),
+            &["a/b/c/d/*", "tests/*", "build/*", "vendor/*", "core"],
+        );
+        uv.sort();
+        assert_eq!(
+            uv,
+            [
+                ("core".to_owned(), "core".to_owned()),
+                ("deep".to_owned(), "a/b/c/d/deep".to_owned()),
+                ("fixture".to_owned(), "tests/fixture".to_owned()),
+                ("lib".to_owned(), "vendor/lib".to_owned()),
+                ("out".to_owned(), "build/out".to_owned()),
+            ]
+        );
+        assert_eq!(
+            detect(temp.path(), &[]),
+            [("core".to_owned(), "core".to_owned())]
+        );
+    }
+
+    fn resolve_auto(
+        root_path: &Path,
+        config: &ChokkinConfig,
+        uv_workspace: Option<&UvWorkspaceHint>,
+        uv_path_sources: &BTreeMap<String, Vec<String>>,
+    ) -> (Vec<String>, bool) {
+        let (members, auto) = resolve_workspace_members(
+            &root(root_path),
+            config,
+            uv_workspace,
+            uv_path_sources,
+            true,
+        )
+        .expect("resolve");
+        (
+            members.into_iter().map(|member| member.path).collect(),
+            auto,
+        )
+    }
+
+    /// Auto-detection runs only when neither uv nor the config declares a
+    /// member, so the precedence reads top to bottom in one function (#549).
+    #[test]
+    fn auto_detection_runs_only_without_declared_members() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = "[project]\nname = \"pkg\"\n";
+        write(temp.path(), "pyproject.toml", project);
+        write(temp.path(), "core/pyproject.toml", project);
+        write(
+            temp.path(),
+            "lib/pyproject.toml",
+            "[project]\nname = \"acme\"\n",
+        );
+        let none = BTreeMap::new();
+        let config = default_config();
+
+        assert_eq!(
+            resolve_auto(temp.path(), &config, None, &none),
+            (vec!["core".to_owned(), "lib".to_owned()], true)
+        );
+        let (_, auto) = resolve_workspace_members(&root(temp.path()), &config, None, &none, false)
+            .expect("resolve");
+        assert!(!auto, "disabled auto-detection");
+
+        let hint = UvWorkspaceHint {
+            members: Vec::new(),
+            exclude: Vec::new(),
+        };
+        assert_eq!(
+            resolve_auto(temp.path(), &config, Some(&hint), &none),
+            (Vec::new(), false),
+            "an empty uv workspace is still a declaration"
+        );
+
+        let sources = BTreeMap::from([("acme".to_owned(), vec!["lib".to_owned()])]);
+        assert_eq!(
+            resolve_auto(temp.path(), &config, None, &sources),
+            (vec!["lib".to_owned()], false)
+        );
+
+        let mut overridden = default_config();
+        overridden.workspaces.insert(
+            "ov".to_owned(),
+            WorkspaceOverride {
+                path: "core".to_owned(),
+                entry: None,
+                project: None,
+                mode: None,
+            },
+        );
+        assert_eq!(
+            resolve_auto(temp.path(), &overridden, None, &none),
+            (vec!["core".to_owned()], false)
+        );
+    }
+
     #[test]
     fn in_tree_path_source_project_becomes_member() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -549,8 +696,9 @@ mod tests {
         })
         .collect();
         let members =
-            resolve_workspace_members(&root(temp.path()), &default_config(), None, &sources)
-                .expect("resolve");
+            resolve_workspace_members(&root(temp.path()), &default_config(), None, &sources, false)
+                .expect("resolve")
+                .0;
         assert_eq!(
             members,
             [ResolvedWorkspaceMember {
@@ -565,7 +713,6 @@ mod tests {
         use std::collections::BTreeSet;
 
         use super::*;
-        use crate::config::WorkspaceOverride;
         use proptest::prelude::*;
 
         const PARTS: &[&str] = &[
@@ -763,8 +910,10 @@ mod tests {
                     &config,
                     hint.as_ref(),
                     &sources,
+                    false,
                 )
-                .expect("resolve");
+                .expect("resolve")
+                .0;
 
                 let mut dirs = BTreeSet::new();
                 for member in &members {

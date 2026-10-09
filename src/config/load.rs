@@ -17,6 +17,16 @@ use super::workspace::resolve_workspace_members;
 ///
 /// Returns defaults when no config files exist. Never executes Python.
 pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
+    load_root_config(root, false)
+}
+
+/// [`load_config`] for the analyzed root: with `auto_workspace`, members may
+/// also be inferred from nested `pyproject.toml` files (#488). Member roots
+/// use [`load_config`], so they never scan their own subtrees again.
+pub(crate) fn load_root_config(
+    root: &ProjectRoot,
+    auto_workspace: bool,
+) -> Result<LoadedConfig, ConfigError> {
     let file_at_root = |name: &str| {
         let path = root.path.join(name);
         path.is_file().then_some(path)
@@ -48,8 +58,13 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
     }
 
     let effective = merge_layers(&layers);
-    let workspace_members =
-        resolve_workspace_members(root, &effective, uv_workspace.as_ref(), &uv_path_sources)?;
+    let (workspace_members, auto_workspace) = resolve_workspace_members(
+        root,
+        &effective,
+        uv_workspace.as_ref(),
+        &uv_path_sources,
+        auto_workspace,
+    )?;
 
     Ok(LoadedConfig {
         root: root.clone(),
@@ -57,6 +72,7 @@ pub fn load_config(root: &ProjectRoot) -> Result<LoadedConfig, ConfigError> {
         sources,
         uv_workspace,
         workspace_members,
+        auto_workspace,
     })
 }
 

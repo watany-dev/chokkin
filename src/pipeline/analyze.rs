@@ -172,6 +172,7 @@ fn run_analysis_core(
         sources: probe.config_sources.clone(),
         uv_workspace: probe.manifest.uv_workspace.clone(),
         workspace_members: probe.workspace_members.clone(),
+        auto_workspace: probe.auto_workspace,
     };
 
     let target = probe

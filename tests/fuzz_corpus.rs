@@ -39,6 +39,7 @@ fn default_loaded_config(root: &ProjectRoot) -> LoadedConfig {
         },
         uv_workspace: None,
         workspace_members: Vec::new(),
+        auto_workspace: false,
     }
 }
 
