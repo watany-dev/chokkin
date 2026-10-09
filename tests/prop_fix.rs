@@ -306,7 +306,11 @@ proptest! {
                 }
             } else {
                 for comment in [format!("# c-{}", entry.name), format!("# above-{}", entry.name)] {
-                    prop_assert!(!plain.contains(&comment), "{comment} in {plain}");
+                    // Line-end match: `# above-zzzdi` must not hit a kept `# above-zzzdig`.
+                    prop_assert!(
+                        !plain.lines().any(|line| line.ends_with(&comment)),
+                        "{comment} in {plain}"
+                    );
                 }
             }
         }
