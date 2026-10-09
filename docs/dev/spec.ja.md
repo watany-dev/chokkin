@@ -714,6 +714,8 @@ except ImportError:
 
 `try` の `else:` 節の import も optional とする(`else:` は try 本体が例外なく通ったときだけ実行されるため)。module トップレベルの try 本体で `has_x = True` のように `True` を代入した名前は flag として覚え、module トップレベルの `if has_x:` 本体の import も optional とする(関数内の `if` は同名の局所変数があり得るので対象外)。`except` / `finally` 節の import は optional にしない (#580)。
 
+package が入っているかを確かめる分岐も optional とする。`importlib.util.find_spec(...)` か `is_<name>_available()` (先頭の `_` は可。transformers の `is_torch_available()` など)を「入っている」側で確かめる `if` / `elif` の本体(`find_spec(...) is not None`、`is_x_available() and ...`)、「入っていない」側で確かめる分岐(`not is_x_available()`、`find_spec(...) is None`、`not a or not b`)の後に続く `elif` / `else`、`if not is_x_available(): raise ImportError(...)` (`ModuleNotFoundError` も可)の後に続く同じ body の文、そうした呼び出しを含む関数の本体(入れ子の関数・クラス・lambda 内の呼び出しは数えない)の import がこれにあたる。`if is_x_available(): import x else: import fallback` の fallback や `if not is_x_available(): import fallback` の本体、条件が availability check でない `raise ImportError` の後の import は optional にしない。`torch.cuda.is_available()` のように package 名の入らない `is_available()` は対象外 (#695)。
+
 この場合、未宣言でも即 `missing_dependency` にはしない。`orjson` がoptional extraにあるならOK、main dependencyにあるならOK、どこにもなければ conditional CHK003 candidate としてdefaultはinfo、`--strict` 時はwarningにする。`sys.platform` 分岐配下の未宣言 import も同じ扱いとし、message では optional try-import と platform-guarded import を区別する。
 
 ただし lockfile の edge で宣言依存から推移的に到達できる場合は、optional / platform-guarded でも CHK004（transitive edge、Certain）を優先する。`try:` で包むだけで「推移依存への直接 import」の指摘が消える抜け道を作らないため (#504)。lockfile に載っているだけで edge で到達できない場合は根拠が弱いので、conditional CHK003 のままにする。ただし optional / platform-guarded の import は「入っていれば使う」ものなので、この CHK004 の severity は error ではなく warning とする(`--strict` でも同じ)。confidence は lock edge の証拠なので Certain のまま (#582)。
