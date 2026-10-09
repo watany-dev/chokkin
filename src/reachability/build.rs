@@ -7,7 +7,9 @@ use crate::entry::EntryPlan;
 use crate::graph::ProjectGraph;
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
-use crate::sources::{DiscoveredSources, FileContext, FileKind, PublicSurface, build_glob_set};
+use crate::sources::{
+    DiscoveredSources, FileContext, FileKind, PublicSurface, build_glob_set, member_ships,
+};
 
 use super::bfs::run_reachability_bfs;
 use super::error::ReachabilityError;
@@ -131,17 +133,7 @@ pub(crate) fn apply_member_surfaces(
     let confidence =
         confidence_for_unreachable(ProjectMode::App, report.reached_opaque_dynamic_import);
     for file in &mut report.unreachable {
-        // A nested member's files belong to the innermost one.
-        let owner = surfaces
-            .iter()
-            .filter_map(|(member, surface)| {
-                let rel = file.path.strip_prefix(member.as_str())?.strip_prefix('/')?;
-                Some((member.len(), rel, surface))
-            })
-            .max_by_key(|(len, _, _)| *len);
-        if let Some((_, rel, surface)) = owner
-            && !surface.contains(rel)
-        {
+        if member_ships(surfaces, &file.path) == Some(false) {
             file.max_confidence = confidence;
         }
     }

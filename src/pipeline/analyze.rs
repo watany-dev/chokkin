@@ -272,10 +272,10 @@ fn run_analysis_core(
     ) {
         apply_public_surface(&mut reachability, &surface, &entry);
     }
+    // CHK007 needs every member's surface, app members too (#678).
     let member_surfaces: Vec<_> = probe
         .workspace_inputs
         .iter()
-        .filter(|input| entry.library_members.contains(&input.member.path))
         .filter_map(|input| {
             let surface = PublicSurface::resolve(
                 input.manifest.metadata.wheel_targets.as_ref(),
@@ -284,7 +284,12 @@ fn run_analysis_core(
             Some((input.member.path.clone(), surface))
         })
         .collect();
-    apply_member_surfaces(&mut reachability, &member_surfaces);
+    let library_surfaces: Vec<_> = member_surfaces
+        .iter()
+        .filter(|(member, _)| entry.library_members.contains(member))
+        .cloned()
+        .collect();
+    apply_member_surfaces(&mut reachability, &library_surfaces);
 
     let workspace_boundaries = probe
         .workspace_inputs
@@ -326,6 +331,7 @@ fn run_analysis_core(
         &entry,
         &plugins,
         &probe.manifest,
+        &member_surfaces,
         production_tests.as_deref(),
     );
 

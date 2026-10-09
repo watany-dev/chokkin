@@ -15,7 +15,7 @@ use crate::rules::RuleContext;
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, sort_candidates,
 };
-use crate::sources::{DiscoveredSources, FileContext, PublicSurface, path_to_module};
+use crate::sources::{DiscoveredSources, FileContext, PublicSurface, member_ships, path_to_module};
 
 use super::conventions::{alembic_script_files, alembic_symbols, is_codegen_file};
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
@@ -25,11 +25,13 @@ use super::public::{PublicApi, exports_reexport, is_public_module};
 
 /// Analyze public symbol usage and unresolved imports (§12).
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn analyze_with_context(
     context: &RuleContext<'_>,
     entry: &EntryPlan,
     plugins: &PluginHints,
     manifest: &LoadedManifest,
+    member_surfaces: &[(String, PublicSurface)],
     production_tests: Option<&[ParsedModule]>,
 ) -> Vec<IssueCandidate> {
     let RuleContext {
@@ -102,6 +104,7 @@ pub fn analyze_with_context(
             mode_for(path)
         }
     };
+    let shipped = |path: &str| is_shipped(surface.as_ref(), member_surfaces, path);
     let mut candidates = detect_unused_exports(
         &registry,
         &reference_index,
@@ -113,6 +116,7 @@ pub fn analyze_with_context(
         &reexports,
         &reference_index,
         mode_for,
+        shipped,
     ));
     candidates.extend(detect_unresolved_imports(
         resolution, &reachable, manifest, sources,
@@ -120,6 +124,18 @@ pub fn analyze_with_context(
 
     sort_candidates(&mut candidates);
     candidates
+}
+
+/// Whether a wheel ships root-relative `path`: its innermost member's own
+/// wheel, else the root's. A shipped `__all__` is public API whatever the
+/// mode, since workspace roots and members with their own CLI resolve to app
+/// (#678).
+fn is_shipped(
+    root: Option<&PublicSurface>,
+    members: &[(String, PublicSurface)],
+    path: &str,
+) -> bool {
+    member_ships(members, path).unwrap_or_else(|| root.is_some_and(|root| root.contains(path)))
 }
 
 fn reachable_file_paths<'g>(
@@ -258,6 +274,7 @@ fn detect_unused_reexports(
     reexports: &[ReExport],
     references: &ReferenceIndex,
     mode_for: impl Fn(&str) -> ProjectMode,
+    shipped: impl Fn(&str) -> bool,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
@@ -267,6 +284,9 @@ fn detect_unused_reexports(
         }
         let mode = mode_for(&reexport.path);
         if mode == ProjectMode::Library && exports_reexport(reexport) {
+            continue;
+        }
+        if reexport.declared_public && shipped(&reexport.path) {
             continue;
         }
         let (severity, confidence) = unused_reexport_severity(mode);
