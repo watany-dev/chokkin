@@ -65,6 +65,8 @@ pub enum ResolveWarning {
         line: u32,
         /// Context of the import statement.
         context: ImportContext,
+        /// `true` when a failed import is caught (see `ImportRef::optional`).
+        optional: bool,
     },
     /// Project `.venv` metadata could not be read.
     VenvUnreadable {

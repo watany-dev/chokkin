@@ -328,13 +328,14 @@ fn detect_unresolved_imports(
 ) -> Vec<IssueCandidate> {
     // One issue per (file, module): lazy imports inside functions repeat the
     // same unresolved module many times in one file and bury the rest.
-    let mut sites: HashMap<(&str, &str), Vec<(u32, ImportContext)>> = HashMap::new();
+    let mut sites: HashMap<(&str, &str), Vec<(u32, bool)>> = HashMap::new();
     for warning in &resolution.warnings {
         let ResolveWarning::UnresolvedImport {
             import,
             file,
             line,
             context,
+            optional,
         } = warning
         else {
             continue;
@@ -342,10 +343,12 @@ fn detect_unresolved_imports(
         if !reachable.contains(file.as_str()) {
             continue;
         }
+        // A `TYPE_CHECKING` import never runs and an optional one is caught.
+        let guarded = *context == ImportContext::Type || *optional;
         sites
             .entry((file.as_str(), import.as_str()))
             .or_default()
-            .push((*line, *context));
+            .push((*line, guarded));
     }
 
     sites
@@ -356,26 +359,24 @@ fn detect_unresolved_imports(
         .collect()
 }
 
-// Anchor at a real runtime line: line 0 is a plugin reference with no
-// position, and a `TYPE_CHECKING` import is the one that never fails.
-fn anchor_line(lines: &[(u32, ImportContext)]) -> Option<u32> {
+// Anchor at a real line that can fail: line 0 is a plugin reference with no
+// position, and a guarded (`TYPE_CHECKING` or optional) import never fails.
+fn anchor_line(lines: &[(u32, bool)]) -> Option<u32> {
     lines
         .iter()
-        .min_by_key(|(line, context)| (*context == ImportContext::Type, *line == 0, *line))
+        .min_by_key(|(line, guarded)| (*guarded, *line == 0, *line))
         .map(|(line, _)| *line)
 }
 
 fn unresolved_import_candidate(
     file: &str,
     import: &str,
-    lines: &[(u32, ImportContext)],
+    lines: &[(u32, bool)],
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> Option<IssueCandidate> {
     let line = anchor_line(lines)?;
-    let type_only = lines
-        .iter()
-        .all(|(_, context)| *context == ImportContext::Type);
+    let guarded_only = lines.iter().all(|(_, guarded)| *guarded);
     let others = lines
         .iter()
         .map(|(other, _)| *other)
@@ -408,8 +409,9 @@ fn unresolved_import_candidate(
             line,
             distribution: None,
         },
-        // A `TYPE_CHECKING` import never runs; it stays reported for typos.
-        severity: if type_only {
+        // A `TYPE_CHECKING` import never runs and an optional one falls back
+        // when missing; both stay reported for typos (#584, #654).
+        severity: if guarded_only {
             Severity::Info
         } else {
             Severity::Warning
@@ -450,13 +452,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn anchor_prefers_runtime_then_positioned_then_earliest_line() {
-        use ImportContext::{Runtime, Type};
-
+    fn anchor_prefers_unguarded_then_positioned_then_earliest_line() {
         assert_eq!(anchor_line(&[]), None);
-        assert_eq!(anchor_line(&[(4, Type), (8, Runtime)]), Some(8));
-        assert_eq!(anchor_line(&[(0, Runtime), (8, Runtime)]), Some(8));
-        assert_eq!(anchor_line(&[(14, Runtime), (8, Runtime)]), Some(8));
-        assert_eq!(anchor_line(&[(0, Runtime), (4, Type)]), Some(0));
+        assert_eq!(anchor_line(&[(4, true), (8, false)]), Some(8));
+        assert_eq!(anchor_line(&[(0, false), (8, false)]), Some(8));
+        assert_eq!(anchor_line(&[(14, false), (8, false)]), Some(8));
+        assert_eq!(anchor_line(&[(0, false), (4, true)]), Some(0));
     }
 }

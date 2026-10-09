@@ -140,7 +140,7 @@ MVPでは以下のrule IDを固定する。
 |`CHK007`|`unused_reexport`      |`__init__.py` などの再exportが内部から参照されない               |library: info / app: warning|
 |`CHK008`|`unlisted_binary`      |tox/nox/pre-commit/CI等で使うCLIが依存宣言されていない           |warning                     |
 |`CHK009`|`duplicate_dependency` |同じcontext内、またはruntimeとgroup/extra/buildに重複宣言されている|warning                     |
-|`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |`TYPE_CHECKING`: info / それ以外: warning|
+|`CHK010`|`unresolved_import`    |first-party/third-party/stdlibのいずれにも解決できないimport  |`TYPE_CHECKING`・optional import: info / それ以外: warning|
 
 PEP 723 script (`# /// script` block を持つ `.py`) の CHK002 / CHK003 は project manifest ではなく script block の `dependencies` に対して判定し、subject を `script:<root 相対 path>:<distribution>` とする (例: `CHK003:script:scripts/tool.py:pyyaml`)。JSON では `path` に script、`distribution` に distribution 名を入れ、`target` / baseline fingerprint / `[tool.chokkin.ignore]` / `--explain` は同じ `script:` 形式を受け付ける。詳細は §10。
 
@@ -375,7 +375,7 @@ Pythonの依存解析で最大の罠は、distribution名とimport名が一致�
 8. 最後に import root を PEP 503 `normalize_distribution_name` で正規化し、manifest の宣言依存か lockfile の package(import したファイルの PEP 723 script block・所属 workspace member の manifest / lockfile も含む)に同じ正規化名があればその distribution とみなす(confidence `Likely`。`import foo_bar` と宣言 `Foo_Bar` など)。完全一致しなければ、正規化した宣言名・lock 名から接頭辞 `python-` / `py-` / `py` と接尾辞 `-python` / `-py` / `py` を外した名前と比べ、一致すればその distribution とみなす(confidence `Maybe`。`import docket` と宣言 `pydocket`、`import discord` と lock `discord-py` など)。それでも一致しなければ推測はせず `Unknown`(CHK010)にする。綴りだけでは third-party と決めない(#361)
 ```
 
-`TYPE_CHECKING` 配下の `_typeshed` は typeshed にしか無い型専用モジュールなので、上の手順より先に stdlib とみなす。runtime の `_typeshed` は今まで通り CHK010 になる。`TYPE_CHECKING` 配下で解決できない import は実行されないため、CHK010 を info に下げて typo 検出のためだけに残す(#584)。CHK010 は (file, module) ごとに 1 件にまとめ、最初に実行される import 行(すべて `TYPE_CHECKING` 配下ならその最初の行)を位置にして残りの行は explain に "also imported at lines …" として載せる。まとめた import のどれかが runtime なら warning、すべて `TYPE_CHECKING` 配下なら info。inline の `# chokkin: ignore[CHK010]` は、まとめた全行に付いているときだけ抑止する(#585)。
+`TYPE_CHECKING` 配下の `_typeshed` は typeshed にしか無い型専用モジュールなので、上の手順より先に stdlib とみなす。runtime の `_typeshed` は今まで通り CHK010 になる。`TYPE_CHECKING` 配下で解決できない import は実行されないため、CHK010 を info に下げて typo 検出のためだけに残す(#584)。`try:` 本体・`else:` や `with suppress(ImportError):` 配下の optional import(CHK003 と同じ判定)も、見つからなくても例外が捕まえられ実行は失敗しないので同じく info にする。`except ImportError:` 節の fallback import は optional ではないため warning のまま(#654)。CHK010 は (file, module) ごとに 1 件にまとめ、失敗しうる最初の import 行(すべて `TYPE_CHECKING` 配下か optional ならその最初の行)を位置にして残りの行は explain に "also imported at lines …" として載せる。まとめた import のどれかが失敗しうる(`TYPE_CHECKING` 配下でも optional でもない)なら warning、すべてそうでなければ info。inline の `# chokkin: ignore[CHK010]` は、まとめた全行に付いているときだけ抑止する(#585)。
 
 PEP 723 script の CHK002/CHK003 は script block に対して判定する。script と同じディレクトリにある module / package(`<dir>/<root>.py` や `<dir>/<root>/`)は `sys.path` 先頭で distribution を shadow するため CHK003 の対象外とし、それらの helper module の import も script block の依存の使用として数える。未解決(`Unknown`)の import root と first-party の import root(project 同梱の script が `uv run` で index から自 project を入れるケース)も、block が同名を宣言していれば使用とみなす。`[sys.executable, <file>, ...]` で別 file を実行する script は、子 process が block の環境を共有し import を追えないため script の CHK002 を出さない。`subprocess` を import する script では、複数語の文字列 literal(`"ruff format ..."`)の先頭語をコマンド名とみなし、同名の宣言依存を使用として数える。
 
