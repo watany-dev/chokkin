@@ -748,6 +748,8 @@ fn extra_requirements_files_only_declare_names() {
         ("requirements/tests.in", "Ephemeral_Port_Reserve\n"),
         ("requirements/notes.md", "not-a-requirement\n"),
         ("constraints.txt", "urllib3<3\n"),
+        // A root `.in` file counts only with the `requirements` prefix.
+        ("constraints.in", "boto3\n"),
     ] {
         std::fs::write(temp.path().join(name), contents).expect("write project file");
     }
