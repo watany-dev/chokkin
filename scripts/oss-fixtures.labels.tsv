@@ -1111,7 +1111,7 @@ mcp-python-sdk	CHK002	python-multipart	fp	-	starlette's request.form() in server
 # (50 per rule, at most 6 per project). When report.md shows stale labels after a
 # clone bump, delete those rows and rerun the script to top the sample back up.
 airflow	CHK001	airflow-core/src/airflow/migrations/versions/0059_3_0_0_remove_external_trigger_field.py	fp	framework-loaded	Alembic migration version in airflow migrations/versions; loaded by alembic script directory scan
-black	CHK001	src/blib2to3/pgen2/conv.py	tp	-	Obsolete pgen converter (docstring says so); no import of conv anywhere; its 'from pgen2 import' would not even resolve in black
+black	CHK001	src/blib2to3/pgen2/conv.py	deferred	library-public	Obsolete pgen converter (docstring says so); no import of conv anywhere; its 'from pgen2 import' would not even resolve in black; library mode since #652 reports an unreachable package module at maybe
 django	CHK001	tests/aggregation_regress/models.py	fp	framework-loaded	Django test app models.py; tests/runtests.py installs each tests/<app> as an app and Django loads models by convention
 fastapi	CHK001	fastapi/staticfiles.py	fp	library-public	Public re-export fastapi.staticfiles documented in tutorial docs (StaticFiles); users import it
 fastmcp	CHK001	examples/smart_home/src/smart_home/lights/models.py	fp	other	Imported via absolute import in examples/smart_home/src/smart_home/lights/server.py (src-layout example package)
@@ -1126,7 +1126,7 @@ uvicorn	CHK001	tests/importer/circular_import_a.py	fp	dynamic-import	Loaded via 
 virtualenv	CHK001	tests/unit/create/console_app/setup.py	fp	other	Test fixture: tests/unit/create/test_creator.py copies console_app dir and builds/installs it
 werkzeug	CHK001	tests/live_apps/reloader_app.py	fp	dynamic-import	Loaded by tests/live_apps/run.py import_module(f"{name}_app"); dev_server("reloader") in test_serving.py
 airflow	CHK001	providers/common/ai/hatch_build.py	fp	framework-loaded	Hatch custom build target: providers/common/ai/pyproject.toml [tool.hatch.build.targets.custom] path=./hatch_build.py
-black	CHK001	src/blib2to3/pgen2/literals.py	tp	-	Not imported anywhere in black/blib2to3 (rg literals/evalString); legacy lib2to3 helper unused by parser
+black	CHK001	src/blib2to3/pgen2/literals.py	deferred	library-public	Not imported anywhere in black/blib2to3 (rg literals/evalString); legacy lib2to3 helper unused by parser; library mode since #652 reports an unreachable package module at maybe
 django	CHK001	tests/prefetch_related/models.py	fp	framework-loaded	Django test app models.py; tests/runtests.py installs each tests/<app> as an app and Django loads models by convention
 fastapi	CHK001	fastapi/middleware/trustedhost.py	fp	library-public	Public module fastapi.middleware.trustedhost documented in docs/en/docs/reference/middleware.md
 fastmcp	CHK001	docs/apps/demos/team-directory-reactive.py	fp	script-entry	Docs demo rendered via <PrefabDemoFrame demo="team-directory-reactive"> in docs/apps/quickstart.mdx
@@ -1198,55 +1198,55 @@ fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/elicitation.py:pydantic_
 llama_index	CHK004	llama-index-postprocessor-ibm:llama-index-integrations/postprocessor/llama-index-postprocessor-ibm/llama_index/postprocessor/ibm/utils.py:pydantic	tp	-	member declares ibm-watsonx-ai, pyarrow, llama-index-core; pydantic transitive
 mcp-python-sdk	CHK004	src/mcp/server/mcpserver/resources/types.py:pydantic_core	tp	-	root dynamic deps (hatch hook) declare pydantic but not pydantic-core
 airflow	CHK006	airflow-core/src/airflow/api_fastapi/execution_api/routes/xcoms.py:head_xcom	tp	-	FastAPI route handler registered by @router.head decorator in same module; no other refs to head_xcom in repo
-black	CHK006	src/blib2to3/pgen2/parse.py:Results	tp	-	type alias in vendored blib2to3; no refs anywhere else (not even used in-module); black is a CLI tool
-django	CHK006	django/contrib/postgres/fields/ranges.py:FullyLessThan	tp	-	registered via @RangeField.register_lookup in same module; docs only document `fully_lt` lookup name, not the class
+black	CHK006	src/blib2to3/pgen2/parse.py:Results	info-expected	library-public-api	type alias in vendored blib2to3; no refs anywhere else (not even used in-module); black is a CLI tool; library mode since #652 keeps the package's public API at info
+django	CHK006	django/contrib/postgres/fields/ranges.py:FullyLessThan	info-expected	library-public-api	registered via @RangeField.register_lookup in same module; docs only document `fully_lt` lookup name, not the class; library mode since #652 keeps the package's public API at info
 fastapi	CHK006	fastapi/openapi/utils.py:generate_operation_id	fp	library-public-api	deprecated public function kept for backward compat in fastapi.openapi.utils (emits deprecation warning)
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/auth/providers/introspection.py:logger	tp	-	module-level logger in fastmcp auth provider; only used in-module (self.logger is separate)
-flask	CHK006	src/flask/app.py:T_template_test	tp	-	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy
+flask	CHK006	src/flask/app.py:T_template_test	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
 httpx	CHK006	httpx/_client.py:USE_CLIENT_DEFAULT	fp	external-reference	httpx/__init__.py does `from ._client import *` and lists USE_CLIENT_DEFAULT in __all__; documented in CHANGELOG
 mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:Operator	fp	library-public-api	in __all__ of mcp.shared.uri_template, which docs/servers/uri-templates.md documents as the public template engine module
-mitmproxy	CHK006	mitmproxy/addons/core.py:LISTEN_PORT	tp	-	constant unused anywhere (no refs in repo, not used in-module)
+mitmproxy	CHK006	mitmproxy/addons/core.py:LISTEN_PORT	info-expected	library-public-api	constant unused anywhere (no refs in repo, not used in-module); library mode since #652 keeps the package's public API at info
 mlflow	CHK006	mlflow/deployments/cli.py:optional_deployment_name	tp	-	click option defined but never applied; no refs in repo
 pdm	CHK006	src/pdm/signals.py:pre_invoke	fp	library-public-api	plugin signal documented in docs/usage/hooks.md for plugins to connect; emitted by name in core.py try_emit("pre_invoke")
 poetry	CHK006	src/poetry/console/commands/check.py:CheckCommand	fp	name-convention	poetry application.py loads poetry.console.commands.<name> via import_module + getattr "<Name>Command"
 uvicorn	CHK006	uvicorn/logging.py:AccessFormatter	fp	name-convention	referenced by dotted string "uvicorn.logging.AccessFormatter" in uvicorn/config.py LOGGING_CONFIG
-virtualenv	CHK006	src/virtualenv/info.py:IS_MAC_ARM64	tp	-	in virtualenv.info __all__ but no refs anywhere; info is an internal module, not documented API
+virtualenv	CHK006	src/virtualenv/info.py:IS_MAC_ARM64	info-expected	library-public-api	in virtualenv.info __all__ but no refs anywhere; info is an internal module, not documented API; library mode since #652 keeps the package's public API at info
 werkzeug	CHK006	src/werkzeug/exceptions.py:UnavailableForLegalReasons	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
 airflow	CHK006	airflow-ctl/src/airflowctl/ctl/cli_config.py:positive_int	tp	-	airflowctl cli_config.positive_int unused; refs found are to airflow.cli.cli_config (a different module) in core/providers
-black	CHK006	src/blib2to3/pgen2/token.py:ISNONTERMINAL	tp	-	blib2to3 vendored token helper, no refs anywhere in repo
+black	CHK006	src/blib2to3/pgen2/token.py:ISNONTERMINAL	info-expected	library-public-api	blib2to3 vendored token helper, no refs anywhere in repo; library mode since #652 keeps the package's public API at info
 django	CHK006	django/utils/translation/trans_null.py:get_language	fp	name-convention	translation backend loaded dynamically; django.utils.translation Trans.__getattr__ does getattr(trans, name)
 fastapi	CHK006	fastapi/responses.py:UJSONResponse	fp	library-public-api	documented response class (docs custom-response.md); imported in docs_src/custom_response/tutorial001.py
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_code.py:check_claude_code_available	tp	-	CLI installer helper, no callers anywhere; only listed in auto-generated python-sdk docs page
 flask	CHK006	src/flask/json/__init__.py:dump	fp	external-reference	tests/test_json.py calls flask.json.dump; also documented in docs/api.rst (autofunction dump)
 httpx	CHK006	httpx/_api.py:post	fp	external-reference	httpx/__init__.py does `from ._api import *` (post in _api __all__); documented httpx.post
 mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:DEFAULT_MAX_TEMPLATE_LENGTH	fp	library-public-api	in __all__ of mcp.shared.uri_template, documented public module (docs/servers/uri-templates.md)
-mitmproxy	CHK006	mitmproxy/contentviews/_api.py:logger	tp	-	module logger in mitmproxy.contentviews._api, private module; other `logger` hits are unrelated module-level loggers
+mitmproxy	CHK006	mitmproxy/contentviews/_api.py:logger	info-expected	library-public-api	module logger in mitmproxy.contentviews._api, private module; other `logger` hits are unrelated module-level loggers; library mode since #652 keeps the package's public API at info
 mlflow	CHK006	mlflow/protos/unity_catalog_messages_pb2.py:PENDING_REGISTRATION	tp	-	unsure: generated protobuf enum constant; nothing imports it from unity_catalog_messages_pb2 (refs are strings/other pb2)
 pdm	CHK006	src/pdm/formats/pipfile.py:export	fp	external-reference	pdm.formats FORMATS dict maps to modules; cli/commands/export.py calls FORMATS[fmt].export(...) (module attr access)
 poetry	CHK006	src/poetry/console/commands/self/remove.py:SelfRemoveCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.remove and getattr "SelfRemoveCommand"
-uvicorn	CHK006	uvicorn/_types.py:HTTPResponseDebugEvent	tp	-	TypedDict in private uvicorn._types, no refs anywhere (not even in-module unions)
+uvicorn	CHK006	uvicorn/_types.py:HTTPResponseDebugEvent	info-expected	library-public-api	TypedDict in private uvicorn._types, no refs anywhere (not even in-module unions); library mode since #652 keeps the package's public API at info
 virtualenv	CHK006	src/virtualenv/create/via_global_ref/builtin/graalpy/__init__.py:GraalPyPosix	fp	name-convention	registered as plugin entry point virtualenv.create graalpy-posix in pyproject.toml
 werkzeug	CHK006	src/werkzeug/test.py:encode_multipart	fp	library-public-api	unsure: public non-underscore function in werkzeug.test module (library); undocumented, no internal refs
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskDependencyCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
 black	CHK006	src/blib2to3/pgen2/token.py:AMPEREQUAL	fp	name-convention	looked up by name: grammar.py opmap_raw string "&= AMPEREQUAL" -> getattr(token, name)
 django	CHK006	django/core/management/utils.py:get_command_line_option	fp	external-reference	imported in django/core/management/commands/test.py
-fastapi	CHK006	fastapi/exceptions.py:WebSocketErrorModel	tp	-	unsure: module constant in fastapi.exceptions unused anywhere and undocumented; legacy leftover
+fastapi	CHK006	fastapi/exceptions.py:WebSocketErrorModel	info-expected	library-public-api	unsure: module constant in fastapi.exceptions unused anywhere and undocumented; legacy leftover; library mode since #652 keeps the package's public API at info
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/cursor.py:logger	tp	-	module logger in fastmcp cli/install/cursor.py; other hits are unrelated loggers
-flask	CHK006	src/flask/app.py:T_shell_context_processor	tp	-	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy
+flask	CHK006	src/flask/app.py:T_shell_context_processor	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
 httpx	CHK006	httpx/_api.py:options	fp	external-reference	httpx/__init__.py does `from ._api import *`; documented in docs/api.md as httpx.options
 mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:DEFAULT_MAX_VARIABLES	fp	library-public-api	in __all__ of mcp.shared.uri_template, documented public module (docs/servers/uri-templates.md)
-mitmproxy	CHK006	mitmproxy/proxy/mode_servers.py:DnsInstance	tp	-	registered via ServerInstance.__init_subclass__ registry in same module; no name refs elsewhere
+mitmproxy	CHK006	mitmproxy/proxy/mode_servers.py:DnsInstance	info-expected	library-public-api	registered via ServerInstance.__init_subclass__ registry in same module; no name refs elsewhere; library mode since #652 keeps the package's public API at info
 mlflow	CHK006	mlflow/store/db_migrations/versions/bd07f7e963c5_create_index_on_run_uuid.py:depends_on	fp	name-convention	alembic migration revision attribute read by alembic by name
 pdm	CHK006	src/pdm/cli/commands/search.py:Command	fp	name-convention	pdm core.py imports pdm.cli.commands.<name> and reads module.Command
 poetry	CHK006	src/poetry/console/commands/self/lock.py:SelfLockCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.lock and getattr "SelfLockCommand"
-uvicorn	CHK006	uvicorn/loops/asyncio.py:logger	tp	-	module logger in uvicorn.loops.asyncio, unused anywhere (not even in-module)
-virtualenv	CHK006	src/virtualenv/info.py:fs_path_id	tp	-	in virtualenv.info __all__ but no refs anywhere; info is an internal module
+uvicorn	CHK006	uvicorn/loops/asyncio.py:logger	info-expected	library-public-api	module logger in uvicorn.loops.asyncio, unused anywhere (not even in-module); library mode since #652 keeps the package's public API at info
+virtualenv	CHK006	src/virtualenv/info.py:fs_path_id	info-expected	library-public-api	in virtualenv.info __all__ but no refs anywhere; info is an internal module; library mode since #652 keeps the package's public API at info
 werkzeug	CHK006	src/werkzeug/exceptions.py:HTTPVersionNotSupported	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskInstanceHistoryCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
-black	CHK006	src/black/parsing.py:matches_grammar	tp	-	no refs anywhere in black repo; internal helper
+black	CHK006	src/black/parsing.py:matches_grammar	info-expected	library-public-api	no refs anywhere in black repo; internal helper; library mode since #652 keeps the package's public API at info
 django	CHK006	django/conf/global_settings.py:EMAIL_PORT	fp	name-convention	Django default setting read via settings.EMAIL_PORT attribute lookup; documented in docs/ref/settings.txt
 fastmcp	CHK006	fastmcp_slim/fastmcp/telemetry.py:TRACE_STATE_KEY	tp	-	constant only used in-module in fastmcp.telemetry; no external refs
-flask	CHK006	src/flask/app.py:T_template_filter	tp	-	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy
+flask	CHK006	src/flask/app.py:T_template_filter	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
 airflow	CHK010	scripts/tests/ci/prek/test_extract_permissions.py:extract_permissions	fp	first-party-missed	scripts/ci/prek/extract_permissions.py exists; test inserts PREK_DIR (scripts/ci/prek) into sys.path
 black	CHK010	src/blackd/__init__.py:_black_version	fp	generated	src/_black_version.py written by hatch-vcs (tool.hatch.build.hooks.vcs version-file)
 django	CHK010	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	tp	-	deliberately nonexistent package in Django test fixture bad_module.py

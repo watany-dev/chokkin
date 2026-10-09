@@ -467,7 +467,7 @@ fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::internals::IssueCan
     )
 }
 
-const APP_PYPROJECT: &str = "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.main:main\"\n";
+const APP_PYPROJECT: &str = "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[project.scripts]\napp = \"app.main:main\"\n";
 
 #[test]
 fn symbol_referenced_only_from_tests_is_not_reported() {
