@@ -1018,6 +1018,79 @@ fn binary_resolves_root_dirs_from_tests_and_script_siblings() {
     assert_eq!(unresolved, ["src/acme/run.py:helpers"], "{keys:?}");
 }
 
+/// transformers / flask / mlflow: a file's `sys.path` edit, or its conftest's
+/// `monkeypatch.syspath_prepend`, puts a directory on the path (#719).
+#[test]
+fn binary_resolves_imports_from_directories_sys_path_edits_add() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("utils/check_docs.py", "def check() -> None:\n    pass\n"),
+        (
+            "tests/test_util.py",
+            "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parents[1] / \"utils\"))\n\nimport check_docs\nimport check_doc\n",
+        ),
+        (
+            "tests/conftest.py",
+            "import os\n\n\ndef test_apps(monkeypatch):\n    monkeypatch.syspath_prepend(os.path.join(os.path.dirname(__file__), \"test_apps\"))\n",
+        ),
+        ("tests/test_apps/cliapp/__init__.py", ""),
+        (
+            "tests/test_cli.py",
+            "def test_cli(test_apps):\n    from cliapp import APP\n",
+        ),
+        // `tests/__init__.py` makes the root the basedir, so `"."` is needed.
+        ("tests/__init__.py", ""),
+        ("tests/integ/__init__.py", ""),
+        (
+            "tests/integ/conftest.py",
+            "import os\n\n\ndef here(monkeypatch):\n    monkeypatch.chdir(os.path.dirname(__file__))\n    monkeypatch.syspath_prepend(\".\")\n",
+        ),
+        (
+            "tests/integ/integ_helper.py",
+            "def helper() -> None:\n    pass\n",
+        ),
+        (
+            "tests/integ/test_integ.py",
+            "from integ_helper import helper\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    let unresolved: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK010")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unresolved, ["tests/test_util.py:check_doc"], "{keys:?}");
+}
+
+/// Sphinx: `docs/conf.py` puts `../exts` on the path, so the extensions it
+/// lists, appended ones included, resolve there and are used (#719).
+#[test]
+fn binary_sphinx_extensions_resolve_in_directories_conf_adds() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        (
+            "docs/conf.py",
+            "import os\nimport sys\n\nsys.path.insert(0, os.path.abspath(\"../exts\"))\nextensions = [\"ext_literal\"]\nextensions.append(\"ext_appended\")\n",
+        ),
+        ("exts/ext_literal.py", "def setup(app):\n    pass\n"),
+        ("exts/ext_appended.py", "def setup(app):\n    pass\n"),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    assert!(
+        keys.iter()
+            .all(|(code, _)| code != "CHK001" && code != "CHK010"),
+        "{keys:?}"
+    );
+}
+
 /// airflow: `[tool.pytest]` (pytest 9) adds `example_*.py`, and the root
 /// `testpaths` does not cover the member suites passed to pytest by path (#603).
 #[test]

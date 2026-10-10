@@ -10,10 +10,15 @@
 //! walk (`docs_src/`, a src-layout project's `dummyserver/`) for tests whose
 //! basedir is the root, and, as a fallback, a script's own directory, which
 //! `python path/to/script.py` puts first.
+//!
+//! Last, the directories a file's own `sys.path` edits, or those of a
+//! `conftest.py` above it, may add (#719): the edit's argument is often a
+//! variable, so any path-like literal of the file names a candidate.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::parser::ParseSummary;
 use crate::plugins::{PytestImportSettings, pytest_import_settings};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, path_to_module};
 
@@ -33,6 +38,12 @@ pub(crate) struct PytestImportPaths {
     /// Root-level directories without `__init__.py`: PEP 420 portions, which
     /// lose to a regular package anywhere else on `sys.path`.
     root_namespaces: HashSet<String>,
+    /// File → existing directories its `sys.path` edits may add.
+    hinted: HashMap<String, Vec<String>>,
+    /// Conftest directory → the same, for the files below it.
+    conftest_hinted: Vec<(String, Vec<String>)>,
+    /// Module names in hinted directories the walk skipped.
+    hinted_on_disk: HashMap<String, HashSet<String>>,
 }
 
 impl PytestImportPaths {
@@ -115,7 +126,69 @@ impl PytestImportPaths {
             search,
             root_modules: HashSet::new(),
             root_namespaces: HashSet::new(),
+            hinted: HashMap::new(),
+            conftest_hinted: Vec::new(),
+            hinted_on_disk: HashMap::new(),
         }
+    }
+
+    /// Record the directories each file's `sys.path` hints name: a discovered
+    /// directory ending with the hint, or the hint under the file's directory
+    /// or one of its ancestors, the root included, when it exists on disk.
+    #[must_use]
+    pub(crate) fn with_sys_path_hints(mut self, root: &Path, parse: &ParseSummary) -> Self {
+        let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
+        for dir in &self.dirs {
+            by_name.entry(file_name(dir)).or_default().push(dir);
+        }
+        for dirs in by_name.values_mut() {
+            dirs.sort_unstable();
+        }
+        let mut on_disk = HashMap::new();
+        for module in &parse.modules {
+            let holder_dir = parent_dir(&module.path);
+            let mut found = Vec::new();
+            for hint in &module.sys_path_hints {
+                if hint.is_empty() {
+                    found.push(holder_dir.to_owned());
+                    continue;
+                }
+                for dir in by_name.get(file_name(hint)).into_iter().flatten() {
+                    if ends_with_dirs(dir, hint) {
+                        found.push((*dir).to_owned());
+                    }
+                }
+                let mut ancestor = holder_dir;
+                loop {
+                    let candidate = join(ancestor, hint);
+                    let path = candidate
+                        .split('/')
+                        .fold(root.to_path_buf(), |path, segment| path.join(segment));
+                    if !self.dirs.contains(&candidate) && path.is_dir() {
+                        on_disk
+                            .entry(candidate.clone())
+                            .or_insert_with(|| module_names(&path));
+                        found.push(candidate);
+                    }
+                    if ancestor.is_empty() {
+                        break;
+                    }
+                    ancestor = parent_dir(ancestor);
+                }
+            }
+            if found.is_empty() {
+                continue;
+            }
+            let mut seen = HashSet::new();
+            found.retain(|dir| seen.insert(dir.clone()));
+            if file_name(&module.path) == "conftest.py" {
+                self.conftest_hinted.push((holder_dir.to_owned(), found));
+            } else {
+                self.hinted.insert(module.path.clone(), found);
+            }
+        }
+        self.hinted_on_disk = on_disk;
+        self
     }
 
     /// Record the root's top-level entries, which the walk may have skipped.
@@ -155,21 +228,51 @@ impl PytestImportPaths {
     /// Whether `root` is local to `file` only when nothing else provides it:
     /// a root namespace directory for a test, or a module beside a script
     /// (`scripts/ci/prek/common_prek_utils.py`).
+    /// A directory a `sys.path` edit adds counts the same way (#719).
     #[must_use]
     pub(crate) fn provides_fallback(&self, file: &str, root: &str) -> bool {
-        if self.search.contains_key(file) {
+        let local = if self.search.contains_key(file) {
             self.root_namespaces.contains(root)
         } else {
             self.scripts.contains(file) && self.has_module(parent_dir(file), root)
-        }
+        };
+        local
+            || self.hinted_dirs(file).any(|dir| {
+                self.has_module(dir, root)
+                    || self
+                        .hinted_on_disk
+                        .get(dir)
+                        .is_some_and(|names| names.contains(root))
+            })
     }
 
+    /// The file of `module` beside a script, or in a directory a `sys.path`
+    /// edit adds.
     #[must_use]
-    pub(crate) fn resolve_sibling(&self, file: &str, module: &str) -> Option<&str> {
-        if !self.scripts.contains(file) {
-            return None;
-        }
-        self.find_module(parent_dir(file), module)
+    pub(crate) fn resolve_fallback(&self, file: &str, module: &str) -> Option<&str> {
+        self.scripts
+            .contains(file)
+            .then(|| self.find_module(parent_dir(file), module))
+            .flatten()
+            .or_else(|| {
+                self.hinted_dirs(file)
+                    .find_map(|dir| self.find_module(dir, module))
+            })
+    }
+
+    fn hinted_dirs<'s>(&'s self, file: &'s str) -> impl Iterator<Item = &'s str> {
+        let dir = parent_dir(file);
+        let conftests = self
+            .conftest_hinted
+            .iter()
+            .filter(move |(conftest_dir, _)| is_same_or_under(dir, conftest_dir))
+            .map(|(_, dirs)| dirs);
+        self.hinted
+            .get(file)
+            .into_iter()
+            .chain(conftests)
+            .flatten()
+            .map(String::as_str)
     }
 
     fn has_module(&self, dir: &str, root: &str) -> bool {
@@ -213,6 +316,31 @@ fn basedir(path: &str, files: &HashSet<String>) -> String {
 
 fn parent_dir(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
+/// Whether `dir` is `suffix` or ends with it at a segment boundary.
+fn ends_with_dirs(dir: &str, suffix: &str) -> bool {
+    dir.strip_suffix(suffix)
+        .is_some_and(|rest| rest.is_empty() || rest.ends_with('/'))
+}
+
+/// Top-level module names in `dir`: subdirectories and `.py` / `.pyi` stems.
+fn module_names(dir: &Path) -> HashSet<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return HashSet::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.path().is_dir() {
+                return Some(name);
+            }
+            name.strip_suffix(".py")
+                .or_else(|| name.strip_suffix(".pyi"))
+                .map(str::to_owned)
+        })
+        .collect()
 }
 
 fn file_name(path: &str) -> &str {
@@ -424,20 +552,86 @@ mod tests {
         let script = "scripts/ci/prek/check.py";
         assert!(paths.provides_fallback(script, "common_utils"));
         assert_eq!(
-            paths.resolve_sibling(script, "common_utils"),
+            paths.resolve_fallback(script, "common_utils"),
             Some("scripts/ci/prek/common_utils.py")
         );
         assert!(!paths.provides_root(script, "common_utils"));
         // A runtime module imports by its package name, not its directory.
         assert!(!paths.provides_fallback("src/acme/run.py", "helpers"));
-        assert_eq!(paths.resolve_sibling("src/acme/run.py", "helpers"), None);
+        assert_eq!(paths.resolve_fallback("src/acme/run.py", "helpers"), None);
         // Tests follow pytest's rules, not the script fallback.
         assert!(paths.provides_root("tests/e2e/test_x.py", "helpers"));
         assert!(!paths.provides_fallback("tests/pkg/test_y.py", "helpers"));
         assert_eq!(
-            paths.resolve_sibling("tests/pkg/test_y.py", "helpers"),
+            paths.resolve_fallback("tests/pkg/test_y.py", "helpers"),
             None
         );
+    }
+
+    fn hinting(path: &str, hints: &[&str]) -> crate::parser::ParsedModule {
+        crate::parser::ParsedModule {
+            path: path.to_owned(),
+            sys_path_hints: hints.iter().map(|hint| (*hint).to_owned()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sys_path_hints_name_directories_with_the_imported_module() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("utils")).expect("mkdir");
+        std::fs::write(temp.path().join("utils/check_docs.py"), "").expect("write");
+        let files = [
+            "src/acme/__init__.py",
+            "scripts/ci/prek/common_utils.py",
+            "scripts/run.py",
+            "tests/test_util.py",
+            "tests/plain/test_plain.py",
+            "tests/cli/conftest.py",
+            "tests/cli/test_cli.py",
+            "tests/cli/test_apps/cliapp/__init__.py",
+            "src/acme/tool.py",
+            "src/acme/sibling.py",
+            "scripts/lint.py",
+            "tools/prek/tool_utils.py",
+        ];
+        let parse = ParseSummary {
+            modules: vec![
+                hinting("tests/test_util.py", &["utils", "missing"]),
+                hinting("scripts/run.py", &["prek"]),
+                hinting("scripts/lint.py", &["ci/prek"]),
+                hinting("tests/cli/conftest.py", &["test_apps"]),
+                hinting("src/acme/tool.py", &[""]),
+            ],
+        };
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse);
+        // An undiscovered directory under an ancestor, checked on disk.
+        assert!(paths.provides_fallback("tests/test_util.py", "check_docs"));
+        assert!(!paths.provides_fallback("tests/test_util.py", "check_doc"));
+        // Hints naming no existing directory add nothing.
+        assert_eq!(paths.hinted["tests/test_util.py"], ["utils"]);
+        // A discovered directory ending with the hint.
+        assert!(paths.provides_fallback("scripts/run.py", "common_utils"));
+        assert_eq!(
+            paths.resolve_fallback("scripts/run.py", "common_utils"),
+            Some("scripts/ci/prek/common_utils.py")
+        );
+        // A multi-segment hint matches whole trailing segments only.
+        assert!(paths.provides_fallback("scripts/lint.py", "common_utils"));
+        assert!(!paths.provides_fallback("scripts/lint.py", "tool_utils"));
+        // A conftest's hints apply to the files below it only.
+        assert!(paths.provides_fallback("tests/cli/test_cli.py", "cliapp"));
+        assert_eq!(
+            paths.resolve_fallback("tests/cli/test_cli.py", "cliapp"),
+            Some("tests/cli/test_apps/cliapp/__init__.py")
+        );
+        assert!(!paths.provides_fallback("tests/plain/test_plain.py", "cliapp"));
+        // `"."` names the file's own directory.
+        assert!(paths.provides_fallback("src/acme/tool.py", "sibling"));
+        // A file without hints is unaffected.
+        assert!(!paths.provides_fallback("tests/plain/test_plain.py", "check_docs"));
     }
 
     mod props {

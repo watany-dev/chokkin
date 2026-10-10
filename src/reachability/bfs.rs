@@ -228,7 +228,10 @@ pub(super) fn run_reachability_bfs(
     for reference in plugins.module_refs() {
         let label = reference.origin.label.as_str();
         for name in module_and_parents(&reference.module) {
-            let Some(target) = state.module_index.resolve(name) else {
+            let Some(target) = state
+                .module_index
+                .resolve_from(&reference.origin.file, name)
+            else {
                 continue;
             };
             state.enqueue_file(target, None, Reach::Certain, || TraceStep::PluginRef {
