@@ -73,7 +73,9 @@ group, extra or build requirement repeats from the runtime declaration.
   (`dummy_threading`, Python 2's `SimpleHTTPServer` / `BaseHTTPServer`).
   A module added within the range (`tomllib` for `>=3.8`), a platform-only
   or optional-build module (`fcntl`, `sqlite3`), a lower bound below 3.8
-  and a missing `requires-python` keep the warning (requests, #721).
+  and a missing `requires-python` keep the warning. `python_requires` in
+  `setup.py` / `setup.cfg` is not read yet, so requests, which declares
+  only that, still gets the warning (#721).
 - A workspace member used only through another used member's imports is no
   longer CHK002 when the root inventories only its own files (a src-layout
   root). The member files the root does not inventory are parsed for this
