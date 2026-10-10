@@ -26,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   optional (CHK010 / CHK003 info): the body of an `if` whose condition calls
   `importlib.util.find_spec(...)` or an `is_<name>_available()` helper, the
   code after `if not is_<name>_available(): raise ImportError(...)`, and the
-  body of a function that calls either (#695).
+  code of a function after it calls either. A `self.` / `cls.` method named
+  `is_<name>_available` and a `find_spec` other than `importlib.util`'s do
+  not count (#695, #713).
 - Every file under the root's or a workspace member's `examples/` is now
   dev context, not only notebooks: its imports still make files reachable
   (CHK001) but no longer raise CHK003 / CHK004 / CHK005, and `--production`
