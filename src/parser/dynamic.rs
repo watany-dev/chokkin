@@ -1,5 +1,6 @@
 //! `importlib.import_module` and `__import__` literal recognition.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator};
@@ -291,23 +292,29 @@ pub(super) fn edits_sys_path(func: &Expr) -> bool {
 /// relative path, without its `.` and `..` segments (`"../exts"` gives
 /// `exts`). `"."` gives `""`, the module's own directory.
 #[must_use]
-pub(super) fn sys_path_hint(expr: &Expr) -> Option<String> {
-    let value = str_constant(expr)?.replace('\\', "/");
-    let path_like = !value.starts_with('/')
+pub(super) fn sys_path_hint(expr: &Expr) -> Option<Cow<'_, str>> {
+    // The visitor checks every literal, so most are rejected before any copy.
+    let value = str_constant(expr)?;
+    let separator = |c: char| matches!(c, '/' | '\\');
+    let path_like = !value.starts_with(separator)
         && value
             .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'));
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '\\'));
     if !path_like {
         return None;
     }
-    if value.trim_end_matches('/') == "." {
-        return Some(String::new());
+    if value.trim_end_matches(separator) == "." {
+        return Some(Cow::Borrowed(""));
+    }
+    let skipped = |segment: &str| matches!(segment, "" | "." | "..");
+    if !value.contains('\\') && !value.split('/').any(skipped) {
+        return Some(Cow::Borrowed(value));
     }
     let segments: Vec<&str> = value
-        .split('/')
-        .filter(|segment| !matches!(*segment, "" | "." | ".."))
+        .split(separator)
+        .filter(|segment| !skipped(segment))
         .collect();
-    (!segments.is_empty()).then(|| segments.join("/"))
+    (!segments.is_empty()).then(|| Cow::Owned(segments.join("/")))
 }
 
 fn str_constant(expr: &Expr) -> Option<&str> {
@@ -425,17 +432,21 @@ mod tests {
 
     #[test]
     fn sys_path_hints_are_relative_directory_literals() {
-        let hint = |source: &str| sys_path_hint(&expr(source));
+        let hint = |source: &str| sys_path_hint(&expr(source)).map(std::borrow::Cow::into_owned);
         assert_eq!(hint(r#""utils""#).as_deref(), Some("utils"));
         assert_eq!(hint(r#""docs/_ext""#).as_deref(), Some("docs/_ext"));
         assert_eq!(hint(r#""../exts""#).as_deref(), Some("exts"));
         assert_eq!(hint(r#""./test_apps/""#).as_deref(), Some("test_apps"));
+        assert_eq!(hint(r#""docs//_ext""#).as_deref(), Some("docs/_ext"));
         assert_eq!(hint(r#""..\\dev""#).as_deref(), Some("dev"));
+        assert_eq!(hint(r#""tools\\lib\\""#).as_deref(), Some("tools/lib"));
         assert_eq!(hint(r#"".""#).as_deref(), Some(""));
+        assert_eq!(hint(r#"".\\""#).as_deref(), Some(""));
         for source in [
             r#""..""#,
             r#""""#,
             r#""/opt/lib""#,
+            r#""\\opt\\lib""#,
             r#""C:/lib""#,
             r#""a b""#,
             r#"f"{root}/utils""#,

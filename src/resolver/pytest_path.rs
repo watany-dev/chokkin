@@ -16,11 +16,13 @@
 //! variable, so any path-like literal of the file names a candidate.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::parser::ParseSummary;
 use crate::plugins::{PytestImportSettings, pytest_import_settings};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, path_to_module};
+
+use super::types::import_root;
 
 /// Extra import directories that apply to test-context files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -44,6 +46,8 @@ pub(crate) struct PytestImportPaths {
     conftest_hinted: Vec<(String, Vec<String>)>,
     /// Module names in hinted directories the walk skipped.
     hinted_on_disk: HashMap<String, HashSet<String>>,
+    /// Hinted directory → top-level names of the discovered files under it.
+    hinted_roots: HashMap<String, HashSet<String>>,
 }
 
 impl PytestImportPaths {
@@ -129,6 +133,7 @@ impl PytestImportPaths {
             hinted: HashMap::new(),
             conftest_hinted: Vec::new(),
             hinted_on_disk: HashMap::new(),
+            hinted_roots: HashMap::new(),
         }
     }
 
@@ -144,7 +149,13 @@ impl PytestImportPaths {
         for dirs in by_name.values_mut() {
             dirs.sort_unstable();
         }
-        let mut on_disk = HashMap::new();
+        // Many files share hints and ancestors, so each ancestor is listed
+        // once and each candidate checked once; most hints name nothing
+        // there. Names are lowercased to stay a superset on case-insensitive
+        // file systems.
+        let mut listed: HashMap<&str, Option<HashSet<String>>> = HashMap::new();
+        // Candidate → its module names, or `None` when it is no directory.
+        let mut on_disk: HashMap<String, Option<HashSet<String>>> = HashMap::new();
         for module in &parse.modules {
             let holder_dir = parent_dir(&module.path);
             let mut found = Vec::new();
@@ -158,17 +169,31 @@ impl PytestImportPaths {
                         found.push((*dir).to_owned());
                     }
                 }
+                let head = hint
+                    .split_once('/')
+                    .map_or(hint.as_str(), |(head, _)| head)
+                    .to_lowercase();
                 let mut ancestor = holder_dir;
                 loop {
                     let candidate = join(ancestor, hint);
-                    let path = candidate
-                        .split('/')
-                        .fold(root.to_path_buf(), |path, segment| path.join(segment));
-                    if !self.dirs.contains(&candidate) && path.is_dir() {
-                        on_disk
-                            .entry(candidate.clone())
-                            .or_insert_with(|| module_names(&path));
-                        found.push(candidate);
+                    if !self.dirs.contains(&candidate) {
+                        let names = on_disk.entry(candidate.clone()).or_insert_with(|| {
+                            let entries = listed
+                                .entry(ancestor)
+                                .or_insert_with(|| entry_names(&on_disk_path(root, ancestor)));
+                            // A non-ASCII name may be stored in another
+                            // Unicode normalization form, so only `stat` decides.
+                            if head.is_ascii()
+                                && entries.as_ref().is_some_and(|names| !names.contains(&head))
+                            {
+                                return None;
+                            }
+                            let path = on_disk_path(root, &candidate);
+                            path.is_dir().then(|| module_names(&path))
+                        });
+                        if names.is_some() {
+                            found.push(candidate);
+                        }
                     }
                     if ancestor.is_empty() {
                         break;
@@ -187,8 +212,47 @@ impl PytestImportPaths {
                 self.hinted.insert(module.path.clone(), found);
             }
         }
-        self.hinted_on_disk = on_disk;
+        self.hinted_on_disk = on_disk
+            .into_iter()
+            .filter_map(|(dir, names)| Some((dir, names?)))
+            .collect();
+        self.hinted_roots = self.hinted_roots();
         self
+    }
+
+    fn hinted_roots(&self) -> HashMap<String, HashSet<String>> {
+        let mut hinted_roots: HashMap<String, HashSet<String>> = self
+            .hinted
+            .values()
+            .chain(self.conftest_hinted.iter().map(|(_, dirs)| dirs))
+            .flatten()
+            .map(|dir| (dir.clone(), HashSet::new()))
+            .collect();
+        if hinted_roots.is_empty() {
+            return hinted_roots;
+        }
+        for file in &self.files {
+            let mut dir = parent_dir(file);
+            loop {
+                if let Some(roots) = hinted_roots.get_mut(dir) {
+                    let rest = if dir.is_empty() {
+                        file.as_str()
+                    } else {
+                        &file[dir.len() + 1..]
+                    };
+                    let head = rest.split_once('/').map_or(rest, |(head, _)| head);
+                    let root = head.strip_suffix(".py").unwrap_or(head);
+                    if !roots.contains(root) {
+                        roots.insert(root.to_owned());
+                    }
+                }
+                if dir.is_empty() {
+                    break;
+                }
+                dir = parent_dir(dir);
+            }
+        }
+        hinted_roots
     }
 
     /// Record the root's top-level entries, which the walk may have skipped.
@@ -255,7 +319,15 @@ impl PytestImportPaths {
             .then(|| self.find_module(parent_dir(file), module))
             .flatten()
             .or_else(|| {
+                let root = import_root(module);
                 self.hinted_dirs(file)
+                    // Most hinted directories hold no such name: skip them
+                    // without building paths.
+                    .filter(|dir| {
+                        self.hinted_roots
+                            .get(*dir)
+                            .is_some_and(|roots| roots.contains(root))
+                    })
                     .find_map(|dir| self.find_module(dir, module))
             })
     }
@@ -283,10 +355,20 @@ impl PytestImportPaths {
     }
 
     fn find_module(&self, dir: &str, module: &str) -> Option<&str> {
-        let base = join(dir, &module.replace('.', "/"));
-        [format!("{base}.py"), format!("{base}/__init__.py")]
-            .into_iter()
-            .find_map(|candidate| self.files.get(&candidate).map(String::as_str))
+        // One buffer for both candidates: this runs for every unresolved
+        // import of a file with hinted directories.
+        let mut path = String::with_capacity(dir.len() + module.len() + "//__init__.py".len());
+        if !dir.is_empty() {
+            path.push_str(dir);
+            path.push('/');
+        }
+        path.extend(module.chars().map(|c| if c == '.' { '/' } else { c }));
+        let base = path.len();
+        [".py", "/__init__.py"].into_iter().find_map(|suffix| {
+            path.truncate(base);
+            path.push_str(suffix);
+            self.files.get(&path).map(String::as_str)
+        })
     }
 
     #[must_use]
@@ -322,6 +404,24 @@ fn parent_dir(path: &str) -> &str {
 fn ends_with_dirs(dir: &str, suffix: &str) -> bool {
     dir.strip_suffix(suffix)
         .is_some_and(|rest| rest.is_empty() || rest.ends_with('/'))
+}
+
+fn on_disk_path(root: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .fold(root.to_path_buf(), |path, segment| path.join(segment))
+}
+
+/// Lowercased entry names in `dir`, or `None` when it cannot be listed.
+fn entry_names(dir: &Path) -> Option<HashSet<String>> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    Some(
+        entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_lowercase())
+            .collect(),
+    )
 }
 
 /// Top-level module names in `dir`: subdirectories and `.py` / `.pyi` stems.
@@ -630,8 +730,64 @@ mod tests {
         assert!(!paths.provides_fallback("tests/plain/test_plain.py", "cliapp"));
         // `"."` names the file's own directory.
         assert!(paths.provides_fallback("src/acme/tool.py", "sibling"));
+        assert_eq!(
+            paths.resolve_fallback("src/acme/tool.py", "sibling"),
+            Some("src/acme/sibling.py")
+        );
         // A file without hints is unaffected.
         assert!(!paths.provides_fallback("tests/plain/test_plain.py", "check_docs"));
+        // Only names a hinted directory holds are looked up there.
+        let roots = |dir: &str| {
+            let mut roots: Vec<&str> = paths.hinted_roots[dir].iter().map(String::as_str).collect();
+            roots.sort_unstable();
+            roots
+        };
+        assert_eq!(roots("scripts/ci/prek"), ["common_utils"]);
+        assert_eq!(roots("tests/cli/test_apps"), ["cliapp"]);
+        assert_eq!(roots("src/acme"), ["__init__", "sibling", "tool"]);
+        assert_eq!(roots("utils"), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn root_conftest_hints_apply_to_every_file() {
+        let files = [
+            "conftest.py",
+            "helpers/__init__.py",
+            "helpers/fixtures.py",
+            "tests/models/test_model.py",
+        ];
+        let parse = ParseSummary {
+            modules: vec![hinting("conftest.py", &[""])],
+        };
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse);
+        let test = "tests/models/test_model.py";
+        assert_eq!(
+            paths.resolve_fallback(test, "helpers.fixtures"),
+            Some("helpers/fixtures.py")
+        );
+        assert_eq!(
+            paths.resolve_fallback(test, "conftest"),
+            Some("conftest.py")
+        );
+        assert_eq!(paths.resolve_fallback(test, "helpers.missing"), None);
+        assert_eq!(paths.resolve_fallback(test, "torch"), None);
+    }
+
+    #[test]
+    fn entry_names_lowercases_listing_and_misses_unlistable_dirs() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir(temp.path().join("Scripts")).expect("mkdir");
+        std::fs::write(temp.path().join("conftest.py"), "").expect("write");
+        let mut names: Vec<String> = entry_names(temp.path())
+            .expect("listable")
+            .into_iter()
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, ["conftest.py", "scripts"]);
+        assert_eq!(entry_names(&temp.path().join("missing")), None);
     }
 
     mod props {

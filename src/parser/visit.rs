@@ -818,8 +818,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 if let Some(word) = command_word(expr) {
                     self.command_words.insert(word.to_owned());
                 }
-                if let Some(hint) = sys_path_hint(expr) {
-                    self.sys_path.literals.insert(hint);
+                if let Some(hint) = sys_path_hint(expr)
+                    && !self.sys_path.literals.contains(hint.as_ref())
+                {
+                    self.sys_path.literals.insert(hint.into_owned());
                 }
             },
             _ => {},
