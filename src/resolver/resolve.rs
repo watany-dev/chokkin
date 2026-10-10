@@ -21,7 +21,8 @@ use super::venv::load_venv_index;
 /// Distributions declared outside the root manifest, for the files they cover.
 #[derive(Debug, Default)]
 pub struct ScopedDeclarations {
-    /// PEP 723 script path → normalized names its block declares.
+    /// PEP 723 script path → normalized names its block declares; a build
+    /// script → its `[build-system].requires` (#735).
     pub scripts: BTreeMap<String, BTreeSet<String>>,
     /// Workspace member id → normalized names its manifest declares.
     pub members: BTreeMap<String, BTreeSet<String>>,
