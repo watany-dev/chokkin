@@ -99,6 +99,11 @@ pub struct ProjectMetadata {
     /// the custom build and metadata hooks (#735).
     #[serde(default)]
     pub build_scripts: Vec<BuildScript>,
+    /// `.py` files a build hook writes the version into (#720): hatch-vcs
+    /// `version-file` and setuptools-scm / pdm-backend `write_to`. Their
+    /// modules exist only after a build, so they are first-party.
+    #[serde(default)]
+    pub version_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

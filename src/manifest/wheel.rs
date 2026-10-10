@@ -4,6 +4,8 @@
 //! (auto-discovery) are left to layout inference, so a project without any of
 //! these tables keeps the pre-R-05 public surface.
 
+use std::path::Path;
+
 use toml::Value;
 
 use crate::path_util::join_rel;
@@ -170,6 +172,26 @@ pub(super) fn parse_hatch_build_scripts(table: &toml::Table) -> Vec<BuildScript>
             (!path.is_empty()).then_some(BuildScript { table, path })
         })
         .collect()
+}
+
+/// Version files that hatch-vcs (`version-file`), setuptools-scm
+/// (`write_to` / `version_file`) and pdm-backend (`write_to`) generate (#720).
+/// Only a `.py` file can be imported.
+pub(super) fn parse_version_files(table: &toml::Table) -> Vec<String> {
+    let Some(tool) = table_at(table, &["tool"]) else {
+        return Vec::new();
+    };
+    [
+        (&["hatch", "build", "hooks", "vcs"][..], "version-file"),
+        (&["setuptools_scm"][..], "write_to"),
+        (&["setuptools_scm"][..], "version_file"),
+        (&["pdm", "version"][..], "write_to"),
+    ]
+    .into_iter()
+    .filter_map(|(keys, key)| table_at(tool, keys)?.get(key)?.as_str())
+    .map(normalize_path)
+    .filter(|path| Path::new(path).extension().is_some_and(|ext| ext == "py"))
+    .collect()
 }
 
 fn setuptools_targets(tool: &toml::Table) -> Option<WheelTargets> {
@@ -441,6 +463,24 @@ mod tests {
                  [tool.hatch.build.hooks.vcs]\nversion-file = \"_version.py\"\n"
             ),
             Vec::<(String, String)>::new()
+        );
+    }
+
+    #[test]
+    fn generated_version_files_are_read_from_each_tool() {
+        let table: toml::Table = toml::from_str(
+            "[tool.hatch.build.hooks.vcs]\nversion-file = \"./src/_black_version.py\"\n\
+             [tool.setuptools_scm]\nwrite_to = \"acme/_version.py\"\nversion_file = \"VERSION.txt\"\n\
+             [tool.pdm.version]\nsource = \"scm\"\nwrite_to = \"acme/__version__.py\"\n",
+        )
+        .expect("valid toml");
+        assert_eq!(
+            parse_version_files(&table),
+            [
+                "src/_black_version.py",
+                "acme/_version.py",
+                "acme/__version__.py"
+            ]
         );
     }
 

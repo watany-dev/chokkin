@@ -31,10 +31,28 @@ pub(crate) fn is_first_party_import(
     {
         return true;
     }
+    if metadata
+        .version_files
+        .iter()
+        .any(|path| version_file_root(path, layout) == Some(import_root))
+    {
+        return true;
+    }
     if let Some(name) = &metadata.name {
         return normalize_distribution_name(name) == import_norm;
     }
     false
+}
+
+/// Import root of a generated version file, taken below the layout's package
+/// root or `src/` (`src/_black_version.py` → `_black_version`).
+fn version_file_root<'a>(path: &'a str, layout: &LayoutInfo) -> Option<&'a str> {
+    let module = path.strip_suffix(".py")?;
+    let module = [layout.package_root.as_str(), "src"]
+        .into_iter()
+        .find_map(|dir| module.strip_prefix(dir)?.strip_prefix('/'))
+        .unwrap_or(module);
+    module.split('/').next()
 }
 
 /// Returns `true` when `import_root` matches a resolved workspace member.
@@ -143,6 +161,29 @@ mod tests {
             ..ProjectMetadata::default()
         };
         assert!(is_first_party_import("my_package", &layout, &metadata));
+    }
+
+    #[test]
+    fn generated_version_file_is_first_party_below_the_package_root() {
+        let metadata = ProjectMetadata {
+            version_files: vec![
+                "src/_black_version.py".to_owned(),
+                "lib/acme/_version.py".to_owned(),
+                "_flat_version.py".to_owned(),
+            ],
+            ..ProjectMetadata::default()
+        };
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Src,
+            package_root: "lib".to_owned(),
+            ..Default::default()
+        };
+        for root in ["_black_version", "acme", "_flat_version"] {
+            assert!(is_first_party_import(root, &layout, &metadata), "{root}");
+        }
+        for root in ["src", "lib", "_version"] {
+            assert!(!is_first_party_import(root, &layout, &metadata), "{root}");
+        }
     }
 
     #[test]
