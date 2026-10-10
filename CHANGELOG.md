@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdlib range like `requires-python` does, so requests' dead
   `dummy_threading` / `BaseHTTPServer` / `SimpleHTTPServer` fallbacks are
   CHK010 info (#764).
+- An import guarded by a name that an `except ImportError:` handler set to
+  `None` is optional: after `try: import markdown` /
+  `except ImportError: markdown = None`, the body of `if markdown:`,
+  `if markdown is not None:` or an `and` chain with either only runs with
+  the package, so CHK005 for it is info / likely instead of warning /
+  certain and `--fix` no longer moves it to the runtime dependencies
+  (CHK003 / CHK010 for it are info too). Flags set to `True` in the `try`
+  body count in `and` chains too (#730).
 
 ## [0.7.4] - 2026-10-10
 

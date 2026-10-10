@@ -4,8 +4,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt, StmtIf,
-    StmtImport, StmtImportFrom,
+    Alias, BoolOp, CmpOp, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt,
+    StmtIf, StmtImport, StmtImportFrom,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -61,7 +61,9 @@ pub(super) struct ModuleVisitor<'a> {
     availability_checked_at: Option<TextSize>,
     function_depth: u32,
     module_level: bool,
-    /// Module-level names set to `True` inside a `try` body (`has_x = True`).
+    /// Module-level names that are truthy only when a `try` import succeeded:
+    /// set to `True` in the body (`has_x = True`) or to `None` in its
+    /// `except ImportError:` handler (`x = None`, #730).
     try_flags: HashSet<String>,
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
@@ -181,10 +183,7 @@ impl<'a> ModuleVisitor<'a> {
                 self.in_main_block = true;
             }
             // `if has_x:` only runs when the guarded `try` import succeeded.
-            if self.module_level
-                && let Expr::Name(name) = test
-                && self.try_flags.contains(name.id.as_str())
-            {
+            if self.module_level && tests_flag(test, &self.try_flags) {
                 self.try_depth = self.try_depth.saturating_add(1);
             }
         }
@@ -664,7 +663,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             },
             Stmt::Try(try_stmt) => {
                 if self.module_level {
-                    self.try_flags.extend(true_flags(&try_stmt.body));
+                    self.try_flags.extend(assigned_flags(
+                        &try_stmt.body,
+                        |value| matches!(value, Expr::BooleanLiteral(literal) if literal.value),
+                    ));
                 }
                 self.try_depth = self.try_depth.saturating_add(1);
                 self.visit_body(&try_stmt.body);
@@ -675,10 +677,13 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                     if let Some(exc_type) = &handler.type_ {
                         self.visit_expr(exc_type);
                     }
+                    let import_failed = handler.type_.as_deref().is_some_and(catches_import_error);
+                    if self.module_level && import_failed {
+                        self.try_flags
+                            .extend(assigned_flags(&handler.body, Expr::is_none_literal_expr));
+                    }
                     let enclosing = match &primaries {
-                        Some(roots)
-                            if handler.type_.as_deref().is_some_and(catches_import_error) =>
-                        {
+                        Some(roots) if import_failed => {
                             Some(std::mem::replace(&mut self.fallback_for, roots.clone()))
                         },
                         _ => None,
@@ -889,19 +894,35 @@ fn if_branches(if_stmt: &StmtIf) -> impl Iterator<Item = (Option<&Expr>, &[Stmt]
     )
 }
 
-/// Names a `try` body assigns the literal `True` (`has_x = True`).
-fn true_flags(body: &[Stmt]) -> impl Iterator<Item = String> + '_ {
-    body.iter().filter_map(|stmt| {
+/// Names `body` assigns a value `is_flag` accepts (`has_x = True`, `x = None`).
+fn assigned_flags(body: &[Stmt], is_flag: fn(&Expr) -> bool) -> impl Iterator<Item = String> + '_ {
+    body.iter().filter_map(move |stmt| {
         let Stmt::Assign(assign) = stmt else {
             return None;
         };
-        let ([Expr::Name(name)], Expr::BooleanLiteral(value)) =
-            (assign.targets.as_slice(), &*assign.value)
-        else {
+        let [Expr::Name(name)] = assign.targets.as_slice() else {
             return None;
         };
-        value.value.then(|| name.id.to_string())
+        is_flag(&assign.value).then(|| name.id.to_string())
     })
+}
+
+/// Whether `test` passes only when a flag is truthy: `if x:`,
+/// `if x is not None:`, or an `and` chain with either. `or`, `not x` and
+/// `x is None` also pass without the package.
+fn tests_flag(test: &Expr, flags: &HashSet<String>) -> bool {
+    let is_flag =
+        |expr: &Expr| matches!(expr, Expr::Name(name) if flags.contains(name.id.as_str()));
+    match test {
+        Expr::Compare(compare) => matches!(
+            (&*compare.ops, &*compare.operands),
+            ([CmpOp::IsNot], [flag, Expr::NoneLiteral(_)]) if is_flag(flag)
+        ),
+        Expr::BoolOp(bool_op) => {
+            bool_op.op == BoolOp::And && bool_op.values.iter().any(|value| tests_flag(value, flags))
+        },
+        _ => is_flag(test),
+    }
 }
 
 /// Roots a `try` body imports when it does nothing else, so only a missing
@@ -1593,6 +1614,96 @@ g = lambda x=utils.G: x
                 ("other_lib", false),
             ]
         );
+    }
+
+    /// #730: drf's `compat.py` sets `markdown = None` when the import fails
+    /// and guards the rest behind `if markdown is not None and ...:`.
+    #[test]
+    fn none_fallback_guarded_imports_are_optional() {
+        let parsed = visit_source(
+            "try:
+    import markdown
+except ImportError:
+    markdown = None
+try:
+    import pygments
+except (ModuleNotFoundError, AttributeError):
+    pygments = None
+try:
+    import yaml
+    has_yaml = True
+except ImportError:
+    has_yaml = False
+
+if markdown is not None and pygments is not None:
+    from markdown.preprocessors import Preprocessor
+if pygments:
+    from pygments.lexers import TextLexer
+if unrelated and (enabled and markdown):
+    import markdown.extensions
+if has_yaml and enabled:
+    import yaml.nodes
+",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("markdown", true),
+                ("pygments", true),
+                ("yaml", true),
+                ("markdown.preprocessors", true),
+                ("pygments.lexers", true),
+                ("markdown.extensions", true),
+                ("yaml.nodes", true),
+            ]
+        );
+    }
+
+    /// #730: a branch that also runs without the package is not a guard.
+    #[test]
+    fn none_fallback_guard_needs_a_truthy_flag() {
+        let parsed = visit_source(
+            "try:
+    import yaml
+except ImportError:
+    yaml = None
+try:
+    import ujson
+except ValueError:
+    ujson = None
+
+if yaml is None:
+    import a
+if not yaml:
+    import b
+if yaml or other:
+    import c
+if yaml is not None:
+    pass
+elif other:
+    import d
+else:
+    import e
+if ujson is not None:
+    import f
+if (yaml and other) is not None:
+    import g
+if yaml is not other:
+    import h
+
+def func(yaml):
+    if yaml is not None:
+        import i
+",
+        );
+        let optional: Vec<_> = parsed
+            .imports
+            .iter()
+            .filter(|import| import.optional)
+            .map(|import| import.module.as_str())
+            .collect();
+        assert_eq!(optional, ["yaml", "ujson"]);
+        assert_eq!(parsed.imports.len(), 11);
     }
 
     /// #614: mlflow registers optional dataset constructors under
