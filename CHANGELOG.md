@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once (#680).
 
 ### Fixed
+- PEP 723 inline scripts inside a skipped nested project are analyzed
+  again: they declare their own dependencies, so `script:` CHK002 / CHK003
+  still reports them (#714).
 - `__import__(name, globals, locals, fromlist, level)` no longer reads its
   second argument as `import_module`'s `package`. A `level` of 1 or more
   resolves `name` against the calling module's package when `globals` is

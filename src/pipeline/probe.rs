@@ -114,12 +114,17 @@ pub(super) fn probe_project_with_cache(
             &loaded.workspace_members,
         )
     };
+    // A PEP 723 script declares its own dependencies, so it stays checked
+    // inside a skipped project (#714).
     sources.files.retain(|file| {
         !nested.iter().any(|dir| {
             file.path
                 .strip_prefix(dir.as_str())
                 .is_some_and(|rest| rest.starts_with('/'))
-        })
+        }) || (file.kind == FileKind::Python
+            && !discover_inline_scripts(&root.path, [file.path.as_str()])
+                .0
+                .is_empty())
     });
     let member_count = loaded.workspace_members.len();
     // The manifest cache lives under each member root; an undeclared monorepo

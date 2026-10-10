@@ -1776,3 +1776,51 @@ fn binary_examples_feed_reachability_only_and_nested_projects_are_skipped() {
         "{issues:#?}"
     );
 }
+
+#[test]
+fn binary_checks_inline_scripts_inside_skipped_nested_projects() {
+    // #714: a PEP 723 script declares its own dependencies, so skipping the
+    // nested project around it must not skip the script.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"packages/core\"]\n",
+        ),
+        (
+            "packages/core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "clients/python/pyproject.toml",
+            "[project]\nname = \"client\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "clients/python/client/api.py",
+            "import nosuchmodule_client\n",
+        ),
+        (
+            "clients/python/check.py",
+            "# /// script\n# dependencies = [\"rich\"]\n# ///\nimport rich\nimport yaml\n",
+        ),
+    ] {
+        let path = temp.path().join(file);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, text).expect("write fixture");
+    }
+    let issues = json_issues(temp.path(), &[]);
+    let summary = issues
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        [("CHK003", "script:clients/python/check.py:pyyaml")],
+        "{issues:#?}"
+    );
+}
