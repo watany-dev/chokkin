@@ -1170,7 +1170,6 @@ black	CHK006	src/black/parsing.py:matches_grammar	info-expected	library-public-a
 django	CHK006	django/conf/global_settings.py:EMAIL_PORT	fp	name-convention	Django default setting read via settings.EMAIL_PORT attribute lookup; documented in docs/ref/settings.txt
 flask	CHK006	src/flask/app.py:T_template_filter	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
 airflow	CHK010	scripts/tests/ci/prek/test_extract_permissions.py:extract_permissions	fp	first-party-missed	scripts/ci/prek/extract_permissions.py exists; test inserts PREK_DIR (scripts/ci/prek) into sys.path
-black	CHK010	src/blackd/__init__.py:_black_version	fp	generated	src/_black_version.py written by hatch-vcs (tool.hatch.build.hooks.vcs version-file)
 django	CHK010	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	tp	-	deliberately nonexistent package in Django test fixture bad_module.py
 fastapi	CHK010	scripts/docs.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
 flask	CHK010	tests/test_cli.py:cliapp	fp	first-party-missed	tests/test_apps/cliapp/ exists; test_apps fixture does syspath_prepend(tests/test_apps)
@@ -1227,7 +1226,6 @@ flask	CHK010	tests/test_instance_config.py:installed_package	tp	-	installed_pack
 langchain	CHK010	libs/standard-tests/langchain_tests/integration_tests/sandboxes.py:deepagents	tp	-	undeclared third-party: deepagents (pytest.importorskip; only a mypy override in standard-tests pyproject, absent from uv.lock)
 mlflow	CHK010	tests/dev/test_detect_flaky_tests.py:detect_flaky_tests	fp	first-party-missed	dev/detect_flaky_tests.py exists; test inserts repo_root/dev into sys.path
 requests	CHK010	tests/conftest.py:SimpleHTTPServer	fp	stdlib	Python 2 stdlib SimpleHTTPServer in py2/py3 try/except fallback; python_requires>=3.8 so dead code
-sqlalchemy	CHK010	lib/sqlalchemy/sql/_cache_key_cy.py:cython	fp	declared-third-party	cython (Cython dist provides cython module) in build-system.requires; generated guarded import with sqlalchemy.util fallback
 transformers	CHK010	src/transformers/integrations/higgs.py:fast_hadamard_transform	info-expected	optional-import	undeclared third-party: fast-hadamard-transform (gated by is_hadamard_available; only a commented pip install in a Dockerfile) (info since #695)
 airflow	CHK003	ai:providers/common/ai/src/airflow/providers/common/ai/hooks/pydantic_ai.py:pydantic_ai	fp	map-gap	common-ai provider declares pydantic-ai-slim, which provides the pydantic_ai import
 langchain	CHK003	.github/scripts/get_min_versions.py:tomli	tp	-	no root manifest covers .github/scripts; tomli (fallback for py<3.11 tomllib) only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
@@ -1850,7 +1848,6 @@ airflow	CHK006	airflow-core/src/airflow/listeners/spec/asset.py:on_asset_alias_c
 mlflow	CHK006	mlflow/bedrock/__init__.py:autolog	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.bedrock.autolog)
 airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:secrets_backends_list	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
 airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:funcsigs	tp	-	installed at runtime inside the task virtualenv; not declared by the standard provider
-black	CHK010	src/black/__init__.py:_black_version	fp	generated	_black_version.py is written by hatch-vcs version-file at build time
 django	CHK010	tests/project_template/test_settings.py:test_settings	tp	-	template project settings module resolved only at runtime
 flask	CHK010	tests/test_instance_config.py:site_app	tp	-	package created at runtime under tmp_path/site-packages by the test
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_ibm	tp	-	optional partner package imported lazily by init_chat_model; langchain-ibm not declared by langchain
@@ -1862,32 +1859,27 @@ transformers	CHK010	tests/repo_utils/test_check_repo.py:check_repo	fp	first-part
 urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:pyodide	fp	other	pyodide is a Pyodide runtime builtin module (emscripten contrib)
 virtualenv	CHK010	tests/unit/create/via_global_ref/test_race_condition.py:_virtualenv_test	tp	-	module written to a temp dir by the test at runtime
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_10k.py:langchain_text_splitters	tp	-	example DAG import; common.ai provider declares langchain only, langchain-text-splitters is a separate dist
-black	CHK010	src/black/cache.py:_black_version	fp	generated	_black_version.py is written by hatch-vcs version-file at build time
 django	CHK010	tests/gis_tests/test_geoip2.py:geoip2	fp	declared-third-party	geoip2 listed in tests/requirements/py3.txt
 flask	CHK010	tests/test_templating.py:blueprintapp	fp	first-party-missed	tests/test_apps/blueprintapp added to sys.path by tests/conftest.py
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_upstage	tp	-	optional partner package imported lazily by init_chat_model; langchain-upstage not declared by langchain
 llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/llama_index/vector_stores/weaviate/utils.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	mlflow/genai/scorers/builtin_scorers.py:databricks	fp	declared-third-party	imports databricks.agents; databricks-agents declared in pyproject extra databricks but databricks.* maps only to databricks-sdk
-sqlalchemy	CHK010	lib/sqlalchemy/sql/_util_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
 transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:run_glue	fp	first-party-missed	examples/pytorch/text-classification added to sys.path by the test
 airflow	CHK010	scripts/tests/ci/prek/test_check_deferrable_default.py:check_deferrable_default	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
 flask	CHK010	tests/test_instance_config.py:site_package	tp	-	package created at runtime under tmp_path/site-packages by the test
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_nvidia_ai_endpoints	tp	-	optional partner package imported lazily by init_chat_model; langchain-nvidia-ai-endpoints not declared by langchain
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-gaudi/llama_index/llms/gaudi/utils.py:deepspeed	tp	-	optional import; deepspeed not declared by the member pyproject
 mlflow	CHK010	tests/transformers/test_transformers_peft_model.py:peft	tp	-	optional integration; peft not declared in pyproject or requirements/*.txt
-sqlalchemy	CHK010	lib/sqlalchemy/engine/_result_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
 transformers	CHK010	src/transformers/utils/notebook.py:IPython	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/google/src/airflow/providers/google/cloud/hooks/vertex_ai/ray.py:vertex_ray	fp	declared-third-party	vertex_ray is a top-level module shipped by google-cloud-aiplatform (declared); not in the module map
 flask	CHK010	tests/test_blueprints.py:blueprintapp	fp	first-party-missed	tests/test_apps/blueprintapp added to sys.path by tests/conftest.py
 llama_index	CHK010	llama-index-core/llama_index/core/schema.py:haystack	tp	-	optional import in core schema; llama-index-core declares no haystack-ai
 mlflow	CHK010	tests/dev/test_classify_flaky_tests.py:detect_flaky_tests	fp	first-party-missed	dev/ scripts imported by name via sys.path in tests/dev
-sqlalchemy	CHK010	lib/sqlalchemy/util/_immutabledict_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
 transformers	CHK010	tests/models/auto/test_modeling_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
 airflow	CHK010	providers/atlassian/jira/src/airflow/providers/atlassian/jira/hooks/jira.py:atlassian	fp	declared-third-party	atlassian-python-api declared in the provider pyproject; module name differs from the dist name
 flask	CHK010	tests/test_instance_config.py:config_package_app	tp	-	package created at runtime under tmp_path/site-packages by the test
 llama_index	CHK010	llama-index-core/llama_index/core/postprocessor/node.py:spacy	tp	-	optional import; spacy not declared by the member pyproject
 mlflow	CHK010	tests/genai/scorers/trulens/test_trulens.py:trulens	tp	-	optional integration; trulens not declared in pyproject or requirements/*.txt
-sqlalchemy	CHK010	lib/sqlalchemy/engine/_row_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
 transformers	CHK010	src/transformers/integrations/torchao.py:torchao	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	scripts/tests/ci/prek/test_check_http_exception_import_from_fastapi.py:check_http_exception_import_from_fastapi	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
 flask	CHK010	tests/test_instance_config.py:namespace	tp	-	package created at runtime under tmp_path/site-packages by the test

@@ -110,6 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so they are no longer CHK001 and `--production` drops them. Their imports
   resolve through `[build-system].requires` and need no other declaration
   (#735).
+- Modules that exist only at build time are no longer CHK010. A version
+  file that hatch-vcs (`[tool.hatch.build.hooks.vcs] version-file`),
+  setuptools-scm (`[tool.setuptools_scm] write_to` / `version_file`) or
+  pdm-backend (`[tool.pdm.version] write_to`) generates is first-party
+  (`src/_black_version.py` → `_black_version`), and an import root that
+  matches a root `[build-system].requires` name, exactly or by
+  `py` / `python` affix, resolves as third-party (sqlalchemy's
+  `from cython.cimports... import`). No distribution is attached, so
+  CHK003–CHK005 are unchanged (#720).
 
 ## [0.7.3] - 2026-10-09
 

@@ -1900,6 +1900,41 @@ fn requirements_outside_fixed_names_declare_imports_for_chk010_only() {
     }
 }
 
+/// black's hatch-vcs `version-file` and sqlalchemy's `cython` build
+/// requirement exist only at build time (#720).
+#[test]
+fn build_time_modules_are_not_chk010() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\", \"hatch-vcs\", \
+             \"cython>=3.3; platform_python_implementation == 'CPython'\"]\n\
+             build-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"pkg\"\ndynamic = [\"version\"]\n\n\
+             [tool.hatch.build.hooks.vcs]\nversion-file = \"src/_pkg_version.py\"\n\n\
+             [tool.hatch.build.targets.wheel]\nsources = [\"src\"]\n",
+        ),
+        (
+            "src/pkg/__init__.py",
+            "from _pkg_version import version as __version__\n\
+             try:\n    import cython\nexcept ModuleNotFoundError:\n    from pkg import _fallback as cython\n\
+             if cython.compiled:\n    from cython.cimports.pkg._util import x\n\
+             import zzmissing\n",
+        ),
+        ("src/pkg/_fallback.py", "compiled = False\n"),
+    ]);
+    for args in [&["--no-cache"][..], &["--no-cache", "--strict"][..]] {
+        assert_eq!(
+            issue_keys(&json_issues(temp.path(), args)),
+            [(
+                "CHK010".to_owned(),
+                "src/pkg/__init__.py:zzmissing".to_owned()
+            )],
+            "{args:?}"
+        );
+    }
+}
+
 #[test]
 fn binary_examples_feed_reachability_only_and_nested_projects_are_skipped() {
     // #694: examples run outside the package, and a nested `[project]` that
