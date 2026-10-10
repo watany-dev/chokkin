@@ -110,6 +110,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so they are no longer CHK001 and `--production` drops them. Their imports
   resolve through `[build-system].requires` and need no other declaration
   (#735).
+- An import of a module in a directory that the file's own `sys.path` edit
+  adds is no longer CHK010. The same holds for a directory added by a
+  `conftest.py` above the file. The edits covered are
+  `sys.path.insert` / `append` / `extend`, `site.addsitedir` and
+  `monkeypatch.syspath_prepend`. Corpus examples: transformers'
+  `Path(__file__).parents[1] / "utils"`, flask's `test_apps`, and mlflow's
+  `syspath_prepend(".")`. Any path-like string literal in that file names
+  a candidate directory, and the import counts only when the module is
+  there, so a typo still reports. Sphinx extensions resolve the same way
+  through `docs/conf.py`, so one found in `../exts` is no longer CHK001.
+  `extensions.append(...)`, `.extend([...])` and `+= [...]` literals now
+  count too (#719).
 
 ## [0.7.3] - 2026-10-09
 

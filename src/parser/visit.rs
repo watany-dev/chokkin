@@ -14,8 +14,8 @@ use crate::sources::{FileContext, LayoutInfo};
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
 use super::dynamic::{
-    LiteralTarget, LoaderNames, PythonRun, command_word, literal_target, module_prefix,
-    pytest_plugin_names, python_run,
+    LiteralTarget, LoaderNames, PythonRun, command_word, edits_sys_path, literal_target,
+    module_prefix, pytest_plugin_names, python_run, sys_path_hint,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -30,6 +30,13 @@ use super::types::{
     AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef,
     ParsedModule, SymbolDef, SymbolKind, import_context_for_file,
 };
+
+/// Whether the module edits `sys.path`, and its path-like literals (#719).
+#[derive(Default)]
+struct SysPathHints {
+    edited: bool,
+    literals: BTreeSet<String>,
+}
 
 /// Mutable parse state accumulated while visiting one module.
 pub(super) struct ModuleVisitor<'a> {
@@ -61,6 +68,7 @@ pub(super) struct ModuleVisitor<'a> {
     /// index in `dynamic_import_prefixes` (#728).
     prefix_modules: HashMap<String, usize>,
     command_words: BTreeSet<String>,
+    sys_path: SysPathHints,
     loaded_names: HashSet<String>,
     parsed: ParsedModule,
 }
@@ -93,6 +101,7 @@ impl<'a> ModuleVisitor<'a> {
             loader_names: LoaderNames::default(),
             prefix_modules: HashMap::new(),
             command_words: BTreeSet::new(),
+            sys_path: SysPathHints::default(),
             loaded_names: HashSet::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
@@ -111,6 +120,11 @@ impl<'a> ModuleVisitor<'a> {
             .any(|import| import.module == "subprocess");
         if runs_commands {
             self.parsed.shell_commands = self.command_words.into_iter().collect();
+        }
+        // The added path is often built in a variable or another scope, so
+        // every literal of the module is a hint, not just the call's own.
+        if self.sys_path.edited {
+            self.parsed.sys_path_hints = self.sys_path.literals.into_iter().collect();
         }
         let used: BTreeSet<String> = self
             .parsed
@@ -747,6 +761,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             },
             Expr::Call(call) => {
                 self.record_computed_getattr(call);
+                self.sys_path.edited |= edits_sys_path(&call.func);
                 let arguments = &call.arguments;
                 if let Some(loader) = self.loader_names.loader(&call.func) {
                     if let Some(target) =
@@ -783,6 +798,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             Expr::StringLiteral(_) => {
                 if let Some(word) = command_word(expr) {
                     self.command_words.insert(word.to_owned());
+                }
+                if let Some(hint) = sys_path_hint(expr) {
+                    self.sys_path.literals.insert(hint);
                 }
             },
             _ => {},
@@ -1130,6 +1148,16 @@ mod tests {
         assert_eq!(visit_source(source).shell_commands, Vec::<String>::new());
         let parsed = visit_source(&format!("import subprocess\n{source}"));
         assert_eq!(parsed.shell_commands, vec!["ruff".to_owned()]);
+    }
+
+    #[test]
+    fn records_path_literals_only_when_sys_path_is_edited() {
+        let source = "EXT = Path(__file__).parents[2] / \"docs/_ext\"\n";
+        assert_eq!(visit_source(source).sys_path_hints, Vec::<String>::new());
+        let parsed = visit_source(&format!(
+            "{source}class T:\n    def setUp(self):\n        sys.path.insert(0, str(EXT))\n"
+        ));
+        assert_eq!(parsed.sys_path_hints, vec!["docs/_ext".to_owned()]);
     }
 
     #[test]

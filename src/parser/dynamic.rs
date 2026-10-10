@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator};
 
+use super::attributes::attribute_receiver;
 use super::relative::resolve_relative_name;
 
 #[derive(Debug, Clone, Copy)]
@@ -267,6 +268,48 @@ pub(super) fn command_word(expr: &Expr) -> Option<&str> {
     valid.then_some(first)
 }
 
+/// Whether a call adds a directory to `sys.path`: `sys.path.insert` /
+/// `append` / `extend`, `site.addsitedir`, or pytest's
+/// `monkeypatch.syspath_prepend`.
+#[must_use]
+pub(super) fn edits_sys_path(func: &Expr) -> bool {
+    let Expr::Attribute(attribute) = func else {
+        return false;
+    };
+    let receiver_is = |dotted: &str| {
+        attribute_receiver(&attribute.value).is_some_and(|receiver| receiver == dotted)
+    };
+    match attribute.attr.as_str() {
+        "insert" | "append" | "extend" => receiver_is("sys.path"),
+        "addsitedir" => receiver_is("site"),
+        "syspath_prepend" => true,
+        _ => false,
+    }
+}
+
+/// A string literal that may name a directory added to `sys.path`: a
+/// relative path, without its `.` and `..` segments (`"../exts"` gives
+/// `exts`). `"."` gives `""`, the module's own directory.
+#[must_use]
+pub(super) fn sys_path_hint(expr: &Expr) -> Option<String> {
+    let value = str_constant(expr)?.replace('\\', "/");
+    let path_like = !value.starts_with('/')
+        && value
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'));
+    if !path_like {
+        return None;
+    }
+    if value.trim_end_matches('/') == "." {
+        return Some(String::new());
+    }
+    let segments: Vec<&str> = value
+        .split('/')
+        .filter(|segment| !matches!(*segment, "" | "." | ".."))
+        .collect();
+    (!segments.is_empty()).then(|| segments.join("/"))
+}
+
 fn str_constant(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::StringLiteral(literal) => Some(literal.value.to_str()),
@@ -288,8 +331,8 @@ mod tests {
     use ruff_python_ast::Expr;
 
     use super::{
-        LiteralTarget, Loader, LoaderNames, PythonRun, command_word, literal_target, module_prefix,
-        python_run,
+        LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path,
+        literal_target, module_prefix, python_run, sys_path_hint,
     };
 
     fn expr(source: &str) -> Expr {
@@ -355,6 +398,50 @@ mod tests {
                 ),
                 "{source}"
             );
+        }
+    }
+
+    #[test]
+    fn recognizes_calls_that_edit_sys_path() {
+        for func in [
+            "sys.path.insert",
+            "sys.path.append",
+            "sys.path.extend",
+            "site.addsitedir",
+            "monkeypatch.syspath_prepend",
+            "self.monkeypatch.syspath_prepend",
+        ] {
+            assert!(edits_sys_path(&expr(func)), "{func}");
+        }
+        for func in [
+            "path.insert",
+            "sys.modules.insert",
+            "items.append",
+            "addsitedir",
+        ] {
+            assert!(!edits_sys_path(&expr(func)), "{func}");
+        }
+    }
+
+    #[test]
+    fn sys_path_hints_are_relative_directory_literals() {
+        let hint = |source: &str| sys_path_hint(&expr(source));
+        assert_eq!(hint(r#""utils""#).as_deref(), Some("utils"));
+        assert_eq!(hint(r#""docs/_ext""#).as_deref(), Some("docs/_ext"));
+        assert_eq!(hint(r#""../exts""#).as_deref(), Some("exts"));
+        assert_eq!(hint(r#""./test_apps/""#).as_deref(), Some("test_apps"));
+        assert_eq!(hint(r#""..\\dev""#).as_deref(), Some("dev"));
+        assert_eq!(hint(r#"".""#).as_deref(), Some(""));
+        for source in [
+            r#""..""#,
+            r#""""#,
+            r#""/opt/lib""#,
+            r#""C:/lib""#,
+            r#""a b""#,
+            r#"f"{root}/utils""#,
+            "name",
+        ] {
+            assert_eq!(hint(source), None, "{source}");
         }
     }
 

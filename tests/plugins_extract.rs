@@ -464,6 +464,16 @@ fn sphinx_plugin_records_docs_conf_entry() {
             .any(|reference| reference.module == "myst_parser"
                 && reference.origin.file == "docs/conf.py")
     );
+    // Extensions added after the assignment (#719).
+    for module in ["sphinx_copybutton", "sphinx.ext.napoleon", "sphinx_design"] {
+        assert!(
+            contrib
+                .module_refs
+                .iter()
+                .any(|reference| reference.module == module),
+            "{module}"
+        );
+    }
 }
 
 #[test]

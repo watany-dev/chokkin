@@ -2,8 +2,10 @@
 
 use std::path::Path;
 
+use ruff_python_ast::{Expr, Stmt};
+
 use crate::config::{EntrySpec, PluginId};
-use crate::manifest::literals::{assigned_value, parse_module, string_list};
+use crate::manifest::literals::{assigned_value, parse_module, string_list, string_value};
 use crate::path_util::rel_to_root;
 use crate::sources::FileContext;
 
@@ -42,10 +44,9 @@ fn extract_sphinx(root: &Path, dir: &Path, contrib: &mut PluginContribution) {
         );
         if let Ok(contents) = std::fs::read_to_string(&conf)
             && let Some(stmts) = parse_module(&contents)
-            && let Some(scan) = assigned_value(&stmts, "extensions").and_then(string_list)
         {
             let file = rel_to_root(root, &conf);
-            for extension in scan.values {
+            for extension in sphinx_extensions(&stmts) {
                 contrib.module_refs.push(ModuleReference {
                     module: extension,
                     origin: ReferenceOrigin {
@@ -57,6 +58,53 @@ fn extract_sphinx(root: &Path, dir: &Path, contrib: &mut PluginContribution) {
             }
         }
     }
+}
+
+/// The literal names in `extensions = [...]` and in later top-level
+/// `extensions.append(...)`, `.extend([...])` and `+= [...]`.
+fn sphinx_extensions(stmts: &[Stmt]) -> Vec<String> {
+    let mut names = assigned_value(stmts, "extensions")
+        .and_then(string_list)
+        .map(|scan| scan.values)
+        .unwrap_or_default();
+    let is_extensions =
+        |expr: &Expr| matches!(expr, Expr::Name(name) if name.id.as_str() == "extensions");
+    for stmt in stmts {
+        match stmt {
+            Stmt::Expr(stmt) => {
+                let Expr::Call(call) = &*stmt.value else {
+                    continue;
+                };
+                let Expr::Attribute(method) = &*call.func else {
+                    continue;
+                };
+                let [argument] = &*call.arguments.args else {
+                    continue;
+                };
+                if !is_extensions(&method.value) {
+                    continue;
+                }
+                match method.attr.as_str() {
+                    "append" => names.extend(string_value(argument)),
+                    "extend" => names.extend(
+                        string_list(argument)
+                            .into_iter()
+                            .flat_map(|scan| scan.values),
+                    ),
+                    _ => {},
+                }
+            },
+            Stmt::AugAssign(assign) if is_extensions(&assign.target) => {
+                names.extend(
+                    string_list(&assign.value)
+                        .into_iter()
+                        .flat_map(|scan| scan.values),
+                );
+            },
+            _ => {},
+        }
+    }
+    names
 }
 
 fn extract_mkdocs(root: &Path, contrib: &mut PluginContribution) {

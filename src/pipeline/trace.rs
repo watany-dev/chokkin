@@ -264,6 +264,7 @@ mod tests {
                 has_opaque_dynamic_import: false,
                 runs_python_file: false,
                 shell_commands: Vec::new(),
+                sys_path_hints: Vec::new(),
                 decorator_sites: Vec::new(),
                 diagnostics: Vec::new(),
                 skipped: false,
