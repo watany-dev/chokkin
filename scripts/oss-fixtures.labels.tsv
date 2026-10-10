@@ -14,6 +14,7 @@
 #
 # Bucket vocabulary (CHK003): map-gap | workspace-boundary | optional-import |
 # dev-context | transitive-policy | metadata-gap | first-party
+# CHK004 fp rows reuse the CHK003 vocabulary (e.g. map-gap).
 #
 # scripts/oss-metrics.py matches findings on (slug, code, target); one row per
 # key. Unlabeled findings are unknown; unknown and deferred block CHK002 FP gate.
@@ -1085,8 +1086,11 @@ mcp-python-sdk	CHK002	python-multipart	fp	-	starlette's request.form() in server
 # --- Precision samples (#656) ---
 # Hand-labelled by reading the pinned clones (nothing executed). Drawn with
 #   scripts/sample-precision-labels.py --rule CODE >> scripts/oss-fixtures.labels.tsv
-# (50 per rule, at most 6 per project). When report.md shows stale labels after a
-# clone bump, delete those rows and rerun the script to top the sample back up.
+# (50 per rule, at most 6 per project). #699 topped CHK004 / CHK006 / CHK010 up to
+# >=20% coverage; refill those with --total 370 --per-project 80 (CHK004) and
+# --total 225 --per-project 70 (CHK006 / CHK010). When report.md shows stale
+# labels after a clone bump, delete those rows and rerun the script to top the
+# sample back up.
 langchain	CHK001	.github/scripts/check_prerelease_dependencies.py	fp	script-entry	Run by .github/workflows/_release.yml: python .github/scripts/check_prerelease_dependencies.py
 mlflow	CHK001	tests/pyfunc/custom_model/mod1/mod4.py	fp	other	Imported relatively by custom_model/mod1/mod2/__init__.py (from .. import mod4); asserted in test_inferred_code_path.py
 poetry	CHK001	src/poetry/masonry/api.py	fp	library-public	Shipped back-compat build backend poetry.masonry.api (re-exports poetry.core.masonry.api) for users' pyproject build-backend
@@ -1144,7 +1148,6 @@ flask	CHK006	src/flask/app.py:T_template_test	info-expected	library-public-api	T
 mitmproxy	CHK006	mitmproxy/addons/core.py:LISTEN_PORT	info-expected	library-public-api	constant unused anywhere (no refs in repo, not used in-module); library mode since #652 keeps the package's public API at info
 mlflow	CHK006	mlflow/deployments/cli.py:optional_deployment_name	tp	-	click option defined but never applied; no refs in repo
 pdm	CHK006	src/pdm/signals.py:pre_invoke	fp	library-public-api	plugin signal documented in docs/usage/hooks.md for plugins to connect; emitted by name in core.py try_emit("pre_invoke")
-poetry	CHK006	src/poetry/console/commands/check.py:CheckCommand	fp	name-convention	poetry application.py loads poetry.console.commands.<name> via import_module + getattr "<Name>Command"
 uvicorn	CHK006	uvicorn/logging.py:AccessFormatter	fp	name-convention	referenced by dotted string "uvicorn.logging.AccessFormatter" in uvicorn/config.py LOGGING_CONFIG
 werkzeug	CHK006	src/werkzeug/exceptions.py:UnavailableForLegalReasons	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
 airflow	CHK006	airflow-ctl/src/airflowctl/ctl/cli_config.py:positive_int	tp	-	airflowctl cli_config.positive_int unused; refs found are to airflow.cli.cli_config (a different module) in core/providers
@@ -1154,7 +1157,6 @@ fastapi	CHK006	fastapi/responses.py:UJSONResponse	fp	library-public-api	document
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_code.py:check_claude_code_available	tp	-	CLI installer helper, no callers anywhere; only listed in auto-generated python-sdk docs page
 mitmproxy	CHK006	mitmproxy/contentviews/_api.py:logger	info-expected	library-public-api	module logger in mitmproxy.contentviews._api, private module; other `logger` hits are unrelated module-level loggers; library mode since #652 keeps the package's public API at info
 pdm	CHK006	src/pdm/formats/pipfile.py:export	fp	external-reference	pdm.formats FORMATS dict maps to modules; cli/commands/export.py calls FORMATS[fmt].export(...) (module attr access)
-poetry	CHK006	src/poetry/console/commands/self/remove.py:SelfRemoveCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.remove and getattr "SelfRemoveCommand"
 uvicorn	CHK006	uvicorn/_types.py:HTTPResponseDebugEvent	info-expected	library-public-api	TypedDict in private uvicorn._types, no refs anywhere (not even in-module unions); library mode since #652 keeps the package's public API at info
 werkzeug	CHK006	src/werkzeug/test.py:encode_multipart	fp	library-public-api	unsure: public non-underscore function in werkzeug.test module (library); undocumented, no internal refs
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskDependencyCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
@@ -1165,7 +1167,6 @@ fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/cursor.py:logger	tp	-	module log
 flask	CHK006	src/flask/app.py:T_shell_context_processor	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
 mitmproxy	CHK006	mitmproxy/proxy/mode_servers.py:DnsInstance	info-expected	library-public-api	registered via ServerInstance.__init_subclass__ registry in same module; no name refs elsewhere; library mode since #652 keeps the package's public API at info
 pdm	CHK006	src/pdm/cli/commands/search.py:Command	fp	name-convention	pdm core.py imports pdm.cli.commands.<name> and reads module.Command
-poetry	CHK006	src/poetry/console/commands/self/lock.py:SelfLockCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.lock and getattr "SelfLockCommand"
 uvicorn	CHK006	uvicorn/loops/asyncio.py:logger	info-expected	library-public-api	module logger in uvicorn.loops.asyncio, unused anywhere (not even in-module); library mode since #652 keeps the package's public API at info
 werkzeug	CHK006	src/werkzeug/exceptions.py:HTTPVersionNotSupported	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskInstanceHistoryCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
@@ -1175,17 +1176,12 @@ flask	CHK006	src/flask/app.py:T_template_filter	info-expected	library-public-api
 airflow	CHK010	scripts/tests/ci/prek/test_extract_permissions.py:extract_permissions	fp	first-party-missed	scripts/ci/prek/extract_permissions.py exists; test inserts PREK_DIR (scripts/ci/prek) into sys.path
 black	CHK010	src/blackd/__init__.py:_black_version	fp	generated	src/_black_version.py written by hatch-vcs (tool.hatch.build.hooks.vcs version-file)
 django	CHK010	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	tp	-	deliberately nonexistent package in Django test fixture bad_module.py
-djangorestframework	CHK010	tests/test_permissions.py:guardian	fp	declared-third-party	django-guardian in requirements/requirements-optionals.txt (via root requirements.txt -r)
 fastapi	CHK010	scripts/docs.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
-fastmcp	CHK010	fastmcp_slim/fastmcp/utilities/docstring_parsing.py:griffe	fp	declared-third-party	griffelib (provides griffe) in fastmcp_slim/pyproject.toml server extra
 flask	CHK010	tests/test_cli.py:cliapp	fp	first-party-missed	tests/test_apps/cliapp/ exists; test_apps fixture does syspath_prepend(tests/test_apps)
 langchain	CHK010	libs/partners/huggingface/langchain_huggingface/llms/huggingface_pipeline.py:optimum	info-expected	optional-import	undeclared third-party: optimum (optional OpenVINO backend, not in huggingface pyproject/uv.lock) (info since #695)
 llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain_community	tp	-	undeclared third-party: langchain-community (not in llama-index-core pyproject/uv.lock or root)
-mcp-python-sdk	CHK010	src/mcp/os/win32/utilities.py:win32con	fp	declared-third-party	pywin32 (provides win32con) declared with sys_platform=='win32' marker in pyproject; in uv.lock
-mlflow	CHK010	tests/catboost/test_catboost_model_export.py:catboost	fp	declared-third-party	catboost listed in requirements/extra-ml-requirements.txt
 openai-python	CHK010	tests/test_httpx_compat.py:httpx_aiohttp	tp	-	undeclared third-party: httpx-aiohttp (installed ad hoc by scripts/utils/validate-httpx2-wheel.py legacy lane; test skip-gated)
 pdm	CHK010	src/pdm/environments/base.py:pip	info-expected	-	undeclared third-party: pip (guarded try/except ImportError; not in pyproject or pdm.lock); info since #670 (optional import)
-poetry	CHK010	tests/conftest.py:jaraco	fp	declared-third-party	jaraco-classes declared in pyproject (jaraco namespace pkg) and in poetry.lock
 pydantic	CHK010	pydantic/v1/version.py:cython	info-expected	-	undeclared third-party: cython (guarded try/except to detect compiled build; not in pyproject/uv.lock); info since #670 (optional import)
 python-dotenv	CHK010	tests/test_zip_imports.py:child1	tp	-	child1 package created at test runtime inside a tmp zip; not in repo
 requests	CHK010	tests/compat.py:StringIO	fp	stdlib	unsure: Python 2 stdlib StringIO in py2/py3 try/except fallback; project requires >=3.8 so dead code
@@ -1197,31 +1193,21 @@ transformers	CHK010	src/transformers/quantizers/quantizer_bnb_4bit.py:bitsandbyt
 typer	CHK010	scripts/mkdocs_hooks.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
 urllib3	CHK010	test/contrib/emscripten/test_emscripten.py:js	fp	other	js is a Pyodide runtime builtin module (test body runs in Pyodide via run_in_pyodide)
 virtualenv	CHK010	src/virtualenv/seed/wheels/acquire.py:pip	fp	other	unsure: not an import; argv [sys.executable, '-m', 'pip', 'download'] subprocess using host pip tool
-werkzeug	CHK010	tests/conftest.py:ephemeral_port_reserve	fp	declared-third-party	ephemeral-port-reserve in requirements/tests.in and tests.txt
 airflow	CHK010	scripts/ci/prek/check_shared_distributions_usage.py:tomllib	fp	stdlib	tomllib is stdlib 3.11+; script pins requires-python <3.11 and falls back in try/except
 black	CHK010	scripts/diff_shades_gha_helper.py:diff_shades	info-expected	dev-context	undeclared third-party: diff-shades (pip-installed only in .github/workflows/diff_shades.yml) (info in scripts/ since #694)
 django	CHK010	tests/utils_tests/test_module_loading.py:egg_module	fp	first-party-missed	egg_module lives inside tests/utils_tests/eggs/test_egg.egg zip put on sys.path (static zip in repo)
-djangorestframework	CHK010	tests/conftest.py:guardian	fp	declared-third-party	django-guardian in requirements/requirements-optionals.txt (via root requirements.txt -r)
-fastapi	CHK010	scripts/mkdocs_hooks.py:material	fp	declared-third-party	mkdocs-material (provides material) in requirements-docs.txt
-fastmcp	CHK010	examples/atproto_mcp/src/atproto_mcp/__main__.py:atproto_mcp	fp	first-party-missed	examples/atproto_mcp/src/atproto_mcp is its own package (example has own pyproject, src layout)
 flask	CHK010	tests/test_instance_config.py:config_module_app	tp	-	config_module_app.py written to tmp_path at test runtime; not in repo
 langchain	CHK010	libs/langchain/langchain_classic/evaluation/loading.py:datasets	info-expected	-	undeclared third-party: datasets (optional, not in libs/langchain pyproject/uv.lock); info since #670 (optional import)
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-nvidia-tensorrt/llama_index/llms/nvidia_tensorrt/base.py:tensorrt_llm	info-expected	-	undeclared third-party: tensorrt-llm (not in integration pyproject); info since #670 (optional import)
-mcp-python-sdk	CHK010	src/mcp/os/win32/utilities.py:win32api	fp	declared-third-party	pywin32 (provides win32api) declared with sys_platform=='win32' marker in pyproject; in uv.lock
-mlflow	CHK010	tests/transformers/test_transformers_autolog.py:optuna	fp	declared-third-party	optuna listed in requirements/test-requirements.txt
 pdm	CHK010	src/pdm/core.py:uv	fp	other	not an import: [sys.executable, '-m', 'uv'] argv after importlib.metadata.distribution('uv') check
-poetry	CHK010	tests/test_helpers.py:jaraco	fp	declared-third-party	jaraco-classes declared in pyproject (jaraco namespace pkg) and in poetry.lock
 pydantic	CHK010	tests/test_forward_ref.py:module_1	tp	-	module_1 created at runtime by create_module fixture; not a real file
 requests	CHK010	src/requests/cookies.py:dummy_threading	fp	stdlib	dummy_threading is stdlib through 3.8; project python_requires>=3.8 (guarded fallback)
 sqlalchemy	CHK010	lib/sqlalchemy/dialects/sqlite/pysqlcipher.py:pysqlcipher3	tp	-	undeclared third-party: pysqlcipher3 (extra declares sqlcipher3_binary only; legacy fallback)
 streamlit	CHK010	lib/streamlit/elements/write.py:tensorflow	tp	-	undeclared third-party: tensorflow (not in streamlit manifests or uv.lock)
 structlog	CHK010	src/structlog/dev.py:better_exceptions	info-expected	-	undeclared third-party: better-exceptions (guarded optional import); info since #670 (optional import)
 transformers	CHK010	tests/utils/test_auto_docstring.py:check_docstrings	fp	first-party-missed	utils/check_docstrings.py exists; test inserts repo_root/utils into sys.path
-typer	CHK010	scripts/deploy_docs_status.py:pydantic_settings	fp	declared-third-party	pydantic-settings in requirements-github-actions.txt
 urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:js	fp	other	js is a Pyodide runtime builtin module (emscripten-only contrib)
 virtualenv	CHK010	tests/unit/seed/wheels/test_acquire.py:pip	fp	other	not an import: list literal [sys.executable,'-m','pip',...] in a test assertion
-werkzeug	CHK010	tests/conftest.py:xprocess	fp	declared-third-party	pytest-xprocess (provides xprocess) in requirements/tests.in and tests.txt
-airflow	CHK010	providers/google/tests/unit/google/cloud/triggers/test_gcs.py:gcloud	fp	declared-third-party	gcloud-aio-storage (gcloud.aio namespace) in providers/google/pyproject.toml
 airflow	CHK001	devel-common/src/sphinx_exts/metrics_tables_from_registry.py	fp	framework-loaded	listed by string in Sphinx extensions list in devel-common/src/docs/utils/conf_constants.py
 mlflow	CHK001	tests/langgraph/sample_code/langgraph_with_custom_span.py	fp	dynamic-import	loaded by file path string in tests/langgraph/test_langgraph_autolog.py (models-from-code)
 airflow	CHK001	airflow-core/tests/unit/dags_with_system_exit/c_system_exit.py	fp	framework-loaded	DAG file loaded from dags_with_system_exit folder by DAG processor in test_manager.py
@@ -1230,30 +1216,23 @@ airflow	CHK001	airflow-core/src/airflow/stats.py	fp	library-public	deprecated ba
 airflow	CHK001	airflow-core/src/airflow/ti_deps/deps/mapped_task_expanded.py	tp	-	MappedTaskIsExpanded referenced nowhere (only a path in scripts/cov/core_coverage.py); no string/dep registry use
 airflow	CHK006	devel-common/src/docs/provider_conf.py:html_sidebars	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 mlflow	CHK006	mlflow/johnsnowlabs/__init__.py:load_model	fp	library-public-api	documented flavor API (docs reference mlflow.johnsnowlabs.load_model)
-poetry	CHK006	src/poetry/console/commands/env/list.py:EnvListCommand	fp	dynamic-import	poetry command loader imports poetry.console.commands.<name> via import_module and getattr's the class by name
 airflow	CHK006	devel-common/src/docs/provider_conf.py:autoapi_python_use_implicit_namespaces	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/gemini_cli.py:logger	fp	name-convention	module-level `logger = get_logger(__name__)` conventional name, not meant for export
 mlflow	CHK006	mlflow/pyspark/ml/__init__.py:autolog	fp	library-public-api	documented public API (docs link mlflow.pyspark.ml.autolog)
-poetry	CHK006	src/poetry/console/commands/run.py:RunCommand	fp	dynamic-import	poetry command loader imports module by command name via import_module and getattr's the class
 mcp-python-sdk	CHK006	src/mcp/server/auth/handlers/register.py:RegistrationRequest	tp	-	alias RegistrationRequest = OAuthClientMetadata referenced nowhere else in repo
 mlflow	CHK006	mlflow/langchain/chat_agent_langgraph.py:ChatAgentState	fp	external-reference	imported from mlflow.langchain.chat_agent_langgraph in tests/langchain/sample_code and tests/langgraph/sample_code
-poetry	CHK006	src/poetry/console/commands/publish.py:PublishCommand	fp	dynamic-import	poetry command loader imports module by command name via import_module and getattr's the class
 mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:get_config_for_profile	tp	-	deprecated backward-compat function, no references anywhere in repo
 mlflow	CHK006	mlflow/entities/model_registry/prompt_version.py:PromptVersionTag	tp	-	alias PromptVersionTag = ModelVersionTag not referenced anywhere else
 airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_python_virtualenv.py:funcsigs	tp	-	funcsigs only installed at runtime via @task.virtualenv(requirements=["funcsigs"]) in the test; not in any manifest
 black	CHK010	scripts/check_version_in_basics_example.py:commonmark	fp	declared-third-party	commonmark==0.9.1 declared in .pre-commit-config.yaml additional_dependencies of the local hook that runs this script
 django	CHK010	tests/sphinx/test_github_links.py:github_links	fp	first-party-missed	docs/_ext/github_links.py exists; test inserts docs/_ext into sys.path in setUpClass
 fastapi	CHK010	scripts/mkdocs_hooks.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
-fastmcp	CHK010	examples/smart_home/src/smart_home/__main__.py:smart_home	fp	first-party-missed	examples/smart_home/src/smart_home is its own package (example has own pyproject, src layout)
 flask	CHK010	tests/test_instance_config.py:installed_package	tp	-	installed_package written to tmp path at test runtime (syspath_prepend); not in repo
 langchain	CHK010	libs/standard-tests/langchain_tests/integration_tests/sandboxes.py:deepagents	tp	-	undeclared third-party: deepagents (pytest.importorskip; only a mypy override in standard-tests pyproject, absent from uv.lock)
-llama_index	CHK010	llama-index-core/llama_index/core/workflow/handler.py:workflows	fp	declared-third-party	llama-index-workflows (provides workflows) in llama-index-core pyproject dependencies and uv.lock
-mcp-python-sdk	CHK010	scripts/docs/gen_ref_pages.py:griffe	fp	declared-third-party	griffelib (provides griffe) declared in pyproject docs group; in uv.lock
 mlflow	CHK010	tests/dev/test_detect_flaky_tests.py:detect_flaky_tests	fp	first-party-missed	dev/detect_flaky_tests.py exists; test inserts repo_root/dev into sys.path
 requests	CHK010	tests/conftest.py:SimpleHTTPServer	fp	stdlib	Python 2 stdlib SimpleHTTPServer in py2/py3 try/except fallback; python_requires>=3.8 so dead code
 sqlalchemy	CHK010	lib/sqlalchemy/sql/_cache_key_cy.py:cython	fp	declared-third-party	cython (Cython dist provides cython module) in build-system.requires; generated guarded import with sqlalchemy.util fallback
 transformers	CHK010	src/transformers/integrations/higgs.py:fast_hadamard_transform	info-expected	optional-import	undeclared third-party: fast-hadamard-transform (gated by is_hadamard_available; only a commented pip install in a Dockerfile) (info since #695)
-urllib3	CHK010	test/contrib/emscripten/test_emscripten.py:pytest_pyodide	fp	declared-third-party	pytest-pyodide==0.54.0 in emscripten-requirements.txt
 airflow	CHK003	ai:providers/common/ai/src/airflow/providers/common/ai/hooks/pydantic_ai.py:pydantic_ai	fp	map-gap	common-ai provider declares pydantic-ai-slim, which provides the pydantic_ai import
 langchain	CHK003	.github/scripts/get_min_versions.py:tomli	tp	-	no root manifest covers .github/scripts; tomli (fallback for py<3.11 tomllib) only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
 llama_index	CHK003	llama-index-llms-vllm:llama-index-integrations/llms/llama-index-llms-vllm/llama_index/llms/vllm/base.py:torch	tp	-	torch not declared by llama-index-llms-vllm (only llama-index-core) nor in its uv.lock; unguarded import in atexit close()
@@ -1350,3 +1329,727 @@ mlflow	CHK009	aiohttp	info-expected	intentional-duplicate	lint group is synced s
 transformers	CHK009	accelerate	fp	intentional-duplicate	overlap from extras composition in setup.py
 transformers	CHK009	rich	fp	intentional-duplicate	overlap from extras composition in setup.py
 transformers	CHK009	sentencepiece	fp	intentional-duplicate	overlap from extras composition in setup.py
+airflow	CHK004	informatica:providers/informatica/src/airflow/providers/informatica/__init__.py:packaging.version	tp	-	informatica pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/auth/jwt_issuer.py:cryptography.hazmat.primitives	tp	-	fastmcp_slim pyproject declares no cryptography; via authlib, azure-identity
+langchain	CHK004	standard-tests:libs/standard-tests/langchain_tests/utils/pydantic.py:pydantic	tp	-	optional try-import; standard-tests pyproject declares no pydantic; via langchain-core
+llama_index	CHK004	llama-index-llms-alibabacloud-aisearch:llama-index-integrations/llms/llama-index-llms-alibabacloud-aisearch/llama_index/llms/alibabacloud_aisearch/base.py:alibabacloud_tea_util.models	tp	-	optional try-import; llama-index-llms-alibabacloud-aisearch pyproject declares no alibabacloud-tea-util; via alibabacloud-searchplat20240529
+mcp-python-sdk	CHK004	src/mcp/client/session.py:referencing	tp	-	hatch hook dynamic deps of root pyproject omit referencing; via jsonschema
+mlflow	CHK004	mlflow/genai/agent_server/server.py:httpx	tp	-	httpx appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	google:providers/google/src/airflow/providers/google/cloud/hooks/compute_ssh.py:paramiko	tp	-	google pyproject declares no paramiko; via apache-airflow-providers-sftp, apache-airflow-providers-ssh
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/utilities/json_schema_type.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/flare/prompts.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-storage-chat-store-sqlite:llama-index-integrations/storage/chat_store/llama-index-storage-chat-store-sqlite/llama_index/storage/chat_store/sqlite/base.py:sqlalchemy.ext.asyncio.session	tp	-	llama-index-storage-chat-store-sqlite pyproject declares no sqlalchemy; via llama-index-core
+mcp-python-sdk	CHK004	src/mcp/server/mcpserver/utilities/func_metadata.py:pydantic_core	tp	-	hatch hook dynamic deps of root pyproject omit pydantic-core; via pydantic
+mlflow	CHK004	mlflow/genai/judges/optimizers/memalign/utils.py:tqdm.auto	tp	-	optional try-import; tqdm appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	docker:providers/docker/src/airflow/providers/docker/version_compat.py:packaging.version	tp	-	docker pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/prompts/base.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/agents/middleware/context_editing.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-llms-openai:llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/utils.py:deprecated	tp	-	llama-index-llms-openai pyproject declares no deprecated; via llama-index-core
+mcp-python-sdk	CHK004	src/mcp/client/auth/utils.py:pydantic_core	tp	-	hatch hook dynamic deps of root pyproject omit pydantic-core; via pydantic
+mlflow	CHK004	mlflow/artifacts/__init__.py:PIL	tp	-	optional try-import; pillow appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	azure:providers/microsoft/azure/src/airflow/providers/microsoft/azure/hooks/container_registry.py:flask_appbuilder.fieldwidgets	tp	-	azure pyproject declares no flask-appbuilder; via root apache-airflow-providers-fab (lock-only edge)
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/client/elicitation.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	openai:libs/partners/openai/langchain_openai/_compat.py:httpx2	tp	-	openai pyproject declares no httpx2; via openai
+llama_index	CHK004	llama-index-tools-bing-search:llama-index-integrations/tools/llama-index-tools-bing-search/llama_index/tools/bing_search/base.py:requests	tp	-	llama-index-tools-bing-search pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/models/model.py:langchain_core.runnables.base	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	devel-common:devel-common/src/tests_common/test_utils/providers.py:yaml	tp	-	devel-common pyproject declares no pyyaml; via apache-airflow-core, sphinx-autoapi
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/auth/jwt_issuer.py:cryptography.hazmat.primitives.kdf.pbkdf2	tp	-	fastmcp_slim pyproject declares no cryptography; via authlib, azure-identity
+langchain	CHK004	openai:libs/partners/openai/langchain_openai/chat_models/azure.py:typing_extensions	tp	-	openai pyproject declares no typing-extensions; via aiohttp, azure-identity
+llama_index	CHK004	llama-index-readers-firestore:llama-index-integrations/readers/llama-index-readers-firestore/llama_index/readers/firestore/base.py:google.cloud	fp	map-gap	map-gap: google.cloud.firestore is provided by declared google-cloud-firestore; bundled map lacks it and falls back to google-api-core
+mlflow	CHK004	mlflow/utils/file_utils.py:tqdm.auto	tp	-	optional try-import; tqdm appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	google:providers/google/src/airflow/providers/google/cloud/hooks/bigquery.py:flask_appbuilder.fieldwidgets	tp	-	google pyproject declares no flask-appbuilder; via apache-airflow-providers-fab
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/middleware/logging.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/scoring/eval_chain.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-vector-stores-google:llama-index-integrations/vector_stores/llama-index-vector-stores-google/llama_index/vector_stores/google/genai_extension.py:google.protobuf	tp	-	llama-index-vector-stores-google pyproject declares no protobuf; via google-generativeai
+mlflow	CHK004	mlflow/utils/_unity_catalog_utils.py:azure.core.credentials	tp	-	root pyproject declares no azure-core; via azure-identity, azure-storage-blob
+airflow	CHK004	compat:providers/common/compat/src/airflow/providers/common/compat/sqlalchemy/orm.py:sqlalchemy	tp	-	optional try-import; compat pyproject declares no sqlalchemy; via apache-airflow-devel-common, apache-airflow-providers-openlineage
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/client/mixins/prompts.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	huggingface:libs/partners/huggingface/langchain_huggingface/llms/huggingface_pipeline.py:torch	tp	-	huggingface pyproject declares no torch; via sentence-transformers
+llama_index	CHK004	llama-index-postprocessor-xinference-rerank:llama-index-integrations/postprocessor/llama-index-postprocessor-xinference-rerank/llama_index/postprocessor/xinference_rerank/base.py:requests	tp	-	llama-index-postprocessor-xinference-rerank pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/webhooks/ssrf.py:urllib3.connection	tp	-	root pyproject declares no urllib3; via azureml-core, botocore
+airflow	CHK004	hashicorp:providers/hashicorp/src/airflow/providers/hashicorp/version_compat.py:packaging.version	tp	-	hashicorp pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/tools/base.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	core:libs/core/langchain_core/output_parsers/xml.py:defusedxml.ElementTree	tp	-	optional try-import; core pyproject declares no defusedxml; lock dependents only
+llama_index	CHK004	llama-index-readers-sec-filings:llama-index-integrations/readers/llama-index-readers-sec-filings/llama_index/readers/sec_filings/prepline_sec_filings/sec_document.py:numpy.typing	tp	-	llama-index-readers-sec-filings pyproject declares no numpy; via llama-index-core
+mlflow	CHK004	mlflow/metrics/genai/genai_metric.py:tqdm.auto	tp	-	optional try-import; tqdm appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	google:providers/google/src/airflow/providers/google/__init__.py:packaging.version	tp	-	google pyproject declares no packaging; via apache-airflow-task-sdk, google-cloud-aiplatform
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/prompts/function_prompt.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain:libs/langchain/langchain_classic/agents/output_parsers/tools.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-memory-bedrock-agentcore:llama-index-integrations/memory/llama-index-memory-bedrock-agentcore/llama_index/memory/bedrock_agentcore/base.py:pydantic	tp	-	llama-index-memory-bedrock-agentcore pyproject declares no pydantic; via llama-index-core
+mlflow	CHK004	mlflow/server/auth/sqlalchemy_store.py:werkzeug.security	tp	-	root pyproject declares no werkzeug; via flask, flask-cors
+airflow	CHK004	influxdb:providers/influxdb/src/airflow/providers/influxdb/hooks/influxdb3.py:flask_appbuilder.fieldwidgets	tp	-	influxdb pyproject declares no flask-appbuilder; via root apache-airflow-providers-fab (lock-only edge)
+fastmcp	CHK004	fastmcp_remote:fastmcp_remote/fastmcp_remote/cli.py:anyio	tp	-	hatch hook deps of fastmcp_remote omit anyio (lock-only edge)
+langchain	CHK004	fireworks:libs/partners/fireworks/langchain_fireworks/rerank.py:pydantic	tp	-	fireworks pyproject declares no pydantic; via fireworks-ai, langchain
+llama_index	CHK004	llama-index-embeddings-upstage:llama-index-integrations/embeddings/llama-index-embeddings-upstage/llama_index/embeddings/upstage/base.py:httpx	tp	-	llama-index-embeddings-upstage pyproject declares no httpx; via llama-index-core
+mlflow	CHK004	mlflow/gateway/providers/vertex_ai.py:google.auth	tp	-	optional try-import; root pyproject declares no google-auth; via databricks-sdk, google-cloud-storage
+airflow	CHK004	cohere:providers/cohere/src/airflow/providers/cohere/__init__.py:packaging.version	tp	-	cohere pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/auth/oauth_proxy/proxy.py:cryptography.fernet	tp	-	fastmcp_slim pyproject declares no cryptography; via authlib, azure-identity
+langchain	CHK004	openai:libs/partners/openai/langchain_openai/chatgpt_oauth.py:httpx	tp	-	httpx declared only in group:test_integration of openai pyproject; runtime import, member groups are strict-only so CHK004 stands
+llama_index	CHK004	llama-index-readers-document360:llama-index-integrations/readers/llama-index-readers-document360/llama_index/readers/document360/entities/category.py:pydantic	tp	-	llama-index-readers-document360 pyproject declares no pydantic; via llama-index-core
+mlflow	CHK004	mlflow/langchain/output_parsers.py:langchain_core.output_parsers.transform	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	vespa:providers/vespa/src/airflow/providers/vespa/__init__.py:packaging.version	tp	-	vespa pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/settings.py:pydantic_settings	tp	-	hatch hook deps of fastmcp_tasks omit pydantic-settings; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/api/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-llms-deepinfra:llama-index-integrations/llms/llama-index-llms-deepinfra/llama_index/llms/deepinfra/types.py:typing_extensions	tp	-	llama-index-llms-deepinfra pyproject declares no typing-extensions; via aiohttp, black
+mlflow	CHK004	mlflow/langchain/_compat.py:langchain_core.retrievers	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	slack:providers/slack/src/airflow/providers/slack/hooks/slack.py:typing_extensions	tp	-	slack pyproject declares no typing-extensions; via aiohttp, apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/models.py:mcp_types.jsonrpc	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	openrouter:libs/partners/openrouter/langchain_openrouter/chat_models.py:typing_extensions	tp	-	openrouter pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-llms-oci-data-science:llama-index-integrations/llms/llama-index-llms-oci-data-science/llama_index/llms/oci_data_science/client.py:httpx	tp	-	llama-index-llms-oci-data-science pyproject declares no httpx; via llama-index-core
+mlflow	CHK004	mlflow/tracking/client.py:PIL.Image	tp	-	optional try-import; pillow appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	azure:providers/microsoft/azure/src/airflow/providers/microsoft/azure/hooks/container_registry.py:flask_babel	tp	-	azure pyproject declares no flask-babel; lock dependents only (lock-only edge)
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/resources/security.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	openai:libs/partners/openai/langchain_openai/embeddings/base.py:typing_extensions	tp	-	openai pyproject declares no typing-extensions; via aiohttp, azure-identity
+llama_index	CHK004	llama-index-llms-konko:llama-index-integrations/llms/llama-index-llms-konko/llama_index/llms/konko/base.py:tiktoken	tp	-	optional try-import; llama-index-llms-konko pyproject declares no tiktoken; via llama-index-core
+mlflow	CHK004	mlflow/models/evaluation/artifacts.py:PIL.Image	tp	-	pillow appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	influxdb:providers/influxdb/src/airflow/providers/influxdb/hooks/influxdb.py:flask_babel	tp	-	influxdb pyproject declares no flask-babel; lock dependents only (lock-only edge)
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/components.py:pydantic	tp	-	hatch hook deps of fastmcp_tasks omit pydantic; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/agents/structured_chat/output_parser.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-vector-stores-faiss:llama-index-integrations/vector_stores/llama-index-vector-stores-faiss/llama_index/vector_stores/faiss/base.py:fsspec	tp	-	llama-index-vector-stores-faiss pyproject declares no fsspec; via llama-index-core
+mlflow	CHK004	mlflow/utils/_unity_catalog_utils.py:google.oauth2.credentials	tp	-	root pyproject declares no google-auth; via databricks-sdk, google-cloud-storage
+airflow	CHK004	kubernetes:providers/cncf/kubernetes/src/airflow/providers/cncf/kubernetes/operators/custom_object_launcher.py:tenacity	tp	-	kubernetes pyproject declares no tenacity; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/extension.py:mcp_types.jsonrpc	tp	-	optional try-import; hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/retrievers/multi_query.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-embeddings-anyscale:llama-index-integrations/embeddings/llama-index-embeddings-anyscale/llama_index/embeddings/anyscale/base.py:httpx	tp	-	llama-index-embeddings-anyscale pyproject declares no httpx; via llama-index-core
+mlflow	CHK004	mlflow/utils/openai_utils.py:azure.core.exceptions	tp	-	optional try-import; root pyproject declares no azure-core; via azure-identity, azure-storage-blob
+airflow	CHK004	amazon:providers/amazon/src/airflow/providers/amazon/aws/hooks/emr.py:tenacity	tp	-	amazon pyproject declares no tenacity; via apache-airflow-providers-google, apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/middleware/response_limiting.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/parsing/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-snowflake:llama-index-integrations/readers/llama-index-readers-snowflake/llama_index/readers/snowflake/base.py:sqlalchemy.orm	tp	-	sqlalchemy appears only in llama-index-integrations/readers/llama-index-readers-snowflake/requirements.txt; extra requirements never satisfy CHK001-005
+mlflow	CHK004	mlflow/tracking/multimedia.py:PIL	tp	-	optional try-import; pillow appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	fab:providers/fab/src/airflow/providers/fab/auth_manager/security_manager/override.py:sqlalchemy.exc	tp	-	fab pyproject declares no sqlalchemy; via apache-airflow-devel-common, flask-appbuilder
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/auth/providers/jwt.py:cryptography.hazmat.primitives	tp	-	fastmcp_slim pyproject declares no cryptography; via authlib, azure-identity
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/query_constructor/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-core:llama-index-core/llama_index/core/bridge/pydantic_core.py:pydantic_core	tp	-	llama-index-core pyproject declares no pydantic-core; via pydantic
+mlflow	CHK004	mlflow/langchain/utils/chat.py:langchain_core.messages.ai	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	fab:providers/fab/src/airflow/providers/fab/auth_manager/fab_auth_manager.py:fastapi	tp	-	fab pyproject declares no fastapi; via root apache-airflow-core
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/auth/providers/jwt.py:cryptography.hazmat.primitives.asymmetric	tp	-	fastmcp_slim pyproject declares no cryptography; via authlib, azure-identity
+langchain	CHK004	fireworks:libs/partners/fireworks/langchain_fireworks/llms.py:pydantic	tp	-	fireworks pyproject declares no pydantic; via fireworks-ai, langchain
+llama_index	CHK004	llama-index-vector-stores-openGauss:llama-index-integrations/vector_stores/llama-index-vector-stores-openGauss/llama_index/vector_stores/openGauss/base.py:sqlalchemy.dialects.postgresql	tp	-	llama-index-vector-stores-openGauss pyproject declares no sqlalchemy; via llama-index-core, llama-index-vector-stores-postgres
+mlflow	CHK004	mlflow/tensorflow/__init__.py:h5py	tp	-	root pyproject declares no h5py; via keras, tensorflow
+airflow	CHK004	kylin:providers/apache/kylin/src/airflow/providers/apache/kylin/__init__.py:packaging.version	tp	-	kylin pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/models.py:mcp_types	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/output_parsers/pandas_dataframe.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-llms-alibabacloud-aisearch:llama-index-integrations/llms/llama-index-llms-alibabacloud-aisearch/llama_index/llms/alibabacloud_aisearch/base.py:alibabacloud_tea_openapi.models	tp	-	optional try-import; llama-index-llms-alibabacloud-aisearch pyproject declares no alibabacloud-tea-openapi; via alibabacloud-searchplat20240529
+mlflow	CHK004	mlflow/types/responses.py:langchain_core.messages	tp	-	optional try-import; root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	ssh:providers/ssh/src/airflow/providers/ssh/hooks/ssh.py:tenacity	tp	-	ssh pyproject declares no tenacity; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/worker_cli.py:rich.console	tp	-	hatch hook deps of fastmcp_tasks omit rich; via fastmcp-slim
+langchain	CHK004	typesafe:libs/partners/typesafe/langchain_typesafe/experimental/middleware/model_router.py:pydantic	tp	-	typesafe pyproject declares no pydantic; via langchain, langchain-core
+llama_index	CHK004	llama-index-llms-konko:llama-index-integrations/llms/llama-index-llms-konko/llama_index/llms/konko/utils.py:tenacity	tp	-	llama-index-llms-konko pyproject declares no tenacity; via llama-index-core
+mlflow	CHK004	mlflow/server/handlers.py:werkzeug.http	tp	-	root pyproject declares no werkzeug; via flask, flask-cors
+airflow	CHK004	mysql:providers/mysql/src/airflow/providers/mysql/__init__.py:packaging.version	tp	-	mysql pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/extension.py:mcp_types.version	tp	-	optional try-import; hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/embedding_distance/base.py:numpy	tp	-	optional try-import; numpy declared only in group:test,group:typing of langchain pyproject; runtime import, member groups are strict-only so CHK004 stands
+llama_index	CHK004	llama-index-readers-intercom:llama-index-integrations/readers/llama-index-readers-intercom/llama_index/readers/intercom/base.py:bs4	tp	-	beautifulsoup4 appears only in llama-index-integrations/readers/llama-index-readers-intercom/requirements.txt; extra requirements never satisfy CHK001-005
+mlflow	CHK004	mlflow/server/auth/__init__.py:werkzeug.datastructures	tp	-	root pyproject declares no werkzeug; via flask, flask-cors
+airflow	CHK004	spark:providers/apache/spark/src/airflow/providers/apache/spark/version_compat.py:packaging.version	tp	-	spark pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/models.py:pydantic	tp	-	hatch hook deps of fastmcp_tasks omit pydantic; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/comparison/eval_chain.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-embeddings-textembed:llama-index-integrations/embeddings/llama-index-embeddings-textembed/llama_index/embeddings/textembed/base.py:requests	tp	-	llama-index-embeddings-textembed pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:grpc	tp	-	optional try-import; root pyproject declares no grpcio; via deepeval, opentelemetry-exporter-otlp-proto-grpc
+airflow	CHK004	google:providers/google/src/airflow/providers/google/cloud/hooks/bigquery.py:flask_babel	tp	-	google pyproject declares no flask-babel; lock dependents only
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/handlers.py:mcp_types	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	standard-tests:libs/standard-tests/langchain_tests/integration_tests/chat_models.py:pydantic.v1	tp	-	standard-tests pyproject declares no pydantic; via langchain-core
+llama_index	CHK004	llama-index-output-parsers-guardrails:llama-index-integrations/output_parsers/llama-index-output-parsers-guardrails/llama_index/output_parsers/guardrails/base.py:deprecated	tp	-	llama-index-output-parsers-guardrails pyproject declares no deprecated; via llama-index-core
+mlflow	CHK004	mlflow/cli/scorers.py:pydantic_core	tp	-	root pyproject declares no pydantic-core; via instructor, pydantic
+airflow	CHK004	devel-common:devel-common/src/sphinx_exts/docs_build/dev_index_generator.py:jinja2	tp	-	devel-common pyproject declares no jinja2; via apache-airflow-core, diagrams
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/wire_production.py:mcp_types.version	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/retrievers/document_compressors/chain_extract.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-vector-stores-txtai:llama-index-integrations/vector_stores/llama-index-vector-stores-txtai/llama_index/vector_stores/txtai/base.py:numpy	tp	-	llama-index-vector-stores-txtai pyproject declares no numpy; via llama-index-core
+mlflow	CHK004	mlflow/spark/autologging.py:py4j.java_gateway	tp	-	root pyproject declares no py4j; via pyspark
+airflow	CHK004	weaviate:providers/weaviate/src/airflow/providers/weaviate/hooks/weaviate.py:flask_babel	tp	-	weaviate pyproject declares no flask-babel; lock dependents only (lock-only edge)
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/cli/apps_dev.py:httpcore2	tp	-	fastmcp_slim pyproject declares no httpcore2; via httpx2
+langchain	CHK004	ollama:libs/partners/ollama/langchain_ollama/embeddings.py:typing_extensions	tp	-	ollama pyproject declares no typing-extensions; via langchain-core, pytest-asyncio
+llama_index	CHK004	llama-index-embeddings-llm-rails:llama-index-integrations/embeddings/llama-index-embeddings-llm-rails/llama_index/embeddings/llm_rails/base.py:requests.adapters	tp	-	llama-index-embeddings-llm-rails pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/gateway/providers/vertex_ai.py:google.oauth2	tp	-	optional try-import; root pyproject declares no google-auth; via databricks-sdk, google-cloud-storage
+airflow	CHK004	google:providers/google/src/airflow/providers/google/cloud/transfers/postgres_to_gcs.py:pendulum	tp	-	google pyproject declares no pendulum; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/resources/base.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-llms-perplexity:llama-index-integrations/llms/llama-index-llms-perplexity/llama_index/llms/perplexity/base.py:aiohttp	tp	-	llama-index-llms-perplexity pyproject declares no aiohttp; via llama-index-core
+mlflow	CHK004	mlflow/langchain/autolog.py:langchain_core.callbacks	tp	-	optional try-import; root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	iceberg:providers/apache/iceberg/src/airflow/providers/apache/iceberg/version_compat.py:packaging.version	tp	-	iceberg pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/server.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/embedding_distance/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-vector-stores-oceanbase:llama-index-integrations/vector_stores/llama-index-vector-stores-oceanbase/llama_index/vector_stores/oceanbase/base.py:numpy	tp	-	llama-index-vector-stores-oceanbase pyproject declares no numpy; via llama-index-core, pyobvector
+mlflow	CHK004	mlflow/server/gateway_api.py:zstandard	tp	-	optional try-import; zstandard appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	jenkins:providers/jenkins/src/airflow/providers/jenkins/__init__.py:packaging.version	tp	-	jenkins pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/creation.py:mcp_types	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	mistralai:libs/partners/mistralai/langchain_mistralai/chat_models.py:typing_extensions	tp	-	mistralai pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-readers-whisper:llama-index-integrations/readers/llama-index-readers-whisper/llama_index/readers/whisper/base.py:fsspec	tp	-	llama-index-readers-whisper pyproject declares no fsspec; via llama-index-core
+mlflow	CHK004	mlflow/xgboost/__init__.py:cycler	tp	-	root pyproject declares no cycler; via matplotlib
+airflow	CHK004	openfaas:providers/openfaas/src/airflow/providers/openfaas/hooks/openfaas.py:requests	tp	-	openfaas pyproject declares no requests; via root apache-airflow-breeze, apache-airflow-core
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/settings.py:pydantic	tp	-	hatch hook deps of fastmcp_tasks omit pydantic; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/combine_documents/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-llms-google-genai:llama-index-integrations/llms/llama-index-llms-google-genai/llama_index/llms/google_genai/base.py:google.auth	tp	-	llama-index-llms-google-genai pyproject declares no google-auth; via google-genai
+mlflow	CHK004	mlflow/server/handlers.py:werkzeug.wsgi	tp	-	root pyproject declares no werkzeug; via flask, flask-cors
+airflow	CHK004	keycloak:providers/keycloak/src/airflow/providers/keycloak/auth_manager/keycloak_auth_manager.py:requests.adapters	tp	-	keycloak pyproject declares no requests; via python-keycloak
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/client_models.py:pydantic	tp	-	hatch hook deps of fastmcp_tasks omit pydantic; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/openai_functions/citation_fuzzy_match.py:regex	tp	-	langchain pyproject declares no regex; lock dependents only
+llama_index	CHK004	llama-index-storage-kvstore-azure:llama-index-integrations/storage/kvstore/llama-index-storage-kvstore-azure/llama_index/storage/kvstore/azure/base.py:azure.core.exceptions	tp	-	optional try-import; llama-index-storage-kvstore-azure pyproject declares no azure-core; via azure-data-tables
+mlflow	CHK004	mlflow/gateway/providers/vertex_ai.py:google.auth.transport.requests	tp	-	optional try-import; root pyproject declares no google-auth; via databricks-sdk, google-cloud-storage
+airflow	CHK004	kubernetes:providers/cncf/kubernetes/src/airflow/providers/cncf/kubernetes/python_kubernetes_script.py:jinja2	tp	-	kubernetes pyproject declares no jinja2; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/input_store.py:mcp_types	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/regex_match/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-gcs:llama-index-integrations/readers/llama-index-readers-gcs/llama_index/readers/gcs/base.py:google.oauth2	tp	-	llama-index-readers-gcs pyproject declares no google-auth; via gcsfs
+mlflow	CHK004	mlflow/genai/simulators/distillation.py:tqdm.auto	tp	-	optional try-import; tqdm appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	devel-common:devel-common/src/tests_common/test_utils/perf/perf_kit/sqlalchemy.py:pygments	tp	-	devel-common pyproject declares no pygments; via apache-airflow-core, pytest
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/middleware/caching.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	core:libs/core/langchain_core/vectorstores/in_memory.py:numpy	tp	-	optional try-import; numpy declared only in group:test of core pyproject; runtime import, member groups are strict-only so CHK004 stands
+llama_index	CHK004	llama-index-embeddings-oci-data-science:llama-index-integrations/embeddings/llama-index-embeddings-oci-data-science/llama_index/embeddings/oci_data_science/client.py:httpx	tp	-	llama-index-embeddings-oci-data-science pyproject declares no httpx; via llama-index-core
+mlflow	CHK004	mlflow/spark/__init__.py:py4j.protocol	tp	-	root pyproject declares no py4j; via pyspark
+airflow	CHK004	opensearch:providers/opensearch/src/airflow/providers/opensearch/__init__.py:packaging.version	tp	-	opensearch pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/cli/generate.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	langchain:libs/langchain/langchain_classic/output_parsers/fix.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-extractors-marvin:llama-index-integrations/extractors/llama-index-extractors-marvin/llama_index/extractors/marvin/base.py:pydantic	tp	-	llama-index-extractors-marvin pyproject declares no pydantic; via llama-index-core, marvin
+mlflow	CHK004	mlflow/gateway/config.py:limits	tp	-	root pyproject declares no limits; via slowapi
+airflow	CHK004	qdrant:providers/qdrant/src/airflow/providers/qdrant/__init__.py:packaging.version	tp	-	qdrant pyproject declares no packaging; via apache-airflow-task-sdk
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/input_loop.py:mcp_types	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/memory/entity.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-quip:llama-index-integrations/readers/llama-index-readers-quip/llama_index/readers/quip/base.py:pydantic	tp	-	llama-index-readers-quip pyproject declares no pydantic; via llama-index-core
+mlflow	CHK004	mlflow/langchain/databricks_dependencies.py:langchain_core.runnables	tp	-	optional try-import; root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	azure:providers/microsoft/azure/src/airflow/providers/microsoft/azure/hooks/fileshare.py:wtforms	tp	-	azure pyproject declares no wtforms; via root apache-airflow-providers-fab (lock-only edge)
+fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/tools/function_parsing.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
+langchain	CHK004	fireworks:libs/partners/fireworks/langchain_fireworks/embeddings.py:pydantic	tp	-	fireworks pyproject declares no pydantic; via fireworks-ai, langchain
+llama_index	CHK004	llama-index-llms-vllm:llama-index-integrations/llms/llama-index-llms-vllm/llama_index/llms/vllm/utils.py:requests	tp	-	llama-index-llms-vllm pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/store/artifact/gcs_artifact_repo.py:google.auth.exceptions	tp	-	root pyproject declares no google-auth; via databricks-sdk, google-cloud-storage
+airflow	CHK004	influxdb:providers/influxdb/src/airflow/providers/influxdb/hooks/influxdb.py:wtforms	tp	-	influxdb pyproject declares no wtforms; via root apache-airflow-providers-fab (lock-only edge)
+fastmcp	CHK004	fastmcp_tasks:fastmcp_tasks/fastmcp_tasks/client.py:mcp_types	tp	-	hatch hook deps of fastmcp_tasks omit mcp-types; via fastmcp-slim
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/query_constructor/parser.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-s3:llama-index-integrations/readers/llama-index-readers-s3/llama_index/readers/s3/base.py:typing_extensions	tp	-	llama-index-readers-s3 pyproject declares no typing-extensions; via black, llama-index-core
+mlflow	CHK004	mlflow/webhooks/ssrf.py:urllib3.connectionpool	tp	-	root pyproject declares no urllib3; via azureml-core, botocore
+airflow	CHK004	amazon:providers/amazon/src/airflow/providers/amazon/aws/auth_manager/aws_auth_manager.py:fastapi	tp	-	amazon pyproject declares no fastapi; via root apache-airflow-core
+langchain	CHK004	deepseek:libs/partners/deepseek/langchain_deepseek/chat_models.py:typing_extensions	tp	-	deepseek pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-embeddings-jinaai:llama-index-integrations/embeddings/llama-index-embeddings-jinaai/llama_index/embeddings/jinaai/base.py:aiohttp	tp	-	llama-index-embeddings-jinaai pyproject declares no aiohttp; via llama-index-core
+mlflow	CHK004	mlflow/genai/evaluation/harness.py:tqdm.auto	tp	-	optional try-import; tqdm appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	keycloak:providers/keycloak/src/airflow/providers/keycloak/auth_manager/keycloak_auth_manager.py:requests	tp	-	keycloak pyproject declares no requests; via python-keycloak
+langchain	CHK004	perplexity:libs/partners/perplexity/langchain_perplexity/embeddings.py:pydantic	tp	-	perplexity pyproject declares no pydantic; via langchain-core, perplexityai
+llama_index	CHK004	llama-index-vector-stores-redis:llama-index-integrations/vector_stores/llama-index-vector-stores-redis/llama_index/vector_stores/redis/base.py:fsspec	tp	-	llama-index-vector-stores-redis pyproject declares no fsspec; via llama-index-core
+mlflow	CHK004	mlflow/transformers/__init__.py:huggingface_hub	tp	-	optional try-import; root pyproject declares no huggingface-hub; via datasets
+airflow	CHK004	amazon:providers/amazon/src/airflow/providers/amazon/aws/hooks/base_aws.py:tenacity	tp	-	amazon pyproject declares no tenacity; via apache-airflow-providers-google, apache-airflow-task-sdk
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chat_models/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-file:llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/slides/content_extractor.py:pptx.enum.shapes	tp	-	python-pptx declared only in group:dev of llama-index-readers-file pyproject; runtime import, member groups are strict-only so CHK004 stands (lock-only edge)
+mlflow	CHK004	mlflow/tracking/context/jupyter_notebook_context.py:jupyter_core.paths	tp	-	optional try-import; root pyproject declares no jupyter-core; via nbconvert, nbformat
+airflow	CHK004	clickhousedb:providers/clickhousedb/src/airflow/providers/clickhousedb/__init__.py:packaging.version	tp	-	clickhousedb pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain:libs/langchain/langchain_classic/agents/output_parsers/react_single_input.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-document360:llama-index-integrations/readers/llama-index-readers-document360/llama_index/readers/document360/entities/article_slim.py:pydantic	tp	-	llama-index-readers-document360 pyproject declares no pydantic; via llama-index-core
+mlflow	CHK004	mlflow/langchain/langchain_tracer.py:langchain_core.outputs	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	edge3:providers/edge3/src/airflow/providers/edge3/migrations/versions/0005_3_5_0_replace_individual_counters_with_.py:sqlalchemy	tp	-	edge3 pyproject declares no sqlalchemy; via apache-airflow-devel-common
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/agents/middleware/pii.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-readers-google:llama-index-integrations/readers/llama-index-readers-google/llama_index/readers/google/calendar/base.py:google.oauth2.credentials	tp	-	llama-index-readers-google pyproject declares no google-auth; via google-api-python-client, google-auth-httplib2
+mlflow	CHK004	mlflow/langchain/_compat.py:langchain_core.language_models.chat_models	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	amazon:providers/amazon/src/airflow/providers/amazon/aws/hooks/redshift_sql.py:tenacity	tp	-	amazon pyproject declares no tenacity; via apache-airflow-providers-google, apache-airflow-task-sdk
+langchain	CHK004	fireworks:libs/partners/fireworks/langchain_fireworks/embeddings.py:typing_extensions	tp	-	fireworks pyproject declares no typing-extensions; via aiohttp, fireworks-ai
+llama_index	CHK004	llama-index-readers-file:llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/flat/base.py:fsspec	tp	-	llama-index-readers-file pyproject declares no fsspec; via llama-index-core
+mlflow	CHK004	mlflow/genai/simulators/simulator.py:tqdm.auto	tp	-	optional try-import; tqdm appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	kubernetes:providers/cncf/kubernetes/src/airflow/providers/cncf/kubernetes/operators/resource.py:yaml	tp	-	kubernetes pyproject declares no pyyaml; via kubernetes, kubernetes-asyncio
+langchain	CHK004	standard-tests:libs/standard-tests/langchain_tests/unit_tests/chat_models.py:typing_extensions	tp	-	standard-tests pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-memory-mem0:llama-index-integrations/memory/llama-index-memory-mem0/llama_index/memory/mem0/base.py:typing_extensions	tp	-	llama-index-memory-mem0 pyproject declares no typing-extensions; via black, llama-index-core
+mlflow	CHK004	mlflow/claude_code/tracing.py:dateutil.parser	tp	-	root pyproject declares no python-dateutil; via azureml-core, botocore
+airflow	CHK004	kafka:providers/apache/kafka/src/airflow/providers/apache/kafka/__init__.py:packaging.version	tp	-	kafka pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain:libs/langchain/langchain_classic/agents/openai_assistant/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-document360:llama-index-integrations/readers/llama-index-readers-document360/llama_index/readers/document360/entities/article.py:pydantic	tp	-	llama-index-readers-document360 pyproject declares no pydantic; via llama-index-core
+mlflow	CHK004	mlflow/langchain/utils/chat.py:langchain_core.messages	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	postgres:providers/postgres/src/airflow/providers/postgres/hooks/postgres.py:packaging.version	tp	-	optional try-import; postgres pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	openai:libs/partners/openai/langchain_openai/embeddings/azure.py:typing_extensions	tp	-	openai pyproject declares no typing-extensions; via aiohttp, azure-identity
+llama_index	CHK004	llama-index-observability-otel:llama-index-integrations/observability/llama-index-observability-otel/llama_index/observability/otel/base.py:pydantic	tp	-	llama-index-observability-otel pyproject declares no pydantic; via llama-index-instrumentation
+mlflow	CHK004	mlflow/utils/huggingface_utils.py:huggingface_hub	tp	-	optional try-import; root pyproject declares no huggingface-hub; via datasets
+airflow	CHK004	databricks:providers/databricks/src/airflow/providers/databricks/version_compat.py:packaging.version	tp	-	databricks pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	fireworks:libs/partners/fireworks/langchain_fireworks/chat_models.py:pydantic	tp	-	fireworks pyproject declares no pydantic; via fireworks-ai, langchain
+llama_index	CHK004	llama-index-tools-aws-bedrock-agentcore:llama-index-integrations/tools/llama-index-tools-aws-bedrock-agentcore/llama_index/tools/aws_bedrock_agentcore/runtime/base.py:starlette.exceptions	tp	-	llama-index-tools-aws-bedrock-agentcore pyproject declares no starlette; via bedrock-agentcore
+mlflow	CHK004	mlflow/utils/request_utils.py:urllib3.util	tp	-	root pyproject declares no urllib3; via azureml-core, botocore
+airflow	CHK004	azure:providers/microsoft/azure/src/airflow/providers/microsoft/azure/hooks/wasb.py:flask_appbuilder.fieldwidgets	tp	-	azure pyproject declares no flask-appbuilder; via root apache-airflow-providers-fab (lock-only edge)
+langchain	CHK004	langchain:libs/langchain/langchain_classic/chains/flare/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-pebblo:llama-index-integrations/readers/llama-index-readers-pebblo/llama_index/readers/pebblo/utility.py:pydantic.v1.main	tp	-	llama-index-readers-pebblo pyproject declares no pydantic; via llama-index-core
+mlflow	CHK004	mlflow/langchain/langchain_tracer.py:langchain_core.messages	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	pinecone:providers/pinecone/src/airflow/providers/pinecone/hooks/pinecone.py:flask_babel	tp	-	pinecone pyproject declares no flask-babel; lock dependents only (lock-only edge)
+langchain	CHK004	langchain:libs/langchain/langchain_classic/smith/evaluation/config.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-vector-stores-redis:llama-index-integrations/vector_stores/llama-index-vector-stores-redis/llama_index/vector_stores/redis/base.py:redis.asyncio	tp	-	redis declared only in group:dev of llama-index-vector-stores-redis pyproject; runtime import, member groups are strict-only so CHK004 stands
+mlflow	CHK004	mlflow/langchain/utils/chat.py:langchain_core.outputs.generation	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	opsgenie:providers/opsgenie/src/airflow/providers/opsgenie/__init__.py:packaging.version	tp	-	opsgenie pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain:libs/langchain/langchain_classic/retrievers/multi_vector.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-tools-finance:llama-index-integrations/tools/llama-index-tools-finance/llama_index/tools/finance/earnings.py:requests	tp	-	llama-index-tools-finance pyproject declares no requests; via llama-index-core, newsapi-python
+mlflow	CHK004	mlflow/utils/request_utils.py:urllib3	tp	-	root pyproject declares no urllib3; via azureml-core, botocore
+airflow	CHK004	neo4j:providers/neo4j/src/airflow/providers/neo4j/__init__.py:packaging.version	tp	-	neo4j pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/chat_models/base.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-readers-database:llama-index-integrations/readers/llama-index-readers-database/llama_index/readers/database/base.py:sqlalchemy	tp	-	llama-index-readers-database pyproject declares no sqlalchemy; via llama-index-core
+mlflow	CHK004	mlflow/langchain/utils/chat.py:langchain_core.outputs	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	amazon:providers/amazon/src/airflow/providers/amazon/__init__.py:packaging.version	tp	-	amazon pyproject declares no packaging; via apache-airflow-task-sdk, redshift-connector
+langchain	CHK004	langchain:libs/langchain/langchain_classic/smith/evaluation/runner_utils.py:IPython.core.getipython	tp	-	optional try-import; langchain pyproject declares no ipython; lock dependents only
+llama_index	CHK004	llama-index-readers-graphdb-cypher:llama-index-integrations/readers/llama-index-readers-graphdb-cypher/llama_index/readers/graphdb_cypher/base.py:yaml	tp	-	llama-index-readers-graphdb-cypher pyproject declares no pyyaml; via llama-index-core, pre-commit
+mlflow	CHK004	mlflow/store/artifact/azure_blob_artifact_repo.py:azure.core.exceptions	tp	-	optional try-import; root pyproject declares no azure-core; via azure-identity, azure-storage-blob
+airflow	CHK004	pinecone:providers/pinecone/src/airflow/providers/pinecone/hooks/pinecone.py:flask_appbuilder.fieldwidgets	tp	-	pinecone pyproject declares no flask-appbuilder; via root apache-airflow-providers-fab (lock-only edge)
+langchain	CHK004	fireworks:libs/partners/fireworks/langchain_fireworks/chat_models.py:typing_extensions	tp	-	fireworks pyproject declares no typing-extensions; via aiohttp, fireworks-ai
+llama_index	CHK004	llama-index-embeddings-vertex-endpoint:llama-index-integrations/embeddings/llama-index-embeddings-vertex-endpoint/llama_index/embeddings/vertex_endpoint/base.py:google.oauth2	tp	-	llama-index-embeddings-vertex-endpoint pyproject declares no google-auth; via google-cloud-aiplatform
+mlflow	CHK004	mlflow/webhooks/ssrf.py:urllib3.poolmanager	tp	-	root pyproject declares no urllib3; via azureml-core, botocore
+airflow	CHK004	ai:providers/common/ai/src/airflow/providers/common/ai/utils/output_type.py:pydantic	tp	-	ai pyproject declares no pydantic; via apache-airflow-task-sdk, langchain
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/string_distance/base.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-tools-mcp:llama-index-integrations/tools/llama-index-tools-mcp/llama_index/tools/mcp/client.py:httpx2	tp	-	llama-index-tools-mcp pyproject declares no httpx2; via mcp
+mlflow	CHK004	mlflow/langchain/_compat.py:langchain_core.callbacks.base	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	influxdb:providers/influxdb/src/airflow/providers/influxdb/hooks/influxdb3.py:wtforms	tp	-	influxdb pyproject declares no wtforms; via root apache-airflow-providers-fab (lock-only edge)
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/parsing/json_schema.py:jsonschema	tp	-	optional try-import; langchain pyproject declares no jsonschema; lock dependents only
+llama_index	CHK004	llama-index-embeddings-azure-inference:llama-index-integrations/embeddings/llama-index-embeddings-azure-inference/llama_index/embeddings/azure_inference/base.py:azure.core.credentials	tp	-	optional try-import; llama-index-embeddings-azure-inference pyproject declares no azure-core; via azure-ai-inference, azure-identity
+mlflow	CHK004	mlflow/langchain/_compat.py:langchain_core.prompts	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	slack:providers/slack/src/airflow/providers/slack/transfers/sql_to_slack_webhook.py:tabulate	tp	-	slack pyproject declares no tabulate; via root apache-airflow-breeze, apache-airflow-core
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/agents/middleware/model_call_limit.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-vector-stores-oceanbase:llama-index-integrations/vector_stores/llama-index-vector-stores-oceanbase/llama_index/vector_stores/oceanbase/base.py:sqlalchemy.dialects.mysql	tp	-	llama-index-vector-stores-oceanbase pyproject declares no sqlalchemy; via llama-index-core, pyobvector
+mlflow	CHK004	mlflow/utils/huggingface_utils.py:huggingface_hub.utils	tp	-	optional try-import; root pyproject declares no huggingface-hub; via datasets
+airflow	CHK004	slack:providers/slack/src/airflow/providers/slack/__init__.py:packaging.version	tp	-	slack pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/agents/middleware/todo.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-readers-wordpress:llama-index-integrations/readers/llama-index-readers-wordpress/llama_index/readers/wordpress/base.py:bs4	tp	-	beautifulsoup4 appears only in llama-index-integrations/readers/llama-index-readers-wordpress/requirements.txt; extra requirements never satisfy CHK001-005
+mlflow	CHK004	mlflow/langchain/langchain_tracer.py:langchain_core.agents	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	devel-common:devel-common/src/tests_common/test_utils/api_client_helpers.py:requests.adapters	tp	-	devel-common pyproject declares no requests; via apache-airflow-core, pygithub
+langchain	CHK004	text-splitters:libs/text-splitters/langchain_text_splitters/html.py:bs4.element	tp	-	optional try-import; text-splitters pyproject declares no beautifulsoup4; lock dependents only
+llama_index	CHK004	llama-index-vector-stores-faiss:llama-index-integrations/vector_stores/llama-index-vector-stores-faiss/llama_index/vector_stores/faiss/map_store.py:fsspec.implementations.local	tp	-	llama-index-vector-stores-faiss pyproject declares no fsspec; via llama-index-core
+mlflow	CHK004	mlflow/langchain/chat_agent_langgraph.py:langchain_core.runnables	tp	-	optional try-import; root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	opensearch:providers/opensearch/src/airflow/providers/opensearch/version_compat.py:packaging.version	tp	-	opensearch pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain:libs/langchain/langchain_classic/evaluation/embedding_distance/base.py:tiktoken	tp	-	optional try-import; langchain pyproject declares no tiktoken; via langchain-openai
+llama_index	CHK004	llama-index-readers-quip:llama-index-integrations/readers/llama-index-readers-quip/llama_index/readers/quip/base.py:requests	tp	-	llama-index-readers-quip pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/protos/unity_catalog_prompt_messages_pb2_grpc.py:grpc	tp	-	optional try-import; root pyproject declares no grpcio; via deepeval, opentelemetry-exporter-otlp-proto-grpc
+airflow	CHK004	devel-common:devel-common/src/tests_common/test_utils/perf/perf_kit/sqlalchemy.py:pygments.lexers.sql	tp	-	devel-common pyproject declares no pygments; via apache-airflow-core, pytest
+langchain	CHK004	huggingface:libs/partners/huggingface/langchain_huggingface/embeddings/huggingface.py:pydantic	tp	-	huggingface pyproject declares no pydantic; via langchain, langchain-core
+llama_index	CHK004	llama-index-tools-openai:llama-index-integrations/tools/llama-index-tools-openai/llama_index/tools/openai/image_generation/base.py:PIL	tp	-	optional try-import; llama-index-tools-openai pyproject declares no pillow; via llama-index-core
+mlflow	CHK004	mlflow/webhooks/delivery.py:urllib3.util.retry	tp	-	root pyproject declares no urllib3; via azureml-core, botocore
+airflow	CHK004	snowflake:providers/snowflake/src/airflow/providers/snowflake/hooks/snowflake_sql_api.py:requests.exceptions	tp	-	snowflake pyproject declares no requests; via responses, snowflake-connector-python
+langchain	CHK004	langchain:libs/langchain/langchain_classic/memory/summary_buffer.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-google:llama-index-integrations/readers/llama-index-readers-google/llama_index/readers/google/sheets/base.py:google	tp	-	optional try-import; bare `import google` namespace; member declares googleapiclient/oauthlib dists only, no google.* provider; dist pick is heuristic but the gap is real
+mlflow	CHK004	mlflow/langchain/_compat.py:langchain_core.callbacks.manager	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	ai:providers/common/ai/src/airflow/providers/common/ai/policies/retry.py:pydantic	tp	-	ai pyproject declares no pydantic; via apache-airflow-task-sdk, langchain
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/agents/middleware/tool_call_limit.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-readers-openalex:llama-index-integrations/readers/llama-index-readers-openalex/llama_index/readers/openalex/base.py:requests	tp	-	llama-index-readers-openalex pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/entities/model_registry/prompt_version.py:jinja2	tp	-	optional try-import; jinja2 appears only in requirements/doc-min-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	cloudant:providers/cloudant/src/airflow/providers/cloudant/version_compat.py:packaging.version	tp	-	cloudant pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain:libs/langchain/langchain_classic/output_parsers/combining.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-llms-openai:llama-index-integrations/llms/llama-index-llms-openai/llama_index/llms/openai/base.py:tiktoken	tp	-	llama-index-llms-openai pyproject declares no tiktoken; via llama-index-core
+mlflow	CHK004	mlflow/store/artifact/artifact_repo.py:PIL	tp	-	pillow appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	hive:providers/apache/hive/src/airflow/providers/apache/hive/hooks/hive.py:deprecated	tp	-	hive pyproject declares no deprecated; via root apache-airflow-core
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/agents/middleware/types.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-llms-llama-cpp:llama-index-integrations/llms/llama-index-llms-llama-cpp/llama_index/llms/llama_cpp/base.py:requests	tp	-	llama-index-llms-llama-cpp pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/store/artifact/sftp_artifact_repo.py:paramiko	tp	-	root pyproject declares no paramiko; via azureml-core, pysftp
+airflow	CHK004	odbc:providers/odbc/src/airflow/providers/odbc/__init__.py:packaging.version	tp	-	odbc pyproject declares no packaging; via apache-airflow-task-sdk
+langchain	CHK004	langchain:libs/langchain/langchain_classic/retrievers/ensemble.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-llms-azure-openai:llama-index-integrations/llms/llama-index-llms-azure-openai/llama_index/llms/azure_openai/utils.py:azure.core.exceptions	tp	-	llama-index-llms-azure-openai pyproject declares no azure-core; via azure-identity
+mlflow	CHK004	mlflow/langchain/_compat.py:langchain_core.output_parsers	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	amazon:providers/amazon/src/airflow/providers/amazon/aws/hooks/base_aws.py:google.auth.transport	tp	-	amazon pyproject declares no google-auth; via apache-airflow-providers-google
+langchain	CHK004	xai:libs/partners/xai/langchain_xai/chat_models.py:typing_extensions	tp	-	xai pyproject declares no typing-extensions; via aiohttp, langchain-core
+llama_index	CHK004	llama-index-llms-monsterapi:llama-index-integrations/llms/llama-index-llms-monsterapi/llama_index/llms/monsterapi/base.py:pydantic	tp	-	llama-index-llms-monsterapi pyproject declares no pydantic; via llama-index-core
+mlflow	CHK004	mlflow/langchain/output_parsers.py:langchain_core.messages.base	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	observability:shared/observability/src/airflow_shared/observability/traces/__init__.py:opentelemetry.sdk.trace.export	tp	-	observability pyproject declares no opentelemetry-sdk; lock dependents only
+langchain	CHK004	typesafe:libs/partners/typesafe/langchain_typesafe/classifier.py:langsmith.run_helpers	tp	-	typesafe pyproject declares no langsmith; via langchain-core
+llama_index	CHK004	llama-index-vector-stores-google:llama-index-integrations/vector_stores/llama-index-vector-stores-google/llama_index/vector_stores/google/genai_extension.py:google.auth	tp	-	llama-index-vector-stores-google pyproject declares no google-auth; via google-generativeai
+mlflow	CHK004	mlflow/langchain/autolog.py:langchain_core.runnables	tp	-	optional try-import; root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	opensearch:providers/opensearch/src/airflow/providers/opensearch/log/os_task_handler.py:attrs	tp	-	opensearch pyproject declares no attrs; via apache-airflow-task-sdk
+langchain	CHK004	openai:libs/partners/openai/langchain_openai/chat_models/base.py:pydantic.v1	tp	-	openai pyproject declares no pydantic; via langchain, langchain-core
+llama_index	CHK004	llama-index-readers-document360:llama-index-integrations/readers/llama-index-readers-document360/llama_index/readers/document360/base.py:requests	tp	-	llama-index-readers-document360 pyproject declares no requests; via llama-index-core
+mlflow	CHK004	mlflow/langchain/langchain_tracer.py:tenacity	tp	-	tenacity appears only in requirements/extra-ml-requirements.txt; extra requirements never satisfy CHK001-005
+airflow	CHK004	azure:providers/microsoft/azure/src/airflow/providers/microsoft/azure/hooks/data_lake.py:wtforms	tp	-	azure pyproject declares no wtforms; via root apache-airflow-providers-fab (lock-only edge)
+langchain	CHK004	perplexity:libs/partners/perplexity/langchain_perplexity/tools.py:pydantic	tp	-	perplexity pyproject declares no pydantic; via langchain-core, perplexityai
+llama_index	CHK004	llama-index-vector-stores-firestore:llama-index-integrations/vector_stores/llama-index-vector-stores-firestore/llama_index/vector_stores/firestore/utils.py:google.cloud.firestore_v1.services.firestore.transports.base	fp	map-gap	map-gap: google.cloud.firestore_v1 is provided by declared google-cloud-firestore; mapped to google-api-core instead
+mlflow	CHK004	mlflow/langchain/langchain_tracer.py:langchain_core.documents	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
+airflow	CHK004	devel-common:devel-common/src/sphinx_exts/docs_build/code_utils.py:pygments.formatters.terminal	tp	-	devel-common pyproject declares no pygments; via apache-airflow-core, pytest
+langchain	CHK004	langchain:libs/langchain/langchain_classic/agents/output_parsers/openai_functions.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
+llama_index	CHK004	llama-index-readers-google:llama-index-integrations/readers/llama-index-readers-google/llama_index/readers/google/gmail/base.py:google.auth.transport.requests	tp	-	llama-index-readers-google pyproject declares no google-auth; via google-api-python-client, google-auth-httplib2
+mlflow	CHK004	mlflow/store/artifact/gcs_artifact_repo.py:google.oauth2.credentials	tp	-	root pyproject declares no google-auth; via databricks-sdk, google-cloud-storage
+airflow	CHK004	task-sdk:task-sdk/src/airflow/sdk/definitions/_internal/decorators.py:libcst	tp	-	task-sdk pyproject declares no libcst; via apache-airflow-core
+langchain	CHK004	langchain_v1:libs/langchain_v1/langchain/mcp/elicitation.py:typing_extensions	tp	-	langchain_v1 pyproject declares no typing-extensions; via langchain-core, mypy
+llama_index	CHK004	llama-index-embeddings-google-genai:llama-index-integrations/embeddings/llama-index-embeddings-google-genai/llama_index/embeddings/google_genai/base.py:requests	tp	-	llama-index-embeddings-google-genai pyproject declares no requests; via google-genai, llama-index-core
+mlflow	CHK004	mlflow/genai/utils/trace_utils.py:nest_asyncio	tp	-	optional try-import; root pyproject declares no nest-asyncio; via deepeval, ragas
+airflow	CHK006	devel-common/src/docs/provider_conf.py:html_theme_options	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/client/oauth_callback.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mcp-python-sdk	CHK006	src/mcp/shared/_httpx_utils.py:MCP_DEFAULT_SSE_READ_TIMEOUT	tp	-	constant in a private module (_httpx_utils); no references outside the module
+mlflow	CHK006	mlflow/claude_code/config.py:HOOK_FIELD_COMMAND	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/self/add.py:SelfAddCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfAddCommand"
+airflow	CHK006	airflow-core/src/airflow/utils/context.py:OutletEventAccessors	tp	-	task-sdk has its own copy; patches target airflow.sdk.execution_time.context, not this class
+fastmcp	CHK006	fastmcp_slim/fastmcp/settings.py:TEN_MB_IN_BYTES	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mcp-python-sdk	CHK006	src/mcp/shared/message.py:ResumptionTokenUpdateCallback	tp	-	no references outside the module
+mlflow	CHK006	mlflow/langchain/_compat.py:import_runnable	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/env/remove.py:EnvRemoveCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "EnvRemoveCommand"
+airflow	CHK006	airflow-core/src/airflow/cli/commands/api_server_command.py:PS	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/settings.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mcp-python-sdk	CHK006	src/mcp/client/subscriptions.py:OnEvent	fp	library-public-api	listed in __all__ of mcp.client.subscriptions; module documented in docs/migration.md
+mlflow	CHK006	mlflow/server/constants.py:FLASK_SERVER_SECRET_KEY_ENV_VAR	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/self/update.py:SelfUpdateCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfUpdateCommand"
+airflow	CHK006	devel-common/src/docs/provider_conf.py:html_css_files	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/exceptions.py:InvalidSignature	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mcp-python-sdk	CHK006	src/mcp/server/__main__.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/tensorflow/__init__.py:get_default_conda_env	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.tensorflow.get_default_conda_env)
+poetry	CHK006	src/poetry/installation/chef.py:ChefError	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/api_fastapi/common/db/common.py:AsyncSessionDep	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/providers/local_provider/decorators/tools.py:DuplicateBehavior	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/langchain/model.py:get_default_conda_env	tp	-	flavor __init__ re-exports selectively and omits it; not in api inventory
+poetry	CHK006	src/poetry/console/commands/cache/list.py:CacheListCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "CacheListCommand"
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_AUDIT_LOG	fp	external-reference	read as permissions.RESOURCE_AUDIT_LOG in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/tasks.py:TaskMeta	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/models/rag_signatures.py:ChainCompletionChunk	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/source/remove.py:SourceRemoveCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SourceRemoveCommand"
+airflow	CHK006	airflow-core/src/airflow/utils/cli_action_loggers.py:register_post_exec_callback	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/resources/types.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/utils/databricks_utils.py:get_databricks_model_version_url	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/source/add.py:SourceAddCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SourceAddCommand"
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:ClearPartitionsBody	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/tool_injection.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/utils/mlflow_tags.py:MLFLOW_EXPERIMENT_DATABRICKS_TELEMETRY_DESTINATION_ID	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/debug/tags.py:DebugTagsCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "DebugTagsCommand"
+airflow	CHK006	airflow-ctl/src/airflowctl/ctl/commands/auth_command.py:get_token	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/telemetry.py:get_protocol_span_attributes	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/utils/databricks_utils.py:get_job_type_info	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/python/list.py:PythonListCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "PythonListCommand"
+airflow	CHK006	airflow-core/src/airflow/api_fastapi/execution_api/routes/hitl.py:log	tp	-	module-level logger/tracer unused even in-module
+fastmcp	CHK006	fastmcp_slim/fastmcp/tools/tool_transform.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/tensorflow/autologging.py:extract_input_example_from_tf_input_fn	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/new.py:NewCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "NewCommand"
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:AssetEventCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/elicitation.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/genai/judges/builtin_judges.py:BuiltinJudge	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/debug/resolve.py:DebugResolveCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "DebugResolveCommand"
+airflow	CHK006	devel-common/src/docs/provider_conf.py:autodoc_mock_imports	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/middleware.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/utils/data_utils.py:parse_s3_uri	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/self/show/plugins.py:SelfShowPluginsCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfShowPluginsCommand"
+airflow	CHK006	devel-common/src/sphinx_exts/docs_build/code_utils.py:DOCS_SOURCES_PATH	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/telemetry.py:record_span_error	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/tracing/utils/__init__.py:SPANS_COLUMN_NAME	tp	-	no references outside the module
+poetry	CHK006	src/poetry/console/commands/source/show.py:SourceShowCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SourceShowCommand"
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:DAG_ACTIONS	fp	external-reference	read as permissions.DAG_ACTIONS in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/json_schema_type.py:JSONSchema	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/shap/__init__.py:get_default_conda_env	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.shap.get_default_conda_env)
+poetry	CHK006	src/poetry/console/commands/env/info.py:EnvInfoCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "EnvInfoCommand"
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_WEBSITE	fp	external-reference	read as permissions.RESOURCE_WEBSITE in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/cli.py:LOGO_ASCII_3	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/deployments/databricks/__init__.py:target_help	fp	name-convention	deployment plugin interface: plugin_manager checks the module has target_help/run_local via inspect.getmembers
+poetry	CHK006	src/poetry/repositories/pypi_repository.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+airflow	CHK006	airflow-core/src/airflow/api_fastapi/execution_api/datamodels/asset.py:AssetAliasResponse	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/cli.py:LOGO_ASCII_1	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/dspy/save.py:get_default_conda_env	tp	-	flavor __init__ re-exports selectively and omits it; not in api inventory
+poetry	CHK006	src/poetry/console/commands/cache/clear.py:CacheClearCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "CacheClearCommand"
+airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:auth_managers_list	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
+fastmcp	CHK006	fastmcp_slim/fastmcp/exceptions.py:ClientError	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:get_config	tp	-	databricks_utils calls provider objects' .get_config(), not this module function
+poetry	CHK006	src/poetry/console/commands/self/show/__init__.py:SelfShowCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfShowCommand"
+airflow	CHK006	airflow-core/src/airflow/utils/dates.py:datetime_to_nano	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/openapi/json_schema_converter.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/server/graphql/graphql_schema_extensions.py:MlflowMetricExtension	fp	dynamic-import	autogenerated graphql schema references it as a graphene.NonNull dotted-string type
+poetry	CHK006	src/poetry/puzzle/provider.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+airflow	CHK006	airflow-core/src/airflow/dag_processing/processor.py:in_process_api_server	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/ui.py:create_button_group	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/artifacts/__init__.py:load_image	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.artifacts.load_image)
+poetry	CHK006	src/poetry/console/commands/debug/info.py:DebugInfoCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "DebugInfoCommand"
+airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:connection_field_behaviours	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/context.py:set_context	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/johnsnowlabs/__init__.py:save_model	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.johnsnowlabs.save_model)
+poetry	CHK006	src/poetry/console/commands/search.py:SearchCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SearchCommand"
+airflow	CHK006	devel-common/src/tests_common/pytest_plugin.py:pytest_runtest_setup	fp	name-convention	pytest hook called by name
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_desktop.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/types/responses.py:create_mcp_approval_request_item	fp	library-public-api	documented public API (APILink in docs/api_reference for mlflow.types.responses)
+poetry	CHK006	src/poetry/utils/wheel.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:UpdateHITLDetailPayload	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/telemetry.py:get_session_span_attributes	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/pytest/plugin.py:pytest_sessionfinish	fp	name-convention	pytest hook called by name
+poetry	CHK006	src/poetry/console/commands/python/install.py:PythonInstallCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "PythonInstallCommand"
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:AssetStateStoreCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+fastmcp	CHK006	fastmcp_slim/fastmcp/apps/generative.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/__init__.py:txtai	fp	library-public-api	LazyLoader proxy for the external mlflow-txtai flavor; docs show mlflow.txtai.autolog()
+poetry	CHK006	src/poetry/console/commands/about.py:AboutCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "AboutCommand"
+airflow	CHK006	airflow-ctl/src/airflowctl/ctl/cli_config.py:BUILD_DOCS	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/caching.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/sagemaker/__init__.py:run_local	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.sagemaker.run_local)
+airflow	CHK006	airflow-core/src/airflow/triggers/shared_stream.py:AdvanceItem	fp	library-public-api	in __all__ of airflow.triggers.shared_stream; documented in event-scheduling.rst
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/auth/providers/keycloak.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/gemini/chat.py:convert_gemini_func_call_to_mlflow_tool_call	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/models/hitl.py:compile_postgres	tp	-	registered by @compiles decorator in the same module; the name is never referenced
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/mcp_json.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/pytorch/__init__.py:load_checkpoint	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.pytorch.load_checkpoint)
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/openapi/parser.py:OpenAPIParser	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/store/tracking/__init__.py:MAX_RESULTS_GET_METRIC_HISTORY	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/api_fastapi/gunicorn_app.py:AirflowGunicornLogger	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/tasks.py:DEFAULT_TTL_MS	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/pmdarima/__init__.py:get_default_conda_env	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.pmdarima.get_default_conda_env)
+airflow	CHK006	airflow-core/src/airflow/models/asset.py:fetch_active_assets_by_name	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/tools/tool_transform.py:apply_transformations_to_tools	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/genai/discovery/constants.py:DEFAULT_TRIAGE_SAMPLE_SIZE	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_CLUSTER_ACTIVITY	fp	external-reference	read as permissions.RESOURCE_CLUSTER_ACTIVITY in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/client/auth/oauth.py:check_if_auth_required	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/claude_code/config.py:MLFLOW_LEGACY_HOOK_IDENTIFIER	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:resource_name_for_dag	tp	-	only ref is a getattr-by-name fallback in tests_common that is dead because resource_name exists
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/middleware.py:make_middleware_wrapper	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/transformers/__init__.py:log_model	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.transformers.log_model)
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:resource_name	fp	external-reference	read as permissions.resource_name in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/prompts/base.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/sagemaker/__init__.py:target_help	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.sagemaker.target_help)
+airflow	CHK006	devel-common/src/docs/provider_conf.py:templates_path	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/elicitation.py:ScalarElicitationType	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/utils/docstring_utils.py:get_module_min_and_max_supported_ranges	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/policies.py:task_instance_mutation_hook	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_code.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/tracing/utils/warning.py:request_id_backward_compatible	tp	-	no references outside the module
+airflow	CHK006	devel-common/src/docs/provider_conf.py:spelling_exclude_patterns	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/client/auth/bearer.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/gateway/schemas/completions.py:StreamDelta	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_HITL_DETAIL	fp	external-reference	read as permissions.RESOURCE_HITL_DETAIL in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/cli.py:LOGO_ASCII_2	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:get_config_provider	tp	-	legacy databricks cli compat module; no references outside the module
+airflow	CHK006	devel-common/src/docs/provider_conf.py:redirects_file	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/mixins/lifespan.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/store/tracking/dbmodels/initial_models.py:SqlMetric	fp	external-reference	table registered on initial_models.Base metadata; db/utils imports Base as InitialBase for migrations
+airflow	CHK006	airflow-core/src/airflow/configuration.py:ConfigOptionsDictType	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/decorators.py:HasFastMCPMeta	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/utils/file_utils.py:read_yaml	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/models/taskmap.py:tracer	tp	-	module-level logger/tracer unused even in-module
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/sessions.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/llama_index/model.py:get_default_conda_env	tp	-	flavor __init__ re-exports selectively and omits it; not in api inventory
+airflow	CHK006	airflow-core/src/airflow/listeners/spec/dagrun.py:on_dag_run_running	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/providers/filesystem_discovery.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/metrics/genai/prompts/v1.py:grading_system_prompt_template	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/cli/commands/task_command.py:task_failed_deps	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
+fastmcp	CHK006	fastmcp_slim/fastmcp/experimental/transforms/code_mode.py:SandboxProvider	fp	library-public-api	listed in the module's __all__ and documented in docs/servers/transforms/code-mode.mdx
+mlflow	CHK006	mlflow/spark/__init__.py:get_default_conda_env	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.spark.get_default_conda_env)
+airflow	CHK006	airflow-core/src/airflow/policies.py:pod_mutation_hook	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/generate.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:update_and_persist_config	tp	-	legacy databricks cli compat module; no references outside the module
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_CONFIG	fp	external-reference	read as permissions.RESOURCE_CONFIG in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/decorators.py:resolve_task_config	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/environment_variables.py:MLFLOW_PROMPT_CACHE_MAX_SIZE	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_DOCS_MENU	fp	external-reference	read as permissions.RESOURCE_DOCS_MENU in providers/fab via `from airflow.security import permissions` (module-attribute access)
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/elicitation.py:ElicitConfig	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/langchain/chat_agent_langgraph.py:ChatAgentToolNode	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.langchain.chat_agent_langgraph.ChatAgentToolNode)
+airflow	CHK006	airflow-core/src/airflow/utils/helpers.py:GROUP_KEY_REGEX	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/client.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/deployments/mlflow/__init__.py:run_local	fp	name-convention	deployment plugin interface: plugin_manager checks the module has target_help/run_local via inspect.getmembers
+airflow	CHK006	devel-common/src/sphinx_exts/docs_build/code_utils.py:pretty_format_path	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/types.py:ContextSamplingFallbackProtocol	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/deployments/base.py:run_local	fp	name-convention	deployment plugin interface: plugin_manager checks the module has target_help/run_local via inspect.getmembers
+airflow	CHK006	devel-common/src/docs/build_docs.py:ON_GITHUB_ACTIONS	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/stdio.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/demo/data.py:LinkedPromptRef	tp	-	no references outside the module
+airflow	CHK006	devel-common/src/docs/provider_conf.py:html_short_title	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/cimd.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/claude_code/config.py:MLFLOW_HOOK_IDENTIFIER	tp	-	no references outside the module
+airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:HITLDetailCollection	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
+fastmcp	CHK006	fastmcp_remote/fastmcp_remote/__init__.py:__version__	fp	name-convention	dunder version metadata of fastmcp_remote; read by name (importlib.metadata/tests patch)
+mlflow	CHK006	mlflow/deployments/openai/__init__.py:run_local	fp	name-convention	deployment plugin interface: plugin_manager checks the module has target_help/run_local via inspect.getmembers
+airflow	CHK006	devel-common/src/tests_common/pytest_plugin.py:AIRFLOW_PROVIDERS_ROOT_PATH	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/goose.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:set_config_provider	tp	-	legacy databricks cli compat module; no references outside the module
+airflow	CHK006	airflow-core/src/airflow/cli/cli_config.py:ARG_SHUT_DOWN_LOGGING	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/gemini_cli.py:check_gemini_cli_available	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
+mlflow	CHK006	mlflow/shap/__init__.py:log_explainer	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.shap.log_explainer)
+airflow	CHK006	airflow-core/src/airflow/utils/net.py:get_host_ip_address	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/telemetry.py:record_span_exception	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/openai/model.py:get_default_conda_env	tp	-	flavor __init__ re-exports selectively and omits it; not in api inventory
+airflow	CHK006	devel-common/src/docs/provider_conf.py:swagger_present_uri	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+fastmcp	CHK006	fastmcp_slim/fastmcp/server/telemetry.py:SEAM_SPAN_MARKER	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
+mlflow	CHK006	mlflow/deployments/databricks/__init__.py:run_local	fp	name-convention	deployment plugin interface: plugin_manager checks the module has target_help/run_local via inspect.getmembers
+airflow	CHK006	airflow-core/src/airflow/serialization/serialized_objects.py:AssetT	tp	-	no references outside the module
+fastmcp	CHK006	fastmcp_slim/fastmcp/apps/app.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
+mlflow	CHK006	mlflow/models/notebook_resources/eval_with_synthetic_example.py:eval_result	tp	-	notebook template script variable; no references
+airflow	CHK006	devel-common/src/docs/provider_conf.py:autoapi_add_toctree_entry	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+mlflow	CHK006	mlflow/server/auth/__init__.py:validate_can_manage_gateway_secret	tp	-	no references outside the module
+airflow	CHK006	devel-common/src/docs/provider_conf.py:keep_warnings	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
+mlflow	CHK006	mlflow/shap/__init__.py:log_explanation	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.shap.log_explanation)
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_ACTION	fp	external-reference	read as permissions.RESOURCE_ACTION in providers/fab via `from airflow.security import permissions` (module-attribute access)
+mlflow	CHK006	mlflow/utils/string_utils.py:truncate_str_from_middle	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_PASSWORD	fp	external-reference	read as permissions.RESOURCE_PASSWORD in providers/fab via `from airflow.security import permissions` (module-attribute access)
+mlflow	CHK006	mlflow/environment_variables.py:MLFLOW_DEPLOYMENTS_CONFIG	tp	-	no references outside the module
+airflow	CHK006	airflow-core/src/airflow/listeners/spec/asset.py:on_asset_alias_created	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
+mlflow	CHK006	mlflow/bedrock/__init__.py:autolog	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.bedrock.autolog)
+airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:secrets_backends_list	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
+airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:funcsigs	tp	-	installed at runtime inside the task virtualenv; not declared by the standard provider
+black	CHK010	src/black/__init__.py:_black_version	fp	generated	_black_version.py is written by hatch-vcs version-file at build time
+django	CHK010	tests/project_template/test_settings.py:test_settings	tp	-	template project settings module resolved only at runtime
+flask	CHK010	tests/test_instance_config.py:site_app	tp	-	package created at runtime under tmp_path/site-packages by the test
+langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_ibm	tp	-	optional partner package imported lazily by init_chat_model; langchain-ibm not declared by langchain
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/pymu_pdf/base.py:fitz	fp	declared-third-party	pymupdf declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
+requests	CHK010	tests/conftest.py:BaseHTTPServer	fp	stdlib	Python 2 stdlib fallback in try/except ImportError
+sqlalchemy	CHK010	test/conftest.py:sqla_pytestplugin	fp	first-party-missed	bootstrap.py registers lib/sqlalchemy/testing/plugin/pytestplugin.py in sys.modules under this name
+transformers	CHK010	tests/repo_utils/test_check_repo.py:check_repo	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
+urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:pyodide	fp	other	pyodide is a Pyodide runtime builtin module (emscripten contrib)
+virtualenv	CHK010	tests/unit/create/via_global_ref/test_race_condition.py:_virtualenv_test	tp	-	module written to a temp dir by the test at runtime
+airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_10k.py:langchain_text_splitters	tp	-	example DAG import; common.ai provider declares langchain only, langchain-text-splitters is a separate dist
+black	CHK010	src/black/cache.py:_black_version	fp	generated	_black_version.py is written by hatch-vcs version-file at build time
+django	CHK010	tests/gis_tests/test_geoip2.py:geoip2	fp	declared-third-party	geoip2 listed in tests/requirements/py3.txt
+flask	CHK010	tests/test_templating.py:blueprintapp	fp	first-party-missed	tests/test_apps/blueprintapp added to sys.path by tests/conftest.py
+langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_upstage	tp	-	optional partner package imported lazily by init_chat_model; langchain-upstage not declared by langchain
+llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/llama_index/vector_stores/weaviate/utils.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/genai/scorers/builtin_scorers.py:databricks	fp	declared-third-party	imports databricks.agents; databricks-agents declared in pyproject extra databricks but databricks.* maps only to databricks-sdk
+sqlalchemy	CHK010	lib/sqlalchemy/sql/_util_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
+transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:run_glue	fp	first-party-missed	examples/pytorch/text-classification added to sys.path by the test
+airflow	CHK010	scripts/tests/ci/prek/test_check_deferrable_default.py:check_deferrable_default	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+flask	CHK010	tests/test_instance_config.py:site_package	tp	-	package created at runtime under tmp_path/site-packages by the test
+langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_nvidia_ai_endpoints	tp	-	optional partner package imported lazily by init_chat_model; langchain-nvidia-ai-endpoints not declared by langchain
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-gaudi/llama_index/llms/gaudi/utils.py:deepspeed	tp	-	optional import; deepspeed not declared by the member pyproject
+mlflow	CHK010	tests/transformers/test_transformers_peft_model.py:peft	tp	-	optional integration; peft not declared in pyproject or requirements/*.txt
+sqlalchemy	CHK010	lib/sqlalchemy/engine/_result_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
+transformers	CHK010	src/transformers/utils/notebook.py:IPython	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/google/src/airflow/providers/google/cloud/hooks/vertex_ai/ray.py:vertex_ray	fp	declared-third-party	vertex_ray is a top-level module shipped by google-cloud-aiplatform (declared); not in the module map
+flask	CHK010	tests/test_blueprints.py:blueprintapp	fp	first-party-missed	tests/test_apps/blueprintapp added to sys.path by tests/conftest.py
+llama_index	CHK010	llama-index-core/llama_index/core/schema.py:haystack	tp	-	optional import in core schema; llama-index-core declares no haystack-ai
+mlflow	CHK010	tests/dev/test_classify_flaky_tests.py:detect_flaky_tests	fp	first-party-missed	dev/ scripts imported by name via sys.path in tests/dev
+sqlalchemy	CHK010	lib/sqlalchemy/util/_immutabledict_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
+transformers	CHK010	tests/models/auto/test_modeling_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
+airflow	CHK010	providers/atlassian/jira/src/airflow/providers/atlassian/jira/hooks/jira.py:atlassian	fp	declared-third-party	atlassian-python-api declared in the provider pyproject; module name differs from the dist name
+flask	CHK010	tests/test_instance_config.py:config_package_app	tp	-	package created at runtime under tmp_path/site-packages by the test
+llama_index	CHK010	llama-index-core/llama_index/core/postprocessor/node.py:spacy	tp	-	optional import; spacy not declared by the member pyproject
+mlflow	CHK010	tests/genai/scorers/trulens/test_trulens.py:trulens	tp	-	optional integration; trulens not declared in pyproject or requirements/*.txt
+sqlalchemy	CHK010	lib/sqlalchemy/engine/_row_cy.py:cython	fp	declared-third-party	cython in build-system.requires; optional import for compiled extensions
+transformers	CHK010	src/transformers/integrations/torchao.py:torchao	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	scripts/tests/ci/prek/test_check_http_exception_import_from_fastapi.py:check_http_exception_import_from_fastapi	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+flask	CHK010	tests/test_instance_config.py:namespace	tp	-	package created at runtime under tmp_path/site-packages by the test
+llama_index	CHK010	llama-index-core/llama_index/core/schema.py:semantic_kernel	tp	-	optional import in core schema; llama-index-core declares no semantic-kernel
+mlflow	CHK010	mlflow/genai/scorers/guardrails/registry.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
+sqlalchemy	CHK010	test/perf/compiled_extensions/collections_.py:orderedset	tp	-	optional perf-script import; orderedset not declared
+transformers	CHK010	tests/quantization/vptq_integration/test_vptq.py:vptq	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_branch_virtualenv.py:funcsigs	tp	-	installed at runtime inside the task virtualenv; not declared by the standard provider
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-azcognitive-search/llama_index/readers/azcognitive_search/base.py:azure	fp	declared-third-party	azure-search-documents declared in the member pyproject; azure is a namespace package
+mlflow	CHK010	mlflow/smolagents/autolog.py:smolagents	tp	-	optional integration; smolagents not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/models/fastspeech2_conformer/tokenization_fastspeech2_conformer.py:g2p_en	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	task-sdk/tests/task_sdk/io/test_path.py:upath	tp	-	task-sdk pyproject declares no universal-pathlib (only airflow-core does)
+llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-txtai/llama_index/vector_stores/txtai/base.py:txtai	tp	-	optional import; txtai not declared by the member pyproject
+mlflow	CHK010	mlflow/genai/judges/builtin.py:databricks	fp	declared-third-party	imports databricks.agents; databricks-agents declared in pyproject extra databricks but databricks.* maps only to databricks-sdk
+transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
+airflow	CHK010	scripts/tests/ci/prek/test_check_core_imports_in_sdk.py:check_core_imports_in_sdk	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-hubspot/llama_index/readers/hubspot/base.py:hubspot	fp	declared-third-party	hubspot-api-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/genai/scorers/guardrails/__init__.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/quantization/quanto_integration/test_quanto.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
+airflow	CHK010	scripts/tests/ci/prek/test_check_conf_import_in_providers.py:check_conf_import_in_providers	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-contextual/llama_index/llms/contextual/base.py:contextual	fp	declared-third-party	contextual-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/genai/scorers/phoenix/models.py:phoenix	tp	-	optional integration; phoenix not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/distributed/fsdp.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
+airflow	CHK010	providers/apache/tinkerpop/src/airflow/providers/apache/tinkerpop/hooks/gremlin.py:gremlin_python	fp	declared-third-party	gremlinpython declared in the provider pyproject; module name differs from the dist name
+llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-faiss/llama_index/vector_stores/faiss/base.py:faiss	fp	declared-third-party	faiss-cpu declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
+transformers	CHK010	src/transformers/utils/generic.py:mlx	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/presto/src/airflow/providers/presto/hooks/presto.py:prestodb	fp	declared-third-party	presto-python-client declared in the provider pyproject; module name differs from the dist name
+llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain	tp	-	optional langchain bridge; llama-index-core declares no langchain
+mlflow	CHK010	mlflow/ag2/ag2_logger.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
+transformers	CHK010	src/transformers/integrations/integration_utils.py:dvclive	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	task-sdk/tests/task_sdk/execution_time/test_task_runner.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
+llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/tests/test_to_weaviate_filter.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/utils/databricks_utils.py:dbruntime	tp	-	Databricks runtime-only module; never installable
+transformers	CHK010	src/transformers/modeling_utils.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	task-sdk/tests/task_sdk/execution_time/test_supervisor.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-whatsapp/llama_index/readers/whatsapp/base.py:chatminer	fp	declared-third-party	chat-miner declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/dev/test_classify_flaky_tests.py:classify_flaky_tests	fp	first-party-missed	dev/ scripts imported by name via sys.path in tests/dev
+transformers	CHK010	src/transformers/quantizers/quantizer_torchao.py:torchao	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/google/src/airflow/providers/google/cloud/utils/mlengine_prediction_summary.py:apache_beam	tp	-	google provider declares no apache-beam (only the apache.beam provider does)
+llama_index	CHK010	llama-index-integrations/agent/llama-index-agent-azure/tests/test_azure_foundry_agent.py:azure	fp	declared-third-party	azure-ai-agents declared in the member pyproject; azure is a namespace package
+mlflow	CHK010	tests/utils/test_model_utils.py:dummy_package	tp	-	fake module created by the test at runtime
+transformers	CHK010	src/transformers/quantizers/quantizer_compressed_tensors.py:compressed_tensors	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	task-sdk/src/airflow/sdk/io/path.py:upath	tp	-	task-sdk pyproject declares no universal-pathlib (only airflow-core does)
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/image/base.py:pytesseract	tp	-	readers-file declares no pytesseract
+mlflow	CHK010	mlflow/protos/unity_catalog_prompt_service_pb2_grpc.py:unity_catalog_prompt_messages_pb2	fp	generated	protoc-generated grpc stub importing the sibling pb2 module by bare name
+transformers	CHK010	tests/repo_utils/test_check_inits.py:check_inits	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
+airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_llamaindex_hook.py:llama_index	tp	-	example DAG imports llama_index.embeddings.cohere; common.ai declares no llama-index-embeddings-cohere
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-web/llama_index/readers/web/scrapfly_web/base.py:scrapfly	fp	declared-third-party	scrapfly-sdk listed in readers/web/scrapfly_web/requirements.txt
+mlflow	CHK010	mlflow/smolagents/__init__.py:smolagents	tp	-	optional integration; smolagents not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/exporters/test_export.py:executorch	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/amazon/src/airflow/providers/amazon/aws/hooks/base_aws.py:requests_gssapi	tp	-	optional SPNEGO import; amazon provider declares no requests-gssapi
+llama_index	CHK010	llama-index-core/llama_index/core/postprocessor/pii.py:transformers	tp	-	optional import; transformers not declared by the member pyproject
+mlflow	CHK010	tests/utils/test_model_utils.py:dummy_module	tp	-	fake module created by the test at runtime
+transformers	CHK010	src/transformers/integrations/integration_utils.py:flytekitplugins	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/samba/src/airflow/providers/samba/hooks/samba.py:smbclient	fp	declared-third-party	smbprotocol declared in the provider pyproject; module name differs from the dist name
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-gaudi/llama_index/llms/gaudi/utils.py:habana_quantization_toolkit	tp	-	part of the Habana SynapseAI stack, not a declared dist (optimum-habana does not ship it)
+mlflow	CHK010	mlflow/johnsnowlabs/__init__.py:johnsnowlabs	tp	-	optional integration; johnsnowlabs not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/trainer_pt_utils.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	scripts/tests/ci/prek/test_check_example_dag_tags.py:check_example_dag_tags	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-core/llama_index/core/evaluation/benchmarks/beir.py:beir	tp	-	optional import; beir not declared by the member pyproject
+mlflow	CHK010	tests/genai/scorers/test_validation.py:databricks	fp	declared-third-party	imports databricks.agents; databricks-agents declared in pyproject extra databricks but databricks.* maps only to databricks-sdk
+transformers	CHK010	tests/quantization/bnb/test_mixed_int8.py:bitsandbytes	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	task-sdk/tests/task_sdk/api/test_client.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-predibase/llama_index/llms/predibase/base.py:lorax	tp	-	predibase member declares no lorax-client
+mlflow	CHK010	mlflow/server/handlers.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock
+transformers	CHK010	src/transformers/integrations/integration_utils.py:neptune	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_tool_agent.py:langchain_text_splitters	tp	-	example DAG import; common.ai provider declares langchain only, langchain-text-splitters is a separate dist
+llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-shopify/llama_index/tools/shopify/base.py:shopify	fp	declared-third-party	shopifyapi declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/johnsnowlabs/test_johnsnowlabs_model_export.py:johnsnowlabs	tp	-	optional integration; johnsnowlabs not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/integrations/quanto.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
+airflow	CHK010	providers/presto/tests/unit/presto/hooks/test_presto.py:prestodb	fp	declared-third-party	presto-python-client declared in the provider pyproject; module name differs from the dist name
+llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/llama_index/protocols/ag_ui/router.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/langchain/test_langchain_databricks_dependency_extraction.py:databricks_langchain	tp	-	optional integration; databricks-langchain not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/repo_utils/test_checkers.py:checkers	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
+airflow	CHK010	providers/common/ai/tests/unit/common/ai/operators/test_llamaindex_embedding.py:llama_index	fp	declared-third-party	llama-index-core is declared; llama_index is a namespace package shared by several dists
+llama_index	CHK010	llama-index-integrations/output_parsers/llama-index-output-parsers-guardrails/llama_index/output_parsers/guardrails/base.py:guardrails	fp	declared-third-party	guardrails-ai declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/pytorch/test_pytorch_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
+transformers	CHK010	src/transformers/integrations/aqlm.py:aqlm	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	devel-common/src/tests_common/test_utils/gcp_system_helpers.py:unit	fp	first-party-missed	providers' tests `unit` package resolved via pytest rootdir conftest
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-wikipedia/llama_index/readers/wikipedia/base.py:wikipedia	tp	-	readers-wikipedia declares no wikipedia dist (tools-wikipedia does)
+mlflow	CHK010	tests/genai/scorers/guardrails/test_guardrails.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/models/auto/test_image_processing_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
+airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:test_bundle_pkg	tp	-	package created at runtime in tmp_path by the test
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-web/llama_index/readers/web/main_content_extractor/base.py:main_content_extractor	tp	-	optional import; main_content_extractor not declared by the member pyproject
+mlflow	CHK010	tests/genai/scorers/trulens/test_models.py:trulens	tp	-	optional integration; trulens not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/integrations/integration_utils.py:azureml	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	airflow-core/tests/unit/dags_corrupted/test_impersonation_custom.py:fake_datetime	fp	first-party-missed	sibling module in dags_corrupted loaded through the DAG folder on sys.path
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-upstage/llama_index/readers/upstage/base.py:fitz	fp	declared-third-party	pymupdf declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/diffusers/test_diffusers_model_export.py:safetensors	tp	-	optional integration; safetensors not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/integrations/tpu.py:torch_xla	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	task-sdk/tests/task_sdk/definitions/test_deadline.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
+llama_index	CHK010	llama-index-integrations/storage/chat_store/llama-index-storage-chat-store-azure/tests/test_chat_store_azure_chat_store.py:azure	fp	declared-third-party	azure-data-tables declared in the member pyproject; azure is a namespace package
+mlflow	CHK010	mlflow/paddle/__init__.py:paddle	fp	declared-third-party	paddlepaddle listed in requirements/extra-ml-requirements.txt
+transformers	CHK010	tests/repo_utils/test_check_noisy_comments.py:check_noisy_comments	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
+airflow	CHK010	task-sdk/tests/task_sdk/execution_time/schema/test_integration.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-deeplake/llama_index/readers/deeplake/base.py:deeplake	tp	-	readers-deeplake declares no deeplake
+mlflow	CHK010	tests/pytorch/test_forecasting_model.py:pytorch_forecasting	tp	-	optional integration; pytorch-forecasting not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/cache_utils.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
+airflow	CHK010	scripts/tests/ci/prek/test_check_go_example_mod_tidy.py:check_go_example_mod_tidy	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/tests/test_vector_stores_weaviate.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/crewai/__init__.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/exporters/exporter_executorch.py:executorch	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	scripts/tests/in_container/test_run_generate_constraints.py:run_generate_constraints	fp	first-party-missed	test inserts scripts/in_container into sys.path and imports the script module by name
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-friendli/llama_index/llms/friendli/base.py:friendli	fp	declared-third-party	friendli-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/smolagents/test_smolagents_autolog.py:smolagents	tp	-	optional integration; smolagents not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/models/pop2piano/test_processing_pop2piano.py:pretty_midi	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/apache/tinkerpop/tests/integration/apache/tinkerpop/hooks/test_gremlin.py:gremlin_python	fp	declared-third-party	gremlinpython declared in the provider pyproject; module name differs from the dist name
+llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/llama_index/protocols/ag_ui/utils.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/langchain/test_langchain_databricks_integration.py:databricks_langchain	tp	-	optional integration; databricks-langchain not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/quantizers/quantizer_quark.py:quark	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_10k.py:langchain_community	tp	-	example DAG import; common.ai provider declares langchain only, langchain-community is a separate dist
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-rayyan/llama_index/readers/rayyan/base.py:rayyan	fp	declared-third-party	rayyan-sdk declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/paddle/_paddle_autolog.py:paddle	fp	declared-third-party	paddlepaddle listed in requirements/extra-ml-requirements.txt
+transformers	CHK010	tests/quantization/gptq/test_gptq.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
+airflow	CHK010	scripts/tests/ci/prek/test_check_go_version_in_sync.py:check_go_version_in_sync	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/llama_index/vector_stores/weaviate/base.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/transformers/peft.py:peft	tp	-	optional integration; peft not declared in pyproject or requirements/*.txt
+transformers	CHK010	src/transformers/training_args.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	scripts/tests/ci/prek/test_check_partition_mapper_defaults_in_sync.py:check_partition_mapper_defaults_in_sync	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-predibase/llama_index/llms/predibase/base.py:predibase	tp	-	optional import; predibase not declared by the member pyproject
+mlflow	CHK010	mlflow/server/graphql/graphql_no_batching.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock
+transformers	CHK010	tests/pipelines/test_pipelines_common.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
+airflow	CHK010	scripts/tests/ci/prek/test_check_excluded_provider_markers.py:check_excluded_provider_markers	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-azure-inference/tests/test_llms_azure_inference.py:azure	fp	declared-third-party	azure-ai-inference declared in the member pyproject; azure is a namespace package
+mlflow	CHK010	mlflow/pytorch/_lightning_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
+transformers	CHK010	tests/exporters/test_export.py:openvino	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	scripts/tests/ci/prek/test_check_sdk_imports_in_core.py:check_sdk_imports_in_core	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/storage/chat_store/llama-index-storage-chat-store-azure/llama_index/storage/chat_store/azure/base.py:azure	fp	declared-third-party	azure-data-tables declared in the member pyproject; azure is a namespace package
+mlflow	CHK010	mlflow/openai/_agent_tracer.py:agents	tp	-	openai-agents not declared in pyproject or requirements
+transformers	CHK010	tests/utils/test_get_previous_daily_ci.py:get_previous_daily_ci	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
+airflow	CHK010	task-sdk/tests/task_sdk/execution_time/schema/test_migrator.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
+llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/tests/test_utils.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	mlflow/crewai/autolog.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/quantization/ggml/test_gguf_integration.py:gguf	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+airflow	CHK010	scripts/tests/ci/prek/test_check_conn_fields_match_form_widgets.py:check_provider_conn_fields	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
+llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/llama_index/protocols/ag_ui/agent.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/dev/test_annotate_flaky_tests.py:annotate_flaky_tests	fp	first-party-missed	dev/ scripts imported by name via sys.path in tests/dev
+transformers	CHK010	tests/utils/test_tokenization_utils.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
+airflow	CHK010	providers/jdbc/src/airflow/providers/jdbc/hooks/jdbc.py:jpype	fp	declared-third-party	jpype1 declared in the provider pyproject; module name differs from the dist name
+llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-weather/llama_index/tools/weather/base.py:pyowm	tp	-	tools-weather declares no pyowm
+mlflow	CHK010	mlflow/ag2/__init__.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
+transformers	CHK010	tests/repo_utils/test_split_model_tests.py:split_model_tests	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
+airflow	CHK010	airflow-core/tests/unit/core/test_settings.py:airflow_local_settings	tp	-	settings module written to a temp dir by the test at runtime
+llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-mcp-discovery/tests/test_mcp_discovery.py:base	fp	first-party-missed	sibling test helper module imported by bare name from the tool's tests dir
+mlflow	CHK010	tests/otel/test_otel_autolog.py:langfuse	tp	-	optional integration; langfuse not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/repo_utils/test_tests_fetcher.py:tests_fetcher	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
+airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_tool_agent.py:langchain_community	tp	-	example DAG import; common.ai provider declares langchain only, langchain-community is a separate dist
+llama_index	CHK010	llama-index-integrations/embeddings/llama-index-embeddings-azure-inference/llama_index/embeddings/azure_inference/base.py:azure	fp	declared-third-party	azure-ai-inference declared in the member pyproject; azure is a namespace package
+mlflow	CHK010	tests/crewai/test_crewai_autolog.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
+transformers	CHK010	tests/models/auto/test_configuration_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
+llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/tests/test_multimodal_input.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/autogen/test_autogen_autolog.py:autogen_core	tp	-	autogen-core only transitive via autogen-agentchat; not declared itself
+transformers	CHK010	tests/quantization/aqlm_integration/test_aqlm.py:aqlm	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+llama_index	CHK010	llama-index-integrations/agent/llama-index-agent-azure/llama_index/agent/azure_foundry_agent/base.py:azure	fp	declared-third-party	azure-ai-agents declared in the member pyproject; azure is a namespace package
+mlflow	CHK010	tests/langchain/test_langchain_databricks_dependency_extraction.py:databricks	tp	-	imports databricks.vector_search; databricks-vectorsearch is not declared
+transformers	CHK010	src/transformers/modeling_utils.py:hqq	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-airweave/llama_index/tools/airweave/base.py:airweave	fp	declared-third-party	airweave-sdk declared in the member pyproject; module name differs from the dist name
+mlflow	CHK010	tests/haystack/test_haystack_tracing.py:haystack	fp	declared-third-party	haystack-ai declared in pyproject
+transformers	CHK010	tests/trainer/test_trainer.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
+llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/docs/base.py:olefile	tp	-	readers-file declares no olefile (readers-hwp does)

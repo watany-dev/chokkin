@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check alone, so no other rule sees them. A name imported from a member's
   module (`from acme_util import y`) now reaches that member; the parent of
   a namespace package (`airflow` in a provider) still does not (#712).
+- CHK006 no longer reports the classes of modules a command loader fetches by
+  a computed name: when a function binds
+  `module = import_module("pkg.commands." + name)` (or
+  `f"pkg.commands.{name}"`) and calls `getattr(module, <non-literal>)`, every
+  class defined under `pkg.commands` counts as used. Functions, constants, a
+  literal `getattr` name and a walk over `getattr(module, "__all__")` are
+  judged as before (poetry, #728).
 - PEP 723 inline scripts inside a skipped nested project are analyzed
   again: they declare their own dependencies, so `script:` CHK002 / CHK003
   still reports them (#714).

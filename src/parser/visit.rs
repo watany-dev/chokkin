@@ -1,6 +1,6 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
@@ -56,6 +56,10 @@ pub(super) struct ModuleVisitor<'a> {
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
+    /// Names the current scope binds to a module a prefixed loader call
+    /// returned (`module = import_module("pkg." + name)`), with that call's
+    /// index in `dynamic_import_prefixes` (#728).
+    prefix_modules: HashMap<String, usize>,
     command_words: BTreeSet<String>,
     loaded_names: HashSet<String>,
     parsed: ParsedModule,
@@ -87,6 +91,7 @@ impl<'a> ModuleVisitor<'a> {
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
+            prefix_modules: HashMap::new(),
             command_words: BTreeSet::new(),
             loaded_names: HashSet::new(),
             parsed: ParsedModule {
@@ -211,6 +216,7 @@ impl<'a> ModuleVisitor<'a> {
         let saved = self.module_level;
         let saved_function_depth = self.function_depth;
         let saved_checked_at = self.availability_checked_at;
+        let saved_prefix_modules = std::mem::take(&mut self.prefix_modules);
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
             self.function_depth += 1;
@@ -228,6 +234,52 @@ impl<'a> ModuleVisitor<'a> {
         self.module_level = saved;
         self.function_depth = saved_function_depth;
         self.availability_checked_at = saved_checked_at;
+        self.prefix_modules = saved_prefix_modules;
+    }
+
+    /// Track `name = import_module("pkg." + x)` for a later
+    /// `getattr(name, attr)`; any other assignment drops the binding.
+    /// `index` is where the value's own prefix import would be recorded.
+    fn bind_prefix_module(&mut self, target: &Expr, value: &Expr, index: usize) {
+        let Expr::Name(name) = target else {
+            return;
+        };
+        let loads_prefix = matches!(
+            value,
+            Expr::Call(call) if self.loader_names.loader(&call.func).is_some()
+                && module_prefix(call).is_some()
+        );
+        if loads_prefix {
+            self.prefix_modules.insert(name.id.to_string(), index);
+        } else {
+            self.prefix_modules.remove(name.id.as_str());
+        }
+    }
+
+    /// `getattr(module, <non-literal>)` on a name bound by
+    /// [`Self::bind_prefix_module`] fetches an attribute the walk cannot name.
+    /// A scope that first reads `getattr(module, "__all__")` walks the names
+    /// that list exports (an import smoke test), so it drops the binding.
+    fn record_computed_getattr(&mut self, call: &ExprCall) {
+        if !matches!(&*call.func, Expr::Name(func) if func.id.as_str() == "getattr") {
+            return;
+        }
+        let [Expr::Name(receiver), attribute, ..] = &*call.arguments.args else {
+            return;
+        };
+        if let Expr::StringLiteral(literal) = attribute {
+            if literal.value.to_str() == "__all__" {
+                self.prefix_modules.remove(receiver.id.as_str());
+            }
+            return;
+        }
+        if let Some(prefix) = self
+            .prefix_modules
+            .get(receiver.id.as_str())
+            .and_then(|index| self.parsed.dynamic_import_prefixes.get_mut(*index))
+        {
+            prefix.computed_getattr = true;
+        }
     }
 
     /// `[sys.executable, "-m", "pkg"]` uses `pkg` without importing it. It is
@@ -263,6 +315,7 @@ impl<'a> ModuleVisitor<'a> {
             optional: self.is_optional_at(call),
             platform_guarded: self.platform_guard_depth > 0,
             deferred: self.function_depth > 0,
+            computed_getattr: false,
         }
     }
 
@@ -526,7 +579,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 for target in &assign.targets {
                     self.visit_expr(target);
                 }
+                let index = self.parsed.dynamic_import_prefixes.len();
                 self.visit_expr(&assign.value);
+                for target in &assign.targets {
+                    self.bind_prefix_module(target, &assign.value, index);
+                }
             },
             Stmt::AnnAssign(ann_assign) => {
                 if self.module_level
@@ -541,7 +598,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 self.visit_expr(&ann_assign.target);
                 self.visit_annotation(&ann_assign.annotation);
                 if let Some(value) = &ann_assign.value {
+                    let index = self.parsed.dynamic_import_prefixes.len();
                     self.visit_expr(value);
+                    self.bind_prefix_module(&ann_assign.target, value, index);
                 }
             },
             Stmt::TypeAlias(alias) => {
@@ -687,6 +746,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 }
             },
             Expr::Call(call) => {
+                self.record_computed_getattr(call);
                 let arguments = &call.arguments;
                 if let Some(loader) = self.loader_names.loader(&call.func) {
                     if let Some(target) =
@@ -885,6 +945,41 @@ mod tests {
         let parsed =
             visit_source("import subprocess, sys\nsubprocess.run([sys.executable, path])\n");
         assert!(parsed.runs_python_file);
+    }
+
+    #[test]
+    fn marks_prefix_imports_read_by_computed_getattr() {
+        let read = |source: &str| -> Vec<(String, bool)> {
+            visit_source(source)
+                .dynamic_import_prefixes
+                .into_iter()
+                .map(|prefix| (prefix.module, prefix.computed_getattr))
+                .collect()
+        };
+        let prefix = |module: &str, computed: bool| vec![(module.to_owned(), computed)];
+        assert_eq!(
+            read(
+                "from importlib import import_module\ndef load(name):\n    module = import_module(\"pkg.commands.\" + name)\n    return getattr(module, name.title() + \"Command\")\n"
+            ),
+            prefix("pkg.commands", true)
+        );
+        assert_eq!(
+            read(
+                "import importlib\ndef load(name):\n    module: object = importlib.import_module(f\"pkg.plugins.{name}\")\n    return getattr(module, attr, None)\n"
+            ),
+            prefix("pkg.plugins", true)
+        );
+        // A literal name, another scope, a rebound name, or a walk over
+        // `__all__` is not this pattern.
+        for source in [
+            "import importlib\ndef check(name):\n    module = importlib.import_module(\"pkg.\" + name)\n    for attr in getattr(module, \"__all__\", []):\n        getattr(module, attr)\n",
+            "import importlib\ndef load(name):\n    module = importlib.import_module(\"pkg.\" + name)\n    return getattr(module, \"Command\")\n",
+            "import importlib\ndef load(name):\n    module = importlib.import_module(\"pkg.\" + name)\n    def get(attr):\n        return getattr(module, attr)\n    return get\n",
+            "import importlib\ndef load(name):\n    module = importlib.import_module(\"pkg.\" + name)\ndef get(module, attr):\n    return getattr(module, attr)\n",
+            "import importlib\ndef load(name):\n    module = importlib.import_module(\"pkg.\" + name)\n    module = other\n    return getattr(module, attr)\n",
+        ] {
+            assert_eq!(read(source), prefix("pkg", false), "{source}");
+        }
     }
 
     #[test]
