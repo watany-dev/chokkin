@@ -575,6 +575,45 @@ fn from_imported_submodule_attribute_access_counts_as_external_reference() {
 }
 
 #[test]
+fn classes_fetched_by_computed_getattr_on_prefix_imports_are_used() {
+    // poetry's command loader (#728).
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        ("app/commands/__init__.py", ""),
+        (
+            "app/commands/self/lock.py",
+            "class SelfLockCommand:\n    pass\n\ndef helper():\n    pass\n",
+        ),
+        ("app/plugins/__init__.py", ""),
+        ("app/plugins/extra.py", "class ExtraPlugin:\n    pass\n"),
+        (
+            "app/main.py",
+            "from importlib import import_module\n\ndef load(name):\n    module = import_module(\"app.commands.\" + name)\n    return getattr(module, name.title() + \"Command\")\n\ndef plugin(name):\n    module = import_module(f\"app.plugins.{name}\")\n    return getattr(module, \"Plugin\")\n\ndef main():\n    load(\"self.lock\")\n    plugin(\"extra\")\n",
+        ),
+    ]);
+    assert!(!has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.commands.self.lock",
+        "SelfLockCommand"
+    ));
+    // Only classes, and only under a loader whose getattr name is computed.
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.commands.self.lock",
+        "helper"
+    ));
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "app.plugins.extra",
+        "ExtraPlugin"
+    ));
+}
+
+#[test]
 fn chk006_message_names_the_symbol_kind() {
     let report = analyze_generated(&[
         ("pyproject.toml", APP_PYPROJECT),

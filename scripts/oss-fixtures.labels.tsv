@@ -1148,7 +1148,6 @@ flask	CHK006	src/flask/app.py:T_template_test	info-expected	library-public-api	T
 mitmproxy	CHK006	mitmproxy/addons/core.py:LISTEN_PORT	info-expected	library-public-api	constant unused anywhere (no refs in repo, not used in-module); library mode since #652 keeps the package's public API at info
 mlflow	CHK006	mlflow/deployments/cli.py:optional_deployment_name	tp	-	click option defined but never applied; no refs in repo
 pdm	CHK006	src/pdm/signals.py:pre_invoke	fp	library-public-api	plugin signal documented in docs/usage/hooks.md for plugins to connect; emitted by name in core.py try_emit("pre_invoke")
-poetry	CHK006	src/poetry/console/commands/check.py:CheckCommand	fp	name-convention	poetry application.py loads poetry.console.commands.<name> via import_module + getattr "<Name>Command"
 uvicorn	CHK006	uvicorn/logging.py:AccessFormatter	fp	name-convention	referenced by dotted string "uvicorn.logging.AccessFormatter" in uvicorn/config.py LOGGING_CONFIG
 werkzeug	CHK006	src/werkzeug/exceptions.py:UnavailableForLegalReasons	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
 airflow	CHK006	airflow-ctl/src/airflowctl/ctl/cli_config.py:positive_int	tp	-	airflowctl cli_config.positive_int unused; refs found are to airflow.cli.cli_config (a different module) in core/providers
@@ -1158,7 +1157,6 @@ fastapi	CHK006	fastapi/responses.py:UJSONResponse	fp	library-public-api	document
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_code.py:check_claude_code_available	tp	-	CLI installer helper, no callers anywhere; only listed in auto-generated python-sdk docs page
 mitmproxy	CHK006	mitmproxy/contentviews/_api.py:logger	info-expected	library-public-api	module logger in mitmproxy.contentviews._api, private module; other `logger` hits are unrelated module-level loggers; library mode since #652 keeps the package's public API at info
 pdm	CHK006	src/pdm/formats/pipfile.py:export	fp	external-reference	pdm.formats FORMATS dict maps to modules; cli/commands/export.py calls FORMATS[fmt].export(...) (module attr access)
-poetry	CHK006	src/poetry/console/commands/self/remove.py:SelfRemoveCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.remove and getattr "SelfRemoveCommand"
 uvicorn	CHK006	uvicorn/_types.py:HTTPResponseDebugEvent	info-expected	library-public-api	TypedDict in private uvicorn._types, no refs anywhere (not even in-module unions); library mode since #652 keeps the package's public API at info
 werkzeug	CHK006	src/werkzeug/test.py:encode_multipart	fp	library-public-api	unsure: public non-underscore function in werkzeug.test module (library); undocumented, no internal refs
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskDependencyCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
@@ -1169,7 +1167,6 @@ fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/cursor.py:logger	tp	-	module log
 flask	CHK006	src/flask/app.py:T_shell_context_processor	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
 mitmproxy	CHK006	mitmproxy/proxy/mode_servers.py:DnsInstance	info-expected	library-public-api	registered via ServerInstance.__init_subclass__ registry in same module; no name refs elsewhere; library mode since #652 keeps the package's public API at info
 pdm	CHK006	src/pdm/cli/commands/search.py:Command	fp	name-convention	pdm core.py imports pdm.cli.commands.<name> and reads module.Command
-poetry	CHK006	src/poetry/console/commands/self/lock.py:SelfLockCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.lock and getattr "SelfLockCommand"
 uvicorn	CHK006	uvicorn/loops/asyncio.py:logger	info-expected	library-public-api	module logger in uvicorn.loops.asyncio, unused anywhere (not even in-module); library mode since #652 keeps the package's public API at info
 werkzeug	CHK006	src/werkzeug/exceptions.py:HTTPVersionNotSupported	fp	library-public-api	documented via autoexception in werkzeug docs/exceptions.rst
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskInstanceHistoryCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
@@ -1219,14 +1216,11 @@ airflow	CHK001	airflow-core/src/airflow/stats.py	fp	library-public	deprecated ba
 airflow	CHK001	airflow-core/src/airflow/ti_deps/deps/mapped_task_expanded.py	tp	-	MappedTaskIsExpanded referenced nowhere (only a path in scripts/cov/core_coverage.py); no string/dep registry use
 airflow	CHK006	devel-common/src/docs/provider_conf.py:html_sidebars	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 mlflow	CHK006	mlflow/johnsnowlabs/__init__.py:load_model	fp	library-public-api	documented flavor API (docs reference mlflow.johnsnowlabs.load_model)
-poetry	CHK006	src/poetry/console/commands/env/list.py:EnvListCommand	fp	dynamic-import	poetry command loader imports poetry.console.commands.<name> via import_module and getattr's the class by name
 airflow	CHK006	devel-common/src/docs/provider_conf.py:autoapi_python_use_implicit_namespaces	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/gemini_cli.py:logger	fp	name-convention	module-level `logger = get_logger(__name__)` conventional name, not meant for export
 mlflow	CHK006	mlflow/pyspark/ml/__init__.py:autolog	fp	library-public-api	documented public API (docs link mlflow.pyspark.ml.autolog)
-poetry	CHK006	src/poetry/console/commands/run.py:RunCommand	fp	dynamic-import	poetry command loader imports module by command name via import_module and getattr's the class
 mcp-python-sdk	CHK006	src/mcp/server/auth/handlers/register.py:RegistrationRequest	tp	-	alias RegistrationRequest = OAuthClientMetadata referenced nowhere else in repo
 mlflow	CHK006	mlflow/langchain/chat_agent_langgraph.py:ChatAgentState	fp	external-reference	imported from mlflow.langchain.chat_agent_langgraph in tests/langchain/sample_code and tests/langgraph/sample_code
-poetry	CHK006	src/poetry/console/commands/publish.py:PublishCommand	fp	dynamic-import	poetry command loader imports module by command name via import_module and getattr's the class
 mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:get_config_for_profile	tp	-	deprecated backward-compat function, no references anywhere in repo
 mlflow	CHK006	mlflow/entities/model_registry/prompt_version.py:PromptVersionTag	tp	-	alias PromptVersionTag = ModelVersionTag not referenced anywhere else
 airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_python_virtualenv.py:funcsigs	tp	-	funcsigs only installed at runtime via @task.virtualenv(requirements=["funcsigs"]) in the test; not in any manifest
