@@ -56,7 +56,6 @@ pub(super) fn input_paths(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// Normalized distributions the workflows install.
 pub(super) fn scan(root: &Path) -> Vec<String> {
     let mut distributions = Vec::new();
     for path in input_paths(root) {
