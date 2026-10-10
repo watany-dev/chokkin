@@ -272,7 +272,6 @@ fn resolve_import_site(
             // The cache holds the root's first candidate; the pick is per site.
             (ModuleOrigin::ThirdParty, None) => RootResolution {
                 distribution: root_candidates(&root_name, venv_imports, import_map)
-                    .filter(|(candidates, _)| candidates.len() > 1)
                     .map_or(core.distribution, |(candidates, _)| pick(&candidates)),
                 ..core
             },

@@ -320,6 +320,25 @@ fn dotted_map_entry_overrides_a_first_party_root_without_the_module() {
 }
 
 #[test]
+fn namespace_import_picks_the_declared_candidate() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"acme-b\"]\n\n[tool.chokkin.package_module_map]\n\"acme-a\" = [\"acme.shared\"]\n\"acme-b\" = [\"acme.shared\"]\n",
+        ),
+        ("app/__init__.py", ""),
+        ("app/one.py", "import acme.shared.x\n"),
+    ]);
+    let index = resolve_path(temp.path());
+    let resolved = index
+        .imports
+        .iter()
+        .find(|resolved| resolved.full_module == "acme.shared.x")
+        .expect("import");
+    assert_eq!(resolved.distribution.as_deref(), Some("acme-b"));
+}
+
+#[test]
 fn ambiguous_namespace_import_warns_once() {
     let temp = temp_project(&[
         (
