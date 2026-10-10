@@ -25,7 +25,7 @@ use crate::rules::{
 use crate::sources::{DiscoveredSources, FileContext, PublicSurface, discover_sources};
 
 use super::error::AnalyzeError;
-use super::probe::{ProbeReport, probe_project_with_cache};
+use super::probe::{ProbeReport, WorkspaceMemberInputs, probe_project_with_cache};
 use super::warnings::ProbeWarning;
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
@@ -272,25 +272,24 @@ fn run_analysis_core(
     ) {
         apply_public_surface(&mut reachability, &surface, &entry);
     }
-    // CHK007 needs every member's surface, app members too (#678). A member
-    // without wheel targets ships nothing, so its surface is empty.
+    // CHK006/CHK007 need every member's surface, app members too (#678). A
+    // named member without wheel targets ships its layout's packages (#733);
+    // only declared targets narrow reachability.
     let member_surfaces: Vec<_> = probe
         .workspace_inputs
         .iter()
-        .map(|input| {
-            let surface = PublicSurface::resolve(
-                input.manifest.metadata.wheel_targets.as_ref(),
-                &input.sources.files,
-            )
-            .unwrap_or_default();
-            (input.member.path.clone(), surface)
-        })
+        .map(|input| (input.member.path.clone(), shipped_surface(input)))
         .collect();
-    let library_surfaces: Vec<_> = member_surfaces
+    let library_surfaces: Vec<_> = probe
+        .workspace_inputs
         .iter()
-        .filter(|(member, surface)| {
-            !surface.files.is_empty() && entry.library_members.contains(member)
+        .zip(&member_surfaces)
+        .filter(|(input, (member, surface))| {
+            input.manifest.metadata.wheel_targets.is_some()
+                && !surface.files.is_empty()
+                && entry.library_members.contains(member)
         })
+        .map(|(_, pair)| pair)
         .collect();
     apply_member_surfaces(&mut reachability, &library_surfaces);
 
@@ -356,6 +355,21 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// Member-relative files the member's wheel ships; empty when it ships none,
+/// as a member without `[build-system]` that uv does not package.
+fn shipped_surface(input: &WorkspaceMemberInputs) -> PublicSurface {
+    let metadata = &input.manifest.metadata;
+    let files = &input.sources.files;
+    match &metadata.wheel_targets {
+        Some(targets) => PublicSurface::resolve(Some(targets), files),
+        None if metadata.name.is_some() && metadata.build_backend.is_some() => {
+            PublicSurface::from_layout(&input.sources.layout, files)
+        },
+        None => None,
+    }
+    .unwrap_or_default()
 }
 
 /// `--production` drops tests from discovery, but a library's tests are still
