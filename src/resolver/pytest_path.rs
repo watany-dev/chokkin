@@ -745,7 +745,7 @@ mod tests {
         assert_eq!(roots("scripts/ci/prek"), ["common_utils"]);
         assert_eq!(roots("tests/cli/test_apps"), ["cliapp"]);
         assert_eq!(roots("src/acme"), ["__init__", "sibling", "tool"]);
-        assert!(roots("utils").is_empty());
+        assert_eq!(roots("utils"), [] as [&str; 0]);
     }
 
     #[test]
