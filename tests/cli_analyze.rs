@@ -212,6 +212,39 @@ fn binary_baseline_update_then_suppresses_existing_issue() {
     assert!(stdout.contains("Summary: 0 issues"));
 }
 
+/// Issue #712: a src-layout root inventories only `src/**`, so the member
+/// files whose imports use another member are parsed for that check alone.
+/// They go into the root's parse cache bundle, and an edit to one is seen on
+/// the next warm run.
+#[test]
+fn binary_member_imports_outside_root_inventory_are_cached() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(
+        &fixture_path(&["deps", "uv_workspace_member_import_src_layout"]),
+        temp.path(),
+    )
+    .expect("copy");
+    for _ in 0..2 {
+        assert_eq!(issue_keys(&json_issues(temp.path(), &[])), []);
+    }
+    let bundles: Vec<String> = fs::read_dir(temp.path().join(".chokkin/cache/parse"))
+        .expect("parse cache")
+        .map(|entry| fs::read_to_string(entry.expect("entry").path()).expect("bundle"))
+        .collect();
+    assert_eq!(bundles.len(), 1);
+    assert!(bundles[0].contains("packages/core/src/acme/core/__init__.py"));
+
+    fs::write(
+        temp.path().join("packages/core/src/acme/core/__init__.py"),
+        "y = 1\n",
+    )
+    .expect("edit member");
+    assert_eq!(
+        issue_keys(&json_issues(temp.path(), &[])),
+        [("CHK002".to_owned(), "acme-util".to_owned())]
+    );
+}
+
 fn json_issues(root: &std::path::Path, extra: &[&str]) -> Vec<serde_json::Value> {
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--reporter", "json"])

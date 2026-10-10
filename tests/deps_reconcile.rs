@@ -118,6 +118,7 @@ fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::internals::De
             member_id: &input.member.id,
             manifest: &input.manifest,
             files: &input.sources.files,
+            imports: &[],
         })
         .collect::<Vec<_>>();
     reconcile_with_context(
@@ -768,13 +769,16 @@ fn path_source_reached_only_from_an_entry_point_is_used() {
 /// the full pipeline: `load_deps` leaves member layouts out, and `acme`
 /// would then resolve without going through the member tree. Issue #559: a
 /// src-layout root inventories only `src/**`, so the tree comes from the
-/// member's own files, for path and workspace sources alike.
+/// member's own files, for path and workspace sources alike. Issue #712:
+/// the imports of those files are parsed too, so a member used only from
+/// another member's tree is used.
 #[test]
 fn source_dependency_is_used_through_its_member_tree() {
     for name in [
         "uv_path_source_renamed_module",
         "uv_path_source_renamed_module_src_layout",
         "uv_workspace_renamed_module_src_layout",
+        "uv_workspace_member_import_src_layout",
     ] {
         assert_eq!(analyze_issues(name), [], "{name}");
     }

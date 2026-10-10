@@ -1,6 +1,6 @@
 //! Full project analysis orchestration (pipeline steps 1–13).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
@@ -10,7 +10,7 @@ use crate::entry::{EntryPlan, add_member_manifest_roots, build_entry_roots, is_l
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
-use crate::parser::parse_project_sources_with_cache;
+use crate::parser::{ParseSummary, ParsedModule, parse_project_sources_with_cache};
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
     ReachabilityReport, analyze_reachability, apply_member_surfaces, apply_public_surface,
@@ -18,12 +18,15 @@ use crate::reachability::{
 use crate::reporters::FileCounts;
 use crate::resolver::{
     ResolutionIndex, ResolvedImport, ScopedDeclarations, StdlibRange, apply_resolution_to_graph,
-    resolve_imports_for_analysis,
+    import_root, resolve_imports_for_analysis,
 };
+use crate::rules::deps::local_source_member;
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
-use crate::sources::{DiscoveredSources, FileContext, PublicSurface, discover_sources};
+use crate::sources::{
+    DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, discover_sources,
+};
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, WorkspaceMemberInputs, probe_project_with_cache};
@@ -182,12 +185,7 @@ fn run_analysis_core(
         .clone()
         .unwrap_or_else(crate::config::TargetVersion::default_py311);
 
-    let parse = parse_project_sources_with_cache(
-        &probe.root,
-        &probe.sources,
-        &target,
-        Some(&options.cache),
-    )?;
+    let (parse, member_parse) = parse_with_member_files(probe, &target, &options.cache)?;
 
     // Step 5 runs after step 6 so Flask and Celery can read decorators off the
     // parse output instead of re-opening every source file. Nothing in parse
@@ -294,13 +292,21 @@ fn run_analysis_core(
         .collect();
     apply_member_surfaces(&mut reachability, &library_surfaces);
 
+    let stdlib = StdlibRange::new(&target, probe.manifest.metadata.requires_python.as_deref());
+    let member_imports: Vec<Vec<String>> = probe
+        .workspace_inputs
+        .iter()
+        .map(|input| uninventoried_imports(&input.member.path, &member_parse, stdlib))
+        .collect();
     let workspace_boundaries = probe
         .workspace_inputs
         .iter()
-        .map(|input| WorkspaceDependencyBoundary {
+        .zip(&member_imports)
+        .map(|(input, imports)| WorkspaceDependencyBoundary {
             member_id: &input.member.id,
             manifest: &input.manifest,
             files: &input.sources.files,
+            imports,
         })
         .collect::<Vec<_>>();
 
@@ -361,6 +367,94 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// Parse the root inventory together with the files of the root's
+/// `workspace` / `path` source members that it misses, and split the two.
+///
+/// A root that scans only its own package (`src/**`) never sees its members'
+/// files, yet their imports decide which other members are used (#712). Only
+/// that check reads the second list, so every other rule still sees the root
+/// inventory alone. One parse call keeps both in the same parse cache bundle.
+fn parse_with_member_files(
+    probe: &ProbeReport,
+    target: &crate::config::TargetVersion,
+    cache: &CacheOptions,
+) -> Result<(ParseSummary, Vec<ParsedModule>), AnalyzeError> {
+    let member_files = uninventoried_member_files(probe);
+    let member_paths: HashSet<String> = member_files.iter().map(|file| file.path.clone()).collect();
+    let mut sources = probe.sources.clone();
+    sources.files.extend(member_files);
+    let parse = parse_project_sources_with_cache(&probe.root, &sources, target, Some(cache))?;
+    let (members, modules) = parse
+        .modules
+        .into_iter()
+        .partition(|module| member_paths.contains(&module.path));
+    Ok((ParseSummary { modules }, members))
+}
+
+/// Root-relative files of the root's source members that the root inventory
+/// lacks.
+fn uninventoried_member_files(probe: &ProbeReport) -> Vec<DiscoveredFile> {
+    let mut seen: HashSet<String> = probe
+        .sources
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    let mut files = Vec::new();
+    for input in &probe.workspace_inputs {
+        if local_source_member(&probe.manifest, &input.manifest).is_none() {
+            continue;
+        }
+        for file in &input.sources.files {
+            let path = format!("{}/{}", input.member.path, file.path);
+            if seen.insert(path.clone()) {
+                files.push(DiscoveredFile {
+                    path,
+                    ..file.clone()
+                });
+            }
+        }
+    }
+    files
+}
+
+/// Non-stdlib modules the parsed files under `member_path` import, named as
+/// the resolver names them (`from a import b` is `a.b`). The parser already
+/// resolved relative imports through the member's layout; one it could not
+/// resolve has an empty module and is dropped.
+fn uninventoried_imports(
+    member_path: &str,
+    modules: &[ParsedModule],
+    stdlib: StdlibRange,
+) -> Vec<String> {
+    let prefix = format!("{member_path}/");
+    let mut imports = Vec::new();
+    for module in modules
+        .iter()
+        .filter(|module| module.path.starts_with(&prefix))
+    {
+        let statics = module
+            .imports
+            .iter()
+            .filter(|import| !import.module.is_empty())
+            .map(|import| match &import.name {
+                Some(name) => format!("{}.{name}", import.module),
+                None => import.module.clone(),
+            });
+        let named = module
+            .dynamic_imports
+            .iter()
+            .chain(&module.pytest_plugins)
+            .map(|import| import.module.clone());
+        imports.extend(
+            statics
+                .chain(named)
+                .filter(|name| !stdlib.contains(import_root(name))),
+        );
+    }
+    imports
 }
 
 /// Member-relative files the member's wheel ships; empty when it ships none,

@@ -1,6 +1,6 @@
 //! Build the set of used distributions from imports, plugins, and binaries.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use indexmap::IndexSet;
 
@@ -179,21 +179,12 @@ pub(super) fn mark_workspace_source_distributions(
         }
     }
 
-    let declared: HashSet<String> = manifest
-        .dependencies
-        .iter()
-        .map(|dep| normalize_distribution_name(&dep.name))
-        .collect();
     let mut modules: HashSet<&str> = first_party.iter().chain(&entry_modules).copied().collect();
     let mut pending = Vec::new();
     for boundary in workspace_boundaries {
-        let Some(name) = boundary.manifest.metadata.name.as_deref() else {
+        let Some(name) = local_source_member(manifest, boundary.manifest) else {
             continue;
         };
-        let name = normalize_distribution_name(name);
-        if !declared.contains(&name) || !manifest.uv.is_local_source(&name) {
-            continue;
-        }
         let Some(member_path) = member_path(manifest, boundary.manifest) else {
             continue;
         };
@@ -201,25 +192,40 @@ pub(super) fn mark_workspace_source_distributions(
         // member's files, so the member's inventory supplies its tree (#559).
         let mut provided = member_modules(&member_path, &context.sources.files);
         provided.extend(member_modules("", boundary.files));
-        pending.push((name, member_path, provided));
+        pending.push((name, member_path, boundary.imports, provided));
     }
 
     loop {
         let (now_used, rest): (Vec<_>, Vec<_>) =
-            pending.into_iter().partition(|(name, _, provided)| {
-                used.contains(name) || modules.iter().any(|module| provided.contains(*module))
+            pending.into_iter().partition(|(name, _, _, provided)| {
+                used.contains(name) || modules.iter().any(|module| provides(provided, module))
             });
         pending = rest;
         if now_used.is_empty() {
             break;
         }
-        for (name, member_path, _) in now_used {
+        for (name, member_path, imports, _) in now_used {
             if !member_path.is_empty() {
                 modules.extend(member_imports(context.resolution, &member_path));
+                modules.extend(imports.iter().map(String::as_str));
             }
             used.insert(name);
         }
     }
+}
+
+/// Normalized name of `member` when `root` declares it and takes it from a
+/// local `workspace` / `path` source.
+pub(crate) fn local_source_member(
+    root: &LoadedManifest,
+    member: &LoadedManifest,
+) -> Option<String> {
+    let name = normalize_distribution_name(member.metadata.name.as_deref()?);
+    let declared = root
+        .dependencies
+        .iter()
+        .any(|dep| normalize_distribution_name(&dep.name) == name);
+    (declared && root.uv.is_local_source(&name)).then_some(name)
 }
 
 /// Non-stdlib modules imported by files under a non-root member tree.
@@ -247,11 +253,23 @@ fn member_path(root: &LoadedManifest, member: &LoadedManifest) -> Option<String>
     Some(parts.join("/"))
 }
 
+/// Whether `module` is in `provided`, or names something defined in a module
+/// a file of the member holds (`from acme_util import y` is `acme_util.y`).
+/// A namespace package such as `airflow` in a provider does not count as a
+/// parent, since other members provide it as well.
+fn provides(provided: &HashMap<String, bool>, module: &str) -> bool {
+    provided.contains_key(module)
+        || module
+            .rsplit_once('.')
+            .is_some_and(|(parent, _)| provided.get(parent) == Some(&true))
+}
+
 /// Dotted module names the files under `member_path` provide, imported from
 /// the member root or from a `src` directory (`providers/x/src/airflow/models.py`
-/// gives `airflow` and `airflow.models`).
-fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashSet<String> {
-    let mut modules = HashSet::new();
+/// gives `airflow` and `airflow.models`), each `true` when a file holds that
+/// module itself (`airflow.models`) rather than only a submodule.
+fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashMap<String, bool> {
+    let mut modules = HashMap::new();
     for file in files {
         let relative = if member_path.is_empty() {
             Some(file.path.as_str())
@@ -282,7 +300,7 @@ fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashSet<String
         );
         for start in starts {
             for end in start + 1..=parts.len() {
-                modules.insert(parts[start..end].join("."));
+                *modules.entry(parts[start..end].join(".")).or_default() |= end == parts.len();
             }
         }
     }
@@ -467,30 +485,36 @@ mod tests {
 
     #[test]
     fn member_modules_start_at_member_root_or_src() {
-        let file = |path: &str| DiscoveredFile {
+        let files = [
+            python_file("airflow-core/src/airflow/__init__.py"),
+            python_file("airflow-core/src/airflow/models/dag.py"),
+            python_file("airflow-core/tests/utils.py"),
+            python_file("task-sdk/src/airflow/sdk/__init__.py"),
+        ];
+        let modules = member_modules("airflow-core", &files);
+        assert_eq!(modules.get("airflow"), Some(&true));
+        assert_eq!(modules.get("airflow.models"), Some(&false));
+        assert_eq!(modules.get("airflow.models.dag"), Some(&true));
+        assert!(modules.contains_key("tests.utils"));
+        assert!(!modules.contains_key("utils"));
+        assert!(!modules.contains_key("models"));
+        assert!(!modules.contains_key("airflow.sdk"));
+        assert!(!modules.contains_key(""));
+        assert!(provides(&modules, "airflow.models.dag.DAG"));
+        assert!(provides(&modules, "airflow.DAG"));
+        assert!(!provides(&modules, "airflow.models.DAG"));
+    }
+
+    fn python_file(path: &str) -> DiscoveredFile {
+        DiscoveredFile {
             path: path.to_owned(),
             kind: crate::sources::FileKind::Python,
             context: crate::sources::FileContext::Runtime,
-        };
-        let files = [
-            file("airflow-core/src/airflow/__init__.py"),
-            file("airflow-core/src/airflow/models/dag.py"),
-            file("airflow-core/tests/utils.py"),
-            file("task-sdk/src/airflow/sdk/__init__.py"),
-        ];
-        let modules = member_modules("airflow-core", &files);
-        assert!(modules.contains("airflow"));
-        assert!(modules.contains("airflow.models.dag"));
-        assert!(modules.contains("tests.utils"));
-        assert!(!modules.contains("utils"));
-        assert!(!modules.contains("models"));
-        assert!(!modules.contains("airflow.sdk"));
-        assert!(!modules.contains(""));
+        }
     }
 
-    #[test]
-    fn member_imports_stay_in_member_tree() {
-        let import = |file: &str, module: &str, origin: ModuleOrigin| ResolvedImport {
+    fn resolved(file: &str, module: &str, origin: ModuleOrigin) -> ResolvedImport {
+        ResolvedImport {
             import_root: import_root(module).to_owned(),
             full_module: module.to_owned(),
             file: file.to_owned(),
@@ -502,25 +526,29 @@ mod tests {
             origin,
             distribution: None,
             confidence: ResolveConfidence::Certain,
-        };
+        }
+    }
+
+    #[test]
+    fn member_imports_stay_in_member_tree() {
         let resolution = ResolutionIndex {
             imports: vec![
-                import(
+                resolved(
                     "airflow-core/src/airflow/models/dag.py",
                     "airflow.sdk",
                     ModuleOrigin::FirstParty,
                 ),
-                import(
+                resolved(
                     "airflow-core/src/airflow/models/dag.py",
                     "airflow.sdk.definitions.dag",
                     ModuleOrigin::ThirdParty,
                 ),
-                import(
+                resolved(
                     "airflow-core/src/airflow/models/dag.py",
                     "os",
                     ModuleOrigin::Stdlib,
                 ),
-                import(
+                resolved(
                     "airflow-core-extra/src/extra.py",
                     "extra.api",
                     ModuleOrigin::FirstParty,
@@ -601,40 +629,38 @@ mod tests {
     }
 
     /// `core` is used through its module tree, `sdk` only through an import
-    /// inside `core`. `extra` is imported only by an unreachable file, `stray`
-    /// is not declared, and `plain` has no workspace source.
+    /// inside `core`, and `util` only through an import in an `sdk` file the
+    /// root does not inventory (#712). `extra` is imported only by an
+    /// unreachable file, so `lone`, which only `extra` imports, stays unused.
+    /// `stray` is not declared, and `plain` has no workspace source.
     #[test]
     fn workspace_sources_are_used_through_member_trees() {
         let root = std::env::temp_dir().join("ws");
         let manifest = manifest_at(
             root.clone(),
             "root",
-            &["core", "sdk", "extra", "plain"],
-            &["core", "sdk", "extra", "stray"],
+            &["core", "sdk", "extra", "plain", "util", "lone"],
+            &["core", "sdk", "extra", "stray", "util", "lone"],
         );
-        let members = ["core", "sdk", "extra", "stray", "plain"]
+        let members = ["core", "sdk", "extra", "stray", "plain", "util", "lone"]
             .map(|name| (name, manifest_at(root.join(name), name, &[], &[])));
+        let imports = |name: &str| match name {
+            "sdk" => vec!["utilpkg.helpers".to_owned()],
+            "extra" => vec!["lonepkg".to_owned()],
+            _ => Vec::new(),
+        };
+        let member_imports = members.each_ref().map(|(name, _)| imports(name));
         let boundaries: Vec<WorkspaceDependencyBoundary<'_>> = members
             .iter()
-            .map(|(name, member)| WorkspaceDependencyBoundary {
+            .zip(&member_imports)
+            .map(|((name, member), imports)| WorkspaceDependencyBoundary {
                 member_id: name,
                 manifest: member,
                 files: &[],
+                imports,
             })
             .collect();
-        let import = |file: &str, module: &str| ResolvedImport {
-            import_root: import_root(module).to_owned(),
-            full_module: module.to_owned(),
-            file: file.to_owned(),
-            workspace_member: None,
-            line: 1,
-            context: ImportContext::Runtime,
-            optional: false,
-            platform_guarded: false,
-            origin: ModuleOrigin::FirstParty,
-            distribution: None,
-            confidence: ResolveConfidence::Certain,
-        };
+        let import = |file: &str, module: &str| resolved(file, module, ModuleOrigin::FirstParty);
         let resolution = ResolutionIndex {
             imports: vec![
                 import("src/app.py", "corepkg.models"),
@@ -644,11 +670,6 @@ mod tests {
                 import("core/src/corepkg/models.py", "sdkpkg"),
             ],
             ..ResolutionIndex::default()
-        };
-        let file = |path: &str| DiscoveredFile {
-            path: path.to_owned(),
-            kind: crate::sources::FileKind::Python,
-            context: crate::sources::FileContext::Runtime,
         };
         let sources = crate::sources::DiscoveredSources {
             root: manifest.root.clone(),
@@ -660,8 +681,8 @@ mod tests {
             effective_globs: Vec::new(),
             files: members
                 .iter()
-                .map(|(name, _)| file(&format!("{name}/src/{name}pkg/__init__.py")))
-                .chain([file("core/src/corepkg/models.py")])
+                .map(|(name, _)| python_file(&format!("{name}/src/{name}pkg/__init__.py")))
+                .chain([python_file("core/src/corepkg/models.py")])
                 .collect(),
             warnings: Vec::new(),
         };
@@ -682,7 +703,7 @@ mod tests {
         );
         let mut used: Vec<String> = used.into_iter().collect();
         used.sort();
-        assert_eq!(used, ["core", "sdk"]);
+        assert_eq!(used, ["core", "sdk", "util"]);
     }
 
     /// `streamlit = { path = "lib" }` holds the project's own package, so a

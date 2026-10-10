@@ -221,6 +221,9 @@ pub struct WorkspaceDependencyBoundary<'a> {
     /// Files discovered from the member root, relative to it. A root that
     /// inventories only its own package misses them (#559).
     pub files: &'a [DiscoveredFile],
+    /// Non-stdlib modules imported by the member's files that the root does
+    /// not inventory, and so never resolves (#712).
+    pub imports: &'a [String],
 }
 
 /// Final issue location for reporters and `--explain`.

@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once (#680).
 
 ### Fixed
+- A workspace member used only through another used member's imports is no
+  longer CHK002 when the root inventories only its own files (a src-layout
+  root). The member files the root does not inventory are parsed for this
+  check alone, so no other rule sees them. A name imported from a member's
+  module (`from acme_util import y`) now reaches that member; the parent of
+  a namespace package (`airflow` in a provider) still does not (#712).
 - CHK006 no longer reports the classes of modules a command loader fetches by
   a computed name: when a function binds
   `module = import_module("pkg.commands." + name)` (or
