@@ -294,6 +294,7 @@ mod tests {
                 member_id: "devel-common",
                 manifest: &member,
                 files: &[],
+                imports: &[],
             }],
             &resolution(&[
                 ("coverage", "coverage"),

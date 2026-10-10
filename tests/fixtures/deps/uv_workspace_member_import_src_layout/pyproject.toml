@@ -1,0 +1,14 @@
+[project]
+name = "app"
+version = "0.1.0"
+dependencies = ["acme-core", "acme-util"]
+
+[project.scripts]
+app = "app.main:main"
+
+[tool.uv.sources]
+acme-core = { workspace = true }
+acme-util = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
