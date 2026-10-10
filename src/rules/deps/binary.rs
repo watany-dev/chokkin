@@ -18,6 +18,10 @@ use super::used::DeclaredIndex;
 const WRAPPER_PROVIDERS: &[(&str, &str)] = &[
     ("mkdocs-material", "mkdocs"),
     ("pre-commit-uv", "pre-commit"),
+    // prek is a drop-in pre-commit that reads `.pre-commit-config.yaml` (#723).
+    ("prek", "pre-commit"),
+    ("pytest-cov", "coverage"),
+    ("tox-uv", "tox"),
 ];
 
 /// Distributions and binaries that make a binary usage provided (#680).
@@ -313,6 +317,22 @@ mod tests {
             &[],
             &resolution(&[("mkdocs", "mkdocs"), ("tox", "tox"), ("nox", "nox")]),
             &command_hints(&["mkdocs", "tox", "nox"]),
+        );
+        assert_eq!(found, ["nox"]);
+    }
+
+    #[test]
+    fn prek_pytest_cov_and_tox_uv_provide_without_a_lockfile() {
+        let found = detect(
+            &manifest(&["prek", "pytest-cov", "tox-uv"]),
+            &[],
+            &resolution(&[
+                ("pre-commit", "pre-commit"),
+                ("coverage", "coverage"),
+                ("tox", "tox"),
+                ("nox", "nox"),
+            ]),
+            &command_hints(&["pre-commit", "coverage", "tox", "nox"]),
         );
         assert_eq!(found, ["nox"]);
     }
