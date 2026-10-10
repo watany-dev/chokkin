@@ -13,6 +13,8 @@ Corpus regression gates (#495):
 Release gate (with --baseline, #325):
   6. CHK003 findings not labelled `tp`, outside --expect projects and recall
      sentinels, do not grow over the baseline run
+  7. with --with-strict on both runs: no finding labelled `tp` vanishes from
+     the --strict output (see Downgrade vs vanish below)
 
 Usage:
   scripts/oss-metrics.py [OPTIONS]
@@ -30,7 +32,10 @@ Options:
                         finding-diff.tsv and adds the CHK003 growth criterion
   --strict              Run chokkin with --strict, which also shows `maybe`
                         findings, so a downgrade stays visible; use a separate
-                        --output
+                        --output. A --baseline must be --strict too
+  --with-strict         Also run every project once with --strict and keep
+                        its JSON under strict/; with --baseline (also run with
+                        --with-strict) adds criterion 7
   --build               cargo build --release before running
   --clone               Run clone-oss-fixtures.sh first
   --gate                Exit non-zero if any criterion fails
@@ -49,6 +54,9 @@ Outputs (under --output):
   finding-diff.tsv  finding-level diff against --baseline, keyed on (slug,
                   fingerprint): NEW / GONE / CHANGED (severity or
                   confidence moved); only with --baseline
+  strict/<slug>.json  the --strict report (only with --with-strict)
+  finding-diff-strict.tsv  the same diff between the two strict/ reports
+                  (only with --baseline and --with-strict)
 
 Every timed run is cold: all .chokkin/ caches under the project (workspace
 members get their own) are removed before each run and again afterwards, so
@@ -82,6 +90,17 @@ reachable from an entry root (`summary.files.reachable_runtime`) and its
 per-rule issue counts. The gate fails when the reachable count drops below
 the floor (the package root, entry points or workspace were missed) or a
 rule's count grows past base + max(5, base/5) (a new false-positive pattern).
+
+Downgrade vs vanish (#700): a confidence or severity change can hide a
+finding from the default output (GONE in finding-diff.tsv) while --strict
+still reports it. --strict also changes some verdicts (a member's dev
+declaration turns CHK003 into CHK005), so the strict reports are compared with
+each other, never with a default run (#716). A finding GONE between the two
+strict reports vanished; a default-run GONE whose fingerprint HEAD's strict
+report still has was downgraded, which is informational only. The gate fails
+on a vanished `tp`; vanished findings without a label are counted for triage
+but do not gate, because a release that fixes false positives makes hundreds
+of them vanish.
 
 chokkin only reads the analyzed projects; nothing from them is executed.
 """
@@ -117,6 +136,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-r", "--runs", type=int, default=3)
     p.add_argument("--baseline", type=Path)
     p.add_argument("--strict", action="store_true")
+    p.add_argument("--with-strict", action="store_true")
     p.add_argument("--build", action="store_true")
     p.add_argument("--clone", action="store_true")
     p.add_argument("--gate", action="store_true")
@@ -125,6 +145,8 @@ def parse_args() -> argparse.Namespace:
     if args.help:
         print(__doc__)
         sys.exit(0)
+    if args.strict and args.with_strict:
+        p.error("--with-strict is redundant with --strict")
     return args
 
 
@@ -223,27 +245,38 @@ def chk003_gate_count(out_dir: Path, expect_slugs: set[str]) -> int:
     )
 
 
+def is_strict(out_dir: Path) -> bool:
+    """Whether the run in `out_dir` used --strict, from its report.md."""
+    return "- strict: yes" in (out_dir / "report.md").read_text(encoding="utf-8").splitlines()
+
+
+def report_issues(out_dir: Path, slug: str) -> list[dict] | None:
+    """Issues of one project's saved JSON report; None when it is not JSON (crash)."""
+    try:
+        return json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8")).get("issues", [])
+    except (OSError, ValueError):
+        return None
+
+
 def report_levels(out_dir: Path, slug: str) -> dict[tuple[str, str], Counter] | None:
     """(code, fingerprint) -> Counter of `severity/confidence` in one project's
     saved JSON report; None when the report is not JSON (crash). Import
     fingerprints carry no line, so one fingerprint can cover several findings."""
-    try:
-        report = json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    issues = report_issues(out_dir, slug)
+    if issues is None:
         return None
     levels: dict[tuple[str, str], Counter] = {}
-    for issue in report.get("issues", []):
+    for issue in issues:
         level = f"{issue.get('severity') or '?'}/{issue.get('confidence') or '?'}"
         levels.setdefault((issue["code"], issue["fingerprint"]), Counter())[level] += 1
     return levels
 
 
-def finding_diff(base: Path, head: Path) -> tuple[list[list[str]], list[str]]:
-    """NEW / GONE / CHANGED findings between two runs, keyed on (slug,
-    fingerprint), and the slugs whose report on either side is not JSON.
-    CHANGED means the severity or confidence moved, e.g. a library-mode
-    downgrade from warning to info."""
-    slugs = sorted({r[0] for r in tsv_rows(base / "summary.tsv")} & {r[0] for r in tsv_rows(head / "summary.tsv")})
+def finding_diff(base: Path, head: Path, slugs: list[str]) -> tuple[list[list[str]], list[str]]:
+    """NEW / GONE / CHANGED findings of `slugs` between two runs' reports,
+    keyed on (slug, fingerprint), and the slugs whose report on either side
+    is not JSON. CHANGED means the severity or confidence moved, e.g. a
+    library-mode downgrade from warning to info."""
     rows: list[list[str]] = []
     skipped: list[str] = []
     for slug in slugs:
@@ -260,6 +293,57 @@ def finding_diff(base: Path, head: Path) -> tuple[list[list[str]], list[str]]:
             pairs += [("GONE", o, "-") for o in old[len(new):]] + [("NEW", "-", n) for n in new[len(old):]]
             rows += [[status, slug, code, tsv_field(fp), o, n] for status, o, n in pairs]
     return rows, skipped
+
+
+def downgrade_vs_vanish(
+    base: Path, head: Path, default_rows: list[list[str]], strict_rows: list[list[str]],
+    labels: dict[tuple[str, str, str], tuple[str, str]],
+) -> tuple[list[str], bool]:
+    """Per-rule split of the default run's GONE into downgraded (HEAD's strict
+    report still has the fingerprint) and of the strict-to-strict GONE into
+    vanished by label; and whether no `tp` vanished."""
+    cache: dict[tuple[Path, str], dict[tuple[str, str], str]] = {}
+
+    def keys(run: Path, slug: str) -> dict[tuple[str, str], str]:
+        """(code, escaped fingerprint) -> target in one strict report."""
+        if (run, slug) not in cache:
+            issues = report_issues(run / "strict", slug) or []
+            cache[(run, slug)] = {(i["code"], tsv_field(i["fingerprint"])): i.get("target") or "?" for i in issues}
+        return cache[(run, slug)]
+
+    gone = Counter(r[2] for r in default_rows if r[0] == "GONE")
+    downgraded = Counter(r[2] for r in default_rows if r[0] == "GONE" and (r[2], r[3]) in keys(head, r[1]))
+    vanished: Counter = Counter()
+    lost: list[str] = []
+    for _, slug, code, fp, _, _ in (r for r in strict_rows if r[0] == "GONE"):
+        target = keys(base, slug).get((code, fp), "?")
+        verdict = labels.get((slug, code, target), ("unknown", "-"))[0]
+        vanished[(code, verdict if verdict in ("tp", "fp") else "other")] += 1
+        # One fingerprint can cover several findings; the labelled target is
+        # lost only when HEAD reports none of them.
+        if verdict == "tp" and (code, fp) not in keys(head, slug):
+            lost.append(f"{slug}/{code}/{target}")
+    lines = [
+        "## Downgrade vs vanish (--strict)",
+        "",
+        "GONE = default-run GONE; downgraded = of those, still in HEAD's --strict report.",
+        "Vanished = GONE between the two --strict reports (finding-diff-strict.tsv),",
+        "by label; a vanished `tp` fails the gate, unlabelled ones need triage.",
+        "",
+    ]
+    codes = sorted(gone.keys() | {c for c, _ in vanished})
+    if not codes:
+        return [*lines, "_No finding is GONE._"], True
+    return [
+        *lines,
+        *oc.md_table(
+            ["Rule", "GONE", "Downgraded", "Vanished tp", "Vanished fp", "Vanished other"],
+            [[c, gone[c], downgraded[c], vanished[(c, "tp")], vanished[(c, "fp")], vanished[(c, "other")]]
+             for c in codes],
+            "lrrrrr",
+        ),
+        *(["", f"Vanished `tp`: {' '.join(lost)}"] if lost else []),
+    ], not lost
 
 
 def finding_diff_md(rows: list[list[str]], skipped: list[str]) -> list[str]:
@@ -287,7 +371,9 @@ def finding_diff_md(rows: list[list[str]], skipped: list[str]) -> list[str]:
     ]
 
 
-def compare_md(base: Path, head: Path, report: list[str], diff: tuple[list[list[str]], list[str]]) -> list[str]:
+def compare_md(
+    base: Path, head: Path, report: list[str], diff: tuple[list[list[str]], list[str]], vanish: list[str]
+) -> list[str]:
     """Before/after summary for the CI job page; the full scorecard lists every
     finding and outgrows the job summary limit."""
     base_sum = {r[0]: r for r in tsv_rows(base / "summary.tsv")}
@@ -339,6 +425,8 @@ def compare_md(base: Path, head: Path, report: list[str], diff: tuple[list[list[
         "",
         *finding_diff_md(*diff),
         "",
+        *vanish,
+        *([""] if vanish else []),
         *report[start:end],
     ]
 
@@ -358,6 +446,15 @@ def main() -> int:
     if not args.manifest.is_file():
         print(f"manifest not found: {args.manifest}", file=sys.stderr)
         return 2
+    if args.baseline:
+        # --strict changes verdicts as well as the confidence floor, so a
+        # strict run is only comparable with another strict run (#716).
+        if is_strict(args.baseline) != args.strict:
+            print(f"{args.baseline} and this run differ in --strict; compare like with like", file=sys.stderr)
+            return 2
+        if args.with_strict and not (args.baseline / "strict").is_dir():
+            print(f"--with-strict needs a baseline run with --with-strict: {args.baseline}", file=sys.stderr)
+            return 2
 
     targets: list[tuple[str, str, str, Path]] = []
     for row in oc.read_manifest(args.manifest):
@@ -424,6 +521,13 @@ def main() -> int:
 
         crashes += run.returncode == 3
         config_errors += run.returncode == 2
+        if args.with_strict:
+            strict_run, _ = timed_run(args.bin, proj, 1, ("--strict",))
+            (out / "strict").mkdir(exist_ok=True)
+            (out / "strict" / f"{slug}.json").write_bytes(strict_run.stdout)
+            (out / "strict" / f"{slug}.stderr").write_bytes(strict_run.stderr)
+            crashes += strict_run.returncode == 3
+            config_errors += strict_run.returncode == 2
         if slug in expect:
             summary = (report or {}).get("summary", {})
             counts = ",".join(f"{k}={v}" for k, v in sorted(summary.get("by_code", {}).items()))
@@ -598,9 +702,21 @@ def main() -> int:
     print("\n".join(lines[lines.index("## Exit criteria"):lines.index("## Per-project results")]))
 
     if args.baseline:
-        diff = finding_diff(args.baseline, out)
-        write_tsv("finding-diff.tsv", ["status", "slug", "code", "fingerprint", "before", "after"], diff[0])
-        compare = compare_md(args.baseline, out, lines, diff)
+        diff_header = ["status", "slug", "code", "fingerprint", "before", "after"]
+        slugs = sorted({r[0] for r in tsv_rows(args.baseline / "summary.tsv")} & {r[0] for r in summary_rows})
+        diff = finding_diff(args.baseline, out, slugs)
+        write_tsv("finding-diff.tsv", diff_header, diff[0])
+        vanish: list[str] = []
+        if args.with_strict:
+            strict_diff = finding_diff(args.baseline / "strict", out / "strict", slugs)
+            write_tsv("finding-diff-strict.tsv", diff_header, strict_diff[0])
+            vanish, passes["vanish"] = downgrade_vs_vanish(args.baseline, out, diff[0], strict_diff[0], labels)
+            if strict_diff[1]:
+                vanish[1:1] = ["", f"Not diffed under --strict (non-JSON report): {' '.join(strict_diff[1])}"]
+            print("\n".join(vanish))
+            if not passes["vanish"]:
+                print("findings vanished from the --strict output; see compare.md", file=sys.stderr)
+        compare = compare_md(args.baseline, out, lines, diff, vanish)
         (out / "compare.md").write_text("\n".join(compare) + "\n", encoding="utf-8")
         base_n = chk003_gate_count(args.baseline, set(expect))
         head_n = chk003_gate_count(out, set(expect))
