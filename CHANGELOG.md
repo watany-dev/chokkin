@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdlib range like `requires-python` does, so requests' dead
   `dummy_threading` / `BaseHTTPServer` / `SimpleHTTPServer` fallbacks are
   CHK010 info (#764).
+- Performance: resolving imports through `sys.path` edits no longer slows
+  down large projects. Each directory a candidate path starts from is listed
+  once, and a candidate whose first segment it lacks is never `stat`ed; each
+  candidate is checked once; and an unresolved import skips candidate
+  directories that hold no file with its top-level name. On transformers the
+  `statx` calls drop from about 27,600 to 15,100 (14,800 before v0.7.4), and
+  the slowdown on airflow falls from 9% to under 1% of instructions. Output
+  is unchanged (#763).
 
 ## [0.7.4] - 2026-10-10
 
