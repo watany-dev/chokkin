@@ -17,7 +17,7 @@ use super::types::{
 use super::util::{DependencyPush, push_dependency, read_to_string};
 use super::uv_tool::extract_uv_tool;
 use super::warnings::ManifestWarning;
-use super::wheel::parse_wheel_targets;
+use super::wheel::{parse_hatch_build_scripts, parse_wheel_targets};
 
 /// Partial extraction result from `pyproject.toml`.
 #[derive(Debug, Default)]
@@ -276,6 +276,7 @@ fn extract_build_system(table: &toml::Table, rel: &str, result: &mut PyprojectEx
         result.metadata.build_backend.as_deref(),
         result.metadata.name.as_deref(),
     );
+    result.metadata.build_scripts = parse_hatch_build_scripts(table);
 }
 
 fn detect_tool_sections(table: &toml::Table, warnings: &mut Vec<ManifestWarning>) -> bool {

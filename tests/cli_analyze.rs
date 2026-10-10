@@ -1966,3 +1966,70 @@ fn binary_checks_inline_scripts_inside_skipped_nested_projects() {
         "{issues:#?}"
     );
 }
+
+/// langchain's workflows run `python .github/scripts/check_diff.py` (#734).
+#[test]
+fn binary_github_scripts_are_entry_roots() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  ci:\n    steps:\n      - run: python .github/scripts/check_diff.py\n",
+        ),
+        (".github/scripts/check_diff.py", "import json\n"),
+        ("acme/__init__.py", ""),
+        ("acme/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(certain_chk001(&issues), ["acme/orphan.py"], "{issues:#?}");
+}
+
+/// airflow's `[tool.hatch.build.targets.custom] path = "./hatch_build.py"`
+/// in the root and in members, and the default hook path (#735).
+#[test]
+fn binary_hatch_build_scripts_are_dev_entry_roots() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.hatch.build.targets.custom]\npath = \"./hatch_build.py\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n\n\
+             [tool.uv.workspace]\nmembers = [\"core\"]\n",
+        ),
+        ("hatch_build.py", "import hatchling\n"),
+        ("orphan.py", ""),
+        (
+            "core/pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"core\"\nversion = \"0.1.0\"\n\n\
+             [project.scripts]\ncore = \"core.main:main\"\n\n\
+             [tool.hatch.build.targets.wheel.hooks.custom]\n",
+        ),
+        ("core/hatch_build.py", "import hatchling\n"),
+        ("core/src/core/__init__.py", ""),
+        ("core/src/core/main.py", "def main():\n    pass\n"),
+    ]);
+    // `import hatchling` resolves through `[build-system].requires`, which
+    // the build environment installs, so `--strict` reports no CHK003 or CHK010.
+    for mode in [&[][..], &["--strict"]] {
+        let issues = json_issues(project.path(), mode);
+        assert_eq!(
+            issue_keys(&issues),
+            [("CHK001".to_owned(), "orphan.py".to_owned())],
+            "{mode:?}: {issues:#?}"
+        );
+    }
+    let production = json_issues(project.path(), &["--production"]);
+    assert!(
+        production.iter().all(|issue| !issue["target"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("hatch_build.py")),
+        "{production:#?}"
+    );
+}

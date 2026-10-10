@@ -17,7 +17,8 @@ use crate::reachability::{
 };
 use crate::reporters::FileCounts;
 use crate::resolver::{
-    ScopedDeclarations, StdlibRange, apply_resolution_to_graph, resolve_imports_for_analysis,
+    ResolutionIndex, ResolvedImport, ScopedDeclarations, StdlibRange, apply_resolution_to_graph,
+    resolve_imports_for_analysis,
 };
 use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
@@ -310,9 +311,14 @@ fn run_analysis_core(
         sources: &probe.sources,
         parse: &parse,
     };
+    let deps_resolution = without_build_environment_imports(&resolution, probe);
+    let deps_context = RuleContext {
+        resolution: deps_resolution.as_ref().unwrap_or(&resolution),
+        ..context
+    };
     let deps = crate::rules::deps::reconcile_with_context(
         &DependencyRuleContext {
-            rules: &context,
+            rules: &deps_context,
             config: &probe.effective_config,
             strict,
         },
@@ -394,6 +400,26 @@ fn parse_production_tests(
     Ok(parse_project_sources_with_cache(&probe.root, &tests, target, None)?.modules)
 }
 
+/// A build script imports what `[build-system].requires` installs into the
+/// build environment, which no project declaration needs to cover (#735).
+fn without_build_environment_imports(
+    resolution: &ResolutionIndex,
+    probe: &ProbeReport,
+) -> Option<ResolutionIndex> {
+    let provided = |import: &ResolvedImport| {
+        probe
+            .build_scripts
+            .get(&import.file)
+            .zip(import.distribution.as_ref())
+            .is_some_and(|(requires, distribution)| requires.contains(distribution))
+    };
+    resolution.imports.iter().any(provided).then(|| {
+        let mut resolution = resolution.clone();
+        resolution.imports.retain(|import| !provided(import));
+        resolution
+    })
+}
+
 fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
     let names = |dependencies: &[DeclaredDependency]| {
         dependencies
@@ -406,6 +432,7 @@ fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
             .scripts
             .iter()
             .map(|script| (script.path.clone(), names(&script.dependencies)))
+            .chain(probe.build_scripts.clone())
             .collect(),
         members: probe
             .workspace_inputs

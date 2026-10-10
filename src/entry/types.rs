@@ -8,7 +8,8 @@ use crate::sources::FileContext;
 pub enum EntryOrigin {
     /// `[tool.chokkin].entry` or workspace override.
     Config,
-    /// `[project.scripts]` / `[project.gui-scripts]` / `[project.entry-points]`.
+    /// `[project.scripts]` / `[project.gui-scripts]` / `[project.entry-points]`,
+    /// or a hatch build hook's `path`.
     Manifest {
         /// Entry-point name within the group.
         name: String,

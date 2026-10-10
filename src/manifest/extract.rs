@@ -273,7 +273,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v9".to_owned(),
+            unit_version: "manifest-extract-v10".to_owned(),
         },
         inputs,
     })

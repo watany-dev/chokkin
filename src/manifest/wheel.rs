@@ -8,7 +8,7 @@ use toml::Value;
 
 use crate::path_util::join_rel;
 
-use super::types::{PackageFind, WheelTargets};
+use super::types::{BuildScript, PackageFind, WheelTargets};
 
 /// Parse the wheel target tables of `pyproject.toml`.
 ///
@@ -129,6 +129,47 @@ fn hatch_targets(tool: &toml::Table) -> Option<WheelTargets> {
         paths.extend(string_array(section.get("only-include")));
         targets(source, paths, Vec::new())
     })
+}
+
+/// Files hatchling loads while building, whatever `build-backend` says: the
+/// `custom` target's builder and every `custom` build or metadata hook. An
+/// omitted `path` is hatch's default `hatch_build.py` (#735).
+pub(super) fn parse_hatch_build_scripts(table: &toml::Table) -> Vec<BuildScript> {
+    let Some(hatch) = table_at(table, &["tool", "hatch"]) else {
+        return Vec::new();
+    };
+    let mut sections = vec![
+        (
+            "tool.hatch.build.hooks.custom".to_owned(),
+            table_at(hatch, &["build", "hooks", "custom"]),
+        ),
+        (
+            "tool.hatch.metadata.hooks.custom".to_owned(),
+            table_at(hatch, &["metadata", "hooks", "custom"]),
+        ),
+    ];
+    if let Some(targets) = table_at(hatch, &["build", "targets"]) {
+        sections.push((
+            "tool.hatch.build.targets.custom".to_owned(),
+            table_at(targets, &["custom"]),
+        ));
+        sections.extend(targets.iter().map(|(name, target)| {
+            (
+                format!("tool.hatch.build.targets.{name}.hooks.custom"),
+                target
+                    .as_table()
+                    .and_then(|target| table_at(target, &["hooks", "custom"])),
+            )
+        }));
+    }
+    sections
+        .into_iter()
+        .filter_map(|(table, section)| {
+            let path = section?.get("path").and_then(Value::as_str);
+            let path = normalize_path(path.unwrap_or("hatch_build.py"));
+            (!path.is_empty()).then_some(BuildScript { table, path })
+        })
+        .collect()
 }
 
 fn setuptools_targets(tool: &toml::Table) -> Option<WheelTargets> {
@@ -359,6 +400,48 @@ mod tests {
         .expect("targets");
         assert_eq!(targets.source, "tool.hatch.build");
         assert_eq!(targets.paths, vec!["src/acme"]);
+    }
+
+    fn build_scripts(contents: &str) -> Vec<(String, String)> {
+        let table: toml::Table = toml::from_str(contents).expect("valid toml");
+        parse_hatch_build_scripts(&table)
+            .into_iter()
+            .map(|script| (script.table, script.path))
+            .collect()
+    }
+
+    #[test]
+    fn hatch_custom_builder_and_hooks_are_build_scripts() {
+        let scripts = build_scripts(
+            "[tool.hatch.build.targets.custom]\npath = \"./hatch_build.py\"\n\
+             [tool.hatch.build.targets.wheel.hooks.custom]\npath = \"build/wheel_hook.py\"\n\
+             [tool.hatch.build.hooks.custom]\n\
+             [tool.hatch.metadata.hooks.custom]\npath = \"meta.py\"\n",
+        );
+        let pair = |table: &str, path: &str| (table.to_owned(), path.to_owned());
+        assert_eq!(
+            scripts,
+            [
+                pair("tool.hatch.build.hooks.custom", "hatch_build.py"),
+                pair("tool.hatch.metadata.hooks.custom", "meta.py"),
+                pair("tool.hatch.build.targets.custom", "hatch_build.py"),
+                pair(
+                    "tool.hatch.build.targets.wheel.hooks.custom",
+                    "build/wheel_hook.py"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn hatch_without_custom_tables_has_no_build_scripts() {
+        assert_eq!(
+            build_scripts(
+                "[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\
+                 [tool.hatch.build.hooks.vcs]\nversion-file = \"_version.py\"\n"
+            ),
+            Vec::<(String, String)>::new()
+        );
     }
 
     #[test]

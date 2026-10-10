@@ -405,6 +405,7 @@ zero-configにはentry推定が必要。デフォルトでentry扱いにする�
 [project.scripts]
 [project.gui-scripts]
 [project.entry-points.*]
+[tool.hatch.*.hooks.custom] / [tool.hatch.build.targets.custom] の path
 __main__.py
 main.py
 app.py
@@ -416,6 +417,7 @@ conftest.py
 docs/conf.py
 alembic/env.py
 scripts/**/*.py
+.github/**/*.py
 examples/**/*.py
 docs/**/*.py
 **/*.ipynb
@@ -424,6 +426,10 @@ docs/**/*.py
 単独ファイル名でのentry推定(`main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` / `noxfile.py`)は**project root直下、およびsrc layoutのpackage直下のみ**を対象にする。任意の深さで同名ファイルをentry扱いすると、unused file検出が事実上無効化されるため。`__main__.py` と `conftest.py` は全階層で有効。`docs/conf.py`（root と各 workspace member 直下）と `alembic/env.py` は記載のpathに限定する。
 
 `examples/**` と `docs/**` の `.py` は root 直下と各 workspace member 直下を entry にする（rule `auto:examples/**` / `auto:docs/**`、#666）。どちらも `python examples/foo.py` や `fastmcp run docs/demo.py` で直接実行する単体スクリプトの置き場で、どこからも import されないため。これらは docs / dev context なので、依存の判定には使わず (#694)、解決できない import (CHK010) も info にする。その layout の package 内（flat layout の `examples` package など）は対象外。
+
+root 直下の `scripts/**` と `.github/**` の `.py` も entry にする（rule `auto:scripts/**` / `auto:.github/**`）。`.github/scripts/check_diff.py` のように workflow が `python .github/scripts/x.py` で直接実行し、どこからも import されないため (#734)。workflow の `run:` は読まずに tree 単位で扱い、context は変えない（langchain の `.github/scripts/get_min_versions.py` のように宣言の無い import は CHK003 のまま報告する）。
+
+hatchling が build 時に path で読み込む custom builder / hook も entry にする (#735)。root と各 workspace member の `pyproject.toml` の `[tool.hatch.build.targets.custom]`・`[tool.hatch.build.hooks.custom]`・`[tool.hatch.build.targets.<target>.hooks.custom]`・`[tool.hatch.metadata.hooks.custom]` の `path`（省略時 `hatch_build.py`、manifest 相対）が discovery 済みの file を指すときに限り、origin `manifest: [<table>].path` の entry とする。build 時にだけ動き wheel には入らないので dev context とし（§10）、`--production` では落とす。その file の import は build 環境が入れる `[build-system].requires` で解決し、宣言済みとして CHK003 / CHK004 / CHK005 の対象外にする（airflow の `hatch_build.py` の `hatchling`）。
 
 discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry にする（rule `auto:**/*.ipynb`、#514）。notebook は cell 単位で直接実行され他の file から import されないため、PEP 723 script と同じく root としてしか使われない。そのため notebook 自身は CHK001 にならず、notebook からだけ import される module も到達可能になる。app 判定（`has_clear_app_signals`）は file 名で見るため、notebook があっても mode は変わらない。
 
@@ -570,7 +576,7 @@ contextは依存だけでなく**file側にも割り当てる**。CHK005(misplac
 src/** / flat layoutのpackage/** / [project.scripts]到達file -> runtime
 **/tests/** / root・workspace member直下の test/** / conftest.py / *_test.py / test_*.py -> test
 docs/** / workspace member直下の docs/**                    -> docs
-noxfile.py / 各tool設定が参照するscript                      -> dev
+noxfile.py / 各tool設定が参照するscript (hatch の build hook 等) -> dev
 scripts/**                                                  -> dev (設定で変更可)
 examples/** / workspace member直下の examples/**          -> dev
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
