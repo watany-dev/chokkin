@@ -64,11 +64,9 @@ pub(super) fn detect_missing_dependencies(
 
         let usage = usage_context_for_import(&import.file, import.context, sources);
         let workspace_member = import.workspace_member.as_deref();
-        let boundary = workspace_member.and_then(|member_id| {
-            workspace_declared
-                .iter()
-                .find(|boundary| boundary.member_id == member_id)
-        });
+        let boundary = workspace_declared
+            .iter()
+            .find(|boundary| Some(boundary.member_id) == workspace_member);
         let member_entry = boundary
             .and_then(|boundary| boundary.declared.get(distribution))
             .map(Vec::as_slice);
@@ -110,11 +108,12 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        // A member's own lockfile is walked from the member's declarations
-        // (#653); the root's lockfile still counts from the root's.
+        // Lock edges are walked from the importing member's declarations: a
+        // package only the root's reach (a root extra) may be absent (#649).
+        let seeds = boundary.map_or(declared, |boundary| &boundary.declared);
         let scopes = [
-            boundary.and_then(|boundary| Some((&boundary.declared, boundary.lockfile?))),
-            has_lockfile.then_some((declared, &resolution.transitive)),
+            boundary.and_then(|boundary| Some((seeds, boundary.lockfile?))),
+            has_lockfile.then_some((seeds, &resolution.transitive)),
         ];
         let optional = optional_imports.contains(&(import.file.clone(), import.line));
         candidates.push(undeclared_candidate(
@@ -839,38 +838,57 @@ mod tests {
         assert_eq!(optional[0].severity, Severity::Warning);
     }
 
-    /// #653: a member lockfile adds evidence; the root's lock edges from the
-    /// root's declarations still count.
+    /// #649: the root's lockfile is walked from the importing member's
+    /// declarations; an edge reached only through the root's (a root extra in
+    /// fastmcp) is not evidence the member installs the package.
     #[test]
-    fn root_lockfile_still_counts_beside_member_lockfile() {
+    fn root_lockfile_is_walked_from_member_declarations() {
         let requests = declared_dep("requests");
-        let root_lock = LockfileGraph {
+        let tasks = declared_dep_in(
+            "fastmcp-tasks",
+            DependencyContext::OptionalExtra("tasks".to_owned()),
+        );
+        let root_lock = || LockfileGraph {
             edges: BTreeMap::from([
                 ("requests".to_owned(), vec!["urllib3".to_owned()]),
                 ("urllib3".to_owned(), Vec::new()),
+                ("fastmcp-tasks".to_owned(), vec!["pydocket".to_owned()]),
+                ("pydocket".to_owned(), Vec::new()),
             ]),
             ..LockfileGraph::default()
         };
-        let member_lock = LockfileGraph::default();
+        let root = BTreeMap::from([("fastmcp-tasks".to_owned(), vec![&tasks])]);
         let members = [WorkspaceDeclaredIndex {
-            member_id: "core",
-            declared: BTreeMap::new(),
-            lockfile: Some(&member_lock),
+            member_id: "slim",
+            declared: BTreeMap::from([("requests".to_owned(), vec![&requests])]),
+            lockfile: None,
         }];
+        let import = |distribution, member: Option<&str>, optional| ResolvedImport {
+            workspace_member: member.map(str::to_owned),
+            optional,
+            ..runtime_import(distribution)
+        };
+        let run = |import| detect_with(&root, import, root_lock(), false, &members);
 
-        let found = detect_with(
-            &BTreeMap::from([("requests".to_owned(), vec![&requests])]),
-            ResolvedImport {
-                workspace_member: Some("core".to_owned()),
-                ..runtime_import("urllib3")
-            },
-            root_lock,
-            false,
-            &members,
-        );
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].rule, RuleId::Chk004);
-        assert_eq!(found[0].confidence, Confidence::Certain);
+        let member_edge = run(import("urllib3", Some("slim"), false));
+        assert_eq!(member_edge.len(), 1, "{member_edge:?}");
+        assert_eq!(member_edge[0].rule, RuleId::Chk004);
+        assert_eq!(member_edge[0].confidence, Confidence::Certain);
+
+        let root_edge = run(import("pydocket", Some("slim"), false));
+        assert_eq!(root_edge.len(), 1, "{root_edge:?}");
+        assert_eq!(root_edge[0].rule, RuleId::Chk004);
+        assert_eq!(root_edge[0].confidence, Confidence::Likely);
+
+        let optional = run(import("pydocket", Some("slim"), true));
+        assert_eq!(optional.len(), 1, "{optional:?}");
+        assert_eq!(optional[0].rule, RuleId::Chk003);
+        assert_eq!(optional[0].severity, Severity::Info);
+
+        let root_code = run(import("pydocket", None, false));
+        assert_eq!(root_code.len(), 1, "{root_code:?}");
+        assert_eq!(root_code[0].rule, RuleId::Chk004);
+        assert_eq!(root_code[0].confidence, Confidence::Certain);
     }
 
     #[test]
