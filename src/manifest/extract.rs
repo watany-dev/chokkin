@@ -61,6 +61,7 @@ pub fn extract_manifest(
         sources.pyproject_toml = true;
         sources.pyproject_project_table = extracted.has_project_table;
     }
+    let pyproject_requires_python = metadata.requires_python.clone();
 
     // Manifest whose runtime dependencies could not be read, if any.
     let mut runtime_unknown_in: Option<&str> = None;
@@ -127,6 +128,16 @@ pub fn extract_manifest(
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
         warnings.extend(extracted.warnings);
+    }
+    // PEP 621: under a `[project]` table setuptools ignores setup.*
+    // `python_requires` unless `requires-python` is listed in `dynamic`.
+    if sources.pyproject_project_table
+        && !metadata
+            .dynamic
+            .iter()
+            .any(|field| field == "requires-python")
+    {
+        metadata.requires_python = pyproject_requires_python;
     }
 
     let dev_group = DependencyContext::Group("dev".to_owned());
@@ -273,7 +284,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v11".to_owned(),
+            unit_version: "manifest-extract-v12".to_owned(),
         },
         inputs,
     })

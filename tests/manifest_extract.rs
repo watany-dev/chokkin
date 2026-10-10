@@ -526,6 +526,67 @@ fn resolve_target_version_honors_explicit_py311_over_requires_python() {
     assert_eq!(resolved, TargetVersion::parse("py311").expect("py311"));
 }
 
+/// `python_requires` fills `requires-python` with pyproject > setup.cfg >
+/// setup.py priority, unless a static `[project]` table rules it out (#764).
+#[test]
+fn requires_python_falls_back_to_setup_cfg_and_setup_py() {
+    const PYPROJECT: (&str, &[u8]) = (
+        "pyproject.toml",
+        b"[project]\nname = \"acme\"\nrequires-python = \">=3.12\"\n",
+    );
+    const BUILD_ONLY: (&str, &[u8]) = (
+        "pyproject.toml",
+        b"[build-system]\nrequires = [\"setuptools\"]\n",
+    );
+    const STATIC_PROJECT: (&str, &[u8]) = ("pyproject.toml", b"[project]\nname = \"acme\"\n");
+    const DYNAMIC_PROJECT: (&str, &[u8]) = (
+        "pyproject.toml",
+        b"[project]\nname = \"acme\"\ndynamic = [\"requires-python\"]\n",
+    );
+    const SETUP_CFG: (&str, &[u8]) = (
+        "setup.cfg",
+        b"[options]\npython_requires = >=3.10\ninstall_requires =\n    requests\n",
+    );
+    const SETUP_PY: (&str, &[u8]) = (
+        "setup.py",
+        b"from setuptools import setup\nMIN = '>=3.8'\nsetup(python_requires=MIN, install_requires=['requests'])\n",
+    );
+    const SETUP_PY_UNKNOWN: (&str, &[u8]) = (
+        "setup.py",
+        b"import sys\nsetup(python_requires=sys.argv[1], install_requires=['requests'])\n",
+    );
+    const SETUP_PY_ONLY_REQUIRES: (&str, &[u8]) = ("setup.py", b"setup(python_requires='>=3.9')\n");
+    for (files, expected, conflicts) in [
+        (&[SETUP_CFG][..], Some(">=3.10"), 0),
+        (&[SETUP_PY][..], Some(">=3.8"), 0),
+        (&[SETUP_CFG, SETUP_PY][..], Some(">=3.10"), 1),
+        (&[PYPROJECT, SETUP_CFG, SETUP_PY][..], Some(">=3.12"), 2),
+        (&[BUILD_ONLY, SETUP_PY][..], Some(">=3.8"), 0),
+        (&[STATIC_PROJECT, SETUP_CFG][..], None, 0),
+        (&[DYNAMIC_PROJECT, SETUP_CFG][..], Some(">=3.10"), 0),
+        (&[SETUP_PY_UNKNOWN][..], None, 0),
+        (&[SETUP_PY_ONLY_REQUIRES][..], Some(">=3.9"), 0),
+    ] {
+        let manifest = extract_files(files);
+        assert_eq!(
+            manifest.metadata.requires_python.as_deref(),
+            expected,
+            "{files:?}"
+        );
+        let conflict_count = manifest
+            .warnings
+            .iter()
+            .filter(|warning| {
+                matches!(
+                    warning,
+                    ManifestWarning::MetadataConflict { field, .. } if field == "requires-python"
+                )
+            })
+            .count();
+        assert_eq!(conflict_count, conflicts, "{files:?}");
+    }
+}
+
 #[test]
 fn extracts_without_pyproject() {
     let manifest = extract_fixture("requirements_only");
