@@ -531,6 +531,46 @@ fn affixed_declared_name_resolves_as_maybe() {
 }
 
 #[test]
+fn build_requirement_resolves_without_a_distribution() {
+    // sqlalchemy's `cython` build requirement (#720).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"cython>=3.3\", \"pywidget\"]\n\n\
+             [project]\nname = \"build-demo\"\nversion = \"0.1.0\"\n",
+        ),
+        ("app.py", "import cython\nimport widget\nimport gizmo\n"),
+    ]);
+    let index = resolve_path(temp.path());
+    let root = |name: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == name)
+            .map_or_else(
+                || panic!("{name} import"),
+                |resolved| {
+                    (
+                        resolved.origin,
+                        resolved.distribution.clone(),
+                        resolved.confidence,
+                    )
+                },
+            )
+    };
+
+    assert_eq!(
+        root("cython"),
+        (ModuleOrigin::ThirdParty, None, ResolveConfidence::Likely)
+    );
+    assert_eq!(
+        root("widget"),
+        (ModuleOrigin::ThirdParty, None, ResolveConfidence::Maybe)
+    );
+    assert_eq!(root("gizmo").0, ModuleOrigin::Unknown);
+}
+
+#[test]
 fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
     let index = resolve_path(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
