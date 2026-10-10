@@ -396,10 +396,14 @@ fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
         members: probe
             .workspace_inputs
             .iter()
+            .map(|input| (input.member.id.clone(), names(&input.manifest.dependencies)))
+            .collect(),
+        member_locks: probe
+            .workspace_inputs
+            .iter()
             .map(|input| {
-                let mut declared = names(&input.manifest.dependencies);
-                declared.extend(input.manifest.lockfile.edges.keys().cloned());
-                (input.member.id.clone(), declared)
+                let locked = input.manifest.lockfile.edges.keys().cloned().collect();
+                (input.member.id.clone(), locked)
             })
             .collect(),
     }
