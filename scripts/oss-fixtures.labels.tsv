@@ -1655,19 +1655,15 @@ llama_index	CHK004	llama-index-embeddings-google-genai:llama-index-integrations/
 mlflow	CHK004	mlflow/genai/utils/trace_utils.py:nest_asyncio	tp	-	optional try-import; root pyproject declares no nest-asyncio; via deepeval, ragas
 airflow	CHK006	devel-common/src/docs/provider_conf.py:html_theme_options	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 fastmcp	CHK006	fastmcp_slim/fastmcp/client/oauth_callback.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
-mcp-python-sdk	CHK006	src/mcp/shared/_httpx_utils.py:MCP_DEFAULT_SSE_READ_TIMEOUT	tp	-	constant in a private module (_httpx_utils); no references outside the module
 mlflow	CHK006	mlflow/claude_code/config.py:HOOK_FIELD_COMMAND	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/self/add.py:SelfAddCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfAddCommand"
 airflow	CHK006	airflow-core/src/airflow/utils/context.py:OutletEventAccessors	tp	-	task-sdk has its own copy; patches target airflow.sdk.execution_time.context, not this class
 fastmcp	CHK006	fastmcp_slim/fastmcp/settings.py:TEN_MB_IN_BYTES	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mcp-python-sdk	CHK006	src/mcp/shared/message.py:ResumptionTokenUpdateCallback	tp	-	no references outside the module
 mlflow	CHK006	mlflow/langchain/_compat.py:import_runnable	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/env/remove.py:EnvRemoveCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "EnvRemoveCommand"
 airflow	CHK006	airflow-core/src/airflow/cli/commands/api_server_command.py:PS	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/settings.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mcp-python-sdk	CHK006	src/mcp/client/subscriptions.py:OnEvent	fp	library-public-api	listed in __all__ of mcp.client.subscriptions; module documented in docs/migration.md
 mlflow	CHK006	mlflow/server/constants.py:FLASK_SERVER_SECRET_KEY_ENV_VAR	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/self/update.py:SelfUpdateCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfUpdateCommand"
 airflow	CHK006	devel-common/src/docs/provider_conf.py:html_css_files	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 fastmcp	CHK006	fastmcp_slim/fastmcp/exceptions.py:InvalidSignature	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mcp-python-sdk	CHK006	src/mcp/server/__main__.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
@@ -1676,43 +1672,33 @@ poetry	CHK006	src/poetry/installation/chef.py:ChefError	tp	-	no references outsi
 airflow	CHK006	airflow-core/src/airflow/api_fastapi/common/db/common.py:AsyncSessionDep	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/providers/local_provider/decorators/tools.py:DuplicateBehavior	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/langchain/model.py:get_default_conda_env	tp	-	flavor __init__ re-exports selectively and omits it; not in api inventory
-poetry	CHK006	src/poetry/console/commands/cache/list.py:CacheListCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "CacheListCommand"
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_AUDIT_LOG	fp	external-reference	read as permissions.RESOURCE_AUDIT_LOG in providers/fab via `from airflow.security import permissions` (module-attribute access)
 fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/tasks.py:TaskMeta	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/models/rag_signatures.py:ChainCompletionChunk	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/source/remove.py:SourceRemoveCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SourceRemoveCommand"
 airflow	CHK006	airflow-core/src/airflow/utils/cli_action_loggers.py:register_post_exec_callback	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/resources/types.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/utils/databricks_utils.py:get_databricks_model_version_url	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/source/add.py:SourceAddCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SourceAddCommand"
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:ClearPartitionsBody	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/tool_injection.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/utils/mlflow_tags.py:MLFLOW_EXPERIMENT_DATABRICKS_TELEMETRY_DESTINATION_ID	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/debug/tags.py:DebugTagsCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "DebugTagsCommand"
 airflow	CHK006	airflow-ctl/src/airflowctl/ctl/commands/auth_command.py:get_token	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/telemetry.py:get_protocol_span_attributes	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
 mlflow	CHK006	mlflow/utils/databricks_utils.py:get_job_type_info	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/python/list.py:PythonListCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "PythonListCommand"
 airflow	CHK006	airflow-core/src/airflow/api_fastapi/execution_api/routes/hitl.py:log	tp	-	module-level logger/tracer unused even in-module
 fastmcp	CHK006	fastmcp_slim/fastmcp/tools/tool_transform.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/tensorflow/autologging.py:extract_input_example_from_tf_input_fn	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/new.py:NewCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "NewCommand"
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:AssetEventCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/elicitation.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/genai/judges/builtin_judges.py:BuiltinJudge	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/debug/resolve.py:DebugResolveCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "DebugResolveCommand"
 airflow	CHK006	devel-common/src/docs/provider_conf.py:autodoc_mock_imports	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/middleware.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/utils/data_utils.py:parse_s3_uri	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/self/show/plugins.py:SelfShowPluginsCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfShowPluginsCommand"
 airflow	CHK006	devel-common/src/sphinx_exts/docs_build/code_utils.py:DOCS_SOURCES_PATH	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/telemetry.py:record_span_error	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
 mlflow	CHK006	mlflow/tracing/utils/__init__.py:SPANS_COLUMN_NAME	tp	-	no references outside the module
-poetry	CHK006	src/poetry/console/commands/source/show.py:SourceShowCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SourceShowCommand"
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:DAG_ACTIONS	fp	external-reference	read as permissions.DAG_ACTIONS in providers/fab via `from airflow.security import permissions` (module-attribute access)
 fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/json_schema_type.py:JSONSchema	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
 mlflow	CHK006	mlflow/shap/__init__.py:get_default_conda_env	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.shap.get_default_conda_env)
-poetry	CHK006	src/poetry/console/commands/env/info.py:EnvInfoCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "EnvInfoCommand"
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_WEBSITE	fp	external-reference	read as permissions.RESOURCE_WEBSITE in providers/fab via `from airflow.security import permissions` (module-attribute access)
 fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/cli.py:LOGO_ASCII_3	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/deployments/databricks/__init__.py:target_help	fp	name-convention	deployment plugin interface: plugin_manager checks the module has target_help/run_local via inspect.getmembers
@@ -1720,11 +1706,9 @@ poetry	CHK006	src/poetry/repositories/pypi_repository.py:logger	tp	-	module logg
 airflow	CHK006	airflow-core/src/airflow/api_fastapi/execution_api/datamodels/asset.py:AssetAliasResponse	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/cli.py:LOGO_ASCII_1	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/dspy/save.py:get_default_conda_env	tp	-	flavor __init__ re-exports selectively and omits it; not in api inventory
-poetry	CHK006	src/poetry/console/commands/cache/clear.py:CacheClearCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "CacheClearCommand"
 airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:auth_managers_list	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
 fastmcp	CHK006	fastmcp_slim/fastmcp/exceptions.py:ClientError	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:get_config	tp	-	databricks_utils calls provider objects' .get_config(), not this module function
-poetry	CHK006	src/poetry/console/commands/self/show/__init__.py:SelfShowCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfShowCommand"
 airflow	CHK006	airflow-core/src/airflow/utils/dates.py:datetime_to_nano	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/openapi/json_schema_converter.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/server/graphql/graphql_schema_extensions.py:MlflowMetricExtension	fp	dynamic-import	autogenerated graphql schema references it as a graphene.NonNull dotted-string type
@@ -1732,11 +1716,9 @@ poetry	CHK006	src/poetry/puzzle/provider.py:logger	tp	-	module logger unused eve
 airflow	CHK006	airflow-core/src/airflow/dag_processing/processor.py:in_process_api_server	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/ui.py:create_button_group	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/artifacts/__init__.py:load_image	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.artifacts.load_image)
-poetry	CHK006	src/poetry/console/commands/debug/info.py:DebugInfoCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "DebugInfoCommand"
 airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:connection_field_behaviours	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/context.py:set_context	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/johnsnowlabs/__init__.py:save_model	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.johnsnowlabs.save_model)
-poetry	CHK006	src/poetry/console/commands/search.py:SearchCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SearchCommand"
 airflow	CHK006	devel-common/src/tests_common/pytest_plugin.py:pytest_runtest_setup	fp	name-convention	pytest hook called by name
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_desktop.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/types/responses.py:create_mcp_approval_request_item	fp	library-public-api	documented public API (APILink in docs/api_reference for mlflow.types.responses)
@@ -1744,11 +1726,9 @@ poetry	CHK006	src/poetry/utils/wheel.py:logger	tp	-	module logger unused even in
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:UpdateHITLDetailPayload	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/telemetry.py:get_session_span_attributes	fp	library-public-api	listed in the module's __all__ (fastmcp public module)
 mlflow	CHK006	mlflow/pytest/plugin.py:pytest_sessionfinish	fp	name-convention	pytest hook called by name
-poetry	CHK006	src/poetry/console/commands/python/install.py:PythonInstallCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "PythonInstallCommand"
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:AssetStateStoreCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
 fastmcp	CHK006	fastmcp_slim/fastmcp/apps/generative.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/__init__.py:txtai	fp	library-public-api	LazyLoader proxy for the external mlflow-txtai flavor; docs show mlflow.txtai.autolog()
-poetry	CHK006	src/poetry/console/commands/about.py:AboutCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "AboutCommand"
 airflow	CHK006	airflow-ctl/src/airflowctl/ctl/cli_config.py:BUILD_DOCS	tp	-	no references outside the module
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/caching.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/sagemaker/__init__.py:run_local	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.sagemaker.run_local)
