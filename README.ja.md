@@ -23,7 +23,7 @@ uvx chokkin
 ## 何が出るか
 
 ```text
-chokkin 0.7.3
+chokkin 0.7.4
 
 Project: acme-api
 Config : pyproject.toml
@@ -207,7 +207,7 @@ action を使わない場合は `uvx` でバージョンを固定します。
 
 ```yaml
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - run: uvx chokkin@0.7.3 --baseline chokkin-baseline.json --reporter github
+      - run: uvx chokkin@0.7.4 --baseline chokkin-baseline.json --reporter github
 ```
 
 baseline と `--reporter json` の出力には `schema_version: "1"` が含まれ、[`docs/schema/`](./docs/schema/) の公開 JSON Schema に従います。

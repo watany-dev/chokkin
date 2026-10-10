@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-10-10
+
+v0.7.4 is a fix release on top of v0.7.3 that continues to target false
+positives on real OSS projects. The JSON / baseline `schema_version` stays
+`"1"`, and fingerprints are unchanged, so baselines keep matching. Some
+CHK003 / CHK005 / CHK009 / CHK010 findings become info, files under
+`examples/` become dev context, nested projects that are not workspace
+members are skipped, and many CHK001 / CHK006 / CHK007 / CHK008 / CHK010
+findings go away. `--fix` no longer removes a CHK009 requirement that a
+group, extra or build requirement repeats from the runtime declaration.
+
 ### Added
 - The bundled map gains `griffelib` (`griffe`), `llama-index-workflows`
   (`workflows`), `mkdocs-material` (`material`), `pytest-xprocess`
