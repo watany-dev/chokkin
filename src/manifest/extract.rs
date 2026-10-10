@@ -357,7 +357,7 @@ pub fn resolve_target_version(config: &ChokkinConfig, manifest: &LoadedManifest)
 }
 
 /// Effective lower bound of `requires-python`: the highest `>=`/`>`/`~=`/`==` release.
-pub(super) fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
+pub(crate) fn infer_target_version_from_requires_python(specifier: &str) -> Option<TargetVersion> {
     let specifiers = parse_version_specifiers(specifier)?;
     let (major, minor) = specifiers
         .iter()

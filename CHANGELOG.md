@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once (#680).
 
 ### Fixed
+- CHK010 for an import in an `except ImportError:` (or
+  `ModuleNotFoundError`) handler is info instead of warning when the `try`
+  body only imports stdlib modules that every Python `requires-python`
+  allows ships, from its lower bound up: the fallback never runs
+  (`dummy_threading`, Python 2's `SimpleHTTPServer` / `BaseHTTPServer`).
+  A module added within the range (`tomllib` for `>=3.8`), a platform-only
+  or optional-build module (`fcntl`, `sqlite3`), a lower bound below 3.8
+  and a missing `requires-python` keep the warning (requests, #721).
 - A workspace member used only through another used member's imports is no
   longer CHK002 when the root inventories only its own files (a src-layout
   root). The member files the root does not inventory are parsed for this

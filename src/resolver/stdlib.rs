@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use crate::config::TargetVersion;
-use crate::manifest::requires_python_max_minor;
+use crate::manifest::{infer_target_version_from_requires_python, requires_python_max_minor};
 
 static PY310_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
 static PY311_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
@@ -15,6 +15,77 @@ static PY314_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
 const OLDEST_BUNDLED_MINOR: u32 = 10;
 const NEWEST_BUNDLED_MINOR: u32 = 14;
 
+/// Oldest `requires-python` floor [`StdlibRange::always_contains`] judges:
+/// `py310.txt` stands in for 3.8 and 3.9 once [`ADDED_IN_PY39`] is set aside,
+/// which was checked against `CPython` 3.8.20 and 3.9.25.
+const OLDEST_FLOOR_MINOR: u32 = 8;
+
+/// `py310.txt` entries that 3.8 lacks.
+const ADDED_IN_PY39: [&str; 5] = [
+    "_aix_support",
+    "_bootsubprocess",
+    "_zoneinfo",
+    "graphlib",
+    "zoneinfo",
+];
+
+/// Stdlib roots that a given interpreter may still lack: platform-only
+/// modules and those built on an optional library or split out by distros.
+const NOT_ALWAYS_BUILT: [&str; 52] = [
+    "_bz2",
+    "_crypt",
+    "_ctypes",
+    "_curses",
+    "_curses_panel",
+    "_dbm",
+    "_decimal",
+    "_gdbm",
+    "_hashlib",
+    "_lzma",
+    "_msi",
+    "_overlapped",
+    "_posixshmem",
+    "_posixsubprocess",
+    "_sqlite3",
+    "_ssl",
+    "_tkinter",
+    "_uuid",
+    "_winapi",
+    "bz2",
+    "crypt",
+    "ctypes",
+    "curses",
+    "distutils",
+    "ensurepip",
+    "fcntl",
+    "grp",
+    "idlelib",
+    "lib2to3",
+    "lzma",
+    "msilib",
+    "msvcrt",
+    "nis",
+    "nt",
+    "ossaudiodev",
+    "posix",
+    "pty",
+    "pwd",
+    "pyexpat",
+    "readline",
+    "resource",
+    "spwd",
+    "sqlite3",
+    "ssl",
+    "syslog",
+    "termios",
+    "tkinter",
+    "tty",
+    "turtle",
+    "venv",
+    "winreg",
+    "winsound",
+];
+
 /// Python 3 minors whose stdlib counts: a root that is stdlib in any of them
 /// is stdlib, so `tomllib` behind a `sys.version_info` guard is not a missing
 /// dependency of a `>=3.10` project (#358).
@@ -22,6 +93,9 @@ const NEWEST_BUNDLED_MINOR: u32 = 14;
 pub struct StdlibRange {
     min: u32,
     max: u32,
+    /// Lowest Python 3 minor `requires-python` allows; `None` when it is
+    /// missing or admits Python 2.
+    floor: Option<u32>,
 }
 
 impl StdlibRange {
@@ -34,7 +108,10 @@ impl StdlibRange {
             .and_then(requires_python_max_minor)
             .unwrap_or(u32::MAX)
             .max(min);
-        Self { min, max }
+        let floor = requires_python
+            .and_then(infer_target_version_from_requires_python)
+            .map(|version| version.minor());
+        Self { min, max, floor }
     }
 
     /// Returns whether `import_root` is a stdlib module for any minor in range.
@@ -43,6 +120,24 @@ impl StdlibRange {
         let low = self.min.clamp(OLDEST_BUNDLED_MINOR, NEWEST_BUNDLED_MINOR);
         let high = self.max.clamp(low, NEWEST_BUNDLED_MINOR);
         (low..=high).any(|minor| stdlib_modules(minor).contains(import_root))
+    }
+
+    /// Returns whether every interpreter `requires-python` allows, from its
+    /// lower bound up, ships `import_root`, so an `except ImportError:`
+    /// fallback for it never runs (#721). `false` without a lower bound.
+    #[must_use]
+    pub fn always_contains(self, import_root: &str) -> bool {
+        let Some(floor) = self.floor.filter(|floor| *floor >= OLDEST_FLOOR_MINOR) else {
+            return false;
+        };
+        if NOT_ALWAYS_BUILT.contains(&import_root)
+            || (floor == OLDEST_FLOOR_MINOR && ADDED_IN_PY39.contains(&import_root))
+        {
+            return false;
+        }
+        let low = floor.clamp(OLDEST_BUNDLED_MINOR, NEWEST_BUNDLED_MINOR);
+        let high = self.max.clamp(low, NEWEST_BUNDLED_MINOR);
+        (low..=high).all(|minor| stdlib_modules(minor).contains(import_root))
     }
 }
 
@@ -136,6 +231,43 @@ mod tests {
         assert!(supported.contains("cgi"));
         assert!(StdlibRange::new(&py310, None).contains("tomllib"));
         assert!(!StdlibRange::new(&py310, Some(">=3.10,<3.11")).contains("tomllib"));
+    }
+
+    fn floor(requires_python: Option<&str>) -> StdlibRange {
+        StdlibRange::new(&TargetVersion::default_py311(), requires_python)
+    }
+
+    #[test]
+    fn always_contains_checks_every_supported_minor_from_the_lower_bound() {
+        assert!(floor(Some(">=3.8")).always_contains("threading"));
+        assert!(floor(Some(">=3.12")).always_contains("tomllib"));
+        // `tomllib` arrived in 3.11 and `cgi` left in 3.13.
+        assert!(!floor(Some(">=3.10")).always_contains("tomllib"));
+        assert!(!floor(Some(">=3.10")).always_contains("cgi"));
+        assert!(floor(Some(">=3.10,<3.13")).always_contains("cgi"));
+        assert!(!floor(Some(">=3.8")).always_contains("dummy_threading"));
+    }
+
+    #[test]
+    fn always_contains_sets_aside_modules_older_floors_lack() {
+        // `py310.txt` stands in for 3.8 and 3.9, which lack `zoneinfo`.
+        assert!(!floor(Some(">=3.8")).always_contains("zoneinfo"));
+        assert!(floor(Some(">=3.9")).always_contains("zoneinfo"));
+        assert!(!floor(Some(">=3.7")).always_contains("threading"));
+    }
+
+    #[test]
+    fn always_contains_needs_a_python3_lower_bound() {
+        assert!(!floor(None).always_contains("threading"));
+        assert!(!floor(Some("<3.13")).always_contains("threading"));
+        assert!(!floor(Some(">=2.7,!=3.0.*")).always_contains("threading"));
+    }
+
+    #[test]
+    fn always_contains_skips_platform_and_optional_builds() {
+        for module in ["fcntl", "msvcrt", "sqlite3", "tkinter"] {
+            assert!(!floor(Some(">=3.10")).always_contains(module), "{module}");
+        }
     }
 
     #[test]

@@ -57,6 +57,10 @@ pub struct ImportRef {
     /// Relative import dot count (`0` = absolute).
     #[serde(default, skip_serializing_if = "is_zero_level")]
     pub relative_level: u8,
+    /// In an `except ImportError:` handler, the roots its `try` body imports;
+    /// the handler only runs when one of them is missing (#721).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_for: Vec<String>,
 }
 
 /// Serialization helper: `relative_level` is `0` for the common absolute import.
