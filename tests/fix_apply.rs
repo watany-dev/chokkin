@@ -141,6 +141,45 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
     );
 }
 
+/// #731: a host's own import in a module it loads is info, so it stays put.
+#[test]
+fn fix_keeps_host_loaded_imports_out_of_runtime() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("misplaced_host_loaded"), temp.path()).expect("copy fixture");
+
+    let report = analyze_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    assert!(report.fix.is_some());
+
+    let after =
+        std::fs::read_to_string(temp.path().join("pyproject.toml")).expect("read pyproject");
+    let doc: toml::Table = toml::from_str(&after).expect("valid toml after fix");
+    let names = |value: &toml::Value| -> Vec<String> {
+        value
+            .as_array()
+            .expect("array")
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_owned))
+            .collect()
+    };
+    assert_eq!(
+        names(&doc["project"]["dependencies"]),
+        ["sniffio", "rich", "hypothesis"]
+    );
+    assert_eq!(
+        names(&doc["dependency-groups"]["dev"]),
+        ["curio", "ipython", "pytest", "trio"]
+    );
+}
+
 #[test]
 fn fix_removes_included_group_dependency_only_from_declaring_group() {
     let temp = tempfile::tempdir().expect("tempdir");

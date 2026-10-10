@@ -1,0 +1,11 @@
+[project]
+name = "misplaced-host-loaded"
+version = "0.1.0"
+dependencies = ["sniffio"]
+
+[project.entry-points.pytest11]
+acme = "acme.plugin"
+acme-object = "acme.plugin_object:Plugin"
+
+[dependency-groups]
+dev = ["curio", "hypothesis", "ipython", "pytest", "rich", "trio"]

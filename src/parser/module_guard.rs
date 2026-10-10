@@ -2,14 +2,20 @@
 //! "already imported" checks and the `__main__` script block (#681), and
 //! "is it installed" checks (#695).
 
+use std::collections::{HashMap, HashSet};
+
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
-use ruff_python_ast::{BoolOp, CmpOp, Expr, Stmt, UnaryOp};
+use ruff_python_ast::{BoolOp, CmpOp, Expr, ExprContext, Parameters, Stmt, UnaryOp};
 use ruff_text_size::{Ranged, TextSize};
 
 /// The top-level module `test` proves is already imported when its body
-/// runs: `"x" in sys.modules` or `sniffio.current_async_library() == "x"`.
+/// runs: `"x" in sys.modules` or `sniffio.current_async_library() == "x"`,
+/// the call possibly read back from one of `async_library_names`.
 #[must_use]
-pub(super) fn imported_module_guard(test: &Expr) -> Option<String> {
+pub(super) fn imported_module_guard(
+    test: &Expr,
+    async_library_names: &HashSet<String>,
+) -> Option<String> {
     let Expr::Compare(compare) = test else {
         return None;
     };
@@ -18,8 +24,8 @@ pub(super) fn imported_module_guard(test: &Expr) -> Option<String> {
     };
     let module = match op {
         CmpOp::In if is_dotted(right, "sys", "modules") => string_literal(left),
-        CmpOp::Eq if is_async_library_call(left) => string_literal(right),
-        CmpOp::Eq if is_async_library_call(right) => string_literal(left),
+        CmpOp::Eq if is_async_library(left, async_library_names) => string_literal(right),
+        CmpOp::Eq if is_async_library(right, async_library_names) => string_literal(left),
         _ => None,
     }?;
     module
@@ -27,6 +33,61 @@ pub(super) fn imported_module_guard(test: &Expr) -> Option<String> {
         .next()
         .filter(|root| !root.is_empty())
         .map(str::to_owned)
+}
+
+/// Names the scope `body` only ever binds to `sniffio.current_async_library()`
+/// (`library = sniffio.current_async_library()`), so comparing one compares
+/// the call (#731). A parameter is a binding of the function's scope too, and
+/// nested scopes have their own names.
+#[must_use]
+pub(super) fn async_library_names(
+    parameters: Option<&Parameters>,
+    body: &[Stmt],
+) -> HashSet<String> {
+    let mut bindings = AsyncLibraryBindings::default();
+    for parameter in parameters.into_iter().flatten() {
+        bindings
+            .only_async_library
+            .insert(parameter.name().as_str(), false);
+    }
+    bindings.visit_body(body);
+    bindings
+        .only_async_library
+        .into_iter()
+        .filter(|&(_, only)| only)
+        .map(|(name, _)| name.to_owned())
+        .collect()
+}
+
+/// Per bound name, whether every binding so far assigned the sniffio call.
+#[derive(Default)]
+struct AsyncLibraryBindings<'a> {
+    only_async_library: HashMap<&'a str, bool>,
+}
+
+impl<'a> Visitor<'a> for AsyncLibraryBindings<'a> {
+    fn visit_stmt(&mut self, stmt: &'a Stmt) {
+        if let Stmt::Assign(assign) = stmt
+            && let [Expr::Name(name)] = &*assign.targets
+            && is_async_library_call(&assign.value)
+        {
+            self.only_async_library
+                .entry(name.id.as_str())
+                .or_insert(true);
+        } else if !matches!(stmt, Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
+            walk_stmt(self, stmt);
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &'a Expr) {
+        match expr {
+            Expr::Lambda(_) => {},
+            Expr::Name(name) if name.ctx != ExprContext::Load => {
+                self.only_async_library.insert(name.id.as_str(), false);
+            },
+            _ => walk_expr(self, expr),
+        }
+    }
 }
 
 /// Returns `true` for `__name__ == "__main__"` (either operand order).
@@ -195,6 +256,11 @@ fn is_dotted(expr: &Expr, receiver: &str, attr: &str) -> bool {
     )
 }
 
+fn is_async_library(expr: &Expr, names: &HashSet<String>) -> bool {
+    is_async_library_call(expr)
+        || matches!(expr, Expr::Name(name) if names.contains(name.id.as_str()))
+}
+
 fn is_async_library_call(expr: &Expr) -> bool {
     matches!(expr, Expr::Call(call)
         if call.arguments.is_empty() && is_dotted(&call.func, "sniffio", "current_async_library"))
@@ -206,7 +272,7 @@ mod tests {
 
     fn guard(source: &str) -> Option<String> {
         let parsed = ruff_python_parser::parse_expression(source).expect("parse");
-        imported_module_guard(parsed.expr())
+        imported_module_guard(parsed.expr(), &HashSet::from(["library".to_owned()]))
     }
 
     fn is_main(source: &str) -> bool {
@@ -227,6 +293,8 @@ mod tests {
         for source in [
             "sniffio.current_async_library() == 'trio'",
             "'trio' == sniffio.current_async_library()",
+            "library == 'trio'",
+            "'trio' == library",
         ] {
             assert_eq!(guard(source).as_deref(), Some("trio"), "{source}");
         }
@@ -242,8 +310,74 @@ mod tests {
             "other() == 'trio'",
             "'trio' == other()",
             "name in sys.modules",
+            "backend == 'trio'",
+            "library != 'trio'",
+            "library.name == 'trio'",
         ] {
             assert_eq!(guard(source), None, "{source}");
+        }
+    }
+
+    /// #731: a name counts only while every binding of its scope assigns the
+    /// sniffio call.
+    #[test]
+    fn collects_names_bound_only_to_the_async_library_call() {
+        let names = |source: &str| {
+            let module = ruff_python_parser::parse_module(source).expect("parse");
+            let (parameters, body) = match &**module.suite() {
+                [Stmt::FunctionDef(def)] => (Some(&*def.parameters), &*def.body),
+                body => (None, body),
+            };
+            let mut names: Vec<String> =
+                async_library_names(parameters, body).into_iter().collect();
+            names.sort();
+            names
+        };
+        let call = "sniffio.current_async_library()";
+        assert_eq!(names(&format!("library = {call}\n")), ["library"]);
+        assert_eq!(
+            names(&format!("def f(backend):\n    library = {call}\n")),
+            ["library"]
+        );
+        assert_eq!(
+            names(&format!(
+                "if x:\n    a = {call}\n    b = {call}\nelse:\n    a = {call}\n    b = None\n"
+            )),
+            ["a"]
+        );
+        for rebound in [
+            "library = 'trio'",
+            "library += 'x'",
+            "for library in backends:\n    pass",
+            "with open(path) as library:\n    pass",
+            "if (library := detect()):\n    pass",
+            "del library",
+            "library, other = pair",
+        ] {
+            assert!(
+                names(&format!("library = {call}\n{rebound}\n")).is_empty(),
+                "{rebound}"
+            );
+            assert!(
+                names(&format!("{rebound}\nlibrary = {call}\n")).is_empty(),
+                "{rebound}"
+            );
+        }
+        for source in [
+            format!("library = other = {call}\n"),
+            format!("library = {call}.upper()\n"),
+            format!("library: str = {call}\n"),
+            format!("self.library = {call}\n"),
+            "library = current_async_library()\n".to_owned(),
+            format!("x = 1\ndef inner():\n    library = {call}\n"),
+            format!("def f(library=None):\n    library = {call}\n"),
+            format!("def f(*library):\n    library = {call}\n"),
+            format!("def f(*, library):\n    library = {call}\n"),
+            format!("def f(**library):\n    library = {call}\n"),
+            format!("class Backend:\n    library = {call}\n"),
+            format!("probe = lambda: (library := {call})\n"),
+        ] {
+            assert!(names(&source).is_empty(), "{source}");
         }
     }
 

@@ -20,8 +20,8 @@ use super::dynamic::{
 use super::exports::extract_exports;
 use super::lines::LineIndex;
 use super::module_guard::{
-    availability_test, first_availability_check, imported_module_guard, is_main_guard_test,
-    raises_import_error, runs_as_main,
+    async_library_names, availability_test, first_availability_check, imported_module_guard,
+    is_main_guard_test, raises_import_error, runs_as_main,
 };
 use super::platform_guard::is_platform_guard_test;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
@@ -53,6 +53,9 @@ pub(super) struct ModuleVisitor<'a> {
     /// Top-level modules an enclosing branch checked are already imported
     /// (`"x" in sys.modules`); imports of them are optional (#681).
     imported_guards: Vec<String>,
+    /// Names the current scope binds to `sniffio.current_async_library()`
+    /// (#731).
+    async_library_names: HashSet<String>,
     /// Inside `if __name__ == "__main__":` of a module other than
     /// `__main__.py`; its imports are dev context (#681).
     in_main_block: bool,
@@ -95,6 +98,7 @@ impl<'a> ModuleVisitor<'a> {
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
             imported_guards: Vec::new(),
+            async_library_names: HashSet::new(),
             in_main_block: false,
             availability_checked_at: None,
             function_depth: 0,
@@ -151,6 +155,7 @@ impl<'a> ModuleVisitor<'a> {
     /// list to decide whether an underscore-prefixed symbol is public.
     pub(super) fn visit_module(&mut self, stmts: &[Stmt]) {
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
+        self.async_library_names = async_library_names(None, stmts);
         self.visit_body(stmts);
     }
 
@@ -173,7 +178,8 @@ impl<'a> ModuleVisitor<'a> {
             if is_platform_guard_test(test) {
                 self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
             }
-            self.imported_guards.extend(imported_module_guard(test));
+            self.imported_guards
+                .extend(imported_module_guard(test, &self.async_library_names));
             // `python -m pkg` runs `pkg/__main__.py` as `__main__`, and Jupyter
             // runs every cell as `__main__`, so there the block is the normal
             // path.
@@ -565,12 +571,17 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 if let Some(returns) = &def.returns {
                     self.visit_annotation(returns);
                 }
+                let outer_names = std::mem::replace(
+                    &mut self.async_library_names,
+                    async_library_names(Some(&def.parameters), &def.body),
+                );
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
                     &def.body,
                     SymbolKind::Function,
                 );
+                self.async_library_names = outer_names;
             },
             Stmt::ClassDef(def) => {
                 self.visit_decorators(&def.decorator_list);
@@ -580,7 +591,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 if let Some(arguments) = &def.arguments {
                     self.visit_arguments(arguments);
                 }
+                let outer_names = std::mem::replace(
+                    &mut self.async_library_names,
+                    async_library_names(None, &def.body),
+                );
                 self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
+                self.async_library_names = outer_names;
             },
             Stmt::Assign(assign) => {
                 if self.module_level {
@@ -1917,6 +1933,60 @@ import trio_util
                 ("trio", true),
                 ("asyncio", false),
                 ("trio_util", false),
+            ]
+        );
+    }
+
+    /// #731: the sniffio result read back from a variable of the same scope
+    /// guards like the call itself.
+    #[test]
+    fn async_library_variable_checks_make_matching_imports_optional() {
+        let parsed = visit_source(
+            "import sniffio
+def via_variable():
+    library = sniffio.current_async_library()
+    if library == \"trio\":
+        import trio
+        import anyio
+    elif \"curio\" == library:
+        import curio
+def reassigned(flag):
+    library = sniffio.current_async_library()
+    if flag:
+        library = \"trio\"
+    if library == \"trio\":
+        import trio_typing
+def from_caller(library=None):
+    if library is None:
+        library = sniffio.current_async_library()
+    if library == \"trio\":
+        import trio_util
+def outer():
+    library = sniffio.current_async_library()
+    def inner():
+        if library == \"trio\":
+            import trio_asyncio
+library = \"trio\"
+if library == \"trio\":
+    import trio_websocket
+",
+        );
+        let optional: Vec<(&str, bool)> = parsed
+            .imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.optional))
+            .collect();
+        assert_eq!(
+            optional,
+            [
+                ("sniffio", false),
+                ("trio", true),
+                ("anyio", false),
+                ("curio", true),
+                ("trio_typing", false),
+                ("trio_util", false),
+                ("trio_asyncio", false),
+                ("trio_websocket", false),
             ]
         );
     }

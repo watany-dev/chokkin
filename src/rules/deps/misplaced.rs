@@ -4,10 +4,12 @@ use std::collections::{HashMap, HashSet};
 
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
-use crate::parser::ParseSummary;
+use crate::manifest::LoadedManifest;
+use crate::parser::{ParseSummary, SymbolKind};
 use crate::resolver::ResolvedImport;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 use crate::rules::{DependencyRuleContext, RuleContext};
+use crate::sources::{LayoutInfo, path_to_module};
 
 use super::context::{
     DeclarationBucket, UsageContext, declaration_bucket, declaration_buckets, include_path_details,
@@ -25,6 +27,7 @@ pub(super) fn detect_misplaced_dependencies(
     dependency: &DependencyRuleContext<'_>,
     reachable: &HashSet<&str>,
     workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+    pytest11_modules: &HashSet<&str>,
 ) -> Vec<IssueCandidate> {
     let DependencyRuleContext {
         rules: context,
@@ -39,6 +42,7 @@ pub(super) fn detect_misplaced_dependencies(
         ..
     } = *context;
     let strengths = import_strengths(context.parse);
+    let host_loaded = host_loaded_files(context.parse, &sources.layout, pytest11_modules);
     let eager = file_paths(graph, &reachability.eager);
     let certain = file_paths(graph, &reachability.certain);
     let mut candidates: Vec<(IssueCandidate, ImportStrength)> = Vec::new();
@@ -115,6 +119,9 @@ pub(super) fn detect_misplaced_dependencies(
             // missing at runtime without breaking the package (#614).
             strength = ImportStrength::Optional;
         }
+        if host_loaded.contains(&(import.file.as_str(), distribution.as_str())) {
+            strength = ImportStrength::HostLoaded;
+        }
         let report_key = (
             workspace_member.unwrap_or_default().to_owned(),
             distribution.clone(),
@@ -174,6 +181,8 @@ pub(super) fn detect_misplaced_dependencies(
 /// imports work without it until the code path runs (#583).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ImportStrength {
+    /// In a module the distribution itself loads (#731).
+    HostLoaded,
     /// `try`/`except ImportError`, `suppress(ImportError)` or
     /// platform-guarded, or in a file loaded only past such an import.
     Optional,
@@ -187,6 +196,10 @@ impl ImportStrength {
     fn apply(self, mut candidate: IssueCandidate) -> IssueCandidate {
         let detail = match self {
             Self::TopLevel => return candidate,
+            Self::HostLoaded => {
+                candidate.severity = Severity::Info;
+                "imported only by modules it loads itself: a pytest plugin or an IPython extension"
+            },
             Self::Optional => {
                 candidate.severity = Severity::Info;
                 "imported only under try/except ImportError, a platform guard or a check that it is already imported, or by modules loaded only that way"
@@ -230,6 +243,46 @@ fn import_strengths(parse: &ParseSummary) -> HashMap<(String, u32), ImportStreng
     strengths
 }
 
+pub(super) fn pytest11_modules<'a>(
+    manifests: impl Iterator<Item = &'a LoadedManifest>,
+) -> HashSet<&'a str> {
+    manifests
+        .flat_map(|manifest| &manifest.entry_points)
+        .filter(|entry| entry.group == "pytest11")
+        .filter_map(|entry| entry.target.split(':').next())
+        .map(str::trim)
+        .collect()
+}
+
+/// `(file, distribution)` pairs where the distribution's program loads the
+/// file, so the file's import of it only runs with it installed (#731):
+/// pytest loads a `pytest11` entry-point target or a module defining a
+/// top-level `pytest_*` hook, `IPython` one defining `load_ipython_extension`.
+fn host_loaded_files<'a>(
+    parse: &'a ParseSummary,
+    layout: &LayoutInfo,
+    pytest11_modules: &HashSet<&str>,
+) -> HashSet<(&'a str, &'static str)> {
+    let mut loaded = HashSet::new();
+    for module in &parse.modules {
+        let defines = |is_hook: fn(&str) -> bool| {
+            module
+                .symbols
+                .iter()
+                .any(|symbol| symbol.kind == SymbolKind::Function && is_hook(&symbol.name))
+        };
+        let registered = path_to_module(&module.path, layout)
+            .is_some_and(|name| pytest11_modules.contains(name.as_str()));
+        if registered || defines(|name| name.starts_with("pytest_")) {
+            loaded.insert((module.path.as_str(), "pytest"));
+        }
+        if defines(|name| name == "load_ipython_extension") {
+            loaded.insert((module.path.as_str(), "ipython"));
+        }
+    }
+    loaded
+}
+
 fn import_origin(import: &ResolvedImport) -> Origin {
     Origin::Import {
         file: import.file.clone(),
@@ -254,4 +307,79 @@ fn misplaced_message(
         "{distribution} is used from runtime code but only declared in {}",
         contexts.join(", ")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{ParsedModule, SymbolDef};
+    use crate::sources::ProjectLayout;
+
+    fn module(path: &str, symbols: &[(&str, SymbolKind)]) -> ParsedModule {
+        ParsedModule {
+            path: path.to_owned(),
+            symbols: symbols
+                .iter()
+                .map(|&(name, kind)| SymbolDef {
+                    name: name.to_owned(),
+                    kind,
+                    line: 1,
+                    is_public: true,
+                    decorators: Vec::new(),
+                    in_type_checking: false,
+                    used_in_module: false,
+                })
+                .collect(),
+            ..ParsedModule::default()
+        }
+    }
+
+    /// #731: a file is host-loaded only for the host that loads it.
+    #[test]
+    fn host_loaded_files_pair_each_file_with_its_own_host() {
+        let pytest11 = HashSet::from(["acme.plugin", "acme.objects"]);
+        let parse = ParseSummary {
+            modules: vec![
+                module("src/acme/plugin.py", &[]),
+                module("src/acme/objects/__init__.py", &[]),
+                module("src/acme/cli.py", &[("main", SymbolKind::Function)]),
+                module(
+                    "src/acme/hooks.py",
+                    &[("pytest_configure", SymbolKind::Function)],
+                ),
+                module(
+                    "src/acme/ext.py",
+                    &[("load_ipython_extension", SymbolKind::Function)],
+                ),
+                module(
+                    "src/acme/lookalikes.py",
+                    &[
+                        ("pytest_plugins", SymbolKind::Variable),
+                        ("pytest_Helper", SymbolKind::Class),
+                        ("load_ipython_extension", SymbolKind::Variable),
+                        ("run_pytest_configure", SymbolKind::Function),
+                    ],
+                ),
+            ],
+        };
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
+            packages: vec!["acme".to_owned()],
+            ..LayoutInfo::default()
+        };
+        let mut loaded: Vec<_> = host_loaded_files(&parse, &layout, &pytest11)
+            .into_iter()
+            .collect();
+        loaded.sort_unstable();
+        assert_eq!(
+            loaded,
+            [
+                ("src/acme/ext.py", "ipython"),
+                ("src/acme/hooks.py", "pytest"),
+                ("src/acme/objects/__init__.py", "pytest"),
+                ("src/acme/plugin.py", "pytest"),
+            ]
+        );
+    }
 }

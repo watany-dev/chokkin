@@ -2174,3 +2174,47 @@ fn binary_hatch_build_scripts_are_dev_entry_roots() {
         "{production:#?}"
     );
 }
+
+/// #731: a workspace member's own `pytest11` entry point makes its plugin
+/// module pytest-loaded; its other modules still need what they import.
+#[test]
+fn binary_member_pytest_plugin_imports_pytest_as_info() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"workspace-root\"\nversion = \"0.1.0\"\n\n\
+             [project.scripts]\ntools-cli = \"tools.cli:main\"\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        (
+            "packages/tools/pyproject.toml",
+            "[project]\nname = \"tools\"\nversion = \"0.1.0\"\n\n\
+             [project.entry-points.pytest11]\ntools = \"tools.plugin\"\n\n\
+             [dependency-groups]\ndev = [\"pytest\", \"ipython\"]\n",
+        ),
+        ("packages/tools/src/tools/__init__.py", ""),
+        (
+            "packages/tools/src/tools/plugin.py",
+            "import pytest\n\n\n@pytest.fixture\ndef tool():\n    return 1\n",
+        ),
+        (
+            "packages/tools/src/tools/cli.py",
+            "import IPython\n\n\ndef main():\n    IPython.embed()\n",
+        ),
+    ]);
+    let misplaced: Vec<(String, String)> = json_issues(project.path(), &["--strict"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK005")
+        .map(|issue| {
+            let field = |name: &str| issue[name].as_str().unwrap_or_default().to_owned();
+            (field("target"), field("severity"))
+        })
+        .collect();
+    assert_eq!(
+        misplaced,
+        [
+            ("tools:ipython".to_owned(), "warning".to_owned()),
+            ("tools:pytest".to_owned(), "info".to_owned()),
+        ]
+    );
+}
