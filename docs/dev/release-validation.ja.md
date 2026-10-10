@@ -39,8 +39,8 @@ scripts/clone-oss-fixtures.sh
 BASE="$S/target-073/release/chokkin"
 HEAD="$S/target-head/release/chokkin"
 
-scripts/oss-metrics.py -b "$BASE" -o "$S/metrics/base" -r 1
-scripts/oss-metrics.py -b "$HEAD" -o "$S/metrics/head" -r 3 --baseline "$S/metrics/base" --gate
+scripts/oss-metrics.py -b "$BASE" -o "$S/metrics/base" -r 1 --with-strict
+scripts/oss-metrics.py -b "$HEAD" -o "$S/metrics/head" -r 3 --baseline "$S/metrics/base" --with-strict --gate
 ```
 
 clone は `target/oss-clones/clones.lock.tsv` で固定され、両バージョンで同じ
@@ -77,24 +77,41 @@ awk -F'\t' '$1=="NEW" && $4 ~ /examples\//' "$S/metrics/head/finding-diff.tsv"
 
 library mode の自動判定 (#652/#664) のように finding を info や `maybe` に落とす変更が
 入ると、既定の filter の件数だけでは「降格」と「消失」を区別できない (#693 P-B)。
-HEAD を `--strict` でも測り、baseline の既定 run と比べる。
+§2 の `--with-strict` は、各 project を既定の run に加えて `--strict` でも 1 回測り、
+JSON を `strict/` に置く。`--strict` は confidence の表示 floor を `maybe` まで下げるので、
+`maybe` に降格した finding も残る (info はもともと JSON に出る)。
+
+`--strict` は表示 floor だけでなく判定も変える。たとえば member の dev 宣言があると、
+runtime import は CHK003 ではなく CHK005 になる。このため strict の出力は baseline の
+strict 出力とだけ比べる (#716)。既定 run の baseline と比べると、CHK005 に変わった
+だけの finding が GONE に混ざる (v0.7.3 → main の langchain CHK003 15 件はすべてこれ)。
+`--strict` の run に既定 run の `--baseline` を渡すと (逆も)、`oss-metrics.py` は
+exit 2 で止まる。
+
+`compare.md` の「Downgrade vs vanish」表は、rule ごとに次を並べる。
+
+| 列 | 意味 |
+| --- | --- |
+| GONE | 既定 run の GONE (`finding-diff.tsv`) |
+| Downgraded | そのうち HEAD の strict 出力に同じ fingerprint が残るもの (降格) |
+| Vanished tp / fp / other | strict 同士の GONE (`finding-diff-strict.tsv`、消失) を label 別に数えたもの |
+
+gate (`--gate`) が落ちるのは `tp` が消えたときだけ。ラベル無し (other) の消失は件数を
+出すだけにしている。FP を直すリリースでは消失が数百件出るからで、v0.7.3 → main では
+CHK010 215 件、CHK003 98 件 (airflow)、CHK007 50 件 (fastmcp) が other だった。
+other は `finding-diff-strict.tsv` から project ごとに引いて、原因の PR を確かめる。
 
 ```sh
-scripts/oss-metrics.py -b "$HEAD" -o "$S/metrics/head-strict" -r 1 --strict --baseline "$S/metrics/base"
+awk -F'\t' '$1=="GONE" {print $3, $2}' "$S/metrics/head/finding-diff-strict.tsv" | sort | uniq -c | sort -rn
 ```
 
-`--strict` は confidence の表示 floor を `maybe` まで下げるので、`maybe` に降格した
-finding も出力に残る (info はもともと JSON に出る)。この run の `finding-diff.tsv`
-の GONE は降格では説明できない、本当に消えた finding になる。§2 の GONE のうち、
-ここで GONE に残らないものは降格。レポートには既定 run と strict run の GONE 件数を
-並べて書く。
+confidence を落とす変更でも、件数減のすべてが降格とは限らない。library mode の public
+symbol には CHK006 / CHK007 自体を出さない (spec §12) ので、`--strict` にも残らない。
+v0.7.2 → v0.7.3 では CHK006 1,578 件と CHK007 66 件がすべて other の消失になった。
+CHK001 も、1,329 件の GONE のうち Downgraded は 270 件だけだった (django の消失 744 件の
+うち 742 件は `tests/` 配下)。
 
-この run で見るのは GONE だけにする。strict は dev / test context の CHK003 や
-marker 付き依存の CHK002 を新たに報告し、一部の severity も上げる (marker 付き依存の
-CHK002 が warning → error など) ので、NEW と CHANGED、`compare.md` の CHK002 /
-CHK003 の表には strict 自体による差が混ざる。NEW / CHANGED は §2 の run で見る。
-gate の基準 (expectations、CHK003 growth) も既定の filter 前提なので `--gate` は
-付けず、出力先も既定 run と分ける。
+`--with-strict` で増える時間は、corpus 一周の `-r 1` の 1 回分になる。
 
 ## 4. レポートに残すもの
 
@@ -104,6 +121,6 @@ gate の基準 (expectations、CHK003 growth) も既定の filter 前提なの�
 - `report.md` の exit criteria と per-rule precision
 - rule 別件数の baseline → HEAD と、`compare.md` の finding-level diff の集計
 - 件数が動いた project ごとの内訳と原因の PR (`finding-diff.tsv` から)
-- §3 の strict run の GONE 件数
+- §3 の「Downgrade vs vanish」表と、other の消失の原因
 - 実行時間 (環境ノイズが大きいので baseline と HEAD を交互に複数回)
 - 実行したコマンド
