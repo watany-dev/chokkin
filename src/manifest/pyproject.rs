@@ -253,8 +253,7 @@ fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
     }
 }
 
-/// `[build-system]` plus the wheel target tables it selects (R-05) and the
-/// hatch build scripts.
+/// `[build-system]` plus the wheel target tables it selects (R-05).
 fn extract_build_system(table: &toml::Table, rel: &str, result: &mut PyprojectExtraction) {
     if let Some(build_system) = table.get("build-system").and_then(Value::as_table) {
         result.metadata.build_backend = build_system

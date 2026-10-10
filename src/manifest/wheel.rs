@@ -1,5 +1,4 @@
-//! Wheel target configuration → distributed package paths (R-05), and the
-//! hatch build scripts beside it.
+//! Wheel target configuration → distributed package paths (R-05).
 //!
 //! Only explicitly written build backend tables count. Backend defaults
 //! (auto-discovery) are left to layout inference, so a project without any of

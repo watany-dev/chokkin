@@ -101,7 +101,6 @@ pub struct ProjectMetadata {
     pub build_scripts: Vec<BuildScript>,
 }
 
-/// A build-time Python file named by a build backend table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuildScript {
     /// TOML table that names the file, e.g. `tool.hatch.build.hooks.custom`.
