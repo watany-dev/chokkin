@@ -1196,7 +1196,7 @@ langchain	CHK010	libs/langchain/langchain_classic/evaluation/loading.py:datasets
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-nvidia-tensorrt/llama_index/llms/nvidia_tensorrt/base.py:tensorrt_llm	info-expected	-	undeclared third-party: tensorrt-llm (not in integration pyproject); info since #670 (optional import)
 pdm	CHK010	src/pdm/core.py:uv	fp	other	not an import: [sys.executable, '-m', 'uv'] argv after importlib.metadata.distribution('uv') check
 pydantic	CHK010	tests/test_forward_ref.py:module_1	tp	-	module_1 created at runtime by create_module fixture; not a real file
-requests	CHK010	src/requests/cookies.py:dummy_threading	fp	stdlib	dummy_threading is stdlib through 3.8; project python_requires>=3.8 (guarded fallback)
+requests	CHK010	src/requests/cookies.py:dummy_threading	info-expected	stdlib	dummy_threading is stdlib through 3.8; project python_requires>=3.8 (guarded fallback); info since #764 (setup.py python_requires)
 sqlalchemy	CHK010	lib/sqlalchemy/dialects/sqlite/pysqlcipher.py:pysqlcipher3	tp	-	undeclared third-party: pysqlcipher3 (extra declares sqlcipher3_binary only; legacy fallback)
 streamlit	CHK010	lib/streamlit/elements/write.py:tensorflow	tp	-	undeclared third-party: tensorflow (not in streamlit manifests or uv.lock)
 structlog	CHK010	src/structlog/dev.py:better_exceptions	info-expected	-	undeclared third-party: better-exceptions (guarded optional import); info since #670 (optional import)
@@ -1225,7 +1225,7 @@ fastapi	CHK010	scripts/mkdocs_hooks.py:mkdocs	info-expected	dev-context	undeclar
 flask	CHK010	tests/test_instance_config.py:installed_package	tp	-	installed_package written to tmp path at test runtime (syspath_prepend); not in repo
 langchain	CHK010	libs/standard-tests/langchain_tests/integration_tests/sandboxes.py:deepagents	tp	-	undeclared third-party: deepagents (pytest.importorskip; only a mypy override in standard-tests pyproject, absent from uv.lock)
 mlflow	CHK010	tests/dev/test_detect_flaky_tests.py:detect_flaky_tests	fp	first-party-missed	dev/detect_flaky_tests.py exists; test inserts repo_root/dev into sys.path
-requests	CHK010	tests/conftest.py:SimpleHTTPServer	fp	stdlib	Python 2 stdlib SimpleHTTPServer in py2/py3 try/except fallback; python_requires>=3.8 so dead code
+requests	CHK010	tests/conftest.py:SimpleHTTPServer	info-expected	stdlib	Python 2 stdlib SimpleHTTPServer in py2/py3 try/except fallback; python_requires>=3.8 so dead code; info since #764 (setup.py python_requires)
 transformers	CHK010	src/transformers/integrations/higgs.py:fast_hadamard_transform	info-expected	optional-import	undeclared third-party: fast-hadamard-transform (gated by is_hadamard_available; only a commented pip install in a Dockerfile) (info since #695)
 airflow	CHK003	ai:providers/common/ai/src/airflow/providers/common/ai/hooks/pydantic_ai.py:pydantic_ai	fp	map-gap	common-ai provider declares pydantic-ai-slim, which provides the pydantic_ai import
 langchain	CHK003	.github/scripts/get_min_versions.py:tomli	tp	-	no root manifest covers .github/scripts; tomli (fallback for py<3.11 tomllib) only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
@@ -1853,7 +1853,7 @@ flask	CHK010	tests/test_instance_config.py:site_app	tp	-	package created at runt
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_ibm	tp	-	optional partner package imported lazily by init_chat_model; langchain-ibm not declared by langchain
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/pymu_pdf/base.py:fitz	fp	declared-third-party	pymupdf declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
-requests	CHK010	tests/conftest.py:BaseHTTPServer	fp	stdlib	Python 2 stdlib fallback in try/except ImportError
+requests	CHK010	tests/conftest.py:BaseHTTPServer	info-expected	stdlib	Python 2 stdlib fallback in try/except ImportError; python_requires>=3.8 so dead code; info since #764 (setup.py python_requires)
 sqlalchemy	CHK010	test/conftest.py:sqla_pytestplugin	fp	first-party-missed	bootstrap.py registers lib/sqlalchemy/testing/plugin/pytestplugin.py in sys.modules under this name
 transformers	CHK010	tests/repo_utils/test_check_repo.py:check_repo	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
 urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:pyodide	fp	other	pyodide is a Pyodide runtime builtin module (emscripten contrib)

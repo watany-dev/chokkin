@@ -78,7 +78,7 @@ pub struct ProjectMetadata {
     pub name: Option<String>,
     /// `[project].version`.
     pub version: Option<String>,
-    /// `[project].requires-python`.
+    /// `[project].requires-python`, else `python_requires` from setup.cfg or setup.py.
     pub requires_python: Option<String>,
     /// `[project].dynamic` entries, e.g. `dependencies`.
     pub dynamic: Vec<String>,

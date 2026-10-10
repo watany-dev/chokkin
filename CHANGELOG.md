@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `python_requires` in `setup.cfg` (`[options]`) and `setup.py` (a
+  `setup()` argument that reads as a string without running the file) now
+  counts as `requires-python` when `pyproject.toml` declares none, with
+  pyproject > setup.cfg > setup.py priority and a `MetadataConflict`
+  warning when they differ. As in setuptools, a `[project]` table that does
+  not list `requires-python` in `dynamic` rules the setup.* value out. It sets the inferred `target_version` and the
+  stdlib range like `requires-python` does, so requests' dead
+  `dummy_threading` / `BaseHTTPServer` / `SimpleHTTPServer` fallbacks are
+  CHK010 info (#764).
+
 ## [0.7.4] - 2026-10-10
 
 v0.7.4 is a fix release on top of v0.7.3 that continues to target false

@@ -401,7 +401,7 @@ impl<'a> Evaluator<'a> {
                 let name = keyword.arg.as_ref()?.as_str();
                 matches!(
                     name,
-                    "name" | "version" | "install_requires" | "extras_require"
+                    "name" | "version" | "python_requires" | "install_requires" | "extras_require"
                 )
                 .then(|| (name.to_owned(), self.eval(&keyword.value)))
             })

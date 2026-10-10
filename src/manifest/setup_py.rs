@@ -66,6 +66,7 @@ pub(super) fn extract_setup_py(
     result.metadata.name = string_keyword(&call, "name");
     result.dynamic_name = result.metadata.name.is_none() && call.keyword("name").is_some();
     result.metadata.version = string_keyword(&call, "version");
+    result.metadata.requires_python = string_keyword(&call, "python_requires");
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
     let extras_require: &[(String, Value)] = match call.keyword("extras_require") {

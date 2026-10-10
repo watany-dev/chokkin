@@ -43,9 +43,9 @@ pub(super) fn extract_setup_cfg(
         result.metadata.version = metadata.get("version").cloned();
     }
 
-    if let Some(options) = sections.get("options")
-        && let Some(requires) = options.get("install_requires")
-    {
+    let options = sections.get("options");
+    result.metadata.requires_python = options.and_then(|o| o.get("python_requires")).cloned();
+    if let Some(requires) = options.and_then(|o| o.get("install_requires")) {
         for (index, raw) in split_requirement_lines(requires).enumerate() {
             push_dependency(DependencyPush {
                 dependencies: &mut result.dependencies,
