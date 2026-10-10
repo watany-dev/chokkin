@@ -1510,6 +1510,9 @@ def g():
 
 def h():
     return importlib.import_module('orjson') if find_spec('orjson') else None
+
+def k():
+    importlib.import_module('plugin').setup(find_spec('extra'))
 ",
         );
         assert_eq!(
@@ -1529,7 +1532,7 @@ def h():
             .iter()
             .map(|import| (import.module.as_str(), import.optional))
             .collect();
-        assert_eq!(dynamic, [("orjson", true)]);
+        assert_eq!(dynamic, [("orjson", true), ("plugin", false)]);
     }
 
     /// Only module-level flags guard imports: a function-local `if` may read
