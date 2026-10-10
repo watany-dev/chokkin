@@ -89,6 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.py` files under the root `.github/` directory, which workflows run as
   `python .github/scripts/check.py`, are entry roots like `scripts/`, so
   they are no longer CHK001 (#734).
+- hatchling's custom builder and build / metadata hooks
+  (`[tool.hatch.build.targets.custom]`, `[tool.hatch.build.hooks.custom]`,
+  `[tool.hatch.build.targets.<target>.hooks.custom]` and
+  `[tool.hatch.metadata.hooks.custom]`, `path` defaulting to
+  `hatch_build.py`) in the root or a workspace member are dev entry roots,
+  so they are no longer CHK001 and `--production` drops them. Their imports
+  resolve through `[build-system].requires` and need no other declaration
+  (#735).
 
 ## [0.7.3] - 2026-10-09
 

@@ -17,6 +17,7 @@ use crate::manifest::{
     DeclaredDependency, InlineScript, LoadedManifest, discover_inline_scripts,
     extract_manifest_with_cache, normalize_distribution_name, resolve_target_version,
 };
+use crate::path_util::join_rel;
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
@@ -52,6 +53,10 @@ pub struct ProbeReport {
     pub auto_workspace: bool,
     /// PEP 723 scripts among the discovered Python files.
     pub scripts: Vec<InlineScript>,
+    /// Build scripts hatchling runs (#735), root-relative, with the normalized
+    /// `[build-system].requires` names of the manifest naming each: the build
+    /// environment installs those for the script.
+    pub build_scripts: BTreeMap<String, BTreeSet<String>>,
     /// Why each plugin is on or off; already applied to `effective_config.plugins`.
     pub plugin_activations: Vec<PluginActivation>,
     /// Non-fatal warnings from manifest and source discovery.
@@ -148,6 +153,7 @@ pub(super) fn probe_project_with_cache(
             layout: input.sources.layout.clone(),
         })
         .collect();
+    let build_scripts = mark_build_scripts_dev(&mut sources, &manifest, &workspace_inputs);
     apply_member_context(&mut sources, loaded.effective.production);
     let (scripts, script_warnings) = discover_inline_scripts(
         &root.path,
@@ -176,9 +182,48 @@ pub(super) fn probe_project_with_cache(
         workspace_inputs,
         auto_workspace: loaded.auto_workspace,
         scripts,
+        build_scripts,
         plugin_activations,
         warnings,
     })
+}
+
+/// hatchling runs its build hooks while building and never ships them, so
+/// they are dev files, which `--production` then drops (#735). Returns each
+/// root-relative build script with its manifest's `[build-system].requires`.
+fn mark_build_scripts_dev(
+    sources: &mut DiscoveredSources,
+    manifest: &LoadedManifest,
+    workspace_inputs: &[WorkspaceMemberInputs],
+) -> BTreeMap<String, BTreeSet<String>> {
+    let scripts = |manifest: &LoadedManifest, member: &str| {
+        let requires: BTreeSet<String> = manifest
+            .metadata
+            .build_requires
+            .iter()
+            .map(|dep| normalize_distribution_name(&dep.name))
+            .collect();
+        manifest
+            .metadata
+            .build_scripts
+            .iter()
+            .map(|script| (join_rel(member, &script.path), requires.clone()))
+            .collect::<Vec<_>>()
+    };
+    let build_scripts: BTreeMap<_, _> = scripts(manifest, "")
+        .into_iter()
+        .chain(
+            workspace_inputs
+                .iter()
+                .flat_map(|input| scripts(&input.manifest, &input.member.path)),
+        )
+        .collect();
+    for file in &mut sources.files {
+        if file.context == FileContext::Runtime && build_scripts.contains_key(&file.path) {
+            file.context = FileContext::Dev;
+        }
+    }
+    build_scripts
 }
 
 /// Drop members that only dependency groups pull in, such as airflow's

@@ -35,6 +35,10 @@ pub fn build_entry_roots(
         &mut candidates,
         &mut warnings,
     );
+    candidates.extend(
+        build_script_entries(manifest)
+            .filter(|candidate| known_paths.contains(&candidate.spec.path)),
+    );
     collect_plugin_entries(plugins, &mut candidates);
     collect_symbol_ref_entries(
         plugins,
@@ -84,6 +88,7 @@ pub(crate) fn add_member_manifest_roots<'a>(
             &mut candidates,
             &mut Vec::new(),
         );
+        candidates.extend(build_script_entries(manifest));
         for candidate in candidates {
             let path = format!("{member_path}/{}", candidate.spec.path);
             if !root_paths.contains(&path) {
@@ -166,6 +171,25 @@ fn collect_manifest_entries(
             },
         });
     }
+}
+
+/// hatchling loads its build hooks by path, so nothing imports them (#735).
+fn build_script_entries(manifest: &LoadedManifest) -> impl Iterator<Item = EntryCandidate> + '_ {
+    manifest
+        .metadata
+        .build_scripts
+        .iter()
+        .map(|script| EntryCandidate {
+            spec: EntrySpec {
+                path: script.path.clone(),
+                symbol: None,
+            },
+            context: FileContext::Dev,
+            origin: EntryOrigin::Manifest {
+                name: "path".to_owned(),
+                group: script.table.clone(),
+            },
+        })
 }
 
 /// A library's public API is its own entry point: without this, a library

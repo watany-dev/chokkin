@@ -95,6 +95,19 @@ pub struct ProjectMetadata {
     /// Packages the wheel target configuration ships, when it is declared.
     #[serde(default)]
     pub wheel_targets: Option<WheelTargets>,
+    /// Python files hatchling loads while building: the custom builder and
+    /// the custom build and metadata hooks (#735).
+    #[serde(default)]
+    pub build_scripts: Vec<BuildScript>,
+}
+
+/// A build-time Python file named by a build backend table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuildScript {
+    /// TOML table that names the file, e.g. `tool.hatch.build.hooks.custom`.
+    pub table: String,
+    /// Manifest-relative path.
+    pub path: String,
 }
 
 /// Distributed packages declared by build backend configuration (R-05).
