@@ -800,7 +800,7 @@ fn docs_requirements_files_only_declare_names() {
     let cache = CacheOptions::default();
     let first =
         extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
-    assert!(dependency_names(&first).is_empty());
+    assert_eq!(dependency_names(&first), Vec::<&str>::new());
     assert_eq!(
         first
             .sources
