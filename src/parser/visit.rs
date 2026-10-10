@@ -7,7 +7,7 @@ use ruff_python_ast::{
     Alias, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt, StmtIf,
     StmtImport, StmtImportFrom,
 };
-use ruff_text_size::Ranged;
+use ruff_text_size::{Ranged, TextSize};
 
 use crate::sources::{FileContext, LayoutInfo};
 
@@ -20,7 +20,7 @@ use super::dynamic::{
 use super::exports::extract_exports;
 use super::lines::LineIndex;
 use super::module_guard::{
-    availability_test, checks_availability, imported_module_guard, is_main_guard_test,
+    availability_test, first_availability_check, imported_module_guard, is_main_guard_test,
     raises_import_error, runs_as_main,
 };
 use super::platform_guard::is_platform_guard_test;
@@ -46,6 +46,9 @@ pub(super) struct ModuleVisitor<'a> {
     /// Inside `if __name__ == "__main__":` of a module other than
     /// `__main__.py`; its imports are dev context (#681).
     in_main_block: bool,
+    /// Where the enclosing function first checks if a package is installed;
+    /// imports after it are optional (#695).
+    availability_checked_at: Option<TextSize>,
     function_depth: u32,
     module_level: bool,
     /// Module-level names set to `True` inside a `try` body (`has_x = True`).
@@ -77,6 +80,7 @@ impl<'a> ModuleVisitor<'a> {
             platform_guard_depth: 0,
             imported_guards: Vec::new(),
             in_main_block: false,
+            availability_checked_at: None,
             function_depth: 0,
             module_level: true,
             try_flags: HashSet::new(),
@@ -169,6 +173,14 @@ impl<'a> ModuleVisitor<'a> {
         self.imported_guards.truncate(guard_count);
     }
 
+    /// Whether an import at `node` runs only when some package is installed.
+    fn is_optional_at<R: Ranged>(&self, node: &R) -> bool {
+        self.try_depth > 0
+            || self
+                .availability_checked_at
+                .is_some_and(|at| at < node.start())
+    }
+
     fn is_imported_guarded(&self, module: &str) -> bool {
         let root = module.split('.').next().unwrap_or(module);
         self.imported_guards.iter().any(|guard| guard == root)
@@ -198,20 +210,24 @@ impl<'a> ModuleVisitor<'a> {
         }
         let saved = self.module_level;
         let saved_function_depth = self.function_depth;
-        let saved_try_depth = self.try_depth;
+        let saved_checked_at = self.availability_checked_at;
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
             self.function_depth += 1;
             // A function that asks whether a package is installed treats the
-            // packages it imports as optional (#695).
-            if checks_availability(body) {
-                self.try_depth = self.try_depth.saturating_add(1);
-            }
+            // packages it imports after the check as optional (#695, #713).
+            // A nested function runs when called, possibly after the outer
+            // check, so all of its imports are.
+            self.availability_checked_at = if saved_checked_at.is_some() {
+                Some(TextSize::default())
+            } else {
+                first_availability_check(body)
+            };
         }
         self.visit_body(body);
         self.module_level = saved;
         self.function_depth = saved_function_depth;
-        self.try_depth = saved_try_depth;
+        self.availability_checked_at = saved_checked_at;
     }
 
     /// `[sys.executable, "-m", "pkg"]` uses `pkg` without importing it. It is
@@ -244,7 +260,7 @@ impl<'a> ModuleVisitor<'a> {
         DynamicImport {
             module,
             line: self.line_number(call),
-            optional: self.try_depth > 0,
+            optional: self.is_optional_at(call),
             platform_guarded: self.platform_guard_depth > 0,
             deferred: self.function_depth > 0,
         }
@@ -269,7 +285,7 @@ impl<'a> ModuleVisitor<'a> {
     fn visit_import(&mut self, import: &StmtImport) {
         let line = self.line_number(import);
         let context = self.current_import_context();
-        let optional = self.try_depth > 0;
+        let optional = self.is_optional_at(import);
         let platform_guarded = self.platform_guard_depth > 0;
         let deferred = self.function_depth > 0;
         for alias in &import.names {
@@ -301,7 +317,7 @@ impl<'a> ModuleVisitor<'a> {
     fn visit_import_from(&mut self, import_from: &StmtImportFrom) {
         let line = self.line_number(import_from);
         let context = self.current_import_context();
-        let optional = self.try_depth > 0;
+        let optional = self.is_optional_at(import_from);
         let platform_guarded = self.platform_guard_depth > 0;
         let deferred = self.function_depth > 0;
         let level = u8::try_from(import_from.level).unwrap_or(u8::MAX);
@@ -1449,7 +1465,7 @@ import x
                 ("fallback_lib", false),
                 ("wandb", true),
                 ("plain_lib", false),
-                ("before_lib", true),
+                ("before_lib", false),
                 ("peft", true),
                 ("optimum.quanto", true),
                 ("after_lib", true),
@@ -1460,6 +1476,60 @@ import x
                 ("x", true),
             ]
         );
+    }
+
+    /// #713: only a package check before the import makes it optional; a
+    /// method or a finder's `find_spec` is not a package check.
+    #[test]
+    fn function_availability_check_must_precede_the_import() {
+        let parsed = visit_source(
+            "import importlib.util
+class Loader:
+    def load(self):
+        import requests
+        if self.__is_headers_available():
+            return requests.get
+
+def run(finder):
+    import yaml
+    return finder.find_spec('x', None), yaml
+
+def f():
+    import before_lib
+    if importlib.util.find_spec('rich'):
+        pass
+    import after_lib
+    def inner():
+        import nested_lib
+
+def g():
+    def inner():
+        import early_nested_lib
+    if is_x_available():
+        inner()
+
+def h():
+    return importlib.import_module('orjson') if find_spec('orjson') else None
+",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("importlib.util", false),
+                ("requests", false),
+                ("yaml", false),
+                ("before_lib", false),
+                ("after_lib", true),
+                ("nested_lib", true),
+                ("early_nested_lib", true),
+            ]
+        );
+        let dynamic: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.optional))
+            .collect();
+        assert_eq!(dynamic, [("orjson", true)]);
     }
 
     /// Only module-level flags guard imports: a function-local `if` may read

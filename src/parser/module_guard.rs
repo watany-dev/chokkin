@@ -4,6 +4,7 @@
 
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
 use ruff_python_ast::{BoolOp, CmpOp, Expr, Stmt, UnaryOp};
+use ruff_text_size::{Ranged, TextSize};
 
 /// The top-level module `test` proves is already imported when its body
 /// runs: `"x" in sys.modules` or `sniffio.current_async_library() == "x"`.
@@ -93,21 +94,28 @@ pub(super) fn availability_test(test: &Expr) -> Option<bool> {
     }
 }
 
-/// Whether a function `body` checks if a package is installed anywhere
-/// outside nested scopes.
+/// Where a function `body` first checks if a package is installed, outside
+/// nested scopes: the start of the innermost statement making the check, so
+/// `import_module(x) if find_spec(x) else None` counts as after it (#695).
 #[must_use]
-pub(super) fn checks_availability(body: &[Stmt]) -> bool {
-    let mut finder = AvailabilityCall(false);
+pub(super) fn first_availability_check(body: &[Stmt]) -> Option<TextSize> {
+    let mut finder = AvailabilityCall::default();
     finder.visit_body(body);
-    finder.0
+    finder.found
 }
 
-struct AvailabilityCall(bool);
+#[derive(Default)]
+struct AvailabilityCall {
+    stmt_start: TextSize,
+    found: Option<TextSize>,
+}
 
 impl Visitor<'_> for AvailabilityCall {
     fn visit_stmt(&mut self, stmt: &Stmt) {
-        if !self.0 && !matches!(stmt, Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
+        if self.found.is_none() && !matches!(stmt, Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
+            let outer = std::mem::replace(&mut self.stmt_start, stmt.start());
             walk_stmt(self, stmt);
+            self.stmt_start = outer;
         }
     }
 
@@ -115,26 +123,46 @@ impl Visitor<'_> for AvailabilityCall {
         if let Expr::Call(call) = expr
             && is_availability_call(&call.func)
         {
-            self.0 = true;
+            self.found = Some(self.stmt_start);
         }
-        if !self.0 && !matches!(expr, Expr::Lambda(_)) {
+        if self.found.is_none() && !matches!(expr, Expr::Lambda(_)) {
             walk_expr(self, expr);
         }
     }
 }
 
+/// `importlib.util.find_spec` (or a bare `find_spec` / `util.find_spec`), or an
+/// `is_<x>_available` function; a `self.` / `cls.` method checks the
+/// object's own feature, and another object's `find_spec` is an import-system
+/// finder (#713).
 fn is_availability_call(func: &Expr) -> bool {
-    let name = match func {
-        Expr::Name(name) => name.id.as_str(),
-        Expr::Attribute(attribute) => attribute.attr.as_str(),
-        _ => return false,
-    };
-    name == "find_spec"
-        || name
-            .trim_start_matches('_')
-            .strip_prefix("is_")
-            .and_then(|rest| rest.strip_suffix("_available"))
-            .is_some_and(|package| !package.is_empty())
+    match func {
+        Expr::Name(name) => name.id.as_str() == "find_spec" || is_availability_name(&name.id),
+        Expr::Attribute(attribute) if attribute.attr.as_str() == "find_spec" => {
+            is_dotted(&attribute.value, "importlib", "util")
+                || matches!(&*attribute.value, Expr::Name(name) if name.id.as_str() == "util")
+        },
+        Expr::Attribute(attribute) => {
+            is_availability_name(&attribute.attr) && is_module_path(&attribute.value)
+        },
+        _ => false,
+    }
+}
+
+fn is_availability_name(name: &str) -> bool {
+    name.trim_start_matches('_')
+        .strip_prefix("is_")
+        .and_then(|rest| rest.strip_suffix("_available"))
+        .is_some_and(|package| !package.is_empty())
+}
+
+/// A dotted name such as `transformers.utils`, not rooted at `self` / `cls`.
+fn is_module_path(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(name) => !matches!(name.id.as_str(), "self" | "cls"),
+        Expr::Attribute(attribute) => is_module_path(&attribute.value),
+        _ => false,
+    }
 }
 
 /// Whether `body` ends by raising `ImportError` / `ModuleNotFoundError`.
@@ -254,20 +282,51 @@ mod tests {
 
     #[test]
     fn detects_availability_checks_in_bodies() {
-        let checks = |source: &str| {
+        let checked_at = |source: &str| {
             let module = ruff_python_parser::parse_module(source).expect("parse");
-            checks_availability(module.suite())
+            first_availability_check(module.suite()).map(u32::from)
         };
-        assert!(checks(
-            "x = 1\nif not is_wandb_available():\n    raise RuntimeError\n"
-        ));
-        assert!(checks("for x in y:\n    ok = find_spec(x)\n"));
-        assert!(!checks(
-            "import bitsandbytes\nif is_loaded_in_4bit:\n    pass\n"
-        ));
-        assert!(!checks(
-            "def inner():\n    return is_x_available()\nf = lambda: find_spec('y')\n"
-        ));
+        assert_eq!(
+            checked_at("x = 1\nif not is_wandb_available():\n    raise RuntimeError\n"),
+            Some(6)
+        );
+        assert_eq!(checked_at("for x in y:\n    ok = find_spec(x)\n"), Some(16));
+        assert_eq!(
+            checked_at("x = 1\nreturn import_module(x) if find_spec(x) else None\n"),
+            Some(6)
+        );
+        assert_eq!(
+            checked_at("import bitsandbytes\nif is_loaded_in_4bit:\n    pass\n"),
+            None
+        );
+        assert_eq!(
+            checked_at("def inner():\n    return is_x_available()\nf = lambda: find_spec('y')\n"),
+            None
+        );
+    }
+
+    /// #713: a method checks the object's own feature, and a finder's
+    /// `find_spec` is not `importlib.util.find_spec`.
+    #[test]
+    fn rejects_methods_and_other_find_specs() {
+        for source in [
+            "self.__is_headers_available()",
+            "cls.is_torch_available()",
+            "self.utils.is_torch_available()",
+            "finder.find_spec('x', None)",
+            "importlib.find_spec('x')",
+            "get().is_torch_available()",
+        ] {
+            assert_eq!(availability(source), None, "{source}");
+        }
+        for source in [
+            "utils.is_torch_available()",
+            "transformers.utils.is_torch_available()",
+            "importlib.util.find_spec('x')",
+            "util.find_spec('x')",
+        ] {
+            assert_eq!(availability(source), Some(true), "{source}");
+        }
     }
 
     #[test]
