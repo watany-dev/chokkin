@@ -1141,7 +1141,6 @@ django	CHK006	django/contrib/postgres/fields/ranges.py:FullyLessThan	info-expect
 fastapi	CHK006	fastapi/openapi/utils.py:generate_operation_id	fp	library-public-api	deprecated public function kept for backward compat in fastapi.openapi.utils (emits deprecation warning)
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/auth/providers/introspection.py:logger	tp	-	module-level logger in fastmcp auth provider; only used in-module (self.logger is separate)
 flask	CHK006	src/flask/app.py:T_template_test	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
-mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:Operator	fp	library-public-api	in __all__ of mcp.shared.uri_template, which docs/servers/uri-templates.md documents as the public template engine module
 mitmproxy	CHK006	mitmproxy/addons/core.py:LISTEN_PORT	info-expected	library-public-api	constant unused anywhere (no refs in repo, not used in-module); library mode since #652 keeps the package's public API at info
 mlflow	CHK006	mlflow/deployments/cli.py:optional_deployment_name	tp	-	click option defined but never applied; no refs in repo
 pdm	CHK006	src/pdm/signals.py:pre_invoke	fp	library-public-api	plugin signal documented in docs/usage/hooks.md for plugins to connect; emitted by name in core.py try_emit("pre_invoke")
@@ -1153,7 +1152,6 @@ black	CHK006	src/blib2to3/pgen2/token.py:ISNONTERMINAL	info-expected	library-pub
 django	CHK006	django/utils/translation/trans_null.py:get_language	fp	name-convention	translation backend loaded dynamically; django.utils.translation Trans.__getattr__ does getattr(trans, name)
 fastapi	CHK006	fastapi/responses.py:UJSONResponse	fp	library-public-api	documented response class (docs custom-response.md); imported in docs_src/custom_response/tutorial001.py
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_code.py:check_claude_code_available	tp	-	CLI installer helper, no callers anywhere; only listed in auto-generated python-sdk docs page
-mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:DEFAULT_MAX_TEMPLATE_LENGTH	fp	library-public-api	in __all__ of mcp.shared.uri_template, documented public module (docs/servers/uri-templates.md)
 mitmproxy	CHK006	mitmproxy/contentviews/_api.py:logger	info-expected	library-public-api	module logger in mitmproxy.contentviews._api, private module; other `logger` hits are unrelated module-level loggers; library mode since #652 keeps the package's public API at info
 pdm	CHK006	src/pdm/formats/pipfile.py:export	fp	external-reference	pdm.formats FORMATS dict maps to modules; cli/commands/export.py calls FORMATS[fmt].export(...) (module attr access)
 poetry	CHK006	src/poetry/console/commands/self/remove.py:SelfRemoveCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.remove and getattr "SelfRemoveCommand"
@@ -1165,7 +1163,6 @@ django	CHK006	django/core/management/utils.py:get_command_line_option	fp	externa
 fastapi	CHK006	fastapi/exceptions.py:WebSocketErrorModel	info-expected	library-public-api	unsure: module constant in fastapi.exceptions unused anywhere and undocumented; legacy leftover; library mode since #652 keeps the package's public API at info
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/cursor.py:logger	tp	-	module logger in fastmcp cli/install/cursor.py; other hits are unrelated loggers
 flask	CHK006	src/flask/app.py:T_shell_context_processor	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
-mcp-python-sdk	CHK006	src/mcp/shared/uri_template.py:DEFAULT_MAX_VARIABLES	fp	library-public-api	in __all__ of mcp.shared.uri_template, documented public module (docs/servers/uri-templates.md)
 mitmproxy	CHK006	mitmproxy/proxy/mode_servers.py:DnsInstance	info-expected	library-public-api	registered via ServerInstance.__init_subclass__ registry in same module; no name refs elsewhere; library mode since #652 keeps the package's public API at info
 pdm	CHK006	src/pdm/cli/commands/search.py:Command	fp	name-convention	pdm core.py imports pdm.cli.commands.<name> and reads module.Command
 poetry	CHK006	src/poetry/console/commands/self/lock.py:SelfLockCommand	fp	name-convention	poetry application.py imports poetry.console.commands.self.lock and getattr "SelfLockCommand"
@@ -1174,7 +1171,6 @@ werkzeug	CHK006	src/werkzeug/exceptions.py:HTTPVersionNotSupported	fp	library-pu
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskInstanceHistoryCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
 black	CHK006	src/black/parsing.py:matches_grammar	info-expected	library-public-api	no refs anywhere in black repo; internal helper; library mode since #652 keeps the package's public API at info
 django	CHK006	django/conf/global_settings.py:EMAIL_PORT	fp	name-convention	Django default setting read via settings.EMAIL_PORT attribute lookup; documented in docs/ref/settings.txt
-fastmcp	CHK006	fastmcp_slim/fastmcp/telemetry.py:TRACE_STATE_KEY	tp	-	constant only used in-module in fastmcp.telemetry; no external refs
 flask	CHK006	src/flask/app.py:T_template_filter	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
 airflow	CHK010	scripts/tests/ci/prek/test_extract_permissions.py:extract_permissions	fp	first-party-missed	scripts/ci/prek/extract_permissions.py exists; test inserts PREK_DIR (scripts/ci/prek) into sys.path
 black	CHK010	src/blackd/__init__.py:_black_version	fp	generated	src/_black_version.py written by hatch-vcs (tool.hatch.build.hooks.vcs version-file)
@@ -1233,13 +1229,10 @@ mlflow	CHK001	tests/langchain/agent_executor/chain.py	fp	dynamic-import	loaded b
 airflow	CHK001	airflow-core/src/airflow/stats.py	fp	library-public	deprecated backward-compat shim explicitly kept for third-party `from airflow.stats import Stats`
 airflow	CHK001	airflow-core/src/airflow/ti_deps/deps/mapped_task_expanded.py	tp	-	MappedTaskIsExpanded referenced nowhere (only a path in scripts/cov/core_coverage.py); no string/dep registry use
 airflow	CHK006	devel-common/src/docs/provider_conf.py:html_sidebars	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
-fastmcp	CHK006	fastmcp_slim/fastmcp/client/sampling/__init__.py:SamplingHandlerResult	fp	library-public-api	in package __all__ of fastmcp.client.sampling; public type alias (also used in own module)
-mcp-python-sdk	CHK006	src/mcp/shared/inbound.py:X_MCP_HEADER_KEY	fp	library-public-api	listed in __all__ of public mcp.shared.inbound and used inside module; public constant
 mlflow	CHK006	mlflow/johnsnowlabs/__init__.py:load_model	fp	library-public-api	documented flavor API (docs reference mlflow.johnsnowlabs.load_model)
 poetry	CHK006	src/poetry/console/commands/env/list.py:EnvListCommand	fp	dynamic-import	poetry command loader imports poetry.console.commands.<name> via import_module and getattr's the class by name
 airflow	CHK006	devel-common/src/docs/provider_conf.py:autoapi_python_use_implicit_namespaces	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/gemini_cli.py:logger	fp	name-convention	module-level `logger = get_logger(__name__)` conventional name, not meant for export
-mcp-python-sdk	CHK006	src/mcp/shared/_httpx_utils.py:MCP_DEFAULT_TIMEOUT	tp	-	only used inside private module _httpx_utils; no external reference anywhere in repo
 mlflow	CHK006	mlflow/pyspark/ml/__init__.py:autolog	fp	library-public-api	documented public API (docs link mlflow.pyspark.ml.autolog)
 poetry	CHK006	src/poetry/console/commands/run.py:RunCommand	fp	dynamic-import	poetry command loader imports module by command name via import_module and getattr's the class
 mcp-python-sdk	CHK006	src/mcp/server/auth/handlers/register.py:RegistrationRequest	tp	-	alias RegistrationRequest = OAuthClientMetadata referenced nowhere else in repo
@@ -1247,8 +1240,6 @@ mlflow	CHK006	mlflow/langchain/chat_agent_langgraph.py:ChatAgentState	fp	externa
 poetry	CHK006	src/poetry/console/commands/publish.py:PublishCommand	fp	dynamic-import	poetry command loader imports module by command name via import_module and getattr's the class
 mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:get_config_for_profile	tp	-	deprecated backward-compat function, no references anywhere in repo
 mlflow	CHK006	mlflow/entities/model_registry/prompt_version.py:PromptVersionTag	tp	-	alias PromptVersionTag = ModelVersionTag not referenced anywhere else
-llama_index	CHK007	llama-index-instrumentation/src/llama_index_instrumentation/base/__init__.py:BaseInstrumentationHandler	fp	external-reference	imported from llama_index_instrumentation.base in llama-index-core/llama_index/core/instrumentation/base_handler.py
-llama_index	CHK007	llama-index-instrumentation/src/llama_index_instrumentation/span_handlers/__init__.py:SimpleSpanHandler	fp	library-public-api	in __all__ of separate distribution llama_index_instrumentation; core imports from .simple submodule only
 airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_python_virtualenv.py:funcsigs	tp	-	funcsigs only installed at runtime via @task.virtualenv(requirements=["funcsigs"]) in the test; not in any manifest
 black	CHK010	scripts/check_version_in_basics_example.py:commonmark	fp	declared-third-party	commonmark==0.9.1 declared in .pre-commit-config.yaml additional_dependencies of the local hook that runs this script
 django	CHK010	tests/sphinx/test_github_links.py:github_links	fp	first-party-missed	docs/_ext/github_links.py exists; test inserts docs/_ext into sys.path in setUpClass
@@ -1290,7 +1281,6 @@ black	CHK008	coverage	fp	declared-elsewhere	coverage declared in test_requiremen
 click	CHK008	sphinx-build	fp	declared-elsewhere	sphinx pinned in requirements/docs.txt used as tox docs deps
 django	CHK008	black	fp	declared-elsewhere	black in tox deps and tests/requirements/py3.txt; also pre-commit hook
 djangorestframework	CHK008	flake8	fp	isolated-env	flake8 runs via PyCQA/flake8 pre-commit hook repo
-fastmcp	CHK008	pre-commit	fp	not-invoked	project uses prek (declared in dev deps, prek-action in CI); pre-commit binary never invoked
 flask	CHK008	ruff	fp	isolated-env	ruff runs via ruff-pre-commit hook repo
 jinja	CHK008	pre-commit	fp	declared-elsewhere	pre-commit in requirements/dev.in and tox deps
 langchain	CHK008	pre-commit	tp	-	no pyproject at root; pre-commit not declared anywhere nor installed in CI
@@ -1304,14 +1294,11 @@ python-dotenv	CHK008	coverage	fp	declared-elsewhere	coverage in tox deps (covera
 requests	CHK008	flake8	tp	-	pre-commit hook is isolated, but Makefile runs python -m flake8 in ambient env and flake8 is undeclared
 sqlalchemy	CHK008	pre-commit	tp	-	.pre-commit-config.yaml present; pre-commit not declared in pyproject/tox/nox nor CI
 structlog	CHK008	coverage	fp	declared-elsewhere	coverage[toml] in tox deps
-tenacity	CHK008	tox	fp	ci-provided	CI workflows pip install tox before running it
 transformers	CHK008	coverage	fp	not-invoked	stale [tool.coverage] config only; no coverage/pytest-cov invocation anywhere
 typer	CHK008	mkdocs	fp	transitive-provider	scripts/docs.py runs mkdocs; provided by mkdocs-material declared in requirements-docs.txt
-urllib3	CHK008	sphinx-build	fp	declared-elsewhere	sphinx in docs/requirements.txt installed by nox docs session
 virtualenv	CHK008	pre-commit	fp	transitive-provider	pre-commit-uv (depends on pre-commit) declared in dependency groups used by tox envs
 werkzeug	CHK008	coverage	tp	-	[tool.coverage] config and CONTRIBUTING 'coverage run'; coverage not in requirements/*.in or tox
 airflow	CHK008	ruff	fp	declared-elsewhere	ruff pinned in workspace member devel-common dependencies (root dev group)
-anyio	CHK008	pre-commit	fp	declared-elsewhere	pre-commit in tox deps (testenv:pre-commit)
 attrs	CHK008	ruff	fp	isolated-env	ruff runs via ruff-pre-commit hook repo
 black	CHK008	flake8	fp	isolated-env	flake8 runs via pycqa/flake8 pre-commit hook repo
 click	CHK008	mypy	fp	declared-elsewhere	mypy in requirements/typing.txt used as tox typing deps
@@ -1320,19 +1307,14 @@ djangorestframework	CHK008	isort	fp	isolated-env	isort runs via pycqa/isort pre-
 flask	CHK008	sphinx-build	fp	declared-elsewhere	sphinx in requirements/docs.txt (and dev.txt)
 jinja	CHK008	coverage	tp	-	[tool.coverage] config and CONTRIBUTING says pip install coverage; not declared anywhere
 langchain	CHK008	pytest	fp	declared-elsewhere	root has no manifest; pytest declared in each libs/*/pyproject.toml test group
-mcp-python-sdk	CHK008	pre-commit	fp	ci-provided	CI runs pre-commit/action; not declared locally
 pdm	CHK008	coverage	fp	not-invoked	only [tool.coverage] config plus pdm script named coverage running pytest --cov; pytest-cov declared
-pluggy	CHK008	sphinx-build	fp	declared-elsewhere	sphinx in docs/requirements.txt used by tox docs env and RTD
 python-dotenv	CHK008	mypy	fp	declared-elsewhere	mypy in tox lint env deps
-requests	CHK008	sphinx-build	fp	declared-elsewhere	Sphinx pinned in docs/requirements.txt (RTD)
-sqlalchemy	CHK008	coverage	fp	not-invoked	only [tool.coverage] config; pytest-cov declared in coverage dependency group and tox
 structlog	CHK008	ruff	fp	isolated-env	ruff runs via ruff-pre-commit hook repo
 tenacity	CHK008	mypy	fp	declared-elsewhere	mypy>=1.0.0 in tox mypy env deps
 urllib3	CHK008	pre-commit	fp	declared-elsewhere	nox lint session does session.install("pre-commit"); CI uses pre-commit/action
 werkzeug	CHK008	sphinx-build	fp	declared-elsewhere	sphinx in requirements/docs.txt
 airflow	CHK008	sphinx-build	fp	declared-elsewhere	sphinx declared in workspace member devel-common docs extra (root dev group)
 anyio	CHK008	mypy	fp	isolated-env	mypy runs via mirrors-mypy pre-commit hook
-attrs	CHK008	tox	fp	ci-provided	CI workflows install tox (uv pip install tox / pip install tox) before running it
 airflow	CHK005	logging:click	tp	-	shared/logging structlog.py configure path does an unconditional `import click`; click is absent from the member's runtime deps (only via devel-common dev group); currently satisfied only transitively in airflow-core (uvicorn/fastapi[standard])
 djangorestframework	CHK005	coreschema	fp	optional-import	form_for_link only used by the coreapi docs template; coreschema is a deliberate optional dep (requirements-optionals.txt) of the deprecated coreapi feature
 fastapi	CHK005	anyio	tp	-	fastapi/concurrency.py imports anyio at top level (eagerly via fastapi package); anyio is not a declared runtime dep, only reached transitively via starlette
