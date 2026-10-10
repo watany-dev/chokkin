@@ -1658,7 +1658,6 @@ llama_index	CHK004	llama-index-embeddings-google-genai:llama-index-integrations/
 mlflow	CHK004	mlflow/genai/utils/trace_utils.py:nest_asyncio	tp	-	optional try-import; root pyproject declares no nest-asyncio; via deepeval, ragas
 airflow	CHK006	devel-common/src/docs/provider_conf.py:html_theme_options	fp	external-reference	Sphinx config var; module is star-imported by providers/*/docs/conf.py and read by Sphinx
 fastmcp	CHK006	fastmcp_slim/fastmcp/client/oauth_callback.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
-mcp-python-sdk	CHK006	src/mcp/shared/_httpx_utils.py:MCP_DEFAULT_SSE_READ_TIMEOUT	tp	-	constant in a private module (_httpx_utils); no references outside the module
 mlflow	CHK006	mlflow/claude_code/config.py:HOOK_FIELD_COMMAND	tp	-	no references outside the module
 poetry	CHK006	src/poetry/console/commands/self/add.py:SelfAddCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfAddCommand"
 airflow	CHK006	airflow-core/src/airflow/utils/context.py:OutletEventAccessors	tp	-	task-sdk has its own copy; patches target airflow.sdk.execution_time.context, not this class
