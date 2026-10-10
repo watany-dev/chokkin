@@ -80,12 +80,12 @@ impl<'a> Visitor<'a> for AsyncLibraryBindings<'a> {
     }
 
     fn visit_expr(&mut self, expr: &'a Expr) {
-        match expr {
-            Expr::Lambda(_) => {},
-            Expr::Name(name) if name.ctx != ExprContext::Load => {
-                self.only_async_library.insert(name.id.as_str(), false);
-            },
-            _ => walk_expr(self, expr),
+        if let Expr::Name(name) = expr
+            && name.ctx != ExprContext::Load
+        {
+            self.only_async_library.insert(name.id.as_str(), false);
+        } else {
+            walk_expr(self, expr);
         }
     }
 }
