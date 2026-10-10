@@ -383,6 +383,22 @@ fn misplaced_pytest_emits_chk005() {
     assert_eq!(pytest.severity, Severity::Warning);
 }
 
+/// #730: `if markdown is not None and pygments is not None:` after
+/// `except ImportError: markdown = None` only runs with both installed;
+/// `if yaml is None:` runs without it.
+#[test]
+fn misplaced_import_behind_none_fallback_guard_is_optional() {
+    let report = reconcile_fixture("misplaced_none_fallback");
+    let summary = |name: &str| {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        (candidate.severity, candidate.confidence)
+    };
+    assert_eq!(summary("markdown"), (Severity::Info, Confidence::Likely));
+    assert_eq!(summary("pygments"), (Severity::Info, Confidence::Likely));
+    assert_eq!(summary("pyyaml"), (Severity::Warning, Confidence::Certain));
+}
+
 #[test]
 fn misplaced_confidence_follows_the_strongest_import() {
     let report = reconcile_fixture("misplaced_conditional");
