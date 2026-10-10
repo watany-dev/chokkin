@@ -1018,6 +1018,7 @@ werkzeug	CHK003	tests/test_wrappers.py:pytest	deferred	dev-context	deferred: ver
 werkzeug	CHK003	tests/test_wsgi.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 
 # R-01..R-07 corpus (#323): CHK003 that are new over 573ff37 (PEP 723 scripts are now checked against their own block)
+airflow	CHK003	script:clients/python/test_python_client.py:pytest	tp	-	script imports pytest; the PEP 723 block does not declare it
 airflow	CHK003	script:scripts/ci/prek/check_excluded_provider_markers.py:tomli	tp	-	block pins requires-python <3.11, where tomllib is missing, and the fallback import tomli is not declared
 airflow	CHK003	script:scripts/ci/prek/check_extra_packages_ref.py:tomli	tp	-	same tomli fallback without a declaration in the block
 fastmcp	CHK003	script:examples/memory.py:pydantic	tp	-	imports pydantic directly; the block only declares packages that pull it in transitively
@@ -1044,6 +1045,10 @@ mlflow	CHK003	mlflow/pytorch/__init__.py:torch	tp	-	flavor import of user-instal
 mlflow	CHK003	mlflow/pytorch/__init__.py:torch.export	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
 mlflow	CHK003	mlflow/pytorch/_lightning_autolog.py:torch	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
 mlflow	CHK003	mlflow/tracking/metric_value_conversion_utils.py:torch	tp	-	flavor import of user-installed torch: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+
+# CHK003 resolved by the #688 package-map additions (#715)
+llama_index	CHK003	llama-index-readers-microsoft-outlook:llama-index-integrations/readers/llama-index-readers-microsoft-outlook/llama_index/readers/microsoft_outlook/base.py:win32com.client	tp	-	importlib.import_module("win32com.client") unguarded; the member pyproject does not declare pywin32 (only its requirements.txt)
+mlflow	CHK003	mlflow/llama_index/tracer.py:workflows.handler	info-expected	optional-import	try: from workflows.handler import ... except ImportError: return False (llama-index-workflows >= 2.0 is optional)
 
 # R-01..R-07 corpus (#323): CHK002 on HEAD (tp verified by grep; fp rows cover findings the fixes should remove)
 airflow	CHK002	apache-airflow-core	fp	-	workspace member used through its member tree / entry points
@@ -1082,24 +1087,16 @@ mcp-python-sdk	CHK002	python-multipart	fp	-	starlette's request.form() in server
 #   scripts/sample-precision-labels.py --rule CODE >> scripts/oss-fixtures.labels.tsv
 # (50 per rule, at most 6 per project). When report.md shows stale labels after a
 # clone bump, delete those rows and rerun the script to top the sample back up.
-fastmcp	CHK001	examples/smart_home/src/smart_home/lights/models.py	fp	other	Imported via absolute import in examples/smart_home/src/smart_home/lights/server.py (src-layout example package)
 langchain	CHK001	.github/scripts/check_prerelease_dependencies.py	fp	script-entry	Run by .github/workflows/_release.yml: python .github/scripts/check_prerelease_dependencies.py
-llama_index	CHK001	llama-index-integrations/embeddings/llama-index-embeddings-heroku/examples/async_usage.py	fp	script-entry	Runnable example with __main__; package README points to ./examples runnable examples
 mlflow	CHK001	tests/pyfunc/custom_model/mod1/mod4.py	fp	other	Imported relatively by custom_model/mod1/mod2/__init__.py (from .. import mod4); asserted in test_inferred_code_path.py
 poetry	CHK001	src/poetry/masonry/api.py	fp	library-public	Shipped back-compat build backend poetry.masonry.api (re-exports poetry.core.masonry.api) for users' pyproject build-backend
 airflow	CHK001	providers/common/ai/hatch_build.py	fp	framework-loaded	Hatch custom build target: providers/common/ai/pyproject.toml [tool.hatch.build.targets.custom] path=./hatch_build.py
-fastmcp	CHK001	docs/apps/demos/team-directory-reactive.py	fp	script-entry	Docs demo rendered via <PrefabDemoFrame demo="team-directory-reactive"> in docs/apps/quickstart.mdx
 langchain	CHK001	.github/scripts/check_diff.py	fp	script-entry	Run by .github/workflows/check_diffs.yml and codspeed.yml: python .github/scripts/check_diff.py
-llama_index	CHK001	llama-index-integrations/embeddings/llama-index-embeddings-isaacus/examples/async_usage.py	fp	script-entry	Runnable example with __main__; package README points to ./examples runnable examples
 mlflow	CHK001	tests/llama_index/sample_code/simple_workflow.py	fp	other	Model-from-code file referenced by path string in tests/llama_index/test_llama_index_autolog.py and model_export tests
 poetry	CHK001	src/poetry/console/events/console_events.py	tp	-	Empty (0-byte) file; no reference to poetry.console.events.console_events (code uses cleo.events.console_events)
-fastmcp	CHK001	examples/atproto_mcp/src/atproto_mcp/_atproto/_profile.py	fp	other	Imported via 'from ._profile import get_profile_info' in _atproto/__init__.py; used by example server.py
 langchain	CHK001	.github/scripts/check_extras_sync.py	fp	script-entry	Referenced by .github/workflows/check_extras_sync.yml (path trigger + run step)
-llama_index	CHK001	llama-index-integrations/retrievers/llama-index-retrievers-galaxia/examples/example_1.py	fp	script-entry	Example script in integration package examples/ dir (top-level code meant to be run by users)
 mlflow	CHK001	tests/resources/example_virtualenv_no_python_env/entrypoint.py	fp	script-entry	Run via MLproject entry_points 'python entrypoint.py'; dir used by tests/projects/utils.py
 airflow	CHK001	devel-common/src/sphinx_exts/docroles.py	fp	dynamic-import	Sphinx extension listed by name "docroles" in devel-common/src/docs/utils/conf_constants.py extensions
-fastmcp	CHK001	examples/apps/explorer/explorer_server.py	fp	script-entry	Example server with __main__; docstring says 'uv run python explorer_server.py'
-llama_index	CHK001	llama-index-integrations/tools/llama-index-tools-measurespace/examples/example.py	fp	script-entry	Example script in integration package examples/ dir (top-level await snippet meant to be run by users)
 mlflow	CHK001	tests/llama_index/sample_code/basic_vector_store.py	fp	other	Model-from-code file referenced by path string in tests/llama_index/test_llama_index_model_export.py
 airflow	CHK004	snowflake:providers/snowflake/src/airflow/providers/snowflake/hooks/snowflake.py:sqlalchemy	tp	-	providers/snowflake/pyproject.toml deps/extras/groups lack sqlalchemy; only via snowflake-sqlalchemy/apache-airflow
 fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/utilities/inspect.py:pydantic_core	tp	-	fastmcp_slim/pyproject.toml deps+dynamic extras lack pydantic-core; only via pydantic
@@ -1230,12 +1227,8 @@ virtualenv	CHK010	tests/unit/seed/wheels/test_acquire.py:pip	fp	other	not an imp
 werkzeug	CHK010	tests/conftest.py:xprocess	fp	declared-third-party	pytest-xprocess (provides xprocess) in requirements/tests.in and tests.txt
 airflow	CHK010	providers/google/tests/unit/google/cloud/triggers/test_gcs.py:gcloud	fp	declared-third-party	gcloud-aio-storage (gcloud.aio namespace) in providers/google/pyproject.toml
 airflow	CHK001	devel-common/src/sphinx_exts/metrics_tables_from_registry.py	fp	framework-loaded	listed by string in Sphinx extensions list in devel-common/src/docs/utils/conf_constants.py
-fastmcp	CHK001	examples/namespace_activation/server.py	fp	script-entry	standalone example with __main__ guard; README says `uv run python server.py`
-llama_index	CHK001	llama-index-integrations/retrievers/llama-index-retrievers-superlinked/examples/steam_games_example.py	fp	script-entry	standalone example with __main__ guard; README documents running `python examples/steam_games_example.py`
 mlflow	CHK001	tests/langgraph/sample_code/langgraph_with_custom_span.py	fp	dynamic-import	loaded by file path string in tests/langgraph/test_langgraph_autolog.py (models-from-code)
 airflow	CHK001	airflow-core/tests/unit/dags_with_system_exit/c_system_exit.py	fp	framework-loaded	DAG file loaded from dags_with_system_exit folder by DAG processor in test_manager.py
-fastmcp	CHK001	examples/auth/google_oauth/client.py	fp	script-entry	standalone example client with __main__ guard
-llama_index	CHK001	llama-index-integrations/tools/llama-index-tools-moss/examples/moss_agent.py	fp	script-entry	standalone example with __main__ guard; linked from tool README as runnable script
 mlflow	CHK001	tests/langchain/agent_executor/chain.py	fp	dynamic-import	loaded by file path string in tests/langchain/test_langchain_model_export.py (models-from-code)
 airflow	CHK001	airflow-core/src/airflow/stats.py	fp	library-public	deprecated backward-compat shim explicitly kept for third-party `from airflow.stats import Stats`
 airflow	CHK001	airflow-core/src/airflow/ti_deps/deps/mapped_task_expanded.py	tp	-	MappedTaskIsExpanded referenced nowhere (only a path in scripts/cov/core_coverage.py); no string/dep registry use
@@ -1254,20 +1247,8 @@ mlflow	CHK006	mlflow/langchain/chat_agent_langgraph.py:ChatAgentState	fp	externa
 poetry	CHK006	src/poetry/console/commands/publish.py:PublishCommand	fp	dynamic-import	poetry command loader imports module by command name via import_module and getattr's the class
 mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:get_config_for_profile	tp	-	deprecated backward-compat function, no references anywhere in repo
 mlflow	CHK006	mlflow/entities/model_registry/prompt_version.py:PromptVersionTag	tp	-	alias PromptVersionTag = ModelVersionTag not referenced anywhere else
-fastmcp	CHK007	fastmcp_slim/fastmcp/client/__init__.py:UvStdioTransport	fp	library-public-api	in fastmcp.client __all__; no in-repo import from package (tests use fastmcp.client.transports) but public client API
 llama_index	CHK007	llama-index-instrumentation/src/llama_index_instrumentation/base/__init__.py:BaseInstrumentationHandler	fp	external-reference	imported from llama_index_instrumentation.base in llama-index-core/llama_index/core/instrumentation/base_handler.py
-mcp-python-sdk	CHK007	src/mcp/__init__.py:UriTemplate	fp	library-public-api	in top-level mcp __all__; tests/docs import from mcp.shared.uri_template but it is public package API
-fastmcp	CHK007	fastmcp_slim/fastmcp/contrib/bulk_tool_caller/__init__.py:BulkToolCaller	fp	external-reference	imported via `from fastmcp.contrib.bulk_tool_caller import BulkToolCaller` in contrib example.py and README
 llama_index	CHK007	llama-index-instrumentation/src/llama_index_instrumentation/span_handlers/__init__.py:SimpleSpanHandler	fp	library-public-api	in __all__ of separate distribution llama_index_instrumentation; core imports from .simple submodule only
-mcp-python-sdk	CHK007	src/mcp/__init__.py:InvalidUriTemplate	fp	library-public-api	in top-level mcp __all__; documented in docs/servers/uri-templates.md
-fastmcp	CHK007	fastmcp_slim/fastmcp/prompts/__init__.py:FunctionPrompt	fp	library-public-api	in fastmcp.prompts __all__; in-repo users import from function_prompt submodule but package path is public API
-mcp-python-sdk	CHK007	src/mcp/server/mcpserver/resources/__init__.py:DirectoryResource	fp	library-public-api	in __all__ of mcp.server.mcpserver.resources; listed in docs/servers/resources.md as built-in resource class
-fastmcp	CHK007	fastmcp_slim/fastmcp/client/__init__.py:PythonStdioTransport	fp	library-public-api	in fastmcp.client __all__; documented transport class, no in-repo import from package path
-mcp-python-sdk	CHK007	src/mcp/server/__init__.py:InitializationOptions	fp	external-reference	docs/migration.md documents `from mcp.server import InitializationOptions`
-fastmcp	CHK007	fastmcp_slim/fastmcp/client/__init__.py:ClientCredentialsOAuthProvider	fp	library-public-api	in fastmcp.client __all__; public auth provider, docs import from fastmcp.client.auth
-mcp-python-sdk	CHK007	src/mcp/server/mcpserver/__init__.py:DEFAULT_RESOURCE_SECURITY	fp	library-public-api	in mcp.server.mcpserver __all__; in-repo users import from .resources submodule
-fastmcp	CHK007	fastmcp_slim/fastmcp/utilities/openapi/__init__.py:format_deep_object_parameter	fp	library-public-api	unsure: in utilities.openapi __all__ commented 'maintaining backward compatibility'; not imported anywhere in repo
-mcp-python-sdk	CHK007	src/mcp/__init__.py:ServerSession	fp	library-public-api	in top-level mcp __all__; ServerSession is core public API (in-repo imports use mcp.server.session)
 airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_python_virtualenv.py:funcsigs	tp	-	funcsigs only installed at runtime via @task.virtualenv(requirements=["funcsigs"]) in the test; not in any manifest
 black	CHK010	scripts/check_version_in_basics_example.py:commonmark	fp	declared-third-party	commonmark==0.9.1 declared in .pre-commit-config.yaml additional_dependencies of the local hook that runs this script
 django	CHK010	tests/sphinx/test_github_links.py:github_links	fp	first-party-missed	docs/_ext/github_links.py exists; test inserts docs/_ext into sys.path in setUpClass
