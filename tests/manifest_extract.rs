@@ -777,6 +777,49 @@ fn extra_requirements_files_only_declare_names() {
 }
 
 #[test]
+fn docs_requirements_files_only_declare_names() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    for dir in ["docs", "doc", "docs/nested"] {
+        std::fs::create_dir_all(temp.path().join(dir)).expect("create docs dir");
+    }
+    for (name, contents) in [
+        (
+            "docs/requirements.txt",
+            "Sphinx==7.2.6\n-r ../docs-base.txt\n",
+        ),
+        ("docs-base.txt", "furo\n"),
+        ("doc/requirements.in", "myst-parser\n"),
+        // Only the directory itself is read, like `requirements/`.
+        ("docs/nested/requirements.txt", "sphinx-autobuild\n"),
+        ("docs/conf.txt", "not-a-requirement\n"),
+    ] {
+        std::fs::write(temp.path().join(name), contents).expect("write project file");
+    }
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert_eq!(dependency_names(&first), Vec::<&str>::new());
+    assert_eq!(
+        first
+            .sources
+            .extra_requirements
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["furo", "myst-parser", "sphinx"]
+    );
+
+    // Editing a docs requirements file invalidates the manifest cache.
+    std::fs::write(temp.path().join("docs/requirements.txt"), "mkdocs\n").expect("write docs");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    assert!(second.sources.extra_requirements.contains("mkdocs"));
+    assert!(!second.sources.extra_requirements.contains("sphinx"));
+}
+
+#[test]
 fn extra_requirements_files_keep_what_they_could_read() {
     let temp = tempfile::tempdir().expect("temp dir");
     std::fs::create_dir(temp.path().join("requirements")).expect("create requirements dir");

@@ -13,10 +13,12 @@ use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
 
 use super::commands::{KnownBinary, SourceHits, command_binaries};
-use super::config_text::{PyprojectDoc, leading_spaces, logical_lines, origin_at};
+use super::config_text::{
+    PyprojectDoc, leading_spaces, logical_lines, origin_at, read_root_file, toml_key_line,
+};
 use super::context::PluginContext;
 use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin};
-use super::{task_files, tool_plugins};
+use super::{ci_installs, task_files, tool_plugins};
 
 /// Output from config scanning.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -29,8 +31,9 @@ pub(super) struct ConfigScanResult {
     /// `plugins`, PDM `call`).
     #[serde(default)]
     pub module_refs: Vec<ModuleReference>,
-    /// Distributions tox `deps` and nox `session.install(...)` install, which
-    /// provide their binaries the way a manifest declaration does (#680).
+    /// Distributions tox `deps`, nox `session.install(...)` and CI workflow
+    /// installs (#725) install, which provide their binaries the way a
+    /// manifest declaration does (#680).
     #[serde(default)]
     pub declared_distributions: Vec<String>,
     /// Binaries remote pre-commit hooks install into pre-commit's own
@@ -42,6 +45,7 @@ pub(super) struct ConfigScanResult {
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
 const PRE_COMMIT_CONFIG: &str = ".pre-commit-config.yaml";
 const TOX_CONFIG: &str = "tox.ini";
+const TOX_TOML: &str = "tox.toml";
 const NOX_CONFIG: &str = "noxfile.py";
 const SCRIPT_DIRS: [&str; 2] = ["scripts", "bin"];
 
@@ -53,13 +57,14 @@ const SCRIPT_DIRS: [&str; 2] = ["scripts", "bin"];
 pub(super) fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = MKDOCS_CONFIG_NAMES
         .into_iter()
-        .chain([PRE_COMMIT_CONFIG, TOX_CONFIG, NOX_CONFIG])
+        .chain([PRE_COMMIT_CONFIG, TOX_CONFIG, TOX_TOML, NOX_CONFIG])
         .map(|name| root.join(name))
         .filter(|path| path.is_file())
         .collect();
     paths.extend(shell_script_paths(root));
     paths.extend(task_files::input_paths(root));
     paths.extend(tool_plugins::input_paths(root));
+    paths.extend(ci_installs::input_paths(root));
     paths
 }
 
@@ -81,12 +86,23 @@ pub(super) fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     scan_mkdocs_config(root, &mut result, &mut seen_binaries);
     scan_pre_commit_config(root, &mut result, &mut seen_binaries, &known);
     scan_tox_config(root, ctx, &mut result, &mut seen_binaries, &known);
+    scan_pyproject_tox(
+        ctx,
+        pyproject.as_ref(),
+        &mut result,
+        &mut seen_binaries,
+        &known,
+    );
+    scan_tox_toml(root, ctx, &mut result, &mut seen_binaries, &known);
     scan_noxfile(root, &mut result);
     scan_shell_scripts(root, &mut result, &mut seen_binaries, &known);
     let hits = task_files::scan(root, pyproject.as_ref(), &known);
     merge_hits(&mut result, &mut seen_binaries, hits);
     let hits = tool_plugins::scan(root, pyproject.as_ref());
     merge_hits(&mut result, &mut seen_binaries, hits);
+    result
+        .declared_distributions
+        .extend(ci_installs::scan(root));
 
     for list in [
         &mut result.used_distributions,
@@ -358,7 +374,160 @@ fn scan_tox_config(
         return;
     };
     scan_tox_contents(ctx, &contents, result);
-    scan_tox_commands(&rel, &contents, result, seen, known);
+    scan_tox_commands(&rel, 0, &contents, result, seen, known);
+}
+
+/// pyproject `[tool.tox]`: the `legacy_tox_ini` string is read like `tox.ini`,
+/// and the tox 4 native tables like `tox.toml` (#724). The `tox` usage itself
+/// comes from the `[tool.tox]` table key.
+fn scan_pyproject_tox(
+    ctx: &PluginContext<'_>,
+    pyproject: Option<&PyprojectDoc>,
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    known: KnownBinary<'_>,
+) {
+    let Some(doc) = pyproject else {
+        return;
+    };
+    let Some(tox) = doc.table("tool.tox") else {
+        return;
+    };
+    if let Some(contents) = tox.get("legacy_tox_ini").and_then(toml::Value::as_str) {
+        // TOML drops the newline right after an opening `"""`, so the string
+        // starts on the line after the key unless text follows the quotes.
+        let key_line = doc.origin("tool.tox", "legacy_tox_ini").line;
+        let offset = key_line.map_or(0, |line| {
+            let line = usize::try_from(line).unwrap_or(0);
+            let key_text = doc.line_text(line).unwrap_or_default().trim_end();
+            if key_text.ends_with("\"\"\"") || key_text.ends_with("'''") {
+                line
+            } else {
+                line.saturating_sub(1)
+            }
+        });
+        scan_tox_contents(ctx, contents, result);
+        scan_tox_commands(&doc.rel, offset, contents, result, seen, known);
+    }
+    scan_native_tox(
+        ctx,
+        tox,
+        &doc.rel,
+        "tool.tox",
+        doc.text(),
+        result,
+        seen,
+        known,
+    );
+}
+
+/// `tox.toml`, the tox 4 native config (#724).
+fn scan_tox_toml(
+    root: &Path,
+    ctx: &PluginContext<'_>,
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    known: KnownBinary<'_>,
+) {
+    let Some((rel, text)) = read_root_file(root, TOX_TOML) else {
+        return;
+    };
+    let origin = ReferenceOrigin {
+        file: rel.clone(),
+        line: None,
+        label: TOX_TOML.to_owned(),
+    };
+    push_binary(result, seen, "tox", origin);
+    let Ok(table) = toml::from_str::<toml::Table>(&text) else {
+        return;
+    };
+    scan_native_tox(ctx, &table, &rel, "", &text, result, seen, known);
+}
+
+/// `env_run_base`, `env_pkg_base` and `env.<name>` tables of a native tox
+/// config: `deps` provide distributions, `extras` mark optional dependencies
+/// used and `commands*` run binaries, as in `tox.ini`. `prefix` is the dotted
+/// path of `table` (`tool.tox` in pyproject, empty in `tox.toml`).
+#[allow(clippy::too_many_arguments)]
+fn scan_native_tox(
+    ctx: &PluginContext<'_>,
+    table: &toml::Table,
+    rel: &str,
+    prefix: &str,
+    text: &str,
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    known: KnownBinary<'_>,
+) {
+    let join = |name: &str| {
+        if prefix.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{prefix}.{name}")
+        }
+    };
+    let mut envs: Vec<(String, &toml::Table)> = ["env_run_base", "env_pkg_base"]
+        .into_iter()
+        .filter_map(|name| Some((join(name), table.get(name)?.as_table()?)))
+        .collect();
+    if let Some(named) = table.get("env").and_then(toml::Value::as_table) {
+        envs.extend(
+            named
+                .iter()
+                .filter_map(|(name, env)| Some((join(&format!("env.{name}")), env.as_table()?))),
+        );
+    }
+    let strings = |value: Option<&toml::Value>| -> Vec<String> {
+        value
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(toml::Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    };
+    for (path, env) in envs {
+        for dep in strings(env.get("deps")) {
+            push_tox_dependency(&dep, result);
+        }
+        for extra in strings(env.get("extras")) {
+            mark_optional_extra_dependencies(ctx, &extra, result);
+        }
+        for key in TOX_COMMAND_KEYS {
+            let Some(commands) = env.get(key).and_then(toml::Value::as_array) else {
+                continue;
+            };
+            let origin = ReferenceOrigin {
+                file: rel.to_owned(),
+                line: toml_key_line(text, &path, key),
+                label: format!("{path}.{key}"),
+            };
+            for command in commands.iter().filter_map(native_tox_command) {
+                push_command(
+                    result,
+                    seen,
+                    &expand_tox_substitutions(&command),
+                    known,
+                    &origin,
+                );
+            }
+        }
+    }
+}
+
+/// A native tox command is an argv run without a shell, so an argument with
+/// `;`, `|` or `&` (`python -c "a; b"`) is dropped before the words reach the
+/// shell-aware [`push_command`].
+fn native_tox_command(command: &toml::Value) -> Option<String> {
+    let Some(argv) = command.as_array() else {
+        return command.as_str().map(str::to_owned);
+    };
+    let words: Vec<&str> = argv
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .filter(|arg| !arg.contains([';', '|', '&']))
+        .collect();
+    Some(words.join(" "))
 }
 
 const TOX_COMMAND_KEYS: [&str; 3] = ["commands", "commands_pre", "commands_post"];
@@ -366,8 +535,10 @@ const TOX_COMMAND_KEYS: [&str; 3] = ["commands", "commands_pre", "commands_post"
 /// Binaries run by `commands` / `commands_pre` / `commands_post` in any
 /// section. Other keys (`deps`, `description`, `allowlist_externals`, ...)
 /// name tools without running them, so their words are not commands (#494).
+#[allow(clippy::too_many_arguments)]
 fn scan_tox_commands(
     rel: &str,
+    line_offset: usize,
     contents: &str,
     result: &mut ConfigScanResult,
     seen: &mut HashSet<(String, String)>,
@@ -397,7 +568,7 @@ fn scan_tox_commands(
             seen,
             &expand_tox_substitutions(strip_tox_factors(command)),
             known,
-            &origin_at(rel, index, "tox commands"),
+            &origin_at(rel, line_offset + index, "tox commands"),
         );
     }
 }
@@ -527,7 +698,7 @@ fn push_tox_dependency(raw: &str, result: &mut ConfigScanResult) {
 }
 
 /// A PEP 508 project name (letters, digits, `-`, `_`, `.`).
-fn is_distribution_name(name: &str) -> bool {
+pub(super) fn is_distribution_name(name: &str) -> bool {
     name.starts_with(|ch: char| ch.is_ascii_alphanumeric())
         && name
             .chars()
@@ -586,7 +757,7 @@ impl<'a> Visitor<'a> for SessionInstallVisitor {
     }
 }
 
-fn extract_requirement_name(raw: &str) -> Option<String> {
+pub(super) fn extract_requirement_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
@@ -690,7 +861,7 @@ fn shebang_interpreter(contents: &str) -> Option<&str> {
 }
 
 /// The line up to a `#` that starts a word (`$#` and `${#x}` are not comments).
-fn strip_shell_comment(line: &str) -> &str {
+pub(super) fn strip_shell_comment(line: &str) -> &str {
     let mut end = line.len();
     for (index, _) in line.match_indices('#') {
         let previous = line.get(..index).and_then(|head| head.chars().last());
@@ -1133,6 +1304,63 @@ mod tests {
             ]
         );
         assert!(result.used_distributions.contains(&"sphinx".to_owned()));
+    }
+
+    #[test]
+    fn pyproject_legacy_tox_ini_reads_deps_and_commands() {
+        let result = scan_files(&[(
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\n[tool.tox]\nlegacy_tox_ini = \"\"\"\n[testenv:pre-commit]\n\
+             deps = pre-commit\ncommands = pre-commit run --all-files\n\"\"\"\n",
+        )]);
+        assert_eq!(
+            usages(&result),
+            [
+                ("tox".to_owned(), "pyproject.toml".to_owned(), Some(3)),
+                (
+                    "pre-commit".to_owned(),
+                    "pyproject.toml".to_owned(),
+                    Some(7)
+                ),
+            ]
+        );
+        assert_eq!(result.declared_distributions, ["pre-commit"]);
+    }
+
+    #[test]
+    fn native_tox_tables_read_deps_and_commands() {
+        let native = "[env_run_base]\ndeps = [\"pytest\", \"-r requirements.txt\"]\n\
+                      commands = [[\"pytest\", \"{posargs}\"]]\n[env.lint]\ndeps = [\"ruff\"]\n\
+                      commands_pre = [[\"ruff\", \"check\", \".\"], \
+                      [\"python\", \"-c\", \"import a; black()\"]]\n";
+        let toml_result = scan_files(&[("tox.toml", native)]);
+        assert_eq!(
+            usages(&toml_result),
+            [
+                ("tox".to_owned(), "tox.toml".to_owned(), None),
+                ("pytest".to_owned(), "tox.toml".to_owned(), Some(3)),
+                ("ruff".to_owned(), "tox.toml".to_owned(), Some(6)),
+            ]
+        );
+        assert_eq!(toml_result.declared_distributions, ["pytest", "ruff"]);
+
+        let pyproject = format!(
+            "[project]\nname = \"pkg\"\n{}",
+            native
+                .replace("[env_run_base]", "[tool.tox.env_run_base]")
+                .replace("[env.lint]", "[tool.tox.env.lint]")
+        );
+        let pyproject_result = scan_files(&[("pyproject.toml", pyproject.as_str())]);
+        assert_eq!(
+            usages(&pyproject_result),
+            [
+                // No `[tool.tox]` header line to point at.
+                ("tox".to_owned(), "pyproject.toml".to_owned(), None),
+                ("pytest".to_owned(), "pyproject.toml".to_owned(), Some(5)),
+                ("ruff".to_owned(), "pyproject.toml".to_owned(), Some(8)),
+            ]
+        );
+        assert_eq!(pyproject_result.declared_distributions, ["pytest", "ruff"]);
     }
 
     #[test]

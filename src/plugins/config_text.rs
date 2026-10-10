@@ -37,6 +37,15 @@ impl PyprojectDoc {
         self.table(table)?.get(key)
     }
 
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Raw text of the 1-based `line`.
+    pub(super) fn line_text(&self, line: usize) -> Option<&str> {
+        self.text.lines().nth(line.checked_sub(1)?)
+    }
+
     pub(super) fn origin(&self, table: &str, key: &str) -> ReferenceOrigin {
         ReferenceOrigin {
             file: self.rel.clone(),

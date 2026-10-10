@@ -126,7 +126,7 @@ fn extract_github_actions(ctx: &PluginContext<'_>, contrib: &mut PluginContribut
     }
 }
 
-fn is_workflow_file(path: &Path) -> bool {
+pub(super) fn is_workflow_file(path: &Path) -> bool {
     if !path.is_file() {
         return false;
     }
@@ -142,7 +142,7 @@ struct WorkflowRunValue<'a> {
     command: &'a str,
 }
 
-fn workflow_run_commands(contents: &str) -> Vec<(usize, String)> {
+pub(super) fn workflow_run_commands(contents: &str) -> Vec<(usize, String)> {
     let lines: Vec<&str> = contents.lines().collect();
     let mut commands = Vec::new();
     let mut index = 0;

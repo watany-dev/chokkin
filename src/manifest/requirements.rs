@@ -62,13 +62,18 @@ pub(super) fn extract_requirements_file(
 
 /// Root `*requirements*.txt` and `requirements*.in`, and `requirements/*.txt`
 /// / `requirements/*.in` (werkzeug `requirements/tests.in`, urllib3
-/// `emscripten-requirements.txt`). The fixed root names match too; the rest
-/// have no context to guess, so they only declare names (#679).
+/// `emscripten-requirements.txt`), and the same names under `docs/` and
+/// `doc/` (pluggy `docs/requirements.txt`, #723). The fixed root names match
+/// too; the rest have no context to guess, so they only declare names (#679).
 pub(crate) fn extra_requirements_candidates(root: &Path) -> Vec<PathBuf> {
-    let mut paths = files_matching(root, |stem, ext| {
+    let requirements_name = |stem: &str, ext: &str| {
         (ext == "txt" && stem.contains("requirements"))
             || (ext == "in" && stem.starts_with("requirements"))
-    });
+    };
+    let mut paths = files_matching(root, requirements_name);
+    for dir in ["docs", "doc"] {
+        paths.extend(files_matching(&root.join(dir), requirements_name));
+    }
     paths.extend(files_matching(&root.join("requirements"), |_, ext| {
         ext == "txt" || ext == "in"
     }));
