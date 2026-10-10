@@ -107,8 +107,6 @@ pub fn analyze_with_context(
     candidates
 }
 
-/// The wheels the project ships: which mode judges a file, and whether a
-/// wheel distributes it.
 struct Wheels<'a> {
     entry: &'a EntryPlan,
     /// The root wheel's files; `None` when it declares no wheel targets.
