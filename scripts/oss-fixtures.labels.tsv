@@ -1087,14 +1087,10 @@ mcp-python-sdk	CHK002	python-multipart	fp	-	starlette's request.form() in server
 #   scripts/sample-precision-labels.py --rule CODE >> scripts/oss-fixtures.labels.tsv
 # (50 per rule, at most 6 per project). When report.md shows stale labels after a
 # clone bump, delete those rows and rerun the script to top the sample back up.
-langchain	CHK001	.github/scripts/check_prerelease_dependencies.py	fp	script-entry	Run by .github/workflows/_release.yml: python .github/scripts/check_prerelease_dependencies.py
 mlflow	CHK001	tests/pyfunc/custom_model/mod1/mod4.py	fp	other	Imported relatively by custom_model/mod1/mod2/__init__.py (from .. import mod4); asserted in test_inferred_code_path.py
 poetry	CHK001	src/poetry/masonry/api.py	fp	library-public	Shipped back-compat build backend poetry.masonry.api (re-exports poetry.core.masonry.api) for users' pyproject build-backend
-airflow	CHK001	providers/common/ai/hatch_build.py	fp	framework-loaded	Hatch custom build target: providers/common/ai/pyproject.toml [tool.hatch.build.targets.custom] path=./hatch_build.py
-langchain	CHK001	.github/scripts/check_diff.py	fp	script-entry	Run by .github/workflows/check_diffs.yml and codspeed.yml: python .github/scripts/check_diff.py
 mlflow	CHK001	tests/llama_index/sample_code/simple_workflow.py	fp	other	Model-from-code file referenced by path string in tests/llama_index/test_llama_index_autolog.py and model_export tests
 poetry	CHK001	src/poetry/console/events/console_events.py	tp	-	Empty (0-byte) file; no reference to poetry.console.events.console_events (code uses cleo.events.console_events)
-langchain	CHK001	.github/scripts/check_extras_sync.py	fp	script-entry	Referenced by .github/workflows/check_extras_sync.yml (path trigger + run step)
 mlflow	CHK001	tests/resources/example_virtualenv_no_python_env/entrypoint.py	fp	script-entry	Run via MLproject entry_points 'python entrypoint.py'; dir used by tests/projects/utils.py
 airflow	CHK001	devel-common/src/sphinx_exts/docroles.py	fp	dynamic-import	Sphinx extension listed by name "docroles" in devel-common/src/docs/utils/conf_constants.py extensions
 mlflow	CHK001	tests/llama_index/sample_code/basic_vector_store.py	fp	other	Model-from-code file referenced by path string in tests/llama_index/test_llama_index_model_export.py
