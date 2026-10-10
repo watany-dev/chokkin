@@ -926,7 +926,7 @@ mod tests {
             line,
             optional,
             platform_guarded,
-            deferred: false,
+            ..crate::parser::DynamicImport::default()
         };
         let parse = ParseSummary {
             modules: vec![crate::parser::ParsedModule {

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use indexmap::IndexSet;
 
 use crate::entry::EntryPlan;
+use crate::parser::{ParsedModule, SymbolKind};
 use crate::plugins::PluginHints;
 use crate::sources::{LayoutInfo, path_to_module};
 
@@ -78,6 +79,30 @@ pub(super) fn collect_external_symbols(
     }
 
     external
+}
+
+/// Classes a loader may fetch by a computed name: `import_module("pkg." + x)`
+/// reaches every module under `pkg`, and a `getattr(module, <expr>)` on the
+/// result in the same scope can return any class they define (#728).
+pub(super) fn dynamically_fetched_classes<'a>(
+    registry: &'a [RegistryEntry],
+    modules: &[&ParsedModule],
+) -> impl Iterator<Item = SymbolId> + 'a {
+    let packages: Vec<String> = modules
+        .iter()
+        .flat_map(|module| &module.dynamic_import_prefixes)
+        .filter(|prefix| prefix.computed_getattr)
+        .map(|prefix| format!("{}.", prefix.module))
+        .collect();
+    registry
+        .iter()
+        .filter(move |entry| {
+            entry.def.kind == SymbolKind::Class
+                && packages
+                    .iter()
+                    .any(|package| entry.id.module.starts_with(package.as_str()))
+        })
+        .map(|entry| entry.id.clone())
 }
 
 /// Whether a normalized decorator name registers its target: any

@@ -68,6 +68,7 @@ fn is_zero_level(level: &u8) -> bool {
 
 /// A literal dynamic import (`importlib.import_module("…")` or `__import__("…")`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct DynamicImport {
     /// Resolved module name from a string literal.
     pub module: String,
@@ -82,6 +83,11 @@ pub struct DynamicImport {
     /// Same as [`ImportRef::deferred`].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deferred: bool,
+    /// Prefix imports only: the same scope binds the loaded module to a name
+    /// and reads it with `getattr(module, <computed name>)`, so any class the
+    /// loaded modules define may be fetched by name (#728).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub computed_getattr: bool,
 }
 
 /// Attribute access against an imported module binding (`module.attr`).
