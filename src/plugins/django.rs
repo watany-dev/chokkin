@@ -30,6 +30,10 @@ use super::warnings::PluginsWarning;
 /// otherwise reported unused.
 const LIST_FIELDS: &[&str] = &["INSTALLED_APPS", "MIDDLEWARE"];
 
+/// Origin label of the settings module's entry; symbol analysis uses it to
+/// tell the settings entry from `manage.py` and `ROOT_URLCONF` (#729).
+pub(crate) const SETTINGS_LABEL: &str = "settings.py";
+
 /// Extract Django-related plugin hints.
 pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Django);
@@ -104,7 +108,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         origin: ReferenceOrigin {
             file: settings_rel.clone(),
             line: None,
-            label: "settings.py".to_owned(),
+            label: SETTINGS_LABEL.to_owned(),
         },
     });
 

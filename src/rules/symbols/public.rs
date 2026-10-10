@@ -31,34 +31,20 @@ impl PublicApi {
             if !module.exports.is_empty() {
                 declares_all.insert(name.clone());
             }
-            for import in &module.imports {
-                if import.kind == ImportKind::ImportFrom
-                    && import.name.as_deref() == Some("*")
-                    && !import.module.is_empty()
-                    && import.module != *name
-                {
-                    star_targets
-                        .entry(name.as_str())
-                        .or_default()
-                        .push(import.module.as_str());
-                }
-            }
+            star_targets
+                .entry(name.as_str())
+                .or_default()
+                .extend(star_imports(module).filter(|target| target != name));
         }
 
-        let mut star_reached = HashSet::new();
-        let mut queue: Vec<&str> = star_targets
+        let seeds = star_targets
             .iter()
             .filter(|(importer, _)| is_public_module(importer))
             .flat_map(|(_, targets)| targets.iter().copied())
             .collect();
-        while let Some(target) = queue.pop() {
-            if star_reached.insert(target.to_owned()) {
-                queue.extend(star_targets.get(target).into_iter().flatten().copied());
-            }
-        }
 
         Self {
-            star_reached,
+            star_reached: star_closure(&star_targets, seeds),
             declares_all,
             production_references,
         }
@@ -77,6 +63,32 @@ impl PublicApi {
                     .production_references
                     .is_externally_referenced(&entry.id))
     }
+}
+
+pub(super) fn star_imports(module: &ParsedModule) -> impl Iterator<Item = &str> {
+    module
+        .imports
+        .iter()
+        .filter(|import| {
+            import.kind == ImportKind::ImportFrom
+                && import.name.as_deref() == Some("*")
+                && !import.module.is_empty()
+        })
+        .map(|import| import.module.as_str())
+}
+
+/// `seeds` and every module they reach through chained star imports.
+pub(super) fn star_closure<'a>(
+    star_targets: &HashMap<&str, Vec<&'a str>>,
+    mut seeds: Vec<&'a str>,
+) -> HashSet<String> {
+    let mut reached = HashSet::new();
+    while let Some(target) = seeds.pop() {
+        if reached.insert(target.to_owned()) {
+            seeds.extend(star_targets.get(target).into_iter().flatten().copied());
+        }
+    }
+    reached
 }
 
 /// Every re-export sits in an `__init__`, so a public package's one is API.
