@@ -112,6 +112,26 @@ interval of about ±18 points. Five CHK005 tp are imports that work only
 through another runtime dependency (`openai` via llama-index-llms-openai,
 `anyio` via starlette). Counting them as fp gives 3 / 24 (13%).
 
+### Precision top-up at `883e306` (#699, 2026-10-10)
+
+CHK004 / CHK006 / CHK010 were topped up with the same script until each covers
+at least 20% of its hits (`--total 370 --per-project 80` for CHK004,
+`--total 225 --per-project 70` for the other two), so these three samples are
+no longer capped at 6 per project and mostly come from airflow, llama_index,
+langchain, mlflow and fastmcp. 19 stale CHK010 labels were dropped. The 95%
+interval shrinks to about ±7 points for CHK006 / CHK010; the other rules keep
+the 2026-10-09 sample.
+
+| Rule | Hits | Sample | tp | fp | Coverage | Precision | Main FP buckets |
+|---|---:|---:|---:|---:|---:|---:|---|
+| CHK004 | 1,888 | 403 | 401 | 2 | 21% | 99.5% | map-gap 2 (`google.cloud.firestore` from google-cloud-firestore, missing from the bundled map) |
+| CHK006 | 524 | 230 | 127 | 103 | 44% | 55% | library-public-api 35 (`__all__` / documented API in app mode), dynamic-import 28 (`import_module` + `getattr`, airflow `lazy_load_command`), external-reference 24 (module-attribute access, Sphinx `conf.py`), name-convention 16 (pluggy / pytest hooks, plugin `inspect.getmembers`) |
+| CHK010 | 350 | 225 | 114 | 111 | 64% | 51% | declared-third-party 55 (import≠dist names such as `weaviate-client`, `pymupdf`, `gremlinpython`; `databricks.agents` from databricks-agents, which the bundled map lacks), first-party-missed 46 (`sys.path` inserts, test-only packages, task-sdk tests), generated 4, stdlib 3, other 3 |
+
+CHK004 `tp` rows that a member manifest omits but the root lockfile provides
+are noted `lock-only edge`; they are the population #649 will use to pick the
+transitive-dependency threshold.
+
 ## Validation set (20 projects)
 
 Mix per §17 (library / app / server / framework / Django / FastAPI):
