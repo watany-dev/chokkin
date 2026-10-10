@@ -513,6 +513,7 @@ mod tests {
                     platform_guarded: false,
                     deferred: false,
                     relative_level: 0,
+                    fallback_for: Vec::new(),
                 })
                 .collect(),
             dynamic_imports: dynamic
@@ -791,6 +792,7 @@ mod tests {
             platform_guarded: false,
             deferred: false,
             relative_level: 0,
+            fallback_for: Vec::new(),
         };
         let modules = vec![ParsedModule {
             path: "src/acme/main.py".to_owned(),

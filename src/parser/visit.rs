@@ -39,6 +39,9 @@ pub(super) struct ModuleVisitor<'a> {
     default_context: ImportContext,
     in_type_checking: bool,
     try_depth: u32,
+    /// Inside an `except ImportError:` handler: the roots its `try` body
+    /// imports (#721).
+    fallback_for: Vec<String>,
     platform_guard_depth: u32,
     /// Top-level modules an enclosing branch checked are already imported
     /// (`"x" in sys.modules`); imports of them are optional (#681).
@@ -81,6 +84,7 @@ impl<'a> ModuleVisitor<'a> {
             default_context,
             in_type_checking: false,
             try_depth: 0,
+            fallback_for: Vec::new(),
             platform_guard_depth: 0,
             imported_guards: Vec::new(),
             in_main_block: false,
@@ -301,6 +305,7 @@ impl<'a> ModuleVisitor<'a> {
                     platform_guarded: false,
                     deferred: self.function_depth > 0,
                     relative_level: 0,
+                    fallback_for: Vec::new(),
                 });
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
@@ -363,6 +368,7 @@ impl<'a> ModuleVisitor<'a> {
                 platform_guarded,
                 deferred,
                 relative_level: 0,
+                fallback_for: self.fallback_for.clone(),
             });
         }
     }
@@ -446,6 +452,7 @@ impl<'a> ModuleVisitor<'a> {
                 platform_guarded,
                 deferred,
                 relative_level: level,
+                fallback_for: self.fallback_for.clone(),
             });
         }
     }
@@ -648,12 +655,24 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 self.try_depth = self.try_depth.saturating_add(1);
                 self.visit_body(&try_stmt.body);
                 self.try_depth = self.try_depth.saturating_sub(1);
+                let primaries = imported_roots(&try_stmt.body);
                 for handler in &try_stmt.handlers {
                     let ExceptHandler::ExceptHandler(handler) = handler;
                     if let Some(exc_type) = &handler.type_ {
                         self.visit_expr(exc_type);
                     }
+                    let enclosing = match &primaries {
+                        Some(roots)
+                            if handler.type_.as_deref().is_some_and(catches_import_error) =>
+                        {
+                            Some(std::mem::replace(&mut self.fallback_for, roots.clone()))
+                        },
+                        _ => None,
+                    };
                     self.visit_body(&handler.body);
+                    if let Some(enclosing) = enclosing {
+                        self.fallback_for = enclosing;
+                    }
                 }
                 // `else:` runs only when the `try` body raised nothing, so its
                 // imports are as optional as the body's.
@@ -865,6 +884,39 @@ fn true_flags(body: &[Stmt]) -> impl Iterator<Item = String> + '_ {
         };
         value.value.then(|| name.id.to_string())
     })
+}
+
+/// Roots a `try` body imports when it does nothing else, so only a missing
+/// module can raise there; `None` for any other statement or a relative import.
+fn imported_roots(body: &[Stmt]) -> Option<Vec<String>> {
+    let root = |module: &str| module.split('.').next().unwrap_or(module).to_owned();
+    let mut roots = Vec::new();
+    for stmt in body {
+        match stmt {
+            Stmt::Import(import) => {
+                roots.extend(import.names.iter().map(|alias| root(alias.name.as_str())));
+            },
+            Stmt::ImportFrom(import_from) if import_from.level == 0 => {
+                roots.push(root(import_from.module.as_ref()?.as_str()));
+            },
+            _ => return None,
+        }
+    }
+    Some(roots)
+}
+
+/// `except ImportError:` / `except (ModuleNotFoundError, ...):`.
+fn catches_import_error(exc_type: &Expr) -> bool {
+    let is_import_error = |expr: &Expr| {
+        matches!(
+            subscript_name(expr),
+            Some("ImportError" | "ModuleNotFoundError")
+        )
+    };
+    match exc_type {
+        Expr::Tuple(tuple) => tuple.elts.iter().any(is_import_error),
+        _ => is_import_error(exc_type),
+    }
 }
 
 /// `suppress(...)` / `contextlib.suppress(...)` swallowing a failed import
@@ -1416,6 +1468,36 @@ g = lambda x=utils.G: x
                 "utils.{name} should be recorded exactly once"
             );
         }
+    }
+
+    /// Imports in an `except ImportError:` handler carry the roots the `try`
+    /// body imports when the body does nothing else (#721).
+    #[test]
+    fn records_try_body_roots_on_import_error_fallbacks() {
+        let parsed = visit_source(
+            "try:\n    import threading, os.path\n    from http.server import X\nexcept (ImportError, OSError):\n    import dummy_threading\n    if flag:\n        from SimpleHTTPServer import X\nelse:\n    import else_lib\n\ntry:\n    import a\n    run()\nexcept ImportError:\n    import call_fallback\n\ntry:\n    from . import sibling\nexcept ModuleNotFoundError:\n    import relative_fallback\n\ntry:\n    import b\nexcept ValueError:\n    import value_fallback\nexcept ModuleNotFoundError:\n    import missing_fallback\n",
+        );
+        let fallback_for = |module: &str| {
+            parsed
+                .imports
+                .iter()
+                .find(|import| import.module == module)
+                .map(|import| import.fallback_for.clone())
+                .expect(module)
+        };
+        let primaries = vec!["threading".to_owned(), "os".to_owned(), "http".to_owned()];
+        assert_eq!(fallback_for("dummy_threading"), primaries);
+        assert_eq!(fallback_for("SimpleHTTPServer"), primaries);
+        for module in [
+            "threading",
+            "else_lib",
+            "call_fallback",
+            "relative_fallback",
+            "value_fallback",
+        ] {
+            assert!(fallback_for(module).is_empty(), "{module}");
+        }
+        assert_eq!(fallback_for("missing_fallback"), vec!["b".to_owned()]);
     }
 
     #[test]

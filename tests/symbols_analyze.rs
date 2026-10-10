@@ -332,6 +332,38 @@ fn optional_unresolved_import_is_info() {
     assert_eq!(chk010("fallbackpkg"), vec![(Severity::Warning, 6)]);
     // One unguarded site keeps the warning and anchors the issue.
     assert_eq!(chk010("mixedpkg"), vec![(Severity::Warning, 11)]);
+    // Without `requires-python` no Python is known to ship `threading` (#721).
+    assert_eq!(chk010("dummy_threading"), vec![(Severity::Warning, 26)]);
+}
+
+#[test]
+fn fallback_for_stdlib_every_supported_python_ships_is_info() {
+    let report = analyze_fixture("dead_stdlib_fallback");
+    let chk010 = |root: &str| {
+        report
+            .iter()
+            .filter(|candidate| candidate.rule == RuleId::Chk010)
+            .filter_map(|candidate| match &candidate.subject {
+                chokkin::internals::IssueSubject::Import { module, line, .. } if module == root => {
+                    Some((candidate.severity, *line))
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // `requires-python = ">=3.8"`: the handler never runs (#721).
+    assert_eq!(chk010("dummy_threading"), vec![(Severity::Info, 4)]);
+    assert_eq!(chk010("SimpleHTTPServer"), vec![(Severity::Info, 9)]);
+    // `tomllib` is 3.11+ and `zoneinfo` 3.9+, `fcntl` is POSIX-only: the
+    // fallback runs somewhere (#654).
+    assert_eq!(chk010("tomlfallback"), vec![(Severity::Warning, 14)]);
+    assert_eq!(chk010("zonefallback"), vec![(Severity::Warning, 19)]);
+    assert_eq!(chk010("lockfallback"), vec![(Severity::Warning, 24)]);
+    // A non-stdlib primary, another statement in the body or a handler that
+    // does not catch `ImportError` keeps the fallback live.
+    assert_eq!(chk010("mixedfallback"), vec![(Severity::Warning, 30)]);
+    assert_eq!(chk010("callfallback"), vec![(Severity::Warning, 36)]);
+    assert_eq!(chk010("valuefallback"), vec![(Severity::Warning, 41)]);
 }
 
 #[test]

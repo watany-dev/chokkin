@@ -158,6 +158,7 @@ mod tests {
             platform_guarded: false,
             deferred: false,
             relative_level: 0,
+            fallback_for: Vec::new(),
         }
     }
 }

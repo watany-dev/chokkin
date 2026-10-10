@@ -78,6 +78,12 @@ pub fn resolve_imports_for_analysis(
                 || import.module.clone(),
                 |name| format!("{}.{name}", import.module),
             );
+            // A fallback for modules every supported Python ships never runs.
+            let dead_fallback = !import.fallback_for.is_empty()
+                && import
+                    .fallback_for
+                    .iter()
+                    .all(|root| file_stdlib.always_contains(root));
             imports.push(resolve_import_site(
                 &import.module,
                 &imported,
@@ -85,6 +91,7 @@ pub fn resolve_imports_for_analysis(
                 import.line,
                 import.context,
                 import.optional,
+                dead_fallback,
                 import.platform_guarded,
                 file_stdlib,
                 sources,
@@ -110,6 +117,7 @@ pub fn resolve_imports_for_analysis(
                 dynamic.line,
                 ImportContext::Runtime,
                 dynamic.optional,
+                false,
                 dynamic.platform_guarded,
                 file_stdlib,
                 sources,
@@ -149,6 +157,7 @@ pub fn resolve_imports_for_analysis(
                 plugin_context,
                 false,
                 false,
+                false,
                 file_stdlib,
                 sources,
                 manifest,
@@ -179,6 +188,7 @@ pub fn resolve_imports_for_analysis(
             &reference.origin.file,
             reference.origin.line.unwrap_or(0),
             ImportContext::Runtime,
+            false,
             false,
             false,
             stdlib,
@@ -226,6 +236,7 @@ fn resolve_import_site(
     line: u32,
     context: ImportContext,
     optional: bool,
+    dead_fallback: bool,
     platform_guarded: bool,
     stdlib: StdlibRange,
     sources: &DiscoveredSources,
@@ -325,7 +336,7 @@ fn resolve_import_site(
             file: file.to_owned(),
             line,
             context,
-            optional,
+            optional: optional || dead_fallback,
         });
     }
 

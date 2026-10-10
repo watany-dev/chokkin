@@ -597,6 +597,7 @@ mod tests {
                 platform_guarded: import.platform_guarded,
                 deferred: false,
                 relative_level: 0,
+                fallback_for: Vec::new(),
             })
             .collect();
         ParseSummary {
@@ -920,6 +921,7 @@ mod tests {
             platform_guarded,
             deferred: false,
             relative_level: 0,
+            fallback_for: Vec::new(),
         };
         let dynamic = |line, optional, platform_guarded| crate::parser::DynamicImport {
             module: "pkg".to_owned(),

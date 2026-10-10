@@ -18,3 +18,9 @@ except ImportError:
 
 def main() -> None:
     optionalpkg.run(suppressedpkg, mixedpkg)
+
+
+try:
+    import threading
+except ImportError:
+    import dummy_threading
