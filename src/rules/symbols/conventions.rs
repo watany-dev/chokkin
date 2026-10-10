@@ -5,9 +5,10 @@ use std::path::Path;
 
 use crate::config::PluginId;
 use crate::parser::ParsedModule;
-use crate::plugins::PluginHints;
+use crate::plugins::{DJANGO_SETTINGS_LABEL, PluginHints};
 
-use super::graph::SymbolId;
+use super::graph::{RegistryEntry, SymbolId};
+use super::public::{star_closure, star_imports};
 
 /// protoc output: generated, never edited by hand (ruff excludes it too).
 const GENERATED_SUFFIXES: &[&str] = &["_pb2.py", "_pb2_grpc.py"];
@@ -85,6 +86,65 @@ fn is_alembic_revision(module: &ParsedModule) -> bool {
         .any(|part| part.as_os_str() == "versions");
     let defines = |name: &str| module.symbols.iter().any(|symbol| symbol.name == name);
     in_versions && defines("revision") && defines("down_revision")
+}
+
+/// Entries whose module namespace the host reads as settings: Sphinx's
+/// `docs/conf.py` and Django's settings module.
+fn config_entry_files(plugins: &PluginHints) -> HashSet<&str> {
+    plugins
+        .contributions
+        .iter()
+        .flat_map(|contrib| {
+            contrib
+                .entries
+                .iter()
+                .filter(move |entry| match contrib.plugin {
+                    PluginId::Sphinx => true,
+                    PluginId::Django => entry.origin.label == DJANGO_SETTINGS_LABEL,
+                    _ => false,
+                })
+        })
+        .map(|entry| entry.spec.path.as_str())
+        .collect()
+}
+
+/// Names a config entry pulls into its namespace with `from m import *`,
+/// through chained star imports (#729): the host reads them as settings
+/// (`html_theme`, `INSTALLED_APPS`), so no importer ever names them. A module
+/// with `__all__` hands over only the names it lists.
+pub(super) fn config_star_symbols(
+    plugins: &PluginHints,
+    registry: &[RegistryEntry],
+    modules: &[&ParsedModule],
+    module_names: &HashMap<&str, String>,
+) -> Vec<SymbolId> {
+    let entries = config_entry_files(plugins);
+    let mut seeds = Vec::new();
+    let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut declares_all = HashSet::new();
+    for module in modules {
+        if entries.contains(module.path.as_str()) {
+            seeds.extend(star_imports(module));
+        }
+        if let Some(name) = module_names.get(module.path.as_str()) {
+            star_targets
+                .entry(name.as_str())
+                .or_default()
+                .extend(star_imports(module));
+            if !module.exports.is_empty() {
+                declares_all.insert(name.as_str());
+            }
+        }
+    }
+    let reached = star_closure(&star_targets, seeds);
+    registry
+        .iter()
+        .filter(|entry| {
+            reached.contains(&entry.id.module)
+                && (entry.in_all || !declares_all.contains(entry.id.module.as_str()))
+        })
+        .map(|entry| entry.id.clone())
+        .collect()
 }
 
 #[cfg(test)]

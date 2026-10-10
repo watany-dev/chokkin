@@ -1125,6 +1125,101 @@ fn alembic_script_files_are_not_chk006() {
     assert_eq!(chk006, Vec::<&chokkin::internals::IssueCandidate>::new());
 }
 
+/// Sphinx reads `html_theme` and friends out of `docs/conf.py`'s namespace,
+/// so names it star-imports are settings, not unused exports (#729).
+#[test]
+fn names_star_imported_into_sphinx_conf_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            // The default globs leave a root `docs/` out of a flat layout.
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"app/**/*.py\", \"docs/**/*.py\"]\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "from app.plain import *\n\n\ndef main():\n    pass\n",
+        ),
+        ("app/plain.py", "leftover = 1\n"),
+        (
+            "app/conf_base.py",
+            "from app.conf_chain import *\n\nhtml_theme = \"furo\"\n\n\ndef setup(app):\n    pass\n",
+        ),
+        // The cycle back to `conf_base` must not loop.
+        (
+            "app/conf_chain.py",
+            "from app.conf_base import *\n\nproject = \"app\"\n",
+        ),
+        (
+            "app/conf_all.py",
+            "__all__ = [\"copyright\"]\n\ncopyright = \"2026\"\nnot_listed = 1\n",
+        ),
+        (
+            "docs/conf.py",
+            "from app.conf_base import *\nfrom app.conf_all import *\n",
+        ),
+    ]);
+    for (module, name) in [
+        ("app.conf_base", "html_theme"),
+        ("app.conf_base", "setup"),
+        ("app.conf_chain", "project"),
+        ("app.conf_all", "copyright"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    // `__all__` keeps `not_listed` out of the star import, and a star import
+    // from ordinary code is still no reference.
+    for (module, name) in [("app.conf_all", "not_listed"), ("app.plain", "leftover")] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+}
+
+/// Django reads the settings module's namespace the same way; `ROOT_URLCONF`
+/// is a Django entry too, but its star import is plain code (#729).
+#[test]
+fn names_star_imported_into_django_settings_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.0.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "from .settings_base import *\n\nROOT_URLCONF = \"mysite.urls\"\n",
+        ),
+        (
+            "mysite/settings_base.py",
+            "INSTALLED_APPS = []\nDEBUG = False\n",
+        ),
+        (
+            "mysite/urls.py",
+            "from mysite.views import *\n\nurlpatterns = []\n",
+        ),
+        ("mysite/views.py", "def index(request):\n    pass\n"),
+    ]);
+    for name in ["INSTALLED_APPS", "DEBUG"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "mysite.settings_base", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "mysite.views", "index"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");
