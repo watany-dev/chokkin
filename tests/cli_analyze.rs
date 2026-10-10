@@ -1193,6 +1193,38 @@ fn binary_declared_workspace_library_member_is_scored_as_library() {
     }
 }
 
+/// A library member that declares no wheel targets ships its layout's
+/// packages for CHK006/CHK007 only; that guess must not app-score its other
+/// files the way declared targets do (#733).
+#[test]
+fn layout_shipped_library_member_keeps_library_scoring() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"lib\", \"core\"]\n",
+        ),
+        (
+            "lib/pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("lib/src/acme/__init__.py", ""),
+        ("lib/scripts/release.py", "VERSION = \"1\"\n"),
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n\n[project.scripts]\ncore = \"core.main:main\"\n",
+        ),
+        ("core/src/core/__init__.py", ""),
+        ("core/src/core/main.py", "def main():\n    pass\n"),
+        ("core/src/core/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        certain_chk001(&issues),
+        ["core/src/core/orphan.py"],
+        "{issues:?}"
+    );
+}
+
 /// Monorepos keep Sphinx docs per member: each member's `docs/conf.py` is a
 /// docs entry, so it and the shared modules it imports stay reachable even
 /// with no root `docs/conf.py`, and `--production` drops it like root docs
