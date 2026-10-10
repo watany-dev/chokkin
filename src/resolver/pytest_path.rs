@@ -776,6 +776,20 @@ mod tests {
         assert_eq!(paths.resolve_fallback(test, "torch"), None);
     }
 
+    #[test]
+    fn entry_names_lowercases_listing_and_misses_unlistable_dirs() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir(temp.path().join("Scripts")).expect("mkdir");
+        std::fs::write(temp.path().join("conftest.py"), "").expect("write");
+        let mut names: Vec<String> = entry_names(temp.path())
+            .expect("listable")
+            .into_iter()
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, ["conftest.py", "scripts"]);
+        assert_eq!(entry_names(&temp.path().join("missing")), None);
+    }
+
     mod props {
         use super::*;
         use proptest::prelude::*;
