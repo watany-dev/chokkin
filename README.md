@@ -2,33 +2,35 @@
 
 [日本語](./README.ja.md)
 
-Find unused files, dependencies, and public symbols in Python projects.
+[![PyPI](https://img.shields.io/pypi/v/chokkin)](https://pypi.org/project/chokkin/)
+[![CI](https://github.com/watany-dev/chokkin/actions/workflows/ci.yml/badge.svg)](https://github.com/watany-dev/chokkin/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-`chokkin` is a reachability analyzer for whole Python projects — a [Knip](https://knip.dev/)-like experience for Python. It builds a project-wide graph from your manifests, source code, and tool configs, then reports what nothing reaches: run `uvx chokkin` with zero configuration, and tighten things up with precise settings and CI integration as you go.
-
-> [!NOTE]
-> **Status: v0.7.3 released.** `chokkin` runs the **full analysis pipeline** (steps 1–13) by default: unused files, dependencies, and symbols with built-in reporters (`default`, `compact`, `json`, `markdown`, `github`, `sarif`), plus `--explain`, `--trace`, `--fix`, and baseline filtering. Use `--probe` for steps 1–4 summary only; it reports resolved workspace member counts, and resolver tags member-owned imports while treating cross-member imports as first-party. Strict mode enforces member-local dependency declarations, and reporters expose member ids on workspace findings. v0.4 focuses default CHK003 reporting on runtime imports, keeps conditional missing imports informational, recognizes aliased `TYPE_CHECKING` guards, adds an offline wheel-metadata harvester, and formalizes safe-autofix and semver contracts. The fixed 20-project corpus dropped from 964 to 131 CHK003 findings with 0 unknown labels while every §17 gate remained green. v0.5 follows modern Python packaging: PEP 735 `include-group`, PEP 723 inline scripts, `pylock.toml` / `poetry.lock` / `pdm.lock` for the transitive check, `[tool.uv]` sources / constraints / legacy dev-dependencies, build-system context and wheel-target public surface, more binary / plugin usage sources, and plugin auto-enable from declared dependencies. The parser moved to `ruff_python_parser`, files are parsed in parallel, and the warm cache is keyed on file stat. v0.6 makes `--fix` refuse stale line numbers and array indices instead of deleting the wrong dependency, keeps requirements line endings, and trims the Rust library API. v0.7 targets accuracy on real OSS projects: auto-detected workspace members, build-backend package directories, static `setup.py` evaluation, notebook and library-package entry roots, and vendored-code handling cut the issue count on 24 measured OSS targets from 63,606 to 9,287. **v0.1.0 through v0.7.3 have been released.**
-
-## Why chokkin?
-
-Existing tools each cover one slice of the problem:
-
-```text
-Ruff     : per-file, syntax-level linting
-Vulture  : Python AST-based dead code detection
-deptry   : consistency between dependency manifests and imports
-chokkin    : unused files, dependencies, and public symbols from the whole project graph
-```
-
-`chokkin` is not a style/lint tool. It answers a different question: starting from your entry points, what can actually be reached — and what is just sitting there? It reads `pyproject.toml` (including Poetry/PDM/Hatch dependency sections), requirements files, uv lockfiles, and framework/tool configs (Django, FastAPI, pytest, tox, nox, pre-commit, GitHub Actions, …) to build that picture.
-
-## Quick start
+**Find unused files, dependencies, and public symbols in Python projects.**
 
 ```bash
 uvx chokkin
 ```
 
-No configuration needed. On first run, chokkin discovers your manifests (`pyproject.toml`, `setup.cfg`, `setup.py`, `requirements*.txt`, and one lockfile: `uv.lock`, `pylock.toml`, `poetry.lock`, or `pdm.lock`), infers your layout (src/flat, tests, scripts, docs), infers entry points, builds the import graph, and reconciles it against your declared dependencies:
+That is the whole setup. chokkin reads your `pyproject.toml`, requirements
+files, lockfile, and tool configs, builds a reachability graph of the entire
+project from its entry points, and reports what nothing reaches. It is
+[Knip](https://knip.dev/) for Python: one command, zero configuration, and a
+clear path to a CI gate when you want one.
+
+- **Zero config.** Layout, entry points, dependency groups, and frameworks are
+  detected automatically. Add `[tool.chokkin]` only when you need precision.
+- **Whole-project view.** Not "is this import used in this file" but "can this
+  file, package, or symbol be reached from anything that runs".
+- **Never runs your code.** Analysis is fully static. Django settings,
+  `setup.py`, and notebooks are parsed, not imported.
+- **Fast and self-contained.** A single Rust binary shipped as a Python wheel
+  for Linux, macOS, and Windows. No Rust toolchain, no project virtualenv
+  required.
+- **Built for CI.** Baselines, GitHub annotations, SARIF, fixed exit codes, and
+  a bundled GitHub Action.
+
+## What you get
 
 ```text
 chokkin 0.7.3
@@ -56,6 +58,43 @@ Unused exports  2
 Summary: 8 issues
 ```
 
+Every finding has a rule code, a location, and a reason. When you disagree
+with one, `--explain` and `--trace` show the evidence behind it.
+
+## Why not Ruff, Vulture, or deptry?
+
+They are good tools that answer different questions:
+
+| Tool    | Scope                                                          |
+|---------|----------------------------------------------------------------|
+| Ruff    | per-file, syntax-level linting (unused imports, unused locals) |
+| Vulture | dead code inside Python files, from the AST                    |
+| deptry  | declared dependencies vs. imports                              |
+| chokkin | unused files, dependencies, and public symbols from the whole project graph |
+
+chokkin starts from your entry points (`console_scripts`, `manage.py`,
+`asgi.py`, test suites, notebooks, CI commands, …) and asks what is reachable.
+A module that nothing imports, a package that nothing uses, a class that no
+other module references: those are the findings. Because it also reads
+framework and tool configuration, string references like Django's
+`INSTALLED_APPS` or a `pre-commit` hook running `mypy` count as usage instead
+of showing up as false positives.
+
+## Install
+
+```bash
+uvx chokkin          # run without installing
+pipx run chokkin
+pip install chokkin
+```
+
+Python 3.10+ is required to install the wheel. The analyzed project can target
+any Python version (`target_version` in the config).
+
+chokkin does not need your project's virtualenv. If `.venv` exists it reads
+dist-info metadata from it; otherwise it works from manifests, lockfiles, and a
+bundled distribution-to-module map.
+
 ## What it checks
 
 | Code     | Issue                   | Description                                                              | Default severity              |
@@ -71,47 +110,97 @@ Summary: 8 issues
 | `CHK009` | `duplicate_dependency`  | declared twice in one context, or in runtime and a group/extra            | one context: warning / runtime and group/extra: info |
 | `CHK010` | `unresolved_import`     | import that resolves to neither first-party, third-party, nor stdlib      | `TYPE_CHECKING` or optional (`try` / `suppress(ImportError)` / `find_spec` / `is_*_available()`): info / else: warning |
 
-Because any module top-level name is importable in Python, `unused_export` starts out as a preview rule (info-level in library mode) rather than a hard error. In library mode, a name its own module reads (a TypeVar, a type alias, a helper) is not reported either, since outside callers can reach it through the module's API.
+Each finding also carries a confidence (`certain`, `likely`, `maybe`). By
+default `maybe` findings are hidden; `--confidence` and `--strict` change that.
 
-## CLI
+Python makes every module top-level name importable, so `unused_export` is
+deliberately cautious: in library mode it is info-level, and names the defining
+module itself reads (a TypeVar, a type alias, a helper) are not reported.
+
+## What it understands
+
+**Manifests and lockfiles:** `pyproject.toml` (PEP 621, Poetry, PDM, Hatch,
+`[tool.uv]` sources and constraints), PEP 735 dependency groups including
+`include-group`, PEP 723 inline script metadata, `setup.cfg`, static
+`setup.py`, `requirements*.txt` / `*.in`, and `uv.lock`, `pylock.toml`,
+`poetry.lock`, or `pdm.lock` for the transitive check.
+
+**Layouts:** src and flat layouts, tests, scripts, docs, examples, Jupyter
+notebooks, build-backend package directories, and uv workspaces or
+auto-detected monorepo members, each analyzed with its own manifest.
+
+**Frameworks and tools:** pytest, Django, FastAPI / uvicorn, Flask, Celery,
+Sphinx, MkDocs, Alembic, tox, nox, pre-commit, and GitHub Actions. Plugins
+add entry files, string module references, and binary usage that plain import
+analysis cannot see, and they switch on automatically when the framework is a
+declared dependency. The Django plugin, for example, treats `INSTALLED_APPS`,
+`MIDDLEWARE`, and `ROOT_URLCONF` strings as module references and
+`migrations/**` as framework-used; FastAPI and Flask route handlers count as
+externally used.
+
+**Dependency contexts:** both dependencies and files are assigned a context
+(runtime / dev / test / docs / lint / type / optional extras). That is what
+powers `CHK005`: `import pytest` under `tests/` with pytest in your dev group
+is fine, the same import under `src/` is a misplaced dependency.
+`TYPE_CHECKING`-only imports are type context, and guarded imports
+(`try: import orjson`, `find_spec(...)`, platform checks) stay informational.
+
+## Everyday usage
 
 ```bash
-uvx chokkin
-uvx chokkin --production
-uvx chokkin --strict
-uvx chokkin --no-exit-code
-uvx chokkin --include CHK002,CHK003
+uvx chokkin                          # analyze the current directory
+uvx chokkin path/to/project
+uvx chokkin --reporter compact       # one line per finding
+uvx chokkin --include CHK002,CHK003  # only dependency findings
 uvx chokkin --exclude CHK006
-uvx chokkin --reporter json
-uvx chokkin --reporter markdown
-uvx chokkin --reporter github
-uvx chokkin --reporter sarif
-uvx chokkin --confidence likely
-uvx chokkin --fix
-uvx chokkin --fix --dry-run
-uvx chokkin --fix --allow-remove-files
-uvx chokkin --fix --add-missing
-uvx chokkin --baseline chokkin-baseline.json
-uvx chokkin --baseline chokkin-baseline.json --update-baseline
-uvx chokkin --no-cache
-uvx chokkin --explain CHK002:boto3
-uvx chokkin --trace src/acme/legacy.py
-uvx chokkin --probe              # steps 1–4 summary only
-uvx chokkin --init
+uvx chokkin --production             # runtime context only
+uvx chokkin --strict                 # stricter policies, show `maybe` findings
 ```
 
-Key flags:
+**Investigate a finding** before you trust it:
 
-- `--production` — drop dev/test/docs/lint/type contexts and judge reachability from runtime context only. Dev-only files and dependencies are no longer reported, and "unused in production" becomes strict.
-- `--strict` — direct imports of transitive dependencies always error, workspace members must declare their own dependencies, CHK003 also includes type/test/docs/dev imports, unused environment-marker dependencies error, and `maybe`-confidence issues are shown.
-- `--no-exit-code` — exit 0 even when issues are found (config/CLI errors still exit 2, internal errors 3). Useful during adoption and for GitHub Actions summaries.
-- `--fix` — apply conservative fixes for certain dependency findings; add `--allow-remove-files` to also remove certain unreachable files. `--add-missing` adds Certain CHK003 findings to non-Poetry `[project].dependencies` when the distribution is unambiguous; workspace findings are inserted into the member `pyproject.toml` when that member manifest was inventoried. Unsupported cases are reported as skipped fixes with details on stderr.
-- `--baseline PATH` / `--update-baseline` — freeze current issues in a baseline file and suppress matching issues on later runs so CI fails only on new findings.
-- `--no-cache` — disable Phase 2 cache reads/writes. Parse and manifest/config scan cache units are enabled by default under the project root and are conservative: corrupt or stale entries are treated as misses.
-- `--no-auto-workspace` — do not treat nested `pyproject.toml` files with a `[project]` name as workspace members when the repository declares no uv or chokkin workspace (see workspace mode below), and do not skip nested projects that are not members.
-- `--reporter github` / `--reporter sarif` — emit GitHub Actions annotations or a SARIF 2.1.0 subset for code scanning.
-- `--probe` — include resolved and inventoried workspace member counts when uv or chokkin workspaces are detected.
-- `--explain` / `--trace` — show why an issue was reported and how reachability was judged. `CHK002` explain includes top-level modules and reachable/unreachable import evidence; `--trace` prints a positive path for reachable files and a negative trace (reason, entry roots, incoming import chain) for unreachable files. These are the intended path for investigating and reporting false positives.
+```bash
+uvx chokkin --explain CHK002:boto3        # why is boto3 unused? which imports were seen?
+uvx chokkin --trace src/acme/legacy.py    # how (or why not) is this file reached?
+```
+
+`--trace` prints the import chain from an entry root for reachable files, and
+the reason, entry roots, and incoming imports for unreachable ones. This is
+the intended path for reporting false positives.
+
+**Fix it** when you agree:
+
+```bash
+uvx chokkin --fix --dry-run               # preview
+uvx chokkin --fix                         # remove certain unused dependencies from manifests
+uvx chokkin --fix --add-missing           # also declare certain missing dependencies
+uvx chokkin --fix --allow-remove-files    # also delete certain unreachable files
+```
+
+`--fix` is conservative by design: it only touches `certain` findings, refuses
+to edit a manifest whose line numbers no longer match, preserves line endings,
+and reports anything it skipped on stderr.
+
+**Key flags:**
+
+- `--production` drops dev/test/docs/lint/type contexts and judges
+  reachability from runtime code only. Dev-only files and dependencies
+  disappear, and "unused in production" becomes exact.
+- `--strict` makes direct imports of transitive dependencies an error, requires
+  workspace members to declare their own dependencies, reports undeclared
+  type/test/docs/dev imports as `CHK003`, errors on unused
+  environment-marker dependencies, and shows `maybe` findings.
+- `--reporter default|compact|json|markdown|github|sarif` picks the output.
+  `github` emits workflow annotations; `sarif` writes a SARIF 2.1.0 subset for
+  code scanning.
+- `--no-exit-code` returns 0 even with findings, for adoption periods and
+  summaries.
+- `--no-cache` disables the on-disk parse cache under `.chokkin/`. The cache is
+  keyed on file stat and treats anything stale or corrupt as a miss.
+- `--no-auto-workspace` stops nested `pyproject.toml` files from becoming
+  workspace members or being skipped as separate projects.
+- `--init` appends a starter `[tool.chokkin]` reflecting what auto-discovery
+  found.
 
 Exit codes are fixed for CI:
 
@@ -122,131 +211,19 @@ Exit codes are fixed for CI:
 3: internal error
 ```
 
-## Configuration
+## Adopting chokkin in an existing project
 
-Zero config is the default. When you need precision, configure `[tool.chokkin]` in `pyproject.toml` (standalone `chokkin.toml` / `.chokkin.toml` are also accepted). `chokkin --init` appends a starter `[tool.chokkin]` reflecting what auto-discovery found.
-
-```toml
-[tool.chokkin]
-entry = [
-  "src/acme/__main__.py",
-  "src/acme/asgi.py:application",
-  "manage.py",
-]
-project = [
-  "src/**/*.py",
-  "tests/**/*.py",
-  "scripts/**/*.py",
-]
-mode = "auto"             # auto | app | library
-production = false
-target_version = "py311"  # Python version of the analyzed project
-respect_gitignore = true
-confidence = "likely"     # certain | likely | maybe
-exclude = [
-  ".venv/**",
-  ".chokkin/**",
-  "build/**",
-  "dist/**",
-  "**/__pycache__/**",
-]
-vendored = [             # analyzed and traced, but never reported
-  "**/_vendor/**",
-  "**/vendored/**",
-  "**/externals/**",
-  "**/third_party/**",
-]
-
-[tool.chokkin.dependencies]
-dev_groups = ["dev", "test", "tests", "lint", "docs"]
-runtime_groups = ["server", "worker"]
-type_groups = ["types", "typing", "mypy"]
-
-# distribution name -> import name(s), for cases the bundled map doesn't cover
-[tool.chokkin.package_module_map]
-"PyYAML" = ["yaml"]
-"Pillow" = ["PIL"]
-"protobuf" = ["google.protobuf"]  # dotted names pick one distribution under a namespace package
-
-# CLI name -> distribution name, used by CHK008/CHK002 binary-usage checks
-[tool.chokkin.binary_map]
-"sphinx-build" = "Sphinx"
-
-[tool.chokkin.plugins]
-pytest = true
-django = true
-fastapi = true
-
-# Per-rule severity overrides (off / info / warning / error)
-[tool.chokkin.severity]
-CHK001 = "off"
-CHK006 = "info"
-CHK002 = "error"
-```
-
-The root `.chokkin/` directory is reserved for analyzer data and is always excluded, even with custom excludes. Keep analyzed source files outside it.
-
-### Modes
-
-`mode = "auto"` picks one of:
-
-- **app mode** — there's a clear entry (`console_scripts`, `manage.py`, `asgi.py`, `wsgi.py`, `app.py`). Unused files are reported aggressively.
-- **library mode** — a `[project] name` with a package and no clear entry. Public modules may be imported by external users, so unused files/exports are reported at low confidence (or as info). For serious unused-file detection in a library, declare `entry` explicitly.
-- **workspace mode** — multiple `pyproject.toml` files or `tool.uv.workspace.members`. Each member is analyzed separately (per-member `[tool.chokkin.workspaces.<name>]` config is supported), sharing the workspace lockfile. Without a workspace declaration (llama_index-style monorepos), nested `pyproject.toml` files up to four directories deep that declare a `[project]` name become members automatically; hidden, build, and test directories and `exclude` globs are skipped, a warning reports the member count, and `--no-auto-workspace` turns this off. Nested projects that are not members (an example app with its own `[project]`) are left out of the analysis, outside test directories; a warning reports how many. A member (declared or detected) that names a distribution and has no app entry is scored like a library: its unreachable files drop to `maybe` and its tests are not reported, except files its own wheel targets leave out (such as `docs/conf.py`), which keep app scoring.
-
-### Dependency contexts
-
-Dependencies and files are both assigned contexts (runtime / dev / test / docs / lint / type / optional extras). That's what powers `CHK005`: `import pytest` in `tests/` with pytest in your dev group is fine; the same import in `src/` is a misplaced dependency. Default CHK003 reporting focuses on runtime imports; `--strict` also reports undeclared type/test/docs/dev imports. `TYPE_CHECKING`-only imports (including `typing` aliases) are type-context, while `try: import orjson / except ImportError` and platform-guarded imports remain informational conditional candidates when undeclared.
-
-## Plugins
-
-Frameworks reference modules through strings and decorators, which pure import analysis can't see. Plugins close that gap by adding entry files, string/module references, and binary usage:
-
-- **v0.1**: pytest, django, fastapi/uvicorn
-- **v0.2+**: tox/nox/pre-commit/GitHub Actions binary usage detection, static Flask/Celery route/task references, conventional Sphinx/MkDocs/Alembic config entries, and `.ipynb` code-cell parsing.
-
-For example, the Django plugin treats `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` strings as module references and `migrations/**` as framework-used. Route handlers decorated with `@router.get` / `@router.websocket` etc. are treated as externally used.
-
-## Suppressing issues
-
-Inline and file-level ignores:
-
-```python
-from legacy import old_api  # chokkin: ignore[CHK003]
-
-# chokkin: file-ignore[CHK006]   (at the top of a file)
-```
-
-Config ignores, keyed by rule code (globs over distribution names, paths, or `path:symbol`):
-
-```toml
-[tool.chokkin.ignore]
-CHK001 = ["src/acme/generated/**/*.py"]
-CHK002 = ["boto3", "google-cloud-*"]
-CHK006 = ["src/acme/public_api.py:*"]
-```
-
-For large existing projects, a baseline freezes current issues so CI only fails on new ones:
-
-```bash
-uvx chokkin --baseline chokkin-baseline.json --update-baseline
-uvx chokkin --baseline chokkin-baseline.json
-```
-
-Baseline and `--reporter json` output include `schema_version: "1"`. v0.2 baseline files without that field remain readable. Published JSON Schema files live under [`docs/schema/`](./docs/schema/); migration notes are in [`docs/dev/schema-migration-notes.md`](./docs/dev/schema-migration-notes.md).
-
-## CI adoption
-
-For an existing project, generate and review the baseline once:
+Large projects rarely start clean. Freeze what exists today in a baseline so
+CI fails only on new findings:
 
 ```bash
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 git add chokkin-baseline.json
 ```
 
-Then wire the baseline into pull request checks with the bundled GitHub
-Action. It emits GitHub annotations, writes SARIF for code scanning, and fails
-only for findings not already present in the baseline:
+Then gate pull requests with the bundled GitHub Action. It emits annotations,
+writes SARIF for code scanning, and fails only for findings not in the
+baseline:
 
 ```yaml
 name: chokkin
@@ -263,7 +240,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: watany-dev/chokkin@9341c0b9d678b39b075df0eea440dbc87a1b605a # v0.6.0
+      - uses: watany-dev/chokkin@f6d097a5595fa4c1d6a7d3b67154d9b30e5c1d46 # v0.7.3
         with:
           baseline: chokkin-baseline.json
           sarif-file: chokkin.sarif
@@ -293,23 +270,141 @@ Without the action, pin the version with `uvx`:
       - run: uvx chokkin@0.7.3 --baseline chokkin-baseline.json --reporter github
 ```
 
-## Installation
+Baseline files and `--reporter json` output carry `schema_version: "1"` and
+follow the published JSON Schemas under [`docs/schema/`](./docs/schema/).
 
-`chokkin` is a single Rust binary shipped inside a Python wheel (prebuilt for Linux/macOS/Windows), so all of these work without a Rust toolchain:
+## Suppressing issues
 
-```bash
-uvx chokkin        # run without installing
-pipx run chokkin
-pip install chokkin
+Inline and file-level comments:
+
+```python
+from legacy import old_api  # chokkin: ignore[CHK003]
+
+# chokkin: file-ignore[CHK006]   (at the top of a file)
 ```
 
-chokkin never executes your project's code — analysis is fully static. It also doesn't require your project's virtualenv: if `.venv` exists it is read for dist-info metadata (`METADATA`, `top_level.txt`, `RECORD`, `entry_points.txt`), otherwise manifests, lockfiles, and bundled maps are used.
+Config ignores, keyed by rule code (globs over distribution names, paths, or
+`path:symbol`):
+
+```toml
+[tool.chokkin.ignore]
+CHK001 = ["src/acme/generated/**/*.py"]
+CHK002 = ["boto3", "google-cloud-*"]
+CHK006 = ["src/acme/public_api.py:*"]
+```
+
+Per-rule severity, including turning a rule off:
+
+```toml
+[tool.chokkin.severity]
+CHK001 = "off"
+CHK006 = "info"
+```
+
+## Configuration
+
+Zero config is the default. When you need precision, add `[tool.chokkin]` to
+`pyproject.toml` (a standalone `chokkin.toml` or `.chokkin.toml` also works).
+`chokkin --init` writes a starter section for you. Everything below is
+optional:
+
+```toml
+[tool.chokkin]
+entry = [
+  "src/acme/__main__.py",
+  "src/acme/asgi.py:application",
+  "manage.py",
+]
+project = [
+  "src/**/*.py",
+  "tests/**/*.py",
+  "scripts/**/*.py",
+]
+mode = "auto"             # auto | app | library
+production = false
+target_version = "py311"  # Python version of the analyzed project
+respect_gitignore = true
+confidence = "likely"     # certain | likely | maybe
+exclude = [
+  ".venv/**",
+  "build/**",
+  "dist/**",
+  "**/__pycache__/**",
+]
+vendored = [             # analyzed and traced, but never reported
+  "**/_vendor/**",
+  "**/third_party/**",
+]
+
+[tool.chokkin.dependencies]
+dev_groups = ["dev", "test", "tests", "lint", "docs"]
+runtime_groups = ["server", "worker"]
+type_groups = ["types", "typing", "mypy"]
+
+# distribution name -> import name(s), for cases the bundled map doesn't cover
+[tool.chokkin.package_module_map]
+"PyYAML" = ["yaml"]
+"Pillow" = ["PIL"]
+"protobuf" = ["google.protobuf"]  # dotted names pick one distribution under a namespace package
+
+# CLI name -> distribution name, used by CHK008/CHK002 binary-usage checks
+[tool.chokkin.binary_map]
+"sphinx-build" = "Sphinx"
+
+[tool.chokkin.plugins]
+pytest = true
+django = true
+fastapi = true
+
+[tool.chokkin.severity]
+CHK001 = "off"
+CHK006 = "info"
+```
+
+The root `.chokkin/` directory holds analyzer data and is always excluded.
+
+### Modes
+
+`mode = "auto"` picks one of:
+
+- **app** when there is a clear entry (`console_scripts`, `manage.py`,
+  `asgi.py`, `wsgi.py`, `app.py`). Unused files are reported aggressively.
+- **library** when there is a `[project] name` with a package and no clear
+  entry. Public modules may be imported by users you cannot see, so unused
+  files and exports are reported at low confidence or as info. Declare
+  `entry` explicitly for serious unused-file detection in a library.
+- **workspace** when there are multiple `pyproject.toml` files or
+  `tool.uv.workspace.members`. Each member is analyzed separately against the
+  shared lockfile, with per-member settings under
+  `[tool.chokkin.workspaces.<name>]`. Repositories without a workspace
+  declaration get nested `pyproject.toml` files with a `[project]` name (up to
+  four directories deep) as members automatically; nested projects that are
+  not members, such as an example app with its own `[project]`, are left out
+  with a warning.
+
+## Known limits
+
+Python is dynamic, and chokkin is static. Things it cannot see:
+
+- Modules loaded by name from runtime data (a plugin registry read from a
+  database, `importlib.import_module(f"{pkg}.{name}")` with a non-literal
+  name). Declare these as `entry` or ignore the rule for that path.
+- Code reached only through a framework or tool chokkin has no plugin for.
+  `--trace` shows exactly why a file was judged unreachable, which is usually
+  enough to pick the right `entry` or `ignore`.
+- Users of a library's public API. That is why library mode downgrades
+  `CHK001` / `CHK006` rather than erroring.
+
+If a finding looks wrong and `--explain` / `--trace` do not settle it, please
+[open an issue](https://github.com/watany-dev/chokkin/issues) with their
+output.
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). The full design specification (analysis engine, import resolution strategy, roadmap) is in [`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md) (Japanese).
-
-The `pipeline` benchmark covers full cold/warm analysis, disk parse caching, reachability caching, and discovery after cache population with ~2 KiB modules. Run `cargo bench --bench pipeline`; set `CHOKKIN_BENCH_LARGE=1` to add 5k/10k to the default 1k case.
+See [CONTRIBUTING.md](./CONTRIBUTING.md). The full design specification
+(analysis engine, import resolution strategy, roadmap) is in
+[`docs/dev/spec.ja.md`](./docs/dev/spec.ja.md) (Japanese), and design
+decisions are recorded under [`docs/adr/`](./docs/adr/).
 
 ## License
 
