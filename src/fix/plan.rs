@@ -293,9 +293,9 @@ fn plan_remove_duplicate(
         .iter()
         .filter(|dep| dep.name == *name && !dep.opaque)
         .collect();
-    // Only a declaration another one implies is safe to drop; a sibling extra
-    // with its own specifier or marker stays (#629).
-    let to_remove = crate::rules::deps::duplicate_declarations(&declarations)
+    // Only a repeat in the same context is safe to drop; a group or extra
+    // repeating the runtime declaration stays (#629, #696).
+    let to_remove = crate::rules::deps::removable_duplicates(&declarations)
         .into_iter()
         .max_by_key(|dep| removal_priority(&dep.context))
         .ok_or_else(|| {

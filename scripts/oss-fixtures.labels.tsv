@@ -1018,7 +1018,6 @@ werkzeug	CHK003	tests/test_wrappers.py:pytest	deferred	dev-context	deferred: ver
 werkzeug	CHK003	tests/test_wsgi.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 
 # R-01..R-07 corpus (#323): CHK003 that are new over 573ff37 (PEP 723 scripts are now checked against their own block)
-airflow	CHK003	script:clients/python/test_python_client.py:pytest	tp	-	script imports pytest; the PEP 723 block does not declare it
 airflow	CHK003	script:scripts/ci/prek/check_excluded_provider_markers.py:tomli	tp	-	block pins requires-python <3.11, where tomllib is missing, and the fallback import tomli is not declared
 airflow	CHK003	script:scripts/ci/prek/check_extra_packages_ref.py:tomli	tp	-	same tomli fallback without a declaration in the block
 fastmcp	CHK003	script:examples/memory.py:pydantic	tp	-	imports pydantic directly; the block only declares packages that pull it in transitively
@@ -1184,10 +1183,10 @@ airflow	CHK010	scripts/tests/ci/prek/test_extract_permissions.py:extract_permiss
 black	CHK010	src/blackd/__init__.py:_black_version	fp	generated	src/_black_version.py written by hatch-vcs (tool.hatch.build.hooks.vcs version-file)
 django	CHK010	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	tp	-	deliberately nonexistent package in Django test fixture bad_module.py
 djangorestframework	CHK010	tests/test_permissions.py:guardian	fp	declared-third-party	django-guardian in requirements/requirements-optionals.txt (via root requirements.txt -r)
-fastapi	CHK010	scripts/docs.py:mkdocs	tp	-	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt)
+fastapi	CHK010	scripts/docs.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
 fastmcp	CHK010	fastmcp_slim/fastmcp/utilities/docstring_parsing.py:griffe	fp	declared-third-party	griffelib (provides griffe) in fastmcp_slim/pyproject.toml server extra
 flask	CHK010	tests/test_cli.py:cliapp	fp	first-party-missed	tests/test_apps/cliapp/ exists; test_apps fixture does syspath_prepend(tests/test_apps)
-langchain	CHK010	libs/partners/huggingface/langchain_huggingface/llms/huggingface_pipeline.py:optimum	tp	-	undeclared third-party: optimum (optional OpenVINO backend, not in huggingface pyproject/uv.lock)
+langchain	CHK010	libs/partners/huggingface/langchain_huggingface/llms/huggingface_pipeline.py:optimum	info-expected	optional-import	undeclared third-party: optimum (optional OpenVINO backend, not in huggingface pyproject/uv.lock) (info since #695)
 llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain_community	tp	-	undeclared third-party: langchain-community (not in llama-index-core pyproject/uv.lock or root)
 mcp-python-sdk	CHK010	src/mcp/os/win32/utilities.py:win32con	fp	declared-third-party	pywin32 (provides win32con) declared with sys_platform=='win32' marker in pyproject; in uv.lock
 mlflow	CHK010	tests/catboost/test_catboost_model_export.py:catboost	fp	declared-third-party	catboost listed in requirements/extra-ml-requirements.txt
@@ -1202,12 +1201,12 @@ starlette	CHK010	starlette/_utils.py:exceptiongroup	info-expected	-	undeclared t
 streamlit	CHK010	lib/streamlit/vendor/pympler/asizeof.py:_testcapi	fp	stdlib	_testcapi is a CPython private stdlib test module (guarded try)
 structlog	CHK010	src/structlog/twisted.py:zope	tp	-	undeclared third-party: zope.interface (only transitive via twisted, which is declared in extras)
 transformers	CHK010	src/transformers/quantizers/quantizer_bnb_4bit.py:bitsandbytes	tp	-	undeclared third-party: bitsandbytes (optional quantization backend, not in setup.py/pyproject)
-typer	CHK010	scripts/mkdocs_hooks.py:mkdocs	tp	-	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt)
+typer	CHK010	scripts/mkdocs_hooks.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
 urllib3	CHK010	test/contrib/emscripten/test_emscripten.py:js	fp	other	js is a Pyodide runtime builtin module (test body runs in Pyodide via run_in_pyodide)
 virtualenv	CHK010	src/virtualenv/seed/wheels/acquire.py:pip	fp	other	unsure: not an import; argv [sys.executable, '-m', 'pip', 'download'] subprocess using host pip tool
 werkzeug	CHK010	tests/conftest.py:ephemeral_port_reserve	fp	declared-third-party	ephemeral-port-reserve in requirements/tests.in and tests.txt
 airflow	CHK010	scripts/ci/prek/check_shared_distributions_usage.py:tomllib	fp	stdlib	tomllib is stdlib 3.11+; script pins requires-python <3.11 and falls back in try/except
-black	CHK010	scripts/diff_shades_gha_helper.py:diff_shades	tp	-	undeclared third-party: diff-shades (pip-installed only in .github/workflows/diff_shades.yml)
+black	CHK010	scripts/diff_shades_gha_helper.py:diff_shades	info-expected	dev-context	undeclared third-party: diff-shades (pip-installed only in .github/workflows/diff_shades.yml) (info in scripts/ since #694)
 django	CHK010	tests/utils_tests/test_module_loading.py:egg_module	fp	first-party-missed	egg_module lives inside tests/utils_tests/eggs/test_egg.egg zip put on sys.path (static zip in repo)
 djangorestframework	CHK010	tests/conftest.py:guardian	fp	declared-third-party	django-guardian in requirements/requirements-optionals.txt (via root requirements.txt -r)
 fastapi	CHK010	scripts/mkdocs_hooks.py:material	fp	declared-third-party	mkdocs-material (provides material) in requirements-docs.txt
@@ -1272,7 +1271,7 @@ mcp-python-sdk	CHK007	src/mcp/__init__.py:ServerSession	fp	library-public-api	in
 airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_python_virtualenv.py:funcsigs	tp	-	funcsigs only installed at runtime via @task.virtualenv(requirements=["funcsigs"]) in the test; not in any manifest
 black	CHK010	scripts/check_version_in_basics_example.py:commonmark	fp	declared-third-party	commonmark==0.9.1 declared in .pre-commit-config.yaml additional_dependencies of the local hook that runs this script
 django	CHK010	tests/sphinx/test_github_links.py:github_links	fp	first-party-missed	docs/_ext/github_links.py exists; test inserts docs/_ext into sys.path in setUpClass
-fastapi	CHK010	scripts/mkdocs_hooks.py:mkdocs	tp	-	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt)
+fastapi	CHK010	scripts/mkdocs_hooks.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
 fastmcp	CHK010	examples/smart_home/src/smart_home/__main__.py:smart_home	fp	first-party-missed	examples/smart_home/src/smart_home is its own package (example has own pyproject, src layout)
 flask	CHK010	tests/test_instance_config.py:installed_package	tp	-	installed_package written to tmp path at test runtime (syspath_prepend); not in repo
 langchain	CHK010	libs/standard-tests/langchain_tests/integration_tests/sandboxes.py:deepagents	tp	-	undeclared third-party: deepagents (pytest.importorskip; only a mypy override in standard-tests pyproject, absent from uv.lock)
@@ -1281,26 +1280,26 @@ mcp-python-sdk	CHK010	scripts/docs/gen_ref_pages.py:griffe	fp	declared-third-par
 mlflow	CHK010	tests/dev/test_detect_flaky_tests.py:detect_flaky_tests	fp	first-party-missed	dev/detect_flaky_tests.py exists; test inserts repo_root/dev into sys.path
 requests	CHK010	tests/conftest.py:SimpleHTTPServer	fp	stdlib	Python 2 stdlib SimpleHTTPServer in py2/py3 try/except fallback; python_requires>=3.8 so dead code
 sqlalchemy	CHK010	lib/sqlalchemy/sql/_cache_key_cy.py:cython	fp	declared-third-party	cython (Cython dist provides cython module) in build-system.requires; generated guarded import with sqlalchemy.util fallback
-transformers	CHK010	src/transformers/integrations/higgs.py:fast_hadamard_transform	tp	-	undeclared third-party: fast-hadamard-transform (gated by is_hadamard_available; only a commented pip install in a Dockerfile)
+transformers	CHK010	src/transformers/integrations/higgs.py:fast_hadamard_transform	info-expected	optional-import	undeclared third-party: fast-hadamard-transform (gated by is_hadamard_available; only a commented pip install in a Dockerfile) (info since #695)
 urllib3	CHK010	test/contrib/emscripten/test_emscripten.py:pytest_pyodide	fp	declared-third-party	pytest-pyodide==0.54.0 in emscripten-requirements.txt
 airflow	CHK003	ai:providers/common/ai/src/airflow/providers/common/ai/hooks/pydantic_ai.py:pydantic_ai	fp	map-gap	common-ai provider declares pydantic-ai-slim, which provides the pydantic_ai import
 langchain	CHK003	.github/scripts/get_min_versions.py:tomli	tp	-	no root manifest covers .github/scripts; tomli (fallback for py<3.11 tomllib) only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
 llama_index	CHK003	llama-index-llms-vllm:llama-index-integrations/llms/llama-index-llms-vllm/llama_index/llms/vllm/base.py:torch	tp	-	torch not declared by llama-index-llms-vllm (only llama-index-core) nor in its uv.lock; unguarded import in atexit close()
-transformers	CHK003	src/transformers/data/metrics/__init__.py:scipy.stats	tp	-	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available
+transformers	CHK003	src/transformers/data/metrics/__init__.py:scipy.stats	info-expected	optional-import	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available (info since #695)
 airflow	CHK003	ai:providers/common/ai/src/airflow/providers/common/ai/toolsets/datafusion.py:pydantic_ai.exceptions	fp	map-gap	common-ai provider declares pydantic-ai-slim, which provides the pydantic_ai import
 langchain	CHK003	.github/scripts/get_min_versions.py:packaging.requirements	tp	-	no root manifest covers .github/scripts; packaging only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
 llama_index	CHK003	llama-index-readers-sec-filings:llama-index-integrations/readers/llama-index-readers-sec-filings/llama_index/readers/sec_filings/prepline_sec_filings/api/section.py:unstructured.staging.base	tp	-	unstructured not declared by llama-index-readers-sec-filings (faker, ratelimit, core) nor in its uv.lock; unguarded import in prepline api/section.py
-transformers	CHK003	src/transformers/models/maskformer/modular_maskformer.py:scipy.optimize	tp	-	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available
+transformers	CHK003	src/transformers/models/maskformer/modular_maskformer.py:scipy.optimize	info-expected	optional-import	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available (info since #695)
 airflow	CHK003	ai:providers/common/ai/src/airflow/providers/common/ai/toolsets/langchain_bridge.py:pydantic_ai	fp	map-gap	common-ai provider declares pydantic-ai-slim, which provides the pydantic_ai import
 langchain	CHK003	.github/scripts/get_min_versions.py:packaging.version	tp	-	no root manifest covers .github/scripts; packaging only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
 llama_index	CHK003	llama-index-readers-sec-filings:llama-index-integrations/readers/llama-index-readers-sec-filings/llama_index/readers/sec_filings/prepline_sec_filings/api/section.py:starlette.types	tp	-	starlette not declared by llama-index-readers-sec-filings (faker, ratelimit, core) nor in its uv.lock; unguarded import in prepline api/section.py
-transformers	CHK003	src/transformers/models/mask2former/modeling_mask2former.py:scipy.optimize	tp	-	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available
+transformers	CHK003	src/transformers/models/mask2former/modeling_mask2former.py:scipy.optimize	info-expected	optional-import	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available (info since #695)
 langchain	CHK003	.github/scripts/get_min_versions.py:packaging.specifiers	tp	-	no root manifest covers .github/scripts; packaging only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
 llama_index	CHK003	llama-index-embeddings-clip:llama-index-integrations/embeddings/llama-index-embeddings-clip/llama_index/embeddings/clip/base.py:torch	tp	-	torch not declared by llama-index-embeddings-clip (only llama-index-core) nor in its uv.lock; user-installed per error text
 transformers	CHK003	src/transformers/integrations/integration_utils.py:pandas	tp	-	pandas only in setup.py deps table, in no extra (transitive via datasets); lazy import in Flyte callback
 langchain	CHK003	langchain:libs/langchain/langchain_classic/evaluation/string_distance/base.py:rapidfuzz	tp	-	rapidfuzz not in libs/langchain pyproject or uv.lock; import in _get_metric is unguarded (init has guarded check, error severity debatable)
 llama_index	CHK003	llama-index-readers-sec-filings:llama-index-integrations/readers/llama-index-readers-sec-filings/llama_index/readers/sec_filings/prepline_sec_filings/api/section.py:starlette.datastructures	tp	-	starlette not declared by llama-index-readers-sec-filings (faker, ratelimit, core) nor in its uv.lock; unguarded import in prepline api/section.py
-transformers	CHK003	src/transformers/models/maskformer/modeling_maskformer.py:scipy.optimize	tp	-	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available
+transformers	CHK003	src/transformers/models/maskformer/modeling_maskformer.py:scipy.optimize	info-expected	optional-import	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available (info since #695)
 langchain	CHK003	.github/scripts/get_min_versions.py:requests	tp	-	no root manifest covers .github/scripts; requests only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
 transformers	CHK003	src/transformers/cli/chat.py:requests	tp	-	requests in no install_requires/extra/deps table; unconditional top-level import in cli/chat.py
 airflow	CHK008	mypy	fp	declared-elsewhere	mypy declared in workspace member devel-common [mypy] extra, pulled into root dev group
@@ -1377,14 +1376,14 @@ llama_index	CHK005	llama-index-llms-azure-openai:openai	tp	-	top-level openai im
 mlflow	CHK005	langchain-community	fp	optional-import	langchain flavor integration; langchain_community loader only used for legacy LLM configs of a user-installed optional framework
 llama_index	CHK005	llama-index-llms-konko:openai	tp	-	top-level `import openai` in shipped utils.py; runtime deps are konko and llama-index-core only (openai at best transitive via konko)
 mlflow	CHK005	pytest	fp	optional-import	mlflow/pytest/plugin.py is a pytest plugin only loaded inside a pytest run, so pytest is present by definition
-mlflow	CHK009	fastapi	fp	intentional-duplicate	pyproject auto-generated by dev/pyproject.py; gateway/genai extras mirror mlflow-skinny extras for install-compat, same spec as runtime
+mlflow	CHK009	fastapi	info-expected	intentional-duplicate	pyproject auto-generated by dev/pyproject.py; gateway/genai extras mirror mlflow-skinny extras for install-compat, same spec as runtime
 poetry	CHK009	dulwich	fp	intentional-duplicate	test group re-lists dulwich with tighter >=1.2.1 constraint, explained in a comment (LFS test)
 transformers	CHK009	datasets	fp	intentional-duplicate	setup.py extras composed by concatenation (dev = all + testing, deepspeed-testing includes testing); overlap is by construction
-mlflow	CHK009	requests	fp	intentional-duplicate	lint group is synced standalone in CI (`uv sync --only-group lint`), so it must re-list requests
+mlflow	CHK009	requests	info-expected	intentional-duplicate	lint group is synced standalone in CI (`uv sync --only-group lint`), so it must re-list requests
 transformers	CHK009	protobuf	fp	intentional-duplicate	overlap from extras composition in setup.py (dev and deepspeed-testing built from other extras)
-mlflow	CHK009	pyarrow	fp	intentional-duplicate	auto-generated pyproject; extras extra mirrors mlflow-skinny where pyarrow is optional; same package harmless
+mlflow	CHK009	pyarrow	info-expected	intentional-duplicate	auto-generated pyproject; extras extra mirrors mlflow-skinny where pyarrow is optional; same package harmless
 transformers	CHK009	mistral-common	fp	intentional-duplicate	dev = all + testing and both include extras["mistral-common"]; repeated entry from list concatenation, harmless
-mlflow	CHK009	aiohttp	fp	intentional-duplicate	lint group is synced standalone in CI (`uv sync --only-group lint`), so it must re-list aiohttp
+mlflow	CHK009	aiohttp	info-expected	intentional-duplicate	lint group is synced standalone in CI (`uv sync --only-group lint`), so it must re-list aiohttp
 transformers	CHK009	accelerate	fp	intentional-duplicate	overlap from extras composition in setup.py
 transformers	CHK009	rich	fp	intentional-duplicate	overlap from extras composition in setup.py
 transformers	CHK009	sentencepiece	fp	intentional-duplicate	overlap from extras composition in setup.py

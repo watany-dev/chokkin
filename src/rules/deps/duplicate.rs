@@ -11,6 +11,11 @@
 //! marker or version specifier (`click!=8.3.0` for a runtime `click>=7`):
 //! removing it would change what gets installed (#629). The project's own
 //! self-referential extras (`all = ["pkg[a,b]"]`) are never duplicates.
+//!
+//! Only a repeat in the same context is a warning `--fix` removes. A group or
+//! extra repeating the runtime declaration is info / likely: a group may be
+//! installed on its own (`uv sync --only-group lint`) and generated extras
+//! mirror another package's, which static analysis cannot tell apart (#696).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -37,16 +42,30 @@ pub(super) fn detect_duplicate_dependencies(
     by_name
         .into_iter()
         .filter_map(|(name, declarations)| {
-            let involved = duplicate_declarations(&declarations);
-            (!involved.is_empty()).then(|| candidate(name, &involved))
+            // A repeat in one context is reported on its own, so the warning
+            // names only what `--fix` removes.
+            let removable = removable_duplicates(&declarations);
+            let (involved, removable) = if removable.is_empty() {
+                (duplicate_declarations(&declarations, |_, _| true), false)
+            } else {
+                (removable, true)
+            };
+            (!involved.is_empty()).then(|| candidate(name, &involved, removable))
         })
         .collect()
 }
 
-/// The declarations of one distribution that repeat another one; `--fix`
-/// removes from these only.
-pub(crate) fn duplicate_declarations<'a>(
+/// The declarations of one distribution that repeat another one in the same
+/// context; `--fix` removes from these only (#696).
+pub(crate) fn removable_duplicates<'a>(
     declarations: &[&'a DeclaredDependency],
+) -> Vec<&'a DeclaredDependency> {
+    duplicate_declarations(declarations, |a, b| a.context == b.context)
+}
+
+fn duplicate_declarations<'a>(
+    declarations: &[&'a DeclaredDependency],
+    pair: impl Fn(&DeclaredDependency, &DeclaredDependency) -> bool,
 ) -> Vec<&'a DeclaredDependency> {
     declarations
         .iter()
@@ -54,7 +73,7 @@ pub(crate) fn duplicate_declarations<'a>(
         .filter(|dep| {
             declarations
                 .iter()
-                .any(|other| duplicates(dep, other, declarations))
+                .any(|other| pair(dep, other) && duplicates(dep, other, declarations))
         })
         .collect()
 }
@@ -112,7 +131,7 @@ fn specifier_set(dep: &DeclaredDependency) -> BTreeSet<&str> {
         .collect()
 }
 
-fn candidate(name: &str, involved: &[&DeclaredDependency]) -> IssueCandidate {
+fn candidate(name: &str, involved: &[&DeclaredDependency], removable: bool) -> IssueCandidate {
     let labels: Vec<String> = involved
         .iter()
         .map(|dep| context_label(&dep.context))
@@ -126,13 +145,18 @@ fn candidate(name: &str, involved: &[&DeclaredDependency]) -> IssueCandidate {
             labels.join(", ")
         ),
     };
+    let (severity, confidence) = if removable {
+        (Severity::Warning, Confidence::Certain)
+    } else {
+        (Severity::Info, Confidence::Likely)
+    };
     IssueCandidate {
         rule: RuleId::Chk009,
         subject: IssueSubject::Distribution {
             name: name.to_owned(),
         },
-        severity: Severity::Warning,
-        confidence: Confidence::Certain,
+        severity,
+        confidence,
         message,
         workspace_member: None,
         origins: involved
@@ -245,25 +269,48 @@ mod tests {
             issue.explain.details,
             ["group:dev", "group:typing", "optional:http", "runtime"]
         );
+        // #696: a group may be installed on its own, so this is only a hint.
+        assert_eq!(issue.severity, Severity::Info);
+        assert_eq!(issue.confidence, Confidence::Likely);
     }
 
     #[test]
     fn reports_declaration_repeated_in_the_same_context() {
+        let dependencies = [
+            dep("requests", DependencyContext::Runtime),
+            at("requests", DependencyContext::Runtime, "pyproject.toml", 2),
+            dep("pytest", group("test")),
+            at("pytest", group("test"), "pyproject.toml", 9),
+            at("numpy", extra("fast"), "setup.py", 12),
+            at("numpy", extra("fast"), "setup.cfg", 7),
+        ];
         assert_eq!(
-            messages(&[
-                dep("requests", DependencyContext::Runtime),
-                at("requests", DependencyContext::Runtime, "pyproject.toml", 2),
-                dep("pytest", group("test")),
-                at("pytest", group("test"), "pyproject.toml", 9),
-                at("numpy", extra("fast"), "setup.py", 12),
-                at("numpy", extra("fast"), "setup.cfg", 7),
-            ]),
+            messages(&dependencies),
             [
                 "numpy is declared more than once in optional:fast",
                 "pytest is declared more than once in group:test",
                 "requests is declared more than once in runtime",
             ]
         );
+        assert!(detect(&dependencies).iter().all(|issue| {
+            issue.severity == Severity::Warning && issue.confidence == Confidence::Certain
+        }));
+    }
+
+    #[test]
+    fn a_repeat_in_one_context_is_reported_without_the_cross_context_one() {
+        let found = detect(&[
+            dep("requests", DependencyContext::Runtime),
+            at("requests", DependencyContext::Runtime, "pyproject.toml", 2),
+            dep("requests", group("lint")),
+        ]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].message,
+            "requests is declared more than once in runtime"
+        );
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert_eq!(found[0].origins.len(), 2);
     }
 
     #[test]
