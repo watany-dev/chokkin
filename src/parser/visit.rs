@@ -1475,7 +1475,7 @@ g = lambda x=utils.G: x
     #[test]
     fn records_try_body_roots_on_import_error_fallbacks() {
         let parsed = visit_source(
-            "try:\n    import threading, os.path\n    from http.server import X\nexcept (ImportError, OSError):\n    import dummy_threading\n    if flag:\n        from SimpleHTTPServer import X\nelse:\n    import else_lib\n\ntry:\n    import a\n    run()\nexcept ImportError:\n    import call_fallback\n\ntry:\n    from . import sibling\nexcept ModuleNotFoundError:\n    import relative_fallback\n\ntry:\n    import b\nexcept ValueError:\n    import value_fallback\nexcept ModuleNotFoundError:\n    import missing_fallback\n",
+            "try:\n    import threading, os.path\n    from http.server import X\nexcept (ImportError, OSError):\n    import dummy_threading\n    if flag:\n        from SimpleHTTPServer import X\nelse:\n    import else_lib\n\ntry:\n    import a\n    run()\nexcept ImportError:\n    import call_fallback\n\ntry:\n    from . import sibling\nexcept ModuleNotFoundError:\n    import relative_fallback\n\ntry:\n    from .compat import x\nexcept ImportError:\n    import relative_module_fallback\n\ntry:\n    import b\nexcept ValueError:\n    import value_fallback\nexcept ModuleNotFoundError:\n    import missing_fallback\n",
         );
         let fallback_for = |module: &str| {
             parsed
@@ -1493,6 +1493,7 @@ g = lambda x=utils.G: x
             "else_lib",
             "call_fallback",
             "relative_fallback",
+            "relative_module_fallback",
             "value_fallback",
         ] {
             assert!(fallback_for(module).is_empty(), "{module}");
