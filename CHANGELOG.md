@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `statx` calls drop from about 27,600 to 15,100 (14,800 before v0.7.4), and
   the slowdown on airflow falls from 9% to under 1% of instructions. Output
   is unchanged (#763).
+- CHK005 is info instead of a warning for two more imports that only run
+  when the package is already there. A sniffio result compared through a
+  variable (`library = sniffio.current_async_library()` then
+  `if library == "trio": import trio`, httpx and openai) guards like the
+  direct comparison, as long as the scope assigns that name nothing else.
+  And a module its host loads may import the host: pytest in a `pytest11`
+  entry-point target or a module defining a top-level `pytest_*` hook
+  (mlflow), IPython in a module defining `load_ipython_extension`
+  (python-dotenv). Other dev-only imports of those modules, and pytest /
+  IPython imports elsewhere, are reported as before, and `--fix` does not
+  move the info findings to runtime (#731).
 
 ## [0.7.4] - 2026-10-10
 

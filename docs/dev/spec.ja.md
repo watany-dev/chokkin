@@ -635,6 +635,10 @@ src/ で import urllib3
 
 CHK005 は distribution 単位で 1 件にまとめ、その distribution の runtime import をすべて見てから confidence を決める。最初に見つかった import では決めない。トップレベルの import (class body を含む) が 1 つでもあれば warning / Certain。どれも関数本体の中 (`ImportRef.deferred`) なら warning / Likely。どれも optional / platform-guarded なら info / Likely とする。「既に import 済み」を確かめる分岐 (`if "x" in sys.modules:`、`sniffio.current_async_library() == "x"`) の本体にある、条件と同じ top-level module の import も optional とする。その分岐を通るときは呼び出し側がそのライブラリを入れているため (#681)。関数内の import は関数が呼ばれるまで実行されず、optional な import は「入っていれば使う」ものなので、どちらも runtime 必須とは言い切れない。`--fix` の MoveToRuntime は Certain だけが対象なので、こうした依存を runtime に昇格させない (#583)。import 元の file が `ReachabilityReport::eager` に入らない場合は、トップレベルの import でも関数内と同じ扱いにする。関数内や `TYPE_CHECKING` 配下からしか読み込まれないモジュールの import は、そのモジュールが読み込まれるまで実行されないため (#610)。eager には入るが `ReachabilityReport::certain` に入らない場合は optional と同じ扱いにする。optional な import 経由でしか読み込まれないモジュールは、無くてもパッケージが動くため (#614)。origin には confidence を決めた import を出す。
 
+sniffio の結果は変数経由の比較でも同じ扱いにする (#731)。`library = sniffio.current_async_library()` のあとに `if library == "trio":` と比べる形で、比較と同じスコープ (module / class / 関数の本体。入れ子の関数は別スコープ) がその名前に sniffio の呼び出しだけを代入している場合に限る。同じスコープにほかの値の代入や `for` / `with` / `:=` / `del` などの束縛が 1 つでもあれば、またはその名前が関数の引数なら、比較時の値が分からないので guard としない。
+
+ホストが自分で読み込むモジュールにある、そのホスト自身の import は info / Likely とする (#731)。pytest plugin (`pytest11` entry point の target module、またはトップレベルに `pytest_*` 関数を定義するモジュール) での pytest の import と、IPython 拡張 (トップレベルに `load_ipython_extension` 関数を定義するモジュール) での IPython の import が対象。そのモジュールは pytest / IPython が動いているときにしか読み込まれないため。ホストとの照合は §7 で解決した distribution (`pytest` / `ipython`) で行うので、`_pytest` や `IPython.core` の import も含む。同じモジュールにあるほかの dev 依存の import と、ホストが読み込まないモジュールでの pytest / IPython の import は従来どおり判定し、後者が 1 つでもあればそちらが confidence を決める。
+
 environment markerとextrasの扱いも定める。
 
 ```text

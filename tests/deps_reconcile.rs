@@ -426,6 +426,31 @@ fn misplaced_confidence_follows_the_strongest_import() {
     ));
 }
 
+/// #731: pytest and `IPython` load their plugins themselves, and a variable
+/// holding the sniffio result guards like the call.
+#[test]
+fn misplaced_host_imports_in_host_loaded_modules_are_info() {
+    let report = reconcile_fixture("misplaced_host_loaded");
+    let summary = |name: &str| {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        (candidate.severity, candidate.confidence)
+    };
+    // plugin.py and plugin_object.py are `pytest11` targets and hooks.py
+    // defines `pytest_configure`; one missed module would make it Certain.
+    assert_eq!(summary("pytest"), (Severity::Info, Confidence::Likely));
+    assert_eq!(summary("ipython"), (Severity::Info, Confidence::Likely));
+    // Other dev-only imports of the same modules are still required.
+    assert_eq!(
+        summary("hypothesis"),
+        (Severity::Warning, Confidence::Certain)
+    );
+    assert_eq!(summary("rich"), (Severity::Warning, Confidence::Certain));
+    assert_eq!(summary("trio"), (Severity::Info, Confidence::Likely));
+    // `library` is reassigned before the comparison.
+    assert_eq!(summary("curio"), (Severity::Warning, Confidence::Likely));
+}
+
 #[test]
 fn unlisted_pytest_binary_emits_chk008() {
     let report = reconcile_fixture("unlisted_pytest");

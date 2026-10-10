@@ -20,7 +20,7 @@ use crate::sources::{DiscoveredSources, PublicSurface};
 
 use super::binary::{BinaryProviders, detect_unlisted_binaries};
 use super::duplicate::detect_duplicate_dependencies;
-use super::misplaced::detect_misplaced_dependencies;
+use super::misplaced::{detect_misplaced_dependencies, pytest11_modules};
 use super::missing::{WorkspaceDeclaredIndex, detect_missing_dependencies};
 use super::script::{detect_script_dependency_issues, is_script_third_party};
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
@@ -183,6 +183,9 @@ fn reconcile_project(
         dependency,
         &reachable,
         &workspace_declared,
+        &pytest11_modules(
+            std::iter::once(manifest).chain(workspace_boundaries.iter().map(|b| b.manifest)),
+        ),
     ));
 
     let providers = BinaryProviders::new(&declared, manifest, workspace_boundaries, plugins);
