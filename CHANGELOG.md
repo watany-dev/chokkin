@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   certain and `--fix` no longer moves it to the runtime dependencies
   (CHK003 / CHK010 for it are info too). Flags set to `True` in the `try`
   body count in `and` chains too (#730).
+- CHK006 no longer reports names that a config entry pulls in with
+  `from m import *`: Sphinx reads `html_theme` and Django reads
+  `INSTALLED_APPS` out of the namespace of `docs/conf.py` (root and
+  workspace members) and of the settings module, so no importer ever names
+  them. Chained star imports are followed, and a module with `__all__`
+  hands over only the names it lists. A star import from any other module
+  is still no reference. This clears airflow's `provider_conf.py`, which
+  every provider's `docs/conf.py` star-imports (#729).
 
 ## [0.7.4] - 2026-10-10
 

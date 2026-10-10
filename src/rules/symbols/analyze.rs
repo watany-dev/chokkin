@@ -18,7 +18,9 @@ use crate::rules::types::{
 };
 use crate::sources::{DiscoveredSources, FileContext, PublicSurface, member_ships, path_to_module};
 
-use super::conventions::{alembic_script_files, alembic_symbols, is_codegen_file};
+use super::conventions::{
+    alembic_script_files, alembic_symbols, config_star_symbols, is_codegen_file,
+};
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::{collect_external_symbols, dynamically_fetched_classes};
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
@@ -82,6 +84,12 @@ pub fn analyze_with_context(
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
     external_symbols.extend(alembic_symbols(plugins, &surface_modules, &module_names));
     external_symbols.extend(dynamically_fetched_classes(&registry, &reachable_modules));
+    external_symbols.extend(config_star_symbols(
+        plugins,
+        &registry,
+        &reachable_modules,
+        &module_names,
+    ));
 
     let wheels = Wheels {
         entry,
