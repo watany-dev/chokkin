@@ -415,8 +415,10 @@ fn uninventoried_member_files(probe: &ProbeReport) -> Vec<DiscoveredFile> {
     files
 }
 
-/// Non-stdlib modules the parsed files under `member_path` import absolutely,
-/// named as the resolver names them (`from a import b` is `a.b`).
+/// Non-stdlib modules the parsed files under `member_path` import, named as
+/// the resolver names them (`from a import b` is `a.b`). The parser already
+/// resolved relative imports through the member's layout; one it could not
+/// resolve has an empty module and is dropped.
 fn uninventoried_imports(
     member_path: &str,
     modules: &[ParsedModule],
@@ -431,7 +433,7 @@ fn uninventoried_imports(
         let statics = module
             .imports
             .iter()
-            .filter(|import| import.relative_level == 0 && !import.module.is_empty())
+            .filter(|import| !import.module.is_empty())
             .map(|import| match &import.name {
                 Some(name) => format!("{}.{name}", import.module),
                 None => import.module.clone(),
