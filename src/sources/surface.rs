@@ -7,7 +7,7 @@ use globset::{Glob, GlobMatcher};
 use crate::manifest::{PackageFind, WheelTargets};
 use crate::path_util::join_rel;
 
-use super::types::DiscoveredFile;
+use super::types::{DiscoveredFile, LayoutInfo};
 
 /// Discovered files a wheel ships, resolved from `WheelTargets`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -45,6 +45,22 @@ impl PublicSurface {
             .map(str::to_owned)
             .collect();
         (!files.is_empty()).then_some(Self { files })
+    }
+
+    /// Files a build backend's auto-detection ships without wheel targets:
+    /// the layout's packages (hatchling's `src/<name>`) (#733).
+    #[must_use]
+    pub(crate) fn from_layout(layout: &LayoutInfo, files: &[DiscoveredFile]) -> Option<Self> {
+        let targets = WheelTargets {
+            source: "layout".to_owned(),
+            paths: layout
+                .packages
+                .iter()
+                .map(|package| layout.package_dir(package))
+                .collect(),
+            find: Vec::new(),
+        };
+        Self::resolve(Some(&targets), files)
     }
 
     /// Whether `path` (root-relative) is shipped in the wheel.
@@ -237,6 +253,21 @@ mod tests {
     fn unmatched_targets_fall_back() {
         assert!(surface(&path_targets(&["src/missing"]), &["src/acme/a.py"]).is_none());
         assert!(PublicSurface::resolve(None, &files(&["src/acme/a.py"])).is_none());
+    }
+
+    #[test]
+    fn layout_ships_its_packages() {
+        let layout = LayoutInfo {
+            package_root: "src".to_owned(),
+            packages: vec!["acme".to_owned()],
+            ..LayoutInfo::default()
+        };
+        let surface =
+            PublicSurface::from_layout(&layout, &files(&["src/acme/a.py", "scripts/run.py"]))
+                .expect("surface");
+        assert!(surface.contains("src/acme/a.py"));
+        assert!(!surface.contains("scripts/run.py"));
+        assert!(PublicSurface::from_layout(&LayoutInfo::default(), &files(&["a.py"])).is_none());
     }
 
     #[test]

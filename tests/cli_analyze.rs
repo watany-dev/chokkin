@@ -1193,6 +1193,38 @@ fn binary_declared_workspace_library_member_is_scored_as_library() {
     }
 }
 
+/// A library member that declares no wheel targets ships its layout's
+/// packages for CHK006/CHK007 only; that guess must not app-score its other
+/// files the way declared targets do (#733).
+#[test]
+fn layout_shipped_library_member_keeps_library_scoring() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"lib\", \"core\"]\n",
+        ),
+        (
+            "lib/pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("lib/src/acme/__init__.py", ""),
+        ("lib/scripts/release.py", "VERSION = \"1\"\n"),
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\n\n[project.scripts]\ncore = \"core.main:main\"\n",
+        ),
+        ("core/src/core/__init__.py", ""),
+        ("core/src/core/main.py", "def main():\n    pass\n"),
+        ("core/src/core/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        certain_chk001(&issues),
+        ["core/src/core/orphan.py"],
+        "{issues:?}"
+    );
+}
+
 /// Monorepos keep Sphinx docs per member: each member's `docs/conf.py` is a
 /// docs entry, so it and the shared modules it imports stay reachable even
 /// with no root `docs/conf.py`, and `--production` drops it like root docs
@@ -1565,6 +1597,85 @@ fn binary_wheel_all_reexports_are_not_chk007_in_app_mode() {
         ],
         "{chk007:?}"
     );
+}
+
+/// Two members force app mode; a shipped module's `__all__` is its public API
+/// even when only the module itself uses a name (#727, `fastmcp_slim`).
+#[test]
+fn shipped_all_names_are_not_chk006_in_app_mode() {
+    let hatch = "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    let root = format!(
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\n[tool.uv.workspace]\nmembers = [\"plugins/one\", \"plugins/two\"]\n"
+    );
+    let member = |name: &str| {
+        format!(
+            "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"{name}\"]\n"
+        )
+    };
+    let (one, two) = (member("one"), member("two"));
+    let project = write_project(&[
+        ("pyproject.toml", root.as_str()),
+        (
+            "src/acme/__init__.py",
+            "from . import limits\n\n__all__ = [\"limits\"]\n",
+        ),
+        (
+            "src/acme/limits.py",
+            "__all__ = [\"MAX\", \"check\"]\n\nMAX = 3\nSPARE = 4\n\n\ndef check(value):\n    return value < MAX\n",
+        ),
+        (
+            "src/acme/cli.py",
+            "from acme.limits import check\n\n\ndef main():\n    print(check(1))\n",
+        ),
+        ("plugins/one/pyproject.toml", one.as_str()),
+        ("plugins/one/one/__init__.py", ""),
+        ("plugins/two/pyproject.toml", two.as_str()),
+        ("plugins/two/two/__init__.py", ""),
+    ]);
+    let chk006: Vec<_> = issue_keys(&json_issues(project.path(), &[]))
+        .into_iter()
+        .filter(|(code, _)| code == "CHK006")
+        .map(|(_, target)| target)
+        .collect();
+    assert_eq!(chk006, ["src/acme/limits.py:SPARE"], "{chk006:?}");
+}
+
+/// A member without wheel targets ships what hatchling auto-detects, its
+/// `src/<name>` package (#733, `llama-index-instrumentation`).
+#[test]
+fn layout_shipped_member_all_reexports_are_not_chk007() {
+    let hatch = "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    let root = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"instr\", \"other\"]\n";
+    let instr = format!(
+        "[project]\nname = \"instr\"\nversion = \"0.1.0\"\n\n[project.scripts]\ninstr = \"instr:main\"\n\n{hatch}"
+    );
+    let project = write_project(&[
+        ("pyproject.toml", root),
+        ("instr/pyproject.toml", instr.as_str()),
+        (
+            "instr/src/instr/__init__.py",
+            "from .base import Event\n\n\ndef main():\n    print(Event)\n",
+        ),
+        (
+            "instr/src/instr/base/__init__.py",
+            "from .event import Event\nfrom .handler import Handler\n\n__all__ = [\"Event\", \"Handler\"]\n",
+        ),
+        ("instr/src/instr/base/event.py", "class Event:\n    pass\n"),
+        (
+            "instr/src/instr/base/handler.py",
+            "class Handler:\n    pass\n",
+        ),
+        (
+            "other/pyproject.toml",
+            "[project]\nname = \"other\"\nversion = \"0.1.0\"\n",
+        ),
+        ("other/other/__init__.py", ""),
+    ]);
+    let chk007: Vec<_> = issue_keys(&json_issues(project.path(), &[]))
+        .into_iter()
+        .filter(|(code, _)| code == "CHK007")
+        .collect();
+    assert!(chk007.is_empty(), "{chk007:?}");
 }
 
 /// `llama_index`'s azurepostgresql member: `psycopg[pool]` brings in
