@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::graph::{FileId, ProjectGraph};
+use crate::parser::ParseSummary;
 use crate::resolver::PytestImportPaths;
 use crate::sources::{DiscoveredSources, path_to_module};
 
@@ -33,6 +34,17 @@ impl ModuleIndex {
         }
     }
 
+    /// Also resolve imports from directories the files' `sys.path` edits add.
+    #[must_use]
+    pub(crate) fn with_sys_path_hints(
+        mut self,
+        sources: &DiscoveredSources,
+        parse: &ParseSummary,
+    ) -> Self {
+        self.pytest = self.pytest.with_sys_path_hints(&sources.root.path, parse);
+        self
+    }
+
     /// Resolve a dotted module name to a first-party file id.
     #[must_use]
     pub(crate) fn resolve(&self, module: &str) -> Option<FileId> {
@@ -41,7 +53,8 @@ impl ModuleIndex {
 
     /// Resolve `module` as imported from the file at `from_path`: pytest's
     /// `sys.path` entries for a test file come first, as prepend mode puts
-    /// them ahead of everything else; a module beside a script comes last.
+    /// them ahead of everything else; a module beside a script or in a
+    /// directory a `sys.path` edit adds comes last.
     #[must_use]
     pub(crate) fn resolve_from(&self, from_path: &str, module: &str) -> Option<FileId> {
         let file_at = |path: &str| self.path_to_file.get(path).copied();
@@ -51,7 +64,7 @@ impl ModuleIndex {
             .or_else(|| self.resolve(module))
             .or_else(|| {
                 self.pytest
-                    .resolve_sibling(from_path, module)
+                    .resolve_fallback(from_path, module)
                     .and_then(file_at)
             })
     }

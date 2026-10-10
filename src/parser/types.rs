@@ -231,6 +231,11 @@ pub struct ParsedModule {
     /// literals that look like command lines: programs it may run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_commands: Vec<String>,
+    /// In a module that edits `sys.path`, string literals that may name the
+    /// added directory, as `/`-separated relative paths (`""` is the
+    /// module's own directory) (#719).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sys_path_hints: Vec<String>,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,

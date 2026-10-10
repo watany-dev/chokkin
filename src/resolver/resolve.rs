@@ -63,7 +63,8 @@ pub fn resolve_imports_for_analysis(
     let binary_resolutions = build_binary_map(config, &venv_index);
     let mut imports = Vec::new();
     let mut root_cache: RootCache = BTreeMap::new();
-    let pytest_paths = PytestImportPaths::build(sources);
+    let pytest_paths =
+        PytestImportPaths::build(sources).with_sys_path_hints(&sources.root.path, parse);
     let local_modules = local_modules(&sources.files, workspace_members);
     let indexed_roots = indexed_roots(sources);
     let owners = MemberOwners::new(workspace_members);
@@ -314,7 +315,8 @@ fn resolve_import_site(
             .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
             // A root that reachability maps to a file is local, even beside a
             // member's declared package (`devel-common/src/docs/`, #612), and so
-            // is a namespace or script-sibling fallback (#589).
+            // is a namespace or script-sibling fallback (#589), or a module in a
+            // directory the file's `sys.path` edits add (#719).
             .or_else(|| {
                 (indexed_roots.contains(&root_name)
                     || pytest_paths.provides_fallback(file, &root_name))
@@ -324,7 +326,7 @@ fn resolve_import_site(
                     confidence: ResolveConfidence::Certain,
                 })
             })
-            .or_else(|| extra_requirements_match(&root_name, manifest))
+            .or_else(|| contextless_requirement_match(&root_name, manifest))
             .unwrap_or(core)
     } else {
         core
@@ -462,16 +464,29 @@ fn root_loose_match(root_name: &str, manifest: &LoadedManifest) -> Option<RootRe
 }
 
 /// A name declared only in a requirements file whose context is unknown
-/// (`requirements/tests.in`, #679) makes the root third-party, exactly or by
-/// affix. No distribution is attached, so CHK003–CHK005 never judge the
-/// import against a context the file does not give.
-fn extra_requirements_match(root_name: &str, manifest: &LoadedManifest) -> Option<RootResolution> {
-    let declared = &manifest.sources.extra_requirements;
+/// (`requirements/tests.in`, #679) or in `[build-system].requires` (#720)
+/// makes the root third-party, exactly or by affix. No distribution is
+/// attached, so CHK003–CHK005 never judge the import against a context
+/// neither source gives.
+fn contextless_requirement_match(
+    root_name: &str,
+    manifest: &LoadedManifest,
+) -> Option<RootResolution> {
+    let declared = || {
+        let build = manifest.metadata.build_requires.iter();
+        let build = build.map(|dep| normalize_distribution_name(&dep.name));
+        manifest
+            .sources
+            .extra_requirements
+            .iter()
+            .cloned()
+            .chain(build)
+    };
     let distribution = normalize_distribution_name(root_name);
-    let confidence = if declared.contains(&distribution) {
+    let confidence = if declared().any(|name| name == distribution) {
         ResolveConfidence::Likely
     } else {
-        loose_declared_match(&distribution, declared.iter().cloned())?.confidence
+        loose_declared_match(&distribution, declared())?.confidence
     };
     Some(RootResolution {
         origin: ModuleOrigin::ThirdParty,
