@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once (#680).
 
 ### Fixed
+- `__import__(name, globals, locals, fromlist, level)` no longer reads its
+  second argument as `import_module`'s `package`. A `level` of 1 or more
+  resolves `name` against the calling module's package when `globals` is
+  `globals()`; any other `globals` or a non-literal `level` makes the call
+  opaque, and `level` without `globals` imports nothing (#566).
 - CHK007 no longer reports `__all__` re-exports in an `__init__.py` that a
   wheel ships when the project or member is in app mode (a workspace root
   with two or more members, or a member whose console script targets its
