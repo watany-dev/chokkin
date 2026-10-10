@@ -22,6 +22,10 @@ const EXACT_PATH_ENTRIES: &[&str] = &["docs/conf.py", "alembic/env.py"];
 /// `python examples/foo.py` or `fastmcp run docs/demo.py` (#666).
 const SCRIPT_TREES: &[&str] = &["examples", "docs"];
 
+/// Root trees of scripts run directly: `scripts/`, and `.github/` whose
+/// workflows run `python .github/scripts/check.py` (#734).
+const ROOT_SCRIPT_TREES: &[&str] = &["scripts", ".github"];
+
 /// Collect auto-detected entry candidates from discovered files (§8).
 #[must_use]
 pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandidate> {
@@ -54,12 +58,14 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
             continue;
         }
 
-        if path.starts_with("scripts/")
-            && std::path::Path::new(path)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
+        if let Some(tree) = ROOT_SCRIPT_TREES.iter().find(|tree| {
+            path.strip_prefix(**tree)
+                .is_some_and(|rest| rest.starts_with('/'))
+        }) && std::path::Path::new(path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
         {
-            candidates.push(candidate(path, file.context, "auto:scripts/**".to_owned()));
+            candidates.push(candidate(path, file.context, format!("auto:{tree}/**")));
         }
     }
 
@@ -232,6 +238,27 @@ mod tests {
             entries
                 .iter()
                 .any(|entry| entry.spec.path == "scripts/deploy.py")
+        );
+    }
+
+    #[test]
+    fn detects_root_github_tree() {
+        let sources = sources_with(
+            &[".github/scripts/check_diff.py", "pkg/.github/x.py"],
+            &src_layout(),
+        );
+        let rules: Vec<_> = detect_auto_entries(&sources)
+            .into_iter()
+            .map(|entry| (entry.spec.path, entry.origin))
+            .collect();
+        assert_eq!(
+            rules,
+            [(
+                ".github/scripts/check_diff.py".to_owned(),
+                EntryOrigin::Auto {
+                    rule: "auto:.github/**".to_owned()
+                }
+            )]
         );
     }
 

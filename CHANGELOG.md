@@ -86,6 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   root's (#571), the `test_` prefix and `_test` suffix are case-sensitive as
   in pytest (#570), and a directory whose name contains `.` (`v1.0/`) is
   no longer a package candidate (#569).
+- `.py` files under the root `.github/` directory, which workflows run as
+  `python .github/scripts/check.py`, are entry roots like `scripts/`, so
+  they are no longer CHK001 (#734).
 
 ## [0.7.3] - 2026-10-09
 

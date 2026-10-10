@@ -1966,3 +1966,24 @@ fn binary_checks_inline_scripts_inside_skipped_nested_projects() {
         "{issues:#?}"
     );
 }
+
+/// langchain's workflows run `python .github/scripts/check_diff.py` (#734).
+#[test]
+fn binary_github_scripts_are_entry_roots() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  ci:\n    steps:\n      - run: python .github/scripts/check_diff.py\n",
+        ),
+        (".github/scripts/check_diff.py", "import json\n"),
+        ("acme/__init__.py", ""),
+        ("acme/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(certain_chk001(&issues), ["acme/orphan.py"], "{issues:#?}");
+}
