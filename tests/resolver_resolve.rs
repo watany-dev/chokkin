@@ -2,7 +2,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use chokkin::internals::StdlibRange;
@@ -24,6 +24,13 @@ fn resolve_fixture(name: &str) -> chokkin::internals::ResolutionIndex {
 }
 
 fn resolve_path(path: &Path) -> chokkin::internals::ResolutionIndex {
+    resolve_path_scoped(path, &ScopedDeclarations::default())
+}
+
+fn resolve_path_scoped(
+    path: &Path,
+    scoped: &ScopedDeclarations,
+) -> chokkin::internals::ResolutionIndex {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         marker: RootMarker::PyProjectToml,
@@ -51,7 +58,7 @@ fn resolve_path(path: &Path) -> chokkin::internals::ResolutionIndex {
         &plugin_refs,
         &loaded.workspace_members,
         &BTreeMap::new(),
-        &ScopedDeclarations::default(),
+        scoped,
     )
 }
 
@@ -237,6 +244,52 @@ fn declared_name_resolves_an_unmapped_normalized_root() {
 }
 
 #[test]
+fn each_site_picks_its_own_declared_candidate_for_a_shared_root() {
+    // `pydantic-ai` and `pydantic-ai-slim` both provide `pydantic_ai` (#732).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"shared-root\"\nversion = \"0.1.0\"\ndependencies = [\"pydantic-ai-slim\"]\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+        ),
+        ("main.py", "import pydantic_ai\n"),
+        ("scripts/tool.py", "import pydantic_ai\n"),
+        (
+            "services/api/pyproject.toml",
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\n",
+        ),
+        ("services/api/src/api/main.py", "import pydantic_ai\n"),
+        (
+            "services/web/pyproject.toml",
+            "[project]\nname = \"web\"\nversion = \"0.1.0\"\n",
+        ),
+        ("services/web/src/web/main.py", "import pydantic_ai\n"),
+    ]);
+    let full = || BTreeSet::from(["pydantic-ai".to_owned()]);
+    let scoped = ScopedDeclarations {
+        scripts: BTreeMap::from([("scripts/tool.py".to_owned(), full())]),
+        members: BTreeMap::from([("api".to_owned(), full())]),
+        member_locks: BTreeMap::from([("web".to_owned(), full())]),
+    };
+    let index = resolve_path_scoped(temp.path(), &scoped);
+    let distribution = |file: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.file == file)
+            .and_then(|resolved| resolved.distribution.clone())
+            .expect("import")
+    };
+    assert_eq!(distribution("main.py"), "pydantic-ai-slim");
+    assert_eq!(distribution("scripts/tool.py"), "pydantic-ai");
+    assert_eq!(distribution("services/api/src/api/main.py"), "pydantic-ai");
+    // The root's declaration beats a name the member only locks.
+    assert_eq!(
+        distribution("services/web/src/web/main.py"),
+        "pydantic-ai-slim"
+    );
+}
+
+#[test]
 fn dotted_map_entry_overrides_a_first_party_root_without_the_module() {
     let temp = temp_project(&[
         (
@@ -264,6 +317,25 @@ fn dotted_map_entry_overrides_a_first_party_root_without_the_module() {
         origin("poetry.core.version"),
         (ModuleOrigin::ThirdParty, Some("poetry-core".to_owned()))
     );
+}
+
+#[test]
+fn namespace_import_picks_the_declared_candidate() {
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"acme-b\"]\n\n[tool.chokkin.package_module_map]\n\"acme-a\" = [\"acme.shared\"]\n\"acme-b\" = [\"acme.shared\"]\n",
+        ),
+        ("app/__init__.py", ""),
+        ("app/one.py", "import acme.shared.x\n"),
+    ]);
+    let index = resolve_path(temp.path());
+    let resolved = index
+        .imports
+        .iter()
+        .find(|resolved| resolved.full_module == "acme.shared.x")
+        .expect("import");
+    assert_eq!(resolved.distribution.as_deref(), Some("acme-b"));
 }
 
 #[test]

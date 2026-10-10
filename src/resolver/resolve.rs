@@ -23,8 +23,10 @@ use super::venv::load_venv_index;
 pub struct ScopedDeclarations {
     /// PEP 723 script path → normalized names its block declares.
     pub scripts: BTreeMap<String, BTreeSet<String>>,
-    /// Workspace member id → normalized names its manifest declares or locks.
+    /// Workspace member id → normalized names its manifest declares.
     pub members: BTreeMap<String, BTreeSet<String>>,
+    /// Workspace member id → normalized names its lockfile pins.
+    pub member_locks: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Resolve parsed imports and plugin module references to origins and distributions.
@@ -215,7 +217,7 @@ struct RootResolution {
     confidence: ResolveConfidence,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn resolve_import_site(
     full_module: &str,
     imported: &str,
@@ -240,6 +242,9 @@ fn resolve_import_site(
     root_cache: &mut RootCache,
 ) -> ResolvedImport {
     let root_name = import_root(full_module).to_owned();
+    let workspace_member = owners.owner(file);
+    let member = workspace_member.as_deref();
+    let pick = |candidates: &[String]| site_candidate(candidates, file, member, scoped, manifest);
     let core = if let Some(origin) = site_origin(&root_name, file, context, stdlib, pytest_paths) {
         RootResolution {
             origin,
@@ -264,6 +269,12 @@ fn resolve_import_site(
             })
             .clone();
         match (core.origin, import_map.namespace_candidates(imported)) {
+            // The cache holds the root's first candidate; the pick is per site.
+            (ModuleOrigin::ThirdParty, None) => RootResolution {
+                distribution: root_candidates(&root_name, venv_imports, import_map)
+                    .map_or(core.distribution, |(candidates, _)| pick(&candidates)),
+                ..core
+            },
             (ModuleOrigin::Stdlib, _) | (_, None) => core,
             // A first-party root may share its namespace with a distribution
             // (`poetry` and `poetry.core`); the local tree wins when it has the
@@ -271,20 +282,21 @@ fn resolve_import_site(
             (ModuleOrigin::FirstParty, Some((module, ..))) if local_modules.contains(module) => {
                 core
             },
-            (_, Some((_, distributions, confidence))) => root_resolution_from_candidates(
-                &root_name,
-                &distributions,
-                Some(confidence),
-                warnings,
-            ),
+            (_, Some((_, distributions, confidence))) => RootResolution {
+                distribution: pick(&distributions),
+                ..root_resolution_from_candidates(
+                    &root_name,
+                    &distributions,
+                    Some(confidence),
+                    warnings,
+                )
+            },
         }
     };
 
-    let workspace_member = owners.owner(file);
     // An exact name in the file's own script block or member manifest beats an
     // affixed root declaration (`pyfoo` must not take a script's `foo`).
     let core = if core.origin == ModuleOrigin::Unknown {
-        let member = workspace_member.as_deref();
         scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
             .or_else(|| root_loose_match(&root_name, manifest))
             .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
@@ -391,17 +403,9 @@ fn resolve_import_root(
         };
     }
 
-    if let Some(distributions) = venv_imports.get(root_name) {
-        return root_resolution_from_candidates(root_name, distributions, None, warnings);
-    }
-
-    if let Some((distributions, confidence)) = import_map.candidates(root_name) {
-        return root_resolution_from_candidates(
-            root_name,
-            &distributions,
-            Some(confidence),
-            warnings,
-        );
+    if let Some((distributions, confidence)) = root_candidates(root_name, venv_imports, import_map)
+    {
+        return root_resolution_from_candidates(root_name, &distributions, confidence, warnings);
     }
 
     // No map names the root. A declared or locked distribution whose
@@ -487,6 +491,7 @@ fn scoped_declaration(
             .get(file)
             .into_iter()
             .chain(workspace_member.and_then(|member| scoped.members.get(member)))
+            .chain(workspace_member.and_then(|member| scoped.member_locks.get(member)))
             .flatten()
     };
     match kind {
@@ -627,6 +632,62 @@ impl<'a> MemberOwners<'a> {
             dir = &dir[..dir.rfind('/')?];
         }
     }
+}
+
+/// Distributions the environment, then the maps, say provide `root_name`;
+/// the confidence is the map's, `None` for the environment.
+fn root_candidates(
+    root_name: &str,
+    venv_imports: &BTreeMap<String, Vec<String>>,
+    import_map: &ImportMap,
+) -> Option<(Vec<String>, Option<ResolveConfidence>)> {
+    venv_imports
+        .get(root_name)
+        .map(|distributions| (distributions.clone(), None))
+        .or_else(|| {
+            import_map
+                .candidates(root_name)
+                .map(|(distributions, confidence)| (distributions, Some(confidence)))
+        })
+}
+
+/// Among several distributions providing a root, a declared one beats a
+/// locked one, and the file's own script block or member manifest beats the
+/// root's (#732); else the first.
+fn site_candidate(
+    candidates: &[String],
+    file: &str,
+    member: Option<&str>,
+    scoped: &ScopedDeclarations,
+    manifest: &LoadedManifest,
+) -> Option<String> {
+    let in_member = |sets: &BTreeMap<String, BTreeSet<String>>, name: &str| {
+        member
+            .and_then(|member| sets.get(member))
+            .is_some_and(|names| names.contains(name))
+    };
+    let prefers: [&dyn Fn(&str) -> bool; 5] = [
+        &|name| {
+            scoped
+                .scripts
+                .get(file)
+                .is_some_and(|names| names.contains(name))
+        },
+        &|name| in_member(&scoped.members, name),
+        &|name| {
+            manifest
+                .dependencies
+                .iter()
+                .any(|dep| normalize_distribution_name(&dep.name) == name)
+        },
+        &|name| in_member(&scoped.member_locks, name),
+        &|name| manifest.lockfile.edges.contains_key(name),
+    ];
+    prefers
+        .iter()
+        .find_map(|prefers| candidates.iter().find(|name| prefers(name)))
+        .or_else(|| candidates.first())
+        .cloned()
 }
 
 fn root_resolution_from_candidates(
@@ -850,6 +911,7 @@ mod tests {
                 BTreeSet::from(["rich".to_owned()]),
             )]),
             members: BTreeMap::from([("api".to_owned(), BTreeSet::from(["foo-bar".to_owned()]))]),
+            member_locks: BTreeMap::new(),
         };
         let found = |root: &str, file: &str, member: Option<&str>| {
             scoped_declaration(root, file, member, &scoped, ScopedMatch::Exact)

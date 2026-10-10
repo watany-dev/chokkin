@@ -497,6 +497,37 @@ fn binary_scoped_exact_declaration_beats_affixed_root_name() {
     }
 }
 
+#[test]
+fn binary_declared_candidate_wins_among_distributions_sharing_a_root() {
+    // `pydantic-ai` and `pydantic-ai-slim` both provide `pydantic_ai`; each
+    // site takes the one its own manifest declares, not the map's first (#732).
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"shared-root\"\nversion = \"0.1.0\"\ndependencies = [\"pydantic-ai-slim>=1.0\"]\n\n[project.scripts]\napi-cli = \"api.main:main\"\nroot-cli = \"shared_root:main\"\n\n[tool.uv.workspace]\nmembers = [\"services/*\"]\n",
+        ),
+        (
+            "shared_root/__init__.py",
+            "import pydantic_ai\n\n\ndef main() -> None:\n    pydantic_ai.run()\n",
+        ),
+        (
+            "services/api/pyproject.toml",
+            "[project]\nname = \"api\"\nversion = \"0.1.0\"\ndependencies = [\"pydantic-ai>=1.0\"]\n",
+        ),
+        ("services/api/src/api/__init__.py", ""),
+        (
+            "services/api/src/api/main.py",
+            "import pydantic_ai\n\n\ndef main() -> None:\n    pydantic_ai.run()\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(temp.path(), &[]));
+    assert!(
+        keys.iter()
+            .all(|(code, _)| !matches!(code.as_str(), "CHK002" | "CHK003")),
+        "{keys:?}"
+    );
+}
+
 fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
