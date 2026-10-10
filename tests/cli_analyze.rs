@@ -1381,6 +1381,13 @@ fn binary_member_sphinx_conf_is_a_docs_entry() {
         ["core/src/core/orphan.py"],
         "{issues:?}"
     );
+    // Sphinx reads the names the member's conf.py star-imports (#729).
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue["symbol"] != "docs.provider_conf:project"),
+        "{issues:?}"
+    );
     let issues = json_issues(project.path(), &["--production"]);
     assert!(
         issues
