@@ -6,3 +6,4 @@ extensions = [
 extensions.append("sphinx_copybutton")
 extensions.extend(["sphinx.ext.napoleon"])
 extensions += ["sphinx_design"]
+exclude_patterns += ["_build"]

@@ -474,6 +474,12 @@ fn sphinx_plugin_records_docs_conf_entry() {
             "{module}"
         );
     }
+    assert!(
+        !contrib
+            .module_refs
+            .iter()
+            .any(|reference| reference.module == "_build")
+    );
 }
 
 #[test]

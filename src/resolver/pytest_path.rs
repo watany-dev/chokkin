@@ -592,11 +592,14 @@ mod tests {
             "tests/cli/test_apps/cliapp/__init__.py",
             "src/acme/tool.py",
             "src/acme/sibling.py",
+            "scripts/lint.py",
+            "tools/prek/tool_utils.py",
         ];
         let parse = ParseSummary {
             modules: vec![
                 hinting("tests/test_util.py", &["utils", "missing"]),
                 hinting("scripts/run.py", &["prek"]),
+                hinting("scripts/lint.py", &["ci/prek"]),
                 hinting("tests/cli/conftest.py", &["test_apps"]),
                 hinting("src/acme/tool.py", &[""]),
             ],
@@ -607,12 +610,17 @@ mod tests {
         // An undiscovered directory under an ancestor, checked on disk.
         assert!(paths.provides_fallback("tests/test_util.py", "check_docs"));
         assert!(!paths.provides_fallback("tests/test_util.py", "check_doc"));
+        // Hints naming no existing directory add nothing.
+        assert_eq!(paths.hinted["tests/test_util.py"], ["utils"]);
         // A discovered directory ending with the hint.
         assert!(paths.provides_fallback("scripts/run.py", "common_utils"));
         assert_eq!(
             paths.resolve_fallback("scripts/run.py", "common_utils"),
             Some("scripts/ci/prek/common_utils.py")
         );
+        // A multi-segment hint matches whole trailing segments only.
+        assert!(paths.provides_fallback("scripts/lint.py", "common_utils"));
+        assert!(!paths.provides_fallback("scripts/lint.py", "tool_utils"));
         // A conftest's hints apply to the files below it only.
         assert!(paths.provides_fallback("tests/cli/test_cli.py", "cliapp"));
         assert_eq!(
