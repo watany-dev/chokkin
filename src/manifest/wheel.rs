@@ -435,12 +435,12 @@ mod tests {
 
     #[test]
     fn hatch_without_custom_tables_has_no_build_scripts() {
-        assert!(
+        assert_eq!(
             build_scripts(
                 "[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\
                  [tool.hatch.build.hooks.vcs]\nversion-file = \"_version.py\"\n"
-            )
-            .is_empty()
+            ),
+            Vec::<(String, String)>::new()
         );
     }
 
