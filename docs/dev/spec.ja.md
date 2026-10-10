@@ -840,6 +840,13 @@ symbol usage analysis が `module.name` を外部参照として扱う。`from p
 `from . import module` を含む) で既知の first-party submodule を束縛した場合も同様に扱う (#411)。chain access や動的 attribute
 は v0.2 では追跡しない。
 
+例外として、literal の接頭辞で組み立てた動的 import (§14、`import_module("pkg.commands." + name)` / `f"pkg.commands.{name}"`) を
+代入や注釈付き代入で名前に束縛し、同じスコープ (関数・class 本体・module) で `getattr(module, <非literal>)` に渡している場合は、
+`pkg.commands` 配下の module で定義された公開 class をすべて外部参照済みとし CHK006 にしない (#728)。poetry の command loader
+(`getattr(module, name.title() + "Command")`) のように class 名を組み立てて取り出すため。関数・定数、`getattr` の属性名が
+literal の場合、束縛後に別の値を代入した名前、入れ子の関数など別スコープからの `getattr` は対象外とする。
+先に `getattr(module, "__all__")` を読むスコープは `__all__` に列挙された名前を順に取り出す import smoke test とみなし、これも対象外とする。
+
 ただし、以下はused扱いにする。
 
 ```text
@@ -942,7 +949,7 @@ lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.l
 |libraryのpublic APIは外部利用される    |内部参照がなくても公開APIかもしれない                                           |app/library modeを分け、libraryではunused exports/filesを低confidenceにする                           |
 |dev/test/docs/lint/type依存が混在する|`pytest` がmain dependenciesにある                                 |dependency contextを導入し、misplaced dependencyを出す                                             |
 |namespace packageがある          |`google.*`, `zope.*`                                           |namespace package modeと `Import-Namespace` を使う                                             |
-|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる。`[sys.executable, "-m", "pkg"]` は `pkg` の使用として数えるが、未宣言でも CHK003 にはしない。`"pkg.commands." + name` や `f"pkg.commands.{name}"` のようにliteralの接頭辞で組み立てた名前は、`pkg.commands` 配下の first-party module すべてへ到達させる(confidenceはopaqueのまま下げる)                                 |
+|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる。`[sys.executable, "-m", "pkg"]` は `pkg` の使用として数えるが、未宣言でも CHK003 にはしない。`"pkg.commands." + name` や `f"pkg.commands.{name}"` のようにliteralの接頭辞で組み立てた名前は、`pkg.commands` 配下の first-party module すべてへ到達させる(confidenceはopaqueのまま下げる)。その結果を同じスコープで `getattr(module, <非literal>)` に渡すと、配下の class を CHK006 にしない(§12、#728)                                 |
 |monorepo/workspaceで依存境界が曖昧    |root depsをmemberが使う                                            |workspace graphを作り、`--strict` でmemberごとの直接依存を要求する                                          |
 |auto-fixが危険                   |dead code削除で実行時破壊                                              |default fixはmanifest中心。file/code削除は明示フラグ必須                                                 |
 
