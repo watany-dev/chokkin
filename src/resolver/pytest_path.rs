@@ -220,7 +220,6 @@ impl PytestImportPaths {
         self
     }
 
-    /// Hinted directory → top-level names of the discovered files under it.
     fn hinted_roots(&self) -> HashMap<String, HashSet<String>> {
         let mut hinted_roots: HashMap<String, HashSet<String>> = self
             .hinted
@@ -407,7 +406,6 @@ fn ends_with_dirs(dir: &str, suffix: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.ends_with('/'))
 }
 
-/// `relative`, a `/`-separated path under `root`, on disk.
 fn on_disk_path(root: &Path, relative: &str) -> PathBuf {
     relative
         .split('/')
