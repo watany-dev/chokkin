@@ -1,0 +1,17 @@
+[project]
+name = "misplaced-none-fallback"
+version = "0.1.0"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "markdown",
+    "pygments",
+    "pyyaml",
+]
+
+[project.scripts]
+acme-cli = "acme.compat:main"
+
+[tool.chokkin]
+mode = "app"

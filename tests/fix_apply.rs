@@ -88,6 +88,45 @@ fn fix_moves_direct_reference_with_extras_to_runtime() {
     );
 }
 
+/// #730: an import behind an `except ImportError: x = None` guard is not
+/// moved to the runtime dependencies.
+#[test]
+fn fix_keeps_none_fallback_guarded_imports_in_their_group() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("misplaced_none_fallback"), temp.path()).expect("copy fixture");
+
+    analyze_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+
+    let after = std::fs::read_to_string(temp.path().join("pyproject.toml")).expect("pyproject");
+    let doc: toml::Table = toml::from_str(&after).expect("valid toml");
+    let names = |value: &toml::Value| -> Vec<String> {
+        let array = value.as_array().expect("array");
+        array
+            .iter()
+            .filter_map(|dep| dep.as_str().map(str::to_owned))
+            .collect()
+    };
+    assert_eq!(
+        names(&doc["project"]["dependencies"]),
+        ["pyyaml"],
+        "{after}"
+    );
+    assert_eq!(
+        names(&doc["dependency-groups"]["dev"]),
+        ["markdown", "pygments"],
+        "{after}"
+    );
+}
+
 #[test]
 fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
     let temp = tempfile::tempdir().expect("tempdir");
