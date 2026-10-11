@@ -339,6 +339,49 @@ fn namespace_import_picks_the_declared_candidate() {
 }
 
 #[test]
+fn declared_distributions_with_differing_import_names_resolve() {
+    // Distributions sharing a namespace with other mapped ones (#748).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"databricks-sdk\", \"databricks-agents\", \"google-api-core\", \"google-cloud-firestore\", \"paddlepaddle-gpu\"]\n",
+        ),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "import databricks.sdk.service.catalog\nfrom databricks.agents.evals import judges\nimport google.api_core.exceptions\nfrom google.cloud import firestore\nfrom google.cloud.firestore_v1.base_query import FieldFilter\nimport paddle\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let distribution = |module: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == module)
+            .map(|resolved| (resolved.origin, resolved.distribution.clone()))
+            .expect("import")
+    };
+    for (module, expected) in [
+        ("databricks.sdk.service.catalog", "databricks-sdk"),
+        ("databricks.agents.evals", "databricks-agents"),
+        ("google.api_core.exceptions", "google-api-core"),
+        ("google.cloud", "google-cloud-firestore"),
+        (
+            "google.cloud.firestore_v1.base_query",
+            "google-cloud-firestore",
+        ),
+        // paddlepaddle provides `paddle` too; the declared one wins.
+        ("paddle", "paddlepaddle-gpu"),
+    ] {
+        assert_eq!(
+            distribution(module),
+            (ModuleOrigin::ThirdParty, Some(expected.to_owned())),
+            "{module}"
+        );
+    }
+}
+
+#[test]
 fn ambiguous_namespace_import_warns_once() {
     let temp = temp_project(&[
         (

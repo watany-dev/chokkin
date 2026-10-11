@@ -472,7 +472,8 @@
       "imports": [
         "google",
         "google.cloud.aiplatform",
-        "vertexai"
+        "vertexai",
+        "vertex_ray"
       ]
     },
     {
@@ -685,6 +686,169 @@
       "distribution": "gcloud-aio-storage",
       "imports": [
         "gcloud.aio.storage"
+      ]
+    },
+    {
+      "distribution": "databricks-agents",
+      "imports": [
+        "databricks.agents",
+        "databricks.rag_eval"
+      ]
+    },
+    {
+      "distribution": "google-cloud-firestore",
+      "imports": [
+        "google.cloud.firestore",
+        "google.cloud.firestore_admin",
+        "google.cloud.firestore_admin_v1",
+        "google.cloud.firestore_bundle",
+        "google.cloud.firestore_v1"
+      ]
+    },
+    {
+      "distribution": "weaviate-client",
+      "imports": [
+        "weaviate"
+      ]
+    },
+    {
+      "distribution": "pymupdf",
+      "imports": [
+        "fitz",
+        "pymupdf"
+      ]
+    },
+    {
+      "distribution": "gremlinpython",
+      "imports": [
+        "gremlin_python"
+      ]
+    },
+    {
+      "distribution": "presto-python-client",
+      "imports": [
+        "prestodb"
+      ]
+    },
+    {
+      "distribution": "smbprotocol",
+      "imports": [
+        "smbclient",
+        "smbprotocol"
+      ]
+    },
+    {
+      "distribution": "jpype1",
+      "imports": [
+        "jpype"
+      ]
+    },
+    {
+      "distribution": "shopifyapi",
+      "imports": [
+        "shopify"
+      ]
+    },
+    {
+      "distribution": "azure-ai-agents",
+      "imports": [
+        "azure.ai.agents"
+      ]
+    },
+    {
+      "distribution": "azure-ai-inference",
+      "imports": [
+        "azure.ai.inference"
+      ]
+    },
+    {
+      "distribution": "azure-ai-projects",
+      "imports": [
+        "azure.ai.projects"
+      ]
+    },
+    {
+      "distribution": "azure-data-tables",
+      "imports": [
+        "azure.data.tables"
+      ]
+    },
+    {
+      "distribution": "azure-search-documents",
+      "imports": [
+        "azure.search.documents"
+      ]
+    },
+    {
+      "distribution": "atlassian-python-api",
+      "imports": [
+        "atlassian"
+      ]
+    },
+    {
+      "distribution": "hubspot-api-client",
+      "imports": [
+        "hubspot"
+      ]
+    },
+    {
+      "distribution": "contextual-client",
+      "imports": [
+        "contextual"
+      ]
+    },
+    {
+      "distribution": "chat-miner",
+      "imports": [
+        "chatminer"
+      ]
+    },
+    {
+      "distribution": "ag-ui-protocol",
+      "imports": [
+        "ag_ui"
+      ]
+    },
+    {
+      "distribution": "friendli-client",
+      "imports": [
+        "friendli"
+      ]
+    },
+    {
+      "distribution": "rayyan-sdk",
+      "imports": [
+        "rayyan"
+      ]
+    },
+    {
+      "distribution": "airweave-sdk",
+      "imports": [
+        "airweave"
+      ]
+    },
+    {
+      "distribution": "paddlepaddle",
+      "imports": [
+        "paddle"
+      ]
+    },
+    {
+      "distribution": "paddlepaddle-gpu",
+      "imports": [
+        "paddle"
+      ]
+    },
+    {
+      "distribution": "haystack-ai",
+      "imports": [
+        "haystack"
+      ]
+    },
+    {
+      "distribution": "farm-haystack",
+      "imports": [
+        "haystack"
       ]
     }
   ],

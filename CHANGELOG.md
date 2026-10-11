@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The bundled package map now knows the import names of more distributions
+  whose name differs from the module: `pymupdf` (`fitz`), `weaviate-client`,
+  `gremlinpython`, `presto-python-client`, `smbprotocol` (`smbclient`),
+  `jpype1`, `shopifyapi`, `atlassian-python-api`, `hubspot-api-client`,
+  `ag-ui-protocol`, `haystack-ai` / `farm-haystack`,
+  `paddlepaddle` / `paddlepaddle-gpu` and a few others, plus `vertex_ray`
+  from `google-cloud-aiplatform`. Namespace distributions get dotted
+  entries: `databricks-agents` (`databricks.agents`, `databricks.rag_eval`),
+  `google-cloud-firestore` (`google.cloud.firestore*`) and
+  `azure-search-documents`, `azure-data-tables`, `azure-ai-agents`,
+  `azure-ai-projects`, `azure-ai-inference`. Declaring one of them no
+  longer reports its imports as CHK010 (or `google.cloud.firestore` as
+  CHK003 / CHK004 on `google-api-core`) and the dependency as unused (#748).
 - Names in a quoted type outside an annotation now count as read by their
   module, like quoted annotations (#545): the type of `cast("T", x)`, the
   constraints, `bound=` and `default=` of `TypeVar("M", bound="Foo")`, and

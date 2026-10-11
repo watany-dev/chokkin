@@ -248,6 +248,23 @@ mod tests {
             first("gcloud.aio.storage").as_deref(),
             Some("gcloud-aio-storage")
         );
+        assert_eq!(
+            first("databricks.agents.evals").as_deref(),
+            Some("databricks-agents")
+        );
+        assert_eq!(
+            first("google.cloud.firestore_v1.base_query").as_deref(),
+            Some("google-cloud-firestore")
+        );
+        assert_eq!(
+            first("azure.search.documents.models").as_deref(),
+            Some("azure-search-documents")
+        );
+        assert_eq!(
+            first("azure.data.tables").as_deref(),
+            Some("azure-data-tables")
+        );
+        assert_eq!(first("azure.cognitiveservices.speech"), None);
         assert_eq!(first("google"), None);
         assert_eq!(first("yaml.loader"), None);
     }
@@ -295,6 +312,16 @@ mod tests {
             ("win32api", "pywin32"),
             ("pywintypes", "pywin32"),
             ("guardian", "django-guardian"),
+            ("fitz", "pymupdf"),
+            ("weaviate", "weaviate-client"),
+            ("gremlin_python", "gremlinpython"),
+            ("prestodb", "presto-python-client"),
+            ("smbclient", "smbprotocol"),
+            ("jpype", "jpype1"),
+            ("shopify", "shopifyapi"),
+            ("vertex_ray", "google-cloud-aiplatform"),
+            ("atlassian", "atlassian-python-api"),
+            ("ag_ui", "ag-ui-protocol"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),
