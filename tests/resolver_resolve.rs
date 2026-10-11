@@ -571,6 +571,55 @@ fn build_requirement_resolves_without_a_distribution() {
 }
 
 #[test]
+fn pyodide_runtime_modules_resolve_unless_a_package_provides_them() {
+    // urllib3's emscripten contrib imports what Pyodide itself provides (#722).
+    let bare = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"runtime-demo\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "fetch.py",
+            "import js\nimport pyodide_js\nimport _pyodide\nfrom pyodide.ffi import to_js\nimport jsx\n",
+        ),
+    ]);
+    let index = resolve_path(bare.path());
+    let root = |name: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == name)
+            .map(|resolved| (resolved.origin, resolved.distribution.clone()))
+            .expect("import")
+    };
+    for name in ["js", "pyodide_js", "_pyodide", "pyodide"] {
+        assert_eq!(root(name), (ModuleOrigin::ThirdParty, None), "{name}");
+    }
+    assert_eq!(root("jsx"), (ModuleOrigin::Unknown, None));
+
+    // A declared or mapped package of the same name still names its distribution.
+    let packaged = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"runtime-demo\"\nversion = \"0.1.0\"\n\
+             dependencies = [\"pyodide-py\"]\n\n\
+             [tool.chokkin.package_module_map]\n\"js-shim\" = [\"js\"]\n",
+        ),
+        ("fetch.py", "import js\nimport pyodide\n"),
+    ]);
+    let index = resolve_path(packaged.path());
+    let distribution = |name: &str| {
+        index
+            .imports
+            .iter()
+            .find(|resolved| resolved.import_root == name)
+            .and_then(|resolved| resolved.distribution.clone())
+    };
+    assert_eq!(distribution("js").as_deref(), Some("js-shim"));
+    assert_eq!(distribution("pyodide").as_deref(), Some("pyodide-py"));
+}
+
+#[test]
 fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
     let index = resolve_path(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
