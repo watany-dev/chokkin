@@ -798,15 +798,42 @@ fn uv_dev_dependencies_join_dev_group_in_every_format() {
     assert_eq!(names, vec!["pytest", "ruff"]);
 }
 
+fn dependency_contexts(manifest: &chokkin::internals::LoadedManifest) -> Vec<(&str, String)> {
+    let mut contexts: Vec<_> = manifest
+        .dependencies
+        .iter()
+        .map(|dep| (dep.name.as_str(), format!("{:?}", dep.context)))
+        .collect();
+    contexts.sort();
+    contexts
+}
+
+fn group(file: &str) -> String {
+    format!("{:?}", DependencyContext::Group(file.to_owned()))
+}
+
 #[test]
-fn extra_requirements_files_only_declare_names() {
+fn extra_requirements_files_declare_only_in_the_context_their_path_names() {
     let temp = tempfile::tempdir().expect("temp dir");
     std::fs::create_dir(temp.path().join("requirements")).expect("create requirements dir");
     for (name, contents) in [
         ("requirements.txt", "requests\n"),
         ("requirements-github-actions.txt", "pydantic_settings\n"),
         ("requirements-lint.in", "ruff\n"),
-        ("requirements/tests.in", "Ephemeral_Port_Reserve\n"),
+        // Including a file read on its own does not declare it twice.
+        (
+            "requirements/tests.in",
+            "Ephemeral_Port_Reserve\n-r ../requirements-github-actions.txt\n",
+        ),
+        // Compiled from the sibling `.in`: pins the whole environment.
+        (
+            "requirements/tests.txt",
+            "ephemeral-port-reserve==1.0\nidna==3.10\n",
+        ),
+        // A contextless file only declares names, even from a dev file.
+        ("requirements/dev.in", "-r ../requirements-ml.txt\n"),
+        ("requirements-ml.txt", "torch\n"),
+        ("requirements-optional.txt", "pyyaml\n"),
         ("requirements/notes.md", "not-a-requirement\n"),
         ("constraints.txt", "urllib3<3\n"),
         // A root `.in` file counts only with the `requirements` prefix.
@@ -819,7 +846,24 @@ fn extra_requirements_files_only_declare_names() {
     let cache = CacheOptions::default();
     let first =
         extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
-    assert_eq!(dependency_names(&first), ["requests"]);
+    assert_eq!(
+        dependency_contexts(&first),
+        [
+            ("ephemeral-port-reserve", group("requirements/tests.in")),
+            (
+                "pydantic-settings",
+                group("requirements-github-actions.txt")
+            ),
+            (
+                "pyyaml",
+                format!(
+                    "{:?}",
+                    DependencyContext::OptionalExtra("requirements-optional.txt".to_owned())
+                )
+            ),
+            ("requests", format!("{:?}", DependencyContext::Runtime)),
+        ]
+    );
     assert_eq!(
         first
             .sources
@@ -827,7 +871,14 @@ fn extra_requirements_files_only_declare_names() {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["ephemeral-port-reserve", "pydantic-settings", "ruff"]
+        [
+            "ephemeral-port-reserve",
+            "idna",
+            "pydantic-settings",
+            "pyyaml",
+            "ruff",
+            "torch"
+        ]
     );
 
     // A file added under `requirements/` invalidates the manifest cache.
@@ -838,7 +889,7 @@ fn extra_requirements_files_only_declare_names() {
 }
 
 #[test]
-fn docs_requirements_files_only_declare_names() {
+fn docs_requirements_files_declare_docs_groups() {
     let temp = tempfile::tempdir().expect("temp dir");
     for dir in ["docs", "doc", "docs/nested"] {
         std::fs::create_dir_all(temp.path().join(dir)).expect("create docs dir");
@@ -861,7 +912,15 @@ fn docs_requirements_files_only_declare_names() {
     let cache = CacheOptions::default();
     let first =
         extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
-    assert_eq!(dependency_names(&first), Vec::<&str>::new());
+    // `docs/../docs-base.txt` keeps the origin it has when read directly.
+    assert_eq!(
+        dependency_contexts(&first),
+        [
+            ("furo", group("docs-base.txt")),
+            ("myst-parser", group("doc/requirements.in")),
+            ("sphinx", group("docs/requirements.txt")),
+        ]
+    );
     assert_eq!(
         first
             .sources
