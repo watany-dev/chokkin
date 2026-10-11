@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning, unreachable test files are no longer CHK001, and CHK005 counts
   imports in public modules that nothing reaches. Members of a
   library root are judged in library mode too (#776).
+- A module that calls `warnings.warn` at module top level with a
+  deprecation category (a name containing `Deprecat` or matching
+  `Removed*Warning`) is a compatibility shim kept for outside callers: its
+  CHK001 and its symbols' CHK006 are info. Airflow's `stats.py` and
+  `security/permissions.py` are no longer reported (#778).
 
 ### Fixed
 - A workspace member's own pytest config (`pytest.ini`,

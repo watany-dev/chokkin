@@ -2,6 +2,7 @@
 
 mod attributes;
 mod decorators;
+mod deprecation;
 mod dynamic;
 mod encoding;
 mod error;

@@ -13,6 +13,7 @@ use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::attribute_receiver;
 use super::decorators::normalize_decorator;
+use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
     LiteralTarget, LoaderNames, PythonRun, command_word, edits_sys_path, literal_target,
     module_prefix, pytest_plugin_names, python_run, sys_path_hint,
@@ -159,6 +160,7 @@ impl<'a> ModuleVisitor<'a> {
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.async_library_names = async_library_names(None, stmts);
         self.visit_body(stmts);
+        self.parsed.deprecated_shim = warns_deprecated_on_import(stmts, &self.parsed.imports);
     }
 
     /// Visit one `if`/`elif`/`else` branch; `test` is `None` for `else`.

@@ -1642,7 +1642,7 @@ airflow	CHK006	devel-common/src/docs/provider_conf.py:html_theme_options	fp	exte
 fastmcp	CHK006	fastmcp_slim/fastmcp/client/oauth_callback.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/claude_code/config.py:HOOK_FIELD_COMMAND	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
 poetry	CHK006	src/poetry/console/commands/self/add.py:SelfAddCommand	fp	dynamic-import	poetry application.py imports poetry.console.commands.<name> via import_module and getattr's "SelfAddCommand"
-airflow	CHK006	airflow-core/src/airflow/utils/context.py:OutletEventAccessors	tp	-	task-sdk has its own copy; patches target airflow.sdk.execution_time.context, not this class
+airflow	CHK006	airflow-core/src/airflow/utils/context.py:OutletEventAccessors	info-expected	deprecated-shim	task-sdk has its own copy; patches target airflow.sdk.execution_time.context, not this class; the module warns on import that it is deprecated, so #778 keeps it at info
 fastmcp	CHK006	fastmcp_slim/fastmcp/settings.py:TEN_MB_IN_BYTES	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mcp-python-sdk	CHK006	src/mcp/shared/message.py:ResumptionTokenUpdateCallback	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
 mlflow	CHK006	mlflow/langchain/_compat.py:import_runnable	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
@@ -1754,7 +1754,7 @@ mlflow	CHK006	mlflow/genai/discovery/constants.py:DEFAULT_TRIAGE_SAMPLE_SIZE	inf
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_CLUSTER_ACTIVITY	fp	external-reference	read as permissions.RESOURCE_CLUSTER_ACTIVITY in providers/fab via `from airflow.security import permissions` (module-attribute access)
 fastmcp	CHK006	fastmcp_slim/fastmcp/client/auth/oauth.py:check_if_auth_required	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/claude_code/config.py:MLFLOW_LEGACY_HOOK_IDENTIFIER	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
-airflow	CHK006	airflow-core/src/airflow/security/permissions.py:resource_name_for_dag	tp	-	only ref is a getattr-by-name fallback in tests_common that is dead because resource_name exists
+airflow	CHK006	airflow-core/src/airflow/security/permissions.py:resource_name_for_dag	info-expected	deprecated-shim	only ref is a getattr-by-name fallback in tests_common that is dead because resource_name exists; the module warns on import that it is deprecated, so #778 keeps it at info
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/middleware.py:make_middleware_wrapper	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 mlflow	CHK006	mlflow/transformers/__init__.py:log_model	fp	library-public-api	documented public API (api_inventory.txt lists mlflow.transformers.log_model)
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:resource_name	fp	external-reference	read as permissions.resource_name in providers/fab via `from airflow.security import permissions` (module-attribute access)

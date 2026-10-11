@@ -823,6 +823,8 @@ maybe:
 
 デフォルトでは `confidence = "likely"` 以上だけ表示する。`--confidence maybe` で全部出す。
 
+module top-level（関数の外）で `warnings.warn` を呼び、第2位置引数か `category=` が `*Deprecat*` / `Removed*Warning` に当たる名前の module は、import 時に自身の非推奨を告げる互換 shim とみなす (`src/parser/deprecation.rs`、#778)。airflow の `stats.py` (`DeprecatedImportWarning`) や `security/permissions.py` (`RemovedInAirflow4Warning`) のように外部の利用者のために残しているので、この file の CHK001 と、この file で定義された symbol の CHK006 は info にする。category は AST 上の名前（`exc.RemovedInAirflow4Warning` なら末尾）だけで判定し、class は解決しない。`warn` は module top-level の `import warnings`（別名を含む）か `from warnings import warn` で束縛したものに限る。関数内の `warn` はその関数の非推奨なので対象外で、`if` などの block 内の `warn` も条件付きの非推奨なので数えない。
+
 confidenceとseverityは独立した2軸として扱う。severityはissue種別の重み(error / warning / info)、confidenceは解析の確からしさ(certain / likely / maybe)。表示filterは `confidence >= 設定値`、exit code 1の対象はdefaultで `severity >= error` かつ `confidence >= likely` にする。`--strict` ではwarning以上かつmaybe以上まで広げる。
 
 ## 12. unused exports判定
@@ -909,6 +911,8 @@ CHK007 は、再exportした `__init__.py` 自身がその名前を読んでい�
 CHK007 は mode によらず、wheel が配布する `__init__.py` で明示的に公開した再export（`__all__` に載っている、または `import a as a`）も対象外にする (#678)。app signal を持つ workspace root と CLI を持つ member は app mode になる (§8) が、その wheel の利用者はこれらの名前を package から import できるため。配布するかは root の wheel target から求めた public surface で判定し、workspace member の file は library / app を問わず最も深い member 自身の wheel target（member 相対）で判定する。wheel target を宣言せず `[project].name` と `[build-system]` の `build-backend` を持つ member は、build backend の自動検出（hatchling の `src/<name>` 等）と同じく layout が推定した package を配布するものとみなす (#733、llama-index-instrumentation)。`[build-system]` のない member は uv が package にしないので何も配布しない。この推定は配布判定だけに使い、CHK001 の到達性を絞る library surface は宣言された wheel target からだけ求める。wheel target を宣言していない root の file や、surface に含まれない file（`examples/` の app 内 `__all__` 等）は従来どおり app mode で warning にする。
 
 同じ理由で、wheel が配布する file の `__all__` に載っている名前は、module 内でしか使われていなくても CHK006 にしない (#727)。app mode の workspace root (§8) では、fastmcp の `fastmcp_slim` の配布 module の `__all__` 定数が warning / certain になっていた。`__all__` に載っていない名前と、配布されない file の `__all__` は従来どおり app mode の判定に従う。CHK001 の判定は変えない。
+
+import 時に非推奨を告げる互換 shim (§11、#778) で定義された symbol の CHK006 は info にする。
 
 `unused_export` の自動削除はv1までは避ける。安全なfixは `__all__` からの削除程度に限定し、関数・class本体の削除は `--fix --unsafe` がある場合だけにする。
 

@@ -187,6 +187,7 @@ pub struct ParseDiagnostic {
 
 /// Result of parsing one `.py` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ParsedModule {
     /// Root-relative path using `/` separators.
     pub path: String,
@@ -236,6 +237,11 @@ pub struct ParsedModule {
     /// module's own directory) (#719).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sys_path_hints: Vec<String>,
+    /// A module-level `warnings.warn` with a deprecation category: importing
+    /// the module is deprecated, so it is a compatibility shim kept for
+    /// outside callers (#778).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deprecated_shim: bool,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,
