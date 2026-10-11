@@ -26,7 +26,6 @@ pub(super) fn warns_deprecated_on_import(stmts: &[Stmt], imports: &[ImportRef]) 
     })
 }
 
-/// Whether `func` is `warnings.warn` through the module-level `import`.
 fn binds_warn(import: &ImportRef, func: &Expr) -> bool {
     if import.deferred || import.module != "warnings" {
         return false;
