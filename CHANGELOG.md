@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A workspace member's own pytest config (`pytest.ini`,
+  `[tool.pytest]` / `[tool.pytest.ini_options]`, `tox.ini`, `setup.cfg`) now
+  replaces the root's for the tests below that member: its `pythonpath` is
+  read relative to the member directory and its `--import-mode=importlib`
+  applies there. Imports in airflow's `scripts/tests` (`pythonpath =
+  [".", "ci/prek", "in_container"]`) and `task-sdk/tests` (`pythonpath =
+  ["tests"]`) no longer report CHK010 (#775).
 - The bundled package map maps `guardrails-ai` to its `guardrails` import, so
   declaring it no longer reports the import as CHK010 (#773).
 

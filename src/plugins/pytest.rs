@@ -192,23 +192,26 @@ pub(crate) struct PytestImportSettings {
     pub testpaths: Vec<String>,
 }
 
-/// Read [`PytestImportSettings`] from the config file pytest itself picks.
+/// Read [`PytestImportSettings`] from the config file pytest itself picks in
+/// `root`, or `None` when `root` holds no pytest config.
 ///
 /// `pytest.ini` / `.pytest.ini` win even without a `[pytest]` section, then
 /// the first of `pyproject.toml`, `tox.ini` and `setup.cfg` with a pytest
 /// section.
 #[must_use]
-pub(crate) fn import_settings(root: &Path) -> PytestImportSettings {
+pub(crate) fn import_settings(root: &Path) -> Option<PytestImportSettings> {
     for file in ["pytest.ini", ".pytest.ini"] {
         let path = root.join(file);
         if path.is_file() {
-            return read_ini_section(&path, "pytest")
-                .map(|section| ini_import_settings(&section))
-                .unwrap_or_default();
+            return Some(
+                read_ini_section(&path, "pytest")
+                    .map(|section| ini_import_settings(&section))
+                    .unwrap_or_default(),
+            );
         }
     }
     if let Some(settings) = pyproject_import_settings(&root.join("pyproject.toml")) {
-        return settings;
+        return Some(settings);
     }
     for (file, section_name) in [("tox.ini", "pytest"), ("setup.cfg", "tool:pytest")] {
         let path = root.join(file);
@@ -218,10 +221,10 @@ pub(crate) fn import_settings(root: &Path) -> PytestImportSettings {
         if let Ok(section) = read_ini_section(&path, section_name)
             && !section.is_empty()
         {
-            return ini_import_settings(&section);
+            return Some(ini_import_settings(&section));
         }
     }
-    PytestImportSettings::default()
+    None
 }
 
 fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
@@ -333,9 +336,12 @@ mod tests {
             "[tool.pytest.ini_options]\npythonpath = [\"src\"]\ntestpaths = \"t/unit t/e2e\"\n",
         )
         .expect("write pyproject");
-        assert_eq!(import_settings(root).pythonpath, ["src"]);
+        assert_eq!(import_settings(root).expect("config").pythonpath, ["src"]);
         // pytest splits a string `testpaths` on whitespace, as in an ini file.
-        assert_eq!(import_settings(root).testpaths, ["t/unit", "t/e2e"]);
+        assert_eq!(
+            import_settings(root).expect("config").testpaths,
+            ["t/unit", "t/e2e"]
+        );
 
         std::fs::write(
             root.join("pytest.ini"),
@@ -344,11 +350,11 @@ mod tests {
         .expect("write pytest.ini");
         assert_eq!(
             import_settings(root),
-            PytestImportSettings {
+            Some(PytestImportSettings {
                 pythonpath: Vec::new(),
                 importlib: true,
                 testpaths: Vec::new(),
-            }
+            })
         );
     }
 
@@ -363,11 +369,11 @@ mod tests {
         .expect("write pyproject");
         assert_eq!(
             import_settings(root),
-            PytestImportSettings {
+            Some(PytestImportSettings {
                 pythonpath: vec!["src".to_owned()],
                 importlib: true,
                 testpaths: vec!["tests".to_owned()],
-            }
+            })
         );
     }
 }

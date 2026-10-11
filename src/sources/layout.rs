@@ -337,7 +337,10 @@ pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> 
     }
     let mut testpaths = Vec::new();
     for dir in dirs {
-        for path in pytest_import_settings(&root.join(dir)).testpaths {
+        for path in pytest_import_settings(&root.join(dir))
+            .unwrap_or_default()
+            .testpaths
+        {
             let Some(path) = in_root_dir(&path) else {
                 continue;
             };
