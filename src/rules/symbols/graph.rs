@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::parser::{ImportKind, ParsedModule, SymbolDef};
 
+use super::public::star_imports;
+
 /// Rules-local symbol identifier (distinct from graph `SymbolId` if added later).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) struct SymbolId {
@@ -88,6 +90,7 @@ impl ReferenceIndex {
     pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
         let mut index = Self::default();
         let known_modules: HashSet<&str> = module_names.values().map(String::as_str).collect();
+        let stars = StarImports::build(modules, module_names);
 
         for module in modules {
             let importer = module_names
@@ -109,22 +112,22 @@ impl ReferenceIndex {
                         };
                         // `from . import x` in the package's own `__init__` defines a re-export, not a use.
                         if import.name.is_some() || package != importer {
-                            index.record(importer, SymbolId::new(package, name));
+                            index.record(importer, SymbolId::new(package, name), &stars);
                         }
                         let submodule = format!("{package}.{name}");
                         if known_modules.contains(submodule.as_str()) {
                             let binding = import.alias.as_deref().unwrap_or(name);
-                            index.record_accesses(importer, module, &submodule, &[binding]);
+                            for target in accesses(module, &submodule, &[binding]) {
+                                index.record(importer, target, &stars);
+                            }
                         }
                     },
                     ImportKind::Import => {
                         let binding = import.alias.as_deref().unwrap_or(&import.module);
-                        index.record_accesses(
-                            importer,
-                            module,
-                            &import.module,
-                            &[import.module.as_str(), binding],
-                        );
+                        let receivers = [import.module.as_str(), binding];
+                        for target in accesses(module, &import.module, &receivers) {
+                            index.record(importer, target, &stars);
+                        }
                     },
                 }
             }
@@ -133,21 +136,16 @@ impl ReferenceIndex {
         index
     }
 
-    fn record_accesses(
-        &mut self,
-        importer: &str,
-        module: &ParsedModule,
-        target_module: &str,
-        receivers: &[&str],
-    ) {
-        for access in &module.attribute_accesses {
-            if receivers.contains(&access.receiver.as_str()) {
-                self.record(importer, SymbolId::new(target_module, access.name.clone()));
-            }
+    /// `pkg.name` also uses `name` in each module `pkg` star-imports it from
+    /// (#576); the importer, not `pkg`, decides whether that use is external.
+    fn record(&mut self, importer: &str, target: SymbolId, stars: &StarImports<'_>) {
+        for source in stars.sources(&target.module, &target.name) {
+            self.mark(importer, SymbolId::new(source, target.name.clone()));
         }
+        self.mark(importer, target);
     }
 
-    fn record(&mut self, importer: &str, target: SymbolId) {
+    fn mark(&mut self, importer: &str, target: SymbolId) {
         let external = importer != target.module;
         self.entries
             .entry(target)
@@ -163,5 +161,70 @@ impl ReferenceIndex {
     /// Returns `true` when `target` is referenced from a different module.
     pub(super) fn is_externally_referenced(&self, target: &SymbolId) -> bool {
         matches!(self.entries.get(target), Some(true))
+    }
+}
+
+/// `target_module.name` read through any of `receivers` in `module`.
+fn accesses<'m>(
+    module: &'m ParsedModule,
+    target_module: &'m str,
+    receivers: &'m [&'m str],
+) -> impl Iterator<Item = SymbolId> + 'm {
+    module
+        .attribute_accesses
+        .iter()
+        .filter(|access| receivers.contains(&access.receiver.as_str()))
+        .map(move |access| SymbolId::new(target_module, access.name.clone()))
+}
+
+/// `from m import *` edges between named modules, with each module's `__all__`.
+struct StarImports<'a> {
+    targets: HashMap<&'a str, Vec<&'a str>>,
+    exports: HashMap<&'a str, &'a [String]>,
+}
+
+impl<'a> StarImports<'a> {
+    fn build(modules: &[&'a ParsedModule], module_names: &'a HashMap<&str, String>) -> Self {
+        let mut targets: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut exports = HashMap::new();
+        for module in modules {
+            let Some(name) = module_names.get(module.path.as_str()) else {
+                continue;
+            };
+            let stars = star_imports(module).filter(|target| target != name);
+            targets.entry(name.as_str()).or_default().extend(stars);
+            exports.insert(name.as_str(), module.exports.as_slice());
+        }
+        Self { targets, exports }
+    }
+
+    /// Modules `module` reaches `name` in through chained star imports. Each
+    /// hop hands on only the names in its `__all__`, or without one, the
+    /// names not starting with `_`.
+    fn sources(&self, module: &str, name: &str) -> Vec<&'a str> {
+        let mut sources = Vec::new();
+        let mut queue: Vec<&str> = self
+            .targets
+            .get(module)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect();
+        let mut seen = HashSet::new();
+        while let Some(target) = queue.pop() {
+            if !seen.insert(target) || !self.hands_on(target, name) {
+                continue;
+            }
+            sources.push(target);
+            queue.extend(self.targets.get(target).into_iter().flatten().copied());
+        }
+        sources
+    }
+
+    fn hands_on(&self, module: &str, name: &str) -> bool {
+        match self.exports.get(module) {
+            Some(all) if !all.is_empty() => all.iter().any(|export| export == name),
+            _ => !name.starts_with('_'),
+        }
     }
 }

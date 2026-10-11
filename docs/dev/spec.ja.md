@@ -848,6 +848,13 @@ symbol usage analysis が `module.name` を外部参照として扱う。`from p
 `from . import module` を含む) で既知の first-party submodule を束縛した場合も同様に扱う (#411)。chain access や動的 attribute
 は v0.2 では追跡しない。
 
+参照先の module が `from m import *` で名前を取り込んでいる場合、その参照は `m` の同名 symbol にも届くとみなす (#576)。
+`pkg/__init__.py` が `from .sub.impl import *` するとき、`import pkg; pkg.name` と `from pkg import name` は
+`pkg.sub.impl.name` の参照になる。star 先がさらに star import していれば連鎖を辿り、各段で `__all__` のある module は
+列挙した名前だけ、無い module は `_` で始まらない名前だけを渡す (Python の `import *` と同じ)。外部参照かどうかは
+元の importer で判定するので、定義元 module 自身が package 経由で自分の名前を読んでも外部参照にはならない。
+star import 文そのもの (`pkg/__init__.py` の `from .sub.impl import *`) は従来どおり参照にならない。
+
 例外として、literal の接頭辞で組み立てた動的 import (§14、`import_module("pkg.commands." + name)` / `f"pkg.commands.{name}"`) を
 代入や注釈付き代入で名前に束縛し、同じスコープ (関数・class 本体・module) で `getattr(module, <非literal>)` に渡している場合は、
 `pkg.commands` 配下の module で定義された公開 class をすべて外部参照済みとし CHK006 にしない (#728)。poetry の command loader

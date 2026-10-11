@@ -52,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands over only the names it lists. A star import from any other module
   is still no reference. This clears airflow's `provider_conf.py`, which
   every provider's `docs/conf.py` star-imports (#729).
+- CHK006 no longer reports names used through a package that star-imports
+  them: after `from .sub.impl import *` in `pkg/__init__.py`, `pkg.name`
+  and `from pkg import name` count as uses of `pkg.sub.impl.name`. Chained
+  star imports are followed, and at each hop a module with `__all__` hands
+  on only the names it lists, one without hands on the names not starting
+  with `_`. Whether the use is external is judged by the importing module,
+  so a module reaching its own name through the package still counts as
+  unused. This clears 33 of litellm's app mode findings, such as
+  `litellm.amoderation` and `GCSLoggingConfig` (#576).
 
 ## [0.7.4] - 2026-10-10
 

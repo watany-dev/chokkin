@@ -1220,6 +1220,101 @@ fn names_star_imported_into_django_settings_are_not_chk006() {
     );
 }
 
+/// `pkg.name` and `from pkg import name` reach the module a package
+/// star-imports `name` from (#576).
+#[test]
+fn names_used_through_a_package_star_import_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("app/__init__.py", "from .sub.impl import *\n"),
+        ("app/sub/__init__.py", ""),
+        (
+            "app/sub/impl.py",
+            "def via_star():\n    pass\n\n\ndef via_from():\n    pass\n\n\ndef unused():\n    pass\n",
+        ),
+        (
+            "app/cli.py",
+            "import app\nfrom app import via_from\n\n\ndef main():\n    app.via_star()\n    via_from()\n",
+        ),
+    ]);
+    for name in ["via_star", "via_from"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "app.sub.impl", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "app.sub.impl", "unused"),
+        "{report:?}"
+    );
+}
+
+/// Star imports chain (`a` -> `a.b` -> `a.b.c`), and a module with `__all__`
+/// hands on only the names it lists, at every hop (#576).
+#[test]
+fn package_star_import_chain_forwards_only_names_in_all() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"a\"\nversion = \"0.0.0\"\n\n[project.scripts]\na = \"a.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("a/__init__.py", "from .b import *\n"),
+        ("a/b/__init__.py", "from .c import *\nfrom .d import *\n"),
+        (
+            "a/b/c.py",
+            "__all__ = [\"listed\"]\n\n\ndef listed():\n    pass\n\n\ndef not_listed():\n    pass\n",
+        ),
+        (
+            "a/b/d.py",
+            "from a.b.e import *\n\n__all__ = [\"in_d\"]\n\n\ndef in_d():\n    pass\n",
+        ),
+        ("a/b/e.py", "def in_e():\n    pass\n"),
+        (
+            "a/cli.py",
+            "import a\nfrom a import listed, not_listed\n\n\ndef main():\n    a.in_d()\n    a.in_e()\n    listed()\n    not_listed()\n",
+        ),
+    ]);
+    for (module, name) in [("a.b.c", "listed"), ("a.b.d", "in_d")] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    // `a.b.c.__all__` leaves `not_listed` out, and `a.b.d.__all__` stops
+    // `in_e` before it reaches `a`.
+    for (module, name) in [("a.b.c", "not_listed"), ("a.b.e", "in_e")] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+}
+
+/// The defining module reaching its own name through the package is no
+/// outside use (#576).
+#[test]
+fn own_name_used_through_a_package_star_import_stays_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("app/__init__.py", "from .impl import *\n"),
+        (
+            "app/impl.py",
+            "__all__ = [\"self_only\"]\n\n\ndef self_only():\n    import app\n\n    return app.self_only\n",
+        ),
+        ("app/cli.py", "import app.impl\n\n\ndef main():\n    pass\n"),
+    ]);
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "app.impl", "self_only"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");
