@@ -1,5 +1,6 @@
 //! Static `setup.py` manifest extraction.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::path_util::rel_to_root;
@@ -113,6 +114,10 @@ fn string_keyword(call: &SetupCall, name: &str) -> Option<String> {
 }
 
 /// Push the items as dependencies; `false` when part of them was unreadable.
+///
+/// A requirement string repeated in one evaluated list is pushed once: lists
+/// built by concatenation (`extras["dev"] = extras["all"] + extras["testing"]`)
+/// repeat the same literal, and setup.py items carry no line to fix (#726).
 fn push_items(
     root: &Path,
     result: &mut SetupPyExtraction,
@@ -125,8 +130,10 @@ fn push_items(
         _ => "install_requires".to_owned(),
     };
     let mut complete = items.complete;
+    let mut seen = HashSet::new();
     for (index, item) in items.items.iter().enumerate() {
         match item {
+            DependencyItem::Requirement(raw) if !seen.insert(raw.as_str()) => {},
             DependencyItem::Requirement(raw) => push_dependency(DependencyPush {
                 dependencies: &mut result.dependencies,
                 warnings: &mut result.warnings,
@@ -356,6 +363,39 @@ if __name__ == "__main__":
         assert_eq!(
             names_in(&result, &extra("all")),
             vec!["torch", "numpy", "mistral-common"]
+        );
+    }
+
+    /// Concatenated extras repeat the same literal; it is one declaration (#726).
+    #[test]
+    fn repeated_requirement_in_concatenated_list_is_pushed_once() {
+        let contents = r#"
+from setuptools import setup
+
+_deps = ["accelerate>=1", "datasets", "pytest"]
+deps = {d.split(">")[0]: d for d in _deps}
+
+def deps_list(*pkgs):
+    return [deps[p] for p in pkgs]
+
+extras = {}
+extras["torch"] = deps_list("accelerate")
+extras["testing"] = deps_list("pytest", "datasets") + extras["torch"]
+extras["all"] = extras["torch"] + deps_list("datasets")
+extras["dev"] = extras["all"] + extras["testing"]
+
+setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
+      install_requires=["requests", "requests", "requests>=2"])
+"#;
+        let result = extract(contents, &[]);
+        assert_eq!(
+            names_in(&result, &extra("dev")),
+            vec!["accelerate", "datasets", "pytest"]
+        );
+        // Only an identical string is merged; another specifier stays.
+        assert_eq!(
+            names_in(&result, &DependencyContext::Runtime),
+            vec!["requests", "requests"]
         );
     }
 
