@@ -11,8 +11,8 @@ Corpus regression gates (#495):
   5. every project in --expect stays within its floors (see below)
 
 Release gate (with --baseline, #325):
-  6. CHK003 findings not labelled `tp`, outside --expect projects and recall
-     sentinels, do not grow over the baseline run
+  6. CHK003 hits (not info) not labelled `tp`, outside --expect projects and
+     recall sentinels, do not grow over the baseline run
   7. with --with-strict on both runs: no finding labelled `tp` vanishes from
      the --strict output (see Downgrade vs vanish below)
 
@@ -236,12 +236,13 @@ def timed_run(
 
 
 def chk003_gate_count(out_dir: Path, expect_slugs: set[str]) -> int:
-    """CHK003 findings counted by the release gate: not `tp`, and outside the
-    --expect projects (gated by their own floors) and recall sentinels."""
+    """CHK003 findings counted by the release gate: hits (not info), not `tp`,
+    and outside the --expect projects (gated by their own floors) and recall
+    sentinels."""
     skip = expect_slugs | {r[0] for r in tsv_rows(out_dir / "summary.tsv") if r[1] == "recall"}
     return sum(
         1 for r in tsv_rows(out_dir / "findings.tsv")
-        if r[1] == "CHK003" and r[3] != "tp" and r[0] not in skip
+        if r[1] == "CHK003" and is_hit(r[7]) and r[3] != "tp" and r[0] not in skip
     )
 
 
@@ -720,7 +721,7 @@ def main() -> int:
         (out / "compare.md").write_text("\n".join(compare) + "\n", encoding="utf-8")
         base_n = chk003_gate_count(args.baseline, set(expect))
         head_n = chk003_gate_count(out, set(expect))
-        print(f"CHK003 (excluding tp): baseline={base_n} head={head_n}")
+        print(f"CHK003 hits (excluding tp): baseline={base_n} head={head_n}")
         passes["chk003"] = head_n <= base_n
         if not passes["chk003"]:
             print(f"CHK003 grew over {args.baseline}", file=sys.stderr)
