@@ -29,15 +29,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies there. Imports in airflow's `scripts/tests` (`pythonpath =
   [".", "ci/prek", "in_container"]`) and `task-sdk/tests` (`pythonpath =
   ["tests"]`) no longer report CHK010 (#775).
-- The bundled package map maps `guardrails-ai` to its `guardrails` import, so
-  declaring it no longer reports the import as CHK010 (#773).
-- The bundled package map maps `faiss-cpu` and `faiss-gpu` to `faiss`,
-  `griffe` to `griffe` (alongside `griffelib`), and `llama-index-core` and the
-  `llama-index` umbrella to the `llama_index.core` namespace. A declared
-  distribution of these no longer reports its import as CHK010, and a declared
-  `griffe` is no longer CHK002 with its import CHK003 against `griffelib`.
-  `llama_index.core` imports with neither declared are now reported as CHK003
-  (#780).
+- A `setup.py` that builds an extra by concatenating lists
+  (`extras["dev"] = extras["all"] + extras["testing"]`) no longer reports
+  CHK009 for a requirement that the concatenation puts into one list twice.
+  A requirement string is now kept once per evaluated list, since setup.py
+  items carry no line to point a fix at; a different specifier is still a
+  separate entry. transformers' six CHK009 findings (`accelerate`,
+  `datasets`, ...) and `torch` go away (#726).
+- The bundled package map maps `guardrails-ai` to `guardrails`, `faiss-cpu`
+  and `faiss-gpu` to `faiss`, `griffe` to `griffe` (alongside `griffelib`),
+  and `llama-index-core` and the `llama-index` umbrella to the
+  `llama_index.core` namespace. A declared distribution of these no longer
+  reports its import as CHK010, and a declared `griffe` is no longer CHK002
+  with its import CHK003 against `griffelib`. `llama_index.core` imports with
+  neither declared are now reported as CHK003 (#773, #780).
+- A requirements file outside the fixed root names now declares its
+  entries in the context its own path names instead of only naming the
+  packages: `requirements/tests.in` declares a test group,
+  `docs/requirements.txt` a docs group, and `requirements-optional.txt` an
+  optional extra. Each file is its own group, so it never repeats another
+  file or a `[dependency-groups]` mirror under CHK009. A file whose path
+  names no context stays names-only, and a `.txt` compiled from a sibling
+  `.in` is not a declaration (#786).
+- A `setup.py` requirement table that `setup()` looks entries up from
+  (transformers' `_deps`) now names every package in it, so `peft` and the
+  other entries no extra uses are no longer CHK010. django's
+  `tests/requirements/` files declare a test group, and `autogen` (mlflow's
+  ag2 flavor) maps to `ag2`, `autogen` and `pyautogen`. CHK005 lists each
+  declaration bucket once instead of "dev, dev" (#749).
 
 ## [0.7.4] - 2026-10-10
 
