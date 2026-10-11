@@ -327,6 +327,7 @@ fn resolve_import_site(
                 })
             })
             .or_else(|| contextless_requirement_match(&root_name, manifest))
+            .or_else(|| runtime_provided(&root_name))
             .unwrap_or(core)
     } else {
         core
@@ -493,6 +494,22 @@ fn contextless_requirement_match(
         distribution: None,
         confidence,
     })
+}
+
+/// Modules the Pyodide runtime provides itself, not an installed
+/// distribution (#722).
+const RUNTIME_PROVIDED: [&str; 4] = ["_pyodide", "js", "pyodide", "pyodide_js"];
+
+/// Last resort before CHK010: a root only a runtime provides is third-party
+/// without a distribution, so a venv or map package of that name wins.
+fn runtime_provided(root_name: &str) -> Option<RootResolution> {
+    RUNTIME_PROVIDED
+        .contains(&root_name)
+        .then_some(RootResolution {
+            origin: ModuleOrigin::ThirdParty,
+            distribution: None,
+            confidence: ResolveConfidence::Certain,
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
