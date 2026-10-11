@@ -1229,15 +1229,18 @@ fn names_used_through_a_package_star_import_are_not_chk006() {
             "pyproject.toml",
             "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
         ),
-        ("app/__init__.py", "from .sub.impl import *\n"),
+        (
+            "app/__init__.py",
+            "from .sub.impl import *\n\n\ndef shadowed():\n    pass\n",
+        ),
         ("app/sub/__init__.py", ""),
         (
             "app/sub/impl.py",
-            "def via_star():\n    pass\n\n\ndef via_from():\n    pass\n\n\ndef unused():\n    pass\n",
+            "def via_star():\n    pass\n\n\ndef via_from():\n    pass\n\n\ndef unused():\n    pass\n\n\ndef shadowed():\n    pass\n",
         ),
         (
             "app/cli.py",
-            "import app\nfrom app import via_from\n\n\ndef main():\n    app.via_star()\n    via_from()\n",
+            "import app\nfrom app import via_from\n\n\ndef main():\n    app.via_star()\n    via_from()\n    app.shadowed()\n",
         ),
     ]);
     for name in ["via_star", "via_from"] {
@@ -1246,10 +1249,13 @@ fn names_used_through_a_package_star_import_are_not_chk006() {
             "{name}: {report:?}"
         );
     }
-    assert!(
-        has_symbol_rule(&report, RuleId::Chk006, "app.sub.impl", "unused"),
-        "{report:?}"
-    );
+    // `app.shadowed` is the package's own definition, not the star-imported one.
+    for name in ["unused", "shadowed"] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, "app.sub.impl", name),
+            "{name}: {report:?}"
+        );
+    }
 }
 
 /// Star imports chain (`a` -> `a.b` -> `a.b.c`), and a module with `__all__`

@@ -57,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `from pkg import name` count as uses of `pkg.sub.impl.name`. Chained
   star imports are followed, and at each hop a module with `__all__` hands
   on only the names it lists, one without hands on the names not starting
-  with `_`. Whether the use is external is judged by the importing module,
+  with `_`; a module that defines the name itself shadows the star-imported
+  one. Whether the use is external is judged by the importing module,
   so a module reaching its own name through the package still counts as
   unused. This clears 33 of litellm's app mode findings, such as
   `litellm.amoderation` and `GCSLoggingConfig` (#576).

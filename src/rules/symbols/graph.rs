@@ -90,7 +90,7 @@ impl ReferenceIndex {
     pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
         let mut index = Self::default();
         let known_modules: HashSet<&str> = module_names.values().map(String::as_str).collect();
-        let stars = StarImports::build(modules, module_names);
+        let mut stars = StarImports::build(modules, module_names);
 
         for module in modules {
             let importer = module_names
@@ -112,13 +112,13 @@ impl ReferenceIndex {
                         };
                         // `from . import x` in the package's own `__init__` defines a re-export, not a use.
                         if import.name.is_some() || package != importer {
-                            index.record(importer, SymbolId::new(package, name), &stars);
+                            index.record(importer, SymbolId::new(package, name), &mut stars);
                         }
                         let submodule = format!("{package}.{name}");
                         if known_modules.contains(submodule.as_str()) {
                             let binding = import.alias.as_deref().unwrap_or(name);
                             for target in accesses(module, &submodule, &[binding]) {
-                                index.record(importer, target, &stars);
+                                index.record(importer, target, &mut stars);
                             }
                         }
                     },
@@ -126,7 +126,7 @@ impl ReferenceIndex {
                         let binding = import.alias.as_deref().unwrap_or(&import.module);
                         let receivers = [import.module.as_str(), binding];
                         for target in accesses(module, &import.module, &receivers) {
-                            index.record(importer, target, &stars);
+                            index.record(importer, target, &mut stars);
                         }
                     },
                 }
@@ -138,8 +138,8 @@ impl ReferenceIndex {
 
     /// `pkg.name` also uses `name` in each module `pkg` star-imports it from
     /// (#576); the importer, not `pkg`, decides whether that use is external.
-    fn record(&mut self, importer: &str, target: SymbolId, stars: &StarImports<'_>) {
-        for source in stars.sources(&target.module, &target.name) {
+    fn record(&mut self, importer: &str, target: SymbolId, stars: &mut StarImports<'_>) {
+        for &source in stars.sources(&target) {
             self.mark(importer, SymbolId::new(source, target.name.clone()));
         }
         self.mark(importer, target);
@@ -177,54 +177,94 @@ fn accesses<'m>(
         .map(move |access| SymbolId::new(target_module, access.name.clone()))
 }
 
-/// `from m import *` edges between named modules, with each module's `__all__`.
+/// `from m import *` edges between named modules.
+#[derive(Default)]
 struct StarImports<'a> {
-    targets: HashMap<&'a str, Vec<&'a str>>,
-    exports: HashMap<&'a str, &'a [String]>,
+    importers: HashMap<&'a str, StarImporter<'a>>,
+    /// `__all__` of the modules that declare one.
+    exports: HashMap<&'a str, HashSet<&'a str>>,
+    cache: HashMap<SymbolId, Vec<&'a str>>,
+}
+
+#[derive(Default)]
+struct StarImporter<'a> {
+    targets: Vec<&'a str>,
+    /// Names the module defines itself, shadowing star-imported ones.
+    defines: HashSet<&'a str>,
 }
 
 impl<'a> StarImports<'a> {
     fn build(modules: &[&'a ParsedModule], module_names: &'a HashMap<&str, String>) -> Self {
-        let mut targets: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut exports = HashMap::new();
+        let mut stars = Self::default();
         for module in modules {
             let Some(name) = module_names.get(module.path.as_str()) else {
                 continue;
             };
-            let stars = star_imports(module).filter(|target| target != name);
-            targets.entry(name.as_str()).or_default().extend(stars);
-            exports.insert(name.as_str(), module.exports.as_slice());
+            let targets: Vec<_> = star_imports(module)
+                .filter(|target| target != name)
+                .collect();
+            if !targets.is_empty() {
+                let importer = stars.importers.entry(name.as_str()).or_default();
+                importer.targets.extend(targets);
+                importer.defines.extend(
+                    module
+                        .symbols
+                        .iter()
+                        .filter(|symbol| !symbol.in_type_checking)
+                        .map(|symbol| symbol.name.as_str()),
+                );
+            }
+            if !module.exports.is_empty() {
+                stars.exports.insert(
+                    name.as_str(),
+                    module.exports.iter().map(String::as_str).collect(),
+                );
+            }
         }
-        Self { targets, exports }
+        stars
+    }
+
+    /// Cached per symbol: a module that imports a package in many function
+    /// bodies records each `pkg.name` access once per import.
+    fn sources(&mut self, target: &SymbolId) -> &[&'a str] {
+        if !self.importers.contains_key(target.module.as_str()) {
+            return &[];
+        }
+        if !self.cache.contains_key(target) {
+            let sources = self.walk(&target.module, &target.name);
+            self.cache.insert(target.clone(), sources);
+        }
+        &self.cache[target]
     }
 
     /// Modules `module` reaches `name` in through chained star imports. Each
     /// hop hands on only the names in its `__all__`, or without one, the
     /// names not starting with `_`.
-    fn sources(&self, module: &str, name: &str) -> Vec<&'a str> {
+    fn walk(&self, module: &str, name: &str) -> Vec<&'a str> {
         let mut sources = Vec::new();
-        let mut queue: Vec<&str> = self
-            .targets
-            .get(module)
-            .into_iter()
-            .flatten()
-            .copied()
-            .collect();
+        let mut queue = vec![module];
         let mut seen = HashSet::new();
-        while let Some(target) = queue.pop() {
-            if !seen.insert(target) || !self.hands_on(target, name) {
+        while let Some(current) = queue.pop() {
+            let Some(importer) = self.importers.get(current) else {
+                continue;
+            };
+            if importer.defines.contains(name) {
                 continue;
             }
-            sources.push(target);
-            queue.extend(self.targets.get(target).into_iter().flatten().copied());
+            for &target in &importer.targets {
+                if seen.insert(target) && self.hands_on(target, name) {
+                    sources.push(target);
+                    queue.push(target);
+                }
+            }
         }
         sources
     }
 
     fn hands_on(&self, module: &str, name: &str) -> bool {
         match self.exports.get(module) {
-            Some(all) if !all.is_empty() => all.iter().any(|export| export == name),
-            _ => !name.starts_with('_'),
+            Some(all) => all.contains(name),
+            None => !name.starts_with('_'),
         }
     }
 }

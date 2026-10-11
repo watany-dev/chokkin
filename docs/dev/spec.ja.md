@@ -851,7 +851,8 @@ symbol usage analysis が `module.name` を外部参照として扱う。`from p
 参照先の module が `from m import *` で名前を取り込んでいる場合、その参照は `m` の同名 symbol にも届くとみなす (#576)。
 `pkg/__init__.py` が `from .sub.impl import *` するとき、`import pkg; pkg.name` と `from pkg import name` は
 `pkg.sub.impl.name` の参照になる。star 先がさらに star import していれば連鎖を辿り、各段で `__all__` のある module は
-列挙した名前だけ、無い module は `_` で始まらない名前だけを渡す (Python の `import *` と同じ)。外部参照かどうかは
+列挙した名前だけ、無い module は `_` で始まらない名前だけを渡す (Python の `import *` と同じ)。star import した module が
+同名を自身で定義していれば、そちらが優先され star 先には届かない。外部参照かどうかは
 元の importer で判定するので、定義元 module 自身が package 経由で自分の名前を読んでも外部参照にはならない。
 star import 文そのもの (`pkg/__init__.py` の `from .sub.impl import *`) は従来どおり参照にならない。
 
