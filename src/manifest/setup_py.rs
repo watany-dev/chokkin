@@ -7,7 +7,7 @@ use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
 use super::literals::parse_module;
-use super::requirements::extract_requirements_path;
+use super::requirements::{extract_requirements_path, requirements_line_distribution};
 use super::setup_py_eval::{
     DependencyItem, SetupCall, Value, dependency_items, evaluate_setup_call,
 };
@@ -35,6 +35,9 @@ pub(super) struct SetupPyExtraction {
     pub files_read: Vec<String>,
     /// Root-relative requirements file candidates probed but absent.
     pub files_missing: Vec<String>,
+    /// Distributions a requirement table lists (transformers `_deps`): a
+    /// version pin table, not a declaration, so they only name packages.
+    pub table_names: Vec<String>,
 }
 
 /// Extract manifest data from `setup.py` without executing Python.
@@ -63,6 +66,11 @@ pub(super) fn extract_setup_py(
     result
         .files_missing
         .extend(call.probed_missing.iter().cloned());
+    result.table_names = call
+        .table_requirements
+        .iter()
+        .filter_map(|raw| requirements_line_distribution(raw))
+        .collect();
 
     result.metadata.name = string_keyword(&call, "name");
     result.dynamic_name = result.metadata.name.is_none() && call.keyword("name").is_some();
@@ -336,8 +344,9 @@ setuptools.setup(install_requires=install_requires(), extras_require=extras_requ
     fn computed_requirement_table_is_looked_up_by_name() {
         let contents = r#"
 import re
-_deps = ["numpy>=1.17", "tokenizers>=0.22,<=0.23", "torch>=2.2", "mistral-common[image]>=1.8"]
+_deps = ["numpy>=1.17", "tokenizers>=0.22,<=0.23", "torch>=2.2", "mistral-common[image]>=1.8", "peft>=0.20"]
 deps = {b: a for a, b in (re.findall(r"^(([^!=<>~ ]+)(?:[!=<>~ ].*)?$)", x)[0] for x in _deps)}
+docs_only = ["sphinx"]
 
 def deps_list(*pkgs):
     return [deps[pkg] for pkg in pkgs]
@@ -349,6 +358,7 @@ if PYTHON_MINOR_VERSION < 14:
     extras["torch"] += deps_list("numpy")
 extras["all"] = extras["torch"] + extras["mistral-common"]
 install_requires = [deps["numpy"], deps["tokenizers"]]
+_deps = []
 
 if __name__ == "__main__":
     setup(extras_require=extras, install_requires=list(install_requires))
@@ -363,6 +373,18 @@ if __name__ == "__main__":
         assert_eq!(
             names_in(&result, &extra("all")),
             vec!["torch", "numpy", "mistral-common"]
+        );
+        // The whole table names packages, `peft` included, as it was when
+        // looked up; a list never looked up is not a table.
+        assert_eq!(
+            result.table_names,
+            ["mistral-common", "numpy", "peft", "tokenizers", "torch"]
+        );
+        assert!(
+            !result
+                .dependencies
+                .iter()
+                .any(|dep| dep.name == "peft" || dep.name == "sphinx")
         );
     }
 

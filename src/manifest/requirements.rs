@@ -62,7 +62,8 @@ pub(super) fn extract_requirements_file(
 
 /// Root `*requirements*.txt` and `requirements*.in`, and `requirements/*.txt`
 /// / `requirements/*.in` (werkzeug `requirements/tests.in`, urllib3
-/// `emscripten-requirements.txt`), and the same names under `docs/` and
+/// `emscripten-requirements.txt`) and `tests/requirements/` (django
+/// `tests/requirements/py3.txt`, #749), and the same names under `docs/` and
 /// `doc/` (pluggy `docs/requirements.txt`, #723). The fixed root names match
 /// too. Every file adds its names; the rest declare dependencies only when
 /// their path names a context (#679, #786).
@@ -75,9 +76,12 @@ pub(crate) fn extra_requirements_candidates(root: &Path) -> Vec<PathBuf> {
     for dir in ["docs", "doc"] {
         paths.extend(files_matching(&root.join(dir), requirements_name));
     }
-    paths.extend(files_matching(&root.join("requirements"), |_, ext| {
-        ext == "txt" || ext == "in"
-    }));
+    for dir in [
+        root.join("requirements"),
+        root.join("tests").join("requirements"),
+    ] {
+        paths.extend(files_matching(&dir, |_, ext| ext == "txt" || ext == "in"));
+    }
     paths
 }
 

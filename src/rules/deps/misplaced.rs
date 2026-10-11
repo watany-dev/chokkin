@@ -139,10 +139,12 @@ pub(super) fn detect_misplaced_dependencies(
         }
         reported.insert(report_key, candidates.len());
 
-        let contexts: Vec<String> = declarations
+        let mut contexts: Vec<String> = declarations
             .iter()
             .map(|dep| declaration_bucket(&dep.context, &config.dependencies).label())
             .collect();
+        contexts.sort();
+        contexts.dedup();
 
         candidates.push((
             IssueCandidate {

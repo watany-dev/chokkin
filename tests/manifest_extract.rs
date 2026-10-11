@@ -816,8 +816,11 @@ fn group(file: &str) -> String {
 fn extra_requirements_files_declare_only_in_the_context_their_path_names() {
     let temp = tempfile::tempdir().expect("temp dir");
     std::fs::create_dir(temp.path().join("requirements")).expect("create requirements dir");
+    std::fs::create_dir_all(temp.path().join("tests/requirements"))
+        .expect("create tests requirements dir");
     for (name, contents) in [
         ("requirements.txt", "requests\n"),
+        ("tests/requirements/py3.txt", "geoip2\n"),
         ("requirements-github-actions.txt", "pydantic_settings\n"),
         ("requirements-lint.in", "ruff\n"),
         // Including a file read on its own does not declare it twice.
@@ -850,6 +853,7 @@ fn extra_requirements_files_declare_only_in_the_context_their_path_names() {
         dependency_contexts(&first),
         [
             ("ephemeral-port-reserve", group("requirements/tests.in")),
+            ("geoip2", group("tests/requirements/py3.txt")),
             (
                 "pydantic-settings",
                 group("requirements-github-actions.txt")
@@ -873,6 +877,7 @@ fn extra_requirements_files_declare_only_in_the_context_their_path_names() {
             .collect::<Vec<_>>(),
         [
             "ephemeral-port-reserve",
+            "geoip2",
             "idna",
             "pydantic-settings",
             "pyyaml",

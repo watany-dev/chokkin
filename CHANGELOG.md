@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file or a `[dependency-groups]` mirror under CHK009. A file whose path
   names no context stays names-only, and a `.txt` compiled from a sibling
   `.in` is not a declaration (#786).
+- A `setup.py` requirement table that `setup()` looks entries up from
+  (transformers' `_deps`) now names every package in it, so `peft` and the
+  other entries no extra uses are no longer CHK010. django's
+  `tests/requirements/` files declare a test group, and `autogen` (mlflow's
+  ag2 flavor) maps to `ag2`, `autogen` and `pyautogen`. CHK005 lists each
+  declaration bucket once instead of "dev, dev" (#749).
 
 ## [0.7.4] - 2026-10-10
 

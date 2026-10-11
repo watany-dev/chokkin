@@ -4,7 +4,7 @@
 //! functions, and filter-free comprehensions are evaluated. Everything else is
 //! [`Value::Unknown`], which callers treat as "could not be read" (#491).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
 use ruff_python_ast::{Comprehension, Expr, ExprCall, Operator, Stmt, StmtFunctionDef, Suite};
@@ -70,6 +70,9 @@ pub(super) struct SetupCall {
     pub unpacked: bool,
     /// Root-relative requirements file candidates probed but absent.
     pub probed_missing: Vec<String>,
+    /// Every requirement string in the lists `deps["name"]` looked up
+    /// (transformers `_deps`), whether `setup()` uses them or not.
+    pub table_requirements: BTreeSet<String>,
 }
 
 impl SetupCall {
@@ -90,6 +93,7 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
         depth: 0,
         steps: 0,
         probed_missing: Vec::new(),
+        table_requirements: BTreeSet::new(),
     };
     let call = evaluator.exec_block(stmts)?;
     let unpacked = call.arguments.keywords.iter().any(|kw| kw.arg.is_none())
@@ -103,6 +107,7 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
         keywords,
         unpacked,
         probed_missing: evaluator.probed_missing,
+        table_requirements: evaluator.table_requirements,
     })
 }
 
@@ -149,6 +154,9 @@ struct Evaluator<'a> {
     depth: usize,
     steps: usize,
     probed_missing: Vec<String>,
+    /// Items of the lists `requirement_table_lookup` found an entry in, read
+    /// at lookup time: a later rebinding does not change what was looked up.
+    table_requirements: BTreeSet<String>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -699,7 +707,7 @@ impl<'a> Evaluator<'a> {
     /// `deps["tokenizers"]` on a table built at install time (transformers):
     /// find a known requirement string whose name matches the key. The bare
     /// key itself (e.g. a `deps_list("torch")` argument) loses to a fuller one.
-    fn requirement_table_lookup(&self, key: &str) -> Value {
+    fn requirement_table_lookup(&mut self, key: &str) -> Value {
         let wanted = normalize_distribution_name(key);
         let mut found: Vec<&String> = Vec::new();
         for value in self.env.values() {
@@ -718,10 +726,22 @@ impl<'a> Evaluator<'a> {
         if found.len() > 1 {
             found.retain(|raw| raw.as_str() != key);
         }
-        match found.as_slice() {
-            [raw] => Value::Str((*raw).clone()),
-            _ => Value::Unknown,
+        let [raw] = found.as_slice() else {
+            return Value::Unknown;
+        };
+        let raw = Value::Str((*raw).clone());
+        for value in self.env.values() {
+            if let Value::List(items) = value
+                && items.contains(&raw)
+            {
+                self.table_requirements
+                    .extend(items.iter().filter_map(|item| match item {
+                        Value::Str(text) => Some(text.clone()),
+                        _ => None,
+                    }));
+            }
         }
+        raw
     }
 }
 

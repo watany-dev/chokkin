@@ -251,7 +251,8 @@ pub struct ManifestSources {
     /// but did not exist; the manifest cache rechecks them on a hit.
     pub requirements_missing: Vec<String>,
     /// Normalized names that requirements files outside the fixed root names
-    /// declare (`requirements/tests.in`, `emscripten-requirements.txt`).
+    /// declare (`requirements/tests.in`, `emscripten-requirements.txt`), and
+    /// that a setup.py requirement table lists (transformers `_deps`, #749).
     /// Their context is unknown, so they only resolve imports (CHK010) and
     /// provide binaries (CHK008), and never feed CHK001–CHK005 (#679, #680).
     #[serde(default)]
