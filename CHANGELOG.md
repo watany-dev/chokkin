@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Names in a quoted type outside an annotation now count as read by their
+  module, like quoted annotations (#545): the type of `cast("T", x)`, the
+  constraints, `bound=` and `default=` of `TypeVar("M", bound="Foo")`, and
+  the value of `X: TypeAlias = "list[Foo]"` or `type X = "Foo"`. A class or
+  alias referenced only there is no longer CHK006 (airflow, langchain).
+  Strings passed to other calls, such as sgqlc's generated
+  `Field("UserConnection")`, still do not count; list generated code under
+  `vendored` or `[tool.chokkin.ignore]` (#577).
 - `python_requires` in `setup.cfg` (`[options]`) and `setup.py` (a
   `setup()` argument that reads as a string without running the file) now
   counts as `requires-python` when `pyproject.toml` declares none, with
