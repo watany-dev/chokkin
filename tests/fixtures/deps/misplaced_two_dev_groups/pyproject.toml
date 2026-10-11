@@ -1,0 +1,8 @@
+[project]
+name = "misplaced-two-dev-groups"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["pytest"]
+test = ["pytest"]

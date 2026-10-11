@@ -828,6 +828,24 @@
       ]
     },
     {
+      "distribution": "ag2",
+      "imports": [
+        "autogen"
+      ]
+    },
+    {
+      "distribution": "autogen",
+      "imports": [
+        "autogen"
+      ]
+    },
+    {
+      "distribution": "pyautogen",
+      "imports": [
+        "autogen"
+      ]
+    },
+    {
       "distribution": "paddlepaddle",
       "imports": [
         "paddle"

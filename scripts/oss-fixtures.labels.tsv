@@ -181,37 +181,12 @@ click	CHK003	tests/test_termui.py:pytest	deferred	dev-context	deferred: verify t
 click	CHK003	tests/test_testing.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 click	CHK003	tests/test_types.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 click	CHK003	tests/test_utils.py:pytest	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.common.by	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.ui	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admin/tests.py:selenium.webdriver.support.wait	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/contrib/admindocs/utils.py:docutils.core	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/contrib/admindocs/utils.py:docutils.nodes	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/contrib/admindocs/utils.py:docutils.parsers.rst.roles	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/contrib/gis/db/backends/postgis/adapter.py:psycopg2.extensions	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/contrib/gis/shortcuts.py:numpy	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/contrib/postgres/signals.py:psycopg.types	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/contrib/postgres/signals.py:psycopg2	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/contrib/postgres/signals.py:psycopg2.extras	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/core/files/images.py:PIL	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/core/management/color.py:colorama	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/core/validators.py:PIL	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/db/backends/base/base.py:_thread	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/db/backends/postgresql/operations.py:psycopg.types	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.postgres	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.datetime	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.json	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.range	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg.types.string	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg2	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	django/db/backends/postgresql/psycopg_any.py:psycopg2.extras	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/db/models/fields/files.py:PIL	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
-django	CHK003	django/forms/fields.py:PIL	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/template/backends/jinja2.py:jinja2	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
-django	CHK003	django/test/selenium.py:selenium	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/test/selenium.py:selenium.webdriver.common.desired_capabilities	deferred	dev-context	deferred: verify test/docs/typing dependency policy
-django	CHK003	django/test/utils.py:jinja2	info-expected	optional-import	auto: optional try-import, expected at info severity (#504)
 django	CHK003	django/utils/autoreload.py:__main__	deferred	transitive-policy	deferred: no lockfile — declaration/transitive boundary needs validation
 django	CHK003	tests/admin_docs/test_utils.py:docutils	deferred	dev-context	deferred: verify test/docs/typing dependency policy
 django	CHK003	tests/admin_views/test_autocomplete_view.py:selenium.common	deferred	dev-context	deferred: verify test/docs/typing dependency policy
@@ -1180,6 +1155,17 @@ mlflow	CHK005	jinja2	info-expected	optional-import	optional try-import of jinja2
 mlflow	CHK005	httpx	tp	-	agent server imports httpx at top level; httpx is only in requirements/test-requirements.txt (CHK004 before #786)
 mlflow	CHK005	zstandard	info-expected	optional-import	optional try-import of zstandard in the gateway API; zstandard is only in requirements/test-requirements.txt; guarded, so info (CHK004 before #786)
 werkzeug	CHK005	cryptography	fp	optional-import	ad-hoc SSL only: generate_adhoc_ssl_pair try-imports cryptography and raises a hint when absent; cryptography is only in requirements/tests.in
+django	CHK005	pillow	fp	optional-import	deferred PIL import in get_image_dimensions; Pillow is the user-installed ImageField backend, only in tests/requirements/py3.txt (CHK003 info before #749)
+django	CHK005	psycopg	fp	optional-import	postgresql backend imports psycopg under `if is_psycopg3:`; the DB driver is user-installed, only in tests/requirements/py3.txt and postgres.txt (CHK003 info before #749)
+django	CHK005	selenium	fp	dev-context	django/contrib/admin/tests.py is AdminSeleniumTestCase test support, run only by Django's selenium tests; selenium is only in tests/requirements/py3.txt (#749)
+django	CHK005	colorama	info-expected	optional-import	guarded optional import of colorama; only in tests/requirements/, so info (CHK003 info before #749)
+django	CHK005	docutils	info-expected	optional-import	guarded optional import of docutils; only in tests/requirements/, so info (CHK003 info before #749)
+django	CHK005	geoip2	info-expected	optional-import	guarded optional import of geoip2; only in tests/requirements/, so info (CHK003 info before #749)
+django	CHK005	jinja2	info-expected	optional-import	unguarded top-level import in django/template/backends/jinja2.py, a backend loaded only when TEMPLATES names it; nothing imports it eagerly, so info; only in tests/requirements/ (CHK003 info before #749)
+django	CHK005	numpy	info-expected	optional-import	guarded optional import of numpy; only in tests/requirements/, so info (CHK003 info before #749)
+django	CHK005	oracledb	info-expected	optional-import	guarded optional import of oracledb; only in tests/requirements/, so info (CHK003 info before #749)
+django	CHK005	pywatchman	info-expected	optional-import	guarded optional import of pywatchman; only in tests/requirements/, so info (CHK003 info before #749)
+django	CHK005	tblib	info-expected	optional-import	guarded optional import of tblib; only in tests/requirements/, so info (CHK003 info before #749)
 mlflow	CHK009	fastapi	info-expected	intentional-duplicate	pyproject auto-generated by dev/pyproject.py; gateway/genai extras mirror mlflow-skinny extras for install-compat, same spec as runtime
 mlflow	CHK009	requests	info-expected	intentional-duplicate	lint group is synced standalone in CI (`uv sync --only-group lint`), so it must re-list requests
 mlflow	CHK009	pyarrow	info-expected	intentional-duplicate	auto-generated pyproject; extras extra mirrors mlflow-skinny where pyarrow is optional; same package harmless
@@ -1826,12 +1812,10 @@ airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:f
 django	CHK010	tests/project_template/test_settings.py:test_settings	tp	-	template project settings module resolved only at runtime
 flask	CHK010	tests/test_instance_config.py:site_app	tp	-	package created at runtime under tmp_path/site-packages by the test
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_ibm	tp	-	optional partner package imported lazily by init_chat_model; langchain-ibm not declared by langchain
-mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
 requests	CHK010	tests/conftest.py:BaseHTTPServer	info-expected	stdlib	Python 2 stdlib fallback in try/except ImportError; python_requires>=3.8 so dead code; info since #764 (setup.py python_requires)
 sqlalchemy	CHK010	test/conftest.py:sqla_pytestplugin	fp	first-party-missed	bootstrap.py registers lib/sqlalchemy/testing/plugin/pytestplugin.py in sys.modules under this name
 virtualenv	CHK010	tests/unit/create/via_global_ref/test_race_condition.py:_virtualenv_test	tp	-	module written to a temp dir by the test at runtime
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_10k.py:langchain_text_splitters	tp	-	example DAG import; common.ai provider declares langchain only, langchain-text-splitters is a separate dist
-django	CHK010	tests/gis_tests/test_geoip2.py:geoip2	fp	declared-third-party	geoip2 listed in tests/requirements/py3.txt
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_upstage	tp	-	optional partner package imported lazily by init_chat_model; langchain-upstage not declared by langchain
 transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:run_glue	fp	first-party-missed	examples/pytorch/text-classification added to sys.path by the test
 flask	CHK010	tests/test_instance_config.py:site_package	tp	-	package created at runtime under tmp_path/site-packages by the test
@@ -1852,14 +1836,11 @@ mlflow	CHK010	mlflow/smolagents/autolog.py:smolagents	tp	-	optional integration;
 transformers	CHK010	src/transformers/models/fastspeech2_conformer/tokenization_fastspeech2_conformer.py:g2p_en	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	task-sdk/tests/task_sdk/io/test_path.py:upath	tp	-	task-sdk pyproject declares no universal-pathlib (only airflow-core does)
 llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-txtai/llama_index/vector_stores/txtai/base.py:txtai	tp	-	optional import; txtai not declared by the member pyproject
-transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
 transformers	CHK010	tests/quantization/quanto_integration/test_quanto.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
 mlflow	CHK010	mlflow/genai/scorers/phoenix/models.py:phoenix	tp	-	optional integration; phoenix not declared in pyproject or requirements/*.txt
-transformers	CHK010	src/transformers/distributed/fsdp.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
 mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
 transformers	CHK010	src/transformers/utils/generic.py:mlx	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain	tp	-	optional langchain bridge; llama-index-core declares no langchain
-mlflow	CHK010	mlflow/ag2/ag2_logger.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
 transformers	CHK010	src/transformers/integrations/integration_utils.py:dvclive	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 mlflow	CHK010	mlflow/utils/databricks_utils.py:dbruntime	tp	-	Databricks runtime-only module; never installable
 transformers	CHK010	src/transformers/modeling_utils.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
@@ -1922,7 +1903,6 @@ mlflow	CHK010	mlflow/openai/_agent_tracer.py:agents	tp	-	openai-agents not decla
 mlflow	CHK010	mlflow/crewai/autolog.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/quantization/ggml/test_gguf_integration.py:gguf	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-weather/llama_index/tools/weather/base.py:pyowm	tp	-	tools-weather declares no pyowm
-mlflow	CHK010	mlflow/ag2/__init__.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
 airflow	CHK010	airflow-core/tests/unit/core/test_settings.py:airflow_local_settings	tp	-	settings module written to a temp dir by the test at runtime
 mlflow	CHK010	tests/otel/test_otel_autolog.py:langfuse	tp	-	optional integration; langfuse not declared in pyproject or requirements/*.txt
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_tool_agent.py:langchain_community	tp	-	example DAG import; common.ai provider declares langchain only, langchain-community is a separate dist
@@ -1931,11 +1911,13 @@ mlflow	CHK010	tests/autogen/test_autogen_autolog.py:autogen_core	tp	-	autogen-co
 transformers	CHK010	tests/quantization/aqlm_integration/test_aqlm.py:aqlm	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 mlflow	CHK010	tests/langchain/test_langchain_databricks_dependency_extraction.py:databricks	tp	-	imports databricks.vector_search; databricks-vectorsearch is not declared
 transformers	CHK010	src/transformers/modeling_utils.py:hqq	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
-transformers	CHK010	tests/trainer/test_trainer.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/docs/base.py:olefile	tp	-	readers-file declares no olefile (readers-hwp does)
 llama_index	CHK003	llama-index-core:llama-index-core/llama_index/core/schema.py:haystack	tp	-	llama-index-core declares no haystack-ai
 mlflow	CHK003	mlflow/paddle/__init__.py:paddle	tp	-	flavor import of user-installed paddlepaddle: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661)
 mlflow	CHK003	mlflow/paddle/_paddle_autolog.py:paddle	tp	-	flavor import of user-installed paddlepaddle: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/ag2/__init__.py:autogen	tp	-	flavor import of user-installed ag2: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661, CHK010 before the ag2 map entry in #749)
+mlflow	CHK003	mlflow/ag2/ag2_logger.py:autogen	tp	-	flavor import of user-installed ag2: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661, CHK010 before the ag2 map entry in #749)
+mlflow	CHK003	mlflow/ag2/ag2_logger.py:autogen.logger.base_logger	tp	-	flavor import of user-installed ag2: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661, CHK010 before the ag2 map entry in #749)
 mlflow	CHK003	mlflow/genai/scorers/guardrails/__init__.py:guardrails	tp	-	flavor import of user-installed guardrails-ai: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
 mlflow	CHK003	mlflow/genai/scorers/guardrails/registry.py:guardrails	tp	-	flavor import of user-installed guardrails-ai: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
 mlflow	CHK003	mlflow/genai/scorers/guardrails/utils.py:guardrails	info-expected	optional-import	try: import guardrails except ImportError: raise MlflowException (guardrails-ai is optional)

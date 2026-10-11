@@ -125,6 +125,12 @@ pub fn extract_manifest(
             dependencies.extend(extracted.dependencies);
             sources.setup_py = true;
         }
+        sources.extra_requirements.extend(
+            extracted
+                .table_names
+                .iter()
+                .map(|name| normalize_distribution_name(name)),
+        );
         setup_py_files_read.clone_from(&extracted.files_read);
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
@@ -285,7 +291,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v13".to_owned(),
+            unit_version: "manifest-extract-v14".to_owned(),
         },
         inputs,
     })

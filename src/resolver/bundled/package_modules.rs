@@ -5,6 +5,7 @@
 pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("a2a-sdk", &["a2a"]),
     ("ag-ui-protocol", &["ag_ui"]),
+    ("ag2", &["autogen"]),
     ("aiofiles", &["aiofiles"]),
     ("aiohttp", &["aiohttp"]),
     ("aiosqlite", &["aiosqlite"]),
@@ -25,6 +26,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("async-timeout", &["async_timeout"]),
     ("atlassian-python-api", &["atlassian"]),
     ("attrs", &["attr", "attrs"]),
+    ("autogen", &["autogen"]),
     ("autopep8", &["autopep8"]),
     ("azure-ai-agents", &["azure.ai.agents"]),
     ("azure-ai-inference", &["azure.ai.inference"]),
@@ -298,6 +300,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("pyarrow", &["pyarrow"]),
     ("pyasn1", &["pyasn1"]),
     ("pyasn1-modules", &["pyasn1_modules"]),
+    ("pyautogen", &["autogen"]),
     ("pycodestyle", &["pycodestyle"]),
     ("pycparser", &["pycparser"]),
     ("pydantic", &["pydantic"]),

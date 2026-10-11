@@ -383,6 +383,20 @@ fn misplaced_pytest_emits_chk005() {
     assert_eq!(pytest.severity, Severity::Warning);
 }
 
+/// Two dev groups name one bucket once (django `tests/requirements/py3.txt`
+/// and `postgres.txt`, #749).
+#[test]
+fn misplaced_context_labels_are_deduplicated() {
+    let report = reconcile_fixture("misplaced_two_dev_groups");
+    let pytest =
+        candidate_for_distribution(&report, RuleId::Chk005, "pytest").expect("pytest misplaced");
+    assert!(
+        pytest.message.ends_with("only declared in dev"),
+        "{}",
+        pytest.message
+    );
+}
+
 /// #730: `if markdown is not None and pygments is not None:` after
 /// `except ImportError: markdown = None` only runs with both installed;
 /// `if yaml is None:` runs without it.
