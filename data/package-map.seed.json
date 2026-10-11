@@ -850,6 +850,12 @@
       "imports": [
         "haystack"
       ]
+    },
+    {
+      "distribution": "guardrails-ai",
+      "imports": [
+        "guardrails"
+      ]
     }
   ],
   "auto_packages": [

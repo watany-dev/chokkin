@@ -190,7 +190,8 @@ make oss-metrics
 (`workflow_dispatch`, or a push that touches the corpus / labels / scripts),
 prints the table below and the unclassified HEAD findings to the job summary,
 and fails unless the §17 Phase 4 gate passes and the CHK003 total, without
-`tp`-labelled findings and recall fixtures, does not grow over `573ff37`.
+info-severity findings (#773), `tp`-labelled findings and recall fixtures,
+does not grow over `573ff37`.
 
 Measured on GitHub Actions run
 [36306495456](https://github.com/watany-dev/chokkin/actions/runs/36306495456)
