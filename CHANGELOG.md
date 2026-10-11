@@ -27,10 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The bundled package map maps `guardrails-ai` to its `guardrails` import, so
   declaring it no longer reports the import as CHK010 (#773).
 - The bundled package map maps `faiss-cpu` and `faiss-gpu` to `faiss`,
-  `griffe` to `griffe` (alongside `griffelib`), and `llama-index-core` to the
-  `llama_index.core` namespace. A declared distribution of these no longer
-  reports its import as CHK010, and a declared `griffe` is no longer CHK002
-  with its import CHK003 against `griffelib` (#780).
+  `griffe` to `griffe` (alongside `griffelib`), and `llama-index-core` and the
+  `llama-index` umbrella to the `llama_index.core` namespace. A declared
+  distribution of these no longer reports its import as CHK010, and a declared
+  `griffe` is no longer CHK002 with its import CHK003 against `griffelib`.
+  `llama_index.core` imports with neither declared are now reported as CHK003
+  (#780).
 
 ## [0.7.4] - 2026-10-10
 

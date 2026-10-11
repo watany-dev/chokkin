@@ -193,6 +193,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("kubernetes", &["kubernetes"]),
     ("lazy-object-proxy", &["lazy_object_proxy"]),
     ("limits", &["limits"]),
+    ("llama-index", &["llama_index.core"]),
     ("llama-index-core", &["llama_index.core"]),
     ("llama-index-workflows", &["workflows"]),
     ("loguru", &["loguru"]),

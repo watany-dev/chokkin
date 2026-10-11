@@ -264,9 +264,15 @@ mod tests {
             first("azure.data.tables").as_deref(),
             Some("azure-data-tables")
         );
+        // The `llama-index` umbrella installs llama-index-core too (#780).
         assert_eq!(
-            first("llama_index.core.schema").as_deref(),
-            Some("llama-index-core")
+            import_map
+                .namespace_candidates("llama_index.core.schema")
+                .map(|(_, candidates, _)| candidates),
+            Some(vec![
+                "llama-index".to_owned(),
+                "llama-index-core".to_owned()
+            ])
         );
         assert_eq!(first("llama_index.embeddings.cohere"), None);
         assert_eq!(first("azure.cognitiveservices.speech"), None);
