@@ -1350,7 +1350,6 @@ mlflow	CHK004	mlflow/models/model.py:langchain_core.runnables.base	tp	-	root pyp
 airflow	CHK004	devel-common:devel-common/src/tests_common/test_utils/providers.py:yaml	tp	-	devel-common pyproject declares no pyyaml; via apache-airflow-core, sphinx-autoapi
 fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/auth/jwt_issuer.py:cryptography.hazmat.primitives.kdf.pbkdf2	tp	-	fastmcp_slim pyproject declares no cryptography; via authlib, azure-identity
 langchain	CHK004	openai:libs/partners/openai/langchain_openai/chat_models/azure.py:typing_extensions	tp	-	openai pyproject declares no typing-extensions; via aiohttp, azure-identity
-llama_index	CHK004	llama-index-readers-firestore:llama-index-integrations/readers/llama-index-readers-firestore/llama_index/readers/firestore/base.py:google.cloud	fp	map-gap	map-gap: google.cloud.firestore is provided by declared google-cloud-firestore; bundled map lacks it and falls back to google-api-core
 mlflow	CHK004	mlflow/utils/file_utils.py:tqdm.auto	tp	-	optional try-import; tqdm appears only in requirements/test-requirements.txt; extra requirements never satisfy CHK001-005
 airflow	CHK004	google:providers/google/src/airflow/providers/google/cloud/hooks/bigquery.py:flask_appbuilder.fieldwidgets	tp	-	google pyproject declares no flask-appbuilder; via apache-airflow-providers-fab
 fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/server/middleware/logging.py:pydantic_core	tp	-	fastmcp_slim pyproject declares no pydantic-core; via pydantic
@@ -1638,7 +1637,6 @@ llama_index	CHK004	llama-index-readers-document360:llama-index-integrations/read
 mlflow	CHK004	mlflow/langchain/langchain_tracer.py:tenacity	tp	-	tenacity appears only in requirements/extra-ml-requirements.txt; extra requirements never satisfy CHK001-005
 airflow	CHK004	azure:providers/microsoft/azure/src/airflow/providers/microsoft/azure/hooks/data_lake.py:wtforms	tp	-	azure pyproject declares no wtforms; via root apache-airflow-providers-fab (lock-only edge)
 langchain	CHK004	perplexity:libs/partners/perplexity/langchain_perplexity/tools.py:pydantic	tp	-	perplexity pyproject declares no pydantic; via langchain-core, perplexityai
-llama_index	CHK004	llama-index-vector-stores-firestore:llama-index-integrations/vector_stores/llama-index-vector-stores-firestore/llama_index/vector_stores/firestore/utils.py:google.cloud.firestore_v1.services.firestore.transports.base	fp	map-gap	map-gap: google.cloud.firestore_v1 is provided by declared google-cloud-firestore; mapped to google-api-core instead
 mlflow	CHK004	mlflow/langchain/langchain_tracer.py:langchain_core.documents	tp	-	root pyproject declares no langchain-core; via langchain, langchain-community
 airflow	CHK004	devel-common:devel-common/src/sphinx_exts/docs_build/code_utils.py:pygments.formatters.terminal	tp	-	devel-common pyproject declares no pygments; via apache-airflow-core, pytest
 langchain	CHK004	langchain:libs/langchain/langchain_classic/agents/output_parsers/openai_functions.py:typing_extensions	tp	-	langchain pyproject declares no typing-extensions; via fastapi, langchain-core
@@ -1851,7 +1849,6 @@ airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:f
 django	CHK010	tests/project_template/test_settings.py:test_settings	tp	-	template project settings module resolved only at runtime
 flask	CHK010	tests/test_instance_config.py:site_app	tp	-	package created at runtime under tmp_path/site-packages by the test
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_ibm	tp	-	optional partner package imported lazily by init_chat_model; langchain-ibm not declared by langchain
-llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/pymu_pdf/base.py:fitz	fp	declared-third-party	pymupdf declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
 requests	CHK010	tests/conftest.py:BaseHTTPServer	info-expected	stdlib	Python 2 stdlib fallback in try/except ImportError; python_requires>=3.8 so dead code; info since #764 (setup.py python_requires)
 sqlalchemy	CHK010	test/conftest.py:sqla_pytestplugin	fp	first-party-missed	bootstrap.py registers lib/sqlalchemy/testing/plugin/pytestplugin.py in sys.modules under this name
@@ -1862,8 +1859,6 @@ airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/
 django	CHK010	tests/gis_tests/test_geoip2.py:geoip2	fp	declared-third-party	geoip2 listed in tests/requirements/py3.txt
 flask	CHK010	tests/test_templating.py:blueprintapp	fp	first-party-missed	tests/test_apps/blueprintapp added to sys.path by tests/conftest.py
 langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_upstage	tp	-	optional partner package imported lazily by init_chat_model; langchain-upstage not declared by langchain
-llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/llama_index/vector_stores/weaviate/utils.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
-mlflow	CHK010	mlflow/genai/scorers/builtin_scorers.py:databricks	fp	declared-third-party	imports databricks.agents; databricks-agents declared in pyproject extra databricks but databricks.* maps only to databricks-sdk
 transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:run_glue	fp	first-party-missed	examples/pytorch/text-classification added to sys.path by the test
 airflow	CHK010	scripts/tests/ci/prek/test_check_deferrable_default.py:check_deferrable_default	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
 flask	CHK010	tests/test_instance_config.py:site_package	tp	-	package created at runtime under tmp_path/site-packages by the test
@@ -1871,12 +1866,9 @@ langchain	CHK010	libs/langchain/langchain_classic/chat_models/base.py:langchain_
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-gaudi/llama_index/llms/gaudi/utils.py:deepspeed	tp	-	optional import; deepspeed not declared by the member pyproject
 mlflow	CHK010	tests/transformers/test_transformers_peft_model.py:peft	tp	-	optional integration; peft not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/utils/notebook.py:IPython	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
-airflow	CHK010	providers/google/src/airflow/providers/google/cloud/hooks/vertex_ai/ray.py:vertex_ray	fp	declared-third-party	vertex_ray is a top-level module shipped by google-cloud-aiplatform (declared); not in the module map
 flask	CHK010	tests/test_blueprints.py:blueprintapp	fp	first-party-missed	tests/test_apps/blueprintapp added to sys.path by tests/conftest.py
-llama_index	CHK010	llama-index-core/llama_index/core/schema.py:haystack	tp	-	optional import in core schema; llama-index-core declares no haystack-ai
 mlflow	CHK010	tests/dev/test_classify_flaky_tests.py:detect_flaky_tests	fp	first-party-missed	dev/ scripts imported by name via sys.path in tests/dev
 transformers	CHK010	tests/models/auto/test_modeling_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
-airflow	CHK010	providers/atlassian/jira/src/airflow/providers/atlassian/jira/hooks/jira.py:atlassian	fp	declared-third-party	atlassian-python-api declared in the provider pyproject; module name differs from the dist name
 flask	CHK010	tests/test_instance_config.py:config_package_app	tp	-	package created at runtime under tmp_path/site-packages by the test
 llama_index	CHK010	llama-index-core/llama_index/core/postprocessor/node.py:spacy	tp	-	optional import; spacy not declared by the member pyproject
 mlflow	CHK010	tests/genai/scorers/trulens/test_trulens.py:trulens	tp	-	optional integration; trulens not declared in pyproject or requirements/*.txt
@@ -1884,43 +1876,32 @@ transformers	CHK010	src/transformers/integrations/torchao.py:torchao	tp	-	option
 airflow	CHK010	scripts/tests/ci/prek/test_check_http_exception_import_from_fastapi.py:check_http_exception_import_from_fastapi	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
 flask	CHK010	tests/test_instance_config.py:namespace	tp	-	package created at runtime under tmp_path/site-packages by the test
 llama_index	CHK010	llama-index-core/llama_index/core/schema.py:semantic_kernel	tp	-	optional import in core schema; llama-index-core declares no semantic-kernel
-mlflow	CHK010	mlflow/genai/scorers/guardrails/registry.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
 sqlalchemy	CHK010	test/perf/compiled_extensions/collections_.py:orderedset	tp	-	optional perf-script import; orderedset not declared
 transformers	CHK010	tests/quantization/vptq_integration/test_vptq.py:vptq	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_branch_virtualenv.py:funcsigs	tp	-	installed at runtime inside the task virtualenv; not declared by the standard provider
-llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-azcognitive-search/llama_index/readers/azcognitive_search/base.py:azure	fp	declared-third-party	azure-search-documents declared in the member pyproject; azure is a namespace package
 mlflow	CHK010	mlflow/smolagents/autolog.py:smolagents	tp	-	optional integration; smolagents not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/models/fastspeech2_conformer/tokenization_fastspeech2_conformer.py:g2p_en	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	task-sdk/tests/task_sdk/io/test_path.py:upath	tp	-	task-sdk pyproject declares no universal-pathlib (only airflow-core does)
 llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-txtai/llama_index/vector_stores/txtai/base.py:txtai	tp	-	optional import; txtai not declared by the member pyproject
-mlflow	CHK010	mlflow/genai/judges/builtin.py:databricks	fp	declared-third-party	imports databricks.agents; databricks-agents declared in pyproject extra databricks but databricks.* maps only to databricks-sdk
 transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
 airflow	CHK010	scripts/tests/ci/prek/test_check_core_imports_in_sdk.py:check_core_imports_in_sdk	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
-llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-hubspot/llama_index/readers/hubspot/base.py:hubspot	fp	declared-third-party	hubspot-api-client declared in the member pyproject; module name differs from the dist name
-mlflow	CHK010	mlflow/genai/scorers/guardrails/__init__.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/quantization/quanto_integration/test_quanto.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
 airflow	CHK010	scripts/tests/ci/prek/test_check_conf_import_in_providers.py:check_conf_import_in_providers	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
-llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-contextual/llama_index/llms/contextual/base.py:contextual	fp	declared-third-party	contextual-client declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	mlflow/genai/scorers/phoenix/models.py:phoenix	tp	-	optional integration; phoenix not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/distributed/fsdp.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
-airflow	CHK010	providers/apache/tinkerpop/src/airflow/providers/apache/tinkerpop/hooks/gremlin.py:gremlin_python	fp	declared-third-party	gremlinpython declared in the provider pyproject; module name differs from the dist name
 llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-faiss/llama_index/vector_stores/faiss/base.py:faiss	fp	declared-third-party	faiss-cpu declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
 transformers	CHK010	src/transformers/utils/generic.py:mlx	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
-airflow	CHK010	providers/presto/src/airflow/providers/presto/hooks/presto.py:prestodb	fp	declared-third-party	presto-python-client declared in the provider pyproject; module name differs from the dist name
 llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain	tp	-	optional langchain bridge; llama-index-core declares no langchain
 mlflow	CHK010	mlflow/ag2/ag2_logger.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
 transformers	CHK010	src/transformers/integrations/integration_utils.py:dvclive	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	task-sdk/tests/task_sdk/execution_time/test_task_runner.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
-llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/tests/test_to_weaviate_filter.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	mlflow/utils/databricks_utils.py:dbruntime	tp	-	Databricks runtime-only module; never installable
 transformers	CHK010	src/transformers/modeling_utils.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	task-sdk/tests/task_sdk/execution_time/test_supervisor.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
-llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-whatsapp/llama_index/readers/whatsapp/base.py:chatminer	fp	declared-third-party	chat-miner declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/dev/test_classify_flaky_tests.py:classify_flaky_tests	fp	first-party-missed	dev/ scripts imported by name via sys.path in tests/dev
 transformers	CHK010	src/transformers/quantizers/quantizer_torchao.py:torchao	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/google/src/airflow/providers/google/cloud/utils/mlengine_prediction_summary.py:apache_beam	tp	-	google provider declares no apache-beam (only the apache.beam provider does)
-llama_index	CHK010	llama-index-integrations/agent/llama-index-agent-azure/tests/test_azure_foundry_agent.py:azure	fp	declared-third-party	azure-ai-agents declared in the member pyproject; azure is a namespace package
 mlflow	CHK010	tests/utils/test_model_utils.py:dummy_package	tp	-	fake module created by the test at runtime
 transformers	CHK010	src/transformers/quantizers/quantizer_compressed_tensors.py:compressed_tensors	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	task-sdk/src/airflow/sdk/io/path.py:upath	tp	-	task-sdk pyproject declares no universal-pathlib (only airflow-core does)
@@ -1935,68 +1916,51 @@ airflow	CHK010	providers/amazon/src/airflow/providers/amazon/aws/hooks/base_aws.
 llama_index	CHK010	llama-index-core/llama_index/core/postprocessor/pii.py:transformers	tp	-	optional import; transformers not declared by the member pyproject
 mlflow	CHK010	tests/utils/test_model_utils.py:dummy_module	tp	-	fake module created by the test at runtime
 transformers	CHK010	src/transformers/integrations/integration_utils.py:flytekitplugins	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
-airflow	CHK010	providers/samba/src/airflow/providers/samba/hooks/samba.py:smbclient	fp	declared-third-party	smbprotocol declared in the provider pyproject; module name differs from the dist name
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-gaudi/llama_index/llms/gaudi/utils.py:habana_quantization_toolkit	tp	-	part of the Habana SynapseAI stack, not a declared dist (optimum-habana does not ship it)
 mlflow	CHK010	mlflow/johnsnowlabs/__init__.py:johnsnowlabs	tp	-	optional integration; johnsnowlabs not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/trainer_pt_utils.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	scripts/tests/ci/prek/test_check_example_dag_tags.py:check_example_dag_tags	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
 llama_index	CHK010	llama-index-core/llama_index/core/evaluation/benchmarks/beir.py:beir	tp	-	optional import; beir not declared by the member pyproject
-mlflow	CHK010	tests/genai/scorers/test_validation.py:databricks	fp	declared-third-party	imports databricks.agents; databricks-agents declared in pyproject extra databricks but databricks.* maps only to databricks-sdk
 transformers	CHK010	tests/quantization/bnb/test_mixed_int8.py:bitsandbytes	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	task-sdk/tests/task_sdk/api/test_client.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-predibase/llama_index/llms/predibase/base.py:lorax	tp	-	predibase member declares no lorax-client
 mlflow	CHK010	mlflow/server/handlers.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock
 transformers	CHK010	src/transformers/integrations/integration_utils.py:neptune	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_tool_agent.py:langchain_text_splitters	tp	-	example DAG import; common.ai provider declares langchain only, langchain-text-splitters is a separate dist
-llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-shopify/llama_index/tools/shopify/base.py:shopify	fp	declared-third-party	shopifyapi declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/johnsnowlabs/test_johnsnowlabs_model_export.py:johnsnowlabs	tp	-	optional integration; johnsnowlabs not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/integrations/quanto.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
-airflow	CHK010	providers/presto/tests/unit/presto/hooks/test_presto.py:prestodb	fp	declared-third-party	presto-python-client declared in the provider pyproject; module name differs from the dist name
-llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/llama_index/protocols/ag_ui/router.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/langchain/test_langchain_databricks_dependency_extraction.py:databricks_langchain	tp	-	optional integration; databricks-langchain not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/repo_utils/test_checkers.py:checkers	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
 airflow	CHK010	providers/common/ai/tests/unit/common/ai/operators/test_llamaindex_embedding.py:llama_index	fp	declared-third-party	llama-index-core is declared; llama_index is a namespace package shared by several dists
-llama_index	CHK010	llama-index-integrations/output_parsers/llama-index-output-parsers-guardrails/llama_index/output_parsers/guardrails/base.py:guardrails	fp	declared-third-party	guardrails-ai declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/pytorch/test_pytorch_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
 transformers	CHK010	src/transformers/integrations/aqlm.py:aqlm	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	devel-common/src/tests_common/test_utils/gcp_system_helpers.py:unit	fp	first-party-missed	providers' tests `unit` package resolved via pytest rootdir conftest
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-wikipedia/llama_index/readers/wikipedia/base.py:wikipedia	tp	-	readers-wikipedia declares no wikipedia dist (tools-wikipedia does)
-mlflow	CHK010	tests/genai/scorers/guardrails/test_guardrails.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/models/auto/test_image_processing_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
 airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:test_bundle_pkg	tp	-	package created at runtime in tmp_path by the test
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-web/llama_index/readers/web/main_content_extractor/base.py:main_content_extractor	tp	-	optional import; main_content_extractor not declared by the member pyproject
 mlflow	CHK010	tests/genai/scorers/trulens/test_models.py:trulens	tp	-	optional integration; trulens not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/integrations/integration_utils.py:azureml	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	airflow-core/tests/unit/dags_corrupted/test_impersonation_custom.py:fake_datetime	fp	first-party-missed	sibling module in dags_corrupted loaded through the DAG folder on sys.path
-llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-upstage/llama_index/readers/upstage/base.py:fitz	fp	declared-third-party	pymupdf declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/diffusers/test_diffusers_model_export.py:safetensors	tp	-	optional integration; safetensors not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/integrations/tpu.py:torch_xla	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	task-sdk/tests/task_sdk/definitions/test_deadline.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
-llama_index	CHK010	llama-index-integrations/storage/chat_store/llama-index-storage-chat-store-azure/tests/test_chat_store_azure_chat_store.py:azure	fp	declared-third-party	azure-data-tables declared in the member pyproject; azure is a namespace package
-mlflow	CHK010	mlflow/paddle/__init__.py:paddle	fp	declared-third-party	paddlepaddle listed in requirements/extra-ml-requirements.txt
 transformers	CHK010	tests/repo_utils/test_check_noisy_comments.py:check_noisy_comments	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
 airflow	CHK010	task-sdk/tests/task_sdk/execution_time/schema/test_integration.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-deeplake/llama_index/readers/deeplake/base.py:deeplake	tp	-	readers-deeplake declares no deeplake
 mlflow	CHK010	tests/pytorch/test_forecasting_model.py:pytorch_forecasting	tp	-	optional integration; pytorch-forecasting not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/cache_utils.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
 airflow	CHK010	scripts/tests/ci/prek/test_check_go_example_mod_tidy.py:check_go_example_mod_tidy	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
-llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/tests/test_vector_stores_weaviate.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	mlflow/crewai/__init__.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/exporters/exporter_executorch.py:executorch	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	scripts/tests/in_container/test_run_generate_constraints.py:run_generate_constraints	fp	first-party-missed	test inserts scripts/in_container into sys.path and imports the script module by name
-llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-friendli/llama_index/llms/friendli/base.py:friendli	fp	declared-third-party	friendli-client declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/smolagents/test_smolagents_autolog.py:smolagents	tp	-	optional integration; smolagents not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/models/pop2piano/test_processing_pop2piano.py:pretty_midi	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
-airflow	CHK010	providers/apache/tinkerpop/tests/integration/apache/tinkerpop/hooks/test_gremlin.py:gremlin_python	fp	declared-third-party	gremlinpython declared in the provider pyproject; module name differs from the dist name
-llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/llama_index/protocols/ag_ui/utils.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/langchain/test_langchain_databricks_integration.py:databricks_langchain	tp	-	optional integration; databricks-langchain not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/quantizers/quantizer_quark.py:quark	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_10k.py:langchain_community	tp	-	example DAG import; common.ai provider declares langchain only, langchain-community is a separate dist
-llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-rayyan/llama_index/readers/rayyan/base.py:rayyan	fp	declared-third-party	rayyan-sdk declared in the member pyproject; module name differs from the dist name
-mlflow	CHK010	mlflow/paddle/_paddle_autolog.py:paddle	fp	declared-third-party	paddlepaddle listed in requirements/extra-ml-requirements.txt
 transformers	CHK010	tests/quantization/gptq/test_gptq.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
 airflow	CHK010	scripts/tests/ci/prek/test_check_go_version_in_sync.py:check_go_version_in_sync	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
-llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/llama_index/vector_stores/weaviate/base.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	mlflow/transformers/peft.py:peft	tp	-	optional integration; peft not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/training_args.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	scripts/tests/ci/prek/test_check_partition_mapper_defaults_in_sync.py:check_partition_mapper_defaults_in_sync	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
@@ -2004,22 +1968,17 @@ llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-predibase/llam
 mlflow	CHK010	mlflow/server/graphql/graphql_no_batching.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock
 transformers	CHK010	tests/pipelines/test_pipelines_common.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
 airflow	CHK010	scripts/tests/ci/prek/test_check_excluded_provider_markers.py:check_excluded_provider_markers	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
-llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-azure-inference/tests/test_llms_azure_inference.py:azure	fp	declared-third-party	azure-ai-inference declared in the member pyproject; azure is a namespace package
 mlflow	CHK010	mlflow/pytorch/_lightning_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
 transformers	CHK010	tests/exporters/test_export.py:openvino	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	scripts/tests/ci/prek/test_check_sdk_imports_in_core.py:check_sdk_imports_in_core	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
-llama_index	CHK010	llama-index-integrations/storage/chat_store/llama-index-storage-chat-store-azure/llama_index/storage/chat_store/azure/base.py:azure	fp	declared-third-party	azure-data-tables declared in the member pyproject; azure is a namespace package
 mlflow	CHK010	mlflow/openai/_agent_tracer.py:agents	tp	-	openai-agents not declared in pyproject or requirements
 transformers	CHK010	tests/utils/test_get_previous_daily_ci.py:get_previous_daily_ci	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
 airflow	CHK010	task-sdk/tests/task_sdk/execution_time/schema/test_migrator.py:task_sdk	fp	first-party-missed	task-sdk/tests/task_sdk test package resolved via pytest rootdir, not a declared package
-llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-weaviate/tests/test_utils.py:weaviate	fp	declared-third-party	weaviate-client declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	mlflow/crewai/autolog.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/quantization/ggml/test_gguf_integration.py:gguf	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	scripts/tests/ci/prek/test_check_conn_fields_match_form_widgets.py:check_provider_conn_fields	fp	first-party-missed	test inserts scripts/ci/prek (PREK_DIR) into sys.path and imports the checker module by name
-llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/llama_index/protocols/ag_ui/agent.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/dev/test_annotate_flaky_tests.py:annotate_flaky_tests	fp	first-party-missed	dev/ scripts imported by name via sys.path in tests/dev
 transformers	CHK010	tests/utils/test_tokenization_utils.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
-airflow	CHK010	providers/jdbc/src/airflow/providers/jdbc/hooks/jdbc.py:jpype	fp	declared-third-party	jpype1 declared in the provider pyproject; module name differs from the dist name
 llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-weather/llama_index/tools/weather/base.py:pyowm	tp	-	tools-weather declares no pyowm
 mlflow	CHK010	mlflow/ag2/__init__.py:autogen	fp	declared-third-party	autogen-agentchat listed in requirements/extra-ml-requirements.txt (ag2 ships the autogen module)
 transformers	CHK010	tests/repo_utils/test_split_model_tests.py:split_model_tests	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
@@ -2028,16 +1987,17 @@ llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-mcp-discover
 mlflow	CHK010	tests/otel/test_otel_autolog.py:langfuse	tp	-	optional integration; langfuse not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/repo_utils/test_tests_fetcher.py:tests_fetcher	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_tool_agent.py:langchain_community	tp	-	example DAG import; common.ai provider declares langchain only, langchain-community is a separate dist
-llama_index	CHK010	llama-index-integrations/embeddings/llama-index-embeddings-azure-inference/llama_index/embeddings/azure_inference/base.py:azure	fp	declared-third-party	azure-ai-inference declared in the member pyproject; azure is a namespace package
 mlflow	CHK010	tests/crewai/test_crewai_autolog.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/models/auto/test_configuration_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
-llama_index	CHK010	llama-index-integrations/protocols/llama-index-protocols-ag-ui/tests/test_multimodal_input.py:ag_ui	fp	declared-third-party	ag-ui-protocol declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/autogen/test_autogen_autolog.py:autogen_core	tp	-	autogen-core only transitive via autogen-agentchat; not declared itself
 transformers	CHK010	tests/quantization/aqlm_integration/test_aqlm.py:aqlm	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
-llama_index	CHK010	llama-index-integrations/agent/llama-index-agent-azure/llama_index/agent/azure_foundry_agent/base.py:azure	fp	declared-third-party	azure-ai-agents declared in the member pyproject; azure is a namespace package
 mlflow	CHK010	tests/langchain/test_langchain_databricks_dependency_extraction.py:databricks	tp	-	imports databricks.vector_search; databricks-vectorsearch is not declared
 transformers	CHK010	src/transformers/modeling_utils.py:hqq	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
-llama_index	CHK010	llama-index-integrations/tools/llama-index-tools-airweave/llama_index/tools/airweave/base.py:airweave	fp	declared-third-party	airweave-sdk declared in the member pyproject; module name differs from the dist name
-mlflow	CHK010	tests/haystack/test_haystack_tracing.py:haystack	fp	declared-third-party	haystack-ai declared in pyproject
 transformers	CHK010	tests/trainer/test_trainer.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/llama_index/readers/file/docs/base.py:olefile	tp	-	readers-file declares no olefile (readers-hwp does)
+llama_index	CHK003	llama-index-core:llama-index-core/llama_index/core/schema.py:haystack	tp	-	llama-index-core declares no haystack-ai
+mlflow	CHK003	mlflow/genai/scorers/guardrails/__init__.py:guardrails	tp	-	optional integration; guardrails-ai not declared in pyproject or requirements/*.txt
+mlflow	CHK003	mlflow/genai/scorers/guardrails/registry.py:guardrails	tp	-	optional integration; guardrails-ai not declared in pyproject or requirements/*.txt
+mlflow	CHK003	mlflow/genai/scorers/guardrails/utils.py:guardrails	info-expected	optional-import	try: import guardrails except ImportError: raise (installation check for the optional guardrails-ai scorers)
+mlflow	CHK003	mlflow/paddle/__init__.py:paddle	tp	-	flavor import of user-installed paddlepaddle: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/paddle/_paddle_autolog.py:paddle	tp	-	flavor import of user-installed paddlepaddle: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661)

@@ -387,7 +387,7 @@ PEP 723 script の CHK002/CHK003 は script block に対して判定する。scr
 
 `google` / `opentelemetry` / `databricks` のように複数 distribution が共有する namespace package は root だけでは決まらないため、root が third-party / unknown に分類された import は、user map と bundled map の dotted key(`google.protobuf`、`opentelemetry.sdk` など、2 segment 以上)を import 先の module 名(`from a.b import c` は `a.b.c`)に対して最長一致で引き、見つかればその distribution で上書きする。first-party root(`poetry` に対する `poetry.core` など)も、一致した dotted module が import 可能な位置(project root・`src/`・各 workspace member の直下または `src/`)に無い場合に限り同様に上書きする。`tests/fixtures/vendor/poetry/core/` のような深い位置のファイルは import できないため数えない。
 
-`azure` のように root 自体を提供する distribution が無い namespace は dotted key(`azure.identity` など)だけを bundled map に載せ、未登録の sub-package を任意の 1 distribution に誤って寄せない。bundled map は `data/package-map.seed.json` から `scripts/generate-package-map.py` で生成し、`--verify-wheels`(ネットワーク必須、CI 対象外)で各 entry の import 名を PyPI 最新 wheel の `top_level.txt` / RECORD と照合する。
+`azure` のように root 自体を提供する distribution が無い namespace は dotted key(`azure.identity` など)だけを bundled map に載せ、未登録の sub-package を任意の 1 distribution に誤って寄せない。同じ import 名を別の distribution も提供する場合(`paddle` の `paddlepaddle` / `paddlepaddle-gpu`、`haystack` の `haystack-ai` / `farm-haystack`)は両方を載せる。片方だけだと、もう片方を宣言した project では step 8 の宣言名照合より先に map の候補で決まり、宣言は未使用・import は未宣言に見えてしまう。候補が複数あれば import site ごとに宣言されている方を選ぶ(#732, #748)。bundled map は `data/package-map.seed.json` から `scripts/generate-package-map.py` で生成し、`--verify-wheels`(ネットワーク必須、CI 対象外)で各 entry の import 名を PyPI 最新 wheel の `top_level.txt` / RECORD と照合する。
 
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 
