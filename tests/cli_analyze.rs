@@ -658,6 +658,57 @@ fn binary_in_package_tests_and_vendored_code_are_not_reported() {
     assert_eq!(flagged, ["CHK006:acme/core.py:dead"], "{keys:?}");
 }
 
+/// airflow's `stats.py` and `security/permissions.py` warn on import that
+/// they are deprecated: shims kept for outside callers, so info (#778).
+#[test]
+fn binary_deprecated_shim_findings_are_info() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/core.py",
+            "from acme.permissions import ACTIONS\n\n\ndef run() -> int:\n    return len(ACTIONS)\n",
+        ),
+        (
+            "acme/permissions.py",
+            "import warnings\n\nwarnings.warn(\"moved\", DeprecationWarning, stacklevel=2)\n\nACTIONS = ()\nRESOURCE = \"r\"\n",
+        ),
+        (
+            "acme/stats.py",
+            "from warnings import warn\n\nwarn(\"moved\", category=DeprecationWarning)\n",
+        ),
+        ("acme/legacy.py", "LEGACY = 1\n"),
+        (
+            "tests/test_core.py",
+            "from acme.core import run\n\n\ndef test_run() -> None:\n    assert run() == 0\n",
+        ),
+    ]);
+    let severities: Vec<_> = json_issues(project.path(), &[])
+        .iter()
+        .filter(|issue| matches!(issue["code"].as_str(), Some("CHK001" | "CHK006")))
+        .map(|issue| {
+            format!(
+                "{}:{}:{}",
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+                issue["severity"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    assert_eq!(
+        severities,
+        [
+            "CHK001:acme/legacy.py:error",
+            "CHK001:acme/stats.py:info",
+            "CHK006:acme/permissions.py:RESOURCE:info",
+        ],
+        "{severities:?}"
+    );
+}
+
 /// A workspace member only dependency groups pull in (airflow's
 /// `devel-common`) never ships, so `--production` drops it like the tests
 /// that import it, while the default run still reaches it from `conftest.py`
