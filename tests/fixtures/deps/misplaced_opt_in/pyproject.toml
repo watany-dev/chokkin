@@ -1,0 +1,7 @@
+[project]
+name = "misplaced-opt-in"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["duckdb", "langchain-community", "psycopg", "pyspark", "sympy"]
