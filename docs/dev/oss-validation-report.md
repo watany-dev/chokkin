@@ -169,12 +169,12 @@ and langchain (CHK001 3 → 0) follow the fixes in the same range.
 
 | Rule | Hits | Sample | tp | fp | Coverage | Precision | Main FP buckets |
 |---|---:|---:|---:|---:|---:|---:|---|
-| CHK001 | 63 | 21 | 2 | 19 | 33% | 10% | script-entry 8 (workflow / pre-commit / SKILL.md `python path.py` runs, standalone examples), framework-loaded 5 (Sphinx extensions, DAG folders), dynamic-import 3, library-public 2, other 1 |
+| CHK001 | 63 | 21 | 2 | 19 | 33% | 10% | script-entry 8 (workflow / pre-commit / SKILL.md `python path.py` runs, standalone examples), framework-loaded 5 (Sphinx extensions #779, DAG folders), dynamic-import 3, library-public 2 (#778, #782), other 1 |
 | CHK002 | 27 | 27 | 26 | 1 | 100% | 96% | — |
 | CHK003 | 115 | 48 (+42 deferred) | 48 | 0 | 42% | 100% | — |
 | CHK004 | 1,877 | 610 | 610 | 0 | 32% | 100% | — |
 | CHK005 | 36 | 17 | 8 | 9 | 47% | 47% | optional-import 8 (#781), other 1 |
-| CHK006 | 270 | 104 | 83 | 21 | 39% | 80% | external-reference 10 (airflow `security/permissions.py` constants), name-convention 6 (#777), dynamic-import 5 (#493) |
+| CHK006 | 270 | 104 | 83 | 21 | 39% | 80% | external-reference 10 (airflow `security/permissions.py`, a deprecation shim; #778), name-convention 6 (#777), dynamic-import 5 (#493) |
 | CHK008 | 18 | 8 | 7 | 1 | 44% | 88% | not-invoked 1 |
 | CHK009 | 0 | 0 | 0 | 0 | n/a | n/a | — |
 | CHK010 | 214 | 126 | 110 | 16 | 59% | 87% | declared-third-party 10 (#749 / #780), first-party-missed 5, generated 1 |
