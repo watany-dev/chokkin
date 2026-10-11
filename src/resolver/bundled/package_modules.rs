@@ -151,7 +151,6 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("gremlinpython", &["gremlin_python"]),
     ("griffelib", &["griffe"]),
     ("grpcio", &["grpc"]),
-    ("guardrails-ai", &["guardrails"]),
     ("gunicorn", &["gunicorn"]),
     ("h11", &["h11"]),
     ("h2", &["h2"]),

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose name differs from the module: `pymupdf` (`fitz`), `weaviate-client`,
   `gremlinpython`, `presto-python-client`, `smbprotocol` (`smbclient`),
   `jpype1`, `shopifyapi`, `atlassian-python-api`, `hubspot-api-client`,
-  `ag-ui-protocol`, `guardrails-ai`, `haystack-ai` / `farm-haystack`,
+  `ag-ui-protocol`, `haystack-ai` / `farm-haystack`,
   `paddlepaddle` / `paddlepaddle-gpu` and a few others, plus `vertex_ray`
   from `google-cloud-aiplatform`. Namespace distributions get dotted
   entries: `databricks-agents` (`databricks.agents`, `databricks.rag_eval`),

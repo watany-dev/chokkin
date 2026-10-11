@@ -810,12 +810,6 @@
       ]
     },
     {
-      "distribution": "guardrails-ai",
-      "imports": [
-        "guardrails"
-      ]
-    },
-    {
       "distribution": "friendli-client",
       "imports": [
         "friendli"
