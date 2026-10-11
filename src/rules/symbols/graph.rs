@@ -252,7 +252,10 @@ impl<'a> StarImports<'a> {
                 continue;
             }
             for &target in &importer.targets {
-                if seen.insert(target) && self.hands_on(target, name) {
+                if !self.hands_on(target, name) {
+                    continue;
+                }
+                if seen.insert(target) {
                     sources.push(target);
                     queue.push(target);
                 }
