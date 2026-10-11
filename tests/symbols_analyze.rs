@@ -973,6 +973,34 @@ fn symbol_used_in_string_annotation_is_not_chk006() {
     );
 }
 
+/// A string type argument of `cast` and `TypeVar` reads the names in it like
+/// a quoted annotation (#577); a string argument of any other call does not.
+#[test]
+fn app_mode_symbol_used_in_string_type_argument_is_not_chk006() {
+    let app = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/base.py",
+            "from typing import TypeVar, cast\n\nimport sgqlc.types\n\nclass Foo:\n    pass\n\nclass Assignee:\n    pass\n\nM = TypeVar(\"M\", bound=\"Foo\")\n\ndef first(items: list[M]) -> M:\n    return items[0]\n\nT = dict[str, int]\n\ndef load(value: object) -> object:\n    return cast(\"T\", value)\n\nassignee = sgqlc.types.Field(\"Assignee\")\n",
+        ),
+        (
+            "app/main.py",
+            "from app.base import assignee, first, load\n\ndef main():\n    first([load(1)])\n    print(assignee)\n",
+        ),
+    ]);
+    for name in ["Foo", "T"] {
+        assert!(
+            !has_symbol_rule(&app, RuleId::Chk006, "app.base", name),
+            "{name}: {app:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&app, RuleId::Chk006, "app.base", "Assignee"),
+        "{app:?}"
+    );
+}
+
 /// Tests outside `tests/` still use library symbols: the rootdir
 /// `conftest.py` and a suite under pytest `testpaths` are discovered (#544).
 #[test]
