@@ -152,8 +152,8 @@ impl Wheels<'_> {
 
     /// Whether a wheel ships root-relative `path`: its innermost member's own
     /// wheel, else the root's. A shipped `__all__` is public API whatever the
-    /// mode, since workspace roots and members with their own CLI resolve to
-    /// app (#678, #727).
+    /// mode, since a workspace root with an app signal and a member with its
+    /// own CLI resolve to app (#678, #727).
     fn ships(&self, path: &str) -> bool {
         member_ships(self.members, path)
             .unwrap_or_else(|| self.root.as_ref().is_some_and(|root| root.contains(path)))
