@@ -119,6 +119,9 @@ pub(super) fn detect_misplaced_dependencies(
             // missing at runtime without breaking the package (#614).
             strength = ImportStrength::Optional;
         }
+        if is_opt_in_import(&import.file, &import.import_root, &sources.layout) {
+            strength = strength.min(ImportStrength::OptIn);
+        }
         if host_loaded.contains(&(import.file.as_str(), distribution.as_str())) {
             strength = ImportStrength::HostLoaded;
         }
@@ -185,6 +188,9 @@ pub(super) fn detect_misplaced_dependencies(
 enum ImportStrength {
     /// In a module the distribution itself loads (#731).
     HostLoaded,
+    /// In airflow's `example_dags/` or a subpackage named after the import
+    /// (`mlflow/pyspark/`, `mlflow/langchain/` for `langchain_community`).
+    OptIn,
     /// `try`/`except ImportError`, `suppress(ImportError)` or
     /// platform-guarded, or in a file loaded only past such an import.
     Optional,
@@ -201,6 +207,10 @@ impl ImportStrength {
             Self::HostLoaded => {
                 candidate.severity = Severity::Info;
                 "imported only by modules it loads itself: a pytest plugin or an IPython extension"
+            },
+            Self::OptIn => {
+                candidate.severity = Severity::Info;
+                "imported only by example DAGs or by a subpackage named after it, which load only when opted into"
             },
             Self::Optional => {
                 candidate.severity = Severity::Info;
@@ -243,6 +253,30 @@ fn import_strengths(parse: &ParseSummary) -> HashMap<(String, u32), ImportStreng
         }
     }
     strengths
+}
+
+/// Whether `file` sits in a subpackage named `example_dags` (airflow loads
+/// them only with `load_examples`) or after the import root, or one the root
+/// extends with `_` (`langchain` for `langchain_community`): an opt-in part
+/// of the package, not a requirement of it (#781). The top-level package
+/// does not count: `dagster_shared` imported from `dagster` is the package's
+/// own requirement. Example DAGs ship in the wheel, so they stay runtime
+/// files for the other rules.
+fn is_opt_in_import(file: &str, import_root: &str, layout: &LayoutInfo) -> bool {
+    let Some(module) = path_to_module(file, layout) else {
+        return false;
+    };
+    let package = if file.ends_with("__init__.py") {
+        module.as_str()
+    } else {
+        module.rsplit_once('.').map_or("", |(package, _)| package)
+    };
+    package.split('.').skip(1).any(|name| {
+        name == "example_dags"
+            || import_root
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'))
+    })
 }
 
 pub(super) fn pytest11_modules<'a>(
@@ -334,6 +368,31 @@ mod tests {
                 .collect(),
             ..ParsedModule::default()
         }
+    }
+
+    #[test]
+    fn opt_in_imports_sit_under_example_dags_or_a_subpackage_named_after_them() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            packages: vec![
+                "airflow".to_owned(),
+                "dagster".to_owned(),
+                "mlflow".to_owned(),
+            ],
+            ..LayoutInfo::default()
+        };
+        let opt_in = |file: &str, root: &str| is_opt_in_import(file, root, &layout);
+        assert!(opt_in("airflow/example_dags/tutorial.py", "duckdb"));
+        assert!(opt_in("mlflow/pyspark/ml/_autolog.py", "pyspark"));
+        assert!(opt_in(
+            "mlflow/langchain/__init__.py",
+            "langchain_community"
+        ));
+        assert!(!opt_in("mlflow/pytorch/_lightning_autolog.py", "torch"));
+        assert!(!opt_in("mlflow/langchainx/run.py", "langchain"));
+        assert!(!opt_in("mlflow/pyspark.py", "pyspark"));
+        assert!(!opt_in("dagster/core/run.py", "dagster_shared"));
+        assert!(!opt_in("/abs/plugin.py", "_pytest"));
     }
 
     /// #731: a file is host-loaded only for the host that loads it.

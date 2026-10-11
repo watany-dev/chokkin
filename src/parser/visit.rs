@@ -213,7 +213,10 @@ impl<'a> ModuleVisitor<'a> {
 
     fn is_imported_guarded(&self, module: &str) -> bool {
         let root = module.split('.').next().unwrap_or(module);
-        self.imported_guards.iter().any(|guard| guard == root)
+        // `is_psycopg3` guards `psycopg`, and `is_boto3_client` `boto3`.
+        self.imported_guards.iter().any(|guard| {
+            guard == root || guard.trim_end_matches(|c: char| c.is_ascii_digit()) == root
+        })
     }
 
     fn visit_decorators(&mut self, decorators: &[Decorator]) {

@@ -10,14 +10,18 @@ use ruff_text_size::{Ranged, TextSize};
 
 /// The top-level module `test` proves is already imported when its body
 /// runs: `"x" in sys.modules` or `sniffio.current_async_library() == "x"`,
-/// the call possibly read back from one of `async_library_names`.
+/// the call possibly read back from one of `async_library_names`, or an
+/// `is_x…` flag or predicate (django's `is_psycopg3`, streamlit's
+/// `is_sympy_expression(body)`) that only holds once `x` is loaded (#781).
 #[must_use]
 pub(super) fn imported_module_guard(
     test: &Expr,
     async_library_names: &HashSet<String>,
 ) -> Option<String> {
-    let Expr::Compare(compare) = test else {
-        return None;
+    let compare = match test {
+        Expr::Compare(compare) => compare,
+        Expr::Call(call) => return predicate_module(&call.func),
+        test => return predicate_module(test),
     };
     let ([op], [left, right]) = (&*compare.ops, &*compare.operands) else {
         return None;
@@ -33,6 +37,24 @@ pub(super) fn imported_module_guard(
         .next()
         .filter(|root| !root.is_empty())
         .map(str::to_owned)
+}
+
+/// `x` of an `is_x` or `is_x_…` name: the module a type predicate or flag
+/// names, up to its first `_`. It keeps a version digit (`psycopg3`), which
+/// the import's root may drop. A `self.` / `cls.` attribute is the
+/// object's own feature (mlflow's `self._is_azure_ad`), as in
+/// [`is_availability_call`].
+fn predicate_module(expr: &Expr) -> Option<String> {
+    let name = match expr {
+        Expr::Name(name) => name.id.as_str(),
+        Expr::Attribute(attribute) if is_module_path(&attribute.value) => attribute.attr.as_str(),
+        _ => return None,
+    };
+    let rest = name.trim_start_matches('_').strip_prefix("is_")?;
+    let module = rest.split('_').next()?;
+    module
+        .starts_with(|c: char| !c.is_ascii_digit())
+        .then(|| module.to_owned())
 }
 
 /// Names the scope `body` only ever binds to `sniffio.current_async_library()`
@@ -289,6 +311,19 @@ mod tests {
     }
 
     #[test]
+    fn detects_is_module_flags_and_predicates() {
+        for (source, module) in [
+            ("is_psycopg3", "psycopg3"),
+            ("is_boto3_client(c)", "boto3"),
+            ("is_sympy_expression(body)", "sympy"),
+            ("type_util.is_pandas_df(data)", "pandas"),
+            ("_is_torch_available()", "torch"),
+        ] {
+            assert_eq!(guard(source).as_deref(), Some(module), "{source}");
+        }
+    }
+
+    #[test]
     fn detects_async_library_comparison() {
         for source in [
             "sniffio.current_async_library() == 'trio'",
@@ -313,6 +348,12 @@ mod tests {
             "backend == 'trio'",
             "library != 'trio'",
             "library.name == 'trio'",
+            "not is_psycopg3",
+            "is_",
+            "is_3",
+            "isinstance(x, str)",
+            "self._is_azure_ad",
+            "cls.is_torch_tensor(x)",
         ] {
             assert_eq!(guard(source), None, "{source}");
         }

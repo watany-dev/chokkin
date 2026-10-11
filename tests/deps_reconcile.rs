@@ -456,6 +456,28 @@ fn misplaced_confidence_follows_the_strongest_import() {
     ));
 }
 
+/// #781: an `is_x` flag or predicate guards `x`, and `example_dags/` and a
+/// subpackage named after the import are opt-in, unless another module
+/// imports it at top level.
+#[test]
+fn misplaced_opt_in_imports_are_info() {
+    let report = reconcile_fixture("misplaced_opt_in");
+    let summary = |name: &str| {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        (candidate.severity, candidate.confidence)
+    };
+    for name in ["psycopg", "sympy", "langchain-community", "duckdb"] {
+        assert_eq!(
+            summary(name),
+            (Severity::Info, Confidence::Likely),
+            "{name}"
+        );
+    }
+    // data.py imports it outside the `pyspark` subpackage.
+    assert_eq!(summary("pyspark"), (Severity::Warning, Confidence::Certain));
+}
+
 /// #731: pytest and `IPython` load their plugins themselves, and a variable
 /// holding the sniffio result guards like the call.
 #[test]
