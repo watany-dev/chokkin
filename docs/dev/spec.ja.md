@@ -450,14 +450,13 @@ src/<package>/__init__.py または root直下の <package>/__init__.py
 (flat layout) があり、明確なentryがない
   -> library mode
 
-複数 pyproject.toml / tool.uv.workspace.members がある
-  -> workspace mode
-
 いずれにも該当しない
   -> app mode。ただしunused_fileのconfidence上限をlikelyに落とす
 ```
 
-app signal は project 自身の package（`layout.packages`）の外にあるものに限る（#652）。`django-admin = "django.core.management:..."` や `httpx = "httpx:main"` のように、console entry の参照先 module の先頭要素が自 package なら、CLI を同梱した library とみなして app signal にしない（GUI を同梱する library は想定しないため、gui entry は常に app signal）。`manage.py` 等のファイル名も、package 内の module（werkzeug の `src/werkzeug/wsgi.py`、mitmproxy の `mitmproxy/tools/web/app.py`）や test / docs / dev context の file（flask の `tests/test_apps/helloworld/wsgi.py`）は数えない。どちらも従来は library の公開 API を app mode の CHK006 certain にしていた。workspace member の判定（`is_library_member`）は file 名の基準だけを共有し、自 package を指す console entry も app signal のままにする。monorepo は CLI を専用 member（airflow の `airflow-core`、llama_index の `llama-dev`）に分けるため、CLI を持つ member は app とみなす。workspace root（member 2 つ以上で app）や CLI を持つ member が app になっても、wheel が配布する file の `__all__` は公開 API なので CHK006 / CHK007 にしない（§12、#678、#727）。mode 自体は変えない。
+workspace root も member の数によらず同じ基準で判定する (#776)。従来は member が 2 つ以上あると app mode に固定していたため、mlflow のように root が自 package の wheel を配布する library でも公開 API が CHK006 warning になっていた。root が app mode のときは各 member を下記の `is_library_member` で判定する。root が library mode のときは member も library mode で判定する。
+
+app signal は project 自身の package（`layout.packages`）の外にあるものに限る（#652）。`django-admin = "django.core.management:..."` や `httpx = "httpx:main"` のように、console entry の参照先 module の先頭要素が自 package なら、CLI を同梱した library とみなして app signal にしない（GUI を同梱する library は想定しないため、gui entry は常に app signal）。`manage.py` 等のファイル名も、package 内の module（werkzeug の `src/werkzeug/wsgi.py`、mitmproxy の `mitmproxy/tools/web/app.py`）や test / docs / dev context の file（flask の `tests/test_apps/helloworld/wsgi.py`）は数えない。どちらも従来は library の公開 API を app mode の CHK006 certain にしていた。workspace member の判定（`is_library_member`）は file 名の基準だけを共有し、自 package を指す console entry も app signal のままにする。monorepo は CLI を専用 member（airflow の `airflow-core`、llama_index の `llama-dev`）に分けるため、CLI を持つ member は app とみなす。app signal を持つ workspace root（fastmcp）や CLI を持つ member が app になっても、wheel が配布する file の `__all__` は公開 API なので CHK006 / CHK007 にしない（§12、#678、#727）。mode 自体は変えない。
 
 setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
 
@@ -903,9 +902,9 @@ library modeでは、定義元module自身がその名前を読んでいるsymbo
 
 CHK007 は、再exportした `__init__.py` 自身がその名前を読んでいる import (parser の `ParsedModule::used_import_bindings`) を対象外にする。`from .x import a as b` の再export名は `b` とする。
 
-CHK007 は mode によらず、wheel が配布する `__init__.py` で明示的に公開した再export（`__all__` に載っている、または `import a as a`）も対象外にする (#678)。workspace root と CLI を持つ member は app mode になる (§8) が、その wheel の利用者はこれらの名前を package から import できるため。配布するかは root の wheel target から求めた public surface で判定し、workspace member の file は library / app を問わず最も深い member 自身の wheel target（member 相対）で判定する。wheel target を宣言せず `[project].name` と `[build-system]` の `build-backend` を持つ member は、build backend の自動検出（hatchling の `src/<name>` 等）と同じく layout が推定した package を配布するものとみなす (#733、llama-index-instrumentation)。`[build-system]` のない member は uv が package にしないので何も配布しない。この推定は配布判定だけに使い、CHK001 の到達性を絞る library surface は宣言された wheel target からだけ求める。wheel target を宣言していない root の file や、surface に含まれない file（`examples/` の app 内 `__all__` 等）は従来どおり app mode で warning にする。
+CHK007 は mode によらず、wheel が配布する `__init__.py` で明示的に公開した再export（`__all__` に載っている、または `import a as a`）も対象外にする (#678)。app signal を持つ workspace root と CLI を持つ member は app mode になる (§8) が、その wheel の利用者はこれらの名前を package から import できるため。配布するかは root の wheel target から求めた public surface で判定し、workspace member の file は library / app を問わず最も深い member 自身の wheel target（member 相対）で判定する。wheel target を宣言せず `[project].name` と `[build-system]` の `build-backend` を持つ member は、build backend の自動検出（hatchling の `src/<name>` 等）と同じく layout が推定した package を配布するものとみなす (#733、llama-index-instrumentation)。`[build-system]` のない member は uv が package にしないので何も配布しない。この推定は配布判定だけに使い、CHK001 の到達性を絞る library surface は宣言された wheel target からだけ求める。wheel target を宣言していない root の file や、surface に含まれない file（`examples/` の app 内 `__all__` 等）は従来どおり app mode で warning にする。
 
-同じ理由で、wheel が配布する file の `__all__` に載っている名前は、module 内でしか使われていなくても CHK006 にしない (#727)。member が 2 つ以上ある workspace root は app mode になる (§8) ため、fastmcp の `fastmcp_slim` や mcp-python-sdk の配布 module の `__all__` 定数が warning / certain になっていた。`__all__` に載っていない名前と、配布されない file の `__all__` は従来どおり app mode の判定に従う。CHK001 の判定は変えない。
+同じ理由で、wheel が配布する file の `__all__` に載っている名前は、module 内でしか使われていなくても CHK006 にしない (#727)。app mode の workspace root (§8) では、fastmcp の `fastmcp_slim` の配布 module の `__all__` 定数が warning / certain になっていた。`__all__` に載っていない名前と、配布されない file の `__all__` は従来どおり app mode の判定に従う。CHK001 の判定は変えない。
 
 `unused_export` の自動削除はv1までは避ける。安全なfixは `__all__` からの削除程度に限定し、関数・class本体の削除は `--fix --unsafe` がある場合だけにする。
 

@@ -102,11 +102,6 @@ pub enum EntryWarning {
         /// Human-readable origin.
         origin: String,
     },
-    /// Multiple uv workspace members detected; treated as app mode (v0.1).
-    WorkspaceMode {
-        /// Number of workspace members.
-        member_count: usize,
-    },
 }
 
 /// Candidate entry before merge and validation.
