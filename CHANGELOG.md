@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/requirements/` files declare a test group, and `autogen` (mlflow's
   ag2 flavor) maps to `ag2`, `autogen` and `pyautogen`. CHK005 lists each
   declaration bucket once instead of "dev, dev" (#749).
+- CHK005 reports a dev-only distribution as info / Likely when every
+  runtime import of it is opt-in: under an `is_x` flag or predicate
+  (django's `if is_psycopg3:`, streamlit's `if is_sympy_expression(body):`),
+  in a subpackage named after it (mlflow's `pyspark` and `langchain` for
+  `langchain_community`), or in airflow's `example_dags`. The top-level
+  package's own name does not count, and example DAGs stay runtime files
+  for CHK003 / CHK004 / CHK010 (#781).
 
 ## [0.7.4] - 2026-10-10
 
