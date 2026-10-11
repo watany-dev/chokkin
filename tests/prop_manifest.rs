@@ -247,7 +247,8 @@ proptest! {
 
     #[test]
     fn setup_py_roundtrip_install_requires(
-        deps in prop::collection::vec(valid_name(), 1..6),
+        // A repeated string is read once (#726); distinct ones keep their order.
+        deps in prop::collection::btree_set(valid_name(), 1..6),
         name in valid_name(),
     ) {
         let rendered = deps

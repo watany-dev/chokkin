@@ -707,6 +707,10 @@ project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言�
 同じ origin (file:line) を別経路で 2 回読んだもの
   (requirements-dev.txt の -r requirements.txt と、直接読む requirements.txt)
   -> include 側の context が違っても 1 つの宣言なので報告しない
+setup.py で評価したリストに同じ文字列が 2 回入ったもの
+  (extras["dev"] = extras["all"] + extras["testing"] で両方に datasets)
+  -> 1 つの宣言として読むので報告しない (#726)。setup.py の要素は行を持たず
+     連結と literal の書き重ねを区別できないため、文字列が完全一致する要素は一律にまとめる
 ```
 
 origin と `--explain` の details には重複に関与した宣言だけを出す。`--fix` もこの関与した宣言の中からだけ削除対象を 1 つ選ぶ (runtime と他 context の組では runtime 宣言を残す)。同じ distribution を別の制約で持つ兄弟の extra (http: httpx と pinned: httpx!=0.28.0 のうち pinned) は消さない。context の label は `runtime` / `group:<name>` / `optional:<extra>` / `build` で、setup.py の `extras_require` も `optional:` にそろえる。
