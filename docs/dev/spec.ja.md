@@ -885,7 +885,11 @@ library modeでは、定義元module自身がその名前を読んでいるsymbo
 
 設定エントリが `from m import *` で取り込む名前も CHK006 の外部利用扱いにする (`config_star_symbols`、#729)。設定エントリは、ホストが module の名前空間を設定として読む plugin entry で、sphinx plugin の `docs/conf.py` (root と各 workspace member) と django plugin の settings module を指す。Sphinx は `html_theme` を、Django は `INSTALLED_APPS` を名前空間から読むので、どの importer もその名前を書かない (airflow の各 provider の `docs/conf.py` が star import する `provider_conf.py`)。star 先がさらに star import していれば連鎖を辿る。`__all__` のある module は列挙した名前だけ、無い module は公開名すべてを対象にする (連鎖の途中にある `__all__` で先の module の名前を絞ることはしない)。対象は star 先で定義された symbol だけで、設定エントリ自身が定義する名前、`__init__.py` の再export (CHK007)、`manage.py` や `ROOT_URLCONF` の module など設定エントリ以外の entry からの star import は従来どおり扱う。通常コードの star import は従来どおり参照にならない。CHK001 の判定には使わない。
 
-引数・戻り値・`AnnAssign` の注釈にある文字列 (`x: "list[T]"`、`list["Foo"]` の内側) は式として parse し直し、中の `Name` も読み取りに数える (#545)。`Literal[...]` の中の文字列、`Annotated[...]` の2番目以降の引数、`cast("T", x)`、`TypeVar(bound="Foo")` は対象外。
+引数・戻り値・`AnnAssign` の注釈にある文字列 (`x: "list[T]"`、`list["Foo"]` の内側) は式として parse し直し、中の `Name` も読み取りに数える (#545)。`Literal[...]` の中の文字列と `Annotated[...]` の2番目以降の引数は対象外。
+
+注釈以外でも、typing が型式として読む位置の文字列は同じく読み取りに数える (#577)。`cast("T", x)` の第1引数 (`typ=`)、`TypeVar("M", "A", "B", bound="Foo", default="Bar")` の2番目以降の位置引数と `bound=` / `default=`、`X: TypeAlias = "list[Foo]"` の右辺、`type X = "Foo"` の右辺が対象。`TypeVar` の第1引数は変数自身の名前なので数えない。呼び出し先は `cast` / `TypeVar` という名前そのものか、`typing` (`import typing as t` の別名を含む) / `typing_extensions` の属性 (`t.cast`、`typing_extensions.TypeVar`) に限る。`Literal` / `Annotated` と違い末尾の名前だけでは判定しない。`col.cast("float")` や `memoryview.cast("B")` のように同名のメソッドがあるため。
+
+それ以外の呼び出しの文字列引数は名前として読まない。sgqlc の生成コード (`sgqlc.types.Field("UserConnection", graphql_name=...)`) のように任意の callee が文字列で class を指す書き方は、識別子に見える文字列すべてを参照に数えると無関係な文字列 (`name="deploy"`、`kwargs.pop("arerank")` など) まで拾うため対象にしない。生成コードは `vendored` に入れるか (走査と参照元には残したまま issue を出さない)、`[tool.chokkin.ignore]` の `CHK006 = ["path/to/graphql_schema.py:*"]` で外す。`exclude` は file を走査から外し、そこからの import も参照に数えなくなるので、生成コードが他 module を使う場合には向かない。
 
 CHK007 は、再exportした `__init__.py` 自身がその名前を読んでいる import (parser の `ParsedModule::used_import_bindings`) を対象外にする。`from .x import a as b` の再export名は `b` とする。
 

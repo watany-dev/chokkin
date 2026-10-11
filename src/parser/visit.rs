@@ -634,6 +634,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 self.visit_expr(&ann_assign.target);
                 self.visit_annotation(&ann_assign.annotation);
                 if let Some(value) = &ann_assign.value {
+                    if subscript_name(&ann_assign.annotation) == Some("TypeAlias") {
+                        AnnotationNames(&mut self.loaded_names).visit_expr(value);
+                    }
                     let index = self.parsed.dynamic_import_prefixes.len();
                     self.visit_expr(value);
                     self.bind_prefix_module(&ann_assign.target, value, index);
@@ -649,7 +652,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 if let Some(type_params) = &alias.type_params {
                     self.visit_type_params(type_params);
                 }
-                self.visit_expr(&alias.value);
+                self.visit_annotation(&alias.value);
             },
             Stmt::AugAssign(aug_assign) => {
                 if self.module_level
@@ -800,6 +803,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 }
             },
             Expr::Call(call) => {
+                for argument in type_expression_arguments(call, &self.typing_aliases) {
+                    AnnotationNames(&mut self.loaded_names).visit_expr(argument);
+                }
                 self.record_computed_getattr(call);
                 self.sys_path.edited |= edits_sys_path(&call.func);
                 let arguments = &call.arguments;
@@ -893,6 +899,45 @@ impl<'a> Visitor<'a> for AnnotationNames<'_> {
             _ => walk_expr(self, expr),
         }
     }
+}
+
+/// Arguments typing reads as type expressions, where a string is a forward
+/// reference (#577): the type of `cast("T", x)` and the constraints, bound
+/// and default of `TypeVar("T", bound="Foo")`. The first `TypeVar` argument
+/// is the variable's own name.
+fn type_expression_arguments<'e>(
+    call: &'e ExprCall,
+    typing_aliases: &HashSet<String>,
+) -> impl Iterator<Item = &'e Expr> {
+    // Unlike `Literal[...]`, a method may share the name: `col.cast("float")`.
+    let callee = match &*call.func {
+        Expr::Name(name) => Some(name.id.as_str()),
+        Expr::Attribute(attribute) => match &*attribute.value {
+            Expr::Name(module)
+                if typing_aliases.contains(module.id.as_str())
+                    || module.id.as_str() == "typing_extensions" =>
+            {
+                Some(attribute.attr.as_str())
+            },
+            _ => None,
+        },
+        _ => None,
+    };
+    let arguments = &call.arguments;
+    let (positional, keywords): (&[Expr], &[&str]) = match callee {
+        Some("cast") => (arguments.args.get(..1).unwrap_or_default(), &["typ"]),
+        Some("TypeVar") => (
+            arguments.args.get(1..).unwrap_or_default(),
+            &["bound", "default"],
+        ),
+        _ => (&[], &[]),
+    };
+    positional.iter().chain(
+        keywords
+            .iter()
+            .filter_map(|name| arguments.find_keyword(name))
+            .map(|keyword| &keyword.value),
+    )
 }
 
 fn subscript_name(expr: &Expr) -> Option<&str> {
@@ -1150,6 +1195,32 @@ mod tests {
                 ("w", false),
                 ("model", false)
             ]
+        );
+    }
+
+    #[test]
+    fn marks_symbols_read_in_string_type_expressions() {
+        let parsed = visit_source(
+            "A = 1\nB = 1\nC = 1\nD = 1\nE = 1\nF = 1\nG = 1\nU = TypeVar(\"U\")\nH = 1\n\n\
+             import typing as t\nx = cast(\"A\", 1)\ny = t.cast(typ=\"list[B]\", val=1)\n\
+             M = TypeVar(\"M\", bound=\"C\")\nN = TypeVar(\"N\", \"D\", \"E\", default=\"F\")\n\
+             Alias: TypeAlias = \"list[G]\"\ntype Other = \"H\"\n",
+        );
+        let used: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.used_in_module)
+            .map(|symbol| symbol.name.as_str())
+            .collect();
+        assert_eq!(used, ["A", "B", "C", "D", "E", "F", "G", "H"]);
+
+        let other_calls =
+            visit_source("Assignee = 1\nB = 1\nz = Field(\"Assignee\")\nb = view.cast(\"B\")\n");
+        assert!(
+            other_calls
+                .symbols
+                .iter()
+                .all(|symbol| !symbol.used_in_module)
         );
     }
 
