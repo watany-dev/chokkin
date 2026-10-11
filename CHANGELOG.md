@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands over only the names it lists. A star import from any other module
   is still no reference. This clears airflow's `provider_conf.py`, which
   every provider's `docs/conf.py` star-imports (#729).
+- Modules that the Pyodide runtime provides (`js`, `pyodide`,
+  `pyodide_js`, `_pyodide`) are no longer CHK010. When nothing else
+  resolves such a root, it is third-party without a distribution, so
+  CHK003–CHK005 are unchanged and a venv, mapped or declared package of
+  the same name still wins. This clears urllib3's emscripten contrib and
+  its `@run_in_pyodide` tests (#722).
 
 ## [0.7.4] - 2026-10-10
 

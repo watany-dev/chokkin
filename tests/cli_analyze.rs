@@ -2015,6 +2015,38 @@ fn build_time_modules_are_not_chk010() {
     }
 }
 
+/// Pyodide provides `js` and `pyodide` itself, not an installed
+/// distribution, so they are neither CHK010 nor CHK003 (#722).
+#[test]
+fn pyodide_runtime_modules_are_not_chk010() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "src/pkg/__init__.py",
+            "from pkg.contrib.emscripten import fetch\n",
+        ),
+        ("src/pkg/contrib/__init__.py", ""),
+        ("src/pkg/contrib/emscripten/__init__.py", ""),
+        (
+            "src/pkg/contrib/emscripten/fetch.py",
+            "import js\nfrom pyodide.ffi import to_js\nimport zzmissing\n",
+        ),
+    ]);
+    for args in [&["--no-cache"][..], &["--no-cache", "--strict"][..]] {
+        assert_eq!(
+            issue_keys(&json_issues(temp.path(), args)),
+            [(
+                "CHK010".to_owned(),
+                "src/pkg/contrib/emscripten/fetch.py:zzmissing".to_owned()
+            )],
+            "{args:?}"
+        );
+    }
+}
+
 #[test]
 fn binary_examples_feed_reachability_only_and_nested_projects_are_skipped() {
     // #694: examples run outside the package, and a nested `[project]` that

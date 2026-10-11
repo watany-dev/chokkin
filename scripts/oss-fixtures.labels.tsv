@@ -1186,7 +1186,6 @@ streamlit	CHK010	lib/streamlit/vendor/pympler/asizeof.py:_testcapi	fp	stdlib	_te
 structlog	CHK010	src/structlog/twisted.py:zope	tp	-	undeclared third-party: zope.interface (only transitive via twisted, which is declared in extras)
 transformers	CHK010	src/transformers/quantizers/quantizer_bnb_4bit.py:bitsandbytes	tp	-	undeclared third-party: bitsandbytes (optional quantization backend, not in setup.py/pyproject)
 typer	CHK010	scripts/mkdocs_hooks.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
-urllib3	CHK010	test/contrib/emscripten/test_emscripten.py:js	fp	other	js is a Pyodide runtime builtin module (test body runs in Pyodide via run_in_pyodide)
 virtualenv	CHK010	src/virtualenv/seed/wheels/acquire.py:pip	fp	other	unsure: not an import; argv [sys.executable, '-m', 'pip', 'download'] subprocess using host pip tool
 airflow	CHK010	scripts/ci/prek/check_shared_distributions_usage.py:tomllib	fp	stdlib	tomllib is stdlib 3.11+; script pins requires-python <3.11 and falls back in try/except
 black	CHK010	scripts/diff_shades_gha_helper.py:diff_shades	info-expected	dev-context	undeclared third-party: diff-shades (pip-installed only in .github/workflows/diff_shades.yml) (info in scripts/ since #694)
@@ -1201,7 +1200,6 @@ sqlalchemy	CHK010	lib/sqlalchemy/dialects/sqlite/pysqlcipher.py:pysqlcipher3	tp	
 streamlit	CHK010	lib/streamlit/elements/write.py:tensorflow	tp	-	undeclared third-party: tensorflow (not in streamlit manifests or uv.lock)
 structlog	CHK010	src/structlog/dev.py:better_exceptions	info-expected	-	undeclared third-party: better-exceptions (guarded optional import); info since #670 (optional import)
 transformers	CHK010	tests/utils/test_auto_docstring.py:check_docstrings	fp	first-party-missed	utils/check_docstrings.py exists; test inserts repo_root/utils into sys.path
-urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:js	fp	other	js is a Pyodide runtime builtin module (emscripten-only contrib)
 virtualenv	CHK010	tests/unit/seed/wheels/test_acquire.py:pip	fp	other	not an import: list literal [sys.executable,'-m','pip',...] in a test assertion
 airflow	CHK001	devel-common/src/sphinx_exts/metrics_tables_from_registry.py	fp	framework-loaded	listed by string in Sphinx extensions list in devel-common/src/docs/utils/conf_constants.py
 mlflow	CHK001	tests/langgraph/sample_code/langgraph_with_custom_span.py	fp	dynamic-import	loaded by file path string in tests/langgraph/test_langgraph_autolog.py (models-from-code)
@@ -1856,7 +1854,6 @@ mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:autogen	fp	declared-t
 requests	CHK010	tests/conftest.py:BaseHTTPServer	info-expected	stdlib	Python 2 stdlib fallback in try/except ImportError; python_requires>=3.8 so dead code; info since #764 (setup.py python_requires)
 sqlalchemy	CHK010	test/conftest.py:sqla_pytestplugin	fp	first-party-missed	bootstrap.py registers lib/sqlalchemy/testing/plugin/pytestplugin.py in sys.modules under this name
 transformers	CHK010	tests/repo_utils/test_check_repo.py:check_repo	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
-urllib3	CHK010	src/urllib3/contrib/emscripten/fetch.py:pyodide	fp	other	pyodide is a Pyodide runtime builtin module (emscripten contrib)
 virtualenv	CHK010	tests/unit/create/via_global_ref/test_race_condition.py:_virtualenv_test	tp	-	module written to a temp dir by the test at runtime
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_10k.py:langchain_text_splitters	tp	-	example DAG import; common.ai provider declares langchain only, langchain-text-splitters is a separate dist
 django	CHK010	tests/gis_tests/test_geoip2.py:geoip2	fp	declared-third-party	geoip2 listed in tests/requirements/py3.txt
