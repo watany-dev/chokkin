@@ -132,6 +132,58 @@ CHK004 `tp` rows that a member manifest omits but the root lockfile provides
 are noted `lock-only edge`; they are the population #649 will use to pick the
 transitive-dependency threshold.
 
+### Re-measurement, stale cleanup and CHK001 / CHK004 top-up at `3406814` (#785, 2026-10-11)
+
+`scripts/oss-metrics.py -r 1 --with-strict --gate` at main `3406814` (after
+#788–#792) passes every gate: CHK002 FP 3.7% (1 / 27), recall 843 / 843, no
+exit 3 / exit 2, every expectation within range, speed within budget.
+
+Before topping up, 228 labels whose finding no longer appears were deleted.
+They are fixed false positives, recorded here so the deleted rows stay
+accounted for:
+
+| Rule | Rows | Verdict | When the finding disappeared |
+|---|---:|---|---|
+| CHK001 | 6 | fp | mlflow: 5 at v0.7.4 (#776 / #792; dynamic-import 2, other 2, script-entry 1), 1 before |
+| CHK002 | 93 | fp | before v0.7.4 |
+| CHK003 | 3 | fp | before v0.7.4 (airflow `pydantic_ai`, map-gap) |
+| CHK005 | 2 | fp | before v0.7.4 (llama_index `IPython`, mitmproxy `requests`) |
+| CHK006 | 67 | 64 fp, 3 info-expected | 45 before v0.7.4 (poetry 19 #750 / #728, fastmcp 11 + mcp 1 #742, airflow provider_conf 12 #729 + 1, mlflow 1); 22 at v0.7.4 (mlflow library-public-api 15, name-convention 4, info-expected 3; #776 / #792) |
+| CHK008 | 33 | fp | before v0.7.4 (#692 / #745) |
+| CHK009 | 1 | fp | before v0.7.4 (poetry `dulwich`) |
+| CHK010 | 23 | fp | before v0.7.4 (first-party-missed, `sys.path` inserts #754, ...) |
+
+All 93 CHK002 targets are still declared in the pinned clones (including the
+six PEP 723 scripts), and the clone manifest has not changed since #690, so
+they vanished because of analysis fixes, not pin bumps. The 74 CHK002 labels
+that report.md still lists as stale are dev-group dependencies: they match
+only the `--strict` run and are kept.
+
+CHK001 and CHK004 were then topped up to at least 30% coverage
+(`--total 21 --per-project 12`, `--total 565 --per-project 140`). The 14 new
+CHK001 labels are all fp; the 196 new CHK004 labels are all tp, checked
+against the member / root manifests and the nearest `uv.lock` (14 are
+`lock-only edge`, 10 reach the import only through the dev closure). The
+expectations for sqlalchemy (CHK010 14 → 6), transformers (CHK010 234 → 203)
+and langchain (CHK001 3 → 0) follow the fixes in the same range.
+
+| Rule | Hits | Sample | tp | fp | Coverage | Precision | Main FP buckets |
+|---|---:|---:|---:|---:|---:|---:|---|
+| CHK001 | 63 | 21 | 2 | 19 | 33% | 10% | script-entry 8 (workflow / pre-commit / SKILL.md `python path.py` runs, standalone examples), framework-loaded 5 (Sphinx extensions, DAG folders), dynamic-import 3, library-public 2, other 1 |
+| CHK002 | 27 | 27 | 26 | 1 | 100% | 96% | — |
+| CHK003 | 115 | 48 (+42 deferred) | 48 | 0 | 42% | 100% | — |
+| CHK004 | 1,877 | 610 | 610 | 0 | 32% | 100% | — |
+| CHK005 | 36 | 17 | 8 | 9 | 47% | 47% | optional-import 8 (#781), other 1 |
+| CHK006 | 270 | 104 | 83 | 21 | 39% | 80% | external-reference 10 (airflow `security/permissions.py` constants), name-convention 6 (#777), dynamic-import 5 (#493) |
+| CHK008 | 18 | 8 | 7 | 1 | 44% | 88% | not-invoked 1 |
+| CHK009 | 0 | 0 | 0 | 0 | n/a | n/a | — |
+| CHK010 | 214 | 126 | 110 | 16 | 59% | 87% | declared-third-party 10 (#749 / #780), first-party-missed 5, generated 1 |
+
+CHK006 precision went up from 55% at `883e306` to 80%, but less than
+the 85.5% estimated in #787: #792 relabelled 41 mlflow tp as info-expected, so
+tp fell from 124 to 83. CHK010 has 16 fp rather than the estimated 14 (#790
+removed 18 fp, not 20; #789 moved 3 tp to CHK003).
+
 ## Validation set (20 projects)
 
 Mix per §17 (library / app / server / framework / Django / FastAPI):
