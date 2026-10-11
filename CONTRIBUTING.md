@@ -73,9 +73,14 @@ for all platforms and publishes to PyPI via Trusted Publishing:
 
 1. Update `version` in `Cargo.toml` and `pyproject.toml`, and the `version` input default in `action.yml`.
 2. Run `cargo generate-lockfile` to update `Cargo.lock`.
-3. Commit: `chore: release vX.Y.Z`.
-4. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-5. GitHub Actions builds wheels, creates a GitHub Release, and publishes to PyPI.
+3. Move the `[Unreleased]` entries of `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`.
+4. Commit: `chore: release vX.Y.Z`.
+5. Tag the squash-merged release commit itself, not the tip of `main`:
+   `git tag vX.Y.Z <release-commit> && git push origin vX.Y.Z`. Anything
+   merged after it ships in the wheels without a CHANGELOG entry or release
+   validation (v0.7.4 was tagged at the tip and shipped #765–#772 and #774
+   this way).
+6. GitHub Actions builds wheels, creates a GitHub Release, and publishes to PyPI.
 
 Wheels are built with the toolchain pinned by `RUST_TOOLCHAIN` in
 `.github/workflows/release.yml`, not the latest stable. To move it, bump it in
