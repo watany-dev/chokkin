@@ -64,7 +64,8 @@ pub(super) fn extract_requirements_file(
 /// / `requirements/*.in` (werkzeug `requirements/tests.in`, urllib3
 /// `emscripten-requirements.txt`), and the same names under `docs/` and
 /// `doc/` (pluggy `docs/requirements.txt`, #723). The fixed root names match
-/// too; the rest have no context to guess, so they only declare names (#679).
+/// too. Every file adds its names; the rest declare dependencies only when
+/// their path names a context (#679, #786).
 pub(crate) fn extra_requirements_candidates(root: &Path) -> Vec<PathBuf> {
     let requirements_name = |stem: &str, ext: &str| {
         (ext == "txt" && stem.contains("requirements"))
@@ -143,7 +144,7 @@ fn parse_requirements_file_path(
         return Err(ManifestError::RequirementsCircularInclude { cycle });
     }
 
-    let rel = rel_to_root(ctx.root, ctx.path);
+    let rel = origin_rel(ctx.root, ctx.path);
     ctx.result.files_read.push(rel.clone());
     let Some(contents) = read_text(ctx.path)? else {
         ctx.result.skipped = true;
@@ -186,7 +187,8 @@ fn parse_requirements_line(
         let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
             path: include_path.to_owned(),
         })?;
-        let include_context = context_for_requirements_include(include_path, ctx.default_context);
+        let include_context = requirements_path_context(&origin_rel(ctx.root, &resolved_path))
+            .unwrap_or_else(|| ctx.default_context.clone());
         return parse_requirements_file_path(RequirementsParseContext {
             root: ctx.root,
             path: &resolved_path,
@@ -420,22 +422,42 @@ fn resolve_requirements_include(
     None
 }
 
-/// Infer dependency context from an included requirements path (Phase 1.5 §4.B).
-///
-/// Only whole directory names and `-`/`_`/`.`-separated stem words count, so
-/// `protests.txt` or `documentsdb.txt` keep the parent context (#505).
-fn context_for_requirements_include(
-    include_path: &str,
-    parent: &DependencyContext,
-) -> DependencyContext {
-    let path = Path::new(include_path);
+/// The root-relative origin of a requirements file, with `..` folded so
+/// `docs/../dev-requirements.txt` keeps the origin `dev-requirements.txt` it
+/// has when read directly. Only the label folds: the file itself is opened
+/// through the OS like pip does, symlinks included.
+fn origin_rel(root: &Path, path: &Path) -> String {
+    let mut folded = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {},
+            std::path::Component::ParentDir
+                if matches!(
+                    folded.components().next_back(),
+                    Some(std::path::Component::Normal(_))
+                ) =>
+            {
+                folded.pop();
+            },
+            other => folded.push(other),
+        }
+    }
+    rel_to_root(root, &folded)
+}
+
+/// The context a requirements path names (Phase 1.5 §4.B), from its whole
+/// directory names and `-`/`_`/`.`-separated stem words, so `protests.txt` or
+/// `documentsdb.txt` name none (#505). `optional` requirements are runtime
+/// features installed on demand, like an extra (#786).
+pub(super) fn requirements_path_context(path: &str) -> Option<DependencyContext> {
+    let path = Path::new(path);
     let lower = |s: &std::ffi::OsStr| s.to_string_lossy().to_ascii_lowercase();
     let basename = path.file_name().map(lower).unwrap_or_default();
     if matches!(
         basename.as_str(),
         "requirements-packaging.txt" | "requirements-github-actions.txt"
     ) {
-        return DependencyContext::Group("dev".to_owned());
+        return Some(DependencyContext::Group("dev".to_owned()));
     }
 
     let stem = path.file_stem().map(lower).unwrap_or_default();
@@ -451,17 +473,18 @@ fn context_for_requirements_include(
     words.extend(stem.split(['-', '_', '.']).map(str::to_owned));
     let has_word = |candidates: &[&str]| words.iter().any(|w| candidates.contains(&w.as_str()));
 
-    if has_word(&["dev"]) {
-        DependencyContext::Group("dev".to_owned())
+    let group = if has_word(&["dev"]) {
+        "dev"
     } else if has_word(&["docs", "doc", "documentation"]) {
-        DependencyContext::Group("docs".to_owned())
+        "docs"
     } else if has_word(&["tests", "test", "testing"]) {
-        DependencyContext::Group("tests".to_owned())
-    } else if has_word(&["optional"]) {
-        DependencyContext::Group("dev".to_owned())
+        "tests"
+    } else if has_word(&["optional", "optionals"]) {
+        return Some(DependencyContext::OptionalExtra("optional".to_owned()));
     } else {
-        parent.clone()
-    }
+        return None;
+    };
+    Some(DependencyContext::Group(group.to_owned()))
 }
 
 #[cfg(test)]
@@ -479,6 +502,16 @@ mod tests {
     #[test]
     fn strip_comment_removes_whitespace_prefixed_hash() {
         assert_eq!(strip_comment("requests  # runtime").trim(), "requests");
+    }
+
+    #[test]
+    fn origin_rel_folds_only_parents_of_named_directories() {
+        // A leading `..` of a relative root has nothing to fold into.
+        let root = Path::new("../proj");
+        assert_eq!(
+            origin_rel(root, Path::new("../proj/docs/../dev-requirements.txt")),
+            "dev-requirements.txt"
+        );
     }
 
     #[test]
@@ -509,25 +542,20 @@ mod tests {
 
     #[test]
     fn include_context_infers_docs_from_nested_path() {
-        let parent = DependencyContext::Runtime;
         assert!(matches!(
-            context_for_requirements_include("requirements-docs.txt", &parent),
-            DependencyContext::Group(group) if group == "docs"
+            requirements_path_context("requirements-docs.txt"),
+            Some(DependencyContext::Group(group)) if group == "docs"
         ));
         assert!(matches!(
-            context_for_requirements_include(
-                "requirements/requirements-documentation.txt",
-                &parent
-            ),
-            DependencyContext::Group(group) if group == "docs"
+            requirements_path_context("requirements/requirements-documentation.txt"),
+            Some(DependencyContext::Group(group)) if group == "docs"
         ));
     }
 
     #[test]
     fn include_context_matches_whole_words_only() {
-        let parent = DependencyContext::Runtime;
-        let group_of = |path: &str| match context_for_requirements_include(path, &parent) {
-            DependencyContext::Group(group) => Some(group),
+        let group_of = |path: &str| match requirements_path_context(path) {
+            Some(DependencyContext::Group(group)) => Some(group),
             _ => None,
         };
         assert_eq!(group_of("reqs/protests.txt"), None);
@@ -539,13 +567,26 @@ mod tests {
         assert_eq!(group_of("dev-requirements.txt").as_deref(), Some("dev"));
         assert_eq!(group_of("requirements-dev.txt").as_deref(), Some("dev"));
         assert_eq!(
-            group_of("requirements-optional.txt").as_deref(),
-            Some("dev")
-        );
-        assert_eq!(
             group_of("requirements-packaging.txt").as_deref(),
             Some("dev")
         );
+        assert_eq!(requirements_path_context("requirements/typing.in"), None);
+    }
+
+    #[test]
+    fn optional_requirements_are_an_extra() {
+        for path in [
+            "requirements-optional.txt",
+            "requirements/requirements-optionals.txt",
+        ] {
+            assert!(
+                matches!(
+                    requirements_path_context(path),
+                    Some(DependencyContext::OptionalExtra(extra)) if extra == "optional"
+                ),
+                "{path}"
+            );
+        }
     }
 
     #[test]

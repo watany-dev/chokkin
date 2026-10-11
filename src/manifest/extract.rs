@@ -18,6 +18,7 @@ use super::pep508_util::normalize_distribution_name;
 use super::pyproject::extract_pyproject;
 use super::requirements::{
     extra_requirements_candidates, extract_requirements_file, extract_requirements_path,
+    requirements_path_context,
 };
 use super::setup_cfg::extract_setup_cfg;
 use super::setup_py::extract_setup_py;
@@ -179,7 +180,7 @@ pub fn extract_manifest(
         constraints.extend(extracted.constraints);
         warnings.extend(extracted.warnings);
     }
-    read_extra_requirements(root_path, &mut sources);
+    read_extra_requirements(root_path, &mut sources, &mut dependencies);
 
     // Only declarations from another source vouch for the runtime set; a
     // partially read setup.py may still hide the rest of it.
@@ -284,7 +285,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v12".to_owned(),
+            unit_version: "manifest-extract-v13".to_owned(),
         },
         inputs,
     })
@@ -304,18 +305,34 @@ fn manifest_inputs_for_payload(
 }
 
 /// Collect the names that requirements files outside the fixed root names
-/// declare, skipping files already read. Best effort: a broken file there only
-/// loses its names, never a warning or an error.
-fn read_extra_requirements(root: &Path, sources: &mut ManifestSources) {
-    for path in extra_requirements_candidates(root) {
-        if sources
-            .requirements_files
-            .contains(&rel_to_root(root, &path))
-        {
+/// declare, skipping files already read. Entries written in a file whose path
+/// names a context (`requirements/tests.in`, `docs/requirements.txt`) are also
+/// declarations in that context; the rest only declare names, even when a
+/// dev file includes them (mlflow `extra-ml-requirements.txt`, #679, #786).
+/// Each such file is its own group (or optional extra), installed on its own
+/// like a PEP 735 one, so it never duplicates another file or a
+/// `[dependency-groups]` mirror, and a file already read declares once. A `.txt`
+/// compiled from a sibling `.in` pins the whole environment, so only the `.in`
+/// declares. Best effort: a broken file there only loses its names, never a
+/// warning or an error.
+fn read_extra_requirements(
+    root: &Path,
+    sources: &mut ManifestSources,
+    dependencies: &mut Vec<DeclaredDependency>,
+) {
+    let candidates = extra_requirements_candidates(root);
+    let compiled = |file: &str| {
+        let path = root.join(file);
+        path.extension().is_some_and(|ext| ext == "txt")
+            && candidates.contains(&path.with_extension("in"))
+    };
+    for path in &candidates {
+        let rel = rel_to_root(root, path);
+        if sources.requirements_files.contains(&rel) {
             continue;
         }
         let (extracted, complete) =
-            extract_requirements_path(root, &path, &DependencyContext::Runtime);
+            extract_requirements_path(root, path, &DependencyContext::Runtime);
         // Unreadable: nothing to declare, and the scan cache could not
         // fingerprint it.
         if !complete && extracted.dependencies.is_empty() {
@@ -328,6 +345,18 @@ fn read_extra_requirements(root: &Path, sources: &mut ManifestSources) {
                 .filter(|dep| !dep.name.is_empty())
                 .map(|dep| normalize_distribution_name(&dep.name)),
         );
+        dependencies.extend(extracted.dependencies.into_iter().filter_map(|mut dep| {
+            if compiled(&dep.origin.file) || sources.requirements_files.contains(&dep.origin.file) {
+                return None;
+            }
+            let file = dep.origin.file.clone();
+            dep.context = match requirements_path_context(&file)? {
+                DependencyContext::Group(_) => DependencyContext::Group(file),
+                DependencyContext::OptionalExtra(_) => DependencyContext::OptionalExtra(file),
+                context => context,
+            };
+            Some(dep)
+        }));
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
     }

@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports its import as CHK010, and a declared `griffe` is no longer CHK002
   with its import CHK003 against `griffelib`. `llama_index.core` imports with
   neither declared are now reported as CHK003 (#773, #780).
+- A requirements file outside the fixed root names now declares its
+  entries in the context its own path names instead of only naming the
+  packages: `requirements/tests.in` declares a test group,
+  `docs/requirements.txt` a docs group, and `requirements-optional.txt` an
+  optional extra. Each file is its own group, so it never repeats another
+  file or a `[dependency-groups]` mirror under CHK009. A file whose path
+  names no context stays names-only, and a `.txt` compiled from a sibling
+  `.in` is not a declaration (#786).
 
 ## [0.7.4] - 2026-10-10
 
