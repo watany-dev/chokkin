@@ -344,12 +344,12 @@ fn declared_distributions_with_differing_import_names_resolve() {
     let temp = temp_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"databricks-sdk\", \"databricks-agents\", \"google-api-core\", \"google-cloud-firestore\", \"paddlepaddle-gpu\"]\n",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"databricks-sdk\", \"databricks-agents\", \"google-api-core\", \"google-cloud-firestore\", \"paddlepaddle-gpu\", \"faiss-gpu\", \"griffe\", \"llama-index-core\"]\n",
         ),
         ("app/__init__.py", ""),
         (
             "app/main.py",
-            "import databricks.sdk.service.catalog\nfrom databricks.agents.evals import judges\nimport google.api_core.exceptions\nfrom google.cloud import firestore\nfrom google.cloud.firestore_v1.base_query import FieldFilter\nimport paddle\n",
+            "import databricks.sdk.service.catalog\nfrom databricks.agents.evals import judges\nimport google.api_core.exceptions\nfrom google.cloud import firestore\nfrom google.cloud.firestore_v1.base_query import FieldFilter\nimport paddle\nimport faiss\nimport griffe\nfrom llama_index.core.schema import TextNode\n",
         ),
     ]);
     let index = resolve_path(temp.path());
@@ -372,6 +372,10 @@ fn declared_distributions_with_differing_import_names_resolve() {
         ),
         // paddlepaddle provides `paddle` too; the declared one wins.
         ("paddle", "paddlepaddle-gpu"),
+        // faiss-cpu and griffelib provide `faiss` and `griffe` too (#780).
+        ("faiss", "faiss-gpu"),
+        ("griffe", "griffe"),
+        ("llama_index.core.schema", "llama-index-core"),
     ] {
         assert_eq!(
             distribution(module),

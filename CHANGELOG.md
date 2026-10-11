@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning, unreachable test files are no longer CHK001, and CHK005 counts
   imports in public modules that nothing reaches. Members of a
   library root are judged in library mode too (#776).
+- A module that calls `warnings.warn` at module top level with a
+  deprecation category (a name containing `Deprecat` or matching
+  `Removed*Warning`) is a compatibility shim kept for outside callers: its
+  CHK001 and its symbols' CHK006 are info. Airflow's `stats.py` and
+  `security/permissions.py` are no longer reported (#778).
 
 ### Fixed
 - A workspace member's own pytest config (`pytest.ini`,
@@ -26,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ["tests"]`) no longer report CHK010 (#775).
 - The bundled package map maps `guardrails-ai` to its `guardrails` import, so
   declaring it no longer reports the import as CHK010 (#773).
+- The bundled package map maps `faiss-cpu` and `faiss-gpu` to `faiss`,
+  `griffe` to `griffe` (alongside `griffelib`), and `llama-index-core` and the
+  `llama-index` umbrella to the `llama_index.core` namespace. A declared
+  distribution of these no longer reports its import as CHK010, and a declared
+  `griffe` is no longer CHK002 with its import CHK003 against `griffelib`.
+  `llama_index.core` imports with neither declared are now reported as CHK003
+  (#780).
 
 ## [0.7.4] - 2026-10-10
 

@@ -1,6 +1,6 @@
 //! Issue emission orchestration (pipeline step 12).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::ExitStatus;
 use crate::config::{ChokkinConfig, RuntimeOverrides};
@@ -10,7 +10,7 @@ use crate::resolver::ResolutionIndex;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
     Issue, IssueCandidate, IssueLocation, IssueReport, IssueSubject, IssueSummary, Origin,
-    SuppressedIssue, sort_candidates,
+    Severity, SuppressedIssue, sort_candidates,
 };
 
 use super::chk001::chk001_candidates;
@@ -43,6 +43,7 @@ pub fn emit_issues(
     let mut candidates = chk001_candidates(&unreachable.unreachable, strict);
     candidates.extend(deps.candidates.clone());
     candidates.extend_from_slice(symbols);
+    downgrade_deprecated_shims(&mut candidates, parse);
 
     sort_candidates(&mut candidates);
 
@@ -79,6 +80,35 @@ pub fn emit_issues(
         suppressed,
         summary,
         exit_status,
+    }
+}
+
+/// A module that warns on import that it is deprecated is kept for outside
+/// callers, so its CHK001 and its symbols' CHK006 are info (#778).
+fn downgrade_deprecated_shims(candidates: &mut [IssueCandidate], parse: &ParseSummary) {
+    let shims: HashSet<&str> = parse
+        .modules
+        .iter()
+        .filter(|module| module.deprecated_shim)
+        .map(|module| module.path.as_str())
+        .collect();
+    for candidate in candidates {
+        let file = match (
+            candidate.rule,
+            &candidate.subject,
+            candidate.origins.first(),
+        ) {
+            (RuleId::Chk001, IssueSubject::File { path }, _) => path,
+            (RuleId::Chk006, _, Some(Origin::Import { file, .. })) => file,
+            _ => continue,
+        };
+        if shims.contains(file.as_str()) {
+            candidate.severity = Severity::Info;
+            candidate
+                .explain
+                .details
+                .push("the module warns on import that it is deprecated".to_owned());
+        }
     }
 }
 
@@ -335,6 +365,7 @@ mod tests {
     use crate::config::{Confidence, ProjectMode, default_config};
     use crate::graph::FileId;
     use crate::manifest::DependencyOrigin;
+    use crate::parser::ParsedModule;
     use crate::reachability::{ReachabilityReport, UnreachableFile};
     use crate::rules::types::{
         DependencyReport, ExplainData, IssueCandidate, IssueSubject, Severity,
@@ -366,6 +397,57 @@ mod tests {
         assert_eq!(issues.issues.len(), 1);
         assert_eq!(issues.issues[0].rule, RuleId::Chk001);
         assert_eq!(issues.exit_status, ExitStatus::IssuesFound);
+    }
+
+    #[test]
+    fn deprecated_shim_chk001_and_chk006_are_info() {
+        let candidate = |rule, subject, file: &str| IssueCandidate {
+            rule,
+            subject,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: String::new(),
+            workspace_member: None,
+            origins: vec![Origin::Import {
+                file: file.to_owned(),
+                line: 1,
+                module: "pkg.mod".to_owned(),
+            }],
+            explain: ExplainData::default(),
+        };
+        let file = |path: &str| IssueSubject::File {
+            path: path.to_owned(),
+        };
+        let symbol = IssueSubject::Symbol {
+            module: "pkg.mod".to_owned(),
+            name: "OLD".to_owned(),
+        };
+        let mut candidates = vec![
+            candidate(RuleId::Chk001, file("pkg/shim.py"), "pkg/shim.py"),
+            candidate(RuleId::Chk006, symbol.clone(), "pkg/shim.py"),
+            candidate(RuleId::Chk007, symbol.clone(), "pkg/shim.py"),
+            candidate(RuleId::Chk001, file("pkg/other.py"), "pkg/shim.py"),
+            candidate(RuleId::Chk006, symbol, "pkg/other.py"),
+        ];
+        let parse = ParseSummary {
+            modules: vec![ParsedModule {
+                path: "pkg/shim.py".to_owned(),
+                deprecated_shim: true,
+                ..ParsedModule::default()
+            }],
+        };
+        downgrade_deprecated_shims(&mut candidates, &parse);
+        let severities: Vec<_> = candidates.iter().map(|c| c.severity).collect();
+        assert_eq!(
+            severities,
+            [
+                Severity::Info,
+                Severity::Info,
+                Severity::Error,
+                Severity::Error,
+                Severity::Error,
+            ]
+        );
     }
 
     #[test]
