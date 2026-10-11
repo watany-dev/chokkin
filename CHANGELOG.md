@@ -79,6 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CHK003–CHK005 are unchanged and a venv, mapped or declared package of
   the same name still wins. This clears urllib3's emscripten contrib and
   its `@run_in_pyodide` tests (#722).
+- CHK006 no longer reports names used through a package that star-imports
+  them: after `from .sub.impl import *` in `pkg/__init__.py`, `pkg.name`
+  and `from pkg import name` count as uses of `pkg.sub.impl.name`. Chained
+  star imports are followed, and at each hop a module with `__all__` hands
+  on only the names it lists, one without hands on the names not starting
+  with `_`; a module that defines the name itself shadows the star-imported
+  one. Whether the use is external is judged by the importing module,
+  so a module reaching its own name through the package still counts as
+  unused. This clears 33 of litellm's app mode findings, such as
+  `litellm.amoderation` and `GCSLoggingConfig` (#576).
 
 ## [0.7.4] - 2026-10-10
 
