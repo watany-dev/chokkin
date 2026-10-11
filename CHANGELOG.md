@@ -7,89 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- The bundled package map now knows the import names of more distributions
-  whose name differs from the module: `pymupdf` (`fitz`), `weaviate-client`,
-  `gremlinpython`, `presto-python-client`, `smbprotocol` (`smbclient`),
-  `jpype1`, `shopifyapi`, `atlassian-python-api`, `hubspot-api-client`,
-  `ag-ui-protocol`, `haystack-ai` / `farm-haystack`,
-  `paddlepaddle` / `paddlepaddle-gpu` and a few others, plus `vertex_ray`
-  from `google-cloud-aiplatform`. Namespace distributions get dotted
-  entries: `databricks-agents` (`databricks.agents`, `databricks.rag_eval`),
-  `google-cloud-firestore` (`google.cloud.firestore*`) and
-  `azure-search-documents`, `azure-data-tables`, `azure-ai-agents`,
-  `azure-ai-projects`, `azure-ai-inference`. Declaring one of them no
-  longer reports its imports as CHK010 (or `google.cloud.firestore` as
-  CHK003 / CHK004 on `google-api-core`) and the dependency as unused (#748).
-- Names in a quoted type outside an annotation now count as read by their
-  module, like quoted annotations (#545): the type of `cast("T", x)`, the
-  constraints, `bound=` and `default=` of `TypeVar("M", bound="Foo")`, and
-  the value of `X: TypeAlias = "list[Foo]"` or `type X = "Foo"`. A class or
-  alias referenced only there is no longer CHK006 (airflow, langchain).
-  Strings passed to other calls, such as sgqlc's generated
-  `Field("UserConnection")`, still do not count; list generated code under
-  `vendored` or `[tool.chokkin.ignore]` (#577).
-- `python_requires` in `setup.cfg` (`[options]`) and `setup.py` (a
-  `setup()` argument that reads as a string without running the file) now
-  counts as `requires-python` when `pyproject.toml` declares none, with
-  pyproject > setup.cfg > setup.py priority and a `MetadataConflict`
-  warning when they differ. As in setuptools, a `[project]` table that does
-  not list `requires-python` in `dynamic` rules the setup.* value out. It sets the inferred `target_version` and the
-  stdlib range like `requires-python` does, so requests' dead
-  `dummy_threading` / `BaseHTTPServer` / `SimpleHTTPServer` fallbacks are
-  CHK010 info (#764).
-- Performance: resolving imports through `sys.path` edits no longer slows
-  down large projects. Each directory a candidate path starts from is listed
-  once, and a candidate whose first segment it lacks is never `stat`ed; each
-  candidate is checked once; and an unresolved import skips candidate
-  directories that hold no file with its top-level name. On transformers the
-  `statx` calls drop from about 27,600 to 15,100 (14,800 before v0.7.4), and
-  the slowdown on airflow falls from 9% to under 1% of instructions. Output
-  is unchanged (#763).
-- CHK005 is info instead of a warning for two more imports that only run
-  when the package is already there. A sniffio result compared through a
-  variable (`library = sniffio.current_async_library()` then
-  `if library == "trio": import trio`, httpx and openai) guards like the
-  direct comparison, as long as the scope assigns that name nothing else.
-  And a module its host loads may import the host: pytest in a `pytest11`
-  entry-point target or a module defining a top-level `pytest_*` hook
-  (mlflow), IPython in a module defining `load_ipython_extension`
-  (python-dotenv). Other dev-only imports of those modules, and pytest /
-  IPython imports elsewhere, are reported as before, and `--fix` does not
-  move the info findings to runtime (#731).
-- An import guarded by a name that an `except ImportError:` handler set to
-  `None` is optional: after `try: import markdown` /
-  `except ImportError: markdown = None`, the body of `if markdown:`,
-  `if markdown is not None:` or an `and` chain with either only runs with
-  the package, so CHK005 for it is info / likely instead of warning /
-  certain and `--fix` no longer moves it to the runtime dependencies
-  (CHK003 / CHK010 for it are info too). Flags set to `True` in the `try`
-  body count in `and` chains too (#730).
-- CHK006 no longer reports names that a config entry pulls in with
-  `from m import *`: Sphinx reads `html_theme` and Django reads
-  `INSTALLED_APPS` out of the namespace of `docs/conf.py` (root and
-  workspace members) and of the settings module, so no importer ever names
-  them. Chained star imports are followed, and a module with `__all__`
-  hands over only the names it lists. A star import from any other module
-  is still no reference. This clears airflow's `provider_conf.py`, which
-  every provider's `docs/conf.py` star-imports (#729).
-- Modules that the Pyodide runtime provides (`js`, `pyodide`,
-  `pyodide_js`, `_pyodide`) are no longer CHK010. When nothing else
-  resolves such a root, it is third-party without a distribution, so
-  CHK003–CHK005 are unchanged and a venv, mapped or declared package of
-  the same name still wins. This clears urllib3's emscripten contrib and
-  its `@run_in_pyodide` tests (#722).
-- CHK006 no longer reports names used through a package that star-imports
-  them: after `from .sub.impl import *` in `pkg/__init__.py`, `pkg.name`
-  and `from pkg import name` count as uses of `pkg.sub.impl.name`. Chained
-  star imports are followed, and at each hop a module with `__all__` hands
-  on only the names it lists, one without hands on the names not starting
-  with `_`; a module that defines the name itself shadows the star-imported
-  one. Whether the use is external is judged by the importing module,
-  so a module reaching its own name through the package still counts as
-  unused. This clears 33 of litellm's app mode findings, such as
-  `litellm.amoderation` and `GCSLoggingConfig` (#576).
-
 ## [0.7.4] - 2026-10-10
 
 v0.7.4 is a fix release on top of v0.7.3 that continues to target false
@@ -100,6 +17,13 @@ CHK003 / CHK005 / CHK009 / CHK010 findings become info, files under
 members are skipped, and many CHK001 / CHK006 / CHK007 / CHK008 / CHK010
 findings go away. `--fix` no longer removes a CHK009 requirement that a
 group, extra or build requirement repeats from the runtime declaration.
+`python_requires` in `setup.cfg` / `setup.py` now counts as
+`requires-python`.
+
+The `v0.7.4` tag points at `34f187b`, not at the release commit
+(`ab5a001`), so the published wheels also contain PRs #765–#772 and #774
+(#576, #577, #722, #729, #730, #731, #748, #763, #764). They were listed
+under Unreleased at release time and are folded into this section below.
 
 ### Added
 - The bundled map gains `griffelib` (`griffe`), `llama-index-workflows`
@@ -157,8 +81,8 @@ group, extra or build requirement repeats from the runtime declaration.
   A module added within the range (`tomllib` for `>=3.8`), a platform-only
   or optional-build module (`fcntl`, `sqlite3`), a lower bound below 3.8
   and a missing `requires-python` keep the warning. `python_requires` in
-  `setup.py` / `setup.cfg` is not read yet, so requests, which declares
-  only that, still gets the warning (#721).
+  `setup.py` / `setup.cfg` counts too (#764), so requests' fallbacks are
+  info (#721).
 - A workspace member used only through another used member's imports is no
   longer CHK002 when the root inventories only its own files (a src-layout
   root). The member files the root does not inventory are parsed for this
@@ -235,6 +159,89 @@ group, extra or build requirement repeats from the runtime declaration.
   `py` / `python` affix, resolves as third-party (sqlalchemy's
   `from cython.cimports... import`). No distribution is attached, so
   CHK003–CHK005 are unchanged (#720).
+- The bundled package map now knows the import names of more distributions
+  whose name differs from the module: `pymupdf` (`fitz`), `weaviate-client`,
+  `gremlinpython`, `presto-python-client`, `smbprotocol` (`smbclient`),
+  `jpype1`, `shopifyapi`, `atlassian-python-api`, `hubspot-api-client`,
+  `ag-ui-protocol`, `haystack-ai` / `farm-haystack`,
+  `paddlepaddle` / `paddlepaddle-gpu` and a few others, plus `vertex_ray`
+  from `google-cloud-aiplatform`. Namespace distributions get dotted
+  entries: `databricks-agents` (`databricks.agents`, `databricks.rag_eval`),
+  `google-cloud-firestore` (`google.cloud.firestore*`) and
+  `azure-search-documents`, `azure-data-tables`, `azure-ai-agents`,
+  `azure-ai-projects`, `azure-ai-inference`. Declaring one of them no
+  longer reports its imports as CHK010 (or `google.cloud.firestore` as
+  CHK003 / CHK004 on `google-api-core`) and the dependency as unused (#748).
+- Names in a quoted type outside an annotation now count as read by their
+  module, like quoted annotations (#545): the type of `cast("T", x)`, the
+  constraints, `bound=` and `default=` of `TypeVar("M", bound="Foo")`, and
+  the value of `X: TypeAlias = "list[Foo]"` or `type X = "Foo"`. A class or
+  alias referenced only there is no longer CHK006 (airflow, langchain).
+  Strings passed to other calls, such as sgqlc's generated
+  `Field("UserConnection")`, still do not count; list generated code under
+  `vendored` or `[tool.chokkin.ignore]` (#577).
+- `python_requires` in `setup.cfg` (`[options]`) and `setup.py` (a
+  `setup()` argument that reads as a string without running the file) now
+  counts as `requires-python` when `pyproject.toml` declares none, with
+  pyproject > setup.cfg > setup.py priority and a `MetadataConflict`
+  warning when they differ. As in setuptools, a `[project]` table that does
+  not list `requires-python` in `dynamic` rules the setup.* value out. It
+  sets the inferred `target_version` and the stdlib range like
+  `requires-python` does, so requests' dead
+  `dummy_threading` / `BaseHTTPServer` / `SimpleHTTPServer` fallbacks are
+  CHK010 info (#764).
+- Performance: resolving imports through `sys.path` edits (#719) no longer
+  slows down large projects. Each directory a candidate path starts from is
+  listed once, and a candidate whose first segment it lacks is never
+  `stat`ed; each candidate is checked once; and an unresolved import skips
+  candidate directories that hold no file with its top-level name. On
+  transformers the `statx` calls are about 15,100, against 27,600 at the
+  release commit and 14,800 in v0.7.3, and airflow runs within 1% of
+  v0.7.3's instructions instead of 9% above them. Output is unchanged
+  (#763).
+- CHK005 is info instead of a warning for two more imports that only run
+  when the package is already there. A sniffio result compared through a
+  variable (`library = sniffio.current_async_library()` then
+  `if library == "trio": import trio`, httpx and openai) guards like the
+  direct comparison, as long as the scope assigns that name nothing else.
+  And a module its host loads may import the host: pytest in a `pytest11`
+  entry-point target or a module defining a top-level `pytest_*` hook
+  (mlflow), IPython in a module defining `load_ipython_extension`
+  (python-dotenv). Other dev-only imports of those modules, and pytest /
+  IPython imports elsewhere, are reported as before, and `--fix` does not
+  move the info findings to runtime (#731).
+- An import guarded by a name that an `except ImportError:` handler set to
+  `None` is optional: after `try: import markdown` /
+  `except ImportError: markdown = None`, the body of `if markdown:`,
+  `if markdown is not None:` or an `and` chain with either only runs with
+  the package, so CHK005 for it is info / likely instead of warning /
+  certain and `--fix` no longer moves it to the runtime dependencies
+  (CHK003 / CHK010 for it are info too). Flags set to `True` in the `try`
+  body count in `and` chains too (#730).
+- CHK006 no longer reports names that a config entry pulls in with
+  `from m import *`: Sphinx reads `html_theme` and Django reads
+  `INSTALLED_APPS` out of the namespace of `docs/conf.py` (root and
+  workspace members) and of the settings module, so no importer ever names
+  them. Chained star imports are followed, and a module with `__all__`
+  hands over only the names it lists. A star import from any other module
+  is still no reference. This clears airflow's `provider_conf.py`, which
+  every provider's `docs/conf.py` star-imports (#729).
+- Modules that the Pyodide runtime provides (`js`, `pyodide`,
+  `pyodide_js`, `_pyodide`) are no longer CHK010. When nothing else
+  resolves such a root, it is third-party without a distribution, so
+  CHK003–CHK005 are unchanged and a venv, mapped or declared package of
+  the same name still wins. This clears urllib3's emscripten contrib and
+  its `@run_in_pyodide` tests (#722).
+- CHK006 no longer reports names used through a package that star-imports
+  them: after `from .sub.impl import *` in `pkg/__init__.py`, `pkg.name`
+  and `from pkg import name` count as uses of `pkg.sub.impl.name`. Chained
+  star imports are followed, and at each hop a module with `__all__` hands
+  on only the names it lists, one without hands on the names not starting
+  with `_`; a module that defines the name itself shadows the star-imported
+  one. Whether the use is external is judged by the importing module,
+  so a module reaching its own name through the package still counts as
+  unused. This clears 33 of litellm's app mode findings, such as
+  `litellm.amoderation` and `GCSLoggingConfig` (#576).
 
 ## [0.7.3] - 2026-10-09
 
