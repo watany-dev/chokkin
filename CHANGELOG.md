@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The bundled package map maps `guardrails-ai` to its `guardrails` import, so
+  declaring it no longer reports the import as CHK010 (#773).
+
 ## [0.7.4] - 2026-10-10
 
 v0.7.4 is a fix release on top of v0.7.3 that continues to target false

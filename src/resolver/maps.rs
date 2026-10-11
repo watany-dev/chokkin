@@ -322,6 +322,7 @@ mod tests {
             ("vertex_ray", "google-cloud-aiplatform"),
             ("atlassian", "atlassian-python-api"),
             ("ag_ui", "ag-ui-protocol"),
+            ("guardrails", "guardrails-ai"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),
