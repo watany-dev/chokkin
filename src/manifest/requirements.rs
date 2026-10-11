@@ -505,6 +505,16 @@ mod tests {
     }
 
     #[test]
+    fn origin_rel_folds_only_parents_of_named_directories() {
+        // A leading `..` of a relative root has nothing to fold into.
+        let root = Path::new("../proj");
+        assert_eq!(
+            origin_rel(root, Path::new("../proj/docs/../dev-requirements.txt")),
+            "dev-requirements.txt"
+        );
+    }
+
+    #[test]
     fn flag_value_parses_long_requirement_form() {
         assert_eq!(
             flag_value(
