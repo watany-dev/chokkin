@@ -5,6 +5,8 @@
 //! top-level package when the directory has an `__init__.py`. Files next to a
 //! test or conftest therefore import under top-level names (`from lifecycle
 //! import X`), which neither the layout nor the module index knows about.
+//! A workspace member's own pytest config replaces the root's for its tests
+//! (#775).
 //!
 //! Two more lookups live here (#589): root directories the source globs never
 //! walk (`docs_src/`, a src-layout project's `dummyserver/`) for tests whose
@@ -53,14 +55,36 @@ pub(crate) struct PytestImportPaths {
 impl PytestImportPaths {
     #[must_use]
     pub(crate) fn build(sources: &DiscoveredSources) -> Self {
-        Self::with_settings(sources, &pytest_import_settings(&sources.root.path))
-            .with_root_entries(&sources.root.path)
+        let root = &sources.root.path;
+        let members: Vec<(String, PytestImportSettings)> = sources
+            .layout
+            .members
+            .iter()
+            .filter_map(|member| {
+                let settings = pytest_import_settings(&on_disk_path(root, &member.path))?;
+                Some((member.path.clone(), settings))
+            })
+            .collect();
+        Self::with_member_settings(
+            sources,
+            &pytest_import_settings(root).unwrap_or_default(),
+            &members,
+        )
+        .with_root_entries(root)
     }
 
-    #[must_use]
-    pub(crate) fn with_settings(
+    #[cfg(test)]
+    fn with_settings(sources: &DiscoveredSources, settings: &PytestImportSettings) -> Self {
+        Self::with_member_settings(sources, settings, &[])
+    }
+
+    /// `members` holds each workspace member with its own pytest config, which
+    /// replaces the root's for the tests below it, as when pytest runs that
+    /// member's suite (#775).
+    fn with_member_settings(
         sources: &DiscoveredSources,
         settings: &PytestImportSettings,
+        members: &[(String, PytestImportSettings)],
     ) -> Self {
         let mut files = HashSet::new();
         let mut dirs = HashSet::new();
@@ -75,31 +99,36 @@ impl PytestImportPaths {
             files.insert(file.path.clone());
         }
 
-        let pythonpath: Vec<String> = settings
-            .pythonpath
-            .iter()
-            .map(|entry| normalize_dir(entry))
+        let scopes: Vec<(&str, bool, Vec<String>)> = std::iter::once(("", settings))
+            .chain(
+                members
+                    .iter()
+                    .map(|(dir, settings)| (dir.as_str(), settings)),
+            )
+            .map(|(dir, settings)| (dir, settings.importlib, pythonpath_under(dir, settings)))
             .collect();
-        let conftest_basedirs: Vec<(&str, String)> = if settings.importlib {
-            Vec::new()
-        } else {
-            sources
-                .files
-                .iter()
-                .filter(|file| file_name(&file.path) == "conftest.py")
-                .map(|file| (parent_dir(&file.path), basedir(&file.path, &files)))
-                .collect()
-        };
+        let conftest_basedirs: Vec<(&str, String)> = sources
+            .files
+            .iter()
+            .filter(|file| file_name(&file.path) == "conftest.py")
+            .map(|file| (parent_dir(&file.path), basedir(&file.path, &files)))
+            .collect();
 
         let mut search = HashMap::new();
         for file in &sources.files {
             if file.context != FileContext::Test {
                 continue;
             }
+            let dir = parent_dir(&file.path);
+            // The innermost config above the file, else the root's.
+            let (_, importlib, pythonpath) = scopes
+                .iter()
+                .filter(|(scope, _, _)| is_same_or_under(dir, scope))
+                .max_by_key(|(scope, _, _)| scope.len())
+                .unwrap_or(&scopes[0]);
             let mut file_dirs = Vec::new();
-            if !settings.importlib {
+            if !importlib {
                 file_dirs.push(basedir(&file.path, &files));
-                let dir = parent_dir(&file.path);
                 for (conftest_dir, conftest_base) in &conftest_basedirs {
                     if is_same_or_under(dir, conftest_dir) {
                         file_dirs.push(conftest_base.clone());
@@ -463,6 +492,23 @@ fn is_same_or_under(dir: &str, ancestor: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// The root-relative `pythonpath` of the config in `dir`, which pytest reads
+/// relative to that directory.
+fn pythonpath_under(dir: &str, settings: &PytestImportSettings) -> Vec<String> {
+    settings
+        .pythonpath
+        .iter()
+        .map(|entry| {
+            let entry = normalize_dir(entry);
+            if entry.is_empty() {
+                dir.to_owned()
+            } else {
+                join(dir, &entry)
+            }
+        })
+        .collect()
+}
+
 /// `./src/`, `src` and `src/` all name `src`; `.` names the root.
 fn normalize_dir(entry: &str) -> String {
     let entry = entry.replace('\\', "/");
@@ -578,6 +624,78 @@ mod tests {
         let paths = PytestImportPaths::with_settings(&sources(&E2E), &importlib_only);
         assert_eq!(
             paths.resolve("tests/e2e/access/test_access.py", "lifecycle"),
+            None
+        );
+    }
+
+    #[test]
+    fn member_config_replaces_the_root_config_for_its_tests() {
+        let files = [
+            "src/acme/__init__.py",
+            "tests/e2e/lifecycle.py",
+            "tests/unit/test_core.py",
+            "scripts/ci/prek/check_imports.py",
+            "scripts/tests/ci/prek/test_check_imports.py",
+            "scripts/tests/conftest.py",
+            "scripts/tests/helpers.py",
+            "scripts/sub/tests/test_sub.py",
+            "scripts/sub/tests/conftest.py",
+            "scripts/sub/tests/helpers.py",
+            "other/tests/test_other.py",
+        ];
+        let root = PytestImportSettings {
+            pythonpath: vec!["tests/e2e".to_owned()],
+            ..PytestImportSettings::default()
+        };
+        let members = [
+            (
+                "scripts".to_owned(),
+                PytestImportSettings {
+                    pythonpath: vec![".".to_owned(), "./ci/prek/".to_owned()],
+                    ..PytestImportSettings::default()
+                },
+            ),
+            (
+                "scripts/sub".to_owned(),
+                PytestImportSettings {
+                    importlib: true,
+                    ..PytestImportSettings::default()
+                },
+            ),
+        ];
+        let paths = PytestImportPaths::with_member_settings(&sources(&files), &root, &members);
+        let test = "scripts/tests/ci/prek/test_check_imports.py";
+        // `pythonpath` is relative to the member's directory.
+        assert_eq!(
+            paths.resolve(test, "check_imports"),
+            Some("scripts/ci/prek/check_imports.py")
+        );
+        assert_eq!(
+            paths.resolve(test, "ci.prek.check_imports"),
+            Some("scripts/ci/prek/check_imports.py")
+        );
+        assert_eq!(
+            paths.resolve(test, "helpers"),
+            Some("scripts/tests/helpers.py")
+        );
+        // The member's config replaces the root's.
+        assert_eq!(paths.resolve(test, "lifecycle"), None);
+        // The innermost config wins: importlib mode drops the conftest basedir.
+        assert_eq!(
+            paths.resolve("scripts/sub/tests/test_sub.py", "helpers"),
+            None
+        );
+        // Tests outside the member keep the root's config.
+        assert_eq!(
+            paths.resolve("other/tests/test_other.py", "check_imports"),
+            None
+        );
+        assert_eq!(
+            paths.resolve("tests/unit/test_core.py", "lifecycle"),
+            Some("tests/e2e/lifecycle.py")
+        );
+        assert_eq!(
+            paths.resolve("tests/unit/test_core.py", "check_imports"),
             None
         );
     }

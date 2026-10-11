@@ -600,7 +600,7 @@ package 内の `tests/`（`pandas/tests/`）も test context とし、test conte
 
 `tests` / `scripts` / `docs` / `build` / `dist` / `examples` / `benchmarks` / `e2e*` などは本体候補にしない。`v1.0/` のように名前に `.` を含むディレクトリは import できないので、`packages.find` と heuristic の package 候補にしない (#569)。`package_root` が `src` 以外 (`lib` など) のときは `--probe` の Layout 行に `root: lib` を出し、module 名は `package_root` からの相対 path で決める。`path` source が本体を持つ場合、その package への import は first-party だが、CHK001 では `workspace = true` source と同じくその依存を used として数える。
 
-pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest]` / `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。
+pytest の既定 `--import-mode=prepend` も模す (#360)。test context の file に限り、(a) その file の basedir(`__init__.py` が無ければ自ディレクトリ、あれば最上位 package の親)、(b) 自分と同じか祖先ディレクトリにある `conftest.py` の basedir、(c) `[tool.pytest]` / `[tool.pytest.ini_options]` / `pytest.ini` / `setup.cfg [tool:pytest]` の `pythonpath` を、この順で `sys.path` 先頭にあるものとして扱う。そこにある module は stdlib 以外の同名 distribution より優先して first-party に解決し、到達性でもその file へ辿る (`tests/e2e/conftest.py` の隣の `lifecycle.py` を `from lifecycle import X` で読む構成)。`addopts` に `--import-mode=importlib` があれば (a)(b) を使わず (c) だけにする。workspace member が自分の pytest 設定を持てば、その member 配下の test file には root の代わりにそれを使う (#775。pytest は member の suite を走らせるときその設定を拾うため)。member が入れ子なら最も内側の設定を使い、`pythonpath` は設定のある member のディレクトリ基準で解決する (airflow の `scripts/pyproject.toml` の `pythonpath = [".", "ci/prek", "in_container"]` は `scripts/`・`scripts/ci/prek/`・`scripts/in_container/`)。member 以外のディレクトリにある設定は読まない。
 
 `sys.path` を実行時に足す file も扱う (#719)。`sys.path.insert` / `append` / `extend`、`site.addsitedir`、`*.syspath_prepend` を呼ぶ file に限り、その file の path らしい string literal (英数字と `_-./` だけで絶対 path でないもの。`..` と `.` の segment は落とし、`"."` だけは自ディレクトリ) をすべて hint として集める。足す path は変数や別スコープで組まれることが多い (`Path(__file__).parents[1] / "utils"`) ので、呼び出しの引数に限らない。hint が指す候補は、hint で終わる探索済みディレクトリと、file のディレクトリかその祖先 (root まで) の下に hint を繋いだ実在ディレクトリ (探索外でも可)。その file、または `conftest.py` の hint ならその配下の file で、他のどこでも解決しない import root が候補ディレクトリにある module なら first-party とし、探索済みならその file へ到達性も辿る。候補に無い名前 (typo) は従来どおり CHK010。Sphinx の `extensions` もこの解決で `docs/conf.py` の hint を使う (`sys.path.insert(0, os.path.abspath("../exts"))`)。zip egg を足す構成 (Django の `egg_module`) と、拡張リストを別 module の pathlib 式で組む構成は追わない。
 
@@ -706,6 +706,10 @@ project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言�
 同じ origin (file:line) を別経路で 2 回読んだもの
   (requirements-dev.txt の -r requirements.txt と、直接読む requirements.txt)
   -> include 側の context が違っても 1 つの宣言なので報告しない
+setup.py で評価したリストに同じ文字列が 2 回入ったもの
+  (extras["dev"] = extras["all"] + extras["testing"] で両方に datasets)
+  -> 1 つの宣言として読むので報告しない (#726)。setup.py の要素は行を持たず
+     連結と literal の書き重ねを区別できないため、文字列が完全一致する要素は一律にまとめる
 ```
 
 origin と `--explain` の details には重複に関与した宣言だけを出す。`--fix` もこの関与した宣言の中からだけ削除対象を 1 つ選ぶ (runtime と他 context の組では runtime 宣言を残す)。同じ distribution を別の制約で持つ兄弟の extra (http: httpx と pinned: httpx!=0.28.0 のうち pinned) は消さない。context の label は `runtime` / `group:<name>` / `optional:<extra>` / `build` で、setup.py の `extras_require` も `optional:` にそろえる。

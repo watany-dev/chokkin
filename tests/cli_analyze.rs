@@ -972,6 +972,53 @@ fn binary_pytest_importlib_mode_does_not_prepend_test_dirs() {
     );
 }
 
+/// airflow's `scripts` member puts `ci/prek` on `sys.path` through its own
+/// pytest `pythonpath`; it applies to that member's tests only (#775).
+#[test]
+fn binary_member_pytest_pythonpath_resolves_its_test_imports() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.uv.workspace]\nmembers = [\"scripts\", \"task-sdk\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "scripts/pyproject.toml",
+            "[project]\nname = \"acme-scripts\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\".\", \"ci/prek\"]\n",
+        ),
+        (
+            "scripts/ci/prek/check_imports.py",
+            "def main() -> None:\n    pass\n",
+        ),
+        (
+            "scripts/tests/ci/prek/test_check_imports.py",
+            "from check_imports import main\n\n\ndef test_main() -> None:\n    main()\n",
+        ),
+        (
+            "task-sdk/pyproject.toml",
+            "[project]\nname = \"acme-task-sdk\"\nversion = \"0.1.0\"\n\n[tool.pytest]\npythonpath = [\"tests\"]\n",
+        ),
+        ("task-sdk/tests/task_sdk/__init__.py", ""),
+        ("task-sdk/tests/task_sdk/helpers.py", "VALUE = 1\n"),
+        (
+            "task-sdk/tests/task_sdk/api/test_client.py",
+            "from task_sdk.helpers import VALUE\n\n\ndef test_client() -> None:\n    assert VALUE\n",
+        ),
+        // Another member's `pythonpath` does not reach the root's tests.
+        (
+            "tests/test_root.py",
+            "from check_imports import main\n\n\ndef test_root() -> None:\n    main()\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    let unresolved: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK010")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unresolved, ["tests/test_root.py:check_imports"], "{keys:?}");
+}
+
 /// fastapi's `docs_src/` and urllib3's `dummyserver/` sit at the root,
 /// outside the source globs, and airflow's prek scripts import a module
 /// beside them (#589).
