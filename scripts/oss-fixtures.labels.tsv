@@ -1871,7 +1871,6 @@ mlflow	CHK010	tests/genai/scorers/trulens/test_trulens.py:trulens	tp	-	optional 
 transformers	CHK010	src/transformers/integrations/torchao.py:torchao	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 flask	CHK010	tests/test_instance_config.py:namespace	tp	-	package created at runtime under tmp_path/site-packages by the test
 llama_index	CHK010	llama-index-core/llama_index/core/schema.py:semantic_kernel	tp	-	optional import in core schema; llama-index-core declares no semantic-kernel
-mlflow	CHK010	mlflow/genai/scorers/guardrails/registry.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
 sqlalchemy	CHK010	test/perf/compiled_extensions/collections_.py:orderedset	tp	-	optional perf-script import; orderedset not declared
 transformers	CHK010	tests/quantization/vptq_integration/test_vptq.py:vptq	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/standard/tests/unit/standard/decorators/test_branch_virtualenv.py:funcsigs	tp	-	installed at runtime inside the task virtualenv; not declared by the standard provider
@@ -1880,7 +1879,6 @@ transformers	CHK010	src/transformers/models/fastspeech2_conformer/tokenization_f
 airflow	CHK010	task-sdk/tests/task_sdk/io/test_path.py:upath	tp	-	task-sdk pyproject declares no universal-pathlib (only airflow-core does)
 llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-txtai/llama_index/vector_stores/txtai/base.py:txtai	tp	-	optional import; txtai not declared by the member pyproject
 transformers	CHK010	tests/trainer/test_trainer_checkpointing.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
-mlflow	CHK010	mlflow/genai/scorers/guardrails/__init__.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/quantization/quanto_integration/test_quanto.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
 mlflow	CHK010	mlflow/genai/scorers/phoenix/models.py:phoenix	tp	-	optional integration; phoenix not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/distributed/fsdp.py:peft	fp	declared-third-party	peft listed in setup.py _deps (dynamic metadata)
@@ -1923,12 +1921,10 @@ transformers	CHK010	src/transformers/integrations/quanto.py:optimum	tp	-	setup.p
 mlflow	CHK010	tests/langchain/test_langchain_databricks_dependency_extraction.py:databricks_langchain	tp	-	optional integration; databricks-langchain not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/repo_utils/test_checkers.py:checkers	fp	first-party-missed	test inserts utils/ into sys.path and imports the repo script by name
 airflow	CHK010	providers/common/ai/tests/unit/common/ai/operators/test_llamaindex_embedding.py:llama_index	fp	declared-third-party	llama-index-core is declared; llama_index is a namespace package shared by several dists
-llama_index	CHK010	llama-index-integrations/output_parsers/llama-index-output-parsers-guardrails/llama_index/output_parsers/guardrails/base.py:guardrails	fp	declared-third-party	guardrails-ai declared in the member pyproject; module name differs from the dist name
 mlflow	CHK010	tests/pytorch/test_pytorch_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
 transformers	CHK010	src/transformers/integrations/aqlm.py:aqlm	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	devel-common/src/tests_common/test_utils/gcp_system_helpers.py:unit	fp	first-party-missed	providers' tests `unit` package resolved via pytest rootdir conftest
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-wikipedia/llama_index/readers/wikipedia/base.py:wikipedia	tp	-	readers-wikipedia declares no wikipedia dist (tools-wikipedia does)
-mlflow	CHK010	tests/genai/scorers/guardrails/test_guardrails.py:guardrails	tp	-	optional integration; guardrails not declared in pyproject or requirements/*.txt
 transformers	CHK010	tests/models/auto/test_image_processing_auto.py:test_module	fp	first-party-missed	test inserts tests/utils into sys.path and imports test_module by name
 airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:test_bundle_pkg	tp	-	package created at runtime in tmp_path by the test
 llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-web/llama_index/readers/web/main_content_extractor/base.py:main_content_extractor	tp	-	optional import; main_content_extractor not declared by the member pyproject
@@ -1981,3 +1977,6 @@ llama_index	CHK010	llama-index-integrations/readers/llama-index-readers-file/lla
 llama_index	CHK003	llama-index-core:llama-index-core/llama_index/core/schema.py:haystack	tp	-	llama-index-core declares no haystack-ai
 mlflow	CHK003	mlflow/paddle/__init__.py:paddle	tp	-	flavor import of user-installed paddlepaddle: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661)
 mlflow	CHK003	mlflow/paddle/_paddle_autolog.py:paddle	tp	-	flavor import of user-installed paddlepaddle: only in requirements/extra-ml-requirements.txt, not in dependencies or any extra, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/genai/scorers/guardrails/__init__.py:guardrails	tp	-	flavor import of user-installed guardrails-ai: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/genai/scorers/guardrails/registry.py:guardrails	tp	-	flavor import of user-installed guardrails-ai: not in dependencies, any extra or uv.lock, so `pip install mlflow` gets ImportError (#661)
+mlflow	CHK003	mlflow/genai/scorers/guardrails/utils.py:guardrails	info-expected	optional-import	try: import guardrails except ImportError: raise MlflowException (guardrails-ai is optional)

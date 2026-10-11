@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies there. Imports in airflow's `scripts/tests` (`pythonpath =
   [".", "ci/prek", "in_container"]`) and `task-sdk/tests` (`pythonpath =
   ["tests"]`) no longer report CHK010 (#775).
+- The bundled package map maps `guardrails-ai` to its `guardrails` import, so
+  declaring it no longer reports the import as CHK010 (#773).
 
 ## [0.7.4] - 2026-10-10
 
