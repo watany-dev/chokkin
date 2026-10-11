@@ -856,6 +856,30 @@
       "imports": [
         "guardrails"
       ]
+    },
+    {
+      "distribution": "faiss-cpu",
+      "imports": [
+        "faiss"
+      ]
+    },
+    {
+      "distribution": "faiss-gpu",
+      "imports": [
+        "faiss"
+      ]
+    },
+    {
+      "distribution": "griffe",
+      "imports": [
+        "griffe"
+      ]
+    },
+    {
+      "distribution": "llama-index-core",
+      "imports": [
+        "llama_index.core"
+      ]
     }
   ],
   "auto_packages": [

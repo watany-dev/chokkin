@@ -264,6 +264,11 @@ mod tests {
             first("azure.data.tables").as_deref(),
             Some("azure-data-tables")
         );
+        assert_eq!(
+            first("llama_index.core.schema").as_deref(),
+            Some("llama-index-core")
+        );
+        assert_eq!(first("llama_index.embeddings.cohere"), None);
         assert_eq!(first("azure.cognitiveservices.speech"), None);
         assert_eq!(first("google"), None);
         assert_eq!(first("yaml.loader"), None);
@@ -277,6 +282,10 @@ mod tests {
             ("OpenSSL", "pyopenssl"),
             ("socks", "pysocks"),
             ("argon2", "argon2-cffi"),
+            ("griffe", "griffe"),
+            ("griffe", "griffelib"),
+            ("faiss", "faiss-cpu"),
+            ("faiss", "faiss-gpu"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(
@@ -305,7 +314,6 @@ mod tests {
             ("kiota_http", "microsoft-kiota-http"),
             ("opensearchpy", "opensearch-py"),
             ("key_value", "py-key-value-aio"),
-            ("griffe", "griffelib"),
             ("workflows", "llama-index-workflows"),
             ("material", "mkdocs-material"),
             ("xprocess", "pytest-xprocess"),
