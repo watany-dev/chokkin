@@ -54,7 +54,7 @@ pub fn build_entry_roots(
         candidates.retain(|candidate| candidate.context.is_included_in_production());
     }
 
-    let mode = resolve_project_mode(config, manifest, sources, &candidates, &mut warnings);
+    let mode = resolve_project_mode(config, manifest, sources, &candidates);
     if mode == ProjectMode::Library {
         collect_library_package_entries(sources, &file_contexts, &mut candidates);
     }

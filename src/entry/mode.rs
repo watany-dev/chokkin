@@ -6,7 +6,7 @@ use crate::resolver::import_root;
 use crate::sources::{DiscoveredSources, FileContext, LayoutInfo};
 
 use super::auto::detect_auto_entries;
-use super::types::{EntryCandidate, EntryWarning};
+use super::types::EntryCandidate;
 
 const APP_ENTRY_FILE_NAMES: &[&str] = &["manage.py", "asgi.py", "wsgi.py", "app.py"];
 
@@ -17,17 +17,9 @@ pub(super) fn resolve_project_mode(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     candidates: &[EntryCandidate],
-    warnings: &mut Vec<EntryWarning>,
 ) -> ProjectMode {
     if config.mode != ProjectMode::Auto {
         return config.mode;
-    }
-
-    if let Some(member_count) = workspace_member_count(config, manifest)
-        && member_count > 1
-    {
-        warnings.push(EntryWarning::WorkspaceMode { member_count });
-        return ProjectMode::App;
     }
 
     if has_clear_app_signals(manifest, sources, candidates, true) {
@@ -51,19 +43,6 @@ pub(super) fn resolve_project_mode(
 pub(crate) fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
     names_distribution(manifest)
         && !has_clear_app_signals(manifest, sources, &detect_auto_entries(sources), false)
-}
-
-fn workspace_member_count(config: &ChokkinConfig, manifest: &LoadedManifest) -> Option<usize> {
-    if let Some(hint) = &manifest.uv_workspace {
-        let count = hint.members.len();
-        if count > 1 {
-            return Some(count);
-        }
-    }
-    if config.workspaces.len() > 1 {
-        return Some(config.workspaces.len());
-    }
-    None
 }
 
 /// A `wsgi.py` / `app.py` module of the project's own package (werkzeug)
@@ -188,16 +167,8 @@ mod tests {
     fn explicit_mode_is_preserved() {
         let mut config = default_config();
         config.mode = ProjectMode::Library;
-        let mut warnings = Vec::new();
-        let mode = resolve_project_mode(
-            &config,
-            &empty_manifest(),
-            &library_sources(),
-            &[],
-            &mut warnings,
-        );
+        let mode = resolve_project_mode(&config, &empty_manifest(), &library_sources(), &[]);
         assert_eq!(mode, ProjectMode::Library);
-        assert_eq!(warnings, []);
     }
 
     #[test]
@@ -209,8 +180,7 @@ mod tests {
         let mut sources = library_sources();
         sources.layout.package_root = "lib".to_owned();
         sources.files[0].path = "lib/acme/__init__.py".to_owned();
-        let mut warnings = Vec::new();
-        let mode = resolve_project_mode(&config, &manifest, &sources, &[], &mut warnings);
+        let mode = resolve_project_mode(&config, &manifest, &sources, &[]);
         assert_eq!(mode, ProjectMode::Library);
     }
 
@@ -220,8 +190,7 @@ mod tests {
         manifest.metadata.name = Some("acme".to_owned());
         let mut config = default_config();
         config.mode = ProjectMode::Auto;
-        let mut warnings = Vec::new();
-        let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[], &mut warnings);
+        let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[]);
         assert_eq!(mode, ProjectMode::Library);
     }
 
@@ -254,14 +223,7 @@ mod tests {
     fn auto_mode(manifest: &LoadedManifest, candidates: &[EntryCandidate]) -> ProjectMode {
         let mut config = default_config();
         config.mode = ProjectMode::Auto;
-        let mut warnings = Vec::new();
-        resolve_project_mode(
-            &config,
-            manifest,
-            &library_sources(),
-            candidates,
-            &mut warnings,
-        )
+        resolve_project_mode(&config, manifest, &library_sources(), candidates)
     }
 
     #[test]
@@ -332,14 +294,7 @@ mod tests {
     fn fallback_is_app_mode() {
         let mut config = default_config();
         config.mode = ProjectMode::Auto;
-        let mut warnings = Vec::new();
-        let mode = resolve_project_mode(
-            &config,
-            &empty_manifest(),
-            &library_sources(),
-            &[],
-            &mut warnings,
-        );
+        let mode = resolve_project_mode(&config, &empty_manifest(), &library_sources(), &[]);
         assert_eq!(mode, ProjectMode::App);
     }
 
@@ -359,15 +314,21 @@ mod tests {
                 rule: "manage.py".to_owned(),
             },
         }];
-        let mut warnings = Vec::new();
-        let mode = resolve_project_mode(
-            &config,
-            &manifest,
-            &library_sources(),
-            &candidates,
-            &mut warnings,
-        );
+        let mode = resolve_project_mode(&config, &manifest, &library_sources(), &candidates);
         assert_eq!(mode, ProjectMode::App);
+    }
+
+    #[test]
+    fn workspace_root_shipping_its_package_is_a_library() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        manifest.uv_workspace = Some(crate::config::UvWorkspaceHint {
+            members: vec!["dev/lint".to_owned(), "plugins/one".to_owned()],
+            exclude: Vec::new(),
+        });
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::Library);
+        manifest.metadata.name = None;
+        assert_eq!(auto_mode(&manifest, &[]), ProjectMode::App);
     }
 
     #[test]

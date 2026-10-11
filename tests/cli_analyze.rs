@@ -1688,15 +1688,16 @@ fn binary_library_member_symbols_use_library_mode() {
     }
 }
 
-/// mcp-python-sdk / fastmcp: a workspace root and a member with its own CLI
-/// resolve to app, yet each wheel ships its package's `__all__` as public
-/// API, so those re-exports are not CHK007. A name outside `__all__`, and an
-/// `__all__` its own member's wheel does not ship, stay reported (#678).
+/// fastmcp: a root whose console script runs a member's package and a member
+/// with its own CLI resolve to app, yet each wheel ships its package's
+/// `__all__` as public API, so those re-exports are not CHK007. A name outside
+/// `__all__`, and an `__all__` its own member's wheel does not ship, stay
+/// reported (#678).
 #[test]
 fn binary_wheel_all_reexports_are_not_chk007_in_app_mode() {
     let hatch = "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
     let root = format!(
-        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\", \"src/demo-app\"]\n\n[tool.uv.workspace]\nmembers = [\"src/acme-cli\", \"src/demo-app\"]\n"
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\nacme-serve = \"acme_cli.main:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\", \"src/demo-app\"]\n\n[tool.uv.workspace]\nmembers = [\"src/acme-cli\", \"src/demo-app\"]\n"
     );
     let member = format!(
         "[project]\nname = \"acme-cli\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme-cli = \"acme_cli.main:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"acme_cli\"]\n"
@@ -1759,13 +1760,14 @@ fn binary_wheel_all_reexports_are_not_chk007_in_app_mode() {
     );
 }
 
-/// Two members force app mode; a shipped module's `__all__` is its public API
-/// even when only the module itself uses a name (#727, `fastmcp_slim`).
+/// A root console script into a member's package makes the root an app; a
+/// shipped module's `__all__` is still its public API even when only the
+/// module itself uses a name (#727, `fastmcp_slim`).
 #[test]
 fn shipped_all_names_are_not_chk006_in_app_mode() {
     let hatch = "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
     let root = format!(
-        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\n[tool.uv.workspace]\nmembers = [\"plugins/one\", \"plugins/two\"]\n"
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\nacme-one = \"one:main\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\n[tool.uv.workspace]\nmembers = [\"plugins/one\", \"plugins/two\"]\n"
     );
     let member = |name: &str| {
         format!(
@@ -1788,7 +1790,7 @@ fn shipped_all_names_are_not_chk006_in_app_mode() {
             "from acme.limits import check\n\n\ndef main():\n    print(check(1))\n",
         ),
         ("plugins/one/pyproject.toml", one.as_str()),
-        ("plugins/one/one/__init__.py", ""),
+        ("plugins/one/one/__init__.py", "def main():\n    pass\n"),
         ("plugins/two/pyproject.toml", two.as_str()),
         ("plugins/two/two/__init__.py", ""),
     ]);
@@ -1798,6 +1800,40 @@ fn shipped_all_names_are_not_chk006_in_app_mode() {
         .map(|(_, target)| target)
         .collect();
     assert_eq!(chk006, ["src/acme/limits.py:SPARE"], "{chk006:?}");
+}
+
+/// mlflow: a workspace root that ships its own package is a library however
+/// many members it has, so its public modules are neither CHK001 nor CHK006
+/// warnings (#776).
+#[test]
+fn workspace_root_shipping_its_package_is_a_library() {
+    let hatch = "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    let root = format!(
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\n[tool.uv.workspace]\nmembers = [\"plugins/one\", \"plugins/two\"]\n"
+    );
+    let member = |name: &str| {
+        format!(
+            "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n{hatch}\n[tool.hatch.build.targets.wheel]\npackages = [\"{name}\"]\n"
+        )
+    };
+    let (one, two) = (member("one"), member("two"));
+    let project = write_project(&[
+        ("pyproject.toml", root.as_str()),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/artifacts.py",
+            "def load_image(path):\n    return path\n",
+        ),
+        ("plugins/one/pyproject.toml", one.as_str()),
+        ("plugins/one/one/__init__.py", ""),
+        ("plugins/two/pyproject.toml", two.as_str()),
+        ("plugins/two/two/__init__.py", ""),
+    ]);
+    let warnings: Vec<_> = json_issues(project.path(), &[])
+        .into_iter()
+        .filter(|issue| issue["severity"] != "info")
+        .collect();
+    assert!(warnings.is_empty(), "{warnings:?}");
 }
 
 /// A member without wheel targets ships what hatchling auto-detects, its

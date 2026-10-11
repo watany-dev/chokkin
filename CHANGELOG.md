@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- A uv workspace root with two or more members is no longer always app mode.
+  `mode = "auto"` judges it like any other root, so a root that names its
+  distribution and ships its own package without app signals (mlflow,
+  mcp-python-sdk) is a library: its public API is CHK006 info instead of
+  warning, unreachable test files are no longer CHK001, and CHK005 counts
+  imports in public modules that nothing reaches. Members of a
+  library root are judged in library mode too (#776).
+
 ### Fixed
 - A workspace member's own pytest config (`pytest.ini`,
   `[tool.pytest]` / `[tool.pytest.ini_options]`, `tox.ini`, `setup.cfg`) now
