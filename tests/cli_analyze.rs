@@ -2392,6 +2392,43 @@ fn binary_member_pytest_plugin_imports_pytest_as_info() {
     );
 }
 
+/// #808: a function-local import of a package the member guards with
+/// `except ImportError` or names in an `is_x…` predicate is the same optional
+/// feature, and test support the package ships runs only under a test suite.
+#[test]
+fn binary_deferred_imports_of_optional_packages_are_info() {
+    let root = fixture_path(&["deps", "misplaced_deferred_optional"]);
+    let mut misplaced: Vec<(String, String, String)> = json_issues(&root, &["--strict"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK005")
+        .map(|issue| {
+            let field = |name: &str| issue[name].as_str().unwrap_or_default().to_owned();
+            (field("target"), field("severity"), field("confidence"))
+        })
+        .collect();
+    misplaced.sort();
+    let expected = |target: &str, severity: &str| {
+        (target.to_owned(), severity.to_owned(), "likely".to_owned())
+    };
+    // Only frames' tests check plotly; frames' `is_openai_v1` says nothing about chat;
+    // the client loads chat's test support at startup.
+    assert_eq!(
+        misplaced,
+        [
+            expected("chat:openai", "warning"),
+            (
+                "chat:responses".to_owned(),
+                "warning".to_owned(),
+                "certain".to_owned()
+            ),
+            expected("frames:cryptography", "info"),
+            expected("frames:plotly", "warning"),
+            expected("frames:polars", "info"),
+            expected("frames:selenium", "info"),
+        ]
+    );
+}
+
 #[test]
 fn binary_command_run_scripts_import_dependency_groups_as_dev() {
     // airflow's pre-commit runs `task-sdk/dev/generate_task_sdk_models.py`,

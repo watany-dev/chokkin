@@ -1145,7 +1145,12 @@ mlflow	CHK005	langchain-community	fp	optional-import	langchain flavor integratio
 llama_index	CHK005	llama-index-llms-konko:openai	tp	-	top-level `import openai` in shipped utils.py; runtime deps are konko and llama-index-core only (openai at best transitive via konko)
 mlflow	CHK005	pytest	fp	optional-import	mlflow/pytest/plugin.py is a pytest plugin only loaded inside a pytest run, so pytest is present by definition
 mlflow	CHK005	torch	tp	-	flavor import of user-installed torch; torch is only in requirements/doc-requirements.txt and torch.txt, so `pip install mlflow` gets ImportError (#661, CHK003 before #786)
-mlflow	CHK005	pillow	tp	-	PIL imported from shipped runtime code; pillow is only in requirements/test-requirements.txt (CHK004 before #786)
+mlflow	CHK005	pillow	info-expected	optional-import	PIL imported only inside functions behind ImportError guards that tell the user to `pip install Pillow` (tracking/multimedia.py); artifact_repo.py: user should already have installed PIL; only in requirements/test-requirements.txt (tp before #808)
+mlflow	CHK005	claude-agent-sdk	info-expected	optional-import	function-local imports in claude_code/tracing.py; anthropic/__init__.py patches it only `if available` under except ImportError
+mlflow	CHK005	ipython	info-expected	optional-import	function-local imports; tracing/display/display_handler.py returns False on ImportError outside notebooks
+mlflow	CHK005	litellm	info-expected	optional-import	function-local imports; litellm/__init__.py and tracing/utils guard it with except ImportError, `_is_litellm_available` probes it
+mlflow	CHK005	shap	info-expected	optional-import	function-local imports; evaluators/shap.py logs a warning and skips explanations on ImportError
+mlflow	CHK005	tensorflow	info-expected	optional-import	function-local imports; transformers/__init__.py and keras/save.py guard it with except ImportError
 mlflow	CHK005	tqdm	info-expected	optional-import	optional try-import of tqdm.auto in shipped code; tqdm is only in requirements/test-requirements.txt; guarded, so info (CHK004 before #786)
 mlflow	CHK005	jinja2	info-expected	optional-import	optional try-import of jinja2 for prompt templates; jinja2 is only in requirements/doc-min-requirements.txt; guarded, so info (CHK004 before #786)
 mlflow	CHK005	httpx	tp	-	agent server imports httpx at top level; httpx is only in requirements/test-requirements.txt (CHK004 before #786)

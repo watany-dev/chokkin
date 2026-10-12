@@ -5,15 +5,15 @@ use std::collections::{HashMap, HashSet};
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
 use crate::manifest::LoadedManifest;
-use crate::parser::{ParseSummary, SymbolKind};
+use crate::parser::{ParseSummary, SymbolKind, guarded_roots, predicate_name_module};
 use crate::resolver::ResolvedImport;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 use crate::rules::{DependencyRuleContext, RuleContext};
-use crate::sources::{LayoutInfo, path_to_module};
+use crate::sources::{DiscoveredSources, FileContext, LayoutInfo, path_to_module};
 
 use super::context::{
-    DeclarationBucket, UsageContext, declaration_bucket, declaration_buckets, include_path_details,
-    is_directly_declared, usage_context_for_import,
+    DeclarationBucket, UsageContext, declaration_bucket, declaration_buckets, file_context,
+    include_path_details, is_directly_declared, usage_context_for_import,
 };
 use super::missing::{
     WorkspaceDeclaredIndex, collect_optional_imports, governing_declarations, member_declarations,
@@ -42,11 +42,12 @@ pub(super) fn detect_misplaced_dependencies(
         ..
     } = *context;
     let strengths = import_strengths(context.parse);
+    let predicates = predicate_modules(context.parse, sources, reachable);
     let host_loaded = host_loaded_files(context.parse, &sources.layout, pytest11_modules);
     let eager = file_paths(graph, &reachability.eager);
     let exposed = file_paths(graph, &reachability.exposed);
     let certain = file_paths(graph, &reachability.certain);
-    let mut candidates: Vec<(IssueCandidate, ImportStrength)> = Vec::new();
+    let mut candidates: Vec<(IssueCandidate, ImportStrength, bool)> = Vec::new();
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
 
     for import in &resolution.imports {
@@ -110,6 +111,11 @@ pub(super) fn detect_misplaced_dependencies(
             .get(&(import.file.clone(), import.line))
             .copied()
             .unwrap_or(ImportStrength::TopLevel);
+        // The package copes without it somewhere, so its function-local
+        // imports are likely the same optional feature (#808). A platform
+        // guard says it is required on that platform instead.
+        let mut optional_elsewhere =
+            strength == ImportStrength::Optional && (import.optional || !import.platform_guarded);
         // A file loaded only from inside functions (or never, past
         // `TYPE_CHECKING`) runs its top-level imports no earlier than a
         // function-local import would (#610).
@@ -127,6 +133,17 @@ pub(super) fn detect_misplaced_dependencies(
         if is_opt_in_import(&import.file, &import.import_root, &sources.layout) {
             strength = strength.min(ImportStrength::OptIn);
         }
+        // Test support the package loads itself is runtime code all the same.
+        if strength < ImportStrength::TopLevel && is_test_support(&import.file, &sources.layout) {
+            strength = strength.min(ImportStrength::TestSupport);
+        }
+        if strength == ImportStrength::Deferred {
+            let member = sources
+                .layout
+                .member_for(&import.file)
+                .map(|(member, _)| member.path.as_str());
+            optional_elsewhere |= predicates.contains(&(member, import.import_root.as_str()));
+        }
         if host_loaded.contains(&(import.file.as_str(), distribution.as_str())) {
             strength = ImportStrength::HostLoaded;
         }
@@ -137,11 +154,12 @@ pub(super) fn detect_misplaced_dependencies(
         // Every import of the distribution counts: one top-level import is
         // enough for Certain, whichever import came first (#583).
         if let Some(&index) = reported.get(&report_key) {
-            if let Some((candidate, current)) = candidates.get_mut(index)
-                && strength > *current
-            {
-                *current = strength;
-                candidate.origins = vec![import_origin(import)];
+            if let Some((candidate, current, optional)) = candidates.get_mut(index) {
+                *optional |= optional_elsewhere;
+                if strength > *current {
+                    *current = strength;
+                    candidate.origins = vec![import_origin(import)];
+                }
             }
             continue;
         }
@@ -177,12 +195,19 @@ pub(super) fn detect_misplaced_dependencies(
                 },
             },
             strength,
+            optional_elsewhere,
         ));
     }
 
     candidates
         .into_iter()
-        .map(|(candidate, strength)| strength.apply(candidate))
+        .map(|(candidate, strength, optional_elsewhere)| {
+            if strength == ImportStrength::Deferred && optional_elsewhere {
+                ImportStrength::DeferredOptional.apply(candidate)
+            } else {
+                strength.apply(candidate)
+            }
+        })
         .collect()
 }
 
@@ -196,9 +221,16 @@ enum ImportStrength {
     /// In airflow's `example_dags/` or a subpackage named after the import
     /// (`mlflow/pyspark/`, `mlflow/langchain/` for `langchain_community`).
     OptIn,
+    /// In test support the package ships (`django.test`,
+    /// `django/contrib/admin/tests.py`): only a test suite loads it (#808).
+    TestSupport,
     /// `try`/`except ImportError`, `suppress(ImportError)` or
     /// platform-guarded, or in a file loaded only past such an import.
     Optional,
+    /// [`Self::Deferred`], and runtime code elsewhere imports it under a
+    /// guard or names it in an `is_x…` predicate (#808). Assigned only after
+    /// every import has been weighed.
+    DeferredOptional,
     /// Only inside a function body, or in a file runtime code loads only
     /// from one or from a `TYPE_CHECKING` block.
     Deferred,
@@ -219,6 +251,14 @@ impl ImportStrength {
             Self::OptIn => {
                 candidate.severity = Severity::Info;
                 "imported only by example DAGs or by a subpackage named after it, which load only when opted into"
+            },
+            Self::TestSupport => {
+                candidate.severity = Severity::Info;
+                "imported only by test support the package ships, which only a test suite loads"
+            },
+            Self::DeferredOptional => {
+                candidate.severity = Severity::Info;
+                "imported only inside functions, and runtime code elsewhere guards it as optional or checks its types by name"
             },
             Self::Optional => {
                 candidate.severity = Severity::Info;
@@ -288,6 +328,58 @@ fn is_opt_in_import(file: &str, import_root: &str, layout: &LayoutInfo) -> bool 
                 .strip_prefix(name)
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'))
     })
+}
+
+/// Whether `file` is test support the package ships: a module or subpackage
+/// below the top-level package named `test`, `tests` or `testing`
+/// (`django/test/selenium.py`, `django/contrib/admin/tests.py`). They stay
+/// runtime files for the other rules: callers import them from their own
+/// tests (§10).
+fn is_test_support(file: &str, layout: &LayoutInfo) -> bool {
+    let Some(module) = path_to_module(file, layout) else {
+        return false;
+    };
+    let mut names: Vec<&str> = module.split('.').skip(1).collect();
+    // A `test.py` module is as likely a command (dbt's `task/test.py`).
+    if !file.ends_with("__init__.py") && names.last() == Some(&"test") {
+        names.pop();
+    }
+    names
+        .iter()
+        .any(|name| matches!(*name, "test" | "tests" | "testing"))
+}
+
+/// Import roots the project's own `is_x…` functions name (streamlit's
+/// `is_polars_dataframe`), each with the workspace member path defining it:
+/// the member checks objects of `x` without importing it, so treats `x` as
+/// optional (#808). Another member's predicate says nothing about this one,
+/// and neither does one only tests or unreachable code define.
+fn predicate_modules<'a>(
+    parse: &'a ParseSummary,
+    sources: &'a DiscoveredSources,
+    reachable: &HashSet<&str>,
+) -> HashSet<(Option<&'a str>, &'a str)> {
+    parse
+        .modules
+        .iter()
+        .filter(|module| {
+            reachable.contains(module.path.as_str())
+                && file_context(&module.path, sources) == FileContext::Runtime
+        })
+        .flat_map(|module| {
+            let member = sources
+                .layout
+                .member_for(&module.path)
+                .map(|(member, _)| member.path.as_str());
+            module
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.kind == SymbolKind::Function)
+                .filter_map(|symbol| predicate_name_module(&symbol.name))
+                .flat_map(guarded_roots)
+                .map(move |root| (member, root))
+        })
+        .collect()
 }
 
 pub(super) fn pytest11_modules<'a>(
@@ -404,6 +496,26 @@ mod tests {
         assert!(!opt_in("mlflow/pyspark.py", "pyspark"));
         assert!(!opt_in("dagster/core/run.py", "dagster_shared"));
         assert!(!opt_in("/abs/plugin.py", "_pytest"));
+    }
+
+    /// #808: a `test`/`tests`/`testing` subpackage or module is test support,
+    /// a top-level package of that name is not.
+    #[test]
+    fn test_support_sits_below_the_top_level_package() {
+        let layout = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            packages: vec!["django".to_owned(), "testing".to_owned()],
+            ..LayoutInfo::default()
+        };
+        let support = |file: &str| is_test_support(file, &layout);
+        assert!(support("django/test/selenium.py"));
+        assert!(support("django/contrib/admin/tests.py"));
+        assert!(support("django/testing/__init__.py"));
+        assert!(support("django/test/__init__.py"));
+        // dbt's `test` command.
+        assert!(!support("django/task/test.py"));
+        assert!(!support("django/contrib/testimonials.py"));
+        assert!(!support("testing/runner.py"));
     }
 
     /// #731: a file is host-loaded only for the host that loads it.

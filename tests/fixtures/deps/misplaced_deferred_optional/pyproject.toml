@@ -1,0 +1,10 @@
+[project]
+name = "misplaced-deferred-optional"
+version = "0.1.0"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[project.scripts]
+chat-cli = "chat.client:create"
+frames-cli = "frames:main"
