@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-10-12
+
+v0.7.5 is a fix release on top of v0.7.4 that continues to target false
+positives on real OSS projects. The JSON / baseline `schema_version` stays
+`"1"`, and fingerprints are unchanged, so baselines keep matching. A uv
+workspace root with several members is judged app or library like any other
+root, deprecation shim modules and opt-in integration imports become info,
+and functions a host calls by name, scripts run by path from CI, pre-commit
+or skill docs, and packages in setup.py requirement tables are no longer
+reported. Requirements files named after a context declare that context, and
+member pytest `pythonpath` settings are honored. In library mode, CHK005 for an
+import that only public subpackages reach stays Likely, so `--fix` leaves it.
+
 ### Changed
 - A uv workspace root with two or more members is no longer always app mode.
   `mode = "auto"` judges it like any other root, so a root that names its
