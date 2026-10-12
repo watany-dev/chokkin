@@ -8,6 +8,7 @@ use crate::config::ProjectMode;
 use crate::entry::EntryPlan;
 use crate::graph::{FileId, GraphEdge, ModuleId, ModuleOrigin, ProjectGraph};
 use crate::parser::{ImportContext, ParseSummary};
+use crate::path_util::is_submodule;
 use crate::plugins::PluginHints;
 use crate::resolver::import_root;
 use crate::sources::FileContext;
@@ -30,7 +31,11 @@ pub(super) struct BfsOutcome {
     /// library files: loading from those says nothing about runtime (#614).
     pub eager: IndexSet<FileId>,
     /// Eager files that some path reaches without passing an optional
-    /// (`try`/`suppress(ImportError)` or platform-guarded) import either.
+    /// (`try`/`suppress(ImportError)` or platform-guarded) import either,
+    /// counting paths that start at a library's public surface.
+    pub exposed: IndexSet<FileId>,
+    /// Exposed files that some path reaches from a root the package or its
+    /// host loads, not only from public subpackages or tests (#802).
     pub certain: IndexSet<FileId>,
 }
 
@@ -56,6 +61,10 @@ enum Reach {
     Reachable,
     /// Reached without lazy imports, but only through optional ones.
     Eager,
+    /// Reached through imports that always run, but only from a library
+    /// subpackage's public surface or out of a test, docs or dev file:
+    /// callers may import it, but nothing shows the package does (#802).
+    Exposed,
     /// Reached through imports that always run.
     Certain,
 }
@@ -94,18 +103,30 @@ struct BfsState<'a> {
 
 impl BfsState<'_> {
     /// Imports out of test, docs and dev files only count for library files,
-    /// which outside callers may import directly.
-    fn edge_class(&self, from: FileId, class: Reach, line: u32, target: FileId) -> Reach {
+    /// which outside callers may import directly, and only as far as
+    /// [`Reach::Exposed`] into a submodule the package need not load.
+    fn edge_class(&self, from: FileId, mut class: Reach, line: u32, target: FileId) -> Reach {
         if class == Reach::Reachable || self.adjacency.lazy.contains(&(from, line)) {
             return Reach::Reachable;
         }
         let file = |id| self.graph.file(id);
-        let runtime = file(from).is_none_or(|node| node.context == FileContext::Runtime)
-            || file(target)
-                .is_some_and(|node| self.entry.mode_for(&node.path) == ProjectMode::Library);
-        if !runtime {
-            Reach::Reachable
-        } else if self.adjacency.optional.contains(&(from, line)) {
+        if file(from).is_some_and(|node| node.context != FileContext::Runtime) {
+            let Some(target) =
+                file(target).filter(|node| self.entry.mode_for(&node.path) == ProjectMode::Library)
+            else {
+                return Reach::Reachable;
+            };
+            let runtime_init = |init: &str| {
+                self.graph
+                    .file_id(init)
+                    .and_then(file)
+                    .is_some_and(|node| node.context == FileContext::Runtime)
+            };
+            if is_submodule(&target.path, runtime_init) {
+                class = class.min(Reach::Exposed);
+            }
+        }
+        if self.adjacency.optional.contains(&(from, line)) {
             class.min(Reach::Eager)
         } else {
             class
@@ -151,12 +172,14 @@ impl BfsState<'_> {
                 .collect()
         };
         let eager = at_least(Reach::Eager);
+        let exposed = at_least(Reach::Exposed);
         let certain = at_least(Reach::Certain);
         BfsOutcome {
             reachable: self.reached.keys().copied().collect(),
             predecessors: self.predecessors,
             used_modules: self.used_modules,
             eager,
+            exposed,
             certain,
         }
     }
@@ -182,7 +205,7 @@ impl BfsState<'_> {
 ///
 /// One walk computes every set: each file carries the best [`Reach`] class
 /// some path gives it, and is followed again only when that class improves,
-/// so no file is followed more than three times.
+/// so no file is followed more than four times.
 ///
 /// Framework-glob files are seeded after the walk from the entry roots and
 /// plugin refs has finished, so a file those reach keeps its import trace;
@@ -220,13 +243,29 @@ pub(super) fn run_reachability_bfs(
         let Some(file_id) = state.graph.file_id(&root.spec.path) else {
             continue;
         };
-        state.enqueue_file(file_id, None, Reach::Certain, || TraceStep::File {
+        let class = if root.only_public() {
+            Reach::Exposed
+        } else {
+            Reach::Certain
+        };
+        state.enqueue_file(file_id, None, class, || TraceStep::File {
             file: file_id,
             path: root.spec.path.clone(),
         });
     }
     for reference in plugins.module_refs() {
         let label = reference.origin.label.as_str();
+        // A library module's own decorators register it only once some
+        // caller imports it, like a public subpackage (#802).
+        let origin = reference.origin.file.as_str();
+        let self_registered = state.graph.file_id(origin).is_some_and(|file| {
+            state.module_index.resolve_from(origin, &reference.module) == Some(file)
+        });
+        let class = if self_registered && entry.mode_for(origin) == ProjectMode::Library {
+            Reach::Exposed
+        } else {
+            Reach::Certain
+        };
         for name in module_and_parents(&reference.module) {
             let Some(target) = state
                 .module_index
@@ -234,7 +273,7 @@ pub(super) fn run_reachability_bfs(
             else {
                 continue;
             };
-            state.enqueue_file(target, None, Reach::Certain, || TraceStep::PluginRef {
+            state.enqueue_file(target, None, class, || TraceStep::PluginRef {
                 module: name.to_owned(),
                 label: label.to_owned(),
             });
@@ -484,11 +523,12 @@ fn conditional_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EntrySpec, ProjectMode};
+    use crate::config::{EntrySpec, PluginId, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::entry::EntryRoot;
+    use crate::entry::{EntryOrigin, EntryRoot, LIBRARY_SUBPACKAGE_RULE};
     use crate::graph::{FileNode, add_parsed_imports};
     use crate::parser::{DynamicImport, ImportContext, ImportKind, ImportRef, ParsedModule};
+    use crate::plugins::{ModuleReference, PluginContribution, ReferenceOrigin};
     use crate::sources::{
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
     };
@@ -983,13 +1023,21 @@ mod tests {
 
     /// #614: a test importing a module says nothing about whether runtime
     /// code loads it, unless the module is a library's, which callers may
-    /// import directly.
+    /// import directly. #802: past a package `__init__.py` that need not
+    /// load it, the module is exposed but not certain.
     #[test]
     fn eager_set_follows_test_imports_only_into_library_files() {
+        for with_init in [false, true] {
+            check_test_import_into_library(with_init);
+        }
+    }
+
+    fn check_test_import_into_library(with_init: bool) {
         let root = test_root();
         let modules = vec![parsed("src/acme/main.py", &[("acme.a", 1)], &[])];
         let mut graph = ProjectGraph::new(root.clone());
-        for path in PATHS {
+        let init = with_init.then_some("src/acme/__init__.py");
+        for path in PATHS.into_iter().chain(init) {
             let context = if path == "src/acme/main.py" {
                 FileContext::Test
             } else {
@@ -1010,9 +1058,25 @@ mod tests {
         let parse = ParseSummary { modules };
         let module_index = ModuleIndex::build(&graph, &sources(&root));
 
-        for (mode, eager) in [
-            (ProjectMode::App, IndexSet::from([main_id])),
-            (ProjectMode::Library, IndexSet::from([main_id, a_id])),
+        // Importing `acme.a` also loads the package `__init__.py` itself.
+        let init_id = init.and_then(|path| graph.file_id(path));
+        let with = |ids: &[FileId]| ids.iter().copied().chain(init_id).collect::<IndexSet<_>>();
+        let library_certain = if with_init {
+            with(&[main_id])
+        } else {
+            IndexSet::from([main_id, a_id])
+        };
+        for (mode, eager, certain) in [
+            (
+                ProjectMode::App,
+                IndexSet::from([main_id]),
+                IndexSet::from([main_id]),
+            ),
+            (
+                ProjectMode::Library,
+                with(&[main_id, a_id]),
+                library_certain,
+            ),
         ] {
             let entry = EntryPlan {
                 mode,
@@ -1026,8 +1090,71 @@ mod tests {
                 &module_index,
                 Vec::new(),
             );
-            assert_eq!(outcome.reachable, IndexSet::from([main_id, a_id]));
-            assert_eq!(outcome.eager, eager, "{mode:?}");
+            assert_eq!(outcome.reachable, with(&[main_id, a_id]));
+            assert_eq!(outcome.eager, eager, "{mode:?} {with_init}");
+            assert_eq!(outcome.exposed, eager, "{mode:?} {with_init}");
+            assert_eq!(outcome.certain, certain, "{mode:?} {with_init}");
+        }
+    }
+
+    /// #802: a library's public subpackage, or a module its own decorators
+    /// register, runs only once a caller imports it, so the files it alone
+    /// reaches are exposed but not certain.
+    #[test]
+    fn certain_set_excludes_files_only_public_modules_reach() {
+        let root = test_root();
+        let modules = vec![
+            parsed("src/acme/main.py", &[("acme.a", 1)], &[]),
+            parsed("src/acme/b.py", &[("acme.a", 1)], &[]),
+            parsed("src/acme/c.py", &[("acme.b", 1)], &[]),
+        ];
+        let graph = graph_with_imports(root.clone(), &modules);
+        let parse = ParseSummary { modules };
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let [main_id, a_id, b_id, c_id] = PATHS.map(|path| graph.file_id(path).expect(path));
+        let root_at = |path: &str, rule: &str| EntryRoot {
+            spec: EntrySpec {
+                path: path.to_owned(),
+                symbol: None,
+            },
+            context: FileContext::Runtime,
+            origins: vec![EntryOrigin::Auto {
+                rule: rule.to_owned(),
+            }],
+        };
+        let mut route = PluginContribution::empty(PluginId::Flask);
+        route.module_refs.push(ModuleReference {
+            module: "acme.c".to_owned(),
+            origin: ReferenceOrigin {
+                file: "src/acme/c.py".to_owned(),
+                line: Some(3),
+                label: "flask route decorator".to_owned(),
+            },
+        });
+        let plugins = PluginHints {
+            contributions: vec![route],
+            ..no_plugins()
+        };
+
+        for (mode, certain) in [
+            (
+                ProjectMode::App,
+                IndexSet::from([main_id, a_id, b_id, c_id]),
+            ),
+            (ProjectMode::Library, IndexSet::from([main_id, a_id])),
+        ] {
+            let entry = EntryPlan {
+                mode,
+                roots: vec![
+                    root_at("src/acme/main.py", "auto:library package"),
+                    root_at("src/acme/b.py", LIBRARY_SUBPACKAGE_RULE),
+                ],
+                ..entry_plan()
+            };
+            let outcome =
+                run_reachability_bfs(&graph, &entry, &plugins, &parse, &module_index, Vec::new());
+            assert_eq!(outcome.exposed.len(), 4, "{mode:?}");
+            assert_eq!(outcome.certain, certain, "{mode:?}");
         }
     }
 

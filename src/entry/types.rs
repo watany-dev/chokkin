@@ -52,6 +52,18 @@ pub struct EntryRoot {
     pub origins: Vec<EntryOrigin>,
 }
 
+impl EntryRoot {
+    /// Whether only a library subpackage's public surface makes this a root,
+    /// so its imports run when a caller imports it, not when the package
+    /// loads (#802).
+    pub(crate) fn only_public(&self) -> bool {
+        !self.origins.is_empty()
+            && self.origins.iter().all(|origin| {
+                matches!(origin, EntryOrigin::Auto { rule } if rule == super::build::LIBRARY_SUBPACKAGE_RULE)
+            })
+    }
+}
+
 /// Outcome of entry root construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryPlan {

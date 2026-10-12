@@ -31,6 +31,21 @@ pub(crate) fn rel_to_root(root: &Path, path: &Path) -> String {
     normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
+/// Whether a directory above the module at root-relative `path` holds an
+/// `__init__.py` that `is_init` accepts: importing that package does not by
+/// itself load `path` (#802).
+#[must_use]
+pub(crate) fn is_submodule(path: &str, is_init: impl Fn(&str) -> bool) -> bool {
+    let mut dir = path.strip_suffix("/__init__.py").unwrap_or(path);
+    while let Some((parent, _)) = dir.rsplit_once('/') {
+        if is_init(&format!("{parent}/__init__.py")) {
+            return true;
+        }
+        dir = parent;
+    }
+    false
+}
+
 /// Join root-relative `/`-separated paths, where `""` is the root.
 #[must_use]
 pub(crate) fn join_rel(base: &str, rel: &str) -> String {

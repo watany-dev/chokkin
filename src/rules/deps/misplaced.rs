@@ -44,6 +44,7 @@ pub(super) fn detect_misplaced_dependencies(
     let strengths = import_strengths(context.parse);
     let host_loaded = host_loaded_files(context.parse, &sources.layout, pytest11_modules);
     let eager = file_paths(graph, &reachability.eager);
+    let exposed = file_paths(graph, &reachability.exposed);
     let certain = file_paths(graph, &reachability.certain);
     let mut candidates: Vec<(IssueCandidate, ImportStrength)> = Vec::new();
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
@@ -114,10 +115,14 @@ pub(super) fn detect_misplaced_dependencies(
         // function-local import would (#610).
         if !eager.contains(import.file.as_str()) {
             strength = strength.min(ImportStrength::Deferred);
-        } else if !certain.contains(import.file.as_str()) {
+        } else if !exposed.contains(import.file.as_str()) {
             // Likewise a file loaded only past an optional import may be
             // missing at runtime without breaking the package (#614).
             strength = ImportStrength::Optional;
+        } else if !certain.contains(import.file.as_str()) {
+            // A library's public module nothing in the package loads needs
+            // it only when a caller imports that module (#802).
+            strength = strength.min(ImportStrength::Exposed);
         }
         if is_opt_in_import(&import.file, &import.import_root, &sources.layout) {
             strength = strength.min(ImportStrength::OptIn);
@@ -197,6 +202,9 @@ enum ImportStrength {
     /// Only inside a function body, or in a file runtime code loads only
     /// from one or from a `TYPE_CHECKING` block.
     Deferred,
+    /// At top level of a library's public module that neither the package's
+    /// own `__init__` nor an entry point loads, only callers and tests (#802).
+    Exposed,
     TopLevel,
 }
 
@@ -218,6 +226,9 @@ impl ImportStrength {
             },
             Self::Deferred => {
                 "imported only inside functions or by modules runtime code loads only from inside functions or TYPE_CHECKING blocks"
+            },
+            Self::Exposed => {
+                "imported only by public modules that the package itself does not load: callers need it only when they import them"
             },
         };
         candidate.confidence = Confidence::Likely;
