@@ -122,5 +122,29 @@ CHK001 も、1,329 件の GONE のうち Downgraded は 270 件だけだった (
 - rule 別件数の baseline → HEAD と、`compare.md` の finding-level diff の集計
 - 件数が動いた project ごとの内訳と原因の PR (`finding-diff.tsv` から)
 - §3 の「Downgrade vs vanish」表と、other の消失の原因
+- §5 の `--fix --dry-run` の計画の差 (HEAD にだけ出る `would move`)
 - 実行時間 (環境ノイズが大きいので baseline と HEAD を交互に複数回)
 - 実行したコマンド
+
+## 5. `--fix` の計画を比べる
+
+gate は finding の件数と label しか見ないので、severity や件数が変わらず confidence だけが
+上がった finding は gate に掛からない。`--fix` の MoveToRuntime は Certain かつ dev 宣言が
+1 つの finding にだけ掛かる (`src/fix/plan.rs`) ので、Likely → Certain の変化はそのまま
+ユーザーの manifest の書き換えにつながる。v0.7.5 の検証では、#792 (#776) で mlflow が library mode に
+なり、`--fix` が `tensorflow` / `keras` など 9 件を runtime に移す計画を出すようになった (#802)。
+これは gate では見つからず、手で dry-run して気付いた。
+
+CHK005 の CHANGED があった project と mode が変わった project は、baseline と HEAD で
+`--fix --dry-run` の計画を比べる。`--dry-run` でも clone は書き換えないが、念のため clone の
+コピーに対して実行する。
+
+```sh
+for b in "$BASE" "$HEAD"; do
+  echo "== $b"
+  "$b" <clone のコピー> --fix --dry-run --no-cache | grep 'would move'
+done
+```
+
+HEAD にだけ出る `would move` は、その package を runtime 依存に移すのが正しいかを label と
+照らして確かめる。
