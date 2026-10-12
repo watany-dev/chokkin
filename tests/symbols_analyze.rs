@@ -1431,8 +1431,7 @@ fn own_name_used_through_a_package_star_import_stays_chk006() {
 }
 
 /// A star-imported package's re-export is used when the name is read through
-/// the outer package; the packages a name merely passes through record no
-/// use (#803).
+/// the outer package (#803).
 #[test]
 fn reexport_in_a_star_imported_package_is_used_through_the_outer_package() {
     let report = analyze_generated(&[

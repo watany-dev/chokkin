@@ -183,7 +183,7 @@ struct StarImports<'a> {
     /// Names each star-importing module defines itself, shadowing
     /// star-imported ones.
     defines: HashMap<&'a str, HashSet<&'a str>>,
-    /// The modules that star-import each module: the edges walked upwards.
+    /// The modules that star-import each module.
     parents: HashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules that define or import each name. A forwarded
     /// reference can only meet a symbol or a re-export there, so the
