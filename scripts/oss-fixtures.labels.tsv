@@ -1725,12 +1725,10 @@ airflow	CHK006	airflow-core/src/airflow/dag_processing/processor.py:in_process_a
 fastmcp	CHK006	fastmcp_slim/fastmcp/utilities/ui.py:create_button_group	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
 airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:connection_field_behaviours	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/context.py:set_context	tp	-	not in __all__; no code references outside the module (only auto-generated python-sdk docs mention it)
-airflow	CHK006	devel-common/src/tests_common/pytest_plugin.py:pytest_runtest_setup	fp	name-convention	pytest hook called by name
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_desktop.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/types/responses.py:create_mcp_approval_request_item	fp	library-public-api	documented public API (APILink in docs/api_reference for mlflow.types.responses)
 poetry	CHK006	src/poetry/utils/wheel.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:UpdateHITLDetailPayload	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
-mlflow	CHK006	mlflow/pytest/plugin.py:pytest_sessionfinish	fp	name-convention	pytest hook called by name
 airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:AssetStateStoreCollectionResponse	tp	-	generated pydantic model in airflowctl datamodels; never used by airflowctl (core refs are a different class)
 fastmcp	CHK006	fastmcp_slim/fastmcp/apps/generative.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 airflow	CHK006	airflow-ctl/src/airflowctl/ctl/cli_config.py:BUILD_DOCS	tp	-	no references outside the module
@@ -1753,7 +1751,6 @@ fastmcp	CHK006	fastmcp_slim/fastmcp/server/middleware/middleware.py:make_middlew
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:resource_name	fp	external-reference	read as permissions.resource_name in providers/fab via `from airflow.security import permissions` (module-attribute access)
 fastmcp	CHK006	fastmcp_slim/fastmcp/prompts/base.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/utils/docstring_utils.py:get_module_min_and_max_supported_ranges	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
-airflow	CHK006	airflow-core/src/airflow/policies.py:task_instance_mutation_hook	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/claude_code.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/tracing/utils/warning.py:request_id_backward_compatible	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
 fastmcp	CHK006	fastmcp_slim/fastmcp/client/auth/bearer.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
@@ -1769,11 +1766,9 @@ mlflow	CHK006	mlflow/utils/file_utils.py:read_yaml	info-expected	library-public-
 airflow	CHK006	airflow-core/src/airflow/models/taskmap.py:tracer	tp	-	module-level logger/tracer unused even in-module
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/sessions.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/llama_index/model.py:get_default_conda_env	info-expected	library-public-api	flavor __init__ re-exports selectively and omits it; not in api inventory; library mode since #776 keeps the package's public API at info
-airflow	CHK006	airflow-core/src/airflow/listeners/spec/dagrun.py:on_dag_run_running	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
 fastmcp	CHK006	fastmcp_slim/fastmcp/server/providers/filesystem_discovery.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/metrics/genai/prompts/v1.py:grading_system_prompt_template	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
 airflow	CHK006	airflow-core/src/airflow/cli/commands/task_command.py:task_failed_deps	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
-airflow	CHK006	airflow-core/src/airflow/policies.py:pod_mutation_hook	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/generate.py:logger	tp	-	module logger unused even in-module; other hits are unrelated loggers
 mlflow	CHK006	mlflow/legacy_databricks_cli/configure/provider.py:update_and_persist_config	info-expected	library-public-api	legacy databricks cli compat module; no references outside the module; library mode since #776 keeps the package's public API at info
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_CONFIG	fp	external-reference	read as permissions.RESOURCE_CONFIG in providers/fab via `from airflow.security import permissions` (module-attribute access)
@@ -1806,7 +1801,6 @@ airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_ACTION	
 mlflow	CHK006	mlflow/utils/string_utils.py:truncate_str_from_middle	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
 airflow	CHK006	airflow-core/src/airflow/security/permissions.py:RESOURCE_PASSWORD	fp	external-reference	read as permissions.RESOURCE_PASSWORD in providers/fab via `from airflow.security import permissions` (module-attribute access)
 mlflow	CHK006	mlflow/environment_variables.py:MLFLOW_DEPLOYMENTS_CONFIG	info-expected	library-public-api	no references outside the module; library mode since #776 keeps the package's public API at info
-airflow	CHK006	airflow-core/src/airflow/listeners/spec/asset.py:on_asset_alias_created	fp	name-convention	pluggy hookspec implemented by name in user policies/listener plugins; documented
 airflow	CHK006	airflow-core/src/airflow/cli/commands/provider_command.py:secrets_backends_list	fp	dynamic-import	cli_config lazy_load_command("<dotted path>") imports it by string
 airflow	CHK010	providers/standard/tests/unit/standard/operators/test_python.py:funcsigs	tp	-	installed at runtime inside the task virtualenv; not declared by the standard provider
 django	CHK010	tests/project_template/test_settings.py:test_settings	tp	-	template project settings module resolved only at runtime
