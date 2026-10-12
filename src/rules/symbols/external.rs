@@ -106,13 +106,18 @@ pub(super) fn dynamically_fetched_classes<'a>(
 }
 
 /// Whether a normalized decorator name registers its target: any
-/// `pytest.mark.*`, or a listed suffix with or without a receiver.
+/// `pytest.mark.*`, a pluggy marker, or a listed suffix with or without a
+/// receiver.
 fn is_registration_decorator(name: &str) -> bool {
     if name.starts_with("pytest.mark.") {
         return true;
     }
     let suffix = name.rsplit_once('.').map_or(name, |(_, suffix)| suffix);
+    // pluggy markers are named for what they mark: `hookimpl`, airflow's
+    // `local_settings_hookspec = HookspecMarker(...)` (fixture `pluggy_hooks`).
     REGISTRATION_DECORATOR_SUFFIXES.contains(&suffix)
+        || suffix.ends_with("hookimpl")
+        || suffix.ends_with("hookspec")
 }
 
 #[cfg(test)]
@@ -130,6 +135,9 @@ mod tests {
             "shared_task",
             "celery.task",
             "click.command",
+            "hookimpl",
+            "pm.hookspec",
+            "local_settings_hookspec",
         ] {
             assert!(is_registration_decorator(name), "{name}");
         }
@@ -143,6 +151,7 @@ mod tests {
             "staticmethod",
             "shared_task_wrapper",
             "app.tasks",
+            "hookimpl_wrapper",
         ] {
             assert!(!is_registration_decorator(name), "{name}");
         }
