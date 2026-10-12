@@ -175,6 +175,26 @@ fn pytest_fixture_is_not_reported() {
     ));
 }
 
+/// pluggy calls the functions its markers decorate by name (#777).
+#[test]
+fn pluggy_hooks_are_external() {
+    let report = analyze_fixture("pluggy_hooks");
+    for (module, name) in [
+        ("acme.policies", "task_policy"),
+        ("acme.listeners", "on_start"),
+        ("acme.listeners", "on_stop"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "acme.policies", "helper"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn fastapi_route_and_websocket_handlers_are_external() {
     let report = analyze_fixture("fastapi_websocket");
@@ -1323,6 +1343,67 @@ fn package_star_import_chain_forwards_only_names_in_all() {
         assert!(
             has_symbol_rule(&report, RuleId::Chk006, module, name),
             "{module}.{name}: {report:?}"
+        );
+    }
+}
+
+/// pytest calls `pytest_*` hooks in the plugins it loads and Sphinx calls an
+/// extension's `setup`, both by name (#777).
+#[test]
+fn host_hooks_called_by_name_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            &format!(
+                "{LIBRARY_PYPROJECT}\n[tool.chokkin.plugins]\nsphinx = true\n\n[tool.pytest.ini_options]\npytest_plugins = [\"acme.ini_plugin\"]\n\n[project.entry-points.pytest11]\nacme = \"acme.entry_plugin\"\n"
+            ),
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/pytest_plugin.py",
+            "import pytest\n\n\ndef pytest_sessionfinish(session):\n    pass\n",
+        ),
+        (
+            "src/acme/listed_plugin.py",
+            "def pytest_configure(config):\n    pass\n",
+        ),
+        (
+            "src/acme/ini_plugin.py",
+            "def pytest_configure(config):\n    pass\n",
+        ),
+        (
+            "src/acme/entry_plugin.py",
+            "def pytest_addoption(parser):\n    pass\n",
+        ),
+        ("src/acme/sphinx_ext.py", "def setup(app):\n    pass\n"),
+        (
+            "src/acme/plain.py",
+            "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from _pytest.config import Config\n\n\ndef pytest_configure(config: \"Config\"):\n    pass\n\n\ndef setup(app):\n    pass\n",
+        ),
+        ("docs/conf.py", "extensions = [\"acme.sphinx_ext\"]\n"),
+        (
+            "conftest.py",
+            "import acme.pytest_plugin\nimport acme.ini_plugin\nimport acme.entry_plugin\nimport acme.sphinx_ext\nimport acme.plain\n\npytest_plugins = [\"acme.listed_plugin\"]\n",
+        ),
+    ]);
+    for (module, name) in [
+        ("acme.pytest_plugin", "pytest_sessionfinish"),
+        ("acme.listed_plugin", "pytest_configure"),
+        ("acme.ini_plugin", "pytest_configure"),
+        ("acme.entry_plugin", "pytest_addoption"),
+        ("acme.sphinx_ext", "setup"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    // The same names in a module no host loads are still unused; importing
+    // pytest only for annotations does not make it a plugin.
+    for name in ["pytest_configure", "setup"] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, "acme.plain", name),
+            "{name}: {report:?}"
         );
     }
 }

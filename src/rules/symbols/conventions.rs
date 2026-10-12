@@ -4,7 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::config::PluginId;
-use crate::parser::ParsedModule;
+use crate::entry::{EntryOrigin, EntryPlan};
+use crate::parser::{ImportContext, ParsedModule, SymbolKind};
 use crate::plugins::{DJANGO_SETTINGS_LABEL, PluginHints};
 
 use super::graph::{RegistryEntry, SymbolId};
@@ -145,6 +146,75 @@ pub(super) fn config_star_symbols(
         })
         .map(|entry| entry.id.clone())
         .collect()
+}
+
+/// Functions a host calls by name (#777): a `pytest_*` hook in a module pytest
+/// loads as a plugin, and the `setup` of a Sphinx extension. pluggy hooks are
+/// marked by their decorator (`external::is_registration_decorator`).
+pub(super) fn host_hook_symbols(
+    registry: &[RegistryEntry],
+    modules: &[&ParsedModule],
+    plan: &EntryPlan,
+    plugins: &PluginHints,
+) -> Vec<SymbolId> {
+    let pytest_plugins: HashSet<&str> = modules
+        .iter()
+        .flat_map(|module| &module.pytest_plugins)
+        .map(|plugin| plugin.module.as_str())
+        .chain(plugin_module_refs(plugins, PluginId::Pytest))
+        .collect();
+    let pytest_files: HashSet<&str> = plan
+        .roots
+        .iter()
+        .filter(|root| {
+            root.origins.iter().any(
+                |origin| matches!(origin, EntryOrigin::Manifest { group, .. } if group == "pytest11"),
+            )
+        })
+        .map(|root| root.spec.path.as_str())
+        .chain(
+            modules
+                .iter()
+                .filter(|module| imports_pytest(module))
+                .map(|module| module.path.as_str()),
+        )
+        .collect();
+    let extensions: HashSet<&str> = plugin_module_refs(plugins, PluginId::Sphinx).collect();
+    registry
+        .iter()
+        .filter(|entry| entry.def.kind == SymbolKind::Function)
+        .filter(|entry| {
+            let module = entry.id.module.as_str();
+            match entry.id.name.as_str() {
+                name if name.starts_with("pytest_") => {
+                    pytest_plugins.contains(module) || pytest_files.contains(entry.path.as_str())
+                },
+                "setup" => extensions.contains(module),
+                _ => false,
+            }
+        })
+        .map(|entry| entry.id.clone())
+        .collect()
+}
+
+fn plugin_module_refs(plugins: &PluginHints, plugin: PluginId) -> impl Iterator<Item = &str> {
+    plugins
+        .contributions
+        .iter()
+        .filter(move |contrib| contrib.plugin == plugin)
+        .flat_map(|contrib| &contrib.module_refs)
+        .map(|reference| reference.module.as_str())
+}
+
+/// pytest only loads a plugin module it is told about; one that imports
+/// pytest at run time is written for it, as an opt-in `-p` plugin may be
+/// (mlflow).
+fn imports_pytest(module: &ParsedModule) -> bool {
+    module.imports.iter().any(|import| {
+        !import.deferred
+            && import.context != ImportContext::Type
+            && matches!(import.module.split('.').next(), Some("pytest" | "_pytest"))
+    })
 }
 
 #[cfg(test)]

@@ -73,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dspy`, `httpx` and `torch` to runtime, and `openai`, `polars`, `psutil`
   and `opentelemetry-exporter-otlp-proto-http` are Likely. CHK001 and CHK006
   reachability is unchanged (#802).
+- Functions a host calls by name are no longer CHK006: a `pytest_*` hook in a
+  module pytest loads as a plugin (listed in `pytest_plugins`, a `pytest11`
+  entry point, or a module that imports pytest at run time), the `setup` of a
+  Sphinx extension listed in `conf.py`, and a function decorated with a
+  pluggy marker (`@hookimpl`, `@hookspec`, airflow's
+  `@local_settings_hookspec`). airflow's `pytest_runtest_setup`, policy and
+  listener hookspecs and mlflow's `pytest_sessionfinish` are no longer
+  reported (#777).
 
 ## [0.7.4] - 2026-10-10
 
