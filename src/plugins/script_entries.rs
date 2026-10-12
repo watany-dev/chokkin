@@ -206,10 +206,22 @@ mod tests {
             ),
             [["scripts/bump.py", ".agents/skills/r/scripts/bump.py"]]
         );
-        assert!(paths("python ${{ matrix.dir }}/gen.py", Fallback::CheckoutPrefix).is_empty());
-        assert!(paths("python $DIR/gen.py", Fallback::None).is_empty());
-        assert!(paths("python ../gen.py", Fallback::None).is_empty());
-        assert!(paths("python /opt/gen.py", Fallback::None).is_empty());
+        assert_eq!(
+            paths("python ${{ matrix.dir }}/gen.py", Fallback::CheckoutPrefix),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            paths("python $DIR/gen.py", Fallback::None),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            paths("python ../gen.py", Fallback::None),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            paths("python /opt/gen.py", Fallback::None),
+            Vec::<Vec<String>>::new()
+        );
     }
 
     #[test]
