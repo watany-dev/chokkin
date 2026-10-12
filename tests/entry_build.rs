@@ -237,3 +237,40 @@ fn manifest_script_resolves_to_module_file() {
     assert_eq!(entry.spec.path, "src/pkg/main.py");
     assert_eq!(entry.spec.symbol.as_deref(), Some("app"));
 }
+
+/// #802: only the package's own `__init__.py` makes a subpackage, not a
+/// stray `src/__init__.py` above it.
+#[test]
+fn library_roots_mark_subpackages_below_the_package_init() {
+    let inputs = load_pipeline(&fixture("library_subpackage"));
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &inputs.plugins,
+        false,
+    );
+
+    assert_eq!(plan.mode, ProjectMode::Library);
+    let origins_of = |path: &str| {
+        let root = plan
+            .roots
+            .iter()
+            .find(|root| root.spec.path == path)
+            .unwrap_or_else(|| panic!("{path} root"));
+        root.origins.clone()
+    };
+    let auto = |rule: &str| {
+        vec![EntryOrigin::Auto {
+            rule: rule.to_owned(),
+        }]
+    };
+    assert_eq!(
+        origins_of("src/acme/__init__.py"),
+        auto("auto:library package")
+    );
+    assert_eq!(
+        origins_of("src/acme/sub/__init__.py"),
+        auto("auto:library subpackage")
+    );
+}
