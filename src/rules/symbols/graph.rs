@@ -330,3 +330,52 @@ fn bound_names(module: &ParsedModule) -> HashSet<&str> {
         });
     defined.chain(imported).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{ImportContext, ImportRef};
+
+    fn import(
+        kind: ImportKind,
+        module: &str,
+        name: Option<&str>,
+        alias: Option<&str>,
+    ) -> ImportRef {
+        ImportRef {
+            module: module.to_owned(),
+            name: name.map(str::to_owned),
+            alias: alias.map(str::to_owned),
+            line: 1,
+            kind,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            deferred: false,
+            relative_level: 0,
+            fallback_for: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bound_names_cover_from_imports_but_not_plain_or_star_imports() {
+        let module = ParsedModule {
+            imports: vec![
+                import(ImportKind::ImportFrom, "pkg.core", Some("helper"), None),
+                import(
+                    ImportKind::ImportFrom,
+                    "pkg.core",
+                    Some("tool"),
+                    Some("renamed"),
+                ),
+                import(ImportKind::ImportFrom, "pkg.sub", None, None),
+                import(ImportKind::ImportFrom, "pkg.other", Some("*"), None),
+                import(ImportKind::Import, "os.path", None, None),
+                import(ImportKind::Import, "json", None, Some("js")),
+            ],
+            ..ParsedModule::default()
+        };
+        let names = bound_names(&module);
+        assert_eq!(names, HashSet::from(["helper", "renamed", "sub"]));
+    }
+}
