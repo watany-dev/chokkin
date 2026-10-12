@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
 use crate::manifest::LoadedManifest;
+use crate::path_util::is_submodule;
 use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_target};
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
@@ -192,6 +193,10 @@ fn build_script_entries(manifest: &LoadedManifest) -> impl Iterator<Item = Entry
         })
 }
 
+/// Rule of a library root for a subpackage `__init__.py` below the package's
+/// own: callers may import it, but nothing shows the package loads it (#802).
+pub(crate) const LIBRARY_SUBPACKAGE_RULE: &str = "auto:library subpackage";
+
 /// A library's public API is its own entry point: without this, a library
 /// with no script, test, or config root reaches nothing and every runtime
 /// dependency it imports reads as unused (#501).
@@ -208,7 +213,15 @@ fn collect_library_package_entries(
             .filter(|(path, context)| {
                 path.ends_with("/__init__.py") && **context == FileContext::Runtime
             });
+        let in_package = |init: &str| {
+            init.starts_with(&prefix) && file_contexts.get(init) == Some(&FileContext::Runtime)
+        };
         for (path, _) in inits {
+            let rule = if is_submodule(path, in_package) {
+                LIBRARY_SUBPACKAGE_RULE
+            } else {
+                "auto:library package"
+            };
             candidates.push(EntryCandidate {
                 spec: EntrySpec {
                     path: (*path).to_owned(),
@@ -216,7 +229,7 @@ fn collect_library_package_entries(
                 },
                 context: FileContext::Runtime,
                 origin: EntryOrigin::Auto {
-                    rule: "auto:library package".to_owned(),
+                    rule: rule.to_owned(),
                 },
             });
         }

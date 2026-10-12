@@ -1,0 +1,10 @@
+[project]
+name = "misplaced-public-module"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[dependency-groups]
+dev = ["attrs", "numpy", "polars"]
+
+[tool.chokkin]
+mode = "library"

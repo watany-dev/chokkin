@@ -96,7 +96,11 @@ pub struct ReachabilityReport {
     /// docs and dev files reach only library files here (#614).
     pub eager: IndexSet<FileId>,
     /// Eager files that some path reaches without passing an optional
-    /// import either (#614).
+    /// import either (#614), counting paths that start at a library
+    /// subpackage's public surface or in a test, docs or dev file.
+    pub exposed: IndexSet<FileId>,
+    /// Exposed files that some such path reaches from a root the package or
+    /// its host loads (#802).
     pub certain: IndexSet<FileId>,
     /// Candidate unused files with confidence metadata.
     pub unreachable: Vec<UnreachableFile>,

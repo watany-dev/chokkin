@@ -1021,3 +1021,19 @@ fn dev_group_declaration_does_not_hide_unused_setup_py_runtime_declaration() {
         assert!(has_dist_rule(&report, RuleId::Chk002, "requests"));
     }
 }
+
+/// #802: a library's public subpackage that the package's own `__init__`
+/// does not load runs only for callers that import it, and a test importing
+/// it does not change that; one the `__init__` loads stays Certain.
+#[test]
+fn misplaced_imports_of_public_modules_the_package_does_not_load_are_likely() {
+    let report = reconcile_fixture("misplaced_public_module");
+    let summary = |name: &str| {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        (candidate.severity, candidate.confidence)
+    };
+    assert_eq!(summary("polars"), (Severity::Warning, Confidence::Likely));
+    assert_eq!(summary("attrs"), (Severity::Warning, Confidence::Certain));
+    assert_eq!(summary("numpy"), (Severity::Warning, Confidence::Certain));
+}

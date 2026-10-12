@@ -8,6 +8,8 @@ mod module;
 mod script;
 mod types;
 
+#[cfg(test)]
+pub(crate) use build::LIBRARY_SUBPACKAGE_RULE;
 pub(crate) use build::add_member_manifest_roots;
 pub use build::build_entry_roots;
 pub(crate) use mode::is_library_member;

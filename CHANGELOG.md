@@ -64,6 +64,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `langchain_community`), or in airflow's `example_dags`. The top-level
   package's own name does not count, and example DAGs stay runtime files
   for CHK003 / CHK004 / CHK010 (#781).
+- In library mode, CHK005 reports a top-level import as warning / Likely,
+  not Certain, when only public modules that the package itself does not
+  load reach it. Such modules are public subpackages that neither the
+  package's own `__init__` nor an entry point imports, and modules that
+  only their own Flask route or Celery task decorators register. Tests
+  importing them do not count either. `--fix` no longer moves mlflow's
+  `dspy`, `httpx` and `torch` to runtime, and `openai`, `polars`, `psutil`
+  and `opentelemetry-exporter-otlp-proto-http` are Likely. CHK001 and CHK006
+  reachability is unchanged (#802).
 
 ## [0.7.4] - 2026-10-10
 
