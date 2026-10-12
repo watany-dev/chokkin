@@ -74,7 +74,6 @@ pub(super) enum Fallback<'a> {
     Under(&'a str),
 }
 
-/// Scripts `command` runs, as root-relative candidates.
 pub(super) fn command_entries(
     command: &str,
     origin: &ReferenceOrigin,
@@ -151,7 +150,6 @@ fn markdown_commands(contents: &str) -> Vec<(usize, String)> {
     commands
 }
 
-/// The character and length of a ```` ``` ```` / `~~~` fence line.
 fn fence_marker(line: &str) -> Option<(char, usize)> {
     let trimmed = line.trim_start();
     let ch = trimmed
