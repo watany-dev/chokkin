@@ -82,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `uv run --directory`, for workflows also without the checkout `path:`
   prefix, and for skill docs also under the skill directory. These files are
   dev entries, and outside a package also dev files, so a dependency group
-  they import is not misplaced. fastmcp's `tests/downstream/_harness.py` and
+  they import is not misplaced and an undeclared import is reported only
+  under `--strict`. fastmcp's `tests/downstream/_harness.py` and
   `changelog_entry.py` and airflow's `task-sdk/dev/generate_task_sdk_models.py`
   are no longer reported (#797).
 
