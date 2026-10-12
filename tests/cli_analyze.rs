@@ -2391,3 +2391,37 @@ fn binary_member_pytest_plugin_imports_pytest_as_info() {
         ]
     );
 }
+
+#[test]
+fn binary_command_run_scripts_import_dependency_groups_as_dev() {
+    // airflow's pre-commit runs `task-sdk/dev/generate_task_sdk_models.py`,
+    // which imports its `codegen` group (#797). The package module run by the
+    // same workflow keeps its runtime context.
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[dependency-groups]\ncodegen = [\"gen-lib\", \"pkg-lib\"]\n\n[tool.chokkin]\nproject = [\"**/*.py\"]\n",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  gen:\n    steps:\n      - run: python tools/gen.py\n      - run: python acme/cli.py\n",
+        ),
+        ("tools/gen.py", "import gen_lib\n\ngen_lib.run()\n"),
+        ("acme/__init__.py", ""),
+        ("acme/cli.py", "import pkg_lib\n\npkg_lib.run()\n"),
+    ]);
+    for mode in [&[][..], &["--strict"]] {
+        let keys = issue_keys(&json_issues(project.path(), mode));
+        assert!(
+            !keys.iter().any(|(_, target)| target.contains("gen")),
+            "{keys:?}"
+        );
+        if mode.is_empty() {
+            continue;
+        }
+        assert!(
+            keys.contains(&("CHK005".to_owned(), "pkg-lib".to_owned())),
+            "{keys:?}"
+        );
+    }
+}

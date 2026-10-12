@@ -6,7 +6,10 @@ use std::path::Path;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
-use crate::entry::{EntryPlan, add_member_manifest_roots, build_entry_roots, is_library_member};
+use crate::entry::{
+    EntryPlan, add_member_manifest_roots, build_entry_roots, is_library_member,
+    mark_command_scripts_dev,
+};
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
@@ -207,18 +210,21 @@ fn run_analysis_core(
         })
         .chain(plugins.warnings.iter().cloned().map(ProbeWarning::Plugin))
         .collect();
+    let mut sources = probe.sources.clone();
+    mark_command_scripts_dev(&mut sources, &plugins);
+    let sources = &sources;
 
     let mut entry = build_entry_roots(
         &probe.effective_config,
         &probe.manifest,
-        &probe.sources,
+        sources,
         &plugins,
         production,
     );
-    crate::entry::add_script_roots(&mut entry, &probe.scripts, &probe.sources, production);
+    crate::entry::add_script_roots(&mut entry, &probe.scripts, sources, production);
     add_member_manifest_roots(
         &mut entry,
-        &probe.sources,
+        sources,
         probe
             .workspace_inputs
             .iter()
@@ -233,7 +239,7 @@ fn run_analysis_core(
             .collect();
     }
 
-    let mut graph = build_analysis_graph(probe, &parse, &plugins)?;
+    let mut graph = build_analysis_graph(probe, sources, &parse, &plugins)?;
 
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
     let script_targets: BTreeMap<_, _> = probe
@@ -248,7 +254,7 @@ fn run_analysis_core(
     let resolution = resolve_imports_for_analysis(
         &probe.effective_config,
         &probe.manifest,
-        &probe.sources,
+        sources,
         &parse,
         &plugin_refs,
         &probe.workspace_members,
@@ -257,17 +263,11 @@ fn run_analysis_core(
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
 
-    let mut reachability = analyze_reachability(
-        &mut graph,
-        &probe.sources,
-        &entry,
-        &plugins,
-        &parse,
-        production,
-    )?;
+    let mut reachability =
+        analyze_reachability(&mut graph, sources, &entry, &plugins, &parse, production)?;
     if let Some(surface) = PublicSurface::resolve(
         probe.manifest.metadata.wheel_targets.as_ref(),
-        &probe.sources.files,
+        &sources.files,
     ) {
         apply_public_surface(&mut reachability, &surface, &entry);
     }
@@ -314,7 +314,7 @@ fn run_analysis_core(
         resolution: &resolution,
         reachability: &reachability,
         graph: &graph,
-        sources: &probe.sources,
+        sources,
         parse: &parse,
     };
     let deps_resolution = without_build_environment_imports(&resolution, probe);
@@ -546,10 +546,11 @@ fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
 
 fn build_analysis_graph(
     probe: &ProbeReport,
+    sources: &DiscoveredSources,
     parse: &crate::parser::ParseSummary,
     plugins: &crate::plugins::PluginHints,
 ) -> Result<ProjectGraph, AnalyzeError> {
-    let mut graph = build_graph_skeleton(&probe.manifest, &probe.sources)?;
+    let mut graph = build_graph_skeleton(&probe.manifest, sources)?;
     for module in &parse.modules {
         let file_id = graph
             .file_id(&module.path)
