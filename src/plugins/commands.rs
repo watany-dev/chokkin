@@ -433,6 +433,8 @@ mod tests {
             [(Some("docs".to_owned()), "build.py".to_owned())]
         );
         assert_eq!(scripts("python -m pytest tests/test_a.py"), []);
+        assert_eq!(scripts("python -m gen.py"), []);
+        assert_eq!(scripts("docker run gen.py"), []);
         assert_eq!(scripts("uv run pytest tests/test_a.py"), []);
         assert_eq!(scripts("uv run --with gen.py ruff check"), []);
         assert_eq!(scripts("echo python gen.py"), []);
