@@ -17,8 +17,8 @@ use super::config_text::{
     PyprojectDoc, leading_spaces, logical_lines, origin_at, read_root_file, toml_key_line,
 };
 use super::context::PluginContext;
-use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin};
-use super::{ci_installs, task_files, tool_plugins};
+use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin, ScriptReference};
+use super::{ci_installs, script_entries, task_files, tool_plugins};
 
 /// Output from config scanning.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -40,6 +40,9 @@ pub(super) struct ConfigScanResult {
     /// environment (#680).
     #[serde(default)]
     pub provided_binaries: Vec<String>,
+    /// Scripts commands run by path (#797).
+    #[serde(default)]
+    pub script_entries: Vec<ScriptReference>,
 }
 
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
@@ -65,6 +68,7 @@ pub(super) fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
     paths.extend(task_files::input_paths(root));
     paths.extend(tool_plugins::input_paths(root));
     paths.extend(ci_installs::input_paths(root));
+    paths.extend(script_entries::input_paths(root));
     paths
 }
 
@@ -103,6 +107,7 @@ pub(super) fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     result
         .declared_distributions
         .extend(ci_installs::scan(root));
+    result.script_entries.extend(script_entries::scan(root));
 
     for list in [
         &mut result.used_distributions,
@@ -340,13 +345,16 @@ fn scan_pre_commit_config(
             continue;
         }
         if local_repo && let Some(entry) = item.strip_prefix("entry:") {
-            push_command(
-                result,
-                seen,
-                unquote_yaml_scalar(entry),
-                known,
-                &origin_at(&rel, index, "pre-commit entry"),
-            );
+            let entry = unquote_yaml_scalar(entry);
+            let origin = origin_at(&rel, index, "pre-commit entry");
+            push_command(result, seen, entry, known, &origin);
+            result
+                .script_entries
+                .extend(script_entries::command_entries(
+                    entry,
+                    &origin,
+                    script_entries::Fallback::None,
+                ));
         }
     }
 }

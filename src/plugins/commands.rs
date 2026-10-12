@@ -68,15 +68,9 @@ impl SourceHits {
 
 /// Known binaries invoked as the command word of `command`, deduplicated.
 pub(super) fn command_binaries(command: &str, known: KnownBinary<'_>) -> Vec<String> {
-    let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
     let mut binaries: Vec<String> = Vec::new();
-    for segment in joined.split(['\n', ';', '|', '&']) {
-        let words: Vec<&str> = segment
-            .split_whitespace()
-            .map(clean_word)
-            .filter(|word| !word.is_empty())
-            .collect();
-        let start = command_start(&words);
+    for_each_segment(command, |words| {
+        let start = command_start(words);
         if let Some(binary) = words
             .get(start..)
             .and_then(|rest| command_binary(rest, known))
@@ -84,8 +78,160 @@ pub(super) fn command_binaries(command: &str, known: KnownBinary<'_>) -> Vec<Str
         {
             binaries.push(binary);
         }
-    }
+    });
     binaries
+}
+
+/// Calls `visit` with the cleaned words of each `;` / `|` / `&` / newline
+/// separated segment, joining backslash continuations first.
+fn for_each_segment(command: &str, mut visit: impl FnMut(&[&str])) {
+    let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
+    for segment in joined.split(['\n', ';', '|', '&']) {
+        let words: Vec<&str> = segment
+            .split_whitespace()
+            .map(clean_word)
+            .filter(|word| !word.is_empty())
+            .collect();
+        visit(&words);
+    }
+}
+
+/// A `.py` file a command runs by path, with the directory (`cd`, `uv run
+/// --directory`) it is relative to.
+pub(super) struct ScriptRun {
+    pub(super) directory: Option<String>,
+    pub(super) path: String,
+}
+
+/// `uv run` options whose value is the next word.
+const UV_RUN_VALUE_OPTIONS: [&str; 26] = [
+    "-p",
+    "--python",
+    "-w",
+    "--with",
+    "--with-editable",
+    "--with-requirements",
+    "--group",
+    "--no-group",
+    "--only-group",
+    "--extra",
+    "--no-extra",
+    "--package",
+    "--project",
+    "--env-file",
+    "--index",
+    "-i",
+    "--index-url",
+    "--default-index",
+    "-f",
+    "--find-links",
+    "-C",
+    "--config-setting",
+    "--exclude-newer",
+    "-P",
+    "--upgrade-package",
+    "--resolution",
+];
+
+/// Scripts run as `python[3] [flags] <path>.py` or `uv run [options]
+/// [python] <path>.py` (`-s` / `--script` included) in `command` (#797).
+///
+/// A `cd <dir>` segment applies to the segments after it.
+pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
+    let mut cwd: Option<String> = None;
+    let mut scripts = Vec::new();
+    for_each_segment(command, |words| {
+        let rest = words.get(command_start(words)..).unwrap_or_default();
+        if let [cd, dir] = rest
+            && command_name(cd) == "cd"
+        {
+            cwd = Some(
+                cwd.as_ref()
+                    .map_or_else(|| (*dir).to_owned(), |cwd| format!("{cwd}/{dir}")),
+            );
+            return;
+        }
+        if let Some(mut run) = segment_script(words) {
+            if let Some(cwd) = &cwd {
+                run.directory = Some(
+                    run.directory
+                        .map_or_else(|| cwd.clone(), |dir| format!("{cwd}/{dir}")),
+                );
+            }
+            scripts.push(run);
+        }
+    });
+    scripts
+}
+
+fn segment_script(words: &[&str]) -> Option<ScriptRun> {
+    let mut index = 0;
+    while let Some(word) = words.get(index) {
+        let rest = words.get(index + 1..).unwrap_or_default();
+        if command_name(word) == "uv" && rest.first() == Some(&"run") {
+            return uv_run_script(rest.get(1..)?);
+        }
+        if is_python_word(word) {
+            return python_script(rest).map(|path| ScriptRun {
+                directory: None,
+                path: path.to_owned(),
+            });
+        }
+        let width = prefix_width(word, rest.first().copied());
+        if width == 0 {
+            return None;
+        }
+        index += width;
+    }
+    None
+}
+
+fn python_script<'a>(args: &[&'a str]) -> Option<&'a str> {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg.starts_with("-m") || arg.starts_with("-c") {
+            return None;
+        }
+        if matches!(*arg, "-X" | "-W") {
+            args.next();
+        } else if !arg.starts_with('-') {
+            return is_python_path(arg).then_some(*arg);
+        }
+    }
+    None
+}
+
+fn uv_run_script(args: &[&str]) -> Option<ScriptRun> {
+    let mut directory = None;
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        index += 1;
+        if let Some(value) = arg.strip_prefix("--directory=") {
+            directory = Some(value);
+        } else if *arg == "--directory" {
+            directory = args.get(index).copied();
+            index += 1;
+        } else if UV_RUN_VALUE_OPTIONS.contains(arg) {
+            index += 1;
+        } else if !arg.starts_with('-') {
+            let path = if is_python_word(arg) {
+                python_script(args.get(index..)?)?
+            } else {
+                is_python_path(arg).then_some(*arg)?
+            };
+            return Some(ScriptRun {
+                directory: directory.map(str::to_owned),
+                path: path.to_owned(),
+            });
+        }
+    }
+    None
+}
+
+fn is_python_path(word: &str) -> bool {
+    std::path::Path::new(word)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
 }
 
 fn clean_word(word: &str) -> &str {
@@ -247,5 +393,48 @@ mod tests {
         assert_eq!(hits.distributions, ["pytest-xdist"]);
         let modules: Vec<_> = hits.module_refs.iter().map(|m| m.module.as_str()).collect();
         assert_eq!(modules, ["pytest_django"]);
+    }
+
+    fn scripts(command: &str) -> Vec<(Option<String>, String)> {
+        command_scripts(command)
+            .into_iter()
+            .map(|run| (run.directory, run.path))
+            .collect()
+    }
+
+    #[test]
+    fn command_scripts_read_python_and_uv_run_paths() {
+        let script = |path: &str| (None, path.to_owned());
+        assert_eq!(
+            scripts("python3 -u fastmcp/tests/_harness.py junit.xml"),
+            [script("fastmcp/tests/_harness.py")]
+        );
+        assert_eq!(
+            scripts("FOO=1 uv run --frozen -w rich scripts/gen.py --check"),
+            [script("scripts/gen.py")]
+        );
+        assert_eq!(
+            scripts("sudo -E bash -c \"poetry run python tools/a.py\""),
+            [script("tools/a.py")]
+        );
+        assert_eq!(
+            scripts("cd docs\npython build.py && uv run --directory api gen.py"),
+            [
+                (Some("docs".to_owned()), "build.py".to_owned()),
+                (Some("docs/api".to_owned()), "gen.py".to_owned()),
+            ]
+        );
+        assert_eq!(
+            scripts("uv run -p 3.12 --group codegen --directory task-sdk -s dev/gen.py"),
+            [(Some("task-sdk".to_owned()), "dev/gen.py".to_owned())]
+        );
+        assert_eq!(
+            scripts("uv run --directory=docs python -X dev build.py"),
+            [(Some("docs".to_owned()), "build.py".to_owned())]
+        );
+        assert_eq!(scripts("python -m pytest tests/test_a.py"), []);
+        assert_eq!(scripts("uv run pytest tests/test_a.py"), []);
+        assert_eq!(scripts("uv run --with gen.py ruff check"), []);
+        assert_eq!(scripts("echo python gen.py"), []);
     }
 }

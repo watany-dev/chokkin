@@ -41,6 +41,7 @@ pub fn build_entry_roots(
             .filter(|candidate| known_paths.contains(&candidate.spec.path)),
     );
     collect_plugin_entries(plugins, &mut candidates);
+    collect_command_entries(plugins, &known_paths, &mut candidates);
     collect_symbol_ref_entries(
         plugins,
         sources,
@@ -248,6 +249,33 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
                 },
             });
         }
+    }
+}
+
+fn collect_command_entries(
+    plugins: &PluginHints,
+    known_paths: &BTreeSet<String>,
+    candidates: &mut Vec<EntryCandidate>,
+) {
+    for script in &plugins.config_script_entries {
+        let Some(path) = script.paths.iter().find(|path| known_paths.contains(*path)) else {
+            continue;
+        };
+        candidates.push(EntryCandidate {
+            spec: EntrySpec {
+                path: path.clone(),
+                symbol: None,
+            },
+            context: FileContext::Dev,
+            origin: EntryOrigin::Command {
+                label: match script.origin.line {
+                    Some(line) => {
+                        format!("{} ({}:{line})", script.origin.label, script.origin.file)
+                    },
+                    None => format!("{} ({})", script.origin.label, script.origin.file),
+                },
+            },
+        });
     }
 }
 

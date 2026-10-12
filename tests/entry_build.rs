@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::internals::{
-    EntryOrigin, EntryWarning, PluginExtractRequest, ProjectMode, ProjectRoot, RootMarker,
-    build_entry_roots, discover_project_root, discover_sources, extract_manifest,
+    EntryOrigin, EntryWarning, FileContext, PluginExtractRequest, ProjectMode, ProjectRoot,
+    RootMarker, build_entry_roots, discover_project_root, discover_sources, extract_manifest,
     extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
     resolve_target_version,
 };
@@ -272,5 +272,65 @@ fn library_roots_mark_subpackages_below_the_package_init() {
     assert_eq!(
         origins_of("src/acme/sub/__init__.py"),
         auto("auto:library subpackage")
+    );
+}
+
+#[test]
+fn commands_running_scripts_by_path_are_dev_entries() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    let write = |rel: &str, contents: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    };
+    write(
+        "pyproject.toml",
+        "[project]\nname = \"acme\"\nversion = \"0\"\n\n[tool.chokkin]\nproject = [\"**/*.py\"]\n",
+    );
+    write("acme/__init__.py", "");
+    write("tools/harness.py", "");
+    write("task-sdk/dev/gen.py", "");
+    write(".agents/skills/release/scripts/bump.py", "");
+    write("tools/orphan.py", "");
+    write(
+        ".github/workflows/ci.yml",
+        "jobs:\n  t:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          path: repo\n      - run: python3 repo/tools/harness.py out.xml\n      - run: python ${{ matrix.tool }}/orphan.py\n",
+    );
+    write(
+        ".pre-commit-config.yaml",
+        "repos:\n  - repo: local\n    hooks:\n      - id: gen\n        entry: uv run -p 3.12 --directory task-sdk -s dev/gen.py\n        language: python\n",
+    );
+    write(
+        ".agents/skills/release/SKILL.md",
+        "```bash\n   uv run .agents/skills/release/scripts/bump.py --check\n```\n",
+    );
+
+    let inputs = load_pipeline(root);
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &inputs.plugins,
+        false,
+    );
+
+    let command_roots: Vec<_> = plan
+        .roots
+        .iter()
+        .filter(|root| {
+            root.origins
+                .iter()
+                .any(|origin| matches!(origin, EntryOrigin::Command { .. }))
+        })
+        .map(|root| (root.spec.path.as_str(), root.context))
+        .collect();
+    assert_eq!(
+        command_roots,
+        [
+            (".agents/skills/release/scripts/bump.py", FileContext::Dev),
+            ("task-sdk/dev/gen.py", FileContext::Dev),
+            ("tools/harness.py", FileContext::Dev),
+        ]
     );
 }

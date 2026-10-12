@@ -377,6 +377,7 @@ mod tests {
             config_declared_distributions: Vec::new(),
             config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
+            config_script_entries: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -430,6 +431,7 @@ mod tests {
             config_declared_distributions: Vec::new(),
             config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
+            config_script_entries: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -496,6 +498,7 @@ mod tests {
             config_declared_distributions: Vec::new(),
             config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
+            config_script_entries: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -574,6 +577,7 @@ mod tests {
             config_declared_distributions: Vec::new(),
             config_provided_binaries: Vec::new(),
             config_module_refs: Vec::new(),
+            config_script_entries: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();

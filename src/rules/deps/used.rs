@@ -436,6 +436,7 @@ mod tests {
                 config_declared_distributions: Vec::new(),
                 config_provided_binaries: Vec::new(),
                 config_module_refs: Vec::new(),
+                config_script_entries: Vec::new(),
                 warnings: Vec::new(),
             },
             &reachable_paths(&graph, &reachable),
