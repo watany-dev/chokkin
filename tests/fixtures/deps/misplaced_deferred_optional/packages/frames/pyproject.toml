@@ -3,4 +3,4 @@ name = "frames"
 version = "0.1.0"
 
 [dependency-groups]
-dev = ["cryptography", "plotly", "polars", "selenium"]
+dev = ["colorama", "cryptography", "plotly", "polars", "selenium", "uvloop"]

@@ -1,8 +1,8 @@
-from frames import convert, plots, serving
+from frames import console, convert, plots, serving
 
 
 def main():
-    return convert, plots, serving
+    return console, convert, plots, serving
 
 
 def live_browser():

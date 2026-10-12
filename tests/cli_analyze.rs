@@ -2411,7 +2411,8 @@ fn binary_deferred_imports_of_optional_packages_are_info() {
         (target.to_owned(), severity.to_owned(), "likely".to_owned())
     };
     // Only frames' tests check plotly; frames' `is_openai_v1` says nothing about chat;
-    // the client loads chat's test support at startup.
+    // the client loads chat's test support at startup. A platform guard alone
+    // makes uvloop required there, while colorama is also under `try`.
     assert_eq!(
         misplaced,
         [
@@ -2421,10 +2422,12 @@ fn binary_deferred_imports_of_optional_packages_are_info() {
                 "warning".to_owned(),
                 "certain".to_owned()
             ),
+            expected("frames:colorama", "info"),
             expected("frames:cryptography", "info"),
             expected("frames:plotly", "warning"),
             expected("frames:polars", "info"),
             expected("frames:selenium", "info"),
+            expected("frames:uvloop", "warning"),
         ]
     );
 }
