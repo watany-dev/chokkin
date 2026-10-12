@@ -1077,7 +1077,6 @@ airflow	CHK001	airflow-core/tests/unit/dags_with_system_exit/c_system_exit.py	fp
 airflow	CHK001	airflow-core/src/airflow/stats.py	fp	library-public	deprecated backward-compat shim explicitly kept for third-party `from airflow.stats import Stats`
 airflow	CHK001	airflow-core/src/airflow/ti_deps/deps/mapped_task_expanded.py	tp	-	MappedTaskIsExpanded referenced nowhere (only a path in scripts/cov/core_coverage.py); no string/dep registry use
 airflow	CHK001	airflow-core/tests/unit/dags/no_dags.py	fp	framework-loaded	DAG file in TEST_DAGS_FOLDER, loaded by path in tests/unit/utils/test_file.py and dag_processing/test_collection.py
-fastmcp	CHK001	tests/downstream/_harness.py	fp	script-entry	run by .github/workflows/run-downstream-smoke.yml (python3 fastmcp/tests/downstream/_harness.py junit.xml ...); sibling smoke scripts import it as top-level _harness
 llama_index	CHK001	llama-index-integrations/graph_rag/llama-index-graph-rag-cognee/example.py	fp	script-entry	standalone example at the member root with an if __name__ == "__main__" guard
 airflow	CHK001	devel-common/src/sphinx_exts/suggest_change_button.py	fp	framework-loaded	listed by string in Sphinx extensions list in devel-common/src/docs/utils/conf_constants.py
 fastmcp	CHK001	tests/downstream/smoke_pydantic_ai.py	fp	script-entry	run by .github/workflows/run-downstream-smoke.yml (script: smoke_*.py); documented in tests/downstream/README.md
@@ -1086,8 +1085,6 @@ fastmcp	CHK001	tests/downstream/smoke_langchain_mcp.py	fp	script-entry	run by .g
 airflow	CHK001	airflow-core/src/airflow/api_fastapi/gunicorn_config.py	fp	dynamic-import	loaded by gunicorn from the string "python:airflow.api_fastapi.gunicorn_config" in api_fastapi/gunicorn_app.py
 fastmcp	CHK001	tests/downstream/smoke_langchain_mcp_adapters.py	fp	script-entry	run by .github/workflows/run-downstream-smoke.yml (script: smoke_*.py); documented in tests/downstream/README.md
 airflow	CHK001	airflow-core/src/airflow/cli/commands/cheat_sheet_command.py	fp	dynamic-import	lazy_load_command("airflow.cli.commands.cheat_sheet_command.cheat_sheet") in cli/cli_config.py (#493)
-fastmcp	CHK001	.agents/skills/release/scripts/changelog_entry.py	fp	script-entry	run via uv run .agents/skills/release/scripts/changelog_entry.py in .agents/skills/release/SKILL.md
-airflow	CHK001	task-sdk/dev/generate_task_sdk_models.py	fp	script-entry	run by a .pre-commit-config.yaml hook (uv run ... -s dev/generate_task_sdk_models.py)
 fastmcp	CHK001	fastmcp_slim/fastmcp/contrib/mcp_mixin/example.py	fp	script-entry	standalone sample with an if __name__ == "__main__" guard, referenced by nothing
 airflow	CHK001	airflow-core/src/airflow/config_templates/default_webserver_config.py	fp	other	config template copied to $AIRFLOW_HOME/webserver_config.py by users (providers/fab/docs/auth-manager/sso.rst), not imported
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/gemini_cli.py:logger	fp	name-convention	module-level `logger = get_logger(__name__)` conventional name, not meant for export
@@ -1106,7 +1103,6 @@ langchain	CHK003	.github/scripts/get_min_versions.py:tomli	tp	-	no root manifest
 llama_index	CHK003	llama-index-llms-vllm:llama-index-integrations/llms/llama-index-llms-vllm/llama_index/llms/vllm/base.py:torch	tp	-	torch not declared by llama-index-llms-vllm (only llama-index-core) nor in its uv.lock; unguarded import in atexit close()
 transformers	CHK003	src/transformers/data/metrics/__init__.py:scipy.stats	info-expected	optional-import	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available (info since #695)
 langchain	CHK003	.github/scripts/get_min_versions.py:packaging.requirements	tp	-	no root manifest covers .github/scripts; packaging only installed ad hoc via uv pip install in _test.yml/_release.yml workflows
-langchain	CHK003	.github/scripts/check_diff.py:packaging.requirements	tp	-	no root manifest covers .github/scripts; packaging only installed ad hoc via pip install in check_diffs.yml/codspeed.yml (reachable since .github/** became entry roots, #734)
 llama_index	CHK003	llama-index-readers-sec-filings:llama-index-integrations/readers/llama-index-readers-sec-filings/llama_index/readers/sec_filings/prepline_sec_filings/api/section.py:unstructured.staging.base	tp	-	unstructured not declared by llama-index-readers-sec-filings (faker, ratelimit, core) nor in its uv.lock; unguarded import in prepline api/section.py
 transformers	CHK003	src/transformers/models/maskformer/modular_maskformer.py:scipy.optimize	info-expected	optional-import	scipy only in setup.py deps table, in no extra or install_requires (transitive via scikit-learn); import gated by is_*_available (info since #695)
 langchain	CHK003	.github/scripts/get_min_versions.py:packaging.version	tp	-	no root manifest covers .github/scripts; packaging only installed ad hoc via uv pip install in _test.yml/_release.yml workflows

@@ -381,6 +381,7 @@ mod golden {
             EntryOrigin::Auto { rule } => format!("auto:{rule}"),
             EntryOrigin::SymbolRef { label, .. } => format!("symbol:{label}"),
             EntryOrigin::Script => "script".to_owned(),
+            EntryOrigin::Command { label } => format!("command:{label}"),
         }
     }
 

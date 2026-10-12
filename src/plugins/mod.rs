@@ -17,6 +17,7 @@ mod fastapi;
 mod flask;
 mod plugin_map;
 mod pytest;
+mod script_entries;
 mod task_files;
 mod tool_plugins;
 mod types;

@@ -81,6 +81,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@local_settings_hookspec`). airflow's `pytest_runtest_setup`, policy and
   listener hookspecs and mlflow's `pytest_sessionfinish` are no longer
   reported (#777).
+- CHK001 no longer reports a `.py` file that a command runs by path:
+  `python[3] <path>.py` or `uv run [options] <path>.py` (`-s` included) in a
+  CI workflow `run:` step, a local pre-commit hook's `entry:`, or a code
+  block or inline code span of `.agents/skills/*/SKILL.md` /
+  `.claude/skills/*/SKILL.md`, also behind wrappers such as `bash -c` or
+  `poetry run`. The path is read from the root, under a preceding `cd` or
+  `uv run --directory`, for workflows also without the checkout `path:`
+  prefix, and for skill docs also under the skill directory. These files are
+  dev entries, and outside a package also dev files, so a dependency group
+  they import is not misplaced and an undeclared import is reported only
+  under `--strict`. fastmcp's `tests/downstream/_harness.py` and
+  `changelog_entry.py` and airflow's `task-sdk/dev/generate_task_sdk_models.py`
+  are no longer reported (#797).
 
 ## [0.7.4] - 2026-10-10
 

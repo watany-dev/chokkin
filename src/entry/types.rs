@@ -39,6 +39,11 @@ pub enum EntryOrigin {
     },
     /// PEP 723 inline script metadata (`# /// script`).
     Script,
+    /// A command that runs the file by path (#797).
+    Command {
+        /// Human-readable origin label.
+        label: String,
+    },
 }
 
 /// One merged entry root after deduplication.

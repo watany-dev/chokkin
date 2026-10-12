@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
 use crate::manifest::LoadedManifest;
-use crate::path_util::is_submodule;
+use crate::path_util::{is_submodule, join_rel};
 use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_target};
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
@@ -41,6 +41,7 @@ pub fn build_entry_roots(
             .filter(|candidate| known_paths.contains(&candidate.spec.path)),
     );
     collect_plugin_entries(plugins, &mut candidates);
+    collect_command_entries(plugins, &known_paths, &mut candidates);
     collect_symbol_ref_entries(
         plugins,
         sources,
@@ -248,6 +249,62 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
                 },
             });
         }
+    }
+}
+
+/// Commands run their scripts by hand or in CI, so like hatchling's build
+/// scripts (#735) those files are dev (#797). A module of a package keeps its
+/// context, since the package may import it too.
+pub(crate) fn mark_command_scripts_dev(sources: &mut DiscoveredSources, plugins: &PluginHints) {
+    let known_paths = known_file_paths(sources);
+    let scripts: BTreeSet<String> = plugins
+        .config_script_entries
+        .iter()
+        .filter_map(|script| command_script_path(&script.paths, &known_paths))
+        .filter(|path| {
+            let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+            !known_paths.contains(&join_rel(dir, "__init__.py"))
+        })
+        .cloned()
+        .collect();
+    for file in &mut sources.files {
+        if file.context == FileContext::Runtime && scripts.contains(&file.path) {
+            file.context = FileContext::Dev;
+        }
+    }
+}
+
+fn command_script_path<'a>(
+    paths: &'a [String],
+    known_paths: &BTreeSet<String>,
+) -> Option<&'a String> {
+    paths.iter().find(|path| known_paths.contains(*path))
+}
+
+fn collect_command_entries(
+    plugins: &PluginHints,
+    known_paths: &BTreeSet<String>,
+    candidates: &mut Vec<EntryCandidate>,
+) {
+    for script in &plugins.config_script_entries {
+        let Some(path) = command_script_path(&script.paths, known_paths) else {
+            continue;
+        };
+        candidates.push(EntryCandidate {
+            spec: EntrySpec {
+                path: path.clone(),
+                symbol: None,
+            },
+            context: FileContext::Dev,
+            origin: EntryOrigin::Command {
+                label: match script.origin.line {
+                    Some(line) => {
+                        format!("{} ({}:{line})", script.origin.label, script.origin.file)
+                    },
+                    None => format!("{} ({})", script.origin.label, script.origin.file),
+                },
+            },
+        });
     }
 }
 

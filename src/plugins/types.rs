@@ -37,6 +37,16 @@ pub struct ModuleReference {
     pub origin: ReferenceOrigin,
 }
 
+/// `.py` file a command runs by path (#797).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptReference {
+    /// Root-relative candidates in priority order; the first discovered one
+    /// is the script.
+    pub paths: Vec<String>,
+    /// Discovery origin.
+    pub origin: ReferenceOrigin,
+}
+
 /// `module:symbol` reference (uvicorn, gunicorn, etc.).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolReference {
@@ -120,6 +130,9 @@ pub struct PluginHints {
     pub config_provided_binaries: Vec<String>,
     /// Module references from generic config scanning (pytest `-p`, mypy plugins, PDM `call`).
     pub config_module_refs: Vec<ModuleReference>,
+    /// Scripts CI workflows, local pre-commit hooks and agent skill docs run
+    /// by path (#797).
+    pub config_script_entries: Vec<ScriptReference>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,
 }

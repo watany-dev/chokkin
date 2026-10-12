@@ -131,6 +131,7 @@ fn format_entry_origin(origin: &EntryOrigin) -> String {
         EntryOrigin::Auto { rule } => format!("auto: {rule}"),
         EntryOrigin::SymbolRef { label, .. } => format!("symbol: {label}"),
         EntryOrigin::Script => "script: PEP 723".to_owned(),
+        EntryOrigin::Command { label } => format!("command: {label}"),
     }
 }
 
