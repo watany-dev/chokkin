@@ -930,6 +930,48 @@ fn binary_production_library_keeps_public_module_names_used_by_tests() {
     }
 }
 
+/// Under `--production` the evidence module star-imports a reachable module
+/// left out of the evidence: what it binds is unknown, so a name read through
+/// the star import still counts there (#803).
+#[test]
+fn binary_production_library_keeps_names_tests_read_through_a_star_import() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"library\"\n",
+        ),
+        (
+            "acme/__init__.py",
+            "from acme import core\n\n__all__ = [\"core\"]\n",
+        ),
+        (
+            "acme/core.py",
+            "def helper() -> None:\n    pass\n\n\ndef unused() -> None:\n    pass\n",
+        ),
+        ("acme/compat.py", "from acme.core import *\n"),
+        (
+            "tests/test_compat.py",
+            "from acme.compat import helper\n\n\ndef test_helper() -> None:\n    helper()\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--production"][..]] {
+        let keys = issue_keys(&json_issues(project.path(), extra));
+        let flagged: Vec<_> = keys
+            .iter()
+            .filter(|(code, _)| code == "CHK006")
+            .map(|(_, target)| target.as_str())
+            .collect();
+        // Without `--production` the tests reach the public `acme.compat`,
+        // whose star import puts all of `acme.core` in the API.
+        let expected: &[&str] = if extra.is_empty() {
+            &[]
+        } else {
+            &["acme/core.py:unused"]
+        };
+        assert_eq!(flagged, expected, "{extra:?}: {keys:?}");
+    }
+}
+
 /// A library member's tests are kept as API evidence under an app root too.
 #[test]
 fn binary_production_library_member_keeps_names_used_by_its_tests() {
