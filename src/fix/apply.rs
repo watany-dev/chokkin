@@ -483,6 +483,11 @@ mod tests {
         );
 
         assert_eq!(fix_report.applied.len(), 1);
+        assert_eq!(fix_report.applied[0].file, "pyproject.toml");
+        assert_eq!(
+            fix_report.applied[0].description,
+            "would remove `boto3` from pyproject.toml"
+        );
         let contents = std::fs::read_to_string(&path).expect("read");
         assert!(contents.contains("boto3"));
     }
@@ -534,6 +539,11 @@ mod tests {
         assert!(dir.path().join("src/legacy.py").exists());
         assert_eq!(fix_report.applied.len(), 1);
         assert_eq!(fix_report.applied[0].rule, RuleId::Chk001);
+        assert_eq!(fix_report.applied[0].file, "src/legacy.py");
+        assert_eq!(
+            fix_report.applied[0].description,
+            "would remove unreachable file `src/legacy.py`"
+        );
     }
 
     #[test]

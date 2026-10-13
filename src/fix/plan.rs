@@ -500,6 +500,96 @@ mod tests {
     }
 
     #[test]
+    fn dependency_fixes_require_certain_confidence() {
+        let manifest = manifest_with(vec![DeclaredDependency {
+            name: "boto3".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: Some(">=1.0".to_owned()),
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        }]);
+        let report_for = |rule, confidence| IssueReport {
+            issues: vec![Issue {
+                rule,
+                severity: Severity::Error,
+                confidence,
+                message: "finding".to_owned(),
+                workspace_member: None,
+                location: IssueLocation {
+                    file: None,
+                    line: None,
+                    manifest: Some(DependencyOrigin {
+                        file: "pyproject.toml".to_owned(),
+                        line: None,
+                        label: "project.dependencies[0]".to_owned(),
+                    }),
+                },
+                subject: IssueSubject::Distribution {
+                    name: "boto3".to_owned(),
+                },
+                explain: None,
+            }],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let add_missing = FixOptions {
+            add_missing: true,
+            ..FixOptions::default()
+        };
+        for (rule, options, detail) in [
+            (
+                RuleId::Chk002,
+                FixOptions::default(),
+                "only Certain-confidence dependency issues are auto-fixable",
+            ),
+            (
+                RuleId::Chk005,
+                FixOptions::default(),
+                "only Certain-confidence dependency issues are auto-fixable",
+            ),
+            (
+                RuleId::Chk009,
+                FixOptions::default(),
+                "only Certain-confidence dependency issues are auto-fixable",
+            ),
+            (
+                RuleId::Chk003,
+                add_missing,
+                "only Certain-confidence missing dependencies can be added automatically",
+            ),
+        ] {
+            let (actions, skipped) = plan_fixes(
+                &report_for(rule, Confidence::Likely),
+                &manifest,
+                &[],
+                options,
+            );
+            assert!(actions.is_empty(), "{rule:?}: {actions:?}");
+            assert_eq!(skipped.len(), 1, "{rule:?}");
+            assert_eq!(skipped[0].reason, SkippedReason::NotFixable, "{rule:?}");
+            assert_eq!(skipped[0].detail, detail, "{rule:?}");
+        }
+
+        // Without --add-missing a CHK003 finding is not a fix candidate at all.
+        let (actions, skipped) = plan_fixes(
+            &report_for(RuleId::Chk003, Confidence::Certain),
+            &manifest,
+            &[],
+            FixOptions::default(),
+        );
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(skipped.is_empty(), "{skipped:?}");
+    }
+
+    #[test]
     fn chk005_move_drops_only_a_poetry_only_constraint() {
         for (specifier, raw) in [("^1.2", "dulwich"), (">=1.2.1", "dulwich>=1.2.1")] {
             let manifest = manifest_with(vec![DeclaredDependency {
