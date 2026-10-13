@@ -49,9 +49,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
-        with:
-          toolchain: stable
+      # `--list` only parses the source, so the runner's preinstalled cargo is enough.
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-mutants@27.1.0

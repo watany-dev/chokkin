@@ -500,6 +500,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn dependency_fixes_require_certain_confidence() {
         let manifest = manifest_with(vec![DeclaredDependency {
             name: "boto3".to_owned(),
@@ -715,6 +716,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn plans_chk003_add_missing_for_pyproject() {
         let mut manifest = manifest_with(Vec::new());
         manifest.sources.pyproject_toml = true;
