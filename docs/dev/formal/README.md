@@ -31,9 +31,9 @@ Z3 / 全数探索モデルは workspace member や baseline の組合せなど k
 pip install z3-solver
 make formal   # Python モデルを全て実行 (個別実行: python3 docs/dev/formal/<name>.py)
 
-# TLA+ (tla2tools.jar は https://github.com/tlaplus/tlaplus/releases から取得)
-cd docs/dev/formal
-java -cp /path/to/tla2tools.jar tlc2.TLC -deadlock MCReachability
+# TLA+ (tla2tools.jar は CI と同じ v1.7.4 を
+# https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar から取得)
+make tlc TLA2TOOLS=/path/to/tla2tools.jar   # 約 7 分
 # 個別 invariant を確認する場合は MCReachability.cfg の INVARIANTS 行を絞る
 ```
 
@@ -41,8 +41,17 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -deadlock MCReachability
 TLC は最初に違反した invariant で停止するため、複数の invariant を個別に確認する場合は
 `INVARIANTS` を 1 つずつ指定する。
 
-## モデルの更新
+## CI とモデルの更新
 
-対象の Rust 関数を変更した場合は対応するモデルの移植部分も更新し、性質が成立する
-(exit 0 / `No error has been found`) ことを確認する。モデルと実装が乖離したままだと
-反例が実装の不具合なのかモデルの不具合なのか判断できなくなる。
+`.github/workflows/formal.yml` が `make formal` と `make tlc` を実行する。`pull_request`
+の paths は `docs/dev/formal/**` と上表の「対象」列の Rust ファイルで、加えて週次 (月曜) と
+`workflow_dispatch` でも走る。モデルの編集や z3-solver / TLC の更新で性質が崩れれば
+job が失敗する。
+
+モデルは Rust を読まない移植なので、Rust の変更だけで job が失敗することはない。代わりに
+対象ファイルを変えた PR で対応するモデルが変わっていなければ、job は「どのモデルの移植を
+見直すか」を warning 注釈で出す。対象関数の意味を変えた PR では、その移植部分も同じ PR で
+更新し、性質が成立する (exit 0 / `No error has been found`) ことを確かめる。モデルと実装が
+乖離したままだと、反例が実装の不具合なのかモデルの不具合なのか判断できなくなる。
+
+対象ファイルを増減したら、上表と `formal.yml` の paths・warning の対応表を一緒に直す。
