@@ -1,7 +1,9 @@
 name: Verification
 
-# Test-effectiveness checks (#418). Informational only: the PR job reports
-# missed mutants but never fails the PR, and kani runs on demand or weekly.
+# Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
+# PR only the mutants on lines the PR changes, weekly all of `make mutants`.
+# Both split into shards of about 100 mutants so a large diff still finishes
+# within a job timeout. kani runs on demand or weekly.
 
 on:
   pull_request:
@@ -15,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       full-mutants:
-        description: "Run cargo-mutants over all of src/rules/ and src/resolver/ (~70 min)"
+        description: "Run cargo-mutants over everything `make mutants` covers"
         type: boolean
         default: false
 
@@ -29,19 +31,59 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_DEV_DEBUG: "0"
+  # A PR mutates the lines it changes; schedule and dispatch mutate everything.
+  MUTANTS_TARGET: ${{ github.event_name == 'pull_request' && 'mutants-diff' || 'mutants' }}
+  BASE: origin/${{ github.base_ref }}
 
 jobs:
-  mutants-diff:
-    name: Mutants (PR diff, non-blocking)
-    if: github.event_name == 'pull_request'
+  mutants-plan:
+    name: Mutants (plan)
+    if: github.event_name != 'workflow_dispatch' || inputs.full-mutants
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    continue-on-error: true
+    timeout-minutes: 15
+    outputs:
+      count: ${{ steps.plan.outputs.count }}
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: Count mutants and pick the shard count
+        id: plan
+        # About 100 mutants per shard (~15 min at -j 2), at most 8 shards.
+        run: |
+          mkdir -p target
+          make -s "$MUTANTS_TARGET" ARGS=--list > target/mutants-list.txt
+          count=$(grep -c . target/mutants-list.txt || true)
+          shards=$(( (count + 99) / 100 ))
+          if [ "$shards" -lt 1 ]; then shards=1; fi
+          if [ "$shards" -gt 8 ]; then shards=8; fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "shards=$(jq -cn --argjson n "$shards" '[range($n)]')" >> "$GITHUB_OUTPUT"
+          echo "$count mutants, $shards shard(s)" >> "$GITHUB_STEP_SUMMARY"
+
+  mutants:
+    name: Mutants (shard ${{ matrix.shard }})
+    needs: mutants-plan
+    if: needs.mutants-plan.outputs.count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.mutants-plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
@@ -49,17 +91,25 @@ jobs:
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-mutants@27.1.0
-      - name: Mutate lines changed by this PR
+      - name: Mutate
         env:
-          BASE_REF: ${{ github.base_ref }}
-        run: make mutants-diff BASE="origin/${BASE_REF}"
-      - name: Summarize missed mutants
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+        # Exit 2 (missed) and 3 (timeout) are left to the next step: a timeout
+        # counts as caught, and exit 3 hides missed mutants in the same run.
+        run: |
+          status=0
+          make "$MUTANTS_TARGET" ARGS="--shard $SHARD" || status=$?
+          case "$status" in 0 | 2 | 3) ;; *) exit "$status" ;; esac
+      - name: Fail on missed mutants
         if: always()
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
           {
-            echo "### cargo-mutants (PR diff)"
+            echo "### cargo-mutants (shard $SHARD)"
             if [ -s mutants.out/missed.txt ]; then
               echo "Missed mutants: a test should have failed for each of these."
+              echo "Add the test, or exclude an equivalent mutant in .cargo/mutants.toml."
               echo '```'
               cat mutants.out/missed.txt
               echo '```'
@@ -67,36 +117,28 @@ jobs:
               echo "No missed mutants."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          test ! -s mutants.out/missed.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: mutants-diff
+          name: mutants-${{ matrix.shard }}
           path: mutants.out
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
 
-  mutants-full:
-    name: Mutants (rules + resolver)
-    if: github.event_name == 'workflow_dispatch' && inputs.full-mutants
+  # One stable check name for branch protection, whatever the shard count.
+  mutants-result:
+    name: Mutants
+    needs: [mutants-plan, mutants]
+    if: always() && needs.mutants-plan.result != 'skipped'
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
-        with:
-          tool: cargo-mutants@27.1.0
-      - run: make mutants
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: mutants-full
-          path: mutants.out
-          retention-days: 30
+      - env:
+          PLAN: ${{ needs.mutants-plan.result }}
+          SHARDS: ${{ needs.mutants.result }}
+        run: |
+          echo "plan: $PLAN, shards: $SHARDS"
+          [ "$PLAN" = success ] && { [ "$SHARDS" = success ] || [ "$SHARDS" = skipped ]; }
 
   kani:
     name: Kani proofs

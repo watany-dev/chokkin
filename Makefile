@@ -110,10 +110,12 @@ formal:
 	done; exit $$status
 
 ## ─── Test effectiveness (#418) ────────────────────────────────────────────────
-# mutants:      cargo-mutants over src/rules/ and src/resolver/ (~70 min at -j 2
-#               on 4 vCPU; most of it is builds). Narrow with ARGS, e.g.
-#               ARGS="-f src/rules/emit.rs". Results: mutants.out/.
-# mutants-diff: only the mutants on lines changed since BASE (default origin/main).
+# mutants:      cargo-mutants over src/rules/, src/resolver/, src/fix/ and
+#               src/graph/ (most of the time is builds).
+#               Narrow with ARGS, e.g. ARGS="-f src/rules/emit.rs".
+#               Results: mutants.out/. CI fails on any missed mutant (#837).
+# mutants-diff: only the mutants on lines changed since BASE (default origin/main);
+#               what the PR check runs.
 # kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
 #               kani-verifier@0.68.0 && cargo kani setup`.
 #               Not part of `make check`. See docs/dev/formal/README.md.
@@ -121,7 +123,7 @@ MUTANTS_ENV = CARGO_PROFILE_DEV_DEBUG=0
 BASE       ?= origin/main
 
 mutants:
-	$(MUTANTS_ENV) cargo mutants -j 2 -f 'src/rules/**' -f 'src/resolver/**' $(ARGS)
+	$(MUTANTS_ENV) cargo mutants -j 2 -f 'src/rules/**' -f 'src/resolver/**' -f 'src/fix/**' -f 'src/graph/**' $(ARGS)
 
 mutants-diff:
 	mkdir -p target
