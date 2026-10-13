@@ -2242,6 +2242,34 @@ fn sphinx_extensions_themes_and_pytest_plugins_are_used() {
     assert_eq!(unused, ["sphinx-issues"], "{keys:?}");
 }
 
+/// airflow's `sphinx-argparse` and `sphinx-autoapi` extensions load as
+/// `sphinxarg` and `autoapi`, which name matching cannot tie to the
+/// distribution (#822).
+#[test]
+fn sphinx_extensions_named_unlike_their_distribution_resolve() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\nversion = \"0\"\n\n[project.optional-dependencies]\n\
+             docs = [\"sphinx\", \"sphinx-argparse\", \"sphinx-autoapi\", \
+             \"sphinx-notfound-page\", \"sphinx-autodoc2\"]\n",
+        ),
+        (
+            "docs/conf.py",
+            "extensions = [\"sphinxarg.ext\", \"autoapi.extension\", \
+             \"notfound.extension\", \"autodoc2\"]\n",
+        ),
+        ("pkg/__init__.py", ""),
+    ]);
+
+    let keys = issue_keys(&json_issues(temp.path(), &["--no-cache", "--strict"]));
+    assert!(
+        keys.iter()
+            .all(|(code, _)| !matches!(code.as_str(), "CHK002" | "CHK010")),
+        "{keys:?}"
+    );
+}
+
 /// black's hatch-vcs `version-file` and sqlalchemy's `cython` build
 /// requirement exist only at build time (#720).
 #[test]

@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference only in the modules on the star path that define or import it,
   instead of in every module on the path. Findings are unchanged; a cold run
   on transformers drops from about 3.8 s to 1.1 s (#803).
+- The bundled package map maps the documentation extensions whose import
+  name differs from the distribution: `sphinx-argparse` to `sphinxarg`,
+  `sphinx-autoapi` to `autoapi`, `sphinx-notfound-page` to `notfound`,
+  `sphinx-autodoc2` to `autodoc2`, `pymdown-extensions` to `pymdownx`,
+  `mkdocs-macros-plugin` to `mkdocs_macros`, and `mkdocstrings-python` to
+  `mkdocstrings_handlers.python`. airflow's `sphinxarg` and `autoapi` Sphinx
+  extensions are no longer CHK010 (#822).
 
 ## [0.7.5] - 2026-10-12
 

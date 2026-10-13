@@ -904,6 +904,48 @@
       "imports": [
         "llama_index.core"
       ]
+    },
+    {
+      "distribution": "sphinx-argparse",
+      "imports": [
+        "sphinxarg"
+      ]
+    },
+    {
+      "distribution": "sphinx-autoapi",
+      "imports": [
+        "autoapi"
+      ]
+    },
+    {
+      "distribution": "sphinx-notfound-page",
+      "imports": [
+        "notfound"
+      ]
+    },
+    {
+      "distribution": "sphinx-autodoc2",
+      "imports": [
+        "autodoc2"
+      ]
+    },
+    {
+      "distribution": "pymdown-extensions",
+      "imports": [
+        "pymdownx"
+      ]
+    },
+    {
+      "distribution": "mkdocs-macros-plugin",
+      "imports": [
+        "mkdocs_macros"
+      ]
+    },
+    {
+      "distribution": "mkdocstrings-python",
+      "imports": [
+        "mkdocstrings_handlers.python"
+      ]
     }
   ],
   "auto_packages": [

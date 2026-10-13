@@ -275,6 +275,12 @@ mod tests {
             ])
         );
         assert_eq!(first("llama_index.embeddings.cohere"), None);
+        // mkdocstrings handlers share the `mkdocstrings_handlers` namespace (#822).
+        assert_eq!(
+            first("mkdocstrings_handlers.python.handler").as_deref(),
+            Some("mkdocstrings-python")
+        );
+        assert_eq!(first("mkdocstrings_handlers.crystal"), None);
         assert_eq!(first("azure.cognitiveservices.speech"), None);
         assert_eq!(first("google"), None);
         assert_eq!(first("yaml.loader"), None);
@@ -337,6 +343,12 @@ mod tests {
             ("atlassian", "atlassian-python-api"),
             ("ag_ui", "ag-ui-protocol"),
             ("guardrails", "guardrails-ai"),
+            ("sphinxarg", "sphinx-argparse"),
+            ("autoapi", "sphinx-autoapi"),
+            ("notfound", "sphinx-notfound-page"),
+            ("autodoc2", "sphinx-autodoc2"),
+            ("pymdownx", "pymdown-extensions"),
+            ("mkdocs_macros", "mkdocs-macros-plugin"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),
