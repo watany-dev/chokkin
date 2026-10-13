@@ -180,17 +180,21 @@ fn accesses<'m>(
 /// `from m import *` edges between named modules.
 #[derive(Default)]
 struct StarImports<'a> {
-    importers: HashMap<&'a str, StarImporter<'a>>,
+    /// Names each star-importing module defines itself, shadowing
+    /// star-imported ones.
+    defines: HashMap<&'a str, HashSet<&'a str>>,
+    /// The modules that star-import each module.
+    parents: HashMap<&'a str, Vec<&'a str>>,
+    /// Star-imported modules that define or import each name. A forwarded
+    /// reference can only meet a symbol or a re-export there, so the
+    /// packages a name merely passes through are never recorded (#803).
+    binders: HashMap<&'a str, Vec<&'a str>>,
+    /// Star-imported modules missing from the parsed ones, such as reachable
+    /// modules left out of the `--production` evidence: they may bind any name.
+    opaque: Vec<&'a str>,
     /// `__all__` of the modules that declare one.
     exports: HashMap<&'a str, HashSet<&'a str>>,
     cache: HashMap<SymbolId, Vec<&'a str>>,
-}
-
-#[derive(Default)]
-struct StarImporter<'a> {
-    targets: Vec<&'a str>,
-    /// Names the module defines itself, shadowing star-imported ones.
-    defines: HashSet<&'a str>,
 }
 
 impl<'a> StarImports<'a> {
@@ -203,10 +207,11 @@ impl<'a> StarImports<'a> {
             let targets: Vec<_> = star_imports(module)
                 .filter(|target| target != name)
                 .collect();
+            for &target in &targets {
+                stars.parents.entry(target).or_default().push(name.as_str());
+            }
             if !targets.is_empty() {
-                let importer = stars.importers.entry(name.as_str()).or_default();
-                importer.targets.extend(targets);
-                importer.defines.extend(
+                stars.defines.entry(name.as_str()).or_default().extend(
                     module
                         .symbols
                         .iter()
@@ -221,47 +226,77 @@ impl<'a> StarImports<'a> {
                 );
             }
         }
+        let mut parsed = HashSet::new();
+        for module in modules {
+            let Some(name) = module_names.get(module.path.as_str()) else {
+                continue;
+            };
+            parsed.insert(name.as_str());
+            if !stars.parents.contains_key(name.as_str()) {
+                continue;
+            }
+            for bound in bound_names(module) {
+                stars.binders.entry(bound).or_default().push(name.as_str());
+            }
+        }
+        stars.opaque = stars
+            .parents
+            .keys()
+            .copied()
+            .filter(|module| !parsed.contains(module))
+            .collect();
         stars
     }
 
     /// Cached per symbol: a module that imports a package in many function
     /// bodies records each `pkg.name` access once per import.
     fn sources(&mut self, target: &SymbolId) -> &[&'a str] {
-        if !self.importers.contains_key(target.module.as_str()) {
+        if !self.defines.contains_key(target.module.as_str()) {
             return &[];
         }
         if !self.cache.contains_key(target) {
-            let sources = self.walk(&target.module, &target.name);
+            let sources = self
+                .binders
+                .get(target.name.as_str())
+                .into_iter()
+                .flatten()
+                .chain(&self.opaque)
+                .copied()
+                .filter(|&binder| self.reaches(&target.module, binder, &target.name))
+                .collect();
             self.cache.insert(target.clone(), sources);
         }
         &self.cache[target]
     }
 
-    /// Modules `module` reaches `name` in through chained star imports. Each
-    /// hop hands on only the names in its `__all__`, or without one, the
-    /// names not starting with `_`.
-    fn walk(&self, module: &str, name: &str) -> Vec<&'a str> {
-        let mut sources = Vec::new();
-        let mut queue = vec![module];
-        let mut seen = HashSet::new();
+    /// Whether `module` reaches `name` in `binder` through chained star
+    /// imports. Each hop hands on only the names in its `__all__`, or without
+    /// one, the names not starting with `_`, and stops at a module defining
+    /// `name` itself. Walks up from `binder`: a name has few binders, while a
+    /// package can star-import hundreds of modules.
+    fn reaches(&self, module: &str, binder: &'a str, name: &str) -> bool {
+        if !self.hands_on(binder, name) {
+            return false;
+        }
+        let mut queue = vec![binder];
+        let mut seen = HashSet::from([binder]);
         while let Some(current) = queue.pop() {
-            let Some(importer) = self.importers.get(current) else {
-                continue;
-            };
-            if importer.defines.contains(name) {
-                continue;
-            }
-            for &target in &importer.targets {
-                if !self.hands_on(target, name) {
+            for &parent in self.parents.get(current).into_iter().flatten() {
+                if self.defines[parent].contains(name) {
                     continue;
                 }
-                if seen.insert(target) {
-                    sources.push(target);
-                    queue.push(target);
+                if parent == module {
+                    return true;
+                }
+                if !self.hands_on(parent, name) {
+                    continue;
+                }
+                if seen.insert(parent) {
+                    queue.push(parent);
                 }
             }
         }
-        sources
+        false
     }
 
     fn hands_on(&self, module: &str, name: &str) -> bool {
@@ -269,5 +304,78 @@ impl<'a> StarImports<'a> {
             Some(all) => all.contains(name),
             None => !name.starts_with('_'),
         }
+    }
+}
+
+/// Names `module` binds by definition or `from … import`: every symbol and
+/// re-export a reference to `module` can be asked about.
+fn bound_names(module: &ParsedModule) -> HashSet<&str> {
+    let defined = module.symbols.iter().map(|symbol| symbol.name.as_str());
+    let imported = module
+        .imports
+        .iter()
+        .filter(|import| {
+            import.kind == ImportKind::ImportFrom && import.name.as_deref() != Some("*")
+        })
+        .map(|import| {
+            // `from . import x` carries no `name`: the parser folds `x` into `module`.
+            let imported = match &import.name {
+                Some(name) => name.as_str(),
+                None => import
+                    .module
+                    .rsplit_once('.')
+                    .map_or(import.module.as_str(), |(_, last)| last),
+            };
+            import.alias.as_deref().unwrap_or(imported)
+        });
+    defined.chain(imported).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{ImportContext, ImportRef};
+
+    fn import(
+        kind: ImportKind,
+        module: &str,
+        name: Option<&str>,
+        alias: Option<&str>,
+    ) -> ImportRef {
+        ImportRef {
+            module: module.to_owned(),
+            name: name.map(str::to_owned),
+            alias: alias.map(str::to_owned),
+            line: 1,
+            kind,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            deferred: false,
+            relative_level: 0,
+            fallback_for: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bound_names_cover_from_imports_but_not_plain_or_star_imports() {
+        let module = ParsedModule {
+            imports: vec![
+                import(ImportKind::ImportFrom, "pkg.core", Some("helper"), None),
+                import(
+                    ImportKind::ImportFrom,
+                    "pkg.core",
+                    Some("tool"),
+                    Some("renamed"),
+                ),
+                import(ImportKind::ImportFrom, "pkg.sub", None, None),
+                import(ImportKind::ImportFrom, "pkg.other", Some("*"), None),
+                import(ImportKind::Import, "os.path", None, None),
+                import(ImportKind::Import, "json", None, Some("js")),
+            ],
+            ..ParsedModule::default()
+        };
+        let names = bound_names(&module);
+        assert_eq!(names, HashSet::from(["helper", "renamed", "sub"]));
     }
 }
