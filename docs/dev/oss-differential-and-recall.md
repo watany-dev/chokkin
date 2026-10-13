@@ -206,6 +206,10 @@ compares the current tree with a criterion baseline saved on the base commit
 than 10% slower and its 95% confidence interval lies entirely above zero.
 Flagged benchmarks are re-run (`--confirm`, default 1), and only a
 regression that repeats fails the gate.
+Benchmarks the baseline lacks run without a comparison. On pull requests that
+touch `src/`, `benches/`, `Cargo.toml`, `Cargo.lock` or the gate itself, the
+`bench-gate` job in `verification.yml` saves the base commit's baseline and runs
+the gate with `--confirm 3` on the same runner; it is non-blocking for now (#836).
 Result for this branch: see [`oss-validation-report.md`](./oss-validation-report.md#346-corpus-measurements-338342).
 
 ## Reproducing

@@ -5,7 +5,8 @@ Compares the current tree with a baseline saved earlier by
 `make bench-save BASELINE=<name>` (typically on the base commit) and fails when
 any benchmark's mean time got slower by more than --threshold *and* criterion's
 95% confidence interval for the change lies entirely above zero (so noise alone
-does not fail the gate).
+does not fail the gate). Benchmarks the baseline lacks (added by the change
+under test) run without a comparison and do not count.
 
 Usage:
   scripts/bench-gate.py [OPTIONS]
@@ -19,7 +20,7 @@ Options:
   -o, --output DIR    report directory (default: target/bench-gate)
   -h, --help          show help
 
-Typical CI use:
+Typical use (CI does the same in the bench-gate job of verification.yml):
   git checkout <base> && make bench-save BASELINE=main
   git checkout <head> && scripts/bench-gate.py --baseline main
 
@@ -56,8 +57,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def bench_id(change_dir: Path) -> str:
-    # target/criterion/<group>/<function>[/<param>]/change
-    return change_dir.parent.relative_to(CRITERION).as_posix()
+    # The directory name replaces "/" in a function name with "_", so it is no
+    # use as a re-run filter; criterion records the real id next to it.
+    meta = change_dir.parent / "new/benchmark.json"
+    return json.loads(meta.read_text(encoding="utf-8"))["full_id"]
 
 
 def collect(since: float) -> list[dict]:
@@ -79,7 +82,7 @@ def collect(since: float) -> list[dict]:
 
 
 def run_bench(baseline: str, only: list[str] | None = None) -> bool:
-    cmd = ["cargo", "bench", "--benches", "--locked", "--", "--baseline", baseline]
+    cmd = ["cargo", "bench", "--benches", "--locked", "--", "--baseline-lenient", baseline]
     if only:
         cmd.append("^(" + "|".join(re.escape(b) for b in only) + ")$")
     return subprocess.run(cmd, cwd=oc.ROOT, check=False).returncode == 0
@@ -89,11 +92,15 @@ def main() -> int:
     args = parse_args()
     since = time.time()
     if not run_bench(args.baseline):
-        print(f"cargo bench failed (missing baseline {args.baseline!r}?)", file=sys.stderr)
+        print("cargo bench failed", file=sys.stderr)
         return 2
     rows = collect(since)
     if not rows:
-        print(f"no change estimates under {CRITERION} — run `make bench-cmp`", file=sys.stderr)
+        print(
+            f"no change estimates under {CRITERION} — save baseline {args.baseline!r} "
+            "first (`make bench-save`)",
+            file=sys.stderr,
+        )
         return 2
     for r in rows:
         r["regressed"] = r["mean_pct"] > args.threshold and r["ci_low_pct"] > 0
