@@ -282,8 +282,7 @@ def other_keys(slug: str, proj: Path, raw: Path, envs: Path) -> dict[tuple[str, 
     run_tool([*TOOLS["deptry"], ".", "--json-output", str(deptry_json)], proj, raw / "deptry.txt")
     if deptry_json.is_file():
         violations = json.loads(deptry_json.read_text(encoding="utf-8"))
-        for rule, found in deptry_keys(violations, proj).items():
-            keys[(rule, "deptry")] = found
+        keys.update({(rule, "deptry"): found for rule, found in deptry_keys(violations, proj).items()})
 
     fawlty = [*TOOLS["fawltydeps"], "--check", "--json"]
     if (envs / slug / "bin/python").exists():
@@ -293,8 +292,7 @@ def other_keys(slug: str, proj: Path, raw: Path, envs: Path) -> dict[tuple[str, 
         data = json.loads(out)
     except json.JSONDecodeError:
         data = {}
-    for rule, found in fawltydeps_keys(data, proj).items():
-        keys[(rule, "fawltydeps")] = found
+    keys.update({(rule, "fawltydeps"): found for rule, found in fawltydeps_keys(data, proj).items()})
 
     out = run_tool([*TOOLS["ruff"], "check", "--isolated", "--select", "F401", "--output-format",
                     "json", "--exit-zero", "--no-cache", "."], proj, raw / "ruff.json")

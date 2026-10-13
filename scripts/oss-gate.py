@@ -99,8 +99,8 @@ def judge(outputs: dict[str, tuple[int, bytes]], validator) -> dict:
         if variant == "cold":
             res["issues"] = len(report.get("issues", []))
     blobs = {v: stdout for v, (_, stdout) in outputs.items()}
-    res["deterministic"] = len(set(blobs.values())) == 1
     res["differs"] = [v for v in VARIANTS[1:] if blobs.get(v) != blobs.get("cold")]
+    res["deterministic"] = not res["differs"]
     return res
 
 
