@@ -474,11 +474,12 @@ fn sphinx_plugin_records_docs_conf_entry() {
             "{module}"
         );
     }
+    // Sphinx ships `alabaster`; only a declared theme is a module (#809).
     assert!(
         !contrib
             .module_refs
             .iter()
-            .any(|reference| reference.module == "_build")
+            .any(|reference| ["_build", "alabaster"].contains(&reference.module.as_str()))
     );
 }
 

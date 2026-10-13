@@ -6,6 +6,7 @@ use ruff_python_ast::{Expr, Stmt};
 
 use crate::config::{EntrySpec, PluginId};
 use crate::manifest::literals::{assigned_value, parse_module, string_list, string_value};
+use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::path_util::rel_to_root;
 use crate::sources::FileContext;
 
@@ -20,10 +21,10 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     match plugin {
         PluginId::Sphinx => {
             let root = ctx.root.path.as_path();
-            extract_sphinx(root, root, &mut contrib);
+            extract_sphinx(root, root, ctx.manifest, &mut contrib);
             // Monorepos keep docs per member (`providers/*/docs/conf.py`).
             for member in &ctx.sources.layout.members {
-                extract_sphinx(root, &root.join(&member.path), &mut contrib);
+                extract_sphinx(root, &root.join(&member.path), ctx.manifest, &mut contrib);
             }
         },
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
@@ -33,7 +34,12 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     contrib
 }
 
-fn extract_sphinx(root: &Path, dir: &Path, contrib: &mut PluginContribution) {
+fn extract_sphinx(
+    root: &Path,
+    dir: &Path,
+    manifest: &LoadedManifest,
+    contrib: &mut PluginContribution,
+) {
     let conf = dir.join("docs").join("conf.py");
     if conf.is_file() {
         push_entry(contrib, root, &conf, FileContext::Docs, "docs/conf.py");
@@ -46,18 +52,37 @@ fn extract_sphinx(root: &Path, dir: &Path, contrib: &mut PluginContribution) {
             && let Some(stmts) = parse_module(&contents)
         {
             let file = rel_to_root(root, &conf);
-            for extension in sphinx_extensions(&stmts) {
+            let theme = declared_theme(&stmts, manifest);
+            let refs = sphinx_extensions(&stmts)
+                .into_iter()
+                .map(|module| (module, "extensions"))
+                .chain(theme.map(|module| (module, "html_theme")));
+            for (module, label) in refs {
                 contrib.module_refs.push(ModuleReference {
-                    module: extension,
+                    module,
                     origin: ReferenceOrigin {
                         file: file.clone(),
                         line: None,
-                        label: "extensions".to_owned(),
+                        label: label.to_owned(),
                     },
                 });
             }
         }
     }
+}
+
+/// `html_theme` when a declared distribution has its name (`furo`,
+/// `sphinx_rtd_theme`). A theme is registered by name rather than imported,
+/// and Sphinx ships its own (`alabaster`, `classic`), so an undeclared name
+/// is no module to resolve (#809).
+fn declared_theme(stmts: &[Stmt], manifest: &LoadedManifest) -> Option<String> {
+    let theme = assigned_value(stmts, "html_theme").and_then(string_value)?;
+    let distribution = normalize_distribution_name(&theme);
+    manifest
+        .dependencies
+        .iter()
+        .any(|dep| normalize_distribution_name(&dep.name) == distribution)
+        .then_some(theme)
 }
 
 /// The literal names in `extensions = [...]` and in later top-level

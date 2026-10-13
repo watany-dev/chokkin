@@ -2156,6 +2156,39 @@ fn requirements_outside_fixed_names_declare_imports_for_chk010_only() {
     }
 }
 
+/// Sphinx loads `conf.py`'s extensions and theme, and pytest the `pytest-*`
+/// plugins, without an import (#809).
+#[test]
+fn sphinx_extensions_themes_and_pytest_plugins_are_used() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\nversion = \"0\"\n\n[dependency-groups]\n\
+             docs = [\"sphinx\", \"furo\", \"sphinxcontrib-log-cabinet\", \
+             \"sphinxext-opengraph\", \"sphinx-issues\"]\n\
+             test = [\"pytest\", \"pytest-xdist\"]\n",
+        ),
+        (
+            "docs/conf.py",
+            "extensions = [\"sphinxcontrib.log_cabinet\"]\n\
+             extensions.append(\"sphinxext.opengraph\")\nhtml_theme = \"furo\"\n",
+        ),
+        ("pkg/__init__.py", ""),
+        (
+            "tests/test_pkg.py",
+            "import pytest\n\ndef test_pkg():\n    assert pytest\n",
+        ),
+    ]);
+
+    let keys = issue_keys(&json_issues(temp.path(), &["--no-cache", "--strict"]));
+    let unused: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK002")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unused, ["sphinx-issues"], "{keys:?}");
+}
+
 /// black's hatch-vcs `version-file` and sqlalchemy's `cython` build
 /// requirement exist only at build time (#720).
 #[test]

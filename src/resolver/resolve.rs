@@ -311,6 +311,7 @@ fn resolve_import_site(
     // affixed root declaration (`pyfoo` must not take a script's `foo`).
     let core = if core.origin == ModuleOrigin::Unknown {
         scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
+            .or_else(|| namespace_declared_match(imported, manifest))
             .or_else(|| root_loose_match(&root_name, manifest))
             .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
             // A root that reachability maps to a file is local, even beside a
@@ -427,18 +428,8 @@ fn resolve_import_root(
     // normalized name matches (`openai`, or `Foo_Bar` for `import foo_bar`)
     // is the only evidence left; the spelling alone is not, or a local module
     // like `e2e_config` would pass as a missing `e2e-config` (#361).
-    let distribution = normalize_distribution_name(root_name);
-    if manifest
-        .dependencies
-        .iter()
-        .any(|dep| normalize_distribution_name(&dep.name) == distribution)
-        || manifest.lockfile.edges.contains_key(&distribution)
-    {
-        return RootResolution {
-            origin: ModuleOrigin::ThirdParty,
-            distribution: Some(distribution),
-            confidence: ResolveConfidence::Likely,
-        };
+    if let Some(resolution) = declared_match(normalize_distribution_name(root_name), manifest) {
+        return resolution;
     }
 
     // The affixed-name step runs per site in [`resolve_import_site`], after a
@@ -448,6 +439,31 @@ fn resolve_import_root(
         distribution: None,
         confidence: ResolveConfidence::Maybe,
     }
+}
+
+fn declared_match(distribution: String, manifest: &LoadedManifest) -> Option<RootResolution> {
+    (manifest
+        .dependencies
+        .iter()
+        .any(|dep| normalize_distribution_name(&dep.name) == distribution)
+        || manifest.lockfile.edges.contains_key(&distribution))
+    .then_some(RootResolution {
+        origin: ModuleOrigin::ThirdParty,
+        distribution: Some(distribution),
+        confidence: ResolveConfidence::Likely,
+    })
+}
+
+/// A namespace package portion declared under its first two segments
+/// (`sphinxcontrib-log-cabinet` for `sphinxcontrib.log_cabinet`, #809). The
+/// shared root alone names no distribution.
+fn namespace_declared_match(module: &str, manifest: &LoadedManifest) -> Option<RootResolution> {
+    let mut segments = module.split('.');
+    let (namespace, portion) = (segments.next()?, segments.next()?);
+    declared_match(
+        normalize_distribution_name(&format!("{namespace}-{portion}")),
+        manifest,
+    )
 }
 
 /// Affixed counterpart of the declared-or-locked step in
