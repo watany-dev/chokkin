@@ -590,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn chk009_never_removes_an_opaque_declaration() {
+    fn chk009_picks_which_duplicate_to_remove() {
         let declaration = |index: usize, opaque| DeclaredDependency {
             name: "boto3".to_owned(),
             extras: Vec::new(),
@@ -632,6 +632,34 @@ mod tests {
         assert_eq!(actions, []);
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
+
+        // With repeats in two contexts, the group repeat goes before the
+        // runtime one, whatever the declaration order.
+        let mut manifest = manifest_with(
+            [
+                (0, DependencyContext::Group("dev".to_owned())),
+                (1, DependencyContext::Group("dev".to_owned())),
+                (2, DependencyContext::Runtime),
+                (3, DependencyContext::Runtime),
+            ]
+            .into_iter()
+            .map(|(index, context)| DeclaredDependency {
+                context,
+                ..declaration(index, false)
+            })
+            .collect(),
+        );
+        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let [FixAction::RemoveDependency { label, .. }] = actions.as_slice() else {
+            panic!("expected one removal: {actions:?}");
+        };
+        assert_eq!(label, "project.dependencies[1]");
+        manifest.dependencies.reverse();
+        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let [FixAction::RemoveDependency { label, .. }] = actions.as_slice() else {
+            panic!("expected one removal: {actions:?}");
+        };
+        assert_eq!(label, "project.dependencies[0]");
     }
 
     #[test]
