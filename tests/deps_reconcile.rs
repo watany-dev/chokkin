@@ -863,10 +863,9 @@ fn source_dependency_is_used_through_its_member_tree() {
     }
 }
 
-/// Issue #557: a member that ships `acme.core` as a PEP 420 namespace
-/// package, with no `acme/__init__.py`, still ties the import back to its
-/// distribution, so there is no CHK010 for `acme` and no CHK002 for
-/// `acme-core`.
+/// Issue #557: a member that ships `acme.core` under a PEP 420 namespace
+/// package, with no `acme/__init__.py`, is still used, so there is no CHK010
+/// for `acme` and no CHK002 for `acme-core`.
 #[test]
 fn source_dependency_with_namespace_package_is_used() {
     for name in [
