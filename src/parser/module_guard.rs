@@ -50,11 +50,23 @@ fn predicate_module(expr: &Expr) -> Option<String> {
         Expr::Attribute(attribute) if is_module_path(&attribute.value) => attribute.attr.as_str(),
         _ => return None,
     };
+    predicate_name_module(name).map(str::to_owned)
+}
+
+/// `x` of an `is_x` or `is_x_…` name, as [`predicate_module`] reads it.
+#[must_use]
+pub(crate) fn predicate_name_module(name: &str) -> Option<&str> {
     let rest = name.trim_start_matches('_').strip_prefix("is_")?;
     let module = rest.split('_').next()?;
     module
         .starts_with(|c: char| !c.is_ascii_digit())
-        .then(|| module.to_owned())
+        .then_some(module)
+}
+
+/// Import roots `guard`, a module an [`imported_module_guard`] names, stands
+/// for: `is_psycopg3` guards `psycopg`, and `is_boto3_client` `boto3`.
+pub(crate) fn guarded_roots(guard: &str) -> [&str; 2] {
+    [guard, guard.trim_end_matches(|c: char| c.is_ascii_digit())]
 }
 
 /// Names the scope `body` only ever binds to `sniffio.current_async_library()`
@@ -321,6 +333,17 @@ mod tests {
         ] {
             assert_eq!(guard(source).as_deref(), Some(module), "{source}");
         }
+    }
+
+    #[test]
+    fn predicate_names_guard_roots_without_version_digits() {
+        assert_eq!(predicate_name_module("is_polars_dataframe"), Some("polars"));
+        assert_eq!(predicate_name_module("_is_openai_v1"), Some("openai"));
+        assert_eq!(predicate_name_module("is_3d"), None);
+        assert_eq!(predicate_name_module("is_"), None);
+        assert_eq!(predicate_name_module("this_is_x"), None);
+        assert_eq!(guarded_roots("psycopg3"), ["psycopg3", "psycopg"]);
+        assert_eq!(guarded_roots("polars"), ["polars", "polars"]);
     }
 
     #[test]

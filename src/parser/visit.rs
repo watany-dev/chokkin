@@ -21,8 +21,8 @@ use super::dynamic::{
 use super::exports::extract_exports;
 use super::lines::LineIndex;
 use super::module_guard::{
-    async_library_names, availability_test, first_availability_check, imported_module_guard,
-    is_main_guard_test, raises_import_error, runs_as_main,
+    async_library_names, availability_test, first_availability_check, guarded_roots,
+    imported_module_guard, is_main_guard_test, raises_import_error, runs_as_main,
 };
 use super::platform_guard::is_platform_guard_test;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
@@ -213,10 +213,9 @@ impl<'a> ModuleVisitor<'a> {
 
     fn is_imported_guarded(&self, module: &str) -> bool {
         let root = module.split('.').next().unwrap_or(module);
-        // `is_psycopg3` guards `psycopg`, and `is_boto3_client` `boto3`.
-        self.imported_guards.iter().any(|guard| {
-            guard == root || guard.trim_end_matches(|c: char| c.is_ascii_digit()) == root
-        })
+        self.imported_guards
+            .iter()
+            .any(|guard| guarded_roots(guard).contains(&root))
     }
 
     fn visit_decorators(&mut self, decorators: &[Decorator]) {
