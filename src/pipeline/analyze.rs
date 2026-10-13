@@ -222,6 +222,7 @@ fn run_analysis_core(
         production,
     );
     crate::entry::add_script_roots(&mut entry, &probe.scripts, sources, production);
+    crate::entry::add_build_backend_roots(&mut entry, &parse, &sources.files);
     add_member_manifest_roots(
         &mut entry,
         sources,
