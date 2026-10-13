@@ -339,3 +339,63 @@ fn copy_dir_recursive(source: &Path, dest: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+/// Write a flat-layout `acme` package whose `__init__.py` holds `source`
+/// next to `setup_cfg`, and run `--fix` on it.
+fn fix_setup_cfg_project(setup_cfg: &str, source: &str, strict: bool) -> (String, usize) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    std::fs::create_dir_all(root.join("acme")).expect("mkdir");
+    std::fs::write(root.join("acme/__init__.py"), source).expect("init");
+    std::fs::write(root.join("setup.cfg"), setup_cfg).expect("setup.cfg");
+
+    let report = analyze_project(
+        root,
+        None,
+        &RuntimeOverrides {
+            strict: Some(strict),
+            ..RuntimeOverrides::default()
+        },
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    let applied = report.fix.expect("fix report").applied.len();
+    let after = std::fs::read_to_string(root.join("setup.cfg")).expect("read setup.cfg");
+    (after, applied)
+}
+
+/// Removing two of four `install_requires` entries rewrites the remaining two
+/// one per line; the unindented key after the list ends it and stays.
+#[test]
+fn fix_rewrites_setup_cfg_install_requires_one_entry_per_line() {
+    let (after, applied) = fix_setup_cfg_project(
+        "[metadata]\nname = acme\nversion = 0.1\n\n[options]\npackages = find:\ninstall_requires =\n    requests>=2\n    boto3\n    click>=8\n    rich\npython_requires = >=3.9\n",
+        "import click\nimport requests\n",
+        false,
+    );
+    assert_eq!(applied, 2);
+    assert_eq!(
+        after,
+        "[metadata]\nname = acme\nversion = 0.1\n\n[options]\npackages = find:\ninstall_requires =\n    requests>=2\n    click>=8\npython_requires = >=3.9\n"
+    );
+}
+
+/// Removing every `install_requires` entry drops the key, even when the next
+/// section header ends the list; an extra (strict) is removed from its own
+/// section by line.
+#[test]
+fn fix_drops_emptied_setup_cfg_install_requires_and_extra_entries() {
+    let (after, applied) = fix_setup_cfg_project(
+        "[metadata]\nname = acme\nversion = 0.1\n\n[options]\npackages = find:\ninstall_requires =\n    boto3\n    click>=8\n[options.extras_require]\nyaml =\n    pyyaml\n    requests\n",
+        "import requests\n",
+        true,
+    );
+    assert_eq!(applied, 3);
+    assert_eq!(
+        after,
+        "[metadata]\nname = acme\nversion = 0.1\n\n[options]\npackages = find:\n[options.extras_require]\nyaml =\n    requests\n"
+    );
+}

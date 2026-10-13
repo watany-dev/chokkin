@@ -1,0 +1,10 @@
+[project]
+name = "celery-shell-scripts"
+version = "0.1.0"
+dependencies = ["celery"]
+
+[tool.chokkin]
+mode = "app"
+
+[tool.chokkin.plugins]
+celery = true

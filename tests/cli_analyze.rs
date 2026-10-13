@@ -2781,3 +2781,92 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
         );
     }
 }
+
+/// Apps named by `flask --app` / `celery -A` in `scripts/` and `bin/` shell
+/// scripts are entry roots, so only the control module is unused.
+#[test]
+fn binary_shell_script_apps_are_entry_roots() {
+    for (fixture, unused) in [
+        ("flask_shell_scripts", "src/myapp/orphan.py"),
+        ("celery_shell_scripts", "src/worker/orphan.py"),
+    ] {
+        let keys = issue_keys(&json_issues(
+            &fixture_path(&["plugins", fixture]),
+            &["--include", "CHK001"],
+        ));
+        let reported: Vec<&str> = keys
+            .iter()
+            .filter(|(code, _)| code == "CHK001")
+            .map(|(_, target)| target.as_str())
+            .collect();
+        assert_eq!(reported, [unused], "{fixture}: {keys:?}");
+    }
+}
+
+/// stderr of `--trace <target>` on the `trace_origins` fixture, which has an
+/// entry root of every origin kind.
+fn trace_stderr(target: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-exit-code", "--trace", target])
+        .arg(fixture_path(&["reachability", "trace_origins"]))
+        .output()
+        .expect("run chokkin");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stderr).expect("utf8")
+}
+
+#[test]
+fn binary_trace_prints_path_to_reachable_file() {
+    assert_eq!(
+        trace_stderr("src/acme/util.py"),
+        "Trace path:\n├─ file src/acme/cli.py\n└─ import acme.util (line 3)\n\n"
+    );
+    // `./` and `\` spellings name the same root-relative file.
+    assert_eq!(
+        trace_stderr("./src/acme/dyn.py"),
+        "Trace path:\n├─ file src/acme/cli.py\n└─ dynamic import acme.dyn (line 5)\n\n"
+    );
+    assert_eq!(
+        trace_stderr(r"src\acme\views.py"),
+        "Trace path:\n└─ plugin ref acme.views (flask route decorator)\n\n"
+    );
+}
+
+#[test]
+fn binary_trace_reports_undiscovered_file() {
+    assert_eq!(
+        trace_stderr("src/acme/missing.py"),
+        "trace: file `src/acme/missing.py` was not discovered in this project\n\n"
+    );
+}
+
+/// The negative trace lists every entry root with its origin and the
+/// unreachable importers of the target.
+#[test]
+fn binary_trace_explains_unreachable_file() {
+    assert_eq!(
+        trace_stderr("src/acme/legacy.py"),
+        "\
+Negative trace for src/acme/legacy.py:
+
+  reason: not reachable from any entry root
+
+  entry roots analyzed:
+    ├─ src/acme/__main__.py (auto: auto:__main__.py)
+    ├─ src/acme/backend.py (build backend: PEP 517)
+    ├─ src/acme/cli.py (config)
+    ├─ src/acme/main.py (manifest: [console].acme)
+    ├─ src/acme/web.py (symbol: FLASK_APP)
+    ├─ src/tools/gen.py (command: workflow run (.github/workflows/ci.yml:6))
+    ├─ src/tools/report.py (script: PEP 723)
+    └─ tests/test_smoke.py (plugin: pytest (pytest defaults))
+
+  incoming imports (all unreachable):
+    ├─ src/acme/compat.py:1 imports acme.legacy (file also unreachable)
+    └─ src/acme/old_api.py:1 imports acme.legacy (file also unreachable)
+
+  suggestion: add to [tool.chokkin].entry or verify import chain
+
+"
+    );
+}

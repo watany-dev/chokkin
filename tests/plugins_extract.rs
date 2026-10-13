@@ -438,6 +438,108 @@ fn celery_plugin_records_app_symbol() {
     );
 }
 
+/// `(module, symbol, file, line, label)` of each symbol ref, sorted.
+fn symbol_ref_keys(
+    contrib: &chokkin::internals::PluginContribution,
+) -> Vec<(&str, &str, &str, Option<u32>, &str)> {
+    let mut keys: Vec<_> = contrib
+        .symbol_refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.module.as_str(),
+                reference.symbol.as_str(),
+                reference.origin.file.as_str(),
+                reference.origin.line,
+                reference.origin.label.as_str(),
+            )
+        })
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// `(binary, file, line)` of each binary usage, sorted.
+fn binary_usage_keys(
+    contrib: &chokkin::internals::PluginContribution,
+) -> Vec<(&str, &str, Option<u32>)> {
+    let mut keys: Vec<_> = contrib
+        .binary_usages
+        .iter()
+        .map(|usage| {
+            (
+                usage.binary.as_str(),
+                usage.origin.file.as_str(),
+                usage.origin.line,
+            )
+        })
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+#[test]
+fn flask_plugin_reads_app_from_shell_scripts() {
+    // `scripts/run.sh` spells `--app X`, `bin/serve.sh` spells `--app=X`; the
+    // shebang and `set -e` lines name no app.
+    let hints = extract_fixture("flask_shell_scripts");
+    let contrib = plugin_contrib(&hints, PluginId::Flask);
+    assert_eq!(
+        symbol_ref_keys(contrib),
+        [
+            (
+                "myapp.factory",
+                "create_app",
+                "scripts/run.sh",
+                Some(3),
+                "flask --app"
+            ),
+            ("myapp.wsgi", "app", "bin/serve.sh", Some(2), "flask --app"),
+        ]
+    );
+    assert_eq!(
+        binary_usage_keys(contrib),
+        [
+            ("flask", "bin/serve.sh", Some(2)),
+            ("flask", "scripts/run.sh", Some(3)),
+        ]
+    );
+}
+
+#[test]
+fn celery_plugin_reads_app_from_shell_scripts() {
+    // `bin/worker.sh` spells `-A X`, `scripts/beat.sh` the attached `-AX`; the
+    // shebang and `echo` lines name no app.
+    let hints = extract_fixture("celery_shell_scripts");
+    let contrib = plugin_contrib(&hints, PluginId::Celery);
+    assert_eq!(
+        symbol_ref_keys(contrib),
+        [
+            (
+                "worker.beat",
+                "app",
+                "scripts/beat.sh",
+                Some(2),
+                "celery app"
+            ),
+            (
+                "worker.celery",
+                "app",
+                "bin/worker.sh",
+                Some(3),
+                "celery app"
+            ),
+        ]
+    );
+    assert_eq!(
+        binary_usage_keys(contrib),
+        [
+            ("celery", "bin/worker.sh", Some(3)),
+            ("celery", "scripts/beat.sh", Some(2)),
+        ]
+    );
+}
+
 #[test]
 fn sphinx_plugin_records_docs_conf_entry() {
     let hints = extract_fixture("sphinx_docs");

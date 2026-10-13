@@ -1,0 +1,6 @@
+on: push
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python src/tools/gen.py
