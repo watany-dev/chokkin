@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CHK005 for a package that runtime code imports only inside functions is
+  info instead of warning when the same workspace member also treats the
+  package as optional: it imports it under `try/except ImportError` (a
+  platform guard alone does not count), or code the member reaches defines an
+  `is_<name>…` predicate for it. Imports in test support a package ships (a
+  `test` / `tests` / `testing` module or subpackage below the top-level
+  package, such as `django/test/selenium.py`) are info too, unless a
+  top-level import already makes them certain. Django's `pillow` and
+  `selenium`, werkzeug's `cryptography`, streamlit's `polars` and `xarray`
+  and mlflow's `pyspark` drop to info (#808).
+
 ### Fixed
 - A runtime module that defines or re-exports (`__all__`) both PEP 517 hooks,
   `build_wheel` and `build_sdist`, is an entry root, so a build backend that
@@ -32,6 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `sys.path` edits of that module apply to `conf.py`, so airflow's
   `devel-common/src/sphinx_exts` modules are no longer CHK001 and their
   `setup` is no longer CHK006 (#779).
+- Sphinx's `html_theme` in `docs/conf.py` counts as a use of the declared
+  distribution of that name (`furo`), an import that resolves to no package
+  falls back to the declared or locked `<namespace>-<portion>` distribution
+  (`sphinxcontrib.log_cabinet` → `sphinxcontrib-log-cabinet`,
+  `sphinxext.opengraph` → `sphinxext-opengraph`), and declared `pytest-*`
+  distributions are used whenever pytest is, even without a venv. `--strict`
+  no longer reports these as CHK002, and airflow's unresolved `sphinxcontrib`
+  imports are no longer CHK010 (#809).
+- A name that a module takes through `from m import *` is recorded as a
+  reference only in the modules on the star path that define or import it,
+  instead of in every module on the path. Findings are unchanged; a cold run
+  on transformers drops from about 3.8 s to 1.1 s (#803).
 - The bundled package map maps the documentation extensions whose import
   name differs from the distribution: `sphinx-argparse` to `sphinxarg`,
   `sphinx-autoapi` to `autoapi`, `sphinx-notfound-page` to `notfound`,
