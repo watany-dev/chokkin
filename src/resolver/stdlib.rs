@@ -1,26 +1,22 @@
 //! Versioned Python standard library module sets.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::config::TargetVersion;
 use crate::manifest::{infer_target_version_from_requires_python, requires_python_max_minor};
 
-static PY310_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
-static PY311_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
-static PY312_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
-static PY313_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
-static PY314_STDLIB: OnceLock<HashSet<&'static str>> = OnceLock::new();
+static STDLIB_MODULES: OnceLock<HashMap<&'static str, Shipped>> = OnceLock::new();
 
 const OLDEST_BUNDLED_MINOR: u32 = 10;
 const NEWEST_BUNDLED_MINOR: u32 = 14;
 
 /// Oldest `requires-python` floor [`StdlibRange::always_contains`] judges:
-/// `py310.txt` stands in for 3.8 and 3.9 once [`ADDED_IN_PY39`] is set aside,
+/// the 3.10 set stands in for 3.8 and 3.9 once [`ADDED_IN_PY39`] is set aside,
 /// which was checked against `CPython` 3.8.20 and 3.9.25.
 const OLDEST_FLOOR_MINOR: u32 = 8;
 
-/// `py310.txt` entries that 3.8 lacks.
+/// 3.10 stdlib roots that 3.8 lacks.
 const ADDED_IN_PY39: [&str; 5] = [
     "_aix_support",
     "_bootsubprocess",
@@ -119,7 +115,9 @@ impl StdlibRange {
     pub fn contains(self, import_root: &str) -> bool {
         let low = self.min.clamp(OLDEST_BUNDLED_MINOR, NEWEST_BUNDLED_MINOR);
         let high = self.max.clamp(low, NEWEST_BUNDLED_MINOR);
-        (low..=high).any(|minor| stdlib_modules(minor).contains(import_root))
+        stdlib_modules()
+            .get(import_root)
+            .is_some_and(|shipped| shipped.first <= high && low <= shipped.last)
     }
 
     /// Returns whether every interpreter `requires-python` allows, from its
@@ -137,22 +135,45 @@ impl StdlibRange {
         }
         let low = floor.clamp(OLDEST_BUNDLED_MINOR, NEWEST_BUNDLED_MINOR);
         let high = self.max.clamp(low, NEWEST_BUNDLED_MINOR);
-        (low..=high).all(|minor| stdlib_modules(minor).contains(import_root))
+        stdlib_modules()
+            .get(import_root)
+            .is_some_and(|shipped| shipped.first <= low && high <= shipped.last)
     }
 }
 
-fn stdlib_modules(minor: u32) -> &'static HashSet<&'static str> {
-    match minor {
-        0..=10 => PY310_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py310.txt"))),
-        11 => PY311_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py311.txt"))),
-        12 => PY312_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py312.txt"))),
-        13 => PY313_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py313.txt"))),
-        _ => PY314_STDLIB.get_or_init(|| load_modules(include_str!("stdlib/py314.txt"))),
-    }
+/// Bundled minors that ship a stdlib root, as one consecutive run; a
+/// `first` of [`OLDEST_BUNDLED_MINOR`] also covers older minors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Shipped {
+    first: u32,
+    last: u32,
 }
 
-fn load_modules(contents: &'static str) -> HashSet<&'static str> {
-    contents.lines().filter(|line| !line.is_empty()).collect()
+fn stdlib_modules() -> &'static HashMap<&'static str, Shipped> {
+    STDLIB_MODULES.get_or_init(|| parse_modules(include_str!("stdlib/modules.txt")))
+}
+
+/// Parses `name [first-last]` lines: a bare name ships in every bundled
+/// minor, and an empty `last` means up to [`NEWEST_BUNDLED_MINOR`].
+fn parse_modules(contents: &'static str) -> HashMap<&'static str, Shipped> {
+    contents
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let (name, minors) = line.split_once(' ').unwrap_or((line, "-"));
+            let (first, last) = minors.split_once('-')?;
+            let minor = |text: &str, default| {
+                if text.is_empty() {
+                    Some(default)
+                } else {
+                    text.parse().ok()
+                }
+            };
+            let first = minor(first, OLDEST_BUNDLED_MINOR)?;
+            let last = minor(last, NEWEST_BUNDLED_MINOR)?;
+            Some((name, Shipped { first, last }))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -250,7 +271,7 @@ mod tests {
 
     #[test]
     fn always_contains_sets_aside_modules_older_floors_lack() {
-        // `py310.txt` stands in for 3.8 and 3.9, which lack `zoneinfo`.
+        // The 3.10 set stands in for 3.8 and 3.9, which lack `zoneinfo`.
         assert!(!floor(Some(">=3.8")).always_contains("zoneinfo"));
         assert!(floor(Some(">=3.9")).always_contains("zoneinfo"));
         assert!(!floor(Some(">=3.7")).always_contains("threading"));
@@ -267,6 +288,37 @@ mod tests {
     fn always_contains_skips_platform_and_optional_builds() {
         for module in ["fcntl", "msvcrt", "sqlite3", "tkinter"] {
             assert!(!floor(Some(">=3.10")).always_contains(module), "{module}");
+        }
+    }
+
+    #[test]
+    fn table_lines_name_the_minors_that_ship_each_root() {
+        let table = parse_modules("# comment\n\nos\ntomllib 11-\nasynchat 10-11\n");
+        let shipped = |name| (table[name].first, table[name].last);
+        assert_eq!(table.len(), 3);
+        assert_eq!(shipped("os"), (10, 14));
+        assert_eq!(shipped("tomllib"), (11, 14));
+        assert_eq!(shipped("asynchat"), (10, 11));
+    }
+
+    #[test]
+    fn bundled_table_parses_and_matches_the_bundled_minors() {
+        let contents = include_str!("stdlib/modules.txt");
+        // A bare name or an open range means the generator's oldest or newest
+        // version, so a stale constant would misread them.
+        let generated = format!("of Python 3.{OLDEST_BUNDLED_MINOR}-3.{NEWEST_BUNDLED_MINOR},");
+        assert!(contents.lines().any(|line| line.contains(&generated)));
+        let entries = contents
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .count();
+        let table = stdlib_modules();
+        // A line the parser skipped would silently drop a stdlib root.
+        assert_eq!(table.len(), entries);
+        for (name, shipped) in table {
+            assert!(OLDEST_BUNDLED_MINOR <= shipped.first, "{name}");
+            assert!(shipped.first <= shipped.last, "{name}");
+            assert!(shipped.last <= NEWEST_BUNDLED_MINOR, "{name}");
         }
     }
 
