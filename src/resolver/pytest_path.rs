@@ -250,14 +250,11 @@ impl PytestImportPaths {
             }
         }
         for import in imports {
-            let Some(dirs) = self.hinted.get(&import.imported).cloned() else {
-                continue;
-            };
-            let found = self.hinted.entry(import.importer.clone()).or_default();
-            for dir in dirs {
-                if !found.contains(&dir) {
-                    found.push(dir);
-                }
+            if let Some(dirs) = self.hinted.get(&import.imported).cloned() {
+                self.hinted
+                    .entry(import.importer.clone())
+                    .or_default()
+                    .extend(dirs);
             }
         }
         self.hinted_on_disk = on_disk

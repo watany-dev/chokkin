@@ -1,5 +1,6 @@
 //! Documentation tool plugin extractors.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -24,10 +25,11 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     match plugin {
         PluginId::Sphinx => {
             let root = ctx.root.path.as_path();
-            extract_sphinx(ctx, root, &mut contrib);
+            let modules = OnceCell::new();
+            extract_sphinx(ctx, root, &modules, &mut contrib);
             // Monorepos keep docs per member (`providers/*/docs/conf.py`).
             for member in &ctx.sources.layout.members {
-                extract_sphinx(ctx, &root.join(&member.path), &mut contrib);
+                extract_sphinx(ctx, &root.join(&member.path), &modules, &mut contrib);
             }
         },
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
@@ -37,7 +39,12 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     contrib
 }
 
-fn extract_sphinx(ctx: &PluginContext<'_>, dir: &Path, contrib: &mut PluginContribution) {
+fn extract_sphinx(
+    ctx: &PluginContext<'_>,
+    dir: &Path,
+    modules: &OnceCell<HashMap<String, String>>,
+    contrib: &mut PluginContribution,
+) {
     let root = ctx.root.path.as_path();
     let conf = dir.join("docs").join("conf.py");
     if conf.is_file() {
@@ -51,7 +58,8 @@ fn extract_sphinx(ctx: &PluginContext<'_>, dir: &Path, contrib: &mut PluginContr
             && let Some(stmts) = parse_module(&contents)
         {
             let file = rel_to_root(root, &conf);
-            let imports = ConfImports::new(&stmts, ctx.sources);
+            let imports =
+                ConfImports::new(&stmts, modules.get_or_init(|| module_files(ctx.sources)));
             // Extensions often live in a directory an imported constants
             // module appends to `sys.path` (airflow's `conf_constants`).
             for imported in &imports.files {
@@ -89,44 +97,43 @@ struct ConfImports {
 }
 
 impl ConfImports {
-    fn new(stmts: &[Stmt], sources: &DiscoveredSources) -> Self {
-        let mut modules: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    fn new(stmts: &[Stmt], module_files: &HashMap<String, String>) -> Self {
+        let mut imports = Self::default();
         for stmt in stmts {
             match stmt {
                 Stmt::ImportFrom(from) if from.level == 0 => {
-                    let Some(module) = &from.module else {
+                    let Some(file) = from
+                        .module
+                        .as_ref()
+                        .and_then(|module| module_files.get(module.as_str()))
+                    else {
                         continue;
                     };
-                    let names = modules.entry(module.to_string()).or_default();
+                    imports.add_file(file);
                     for alias in &from.names {
                         let local = alias.asname.as_ref().unwrap_or(&alias.name);
-                        names.push((local.to_string(), alias.name.to_string()));
+                        imports
+                            .names
+                            .insert(local.to_string(), (file.clone(), alias.name.to_string()));
                     }
                 },
                 Stmt::Import(import) => {
                     for alias in &import.names {
-                        modules.entry(alias.name.to_string()).or_default();
+                        if let Some(file) = module_files.get(alias.name.as_str()) {
+                            imports.add_file(file);
+                        }
                     }
                 },
                 _ => {},
             }
         }
-        let mut imports = Self::default();
-        if modules.is_empty() {
-            return imports;
-        }
-        for file in &sources.files {
-            let Some(names) = path_to_module(&file.path, &sources.layout)
-                .and_then(|module| modules.remove(&module))
-            else {
-                continue;
-            };
-            for (local, name) in names {
-                imports.names.insert(local, (file.path.clone(), name));
-            }
-            imports.files.push(file.path.clone());
-        }
         imports
+    }
+
+    fn add_file(&mut self, file: &String) {
+        if !self.files.contains(file) {
+            self.files.push(file.clone());
+        }
     }
 
     /// The strings the imported module assigns to the name `conf.py` binds
@@ -145,6 +152,18 @@ impl ConfImports {
             .map(|value| literal_strings(value, &|_| Vec::new()))
             .unwrap_or_default()
     }
+}
+
+/// Module name → root-relative file of the discovered sources, the first
+/// file winning.
+fn module_files(sources: &DiscoveredSources) -> HashMap<String, String> {
+    let mut modules = HashMap::new();
+    for file in &sources.files {
+        if let Some(module) = path_to_module(&file.path, &sources.layout) {
+            modules.entry(module).or_insert_with(|| file.path.clone());
+        }
+    }
+    modules
 }
 
 /// `html_theme` when a declared distribution has its name (`furo`,
@@ -239,4 +258,55 @@ fn push_entry(
             label: label.to_owned(),
         },
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn extensions(source: &str) -> Vec<String> {
+        let stmts = parse_module(source).expect("valid python");
+        sphinx_extensions(&stmts, &|name| match name {
+            "BASE" => vec!["ext_constant".to_owned()],
+            _ => Vec::new(),
+        })
+    }
+
+    #[test]
+    fn literal_and_appended_extensions() {
+        assert_eq!(
+            extensions(
+                "extensions = ['a']\nextensions.append('b')\n\
+                 extensions.extend(['c'])\nextensions += ['d']\n"
+            ),
+            ["a", "b", "c", "d"]
+        );
+    }
+
+    #[test]
+    fn a_bare_name_reads_the_imported_constant() {
+        assert_eq!(
+            extensions("extensions = BASE\nextensions.extend(BASE)\nextensions += MISSING\n"),
+            ["ext_constant", "ext_constant"]
+        );
+    }
+
+    #[test]
+    fn conf_imports_keep_first_party_modules_once() {
+        let stmts = parse_module(
+            "import os\nfrom common.constants import EXTS as BASE, OTHER\n\
+             import common.constants\nfrom . import local\nfrom sphinx import addnodes\n",
+        )
+        .expect("valid python");
+        let module_files = HashMap::from([(
+            "common.constants".to_owned(),
+            "src/common/constants.py".to_owned(),
+        )]);
+        let imports = ConfImports::new(&stmts, &module_files);
+        assert_eq!(imports.files, ["src/common/constants.py"]);
+        let file = "src/common/constants.py".to_owned();
+        assert_eq!(imports.names["BASE"], (file.clone(), "EXTS".to_owned()));
+        assert_eq!(imports.names["OTHER"], (file, "OTHER".to_owned()));
+        assert_eq!(imports.names.len(), 2);
+    }
 }

@@ -189,14 +189,9 @@ pub(super) fn host_hook_symbols(
                 name if name.starts_with("pytest_") => {
                     pytest_plugins.contains(module) || pytest_files.contains(entry.path.as_str())
                 },
-                // An extension found on a `sys.path` directory is named
-                // without the package its file sits in (`docroles` for
-                // `sphinx_exts.docroles`, #779).
-                "setup" => extensions.iter().any(|extension| {
-                    module
-                        .strip_suffix(extension)
-                        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
-                }),
+                "setup" => extensions
+                    .iter()
+                    .any(|extension| names_extension(module, extension)),
                 _ => false,
             }
         })
@@ -222,6 +217,15 @@ fn imports_pytest(module: &ParsedModule) -> bool {
             && import.context != ImportContext::Type
             && matches!(import.module.split('.').next(), Some("pytest" | "_pytest"))
     })
+}
+
+/// Whether `extension` names `module`, in full or by its trailing components:
+/// an extension found on a `sys.path` directory is named without the package
+/// its file sits in (`docroles` for `sphinx_exts.docroles`, #779).
+fn names_extension(module: &str, extension: &str) -> bool {
+    module
+        .strip_suffix(extension)
+        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
 }
 
 #[cfg(test)]
@@ -288,5 +292,16 @@ mod tests {
             "db/versions/a1.py",
             &["down_revision", "upgrade"]
         )));
+    }
+
+    #[test]
+    fn an_extension_names_a_module_by_whole_trailing_components() {
+        assert!(names_extension("sphinx_exts.docroles", "docroles"));
+        assert!(names_extension(
+            "sphinx_exts.docroles",
+            "sphinx_exts.docroles"
+        ));
+        assert!(!names_extension("sphinx_exts.xdocroles", "docroles"));
+        assert!(!names_extension("docroles", "sphinx_exts.docroles"));
     }
 }
