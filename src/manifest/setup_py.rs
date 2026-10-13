@@ -79,7 +79,7 @@ pub(super) fn extract_setup_py(
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
     let extras_require: &[(String, Value)] = match call.keyword("extras_require") {
-        Some(Value::Dict(items)) => items,
+        Some(Value::Dict(items, _)) => items,
         _ => &[],
     };
     let nothing_read = install_requires

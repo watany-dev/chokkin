@@ -25,18 +25,36 @@ const MAX_STEPS: usize = 5_000_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Value {
     Str(String),
-    List(Vec<Self>),
-    Dict(Vec<(String, Self)>),
+    List(Vec<Self>, Identity),
+    Dict(Vec<(String, Self)>, Identity),
     /// A requirements file that a helper function reads at install time.
     RequirementsFile(PathBuf),
     Unknown,
 }
 
+/// The Python object a list or dict value copies, so that a change made
+/// through one name reaches every alias (#565). Tuples have none: they
+/// cannot change in place. `==` ignores it and compares contents.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Identity(Option<usize>);
+
+impl Identity {
+    const NONE: Self = Self(None);
+}
+
+impl PartialEq for Identity {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Identity {}
+
 impl Value {
     fn nodes(&self) -> usize {
         match self {
-            Self::List(items) => 1 + items.iter().map(Self::nodes).sum::<usize>(),
-            Self::Dict(items) => 1 + items.iter().map(|(_, value)| value.nodes()).sum::<usize>(),
+            Self::List(items, _) => 1 + items.iter().map(Self::nodes).sum::<usize>(),
+            Self::Dict(items, _) => 1 + items.iter().map(|(_, value)| value.nodes()).sum::<usize>(),
             Self::Str(_) | Self::RequirementsFile(_) | Self::Unknown => 1,
         }
     }
@@ -44,8 +62,61 @@ impl Value {
     /// Mark a value that code we cannot follow may have changed.
     fn taint(&mut self) {
         match self {
-            Self::List(items) => items.push(Self::Unknown),
+            Self::List(items, _) => items.push(Self::Unknown),
             _ => *self = Self::Unknown,
+        }
+    }
+
+    const fn object(&self) -> Option<usize> {
+        match self {
+            Self::List(_, identity) | Self::Dict(_, identity) => identity.0,
+            _ => None,
+        }
+    }
+
+    /// The same contents as a different object (`None`: a tuple).
+    fn with_identity(mut self, new: Identity) -> Self {
+        if let Self::List(_, identity) | Self::Dict(_, identity) = &mut self {
+            *identity = new;
+        }
+        self
+    }
+
+    fn count_object(&self, object: usize) -> usize {
+        if self.object() == Some(object) {
+            return 1;
+        }
+        match self {
+            Self::List(items, _) => items.iter().map(|item| item.count_object(object)).sum(),
+            Self::Dict(items, _) => items
+                .iter()
+                .map(|(_, value)| value.count_object(object))
+                .sum(),
+            _ => 0,
+        }
+    }
+
+    fn replace_object(&mut self, object: usize, with: &Self) {
+        if self.object() == Some(object) {
+            *self = with.clone();
+        } else {
+            self.replace_within(object, with);
+        }
+    }
+
+    fn replace_within(&mut self, object: usize, with: &Self) {
+        match self {
+            Self::List(items, _) => {
+                for item in items {
+                    item.replace_object(object, with);
+                }
+            },
+            Self::Dict(items, _) => {
+                for (_, value) in items {
+                    value.replace_object(object, with);
+                }
+            },
+            _ => {},
         }
     }
 }
@@ -92,6 +163,7 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
         functions: HashMap::new(),
         depth: 0,
         steps: 0,
+        objects: 0,
         probed_missing: Vec::new(),
         table_requirements: BTreeSet::new(),
     };
@@ -135,7 +207,7 @@ pub(super) fn dependency_items(value: &Value) -> DependencyItems {
 fn flatten_into(value: &Value, result: &mut DependencyItems) {
     match value {
         Value::Str(text) => result.items.push(DependencyItem::Requirement(text.clone())),
-        Value::List(items) => {
+        Value::List(items, _) => {
             for item in items {
                 flatten_into(item, result);
             }
@@ -143,7 +215,7 @@ fn flatten_into(value: &Value, result: &mut DependencyItems) {
         Value::RequirementsFile(path) => result
             .items
             .push(DependencyItem::RequirementsFile(path.clone())),
-        Value::Dict(_) | Value::Unknown => result.complete = false,
+        Value::Dict(..) | Value::Unknown => result.complete = false,
     }
 }
 
@@ -153,6 +225,8 @@ struct Evaluator<'a> {
     functions: HashMap<String, &'a StmtFunctionDef>,
     depth: usize,
     steps: usize,
+    /// Objects allocated so far, for fresh [`Identity`]s.
+    objects: usize,
     probed_missing: Vec<String>,
     /// Items of the lists `requirement_table_lookup` found an entry in, read
     /// at lookup time: a later rebinding does not change what was looked up.
@@ -185,15 +259,7 @@ impl<'a> Evaluator<'a> {
                         self.assign(&assign.target, value);
                     }
                 },
-                Stmt::AugAssign(assign) => {
-                    let value = if assign.op == Operator::Add {
-                        let sum = add(self.eval(&assign.target), self.eval(&assign.value));
-                        self.checked(sum)
-                    } else {
-                        Value::Unknown
-                    };
-                    self.assign(&assign.target, value);
-                },
+                Stmt::AugAssign(assign) => self.aug_assign(assign),
                 Stmt::FunctionDef(def) => {
                     self.functions.insert(def.name.id.to_string(), def);
                 },
@@ -242,6 +308,22 @@ impl<'a> Evaluator<'a> {
         None
     }
 
+    fn aug_assign(&mut self, assign: &ruff_python_ast::StmtAugAssign) {
+        let target = self.eval(&assign.target);
+        let object = target.object();
+        let value = if assign.op == Operator::Add && !matches!(target, Value::Dict(..)) {
+            let sum = add(target, self.eval(&assign.value), Identity(object));
+            self.checked(sum)
+        } else {
+            Value::Unknown
+        };
+        match object {
+            // `list += ...` extends the object every alias names.
+            Some(object) => self.propagate(object, value),
+            None => self.assign(&assign.target, value),
+        }
+    }
+
     /// Run each branch from the current state and keep the union of what
     /// they assign; `fallthrough` adds the state where no branch ran.
     fn exec_branches(
@@ -268,13 +350,56 @@ impl<'a> Evaluator<'a> {
 
     /// `reqs.append(...)` and friends change a value we only track by assignment.
     fn taint_mutation(&mut self, call: &ExprCall) {
-        let Expr::Attribute(attribute) = &*call.func else {
-            return;
+        if let Expr::Attribute(attribute) = &*call.func {
+            self.taint_place(&attribute.value);
+        }
+    }
+
+    /// A change we cannot follow to the object `place` names, or failing
+    /// that to the dict holding it.
+    fn taint_place(&mut self, place: &Expr) {
+        if !self.mutate(place, Value::taint)
+            && let Expr::Subscript(subscript) = place
+        {
+            self.taint_place(&subscript.value);
+        }
+    }
+
+    /// Apply `change` to the object `place` names, seen through every alias;
+    /// `false` when `place` names no stored value.
+    fn mutate(&mut self, place: &Expr, change: impl FnOnce(&mut Value)) -> bool {
+        let Some(slot) = self.place_mut(place) else {
+            return false;
         };
-        if let Some(value) = self.place_mut(&attribute.value) {
-            value.taint();
-        } else {
-            self.taint_target(&attribute.value);
+        let object = slot.object();
+        change(slot);
+        if let Some(object) = object {
+            let value = slot.clone();
+            self.propagate(object, value);
+        }
+        true
+    }
+
+    /// Give every copy of `object` its state `value` after an in-place change.
+    fn propagate(&mut self, object: usize, mut value: Value) {
+        // An object holding itself (`reqs += [reqs]`) has no finite value.
+        value.replace_within(object, &Value::Unknown);
+        let copies: usize = self
+            .env
+            .values()
+            .map(|stored| stored.count_object(object))
+            .sum();
+        // Once the budget is spent every later `eval`, `setup()`'s keywords
+        // included, is `Unknown`, so stale copies can no longer be read.
+        if !self.spend(self.env_nodes()) {
+            return;
+        }
+        let added = copies.saturating_mul(value.nodes());
+        if added > MAX_VALUE_NODES || !self.spend(added) {
+            value = Value::Unknown;
+        }
+        for stored in self.env.values_mut() {
+            stored.replace_object(object, &value);
         }
     }
 
@@ -285,12 +410,15 @@ impl<'a> Evaluator<'a> {
                     self.env.remove(name.id.as_str());
                 },
                 Expr::Subscript(subscript) => {
-                    if let Value::Str(key) = self.eval(&subscript.slice)
-                        && let Some(Value::Dict(items)) = self.place_mut(&subscript.value)
-                    {
-                        items.retain(|(existing, _)| *existing != key);
-                    } else {
-                        self.taint_target(&subscript.value);
+                    let key = self.eval(&subscript.slice);
+                    let found = self.mutate(&subscript.value, |base| match (base, &key) {
+                        (Value::Dict(items, _), Value::Str(key)) => {
+                            items.retain(|(existing, _)| existing != key);
+                        },
+                        (base, _) => base.taint(),
+                    });
+                    if !found {
+                        self.taint_place(&subscript.value);
                     }
                 },
                 Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
@@ -309,7 +437,7 @@ impl<'a> Evaluator<'a> {
                     return None;
                 };
                 match self.place_mut(&subscript.value)? {
-                    Value::Dict(items) => items
+                    Value::Dict(items, _) => items
                         .iter_mut()
                         .find(|(existing, _)| *existing == key)
                         .map(|(_, value)| value),
@@ -320,14 +448,12 @@ impl<'a> Evaluator<'a> {
         }
     }
 
+    /// A loop may rebind `target` or change what it names. A rebound name
+    /// taints its aliases too: after no iteration it still names their object.
     fn taint_target(&mut self, target: &Expr) {
         match target {
-            Expr::Name(name) => {
-                if let Some(value) = self.env.get_mut(name.id.as_str()) {
-                    value.taint();
-                }
-            },
-            Expr::Subscript(subscript) => self.taint_target(&subscript.value),
+            Expr::Name(_) => self.taint_place(target),
+            Expr::Subscript(subscript) => self.taint_place(&subscript.value),
             Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
             | Expr::List(ruff_python_ast::ExprList { elts, .. }) => {
                 for elt in elts {
@@ -397,6 +523,11 @@ impl<'a> Evaluator<'a> {
         self.steps <= MAX_STEPS
     }
 
+    fn fresh(&mut self) -> Identity {
+        self.objects += 1;
+        Identity(Some(self.objects))
+    }
+
     fn env_nodes(&self) -> usize {
         self.env.values().map(Value::nodes).sum()
     }
@@ -422,19 +553,19 @@ impl<'a> Evaluator<'a> {
                 self.env.insert(name.id.to_string(), value);
             },
             Expr::Subscript(subscript) => {
-                let (Expr::Name(base), Value::Str(key)) =
-                    (&*subscript.value, self.eval(&subscript.slice))
-                else {
+                let Value::Str(key) = self.eval(&subscript.slice) else {
                     return;
                 };
-                if let Some(Value::Dict(items)) = self.env.get_mut(base.id.as_str()) {
-                    insert_entry(items, key, value);
-                }
+                self.mutate(&subscript.value, |base| {
+                    if let Value::Dict(items, _) = base {
+                        insert_entry(items, key, value);
+                    }
+                });
             },
             Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
             | Expr::List(ruff_python_ast::ExprList { elts, .. }) => {
                 let values = match value {
-                    Value::List(values) if values.len() == elts.len() => values,
+                    Value::List(values, _) if values.len() == elts.len() => values,
                     _ => vec![Value::Unknown; elts.len()],
                 };
                 for (target, value) in elts.iter().zip(values) {
@@ -466,37 +597,24 @@ impl<'a> Evaluator<'a> {
         match expr {
             Expr::StringLiteral(literal) => Value::Str(literal.value.to_str().to_owned()),
             Expr::List(ruff_python_ast::ExprList { elts, .. })
-            | Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
             | Expr::Set(ruff_python_ast::ExprSet { elts, .. }) => {
-                Value::List(self.eval_elements(elts))
+                let items = self.eval_elements(elts);
+                Value::List(items, self.fresh())
             },
-            Expr::Dict(dict) => {
-                let mut items: Vec<(String, Value)> = Vec::new();
-                for item in &dict.items {
-                    match item.key.as_ref().map(|key| self.eval(key)) {
-                        Some(Value::Str(key)) => {
-                            let value = self.eval(&item.value);
-                            insert_entry(&mut items, key, value);
-                        },
-                        None => {
-                            if let Value::Dict(spread) = self.eval(&item.value) {
-                                for (key, value) in spread {
-                                    insert_entry(&mut items, key, value);
-                                }
-                            }
-                        },
-                        Some(_) => {},
-                    }
-                }
-                Value::Dict(items)
-            },
+            Expr::Tuple(tuple) => Value::List(self.eval_elements(&tuple.elts), Identity::NONE),
+            Expr::Dict(dict) => self.eval_dict(dict),
             Expr::Name(name) => self
                 .env
                 .get(name.id.as_str())
                 .cloned()
                 .unwrap_or(Value::Unknown),
             Expr::BinOp(binop) if binop.op == Operator::Add => {
-                add(self.eval(&binop.left), self.eval(&binop.right))
+                let (left, right) = (self.eval(&binop.left), self.eval(&binop.right));
+                let tuples = [&left, &right]
+                    .iter()
+                    .all(|value| matches!(value, Value::List(_, Identity(None))));
+                let identity = if tuples { Identity::NONE } else { self.fresh() };
+                add(left, right, identity)
             },
             Expr::Subscript(subscript) => {
                 let base = self.eval(&subscript.value);
@@ -504,7 +622,7 @@ impl<'a> Evaluator<'a> {
                     return Value::Unknown;
                 };
                 match base {
-                    Value::Dict(items) => items
+                    Value::Dict(items, _) => items
                         .into_iter()
                         .find(|(existing, _)| *existing == key)
                         .map_or(Value::Unknown, |(_, value)| value),
@@ -516,9 +634,17 @@ impl<'a> Evaluator<'a> {
                 }
             },
             Expr::Call(call) => self.eval_call(call),
-            Expr::ListComp(comp) => self.eval_list_comprehension(&comp.elt, &comp.generators),
-            Expr::SetComp(comp) => self.eval_list_comprehension(&comp.elt, &comp.generators),
-            Expr::Generator(comp) => self.eval_list_comprehension(&comp.elt, &comp.generators),
+            Expr::ListComp(comp) => {
+                let identity = self.fresh();
+                self.eval_list_comprehension(&comp.elt, &comp.generators, identity)
+            },
+            Expr::SetComp(comp) => {
+                let identity = self.fresh();
+                self.eval_list_comprehension(&comp.elt, &comp.generators, identity)
+            },
+            Expr::Generator(comp) => {
+                self.eval_list_comprehension(&comp.elt, &comp.generators, Identity::NONE)
+            },
             Expr::DictComp(comp) => {
                 let Some(key) = comp.key.as_deref() else {
                     return Value::Unknown;
@@ -535,10 +661,31 @@ impl<'a> Evaluator<'a> {
                     };
                     insert_entry(&mut items, key, value);
                 }
-                Value::Dict(items)
+                Value::Dict(items, self.fresh())
             },
             _ => Value::Unknown,
         }
+    }
+
+    fn eval_dict(&mut self, dict: &ruff_python_ast::ExprDict) -> Value {
+        let mut items: Vec<(String, Value)> = Vec::new();
+        for item in &dict.items {
+            match item.key.as_ref().map(|key| self.eval(key)) {
+                Some(Value::Str(key)) => {
+                    let value = self.eval(&item.value);
+                    insert_entry(&mut items, key, value);
+                },
+                None => {
+                    if let Value::Dict(spread, _) = self.eval(&item.value) {
+                        for (key, value) in spread {
+                            insert_entry(&mut items, key, value);
+                        }
+                    }
+                },
+                Some(_) => {},
+            }
+        }
+        Value::Dict(items, self.fresh())
     }
 
     fn eval_elements(&mut self, elts: &[Expr]) -> Vec<Value> {
@@ -546,7 +693,7 @@ impl<'a> Evaluator<'a> {
         for elt in elts {
             if let Expr::Starred(starred) = elt {
                 match self.eval(&starred.value) {
-                    Value::List(spread) => values.extend(spread),
+                    Value::List(spread, _) => values.extend(spread),
                     _ => values.push(Value::Unknown),
                 }
             } else {
@@ -556,9 +703,14 @@ impl<'a> Evaluator<'a> {
         values
     }
 
-    fn eval_list_comprehension(&mut self, elt: &Expr, generators: &[Comprehension]) -> Value {
+    fn eval_list_comprehension(
+        &mut self,
+        elt: &Expr,
+        generators: &[Comprehension],
+        identity: Identity,
+    ) -> Value {
         self.comprehend(generators, |evaluator| evaluator.eval(elt))
-            .map_or(Value::Unknown, Value::List)
+            .map_or(Value::Unknown, |items| Value::List(items, identity))
     }
 
     /// Evaluate `produce` once per binding of filter-free generators.
@@ -578,7 +730,7 @@ impl<'a> Evaluator<'a> {
             let mut next = Vec::new();
             for scope in scopes {
                 self.env = scope;
-                let Value::List(items) = self.eval(&generator.iter) else {
+                let Value::List(items, _) = self.eval(&generator.iter) else {
                     self.env = saved;
                     return None;
                 };
@@ -611,9 +763,14 @@ impl<'a> Evaluator<'a> {
         if matches!(name, "list" | "tuple" | "sorted" | "set")
             && call.arguments.keywords.is_empty()
             && let [arg] = args.as_slice()
-            && matches!(arg, Value::List(_) | Value::RequirementsFile(_))
+            && matches!(arg, Value::List(..) | Value::RequirementsFile(_))
         {
-            return arg.clone();
+            let identity = if name == "tuple" {
+                Identity::NONE
+            } else {
+                self.fresh()
+            };
+            return arg.clone().with_identity(identity);
         }
         let value = match self.functions.get(name).copied() {
             Some(def) if call.arguments.keywords.is_empty() => {
@@ -658,7 +815,7 @@ impl<'a> Evaluator<'a> {
         if let Some(vararg) = &parameters.vararg {
             locals.push((
                 vararg.name.id.to_string(),
-                Value::List(positional.collect()),
+                Value::List(positional.collect(), Identity::NONE),
             ));
         }
 
@@ -711,7 +868,7 @@ impl<'a> Evaluator<'a> {
         let wanted = normalize_distribution_name(key);
         let mut found: Vec<&String> = Vec::new();
         for value in self.env.values() {
-            let Value::List(items) = value else {
+            let Value::List(items, _) = value else {
                 continue;
             };
             for item in items {
@@ -731,7 +888,7 @@ impl<'a> Evaluator<'a> {
         };
         let raw = Value::Str((*raw).clone());
         for value in self.env.values() {
-            if let Value::List(items) = value
+            if let Value::List(items, _) = value
                 && items.contains(&raw)
             {
                 self.table_requirements
@@ -761,18 +918,19 @@ fn insert_entry(items: &mut Vec<(String, Value)>, key: String, value: Value) {
     }
 }
 
-fn add(left: Value, right: Value) -> Value {
+/// `left + right`; a list result is the object `identity`.
+fn add(left: Value, right: Value, identity: Identity) -> Value {
     match (left, right) {
         (Value::Str(left), Value::Str(right)) => Value::Str(left + &right),
-        (Value::List(mut left), Value::List(right)) => {
+        (Value::List(mut left, _), Value::List(right, _)) => {
             left.extend(right);
-            Value::List(left)
+            Value::List(left, identity)
         },
-        (Value::List(mut items), other) | (other, Value::List(mut items))
+        (Value::List(mut items, _), other) | (other, Value::List(mut items, _))
             if !matches!(other, Value::Str(_)) =>
         {
             items.push(other);
-            Value::List(items)
+            Value::List(items, identity)
         },
         _ => Value::Unknown,
     }
@@ -797,15 +955,17 @@ fn merge_env(
 fn merge(left: Value, right: Value) -> Value {
     match (left, right) {
         (left, right) if left == right => left,
-        (Value::List(mut left), Value::List(right)) => {
+        // A name bound to different objects in each branch keeps the left
+        // one's identity: later in-place changes reach only its aliases.
+        (Value::List(mut left, identity), Value::List(right, _)) => {
             for item in right {
                 if !left.contains(&item) {
                     left.push(item);
                 }
             }
-            Value::List(left)
+            Value::List(left, identity)
         },
-        (Value::Dict(mut left), Value::Dict(right)) => {
+        (Value::Dict(mut left, identity), Value::Dict(right, _)) => {
             for (key, value) in right {
                 match left.iter().position(|(existing, _)| *existing == key) {
                     Some(index) => {
@@ -815,7 +975,7 @@ fn merge(left: Value, right: Value) -> Value {
                     None => left.push((key, value)),
                 }
             }
-            Value::Dict(left)
+            Value::Dict(left, identity)
         },
         _ => Value::Unknown,
     }
@@ -833,9 +993,10 @@ fn is_setup(func: &Expr) -> bool {
 mod props {
     //! Generated `setup.py` programs checked against a small model of the
     //! Python semantics of the evaluated subset (cross-checked offline with
-    //! `CPython`). Lists are only rebound (`v = v + ...`), never mutated in
-    //! place, and dicts are only copied (`{**d}`): the evaluator has value
-    //! semantics, so `b = a; a.append(x)` (Python aliasing) is out of scope.
+    //! `CPython`). The model keeps lists and dicts on a heap, so a name, a
+    //! dict entry, or a helper's result that aliases one sees `+=`, item
+    //! assignment, and `del` made through another (#565). Lists hold only
+    //! strings and dicts only lists, so no object can contain itself.
 
     use std::collections::HashMap;
     use std::fmt::Write as _;
@@ -1011,12 +1172,15 @@ mod props {
             }
         }
 
-        /// A dict variable is only spread, never aliased (see the module doc).
         fn dict_expr(&mut self, depth: usize) -> Ex {
-            let choice = if depth >= 3 { 0 } else { self.tape.pick(3) };
+            let choice = if depth >= 3 { 0 } else { self.tape.pick(4) };
             let base = match choice {
                 1 => self.var(Kind::Dict).map(|name| Box::new(Ex::Var(name))),
                 2 => return Ex::DictComp(Box::new(self.list_expr(depth + 1))),
+                3 => match self.var(Kind::Dict) {
+                    Some(name) => return Ex::Var(name),
+                    None => None,
+                },
                 _ => None,
             };
             let len = self.tape.pick(4);
@@ -1036,8 +1200,19 @@ mod props {
             St::Assign(name, value)
         }
 
+        /// `new = old`: a second name for a list or dict.
+        fn alias(&mut self) -> St {
+            let kind = self.tape.choose(&[Kind::List, Kind::Dict]);
+            let Some(old) = self.var(kind) else {
+                return self.assign_new();
+            };
+            let name = self.fresh("v");
+            self.scope.vars.push((name.clone(), kind));
+            St::Assign(name, Ex::Var(old))
+        }
+
         fn stmt(&mut self) -> St {
-            match self.tape.pick(6) {
+            match self.tape.pick(8) {
                 1 => match self.var(Kind::List) {
                     Some(name) => {
                         let value = self.list_expr(1);
@@ -1061,6 +1236,11 @@ mod props {
                     None => self.assign_new(),
                 },
                 5 => self.def(),
+                6 => match self.var(Kind::List) {
+                    Some(name) => St::AugAdd(name, self.list_expr(1)),
+                    None => self.assign_new(),
+                },
+                7 => self.alias(),
                 _ => self.assign_new(),
             }
         }
@@ -1085,7 +1265,20 @@ mod props {
         }
     }
 
-    fn py_insert(items: &mut Vec<(String, Py)>, key: &str, value: Py) {
+    /// A model value: strings inline, lists and dicts as heap objects.
+    #[derive(Debug, Clone)]
+    enum Ref {
+        Str(String),
+        Obj(usize),
+    }
+
+    #[derive(Debug)]
+    enum Obj {
+        List(Vec<Ref>),
+        Dict(Vec<(String, Ref)>),
+    }
+
+    fn py_insert(items: &mut Vec<(String, Ref)>, key: &str, value: Ref) {
         match items.iter_mut().find(|(existing, _)| existing == key) {
             Some((_, slot)) => *slot = value,
             None => items.push((key.to_owned(), value)),
@@ -1095,8 +1288,9 @@ mod props {
     /// What `CPython` computes; `None` where it raises (`KeyError`).
     #[derive(Default)]
     struct Model {
-        globals: HashMap<String, Py>,
+        globals: HashMap<String, Ref>,
         funcs: HashMap<String, (Vec<String>, Ex)>,
+        heap: Vec<Obj>,
     }
 
     impl Model {
@@ -1111,25 +1305,35 @@ mod props {
         fn exec(&mut self, stmt: &St) -> Option<()> {
             match stmt {
                 St::Assign(name, value) => {
-                    let value = self.eval(value, &self.globals)?;
+                    let value = self.eval_global(value)?;
                     self.globals.insert(name.clone(), value);
                 },
                 St::AugAdd(name, value) => {
-                    let sum = Ex::Add(Box::new(Ex::Var(name.clone())), Box::new(value.clone()));
-                    let value = self.eval(&sum, &self.globals)?;
-                    self.globals.insert(name.clone(), value);
+                    let target = self.globals.get(name)?.clone();
+                    let value = self.eval_global(value)?;
+                    match target {
+                        Ref::Str(left) => {
+                            let Ref::Str(right) = value else {
+                                return None;
+                            };
+                            self.globals.insert(name.clone(), Ref::Str(left + &right));
+                        },
+                        // `list += ...` extends the object in place.
+                        Ref::Obj(id) => {
+                            let items = self.list(&value)?;
+                            let Obj::List(target) = &mut self.heap[id] else {
+                                return None;
+                            };
+                            target.extend(items);
+                        },
+                    }
                 },
                 St::SetItem(name, key, value) => {
-                    let value = self.eval(value, &self.globals)?;
-                    let Py::Dict(items) = self.globals.get_mut(name)? else {
-                        return None;
-                    };
-                    py_insert(items, key, value);
+                    let value = self.eval_global(value)?;
+                    py_insert(self.dict_mut(name)?, key, value);
                 },
                 St::Del(name, key) => {
-                    let Py::Dict(items) = self.globals.get_mut(name)? else {
-                        return None;
-                    };
+                    let items = self.dict_mut(name)?;
                     let index = items.iter().position(|(existing, _)| existing == key)?;
                     items.remove(index);
                 },
@@ -1141,86 +1345,159 @@ mod props {
             Some(())
         }
 
-        fn strings(&self, iter: &Ex, env: &HashMap<String, Py>) -> Option<Vec<String>> {
-            let Py::List(items) = self.eval(iter, env)? else {
-                return None;
+        fn alloc(&mut self, obj: Obj) -> Ref {
+            self.heap.push(obj);
+            Ref::Obj(self.heap.len() - 1)
+        }
+
+        /// The items of a list, as a shallow copy.
+        fn list(&self, value: &Ref) -> Option<Vec<Ref>> {
+            match value {
+                Ref::Obj(id) => match &self.heap[*id] {
+                    Obj::List(items) => Some(items.clone()),
+                    Obj::Dict(_) => None,
+                },
+                Ref::Str(_) => None,
+            }
+        }
+
+        fn dict_mut(&mut self, name: &str) -> Option<&mut Vec<(String, Ref)>> {
+            let id = match self.globals.get(name)? {
+                Ref::Obj(id) => *id,
+                Ref::Str(_) => return None,
             };
-            items
+            match &mut self.heap[id] {
+                Obj::Dict(items) => Some(items),
+                Obj::List(_) => None,
+            }
+        }
+
+        /// The value as plain data, for comparison with the evaluator.
+        fn resolve(&self, value: &Ref) -> Py {
+            match value {
+                Ref::Str(text) => Py::Str(text.clone()),
+                Ref::Obj(id) => match &self.heap[*id] {
+                    Obj::List(items) => {
+                        Py::List(items.iter().map(|item| self.resolve(item)).collect())
+                    },
+                    Obj::Dict(items) => Py::Dict(
+                        items
+                            .iter()
+                            .map(|(key, value)| (key.clone(), self.resolve(value)))
+                            .collect(),
+                    ),
+                },
+            }
+        }
+
+        fn eval_global(&mut self, expr: &Ex) -> Option<Ref> {
+            let env = self.globals.clone();
+            self.eval(expr, &env)
+        }
+
+        /// `expr` evaluated at module level, as plain data.
+        fn value(&mut self, expr: &Ex) -> Option<Py> {
+            let value = self.eval_global(expr)?;
+            Some(self.resolve(&value))
+        }
+
+        fn strings(&mut self, iter: &Ex, env: &HashMap<String, Ref>) -> Option<Vec<String>> {
+            let value = self.eval(iter, env)?;
+            self.list(&value)?
                 .into_iter()
                 .map(|item| match item {
-                    Py::Str(text) => Some(text),
-                    _ => None,
+                    Ref::Str(text) => Some(text),
+                    Ref::Obj(_) => None,
                 })
                 .collect()
         }
 
-        fn eval(&self, expr: &Ex, env: &HashMap<String, Py>) -> Option<Py> {
+        fn eval(&mut self, expr: &Ex, env: &HashMap<String, Ref>) -> Option<Ref> {
             Some(match expr {
-                Ex::Lit(text) => Py::Str((*text).to_owned()),
+                Ex::Lit(text) => Ref::Str((*text).to_owned()),
                 Ex::Var(name) => env.get(name)?.clone(),
                 Ex::Add(left, right) => match (self.eval(left, env)?, self.eval(right, env)?) {
-                    (Py::Str(left), Py::Str(right)) => Py::Str(left + &right),
-                    (Py::List(mut left), Py::List(right)) => {
-                        left.extend(right);
-                        Py::List(left)
+                    (Ref::Str(left), Ref::Str(right)) => Ref::Str(left + &right),
+                    (left, right) => {
+                        let mut items = self.list(&left)?;
+                        items.extend(self.list(&right)?);
+                        self.alloc(Obj::List(items))
                     },
-                    _ => return None,
                 },
                 Ex::List(spread, items) => {
                     let mut values = match spread {
-                        Some(spread) => match self.eval(spread, env)? {
-                            Py::List(values) => values,
-                            _ => return None,
+                        Some(spread) => {
+                            let spread = self.eval(spread, env)?;
+                            self.list(&spread)?
                         },
                         None => Vec::new(),
                     };
                     for item in items {
                         values.push(self.eval(item, env)?);
                     }
-                    Py::List(values)
+                    self.alloc(Obj::List(values))
                 },
-                Ex::Comp(iter, suffix) => Py::List(
-                    self.strings(iter, env)?
+                Ex::Comp(iter, suffix) => {
+                    let items = self
+                        .strings(iter, env)?
                         .into_iter()
-                        .map(|text| Py::Str(text + suffix))
-                        .collect(),
-                ),
-                Ex::Copy(inner) => self.eval(inner, env)?,
+                        .map(|text| Ref::Str(text + suffix))
+                        .collect();
+                    self.alloc(Obj::List(items))
+                },
+                Ex::Copy(inner) => {
+                    let inner = self.eval(inner, env)?;
+                    let items = self.list(&inner)?;
+                    self.alloc(Obj::List(items))
+                },
                 Ex::Dict(base, pairs) => self.eval_dict(base.as_deref(), pairs, env)?,
                 Ex::DictComp(iter) => {
                     let mut items = Vec::new();
                     for key in self.strings(iter, env)? {
-                        let value = Py::List(vec![Py::Str(key.clone())]);
+                        let value = self.alloc(Obj::List(vec![Ref::Str(key.clone())]));
                         py_insert(&mut items, &key, value);
                     }
-                    Py::Dict(items)
+                    self.alloc(Obj::Dict(items))
                 },
-                Ex::Sub(base, key) => match self.eval(base, env)? {
-                    Py::Dict(items) => items.into_iter().find(|(existing, _)| existing == key)?.1,
-                    _ => return None,
+                Ex::Sub(base, key) => {
+                    let Ref::Obj(id) = self.eval(base, env)? else {
+                        return None;
+                    };
+                    let Obj::Dict(items) = &self.heap[id] else {
+                        return None;
+                    };
+                    items
+                        .iter()
+                        .find(|(existing, _)| existing == key)?
+                        .1
+                        .clone()
                 },
                 Ex::Call(name, args) => {
-                    let (params, body) = self.funcs.get(name)?;
+                    let (params, body) = self.funcs.get(name)?.clone();
                     // A helper sees module globals and its own parameters.
                     let mut scope = self.globals.clone();
                     for (param, arg) in params.iter().zip(args) {
-                        scope.insert(param.clone(), self.eval(arg, env)?);
+                        let arg = self.eval(arg, env)?;
+                        scope.insert(param.clone(), arg);
                     }
-                    self.eval(body, &scope)?
+                    self.eval(&body, &scope)?
                 },
             })
         }
 
         fn eval_dict(
-            &self,
+            &mut self,
             base: Option<&Ex>,
             pairs: &[(&'static str, Ex)],
-            env: &HashMap<String, Py>,
-        ) -> Option<Py> {
+            env: &HashMap<String, Ref>,
+        ) -> Option<Ref> {
             let mut items = match base {
                 Some(base) => match self.eval(base, env)? {
-                    Py::Dict(items) => items,
-                    _ => return None,
+                    Ref::Obj(id) => match &self.heap[id] {
+                        Obj::Dict(items) => items.clone(),
+                        Obj::List(_) => return None,
+                    },
+                    Ref::Str(_) => return None,
                 },
                 None => Vec::new(),
             };
@@ -1228,7 +1505,7 @@ mod props {
                 let value = self.eval(value, env)?;
                 py_insert(&mut items, key, value);
             }
-            Some(Py::Dict(items))
+            Some(self.alloc(Obj::Dict(items)))
         }
     }
 
@@ -1338,12 +1615,12 @@ mod props {
     fn known(value: Option<&Value>) -> Option<Py> {
         match value? {
             Value::Str(text) => Some(Py::Str(text.clone())),
-            Value::List(items) => items
+            Value::List(items, _) => items
                 .iter()
                 .map(|item| known(Some(item)))
                 .collect::<Option<_>>()
                 .map(Py::List),
-            Value::Dict(items) => items
+            Value::Dict(items, _) => items
                 .iter()
                 .map(|(key, value)| Some((key.clone(), known(Some(value))?)))
                 .collect::<Option<_>>()
@@ -1389,10 +1666,10 @@ mod props {
 
     /// Install requirements and extra pairs `CPython` reports.
     fn model_result(stmts: &[St], install: &Ex, extras: &Ex) -> Option<(Vec<String>, ExtraPairs)> {
-        let model = Model::run(stmts)?;
+        let mut model = Model::run(stmts)?;
         let mut install_strings = Vec::new();
-        py_strings(&model.eval(install, &model.globals)?, &mut install_strings);
-        let Py::Dict(items) = model.eval(extras, &model.globals)? else {
+        py_strings(&model.value(install)?, &mut install_strings);
+        let Py::Dict(items) = model.value(extras)? else {
             return None;
         };
         let mut pairs = Vec::new();
@@ -1440,13 +1717,50 @@ mod props {
             let stmts = builder.stmts();
             let install = builder.list_expr(0);
             let extras = builder.dict_expr(0);
-            let Some(model) = Model::run(&stmts) else {
+            let Some(mut model) = Model::run(&stmts) else {
                 return Ok(());
             };
-            let (Some(want_install), Some(want_extras)) = (
-                model.eval(&install, &model.globals),
-                model.eval(&extras, &model.globals),
-            ) else {
+            let (Some(want_install), Some(want_extras)) = (model.value(&install), model.value(&extras)) else {
+                return Ok(());
+            };
+            let source = Style(style).program(&stmts, &install, &extras);
+            let call = evaluate(&source).expect("generated setup.py has a setup() call");
+            prop_assert_eq!(known(call.keyword("install_requires")), Some(want_install), "{}", source);
+            prop_assert_eq!(known(call.keyword("extras_require")), Some(want_extras), "{}", source);
+        }
+
+        #[test]
+        fn changes_through_one_name_reach_its_aliases(
+            tape in prop::collection::vec(any::<u8>(), 0..160),
+            through_alias in any::<bool>(),
+            style in any::<u8>(),
+        ) {
+            let mut builder = Builder::new(&tape);
+            let mut stmts = builder.stmts();
+            let list = builder.fresh("v");
+            let list_alias = builder.fresh("v");
+            let dict = builder.fresh("v");
+            let dict_alias = builder.fresh("v");
+            stmts.push(St::Assign(list.clone(), builder.list_expr(1)));
+            stmts.push(St::Assign(dict.clone(), builder.dict_expr(1)));
+            stmts.push(St::Assign(list_alias.clone(), Ex::Var(list.clone())));
+            stmts.push(St::Assign(dict_alias.clone(), Ex::Var(dict.clone())));
+            let (changed, read) = if through_alias {
+                ((&list_alias, &dict_alias), (&list, &dict))
+            } else {
+                ((&list, &dict), (&list_alias, &dict_alias))
+            };
+            stmts.push(St::AugAdd(changed.0.clone(), builder.list_expr(1)));
+            stmts.push(St::SetItem(changed.1.clone(), builder.tape.choose(&KEYS), Ex::Var(read.0.clone())));
+            if builder.tape.pick(2) == 1 {
+                stmts.push(St::Del(changed.1.clone(), builder.tape.choose(&KEYS)));
+            }
+            let install = Ex::Var(read.0.clone());
+            let extras = Ex::Var(read.1.clone());
+            let Some(mut model) = Model::run(&stmts) else {
+                return Ok(());
+            };
+            let (Some(want_install), Some(want_extras)) = (model.value(&install), model.value(&extras)) else {
                 return Ok(());
             };
             let source = Style(style).program(&stmts, &install, &extras);
@@ -1504,7 +1818,7 @@ mod props {
             let got_install = requirement_texts(call.keyword("install_requires"));
             prop_assert!(got_install.is_some(), "install_requires partial:\n{}", source);
             let got_install = got_install.unwrap_or_default();
-            let Some(Value::Dict(got_extras)) = call.keyword("extras_require") else {
+            let Some(Value::Dict(got_extras, _)) = call.keyword("extras_require") else {
                 prop_assert!(false, "extras_require unreadable:\n{}", source);
                 return Ok(());
             };
@@ -1539,7 +1853,7 @@ mod props {
             let target = match (through_dict, builder.var(Kind::Dict), builder.var(Kind::List)) {
                 (true, Some(dict), _) => {
                     let key = builder.tape.choose(&KEYS);
-                    let Some(Py::Dict(items)) = model.globals.get(&dict) else {
+                    let Some(Py::Dict(items)) = model.globals.get(&dict).map(|value| model.resolve(value)) else {
                         return Ok(());
                     };
                     if !items.iter().any(|(existing, value)| existing == key && matches!(value, Py::List(_))) {
@@ -1615,6 +1929,139 @@ mod props {
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
+        assert_eq!(known(call.keyword("extras_require")), None);
+    }
+
+    fn strings(items: &[&str]) -> Py {
+        Py::List(
+            items
+                .iter()
+                .map(|item| Py::Str((*item).to_owned()))
+                .collect(),
+        )
+    }
+
+    fn install_requires(source: &str) -> Option<Py> {
+        known(
+            evaluate(source)
+                .expect("setup() call")
+                .keyword("install_requires"),
+        )
+    }
+
+    #[test]
+    fn augmented_add_reaches_every_alias_of_a_list() {
+        assert_eq!(
+            install_requires(
+                "base = ['a']\nreqs = base\nbase += ['b']\nsetup(install_requires=reqs)\n"
+            ),
+            Some(strings(&["a", "b"]))
+        );
+        assert_eq!(
+            install_requires(
+                "base = ['a']\nreqs = base\nreqs += ['b']\nsetup(install_requires=base)\n"
+            ),
+            Some(strings(&["a", "b"]))
+        );
+    }
+
+    #[test]
+    fn unfollowed_mutation_marks_every_alias_partial() {
+        let call =
+            evaluate("base = ['a']\nreqs = base\nbase.append('b')\nsetup(install_requires=reqs)\n")
+                .expect("setup() call");
+        let value = call.keyword("install_requires").expect("install_requires");
+        assert!(!dependency_items(value).complete);
+    }
+
+    #[test]
+    fn a_list_held_by_a_dict_sees_later_changes() {
+        let call = evaluate(
+            "base = ['a']\nextras = {'t': base}\nbase += ['b']\nextras['t'] += ['c']\n\
+             setup(install_requires=base, extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            known(call.keyword("install_requires")),
+            Some(strings(&["a", "b", "c"]))
+        );
+        assert_eq!(
+            known(call.keyword("extras_require")),
+            Some(Py::Dict(vec![("t".to_owned(), strings(&["a", "b", "c"]))]))
+        );
+    }
+
+    #[test]
+    fn dict_changes_reach_every_alias() {
+        let call = evaluate(
+            "extras = {'a': ['x']}\nalias = extras\nextras['b'] = ['y']\ndel extras['a']\n\
+             outer = {'inner': alias}\nouter['inner']['c'] = ['z']\nsetup(extras_require=alias)\n",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            known(call.keyword("extras_require")),
+            Some(Py::Dict(vec![
+                ("b".to_owned(), strings(&["y"])),
+                ("c".to_owned(), strings(&["z"])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn copies_and_tuples_do_not_share_changes() {
+        for copy in [
+            "list(base)",
+            "sorted(base)",
+            "base + []",
+            "[*base]",
+            "[x for x in base]",
+        ] {
+            assert_eq!(
+                install_requires(&format!(
+                    "base = ['a']\nreqs = {copy}\nbase += ['b']\nsetup(install_requires=reqs)\n"
+                )),
+                Some(strings(&["a"])),
+                "{copy}"
+            );
+        }
+        assert_eq!(
+            install_requires(
+                "base = ('a',)\nreqs = base\nbase += ('b',)\nsetup(install_requires=reqs)\n"
+            ),
+            Some(strings(&["a"]))
+        );
+    }
+
+    #[test]
+    fn rebinding_in_a_loop_marks_aliases_partial() {
+        // The loop may run zero times, leaving `base` the object `reqs` names.
+        let call = evaluate(
+            "base = ['a']\nreqs = base\nfor x in xs:\n    base = base + [x]\nbase += ['b']\n\
+             setup(install_requires=reqs)\n",
+        )
+        .expect("setup() call");
+        let items = dependency_items(call.keyword("install_requires").expect("install_requires"));
+        assert!(!items.complete);
+        assert!(
+            items
+                .items
+                .contains(&DependencyItem::Requirement("b".to_owned()))
+        );
+    }
+
+    #[test]
+    fn self_reference_is_unknown_not_unbounded() {
+        let call = evaluate(
+            "base = ['a']\nbase += [base]\nextras = {}\nextras['self'] = extras\n\
+             setup(install_requires=base, extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        let install = dependency_items(call.keyword("install_requires").expect("install_requires"));
+        assert!(!install.complete);
+        assert_eq!(
+            install.items,
+            vec![DependencyItem::Requirement("a".to_owned())]
+        );
         assert_eq!(known(call.keyword("extras_require")), None);
     }
 }
