@@ -1,3 +1,10 @@
-# `#[cfg(kani)]` harnesses are never compiled by `cargo test`, so every mutant
-# in them is a guaranteed miss.
-exclude_re = ["verification::"]
+# Equivalent mutants: no test can tell them from the original. Match on the
+# mutant description, not the line number, so edits elsewhere keep them aligned.
+exclude_re = [
+    # `#[cfg(kani)]` harnesses are never compiled by `cargo test`, so every
+    # mutant in them is a guaranteed miss.
+    "verification::",
+    # Retrying every open error instead of only AlreadyExists still returns the
+    # same error after 16 tries: only the retry count changes.
+    "with true in create_temp_in",
+]
