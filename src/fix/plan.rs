@@ -590,6 +590,51 @@ mod tests {
     }
 
     #[test]
+    fn chk009_never_removes_an_opaque_declaration() {
+        let declaration = |index: usize, opaque| DeclaredDependency {
+            name: "boto3".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: format!("project.dependencies[{index}]"),
+            },
+            opaque,
+            included_via: Vec::new(),
+        };
+        let manifest = manifest_with(vec![declaration(0, false), declaration(1, true)]);
+        let report = IssueReport {
+            issues: vec![Issue {
+                rule: RuleId::Chk009,
+                severity: Severity::Warning,
+                confidence: Confidence::Certain,
+                message: "duplicate".to_owned(),
+                workspace_member: None,
+                location: IssueLocation {
+                    file: None,
+                    line: None,
+                    manifest: None,
+                },
+                subject: IssueSubject::Distribution {
+                    name: "boto3".to_owned(),
+                },
+                explain: None,
+            }],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
+    }
+
+    #[test]
     fn chk005_move_drops_only_a_poetry_only_constraint() {
         for (specifier, raw) in [("^1.2", "dulwich"), (">=1.2.1", "dulwich>=1.2.1")] {
             let manifest = manifest_with(vec![DeclaredDependency {
