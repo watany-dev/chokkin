@@ -15,13 +15,15 @@
 //!
 //! Last, the directories a file's own `sys.path` edits, or those of a
 //! `conftest.py` above it, may add (#719): the edit's argument is often a
-//! variable, so any path-like literal of the file names a candidate.
+//! variable, so any path-like literal of the file names a candidate. A plugin
+//! may report that a config file imports a module whose edits its own imports
+//! see (#779).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::parser::ParseSummary;
-use crate::plugins::{PytestImportSettings, pytest_import_settings};
+use crate::plugins::{PytestImportSettings, SysPathImport, pytest_import_settings};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, path_to_module};
 
 use super::types::import_root;
@@ -169,8 +171,14 @@ impl PytestImportPaths {
     /// Record the directories each file's `sys.path` hints name: a discovered
     /// directory ending with the hint, or the hint under the file's directory
     /// or one of its ancestors, the root included, when it exists on disk.
+    /// Each importer in `imports` also gets the directories of its import.
     #[must_use]
-    pub(crate) fn with_sys_path_hints(mut self, root: &Path, parse: &ParseSummary) -> Self {
+    pub(crate) fn with_sys_path_hints(
+        mut self,
+        root: &Path,
+        parse: &ParseSummary,
+        imports: &[SysPathImport],
+    ) -> Self {
         let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
         for dir in &self.dirs {
             by_name.entry(file_name(dir)).or_default().push(dir);
@@ -239,6 +247,17 @@ impl PytestImportPaths {
                 self.conftest_hinted.push((holder_dir.to_owned(), found));
             } else {
                 self.hinted.insert(module.path.clone(), found);
+            }
+        }
+        for import in imports {
+            let Some(dirs) = self.hinted.get(&import.imported).cloned() else {
+                continue;
+            };
+            let found = self.hinted.entry(import.importer.clone()).or_default();
+            for dir in dirs {
+                if !found.contains(&dir) {
+                    found.push(dir);
+                }
             }
         }
         self.hinted_on_disk = on_disk
@@ -824,7 +843,7 @@ mod tests {
         };
         let paths =
             PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
-                .with_sys_path_hints(temp.path(), &parse);
+                .with_sys_path_hints(temp.path(), &parse, &[]);
         // An undiscovered directory under an ancestor, checked on disk.
         assert!(paths.provides_fallback("tests/test_util.py", "check_docs"));
         assert!(!paths.provides_fallback("tests/test_util.py", "check_doc"));
@@ -880,7 +899,7 @@ mod tests {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let paths =
             PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
-                .with_sys_path_hints(temp.path(), &parse);
+                .with_sys_path_hints(temp.path(), &parse, &[]);
         let test = "tests/models/test_model.py";
         assert_eq!(
             paths.resolve_fallback(test, "helpers.fixtures"),
@@ -892,6 +911,35 @@ mod tests {
         );
         assert_eq!(paths.resolve_fallback(test, "helpers.missing"), None);
         assert_eq!(paths.resolve_fallback(test, "torch"), None);
+    }
+
+    #[test]
+    fn importers_see_the_directories_their_imports_hint() {
+        let files = [
+            "docs/conf.py",
+            "common/constants.py",
+            "common/exts/docroles.py",
+        ];
+        let parse = ParseSummary {
+            modules: vec![hinting("common/constants.py", &["exts"])],
+        };
+        let imports = [SysPathImport {
+            importer: "docs/conf.py".to_owned(),
+            imported: "common/constants.py".to_owned(),
+        }];
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths = |imports: &[SysPathImport]| {
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse, imports)
+        };
+        assert_eq!(
+            paths(&imports).resolve_fallback("docs/conf.py", "docroles"),
+            Some("common/exts/docroles.py")
+        );
+        assert_eq!(
+            paths(&[]).resolve_fallback("docs/conf.py", "docroles"),
+            None
+        );
     }
 
     #[test]

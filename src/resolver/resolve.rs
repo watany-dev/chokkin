@@ -6,7 +6,7 @@ use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::{ImportContext, ParseSummary, import_context_for_file};
-use crate::plugins::ModuleReference;
+use crate::plugins::{ModuleReference, SysPathImport};
 use crate::sources::{DiscoveredFile, DiscoveredSources, path_to_module};
 
 use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
@@ -38,6 +38,8 @@ pub struct ScopedDeclarations {
 /// imports in that file; every other file uses the project range.
 /// `workspace_members` marks cross-member imports as first-party so workspace
 /// packages do not become false missing-dependency findings.
+/// `sys_path_imports` lets an importer resolve through its import's
+/// `sys.path` edits.
 #[must_use]
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn resolve_imports_for_analysis(
@@ -46,6 +48,7 @@ pub fn resolve_imports_for_analysis(
     sources: &DiscoveredSources,
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
+    sys_path_imports: &[SysPathImport],
     workspace_members: &[ResolvedWorkspaceMember],
     script_targets: &BTreeMap<String, StdlibRange>,
     scoped: &ScopedDeclarations,
@@ -63,8 +66,11 @@ pub fn resolve_imports_for_analysis(
     let binary_resolutions = build_binary_map(config, &venv_index);
     let mut imports = Vec::new();
     let mut root_cache: RootCache = BTreeMap::new();
-    let pytest_paths =
-        PytestImportPaths::build(sources).with_sys_path_hints(&sources.root.path, parse);
+    let pytest_paths = PytestImportPaths::build(sources).with_sys_path_hints(
+        &sources.root.path,
+        parse,
+        sys_path_imports,
+    );
     let local_modules = local_modules(&sources.files, workspace_members);
     let indexed_roots = indexed_roots(sources);
     let owners = MemberOwners::new(workspace_members);

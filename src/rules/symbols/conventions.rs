@@ -189,7 +189,14 @@ pub(super) fn host_hook_symbols(
                 name if name.starts_with("pytest_") => {
                     pytest_plugins.contains(module) || pytest_files.contains(entry.path.as_str())
                 },
-                "setup" => extensions.contains(module),
+                // An extension found on a `sys.path` directory is named
+                // without the package its file sits in (`docroles` for
+                // `sphinx_exts.docroles`, #779).
+                "setup" => extensions.iter().any(|extension| {
+                    module
+                        .strip_suffix(extension)
+                        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
+                }),
                 _ => false,
             }
         })

@@ -47,6 +47,17 @@ pub struct ScriptReference {
     pub origin: ReferenceOrigin,
 }
 
+/// A config file imports a first-party module whose `sys.path` edits apply to
+/// the config's own imports, as Sphinx's `conf.py` does with a shared
+/// constants module (#779).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SysPathImport {
+    /// Root-relative path of the importing file.
+    pub importer: String,
+    /// Root-relative path of the imported module.
+    pub imported: String,
+}
+
 /// `module:symbol` reference (uvicorn, gunicorn, etc.).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolReference {
@@ -96,6 +107,8 @@ pub struct PluginContribution {
     pub binary_usages: Vec<BinaryUsage>,
     /// Framework-used file globs.
     pub framework_used_globs: Vec<FrameworkUsedGlob>,
+    /// Imports whose `sys.path` edits the importer's imports see.
+    pub sys_path_imports: Vec<SysPathImport>,
 }
 
 impl PluginContribution {
@@ -109,6 +122,7 @@ impl PluginContribution {
             symbol_refs: Vec::new(),
             binary_usages: Vec::new(),
             framework_used_globs: Vec::new(),
+            sys_path_imports: Vec::new(),
         }
     }
 }
@@ -164,6 +178,13 @@ impl PluginHints {
         self.contributions
             .iter()
             .flat_map(|contrib| contrib.symbol_refs.iter())
+    }
+
+    /// Iterate all imports whose `sys.path` edits the importer sees.
+    pub fn sys_path_imports(&self) -> impl Iterator<Item = &SysPathImport> {
+        self.contributions
+            .iter()
+            .flat_map(|contrib| contrib.sys_path_imports.iter())
     }
 
     /// Iterate all framework-used globs.

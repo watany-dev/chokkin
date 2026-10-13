@@ -74,6 +74,7 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         &sources,
         &parse,
         &plugin_refs,
+        &[],
         &loaded.workspace_members,
         &BTreeMap::new(),
         &ScopedDeclarations::default(),

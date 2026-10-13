@@ -30,7 +30,9 @@ pub fn analyze_reachability(
     parse: &ParseSummary,
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
-    let module_index = ModuleIndex::build(graph, sources).with_sys_path_hints(sources, parse);
+    let sys_path_imports: Vec<_> = plugins.sys_path_imports().cloned().collect();
+    let module_index =
+        ModuleIndex::build(graph, sources).with_sys_path_hints(sources, parse, &sys_path_imports);
     let framework = apply_framework_globs(graph, sources, plugins)?;
     let bfs = run_reachability_bfs(
         graph,

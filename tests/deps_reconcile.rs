@@ -71,6 +71,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         &sources,
         &parse,
         &plugin_refs,
+        &[],
         &loaded.workspace_members,
         &BTreeMap::new(),
         &ScopedDeclarations::default(),

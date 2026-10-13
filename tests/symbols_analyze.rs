@@ -71,6 +71,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         &sources,
         &parse,
         &plugin_refs,
+        &[],
         &loaded.workspace_members,
         &BTreeMap::new(),
         &ScopedDeclarations::default(),

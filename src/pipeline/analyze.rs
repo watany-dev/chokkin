@@ -242,6 +242,7 @@ fn run_analysis_core(
     let mut graph = build_analysis_graph(probe, sources, &parse, &plugins)?;
 
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();
+    let sys_path_imports: Vec<_> = plugins.sys_path_imports().cloned().collect();
     let script_targets: BTreeMap<_, _> = probe
         .scripts
         .iter()
@@ -257,6 +258,7 @@ fn run_analysis_core(
         sources,
         &parse,
         &plugin_refs,
+        &sys_path_imports,
         &probe.workspace_members,
         &script_targets,
         &scoped_declarations(probe),
