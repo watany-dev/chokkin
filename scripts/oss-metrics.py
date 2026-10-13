@@ -346,8 +346,6 @@ def downgrade_vs_vanish(
     recontexted: Counter = Counter()
     demoted_n: Counter = Counter()
     info_n: Counter = Counter()
-    # --strict raises some severities and changes verdicts (#716), so a GONE
-    # is matched against HEAD by confidence and count only.
     hidden: dict[tuple[str, str, str], Counter] = {}
     for status, slug, code, fp, before, after in default_rows:
         if status == "CHANGED" and demoted(before, after):
