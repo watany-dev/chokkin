@@ -56,6 +56,7 @@ fn build_graph_registers_files_and_dependencies() {
             ("tests/test_module.py", FileContext::Test, FileKind::Python),
         ]
     );
+    assert_eq!(graph.file_count(), files.len());
 
     assert_eq!(graph.module_count(), 1);
     let acme = graph.module_id("acme").expect("first-party package module");
