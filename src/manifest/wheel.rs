@@ -507,12 +507,12 @@ mod tests {
 
     #[test]
     fn a_dotted_backend_is_no_build_script() {
-        assert!(
+        assert_eq!(
             in_tree_backend(
                 "[build-system]\nbuild-backend = \"poetry.core.masonry.api\"\n\
                  backend-path = [\"src\"]\n",
-            )
-            .is_empty()
+            ),
+            Vec::<String>::new()
         );
     }
 
