@@ -93,9 +93,9 @@ exit 2 で止まる。
 | 列 | 意味 |
 | --- | --- |
 | GONE | 既定 run の GONE (`finding-diff.tsv`) |
-| Recontexted | GONE のうち、HEAD の strict 出力に同じ fingerprint が baseline より低くない level で残るもの (文脈の再分類) |
-| Demoted | 既定 run の CHANGED のうち severity か confidence が下がったもの (どちらも上がっていない) と、GONE のうち HEAD の strict 出力に低い level でだけ残るもの (`maybe` への降格) |
-| To info | Demoted のうち warning / error から info になったもの |
+| Recontexted | GONE のうち、HEAD の strict 出力にだけ同じ fingerprint が `maybe` より上の confidence で残るもの (文脈の再分類) |
+| Demoted | 既定 run の CHANGED のうち severity が下がったもの (severity が同じなら confidence が下がったもの) と、GONE のうち HEAD の strict 出力にだけ `maybe` で残るもの (`maybe` への降格) |
+| To info | Demoted の CHANGED のうち warning / error から info になったもの |
 | Vanished tp / fp / other | strict 同士の GONE (`finding-diff-strict.tsv`、消失) を label 別に数えたもの |
 
 Recontexted は、既定 run の対象から外れただけで level は変わっていない finding を数える。
@@ -104,8 +104,10 @@ Recontexted は、既定 run の対象から外れただけで level は変わ�
 (fastmcp / llama_index / langchain の `examples/**` の CHK003 / CHK004) はすべてこれだった。
 本当の降格は Demoted で、info は JSON にもともと出るので、warning → info の降格は GONE ではなく
 CHANGED 側に現れる。GONE に混ざる降格は、既定の confidence filter で隠れる `maybe` への降格だけ
-になる (#784)。v0.7.3 → v0.7.4 の Demoted は 341 件 (CHANGED 349 件から level が上がった
-CHK004 8 件を除いたもの)、そのうち To info は 165 件 (CHK010 134、CHK003 27、CHK009 4) だった。
+になる (#784)。`--strict` は一部の severity も上げるので、GONE と HEAD の strict 出力は
+confidence と件数だけで突き合わせ、HEAD の既定 run にも出ている分は差し引く。
+v0.7.3 → v0.7.4 の Demoted は 341 件 (CHANGED 349 件から level が上がった CHK004 8 件を
+除いたもの)、そのうち To info は 165 件 (CHK010 134、CHK003 27、CHK009 4) だった。
 どの列も gate には掛からない。
 
 gate (`--gate`) が落ちるのは `tp` が消えたときだけ。ラベル無し (other) の消失は件数を
