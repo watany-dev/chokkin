@@ -1,4 +1,6 @@
 //! Borrowed inputs shared by dependency and symbol analysis.
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::{
     graph::ProjectGraph, parser::ParseSummary, reachability::ReachabilityReport,
     resolver::ResolutionIndex, sources::DiscoveredSources,
@@ -26,4 +28,7 @@ pub struct DependencyRuleContext<'a> {
     pub config: &'a crate::config::ChokkinConfig,
     /// Strict mode (`--strict`).
     pub strict: bool,
+    /// Root-relative build script → normalized `[build-system].requires` of
+    /// its manifest (#735).
+    pub build_scripts: &'a BTreeMap<String, BTreeSet<String>>,
 }

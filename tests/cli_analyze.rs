@@ -2476,6 +2476,33 @@ fn binary_hatch_build_scripts_are_dev_entry_roots() {
     );
 }
 
+/// openai-python's `scripts/hatch_metadata.py` imports `hatchling`, which its
+/// `build` group declares: the build script uses it, whatever group declares
+/// it (#783).
+#[test]
+fn binary_build_script_imports_use_declared_groups() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\", \"hatch-fancy-pypi-readme\"]\n\
+             build-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"acme\"\nversion = \"0.1.0\"\n\
+             dependencies = [\"hatch-fancy-pypi-readme\"]\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [dependency-groups]\nbuild = [\"hatchling\"]\n\n\
+             [tool.hatch.metadata.hooks.custom]\npath = \"scripts/hatch_metadata.py\"\n",
+        ),
+        (
+            "scripts/hatch_metadata.py",
+            "import hatch_fancy_pypi_readme\nimport hatchling\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+    ]);
+    let issues = json_issues(project.path(), &["--strict"]);
+    assert_eq!(issue_keys(&issues), [], "{issues:#?}");
+}
+
 /// poetry's `poetry.masonry.api` re-exports the PEP 517 hooks for projects
 /// that name it as their `build-backend`; nothing in the repository imports
 /// it (#782).
