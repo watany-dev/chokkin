@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `sys.path` edits of that module apply to `conf.py`, so airflow's
   `devel-common/src/sphinx_exts` modules are no longer CHK001 and their
   `setup` is no longer CHK006 (#779).
+- The bundled package map maps the documentation extensions whose import
+  name differs from the distribution: `sphinx-argparse` to `sphinxarg`,
+  `sphinx-autoapi` to `autoapi`, `sphinx-notfound-page` to `notfound`,
+  `sphinx-autodoc2` to `autodoc2`, `pymdown-extensions` to `pymdownx`,
+  `mkdocs-macros-plugin` to `mkdocs_macros`, and `mkdocstrings-python` to
+  `mkdocstrings_handlers.python`. airflow's `sphinxarg` and `autoapi` Sphinx
+  extensions are no longer CHK010 (#822).
 
 ## [0.7.5] - 2026-10-12
 
