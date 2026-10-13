@@ -7,6 +7,7 @@ use crate::config::PluginId;
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::parser::{ImportContext, ParsedModule, SymbolKind};
 use crate::plugins::{DJANGO_SETTINGS_LABEL, PluginHints};
+use crate::reachability::ReachabilityReport;
 
 use super::graph::{RegistryEntry, SymbolId};
 use super::public::{star_closure, star_imports};
@@ -169,6 +170,7 @@ pub(super) fn host_hook_symbols(
     modules: &[&ParsedModule],
     plan: &EntryPlan,
     plugins: &PluginHints,
+    reachability: &ReachabilityReport,
 ) -> Vec<SymbolId> {
     let pytest_plugins: HashSet<&str> = modules
         .iter()
@@ -192,7 +194,19 @@ pub(super) fn host_hook_symbols(
                 .map(|module| module.path.as_str()),
         )
         .collect();
-    let extensions: HashSet<&str> = plugin_module_refs(plugins, PluginId::Sphinx).collect();
+    // The file an extension name loads, not every module ending with it: a
+    // name found on a `sys.path` directory drops its package (#779).
+    let extension_files: HashSet<&str> = plugins
+        .contributions
+        .iter()
+        .filter(|contrib| contrib.plugin == PluginId::Sphinx)
+        .flat_map(|contrib| &contrib.module_refs)
+        .filter_map(|reference| {
+            let key = (reference.origin.file.clone(), reference.module.clone());
+            reachability.plugin_ref_files.get(&key)
+        })
+        .map(String::as_str)
+        .collect();
     let backend_files: HashSet<&str> = plan
         .roots
         .iter()
@@ -214,7 +228,7 @@ pub(super) fn host_hook_symbols(
                 name if name.starts_with("pytest_") => {
                     pytest_plugins.contains(module) || pytest_files.contains(entry.path.as_str())
                 },
-                "setup" => extensions.contains(module),
+                "setup" => extension_files.contains(entry.path.as_str()),
                 name if BUILD_BACKEND_HOOKS.contains(&name) => {
                     backend_files.contains(entry.path.as_str())
                 },

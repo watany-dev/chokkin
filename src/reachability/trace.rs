@@ -28,6 +28,8 @@ pub fn trace_to_file(report: &ReachabilityReport, target: FileId) -> Option<Trac
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use indexmap::IndexSet;
 
     use super::*;
@@ -49,6 +51,7 @@ mod tests {
             framework_used: IndexSet::new(),
             predecessors: indexmap::IndexMap::new(),
             reached_opaque_dynamic_import: false,
+            plugin_ref_files: HashMap::new(),
         };
         assert!(trace_to_file(&report, file_id).is_none());
     }
@@ -115,6 +118,7 @@ mod tests {
             framework_used: IndexSet::new(),
             predecessors,
             reached_opaque_dynamic_import: false,
+            plugin_ref_files: HashMap::new(),
         };
 
         let trace = trace_to_file(&report, child).expect("trace");

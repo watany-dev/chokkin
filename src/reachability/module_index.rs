@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
+use crate::plugins::SysPathImport;
 use crate::resolver::PytestImportPaths;
 use crate::sources::{DiscoveredSources, path_to_module};
 
@@ -40,8 +41,11 @@ impl ModuleIndex {
         mut self,
         sources: &DiscoveredSources,
         parse: &ParseSummary,
+        imports: &[SysPathImport],
     ) -> Self {
-        self.pytest = self.pytest.with_sys_path_hints(&sources.root.path, parse);
+        self.pytest = self
+            .pytest
+            .with_sys_path_hints(&sources.root.path, parse, imports);
         self
     }
 

@@ -74,6 +74,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &sources,
         &parse,
         &plugin_refs,
+        &[],
         &loaded.workspace_members,
         &BTreeMap::new(),
         &ScopedDeclarations::default(),

@@ -89,6 +89,7 @@ pub fn analyze_with_context(
         &reachable_modules,
         entry,
         plugins,
+        reachability,
     ));
     external_symbols.extend(config_star_symbols(
         plugins,

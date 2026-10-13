@@ -1231,6 +1231,59 @@ fn binary_sphinx_extensions_resolve_in_directories_conf_adds() {
     );
 }
 
+/// airflow: `conf.py` takes its extensions from a constants module, and that
+/// module is what puts the extensions' directory on `sys.path` (#779).
+#[test]
+fn binary_sphinx_extensions_follow_an_imported_constants_module() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        (
+            "docs/conf.py",
+            "from common.constants import EXTS as BASE\n\nextensions = BASE\nextensions.append(\"ext_appended\")\n",
+        ),
+        (
+            "src/common/constants.py",
+            "import os\nimport sys\n\nfrom tools import ext_constant\n\nsys.path.append(os.path.join(os.path.dirname(__file__), \"exts\"))\nEXTS = [\"ext_constant\"]\n",
+        ),
+        (
+            "src/common/exts/ext_constant.py",
+            "def setup(app):\n    pass\n",
+        ),
+        (
+            "src/common/exts/ext_appended.py",
+            "def setup(app):\n    pass\n",
+        ),
+        (
+            "src/common/exts/ext_unlisted.py",
+            "def setup(app):\n    pass\n",
+        ),
+        ("src/tools/ext_constant.py", "def setup(app):\n    pass\n"),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    // Sphinx calls the `setup` of an extension found on the hinted path, not
+    // that of a package module sharing its name.
+    assert!(keys.iter().all(|(code, _)| code != "CHK010"), "{keys:?}");
+    let unused_symbols: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK006")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(
+        unused_symbols,
+        ["src/tools/ext_constant.py:setup"],
+        "{keys:?}"
+    );
+    let unused: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK001")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unused, ["src/common/exts/ext_unlisted.py"], "{keys:?}");
+}
+
 /// airflow: `[tool.pytest]` (pytest 9) adds `example_*.py`, and the root
 /// `testpaths` does not cover the member suites passed to pytest by path (#603).
 #[test]

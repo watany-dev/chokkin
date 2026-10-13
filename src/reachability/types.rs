@@ -1,5 +1,7 @@
 //! Reachability analysis types (pipeline step 9).
 
+use std::collections::HashMap;
+
 use indexmap::IndexSet;
 
 use crate::config::{Confidence, ProjectMode};
@@ -112,4 +114,7 @@ pub struct ReachabilityReport {
     pub(super) predecessors: indexmap::IndexMap<FileId, ReachPredecessor>,
     /// Whether a reachable file calls a loader with a non-literal module name.
     pub(super) reached_opaque_dynamic_import: bool,
+    /// The file each plugin module reference, keyed by its origin file and
+    /// module, resolves to: the one the host loads under that name (#779).
+    pub(crate) plugin_ref_files: HashMap<(String, String), String>,
 }

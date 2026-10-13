@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imports resolve through `[build-system].requires` (#782).
 - The PEP 517 and PEP 660 hooks of either kind of build backend are no longer
   CHK006, since the frontend calls them (#782).
+- Sphinx extensions that `docs/conf.py` takes from a constant in an imported
+  first-party module (`extensions = BASIC_SPHINX_EXTENSIONS`) are now read,
+  and the `sys.path` edits of that module apply to `conf.py`, so airflow's
+  `devel-common/src/sphinx_exts` modules are no longer CHK001 and their
+  `setup` is no longer CHK006 (#779).
 
 ## [0.7.5] - 2026-10-12
 
