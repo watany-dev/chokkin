@@ -10,7 +10,7 @@ use ignore::overrides::Override;
 use crate::config::EntrySpec;
 use crate::path_util::normalize_rel_path;
 
-use super::cache::{Ancestors, DirIgnore, SourcesCache, gitignore_skips};
+use super::cache::{Ancestors, DirIgnore, RootLoad, SourcesCache, gitignore_skips};
 use super::context::assign_file_context;
 use super::error::SourcesError;
 use super::types::{DiscoveredFile, FileContext, FileKind};
@@ -47,10 +47,10 @@ pub(super) fn load_gitignore(
     cache: &SourcesCache,
 ) -> (Option<Arc<DirIgnore>>, Option<SourcesWarning>) {
     let dir = cache.dir(root);
-    match dir.root_gitignore() {
-        Ok(true) => (Some(dir), None),
-        Ok(false) => (None, None),
-        Err(()) => (
+    match dir.root_load() {
+        RootLoad::Loaded => (Some(dir), None),
+        RootLoad::Missing => (None, None),
+        RootLoad::Unreadable => (
             None,
             Some(SourcesWarning::GitignoreUnreadable {
                 path: GITIGNORE_PATH.to_owned(),

@@ -54,8 +54,10 @@ pub(super) struct DirIgnore {
     root_load: RootLoad,
 }
 
+/// Whether [`super::walk::load_gitignore`] finds the `.gitignore`, finds
+/// none, or warns that it is unreadable.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RootLoad {
+pub(super) enum RootLoad {
     Missing,
     Unreadable,
     Loaded,
@@ -172,10 +174,10 @@ impl DirIgnore {
         let mut errors = Vec::new();
 
         let gitignore_path = dir.join(".gitignore");
-        let (gitignore, load) = Rules::load(dir, &gitignore_path, shared, &mut errors);
+        let (gitignore, clean) = Rules::load(dir, &gitignore_path, shared, &mut errors);
         let root_load = if !gitignore_path.is_file() {
             RootLoad::Missing
-        } else if load.added_cleanly && load.built {
+        } else if clean {
             RootLoad::Loaded
         } else {
             RootLoad::Unreadable
@@ -203,14 +205,8 @@ impl DirIgnore {
         (!self.errors.is_empty()).then(|| self.errors.join("\n"))
     }
 
-    /// Whether [`super::walk::load_gitignore`] finds the `.gitignore`
-    /// (`Ok(true)`), finds none, or warns that it is unreadable (`Err`).
-    pub(super) fn root_gitignore(&self) -> Result<bool, ()> {
-        match self.root_load {
-            RootLoad::Missing => Ok(false),
-            RootLoad::Unreadable => Err(()),
-            RootLoad::Loaded => Ok(true),
-        }
+    pub(super) const fn root_load(&self) -> RootLoad {
+        self.root_load
     }
 
     /// Whether the directory's `.gitignore` ignores `path` or one of its
@@ -238,39 +234,35 @@ enum Rules {
 
 impl Rules {
     /// `ignore`'s `create_gitignore` for the single file `path` of `dir`,
-    /// rendering its errors into `errors`.
+    /// rendering its errors into `errors`; `false` as [`create_gitignore`].
     fn load(
         dir: &Path,
         path: &Path,
         shared: &Mutex<HashMap<Vec<u8>, Arc<Gitignore>>>,
         errors: &mut Vec<String>,
-    ) -> (Self, Load) {
-        let clean = Load {
-            added_cleanly: true,
-            built: true,
-        };
+    ) -> (Self, bool) {
         if !(cfg!(windows) || path.exists()) {
-            return (Self::None, clean);
+            return (Self::None, true);
         }
         let Ok(content) = fs::read(path) else {
-            let (gitignore, load) = create_gitignore(dir, path, errors);
-            return (Self::Own(gitignore), load);
+            let (gitignore, clean) = create_gitignore(dir, path, errors);
+            return (Self::Own(gitignore), clean);
         };
         let root = dir.strip_prefix("./").unwrap_or(dir).to_path_buf();
         if let Some(gitignore) = lock(shared).get(&content) {
             let gitignore = Arc::clone(gitignore);
-            return (Self::Shared { root, gitignore }, clean);
+            return (Self::Shared { root, gitignore }, true);
         }
         let Some(gitignore) = compile(&content) else {
-            let (gitignore, load) = create_gitignore(dir, path, errors);
-            return (Self::Own(gitignore), load);
+            let (gitignore, clean) = create_gitignore(dir, path, errors);
+            return (Self::Own(gitignore), clean);
         };
         let gitignore = Arc::clone(
             lock(shared)
                 .entry(content)
                 .or_insert_with(|| Arc::new(gitignore)),
         );
-        (Self::Shared { root, gitignore }, clean)
+        (Self::Shared { root, gitignore }, true)
     }
 
     fn matched<'a>(&'a self, path: &Path, is_dir: bool) -> Match<&'a Glob> {
@@ -350,14 +342,9 @@ fn is_file_name(path: &Path) -> bool {
     }
 }
 
-struct Load {
-    added_cleanly: bool,
-    built: bool,
-}
-
 /// `ignore`'s `create_gitignore` for a single file, rendering its errors
-/// into `errors`.
-fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<String>) -> (Gitignore, Load) {
+/// into `errors`; `false` when the file failed to add or the set to build.
+fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<String>) -> (Gitignore, bool) {
     let mut builder = GitignoreBuilder::new(dir);
     let mut added_cleanly = true;
     if (cfg!(windows) || path.exists())
@@ -369,24 +356,11 @@ fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<String>) -> (Gitig
         }
     }
     match builder.build() {
-        Ok(gitignore) => (
-            gitignore,
-            Load {
-                added_cleanly,
-                built: true,
-            },
-        ),
+        Ok(gitignore) => (gitignore, added_cleanly),
         Err(error) => {
             errors.push(error.to_string());
-            (
-                GitignoreBuilder::new(dir)
-                    .build()
-                    .unwrap_or_else(|_| Gitignore::empty()),
-                Load {
-                    added_cleanly,
-                    built: false,
-                },
-            )
+            let empty = GitignoreBuilder::new(dir).build();
+            (empty.unwrap_or_else(|_| Gitignore::empty()), false)
         },
     }
 }
