@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
 use crate::manifest::{ProjectMetadata, UvSourceKind, UvToolSettings, normalize_distribution_name};
-use crate::sources::{LayoutInfo, infer_layout};
+use crate::sources::{LayoutInfo, infer_layout, namespace_packages};
 
 /// Returns `true` when `import_root` matches a first-party package.
 #[must_use]
@@ -21,12 +21,13 @@ pub(crate) fn is_first_party_import(
         .packages
         .iter()
         .chain(&layout.local_packages)
-        .chain(
-            layout
-                .members
+        .chain(layout.members.iter().flat_map(|member| {
+            member
+                .layout
+                .packages
                 .iter()
-                .flat_map(|member| &member.layout.packages),
-        )
+                .chain(&member.namespace_packages)
+        }))
         .any(|package| normalize_distribution_name(package) == import_norm)
     {
         return true;
@@ -101,8 +102,11 @@ pub(super) fn path_source_imports(
             name: Some(source.name.clone()),
             ..ProjectMetadata::default()
         };
-        let (layout, _) = infer_layout(&root.join(path), &metadata, &UvToolSettings::default());
+        let tree = root.join(path);
+        let (layout, _) = infer_layout(&tree, &metadata, &UvToolSettings::default());
+        let namespace = namespace_packages(&tree, &layout);
         let mut packages = layout.packages;
+        packages.extend(namespace);
         if packages.is_empty() {
             packages.push(source.name.replace('-', "_"));
         }

@@ -862,6 +862,22 @@ fn source_dependency_is_used_through_its_member_tree() {
     }
 }
 
+/// Issue #557: a member that ships `acme.core` as a PEP 420 namespace
+/// package (no `acme/__init__.py`) is first-party and used all the same.
+/// The distribution is `corelib`, so no name match can stand in for the
+/// member tree.
+#[test]
+fn source_dependency_with_namespace_package_is_used_through_its_member_tree() {
+    for name in [
+        "uv_path_source_renamed_module_namespace",
+        "uv_path_source_renamed_module_src_layout_namespace",
+        "uv_workspace_renamed_module_src_layout_namespace",
+        "uv_workspace_renamed_module_flat_member_namespace",
+    ] {
+        assert_eq!(analyze_issues(name), [], "{name}");
+    }
+}
+
 fn analyze_issues(name: &str) -> Vec<chokkin::internals::Issue> {
     chokkin::analyze_project(
         &fixture(name),

@@ -252,6 +252,7 @@ mod tests {
         root_layout.members = vec![MemberLayout {
             path: member.to_owned(),
             layout: layout(),
+            namespace_packages: Vec::new(),
         }];
         let mut sources = DiscoveredSources {
             root: ProjectRoot {

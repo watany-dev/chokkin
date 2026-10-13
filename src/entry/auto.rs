@@ -303,6 +303,7 @@ mod tests {
             members: vec![MemberLayout {
                 path: "integrations/foo".to_owned(),
                 layout: src_layout(),
+                namespace_packages: Vec::new(),
             }],
             ..src_layout()
         };
@@ -329,6 +330,7 @@ mod tests {
                     packages: vec!["plugin".to_owned()],
                     ..src_layout()
                 },
+                namespace_packages: Vec::new(),
             }],
             ..src_layout()
         };

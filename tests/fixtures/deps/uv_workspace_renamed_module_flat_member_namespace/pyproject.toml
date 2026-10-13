@@ -1,0 +1,13 @@
+[project]
+name = "app"
+version = "0.1.0"
+dependencies = ["corelib"]
+
+[project.scripts]
+app = "app.main:main"
+
+[tool.uv.sources]
+corelib = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]

@@ -24,6 +24,7 @@ use crate::plugins::{
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredSources, FileContext, FileKind, MemberLayout, apply_member_context, discover_sources,
+    namespace_packages,
 };
 
 use super::error::ProbeError;
@@ -146,13 +147,7 @@ pub(super) fn probe_project_with_cache(
             &loaded.effective.dependencies,
         );
     }
-    sources.layout.members = workspace_inputs
-        .iter()
-        .map(|input| MemberLayout {
-            path: input.member.path.clone(),
-            layout: input.sources.layout.clone(),
-        })
-        .collect();
+    sources.layout.members = member_layouts(&root.path, &workspace_inputs);
     let build_scripts = mark_build_scripts_dev(&mut sources, &manifest, &workspace_inputs);
     apply_member_context(&mut sources, loaded.effective.production);
     let (scripts, script_warnings) = discover_inline_scripts(
@@ -186,6 +181,22 @@ pub(super) fn probe_project_with_cache(
         plugin_activations,
         warnings,
     })
+}
+
+/// Each member's layout and the PEP 420 namespace packages its tree ships
+/// (#557), which the root's layout cannot see.
+fn member_layouts(root: &Path, inputs: &[WorkspaceMemberInputs]) -> Vec<MemberLayout> {
+    inputs
+        .iter()
+        .map(|input| MemberLayout {
+            path: input.member.path.clone(),
+            layout: input.sources.layout.clone(),
+            namespace_packages: namespace_packages(
+                &root.join(&input.member.path),
+                &input.sources.layout,
+            ),
+        })
+        .collect()
 }
 
 /// hatchling runs its build hooks while building and never ships them, so

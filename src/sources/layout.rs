@@ -303,6 +303,56 @@ fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
     packages
 }
 
+/// Top-level PEP 420 namespace packages under the directory `layout` names
+/// modules from (#557): `acme/` without `__init__.py` that holds a package
+/// (`src/acme/core/__init__.py`). The package root of a src layout, or for
+/// an unknown layout `src/` when present and the root otherwise; a flat
+/// layout distributes only its packages.
+#[must_use]
+pub(crate) fn namespace_packages(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+    let (base, skip_non_packages) = match layout.layout {
+        ProjectLayout::Src => (root.join(&layout.package_root), false),
+        ProjectLayout::Unknown if root.join("src").is_dir() => (root.join("src"), false),
+        ProjectLayout::Unknown => (root.to_path_buf(), true),
+        ProjectLayout::Flat => return Vec::new(),
+    };
+    let Ok(entries) = fs::read_dir(base) else {
+        return Vec::new();
+    };
+    let mut packages: Vec<String> = entries
+        .flatten()
+        .filter(entry_is_dir)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            let skipped = name.contains('.') || (skip_non_packages && is_non_package_dir(name));
+            let namespace = !skipped
+                && !path.join("__init__.py").is_file()
+                && holds_package(&path, NAMESPACE_DEPTH);
+            namespace.then(|| name.to_owned())
+        })
+        .collect();
+    packages.sort();
+    packages
+}
+
+/// Directory levels searched below a namespace candidate for a regular
+/// package (`google/cloud/storage/__init__.py` is two).
+const NAMESPACE_DEPTH: usize = 3;
+
+fn holds_package(dir: &Path, depth: usize) -> bool {
+    depth > 0
+        && fs::read_dir(dir).is_ok_and(|entries| {
+            entries.flatten().filter(entry_is_dir).any(|entry| {
+                let path = entry.path();
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| !name.contains('.'))
+                    && (path.join("__init__.py").is_file() || holds_package(&path, depth - 1))
+            })
+        })
+}
+
 /// `src/` keeps its whole tree (top-level modules, namespace packages);
 /// any other package root only contributes its packages, so `lib/tests`
 /// next to `lib/streamlit` stays out of the runtime set.
@@ -518,6 +568,7 @@ mod tests {
                 packages: packages.iter().map(|&package| package.to_owned()).collect(),
                 ..Default::default()
             },
+            namespace_packages: Vec::new(),
         };
         let layout = LayoutInfo {
             members: vec![
@@ -563,6 +614,7 @@ mod tests {
                     inferred_globs: Vec::new(),
                     members: Vec::new(),
                 },
+                namespace_packages: Vec::new(),
             }],
             ..Default::default()
         };
@@ -926,6 +978,39 @@ mod tests {
             infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
         assert_eq!(layout.layout, ProjectLayout::Unknown);
         assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn namespace_packages_hold_a_regular_package() {
+        let temp = tree(&["src/acme/core", "src/plain", "src/google/cloud/storage"]);
+        fs::create_dir_all(temp.path().join("src/scripts_only")).expect("create dir");
+        fs::write(temp.path().join("src/scripts_only/run.py"), "").expect("write");
+        let unknown = LayoutInfo::default();
+        assert_eq!(
+            namespace_packages(temp.path(), &unknown),
+            ["acme", "google"]
+        );
+        let src = LayoutInfo {
+            layout: ProjectLayout::Src,
+            package_root: "src".to_owned(),
+            ..LayoutInfo::default()
+        };
+        assert_eq!(namespace_packages(temp.path(), &src), ["acme", "google"]);
+    }
+
+    #[test]
+    fn namespace_packages_skip_root_non_package_dirs_and_flat_layouts() {
+        let temp = tree(&["acme/core", "tests/unit", "docs/source/ext"]);
+        assert_eq!(
+            namespace_packages(temp.path(), &LayoutInfo::default()),
+            ["acme"]
+        );
+        let flat = LayoutInfo {
+            layout: ProjectLayout::Flat,
+            packages: vec!["other".to_owned()],
+            ..LayoutInfo::default()
+        };
+        assert_eq!(namespace_packages(temp.path(), &flat), Vec::<String>::new());
     }
 
     #[test]
