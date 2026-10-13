@@ -110,11 +110,12 @@ mod tests {
     }
 
     #[test]
-    fn one_hook_or_a_test_module_is_not_a_root() {
+    fn one_hook_other_exports_or_a_test_module_is_not_a_root() {
         let roots = roots_for(
             Vec::new(),
             vec![
                 module("src/acme/wheel.py", &["build_wheel"], &[]),
+                module("src/acme/util.py", &[], &["helper"]),
                 module(
                     "tests/test_backend.py",
                     &["build_wheel", "build_sdist"],
@@ -123,6 +124,7 @@ mod tests {
             ],
             &[
                 ("src/acme/wheel.py", FileContext::Runtime),
+                ("src/acme/util.py", FileContext::Runtime),
                 ("tests/test_backend.py", FileContext::Test),
             ],
         );
