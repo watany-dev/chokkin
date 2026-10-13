@@ -427,7 +427,7 @@ mod tests {
         write_file(&root.join("dirs/x.py"), "");
 
         let outcomes = assert_equivalent(&[root.clone(), root.join("pkg"), root.join("dirs")], &[]);
-        assert!(!outcomes[0].1.is_empty());
+        assert_ne!(outcomes[0].1, []);
         assert!(!paths(&outcomes[0]).contains(&"pkg/types.pyi"));
     }
 
@@ -482,7 +482,7 @@ mod tests {
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
 
         let outcomes = assert_equivalent(std::slice::from_ref(&link), &[]);
-        assert!(!outcomes[0].1.is_empty());
+        assert_ne!(outcomes[0].1, []);
         assert_eq!(paths(&outcomes[0]), ["app.py"]);
     }
 
