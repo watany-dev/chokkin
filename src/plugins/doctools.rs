@@ -277,7 +277,8 @@ mod tests {
         assert_eq!(
             extensions(
                 "extensions = ['a']\nextensions.append('b')\n\
-                 extensions.extend(['c'])\nextensions += ['d']\n"
+                 extensions.extend(['c'])\nextensions += ['d']\n\
+                 templates.append('x')\nextensions.remove('a')\n"
             ),
             ["a", "b", "c", "d"]
         );
