@@ -50,7 +50,9 @@ def cargo_version() -> str:
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
     print("+", " ".join(cmd), flush=True)
-    return subprocess.run(cmd, capture_output=True, text=True, check=False, **kwargs)
+    # chokkin writes UTF-8; text=True alone decodes with cp1252 on Windows.
+    return subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
+                          check=False, **kwargs)
 
 
 def install(wheel: Path, env_dir: Path) -> Path:
