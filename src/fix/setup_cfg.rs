@@ -199,7 +199,10 @@ mod tests {
              [options.extras_require]\ntest =\n    pytest\n",
         )
         .expect("write");
-        remove_dependency(&path, "boto3").expect("remove");
+        assert_eq!(
+            remove_dependency(&path, "boto3").expect("remove"),
+            "removed `boto3` from setup.cfg"
+        );
         let updated = std::fs::read_to_string(&path).expect("read");
         assert_eq!(
             updated,
