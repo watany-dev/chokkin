@@ -28,7 +28,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_DEV_DEBUG: "0"
-  # A PR mutates the lines it changes; schedule and dispatch mutate everything.
   MUTANTS_TARGET: ${{ github.event_name == 'pull_request' && 'mutants-diff' || 'mutants' }}
   BASE: origin/${{ github.base_ref }}
 
@@ -52,7 +51,7 @@ jobs:
           tool: cargo-mutants@27.1.0
       - name: Count mutants and pick the shard count
         id: plan
-        # About 100 mutants per shard (~15 min at -j 2), at most 8 shards.
+        # About 100 mutants per shard (~20 min at -j 2), at most 8 shards.
         run: |
           mkdir -p target
           make -s "$MUTANTS_TARGET" ARGS=--list > target/mutants-list.txt
