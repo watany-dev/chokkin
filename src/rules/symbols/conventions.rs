@@ -7,6 +7,7 @@ use crate::config::PluginId;
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::parser::{ImportContext, ParsedModule, SymbolKind};
 use crate::plugins::{DJANGO_SETTINGS_LABEL, PluginHints};
+use crate::reachability::ReachabilityReport;
 
 use super::graph::{RegistryEntry, SymbolId};
 use super::public::{star_closure, star_imports};
@@ -156,6 +157,7 @@ pub(super) fn host_hook_symbols(
     modules: &[&ParsedModule],
     plan: &EntryPlan,
     plugins: &PluginHints,
+    reachability: &ReachabilityReport,
 ) -> Vec<SymbolId> {
     let pytest_plugins: HashSet<&str> = modules
         .iter()
@@ -179,7 +181,19 @@ pub(super) fn host_hook_symbols(
                 .map(|module| module.path.as_str()),
         )
         .collect();
-    let extensions: HashSet<&str> = plugin_module_refs(plugins, PluginId::Sphinx).collect();
+    // The file an extension name loads, not every module ending with it: a
+    // name found on a `sys.path` directory drops its package (#779).
+    let extension_files: HashSet<&str> = plugins
+        .contributions
+        .iter()
+        .filter(|contrib| contrib.plugin == PluginId::Sphinx)
+        .flat_map(|contrib| &contrib.module_refs)
+        .filter_map(|reference| {
+            let key = (reference.origin.file.clone(), reference.module.clone());
+            reachability.plugin_ref_files.get(&key)
+        })
+        .map(String::as_str)
+        .collect();
     registry
         .iter()
         .filter(|entry| entry.def.kind == SymbolKind::Function)
@@ -189,9 +203,7 @@ pub(super) fn host_hook_symbols(
                 name if name.starts_with("pytest_") => {
                     pytest_plugins.contains(module) || pytest_files.contains(entry.path.as_str())
                 },
-                "setup" => extensions
-                    .iter()
-                    .any(|extension| names_extension(module, extension)),
+                "setup" => extension_files.contains(entry.path.as_str()),
                 _ => false,
             }
         })
@@ -217,15 +229,6 @@ fn imports_pytest(module: &ParsedModule) -> bool {
             && import.context != ImportContext::Type
             && matches!(import.module.split('.').next(), Some("pytest" | "_pytest"))
     })
-}
-
-/// Whether `extension` names `module`, in full or by its trailing components:
-/// an extension found on a `sys.path` directory is named without the package
-/// its file sits in (`docroles` for `sphinx_exts.docroles`, #779).
-fn names_extension(module: &str, extension: &str) -> bool {
-    module
-        .strip_suffix(extension)
-        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
 }
 
 #[cfg(test)]
@@ -292,16 +295,5 @@ mod tests {
             "db/versions/a1.py",
             &["down_revision", "upgrade"]
         )));
-    }
-
-    #[test]
-    fn an_extension_names_a_module_by_whole_trailing_components() {
-        assert!(names_extension("sphinx_exts.docroles", "docroles"));
-        assert!(names_extension(
-            "sphinx_exts.docroles",
-            "sphinx_exts.docroles"
-        ));
-        assert!(!names_extension("sphinx_exts.xdocroles", "docroles"));
-        assert!(!names_extension("docroles", "sphinx_exts.docroles"));
     }
 }

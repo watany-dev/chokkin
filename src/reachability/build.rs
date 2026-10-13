@@ -33,6 +33,14 @@ pub fn analyze_reachability(
     let sys_path_imports: Vec<_> = plugins.sys_path_imports().cloned().collect();
     let module_index =
         ModuleIndex::build(graph, sources).with_sys_path_hints(sources, parse, &sys_path_imports);
+    let plugin_ref_files = plugins
+        .module_refs()
+        .filter_map(|reference| {
+            let file = module_index.resolve_from(&reference.origin.file, &reference.module)?;
+            let key = (reference.origin.file.clone(), reference.module.clone());
+            Some((key, graph.file(file)?.path.clone()))
+        })
+        .collect();
     let framework = apply_framework_globs(graph, sources, plugins)?;
     let bfs = run_reachability_bfs(
         graph,
@@ -98,6 +106,7 @@ pub fn analyze_reachability(
         framework_used: framework.files,
         predecessors: bfs.predecessors,
         reached_opaque_dynamic_import,
+        plugin_ref_files,
     })
 }
 

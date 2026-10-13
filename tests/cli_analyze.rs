@@ -1246,7 +1246,7 @@ fn binary_sphinx_extensions_follow_an_imported_constants_module() {
         ),
         (
             "src/common/constants.py",
-            "import os\nimport sys\n\nsys.path.append(os.path.join(os.path.dirname(__file__), \"exts\"))\nEXTS = [\"ext_constant\"]\n",
+            "import os\nimport sys\n\nfrom tools import ext_constant\n\nsys.path.append(os.path.join(os.path.dirname(__file__), \"exts\"))\nEXTS = [\"ext_constant\"]\n",
         ),
         (
             "src/common/exts/ext_constant.py",
@@ -1260,12 +1260,20 @@ fn binary_sphinx_extensions_follow_an_imported_constants_module() {
             "src/common/exts/ext_unlisted.py",
             "def setup(app):\n    pass\n",
         ),
+        ("src/tools/ext_constant.py", "def setup(app):\n    pass\n"),
     ]);
     let keys = issue_keys(&json_issues(project.path(), &[]));
-    // Sphinx calls the `setup` of an extension found on the hinted path.
-    assert!(
-        keys.iter()
-            .all(|(code, _)| code != "CHK010" && code != "CHK006"),
+    // Sphinx calls the `setup` of an extension found on the hinted path, not
+    // that of a package module sharing its name.
+    assert!(keys.iter().all(|(code, _)| code != "CHK010"), "{keys:?}");
+    let unused_symbols: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK006")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(
+        unused_symbols,
+        ["src/tools/ext_constant.py:setup"],
         "{keys:?}"
     );
     let unused: Vec<&str> = keys
