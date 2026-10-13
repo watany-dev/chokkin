@@ -123,11 +123,160 @@ jobs:
           path: dist/*.tar.gz
           retention-days: 1
 
+  # ── Test what ships (#834) ────────────────────────────────────────────────────
+  # CI tests a dev build on the latest stable. These test the shipped
+  # configuration instead, and the release jobs below need them, so a tag
+  # whose wheels fail them publishes nothing.
+  test-wheels:
+    name: Test wheel (${{ matrix.target }})
+    needs: [build-wheels]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Native runners where one exists; otherwise a container (musl, i686)
+        # or QEMU (armv7, ppc64le, s390x). The images are pinned by digest
+        # (python:3.13-slim and python:3.13-alpine, multi-arch); dependabot
+        # does not track them, so bump the tag and digest together by hand.
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: i686-pc-windows-msvc
+            runner: windows-latest
+            python-arch: x86
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            python-arch: arm64
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+          - target: i686-unknown-linux-gnu
+            runner: ubuntu-24.04
+            platform: linux/386
+            image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+          - target: i686-unknown-linux-musl
+            runner: ubuntu-24.04
+            platform: linux/386
+            image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+          - target: armv7-unknown-linux-gnueabihf
+            runner: ubuntu-24.04
+            platform: linux/arm/v7
+            image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+            qemu: true
+          - target: armv7-unknown-linux-musleabihf
+            runner: ubuntu-24.04
+            platform: linux/arm/v7
+            image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+            qemu: true
+          - target: powerpc64le-unknown-linux-gnu
+            runner: ubuntu-24.04
+            platform: linux/ppc64le
+            image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+            qemu: true
+          - target: s390x-unknown-linux-gnu
+            runner: ubuntu-24.04
+            platform: linux/s390x
+            image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+            qemu: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.image == ''
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.python-arch }}
+      - name: Smoke-test the wheel
+        if: matrix.image == ''
+        shell: bash
+        run: python scripts/wheel-smoke.py dist/*.whl
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: matrix.qemu
+        with:
+          platforms: ${{ matrix.platform }}
+      - name: Smoke-test the wheel in a container
+        if: matrix.image != ''
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          IMAGE: ${{ matrix.image }}
+        run: >-
+          docker run --rm --platform "$PLATFORM" -v "$PWD:/src:ro" -w /src
+          "$IMAGE" python3 scripts/wheel-smoke.py dist/*.whl
+
+  # The dist profile builds the binary with panic = "abort" and fat LTO, which
+  # the integration tests then run; the in-process unit tests still unwind.
+  test-dist:
+    name: Test (dist profile, RUST_TOOLCHAIN)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the release toolchain
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - run: cargo "+$RUST_TOOLCHAIN" test --locked --profile dist
+
+  # Runs the action on the x86_64 Linux wheel built from this commit, so a
+  # change to action.yml is tested against the binary it will ship with.
+  test-action:
+    name: Test action (HEAD wheel)
+    needs: [build-wheels]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheel-x86_64-unknown-linux-gnu
+          path: ${{ runner.temp }}/wheel
+      - name: Create action smoke-test fixture
+        id: fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/demo/src/demo"
+          printf '[project]\nname = "demo"\nversion = "0.0.0"\n' > "$RUNNER_TEMP/demo/pyproject.toml"
+          echo 'VALUE = 1' > "$RUNNER_TEMP/demo/src/demo/__init__.py"
+          wheels=("$RUNNER_TEMP"/wheel/*.whl)
+          echo "wheel=${wheels[0]}" >> "$GITHUB_OUTPUT"
+      - id: chokkin
+        uses: ./
+        with:
+          version: ${{ steps.fixture.outputs.wheel }}
+          working-directory: ${{ runner.temp }}/demo
+          sarif-file: out/chokkin.sarif
+      - name: Check action SARIF output
+        env:
+          SARIF: ${{ steps.chokkin.outputs.sarif-file }}
+        run: |
+          jq -e '.version == "2.1.0"' "$SARIF"
+          test ! -e "$RUNNER_TEMP/demo/.chokkin"
+
   # ── GitHub Release (tags only) ────────────────────────────────────────────────
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-wheels, build-sdist]
+    needs: [build-wheels, build-sdist, test-wheels, test-dist, test-action]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
