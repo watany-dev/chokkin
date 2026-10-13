@@ -996,13 +996,19 @@ mod tests {
 
     #[test]
     fn namespace_packages_hold_a_regular_package() {
-        let temp = tree(&["src/acme/core", "src/plain", "src/google/cloud/storage"]);
+        let temp = tree(&[
+            "src/acme/core",
+            "src/plain",
+            "src/google/cloud/storage",
+            "src/edge/a/b/c",
+            "src/deep/a/b/c/d",
+        ]);
         fs::create_dir_all(temp.path().join("src/scripts_only")).expect("create dir");
         fs::write(temp.path().join("src/scripts_only/run.py"), "").expect("write");
         let unknown = LayoutInfo::default();
         assert_eq!(
             namespace_packages(temp.path(), &unknown),
-            ["acme.core", "google.cloud.storage"]
+            ["acme.core", "edge.a.b.c", "google.cloud.storage"]
         );
         let src = LayoutInfo {
             layout: ProjectLayout::Src,
@@ -1011,7 +1017,7 @@ mod tests {
         };
         assert_eq!(
             namespace_packages(temp.path(), &src),
-            ["acme.core", "google.cloud.storage"]
+            ["acme.core", "edge.a.b.c", "google.cloud.storage"]
         );
     }
 

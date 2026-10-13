@@ -2115,4 +2115,114 @@ mod props {
         );
         assert_eq!(known(call.keyword("extras_require")), None);
     }
+
+    #[test]
+    fn annotated_assignments_bind_and_loops_taint_them() {
+        assert_eq!(
+            install_requires("reqs: list = ['a']\nsetup(install_requires=reqs)\n"),
+            Some(strings(&["a"]))
+        );
+        assert_eq!(
+            install_requires(
+                "reqs = ['a']\nfor x in y:\n    reqs: list = reqs + [x]\n\
+                 setup(install_requires=reqs)\n"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn loops_taint_every_value_they_may_change() {
+        for source in [
+            "reqs = ['a']\nfor reqs, x in pairs:\n    pass\nsetup(install_requires=reqs)\n",
+            "base = ['a']\nreqs = base\nfor x in y:\n    reqs += [x]\n\
+             setup(install_requires=base)\n",
+            "reqs = ['a']\nfor a in b:\n    for c in d:\n        reqs.append(c)\n\
+             setup(install_requires=reqs)\n",
+        ] {
+            assert_eq!(install_requires(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn unpacking_binds_only_matching_lengths() {
+        assert_eq!(
+            install_requires("reqs, extra = (['a'], ['b'])\nsetup(install_requires=reqs)\n"),
+            Some(strings(&["a"]))
+        );
+        assert_eq!(
+            install_requires("reqs, *rest = (['a'], ['b'], ['c'])\nsetup(install_requires=reqs)\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn set_difference_is_not_read_as_a_union() {
+        for source in [
+            "reqs = {'a', 'b'} - {'b'}\nsetup(install_requires=reqs)\n",
+            "reqs = {'a', 'b'}\nreqs -= {'b'}\nsetup(install_requires=reqs)\n",
+        ] {
+            assert_eq!(install_requires(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn equal_strings_survive_a_branch_merge() {
+        assert_eq!(
+            install_requires(
+                "reqs = 'a'\nif win:\n    other = ['b']\nsetup(install_requires=reqs)\n"
+            ),
+            Some(Py::Str("a".to_owned()))
+        );
+    }
+
+    #[test]
+    fn names_rebound_in_a_branch_stop_sharing_their_old_object() {
+        assert_eq!(
+            install_requires(
+                "base = ['a']\ninst = base\nother = base\nif win:\n    inst = ['x']\n    \
+                 other = ['y']\nother += ['z']\nsetup(install_requires=inst)\n"
+            ),
+            Some(strings(&["a", "x"]))
+        );
+    }
+
+    fn big_list(len: usize) -> String {
+        format!("[{}]", vec!["'x'"; len].join(", "))
+    }
+
+    /// `+=` charges the new value once per copy: four copies of 25,000
+    /// nodes fit `MAX_VALUE_NODES`, one more item each does not.
+    #[test]
+    fn in_place_change_is_capped_by_its_copies() {
+        for holder in ["{'k1': base, 'k2': base, 'k3': base}", "[base, base, base]"] {
+            for (len, fits) in [(24_998, true), (24_999, false)] {
+                let source = format!(
+                    "base = {}\nholder = {holder}\nbase += ['y']\nsetup(install_requires=base)\n",
+                    big_list(len)
+                );
+                assert_eq!(
+                    install_requires(&source).is_some(),
+                    fits,
+                    "{holder} with {len} items"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dict_size_counts_the_dict_itself() {
+        for (len, fits) in [(49_998, true), (49_999, false)] {
+            let list = big_list(len);
+            let call = evaluate(&format!(
+                "extras = {{'a': {list}, 'b': {list}}}\nsetup(extras_require=extras)\n"
+            ))
+            .expect("setup() call");
+            assert_eq!(
+                known(call.keyword("extras_require")).is_some(),
+                fits,
+                "{len} items"
+            );
+        }
+    }
 }
