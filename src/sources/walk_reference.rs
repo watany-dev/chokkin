@@ -432,6 +432,88 @@ mod tests {
     }
 
     #[test]
+    fn relative_root_spellings_match_the_ignore_walker() {
+        // Under the package directory, which `cargo test` runs in.
+        fs::create_dir_all("target").expect("target dir");
+        let temp = tempfile::tempdir_in("target").expect("tempdir");
+        let relative = temp
+            .path()
+            .strip_prefix(std::env::current_dir().expect("cwd"))
+            .expect("tempdir under the package directory")
+            .join("repo");
+        write_file(&relative.join(".git/HEAD"), "");
+        write_file(&relative.join(".gitignore"), "/top.py\npkg/gen/\n");
+        write_file(&relative.join("pkg/.gitignore"), "/local.py\n");
+        for file in [
+            "top.py",
+            "app.py",
+            "pkg/top.py",
+            "pkg/local.py",
+            "pkg/gen/x.py",
+        ] {
+            write_file(&relative.join(file), "");
+        }
+
+        let spelled = relative.to_string_lossy().into_owned();
+        let roots: Vec<PathBuf> = [
+            spelled.clone(),
+            format!("{spelled}/"),
+            format!("./{spelled}"),
+            format!("./{spelled}/pkg/"),
+            format!("{spelled}/pkg/."),
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        let outcomes = assert_equivalent(&roots, &[]);
+        assert_eq!(paths(&outcomes[0]), ["app.py", "pkg/top.py"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_roots_warn_like_the_ignore_walker() {
+        let temp = tempdir().expect("tempdir");
+        let real = temp.path().join("real");
+        write_file(&real.join(".git/HEAD"), "");
+        write_file(&real.join(".gitignore"), "foo{bar\nskipped.py\n");
+        write_file(&real.join("app.py"), "");
+        write_file(&real.join("skipped.py"), "");
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        let outcomes = assert_equivalent(std::slice::from_ref(&link), &[]);
+        assert!(!outcomes[0].1.is_empty());
+        assert_eq!(paths(&outcomes[0]), ["app.py"]);
+    }
+
+    #[test]
+    fn concurrent_walks_sharing_a_cache_match_the_ignore_walker() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        write_file(&root.join(".git/HEAD"), "");
+        write_file(&root.join(".gitignore"), "build/\n");
+        let members: Vec<PathBuf> = (0..8).map(|index| root.join(format!("m{index}"))).collect();
+        for member in &members {
+            write_file(&member.join(".gitignore"), "/local.py\n");
+            write_file(&member.join("app.py"), "");
+            write_file(&member.join("local.py"), "");
+            write_file(&member.join("build/out.py"), "");
+        }
+
+        let cache = SourcesCache::default();
+        let roots: Vec<&PathBuf> = std::iter::once(&root).chain(&members).collect();
+        std::thread::scope(|scope| {
+            for root in &roots {
+                let cache = &cache;
+                scope.spawn(move || {
+                    assert_eq!(cached(cache, root, &[], true), reference(root, &[], true));
+                });
+            }
+        });
+        assert_eq!(cache.compiled_rules(), 2);
+    }
+
+    #[test]
     fn plain_directories_and_custom_excludes_match_the_ignore_walker() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path().join("plain");

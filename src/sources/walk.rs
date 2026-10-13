@@ -1,11 +1,12 @@
 //! Directory walking with glob, exclude, and gitignore filters.
 
+use std::fs::FileType;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use globset::GlobSet;
-use ignore::WalkBuilder;
 use ignore::overrides::Override;
+use ignore::{DirEntry, WalkBuilder};
 
 use crate::config::EntrySpec;
 use crate::path_util::normalize_rel_path;
@@ -168,6 +169,25 @@ fn configure_walker(
     builder
 }
 
+/// Ignore file errors of a walked directory, as `ignore` attaches them to
+/// its entry.
+fn dir_warning(
+    cache: &SourcesCache,
+    entry: &DirEntry,
+    file_type: FileType,
+) -> Option<SourcesWarning> {
+    let path = entry.path();
+    // A symlinked root keeps its link type but is walked as a directory.
+    if !(file_type.is_dir() || (entry.depth() == 0 && path.is_dir())) {
+        return None;
+    }
+    let reason = cache.dir(path).error()?;
+    Some(SourcesWarning::PathUnreadable {
+        path: path.to_string_lossy().into_owned(),
+        reason,
+    })
+}
+
 /// Collect Python-related files under `root`.
 pub(super) fn collect_files(
     options: &CollectOptions<'_>,
@@ -212,14 +232,8 @@ pub(super) fn collect_files(
         let Some(file_type) = entry.file_type() else {
             continue;
         };
-        if file_type.is_dir()
-            && options.respect_gitignore
-            && let Some(reason) = cache.dir(path).error()
-        {
-            warnings.push(SourcesWarning::PathUnreadable {
-                path: path.to_string_lossy().into_owned(),
-                reason,
-            });
+        if options.respect_gitignore {
+            warnings.extend(dir_warning(cache, &entry, file_type));
         }
         if !file_type.is_file() {
             continue;

@@ -248,7 +248,9 @@ impl Rules {
             let (gitignore, clean) = create_gitignore(dir, path, errors);
             return (Self::Own(gitignore), clean);
         };
-        let root = dir.strip_prefix("./").unwrap_or(dir).to_path_buf();
+        let root = strip_prefix(Path::new("./"), dir)
+            .unwrap_or(dir)
+            .to_path_buf();
         if let Some(gitignore) = lock(shared).get(&content) {
             let gitignore = Arc::clone(gitignore);
             return (Self::Shared { root, gitignore }, true);
@@ -413,7 +415,7 @@ pub(super) fn gitignore_skips(
     path: &Path,
     is_dir: bool,
 ) -> bool {
-    let path = path.strip_prefix("./").unwrap_or(path);
+    let path = strip_prefix(Path::new("./"), path).unwrap_or(path);
     let ancestor_dirs = ancestors.map_or(&[][..], |ancestors| &ancestors.dirs[..]);
     let any_git = chain.iter().chain(ancestor_dirs).any(|dir| dir.has_git);
     if !any_git {
@@ -431,8 +433,9 @@ pub(super) fn gitignore_skips(
         let relative = if root == Path::new(".") {
             path
         } else {
-            let root = root.strip_prefix("./").unwrap_or(root);
-            path.strip_prefix(root).unwrap_or(path)
+            let root = strip_prefix(Path::new("./"), root).unwrap_or(root);
+            let rest = strip_prefix(root, path).unwrap_or(path);
+            strip_prefix(Path::new("/"), rest).unwrap_or(rest)
         };
         let absolute = ancestors.base.join(relative);
         for dir in &ancestors.dirs {
