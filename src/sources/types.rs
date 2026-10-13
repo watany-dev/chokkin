@@ -99,8 +99,8 @@ pub struct MemberLayout {
     pub path: String,
     /// Layout inferred from the member's own manifest and sources.
     pub layout: LayoutInfo,
-    /// Top-level PEP 420 namespace packages the member ships beside
-    /// `layout.packages` (`acme` for `src/acme/core/__init__.py`).
+    /// Packages the member ships inside PEP 420 namespaces, beside
+    /// `layout.packages` (`acme.core` for `src/acme/core/__init__.py`).
     pub namespace_packages: Vec<String>,
 }
 

@@ -314,10 +314,12 @@ fn package_dirs(
     packages
 }
 
-/// Top-level PEP 420 namespace packages under the directory `layout` names
-/// modules from (#557): `acme/` without `__init__.py` that holds a package
-/// (`src/acme/core/__init__.py`). The package root of a src layout, or for
-/// an unknown layout `src/` when present and the root otherwise; a flat
+/// The regular packages a tree ships inside PEP 420 namespace packages
+/// (#557), as dotted names down to the first `__init__.py`: `acme.core` for
+/// `src/acme/core/__init__.py`. Only these, not the shared `acme`, are the
+/// tree's own, so `acme.auth` from another distribution still resolves to
+/// it. Namespaces sit under the package root of a src layout, or for an
+/// unknown layout under `src/` when present and the root otherwise; a flat
 /// layout distributes only its packages.
 #[must_use]
 pub(crate) fn namespace_packages(root: &Path, layout: &LayoutInfo) -> Vec<String> {
@@ -327,26 +329,37 @@ pub(crate) fn namespace_packages(root: &Path, layout: &LayoutInfo) -> Vec<String
         ProjectLayout::Unknown => (root.to_path_buf(), true),
         ProjectLayout::Flat => return Vec::new(),
     };
-    package_dirs(&base, skip_non_packages, |path| {
-        !path.join("__init__.py").is_file() && holds_package(path, NAMESPACE_DEPTH)
-    })
+    let mut portions = Vec::new();
+    for namespace in package_dirs(&base, skip_non_packages, |path| {
+        !path.join("__init__.py").is_file()
+    }) {
+        collect_portions(
+            &base.join(&namespace),
+            &namespace,
+            NAMESPACE_DEPTH,
+            &mut portions,
+        );
+    }
+    portions
 }
 
-/// Directory levels searched below a namespace candidate for a regular
-/// package (`google/cloud/storage/__init__.py` is two).
+/// Directory levels searched below a namespace for a regular package
+/// (`google/cloud/storage/__init__.py` is two).
 const NAMESPACE_DEPTH: usize = 3;
 
-fn holds_package(dir: &Path, depth: usize) -> bool {
-    depth > 0
-        && fs::read_dir(dir).is_ok_and(|entries| {
-            entries.flatten().filter(entry_is_dir).any(|entry| {
-                let path = entry.path();
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| !name.contains('.'))
-                    && (path.join("__init__.py").is_file() || holds_package(&path, depth - 1))
-            })
-        })
+fn collect_portions(dir: &Path, module: &str, depth: usize, portions: &mut Vec<String>) {
+    if depth == 0 {
+        return;
+    }
+    for child in package_dirs(dir, false, |_| true) {
+        let path = dir.join(&child);
+        let name = format!("{module}.{child}");
+        if path.join("__init__.py").is_file() {
+            portions.push(name);
+        } else {
+            collect_portions(&path, &name, depth - 1, portions);
+        }
+    }
 }
 
 /// `src/` keeps its whole tree (top-level modules, namespace packages);
@@ -984,14 +997,17 @@ mod tests {
         let unknown = LayoutInfo::default();
         assert_eq!(
             namespace_packages(temp.path(), &unknown),
-            ["acme", "google"]
+            ["acme.core", "google.cloud.storage"]
         );
         let src = LayoutInfo {
             layout: ProjectLayout::Src,
             package_root: "src".to_owned(),
             ..LayoutInfo::default()
         };
-        assert_eq!(namespace_packages(temp.path(), &src), ["acme", "google"]);
+        assert_eq!(
+            namespace_packages(temp.path(), &src),
+            ["acme.core", "google.cloud.storage"]
+        );
     }
 
     #[test]
@@ -999,7 +1015,7 @@ mod tests {
         let temp = tree(&["acme/core", "tests/unit", "docs/source/ext"]);
         assert_eq!(
             namespace_packages(temp.path(), &LayoutInfo::default()),
-            ["acme"]
+            ["acme.core"]
         );
         let flat = LayoutInfo {
             layout: ProjectLayout::Flat,

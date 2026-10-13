@@ -9,7 +9,9 @@ use crate::parser::{ImportContext, ParseSummary, import_context_for_file};
 use crate::plugins::{ModuleReference, SysPathImport};
 use crate::sources::{DiscoveredFile, DiscoveredSources, path_to_module};
 
-use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
+use super::first_party::{
+    is_first_party_import, is_member_namespace_import, is_workspace_import, path_source_imports,
+};
 use super::maps::{ImportMap, build_binary_map};
 use super::pytest_path::PytestImportPaths;
 use super::stdlib::StdlibRange;
@@ -264,7 +266,12 @@ fn resolve_import_site(
     let workspace_member = owners.owner(file);
     let member = workspace_member.as_deref();
     let pick = |candidates: &[String]| site_candidate(candidates, file, member, scoped, manifest);
-    let core = if let Some(origin) = site_origin(&root_name, file, context, stdlib, pytest_paths) {
+    // A member's package inside a namespace is local; the namespace root's
+    // other modules still resolve as usual (`acme.auth` from `acme-auth`).
+    let origin = site_origin(&root_name, file, context, stdlib, pytest_paths).or_else(|| {
+        is_member_namespace_import(imported, &sources.layout).then_some(ModuleOrigin::FirstParty)
+    });
+    let core = if let Some(origin) = origin {
         RootResolution {
             origin,
             distribution: None,

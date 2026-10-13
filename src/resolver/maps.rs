@@ -85,7 +85,7 @@ impl ImportMap {
     }
 
     /// Look up the longest dotted prefix of `module` (at least two segments)
-    /// in the user and bundled maps. Namespace packages such as `google` or
+    /// in the local, user and bundled maps. Namespace packages such as `google` or
     /// `opentelemetry` are shared by several distributions, so only a deeper
     /// entry like `google.protobuf` names the one that provides the import.
     /// Returns the matched prefix with its candidates.
@@ -96,6 +96,9 @@ impl ImportMap {
     ) -> Option<(&'m str, Vec<String>, ResolveConfidence)> {
         let mut prefix = module;
         while let Some((parent, _)) = prefix.rsplit_once('.') {
+            if let Some(local) = self.local.get(prefix) {
+                return Some((prefix, local.clone(), ResolveConfidence::Certain));
+            }
             if let Some(user) = self.user.get(prefix) {
                 return Some((prefix, user.clone(), ResolveConfidence::Likely));
             }

@@ -1,0 +1,10 @@
+[project]
+name = "app"
+version = "0.1.0"
+dependencies = ["corelib", "acme-auth"]
+
+[project.scripts]
+app = "app.main:main"
+
+[tool.uv.sources]
+corelib = { path = "packages/core" }

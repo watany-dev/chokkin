@@ -878,6 +878,18 @@ fn source_dependency_with_namespace_package_is_used_through_its_member_tree() {
     }
 }
 
+/// Only `acme.core` is the tree's own: `acme.auth` from the declared
+/// `acme-auth` shares the namespace and keeps that dependency used.
+#[test]
+fn namespace_package_leaves_other_portions_to_their_distributions() {
+    for name in [
+        "uv_path_source_renamed_module_namespace_shared",
+        "uv_workspace_renamed_module_src_layout_namespace_shared",
+    ] {
+        assert_eq!(analyze_issues(name), [], "{name}");
+    }
+}
+
 fn analyze_issues(name: &str) -> Vec<chokkin::internals::Issue> {
     chokkin::analyze_project(
         &fixture(name),

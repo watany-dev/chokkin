@@ -21,13 +21,12 @@ pub(crate) fn is_first_party_import(
         .packages
         .iter()
         .chain(&layout.local_packages)
-        .chain(layout.members.iter().flat_map(|member| {
-            member
-                .layout
-                .packages
+        .chain(
+            layout
+                .members
                 .iter()
-                .chain(&member.namespace_packages)
-        }))
+                .flat_map(|member| &member.layout.packages),
+        )
         .any(|package| normalize_distribution_name(package) == import_norm)
     {
         return true;
@@ -43,6 +42,23 @@ pub(crate) fn is_first_party_import(
         return normalize_distribution_name(name) == import_norm;
     }
     false
+}
+
+/// Returns `true` when `module` is a workspace member's package inside a
+/// PEP 420 namespace (`acme.core`), a module in it, or that bare namespace.
+#[must_use]
+pub(super) fn is_member_namespace_import(module: &str, layout: &LayoutInfo) -> bool {
+    layout
+        .members
+        .iter()
+        .flat_map(|member| &member.namespace_packages)
+        .any(|package| within(module, package) || within(package, module))
+}
+
+fn within(module: &str, package: &str) -> bool {
+    module
+        .strip_prefix(package)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
 /// Import root of a generated version file, taken below the layout's package
@@ -84,7 +100,8 @@ pub(super) fn is_workspace_import(
     false
 }
 
-/// Import roots provided by `[tool.uv.sources]` path entries.
+/// Import roots, and dotted packages inside namespaces (`acme.core`),
+/// provided by `[tool.uv.sources]` path entries.
 ///
 /// The local tree is read at resolve time (never cached) so it cannot go
 /// stale; a tree without packages falls back to the distribution name.
