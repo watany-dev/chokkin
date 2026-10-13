@@ -2503,6 +2503,58 @@ fn binary_build_script_imports_use_declared_groups() {
     assert_eq!(issue_keys(&issues), [], "{issues:#?}");
 }
 
+/// openai-python's `build` group pins hatchling's build environment for
+/// `[tool.uv] build-constraint-dependencies`; the pins import nothing, but
+/// the same unused name in an unrelated group is still CHK002 (#819).
+#[test]
+fn binary_build_environment_pins_in_a_build_group_are_used() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling==1.27.0\"]\n\
+             build-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [dependency-groups]\n\
+             build = [\"hatchling==1.27.0\", \"pathspec==1.1.1\", \"Pluggy==1.6.0\", \"rich\"]\n\
+             lint = [\"pathspec\"]\n\
+             docs = [\"pluggy\", \"trove-classifiers\"]\n\n\
+             [tool.uv]\nbuild-constraint-dependencies = [\n\
+             \"hatchling==1.27.0\", \"pathspec==1.1.1\", \"pluggy==1.6.0\", \"trove-classifiers\",\n]\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+    ]);
+    let issues = json_issues(project.path(), &["--strict"]);
+    let declarations: Vec<_> = issues
+        .iter()
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["message"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let unused = |name: &str, label: &str| {
+        (
+            name.to_owned(),
+            format!(
+                "declared in dependency-groups.{label}, no reachable import, config, or binary usage found"
+            ),
+        )
+    };
+    assert_eq!(
+        declarations,
+        [
+            unused("pathspec", "lint[0]"),
+            unused("pluggy", "docs[0]"),
+            unused("rich", "build[3]"),
+            unused("trove-classifiers", "docs[1]"),
+        ],
+        "{issues:#?}"
+    );
+}
+
 /// poetry's `poetry.masonry.api` re-exports the PEP 517 hooks for projects
 /// that name it as their `build-backend`; nothing in the repository imports
 /// it (#782).
