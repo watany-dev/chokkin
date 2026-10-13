@@ -278,6 +278,17 @@ fn is_non_package_dir(name: &str) -> bool {
 }
 
 fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
+    package_dirs(parent, skip_non_packages, |path| {
+        path.join("__init__.py").is_file()
+    })
+}
+
+/// Sorted names of the importable directories under `parent` that `keep` accepts.
+fn package_dirs(
+    parent: &Path,
+    skip_non_packages: bool,
+    keep: impl Fn(&Path) -> bool,
+) -> Vec<String> {
     let Ok(entries) = fs::read_dir(parent) else {
         return Vec::new();
     };
@@ -295,7 +306,7 @@ fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
         if name.contains('.') || (skip_non_packages && is_non_package_dir(name)) {
             continue;
         }
-        if path.join("__init__.py").is_file() {
+        if keep(&path) {
             packages.push(name.to_owned());
         }
     }
@@ -316,24 +327,9 @@ pub(crate) fn namespace_packages(root: &Path, layout: &LayoutInfo) -> Vec<String
         ProjectLayout::Unknown => (root.to_path_buf(), true),
         ProjectLayout::Flat => return Vec::new(),
     };
-    let Ok(entries) = fs::read_dir(base) else {
-        return Vec::new();
-    };
-    let mut packages: Vec<String> = entries
-        .flatten()
-        .filter(entry_is_dir)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            let skipped = name.contains('.') || (skip_non_packages && is_non_package_dir(name));
-            let namespace = !skipped
-                && !path.join("__init__.py").is_file()
-                && holds_package(&path, NAMESPACE_DEPTH);
-            namespace.then(|| name.to_owned())
-        })
-        .collect();
-    packages.sort();
-    packages
+    package_dirs(&base, skip_non_packages, |path| {
+        !path.join("__init__.py").is_file() && holds_package(path, NAMESPACE_DEPTH)
+    })
 }
 
 /// Directory levels searched below a namespace candidate for a regular

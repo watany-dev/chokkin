@@ -38,10 +38,6 @@ pub(super) enum Value {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Identity(Option<usize>);
 
-impl Identity {
-    const NONE: Self = Self(None);
-}
-
 impl PartialEq for Identity {
     fn eq(&self, _: &Self) -> bool {
         true
@@ -72,14 +68,6 @@ impl Value {
             Self::List(_, identity) | Self::Dict(_, identity) => identity.0,
             _ => None,
         }
-    }
-
-    /// The same contents as a different object (`None`: a tuple).
-    fn with_identity(mut self, new: Identity) -> Self {
-        if let Self::List(_, identity) | Self::Dict(_, identity) = &mut self {
-            *identity = new;
-        }
-        self
     }
 
     fn count_object(&self, object: usize) -> usize {
@@ -601,7 +589,7 @@ impl<'a> Evaluator<'a> {
                 let items = self.eval_elements(elts);
                 Value::List(items, self.fresh())
             },
-            Expr::Tuple(tuple) => Value::List(self.eval_elements(&tuple.elts), Identity::NONE),
+            Expr::Tuple(tuple) => Value::List(self.eval_elements(&tuple.elts), Identity(None)),
             Expr::Dict(dict) => self.eval_dict(dict),
             Expr::Name(name) => self
                 .env
@@ -613,7 +601,7 @@ impl<'a> Evaluator<'a> {
                 let tuples = [&left, &right]
                     .iter()
                     .all(|value| matches!(value, Value::List(_, Identity(None))));
-                let identity = if tuples { Identity::NONE } else { self.fresh() };
+                let identity = if tuples { Identity(None) } else { self.fresh() };
                 add(left, right, identity)
             },
             Expr::Subscript(subscript) => {
@@ -634,17 +622,15 @@ impl<'a> Evaluator<'a> {
                 }
             },
             Expr::Call(call) => self.eval_call(call),
-            Expr::ListComp(comp) => {
-                let identity = self.fresh();
-                self.eval_list_comprehension(&comp.elt, &comp.generators, identity)
-            },
-            Expr::SetComp(comp) => {
-                let identity = self.fresh();
-                self.eval_list_comprehension(&comp.elt, &comp.generators, identity)
-            },
-            Expr::Generator(comp) => {
-                self.eval_list_comprehension(&comp.elt, &comp.generators, Identity::NONE)
-            },
+            Expr::ListComp(ruff_python_ast::ExprListComp {
+                elt, generators, ..
+            })
+            | Expr::SetComp(ruff_python_ast::ExprSetComp {
+                elt, generators, ..
+            })
+            | Expr::Generator(ruff_python_ast::ExprGenerator {
+                elt, generators, ..
+            }) => self.eval_list_comprehension(elt, generators),
             Expr::DictComp(comp) => {
                 let Some(key) = comp.key.as_deref() else {
                     return Value::Unknown;
@@ -703,14 +689,9 @@ impl<'a> Evaluator<'a> {
         values
     }
 
-    fn eval_list_comprehension(
-        &mut self,
-        elt: &Expr,
-        generators: &[Comprehension],
-        identity: Identity,
-    ) -> Value {
+    fn eval_list_comprehension(&mut self, elt: &Expr, generators: &[Comprehension]) -> Value {
         self.comprehend(generators, |evaluator| evaluator.eval(elt))
-            .map_or(Value::Unknown, |items| Value::List(items, identity))
+            .map_or(Value::Unknown, |items| Value::List(items, self.fresh()))
     }
 
     /// Evaluate `produce` once per binding of filter-free generators.
@@ -765,12 +746,15 @@ impl<'a> Evaluator<'a> {
             && let [arg] = args.as_slice()
             && matches!(arg, Value::List(..) | Value::RequirementsFile(_))
         {
-            let identity = if name == "tuple" {
-                Identity::NONE
-            } else {
-                self.fresh()
-            };
-            return arg.clone().with_identity(identity);
+            let mut value = arg.clone();
+            if let Value::List(_, identity) = &mut value {
+                *identity = if name == "tuple" {
+                    Identity(None)
+                } else {
+                    self.fresh()
+                };
+            }
+            return value;
         }
         let value = match self.functions.get(name).copied() {
             Some(def) if call.arguments.keywords.is_empty() => {
@@ -815,7 +799,7 @@ impl<'a> Evaluator<'a> {
         if let Some(vararg) = &parameters.vararg {
             locals.push((
                 vararg.name.id.to_string(),
-                Value::List(positional.collect(), Identity::NONE),
+                Value::List(positional.collect(), Identity(None)),
             ));
         }
 

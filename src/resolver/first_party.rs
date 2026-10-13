@@ -104,9 +104,8 @@ pub(super) fn path_source_imports(
         };
         let tree = root.join(path);
         let (layout, _) = infer_layout(&tree, &metadata, &UvToolSettings::default());
-        let namespace = namespace_packages(&tree, &layout);
-        let mut packages = layout.packages;
-        packages.extend(namespace);
+        let mut packages = namespace_packages(&tree, &layout);
+        packages.extend(layout.packages);
         if packages.is_empty() {
             packages.push(source.name.replace('-', "_"));
         }
