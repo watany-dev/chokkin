@@ -870,7 +870,7 @@ fn source_dependency_is_used_through_its_member_tree() {
 #[test]
 fn source_dependency_with_namespace_package_is_used() {
     for name in [
-        "uv_path_source_namespace_package",
+        "uv_path_source_namespace_package_src_layout",
         "uv_workspace_namespace_package_src_layout",
     ] {
         assert_eq!(analyze_issues(name), [], "{name}");
