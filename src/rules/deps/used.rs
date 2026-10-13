@@ -307,18 +307,26 @@ fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashMap<String
     modules
 }
 
-/// Treat `pytest11` plugins installed in the venv as used whenever pytest is,
-/// since pytest loads them without any import or config reference.
+/// Treat `pytest11` plugins as used whenever pytest is, since pytest loads
+/// them without any import or config reference: the ones installed in the
+/// venv, and the declared `pytest-*` names the plugin naming convention gives
+/// them, which is all there is without a venv (#809).
 pub(super) fn mark_pytest_plugin_distributions(
     resolution: &ResolutionIndex,
+    declared: &DeclaredIndex<'_>,
     used: &mut IndexSet<String>,
 ) {
     if !used.contains("pytest") {
         return;
     }
-    for distribution in &resolution.pytest_plugin_distributions {
-        used.insert(distribution.clone());
-    }
+    let named = declared.keys().filter(|name| name.starts_with("pytest-"));
+    used.extend(
+        resolution
+            .pytest_plugin_distributions
+            .iter()
+            .chain(named)
+            .cloned(),
+    );
 }
 
 /// Treat a project's own distribution as used when declared (self-referential extras).

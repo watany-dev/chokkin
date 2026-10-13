@@ -930,6 +930,48 @@ fn binary_production_library_keeps_public_module_names_used_by_tests() {
     }
 }
 
+/// Under `--production` the evidence module star-imports a reachable module
+/// left out of the evidence: what it binds is unknown, so a name read through
+/// the star import still counts there (#803).
+#[test]
+fn binary_production_library_keeps_names_tests_read_through_a_star_import() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"library\"\n",
+        ),
+        (
+            "acme/__init__.py",
+            "from acme import core\n\n__all__ = [\"core\"]\n",
+        ),
+        (
+            "acme/core.py",
+            "def helper() -> None:\n    pass\n\n\ndef unused() -> None:\n    pass\n",
+        ),
+        ("acme/compat.py", "from acme.core import *\n"),
+        (
+            "tests/test_compat.py",
+            "from acme.compat import helper\n\n\ndef test_helper() -> None:\n    helper()\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--production"][..]] {
+        let keys = issue_keys(&json_issues(project.path(), extra));
+        let flagged: Vec<_> = keys
+            .iter()
+            .filter(|(code, _)| code == "CHK006")
+            .map(|(_, target)| target.as_str())
+            .collect();
+        // Without `--production` the tests reach the public `acme.compat`,
+        // whose star import puts all of `acme.core` in the API.
+        let expected: &[&str] = if extra.is_empty() {
+            &[]
+        } else {
+            &["acme/core.py:unused"]
+        };
+        assert_eq!(flagged, expected, "{extra:?}: {keys:?}");
+    }
+}
+
 /// A library member's tests are kept as API evidence under an app root too.
 #[test]
 fn binary_production_library_member_keeps_names_used_by_its_tests() {
@@ -2114,6 +2156,39 @@ fn requirements_outside_fixed_names_declare_imports_for_chk010_only() {
     }
 }
 
+/// Sphinx loads `conf.py`'s extensions and theme, and pytest the `pytest-*`
+/// plugins, without an import (#809).
+#[test]
+fn sphinx_extensions_themes_and_pytest_plugins_are_used() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\nversion = \"0\"\n\n[dependency-groups]\n\
+             docs = [\"sphinx\", \"furo\", \"sphinxcontrib-log-cabinet\", \
+             \"sphinxext-opengraph\", \"sphinx-issues\"]\n\
+             test = [\"pytest\", \"pytest-xdist\"]\n",
+        ),
+        (
+            "docs/conf.py",
+            "extensions = [\"sphinxcontrib.log_cabinet\"]\n\
+             extensions.append(\"sphinxext.opengraph\")\nhtml_theme = \"furo\"\n",
+        ),
+        ("pkg/__init__.py", ""),
+        (
+            "tests/test_pkg.py",
+            "import pytest\n\ndef test_pkg():\n    assert pytest\n",
+        ),
+    ]);
+
+    let keys = issue_keys(&json_issues(temp.path(), &["--no-cache", "--strict"]));
+    let unused: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK002")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unused, ["sphinx-issues"], "{keys:?}");
+}
+
 /// black's hatch-vcs `version-file` and sqlalchemy's `cython` build
 /// requirement exist only at build time (#720).
 #[test]
@@ -2388,6 +2463,46 @@ fn binary_member_pytest_plugin_imports_pytest_as_info() {
         [
             ("tools:ipython".to_owned(), "warning".to_owned()),
             ("tools:pytest".to_owned(), "info".to_owned()),
+        ]
+    );
+}
+
+/// #808: a function-local import of a package the member guards with
+/// `except ImportError` or names in an `is_x…` predicate is the same optional
+/// feature, and test support the package ships runs only under a test suite.
+#[test]
+fn binary_deferred_imports_of_optional_packages_are_info() {
+    let root = fixture_path(&["deps", "misplaced_deferred_optional"]);
+    let mut misplaced: Vec<(String, String, String)> = json_issues(&root, &["--strict"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK005")
+        .map(|issue| {
+            let field = |name: &str| issue[name].as_str().unwrap_or_default().to_owned();
+            (field("target"), field("severity"), field("confidence"))
+        })
+        .collect();
+    misplaced.sort();
+    let expected = |target: &str, severity: &str| {
+        (target.to_owned(), severity.to_owned(), "likely".to_owned())
+    };
+    // Only frames' tests check plotly; frames' `is_openai_v1` says nothing about chat;
+    // the client loads chat's test support at startup. A platform guard alone
+    // makes uvloop required there, while colorama is also under `try`.
+    assert_eq!(
+        misplaced,
+        [
+            expected("chat:openai", "warning"),
+            (
+                "chat:responses".to_owned(),
+                "warning".to_owned(),
+                "certain".to_owned()
+            ),
+            expected("frames:colorama", "info"),
+            expected("frames:cryptography", "info"),
+            expected("frames:plotly", "warning"),
+            expected("frames:polars", "info"),
+            expected("frames:selenium", "info"),
+            expected("frames:uvloop", "warning"),
         ]
     );
 }

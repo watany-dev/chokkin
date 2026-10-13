@@ -1430,6 +1430,40 @@ fn own_name_used_through_a_package_star_import_stays_chk006() {
     );
 }
 
+/// A star-imported package's re-export is used when the name is read through
+/// the outer package (#803).
+#[test]
+fn reexport_in_a_star_imported_package_is_used_through_the_outer_package() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("app/__init__.py", "from .outer import *\n"),
+        ("app/outer/__init__.py", "from .inner import *\n"),
+        (
+            "app/outer/inner/__init__.py",
+            "from .impl import used, unused\n",
+        ),
+        (
+            "app/outer/inner/impl.py",
+            "def used():\n    pass\n\n\ndef unused():\n    pass\n",
+        ),
+        (
+            "app/cli.py",
+            "from app import used\n\n\ndef main():\n    used()\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk007, "app.outer.inner", "used"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk007, "app.outer.inner", "unused"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");

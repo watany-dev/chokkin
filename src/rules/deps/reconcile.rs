@@ -138,7 +138,7 @@ fn reconcile_project(
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());
     }
-    mark_pytest_plugin_distributions(resolution, &mut used);
+    mark_pytest_plugin_distributions(resolution, &declared, &mut used);
 
     mark_companion_distributions(&declared, &mut used);
 
