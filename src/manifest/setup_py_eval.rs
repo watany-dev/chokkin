@@ -285,7 +285,7 @@ impl<'a> Evaluator<'a> {
                 Stmt::For(ruff_python_ast::StmtFor { body, orelse, .. })
                 | Stmt::While(ruff_python_ast::StmtWhile { body, orelse, .. }) => {
                     if let Stmt::For(for_stmt) = stmt {
-                        self.taint_target(&for_stmt.target);
+                        self.taint_target(&for_stmt.target, false);
                     }
                     self.taint_block(body);
                     self.taint_block(orelse);
@@ -328,12 +328,71 @@ impl<'a> Evaluator<'a> {
             }
             let env = std::mem::take(&mut self.env);
             merged = Some(match merged {
-                Some(merged) => merge_env(merged, env),
+                Some(merged) => self.merge_env(merged, env),
                 None => env,
             });
         }
         self.env = merged.unwrap_or(saved);
         None
+    }
+
+    /// State after one of two branches ran: lists and dicts keep every entry
+    /// either branch gave, so an optional dependency still counts as declared.
+    fn merge_env(
+        &mut self,
+        mut left: HashMap<String, Value>,
+        right: HashMap<String, Value>,
+    ) -> HashMap<String, Value> {
+        let mut joined = HashMap::new();
+        for (name, value) in right {
+            let merged = match left.remove(&name) {
+                Some(existing) => self.merge(existing, value, &mut joined),
+                None => value,
+            };
+            left.insert(name, merged);
+        }
+        left
+    }
+
+    /// `joined` maps each pair of objects already merged to the object
+    /// standing for both, so names aliased in both branches stay aliased.
+    fn merge(
+        &mut self,
+        left: Value,
+        right: Value,
+        joined: &mut HashMap<(Option<usize>, Option<usize>), Identity>,
+    ) -> Value {
+        // A name bound to a different object in each branch gets a new one:
+        // a later in-place change through either object's aliases would
+        // otherwise overwrite the entries the other branch gave.
+        let pair = (left.object(), right.object());
+        let identity =
+            (pair.0 != pair.1).then(|| *joined.entry(pair).or_insert_with(|| self.fresh()));
+        match (left, right) {
+            (left, right) if left == right && identity.is_none() => left,
+            (Value::List(mut left, kept), Value::List(right, _)) => {
+                for item in right {
+                    if !left.contains(&item) {
+                        left.push(item);
+                    }
+                }
+                Value::List(left, identity.unwrap_or(kept))
+            },
+            (Value::Dict(mut left, kept), Value::Dict(right, _)) => {
+                for (key, value) in right {
+                    match left.iter().position(|(existing, _)| *existing == key) {
+                        Some(index) => {
+                            let (_, existing) = left.remove(index);
+                            let merged = self.merge(existing, value, joined);
+                            left.insert(index, (key, merged));
+                        },
+                        None => left.push((key, value)),
+                    }
+                }
+                Value::Dict(left, identity.unwrap_or(kept))
+            },
+            _ => Value::Unknown,
+        }
     }
 
     /// `reqs.append(...)` and friends change a value we only track by assignment.
@@ -356,6 +415,9 @@ impl<'a> Evaluator<'a> {
     /// Apply `change` to the object `place` names, seen through every alias;
     /// `false` when `place` names no stored value.
     fn mutate(&mut self, place: &Expr, change: impl FnOnce(&mut Value)) -> bool {
+        if self.exhausted() {
+            return true;
+        }
         let Some(slot) = self.place_mut(place) else {
             return false;
         };
@@ -370,6 +432,11 @@ impl<'a> Evaluator<'a> {
 
     /// Give every copy of `object` its state `value` after an in-place change.
     fn propagate(&mut self, object: usize, mut value: Value) {
+        // Once the budget is spent every later `eval`, `setup()`'s keywords
+        // included, is `Unknown`, so stale copies can no longer be read.
+        if self.exhausted() {
+            return;
+        }
         // An object holding itself (`reqs += [reqs]`) has no finite value.
         value.replace_within(object, &Value::Unknown);
         let copies: usize = self
@@ -377,8 +444,6 @@ impl<'a> Evaluator<'a> {
             .values()
             .map(|stored| stored.count_object(object))
             .sum();
-        // Once the budget is spent every later `eval`, `setup()`'s keywords
-        // included, is `Unknown`, so stale copies can no longer be read.
         if !self.spend(self.env_nodes()) {
             return;
         }
@@ -436,16 +501,27 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// A loop may rebind `target` or change what it names. A rebound name
-    /// taints its aliases too: after no iteration it still names their object.
-    fn taint_target(&mut self, target: &Expr) {
+    /// A loop may rebind `target` or, `in_place`, change what it names.
+    fn taint_target(&mut self, target: &Expr, in_place: bool) {
         match target {
-            Expr::Name(_) => self.taint_place(target),
+            Expr::Name(_) if in_place => self.taint_place(target),
+            // The aliases keep the old object whenever the loop body runs.
+            // Unless it never runs: then a later in-place change through
+            // this name reaching them is missed.
+            Expr::Name(name) => {
+                let identity = self.fresh();
+                if let Some(value) = self.env.get_mut(name.id.as_str()) {
+                    value.taint();
+                    if let Value::List(_, kept) = value {
+                        *kept = identity;
+                    }
+                }
+            },
             Expr::Subscript(subscript) => self.taint_place(&subscript.value),
             Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
             | Expr::List(ruff_python_ast::ExprList { elts, .. }) => {
                 for elt in elts {
-                    self.taint_target(elt);
+                    self.taint_target(elt, in_place);
                 }
             },
             _ => {},
@@ -463,20 +539,22 @@ impl<'a> Evaluator<'a> {
                 },
                 Stmt::Assign(assign) => {
                     for target in &assign.targets {
-                        self.taint_target(target);
+                        self.taint_target(target, false);
                     }
                 },
-                Stmt::AnnAssign(ruff_python_ast::StmtAnnAssign { target, .. })
-                | Stmt::AugAssign(ruff_python_ast::StmtAugAssign { target, .. }) => {
-                    self.taint_target(target);
+                Stmt::AnnAssign(ruff_python_ast::StmtAnnAssign { target, .. }) => {
+                    self.taint_target(target, false);
+                },
+                Stmt::AugAssign(ruff_python_ast::StmtAugAssign { target, .. }) => {
+                    self.taint_target(target, true);
                 },
                 Stmt::Delete(delete) => {
                     for target in &delete.targets {
-                        self.taint_target(target);
+                        self.taint_target(target, false);
                     }
                 },
                 Stmt::For(for_stmt) => {
-                    self.taint_target(&for_stmt.target);
+                    self.taint_target(&for_stmt.target, false);
                     self.taint_block(&for_stmt.body);
                     self.taint_block(&for_stmt.orelse);
                 },
@@ -509,6 +587,10 @@ impl<'a> Evaluator<'a> {
     fn spend(&mut self, cost: usize) -> bool {
         self.steps = self.steps.saturating_add(cost);
         self.steps <= MAX_STEPS
+    }
+
+    const fn exhausted(&self) -> bool {
+        self.steps > MAX_STEPS
     }
 
     fn fresh(&mut self) -> Identity {
@@ -915,51 +997,6 @@ fn add(left: Value, right: Value, identity: Identity) -> Value {
         {
             items.push(other);
             Value::List(items, identity)
-        },
-        _ => Value::Unknown,
-    }
-}
-
-/// State after one of two branches ran: lists and dicts keep every entry
-/// either branch gave, so an optional dependency still counts as declared.
-fn merge_env(
-    mut left: HashMap<String, Value>,
-    right: HashMap<String, Value>,
-) -> HashMap<String, Value> {
-    for (name, value) in right {
-        let merged = match left.remove(&name) {
-            Some(existing) => merge(existing, value),
-            None => value,
-        };
-        left.insert(name, merged);
-    }
-    left
-}
-
-fn merge(left: Value, right: Value) -> Value {
-    match (left, right) {
-        (left, right) if left == right => left,
-        // A name bound to different objects in each branch keeps the left
-        // one's identity: later in-place changes reach only its aliases.
-        (Value::List(mut left, identity), Value::List(right, _)) => {
-            for item in right {
-                if !left.contains(&item) {
-                    left.push(item);
-                }
-            }
-            Value::List(left, identity)
-        },
-        (Value::Dict(mut left, identity), Value::Dict(right, _)) => {
-            for (key, value) in right {
-                match left.iter().position(|(existing, _)| *existing == key) {
-                    Some(index) => {
-                        let (_, existing) = left.remove(index);
-                        left.insert(index, (key, merge(existing, value)));
-                    },
-                    None => left.push((key, value)),
-                }
-            }
-            Value::Dict(left, identity)
         },
         _ => Value::Unknown,
     }
@@ -2017,19 +2054,54 @@ mod props {
     }
 
     #[test]
-    fn rebinding_in_a_loop_marks_aliases_partial() {
-        // The loop may run zero times, leaving `base` the object `reqs` names.
+    fn rebinding_in_a_loop_leaves_aliases_complete() {
         let call = evaluate(
-            "base = ['a']\nreqs = base\nfor x in xs:\n    base = base + [x]\nbase += ['b']\n\
-             setup(install_requires=reqs)\n",
+            "install_requires = ['requests']\nreqs = install_requires\nfor line in lines:\n    \
+             reqs = reqs + [line]\nreqs += ['b']\nsetup(install_requires=install_requires)\n",
         )
         .expect("setup() call");
         let items = dependency_items(call.keyword("install_requires").expect("install_requires"));
-        assert!(!items.complete);
+        assert_eq!(
+            items,
+            DependencyItems {
+                items: vec![DependencyItem::Requirement("requests".to_owned())],
+                complete: true,
+            }
+        );
+    }
+
+    #[test]
+    fn change_after_branches_keeps_the_other_branch_entries() {
+        let call = evaluate(
+            "requirements = ['requests']\ninstall_requires = requirements\nif win:\n    \
+             install_requires = requirements + ['pywin32']\nrequirements += ['click']\n\
+             setup(install_requires=install_requires)\n",
+        )
+        .expect("setup() call");
+        let items = dependency_items(call.keyword("install_requires").expect("install_requires"));
+        assert!(items.complete);
+        for name in ["requests", "pywin32"] {
+            assert!(
+                items
+                    .items
+                    .contains(&DependencyItem::Requirement(name.to_owned())),
+                "{name} missing from {items:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn names_aliased_in_every_branch_stay_aliased() {
+        let call = evaluate(
+            "if win:\n    a = b = ['x']\nelse:\n    a = b = ['y']\nb += ['z']\n\
+             setup(install_requires=a)\n",
+        )
+        .expect("setup() call");
+        let items = dependency_items(call.keyword("install_requires").expect("install_requires"));
         assert!(
             items
                 .items
-                .contains(&DependencyItem::Requirement("b".to_owned()))
+                .contains(&DependencyItem::Requirement("z".to_owned()))
         );
     }
 

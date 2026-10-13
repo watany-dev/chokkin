@@ -493,7 +493,17 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
         );
         let fan_out =
             "def f():\n    return [f(), f(), f(), f(), f(), f()]\nsetup(install_requires=f())\n";
-        for script in [doubling.as_str(), fan_out] {
+        // Changes in place after the budget is spent must stay cheap too.
+        let aliased = format!(
+            "x = ['a']\n{}{}{}setup(install_requires=x)\n",
+            "x = x + x\n".repeat(15),
+            (0..75)
+                .map(|i| format!("y{i} = x\n"))
+                .collect::<Vec<_>>()
+                .concat(),
+            "x.append('b')\n".repeat(300)
+        );
+        for script in [doubling.as_str(), fan_out, aliased.as_str()] {
             assert!(extract(script, &[]).runtime_unknown);
         }
     }
