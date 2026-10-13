@@ -239,12 +239,10 @@ def fp_gate(findings: list[list[str]]) -> tuple[bool, int, int, int]:
 def recall_missed(
     labels: dict[tuple[str, str, str], tuple[str, str]], reported: set[tuple[str, str, str]]
 ) -> list[str]:
-    """`tp` labels whose finding was not reported as a hit."""
     return [f"{s}/{c}/{t}" for (s, c, t), (v, _) in labels.items() if v == "tp" and (s, c, t) not in reported]
 
 
 def too_slow(size: str, median_ms: int) -> bool:
-    """Only `medium` projects are held to the cold-run budget."""
     return size == "medium" and median_ms > MEDIUM_GATE_MS
 
 

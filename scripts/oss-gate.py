@@ -105,7 +105,6 @@ def judge(outputs: dict[str, tuple[int, bytes]], validator) -> dict:
 
 
 def failing(results: dict[str, dict]) -> dict[str, list[str]]:
-    """The projects failing each gate."""
     return {
         "determinism": [s for s, r in results.items() if not r["deterministic"]],
         "schema": [s for s, r in results.items() if r["schema_errors"]],

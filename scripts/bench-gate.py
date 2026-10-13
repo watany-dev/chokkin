@@ -57,7 +57,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def collect(since: float, root: Path = CRITERION) -> list[dict]:
-    """Change estimates written under `root` since `since`, in percent."""
     rows = []
     for est in sorted(root.glob("**/change/estimates.json")):
         if est.stat().st_mtime < since:
