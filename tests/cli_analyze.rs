@@ -2476,6 +2476,87 @@ fn binary_hatch_build_scripts_are_dev_entry_roots() {
     );
 }
 
+/// poetry's `poetry.masonry.api` re-exports the PEP 517 hooks for projects
+/// that name it as their `build-backend`; nothing in the repository imports
+/// it (#782).
+#[test]
+fn binary_pep517_backend_modules_are_entry_roots() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+        (
+            "src/acme/masonry/api.py",
+            "from acme.core import build_sdist, build_wheel\n\n\
+             __all__ = [\"build_sdist\", \"build_wheel\"]\n",
+        ),
+        (
+            "src/acme/core.py",
+            "def build_wheel(wheel_directory):\n    pass\n\n\
+             def build_sdist(sdist_directory):\n    pass\n",
+        ),
+        (
+            "src/acme/backend.py",
+            "def build_wheel(wheel_directory):\n    pass\n\n\
+             def build_sdist(sdist_directory):\n    pass\n\n\
+             def get_requires_for_build_wheel(config_settings=None):\n    return []\n\n\
+             def helper():\n    pass\n",
+        ),
+        (
+            "src/acme/wheel_only.py",
+            "def build_wheel(wheel_directory):\n    pass\n",
+        ),
+    ]);
+    // The frontend calls the hooks, so they are no CHK006 either.
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        issue_keys(&issues),
+        [
+            ("CHK001".to_owned(), "src/acme/wheel_only.py".to_owned()),
+            ("CHK006".to_owned(), "src/acme/backend.py:helper".to_owned()),
+        ],
+        "{issues:#?}"
+    );
+}
+
+/// An in-tree backend under `backend-path` runs in the build environment, so
+/// its imports resolve through `[build-system].requires`, and the frontend
+/// calls its hooks (#782).
+#[test]
+fn binary_in_tree_backend_imports_resolve_through_build_requires() {
+    for backend_path in ["_custom_build", "src"] {
+        let pyproject = format!(
+            "[build-system]\nrequires = [\"setuptools\", \"tomli\"]\n\
+             build-backend = \"backend\"\nbackend-path = [\"{backend_path}\"]\n\n\
+             [project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n"
+        );
+        let backend = format!("{backend_path}/backend.py");
+        let project = write_project(&[
+            ("pyproject.toml", pyproject.as_str()),
+            ("src/acme/__init__.py", ""),
+            ("src/acme/cli.py", "def main():\n    pass\n"),
+            (
+                backend.as_str(),
+                "import tomli\nfrom setuptools import build_meta\n\n\
+                 def build_wheel(wheel_directory):\n    return build_meta.build_wheel(wheel_directory)\n\n\
+                 def build_sdist(sdist_directory):\n    return build_meta.build_sdist(sdist_directory)\n",
+            ),
+        ]);
+        let issues = json_issues(project.path(), &[]);
+        assert!(
+            issue_keys(&issues).is_empty(),
+            "{backend_path}: {issues:#?}"
+        );
+    }
+}
+
 /// #731: a workspace member's own `pytest11` entry point makes its plugin
 /// module pytest-loaded; its other modules still need what they import.
 #[test]

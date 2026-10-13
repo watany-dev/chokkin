@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A runtime module that defines or re-exports (`__all__`) both PEP 517 hooks,
+  `build_wheel` and `build_sdist`, is an entry root, so a build backend that
+  frontends import by its `build-backend` name (poetry's `poetry.masonry.api`)
+  is no longer CHK001 (#782).
+- An in-tree build backend, a top-level module under `[build-system].backend-path`,
+  is a dev build script like a hatchling hook: it is an entry root and its
+  imports resolve through `[build-system].requires` (#782).
+- The PEP 517 and PEP 660 hooks of either kind of build backend are no longer
+  CHK006, since the frontend calls them (#782).
 - Sphinx extensions that `docs/conf.py` takes from a constant in an imported
   first-party module (`extensions = BASIC_SPHINX_EXTENSIONS`) are now read,
   and the `sys.path` edits of that module apply to `conf.py`, so airflow's

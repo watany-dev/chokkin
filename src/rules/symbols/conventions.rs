@@ -25,6 +25,18 @@ const ALEMBIC_NAMES: &[&str] = &[
     "downgrade",
 ];
 
+/// The PEP 517 and PEP 660 hooks a frontend calls on a build backend.
+const BUILD_BACKEND_HOOKS: &[&str] = &[
+    "build_wheel",
+    "build_sdist",
+    "build_editable",
+    "get_requires_for_build_wheel",
+    "get_requires_for_build_sdist",
+    "get_requires_for_build_editable",
+    "prepare_metadata_for_build_wheel",
+    "prepare_metadata_for_build_editable",
+];
+
 /// Whether a file's symbols are no API surface: protoc output, or a
 /// transformers `modular_x.py` that generates the sibling `modeling_x.py`.
 pub(super) fn is_codegen_file(path: &str, files: &HashSet<&str>) -> bool {
@@ -150,8 +162,9 @@ pub(super) fn config_star_symbols(
 }
 
 /// Functions a host calls by name (#777): a `pytest_*` hook in a module pytest
-/// loads as a plugin, and the `setup` of a Sphinx extension. pluggy hooks are
-/// marked by their decorator (`external::is_registration_decorator`).
+/// loads as a plugin, the `setup` of a Sphinx extension, and the hooks of a
+/// build backend (#782). pluggy hooks are marked by their decorator
+/// (`external::is_registration_decorator`).
 pub(super) fn host_hook_symbols(
     registry: &[RegistryEntry],
     modules: &[&ParsedModule],
@@ -194,6 +207,18 @@ pub(super) fn host_hook_symbols(
         })
         .map(String::as_str)
         .collect();
+    let backend_files: HashSet<&str> = plan
+        .roots
+        .iter()
+        .filter(|root| {
+            root.origins.iter().any(|origin| match origin {
+                EntryOrigin::BuildBackend => true,
+                EntryOrigin::Manifest { group, .. } => group == "build-system.backend-path",
+                _ => false,
+            })
+        })
+        .map(|root| root.spec.path.as_str())
+        .collect();
     registry
         .iter()
         .filter(|entry| entry.def.kind == SymbolKind::Function)
@@ -204,6 +229,9 @@ pub(super) fn host_hook_symbols(
                     pytest_plugins.contains(module) || pytest_files.contains(entry.path.as_str())
                 },
                 "setup" => extension_files.contains(entry.path.as_str()),
+                name if BUILD_BACKEND_HOOKS.contains(&name) => {
+                    backend_files.contains(entry.path.as_str())
+                },
                 _ => false,
             }
         })

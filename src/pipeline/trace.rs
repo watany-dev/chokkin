@@ -132,6 +132,7 @@ fn format_entry_origin(origin: &EntryOrigin) -> String {
         EntryOrigin::SymbolRef { label, .. } => format!("symbol: {label}"),
         EntryOrigin::Script => "script: PEP 723".to_owned(),
         EntryOrigin::Command { label } => format!("command: {label}"),
+        EntryOrigin::BuildBackend => "build backend: PEP 517".to_owned(),
     }
 }
 

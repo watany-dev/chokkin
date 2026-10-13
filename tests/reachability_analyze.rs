@@ -383,6 +383,7 @@ mod golden {
             EntryOrigin::SymbolRef { label, .. } => format!("symbol:{label}"),
             EntryOrigin::Script => "script".to_owned(),
             EntryOrigin::Command { label } => format!("command:{label}"),
+            EntryOrigin::BuildBackend => "build-backend".to_owned(),
         }
     }
 
