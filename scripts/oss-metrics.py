@@ -96,11 +96,15 @@ finding from the default output (GONE in finding-diff.tsv) while --strict
 still reports it. --strict also changes some verdicts (a member's dev
 declaration turns CHK003 into CHK005), so the strict reports are compared with
 each other, never with a default run (#716). A finding GONE between the two
-strict reports vanished; a default-run GONE whose fingerprint HEAD's strict
-report still has was downgraded, which is informational only. The gate fails
-on a vanished `tp`; vanished findings without a label are counted for triage
-but do not gate, because a release that fixes false positives makes hundreds
-of them vanish.
+strict reports vanished. A default-run GONE whose fingerprint HEAD's strict
+report still has was recontexted when the level is not lower (a context
+change: examples/ became dev, #709) and demoted when it is only at a lower
+severity or confidence (hidden at `maybe`, #784). A default-run CHANGED to a
+lower level is demoted too, and demotions from warning or error to info are
+counted apart. These columns are informational only. The gate fails on a
+vanished `tp`; vanished findings without a label are counted for triage but
+do not gate, because a release that fixes false positives makes hundreds of
+them vanish.
 
 chokkin only reads the analyzed projects; nothing from them is executed.
 """
@@ -296,14 +300,34 @@ def finding_diff(base: Path, head: Path, slugs: list[str]) -> tuple[list[list[st
     return rows, skipped
 
 
+SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
+CONFIDENCE_RANK = {"maybe": 0, "likely": 1, "certain": 2}
+
+
+def demoted(before: str, after: str) -> bool:
+    """Whether level `after` (`severity/confidence`) is below `before`: one
+    part dropped and neither rose."""
+    (bs, bc), (as_, ac) = before.split("/"), after.split("/")
+    ds = SEVERITY_RANK.get(as_, 0) - SEVERITY_RANK.get(bs, 0)
+    dc = CONFIDENCE_RANK.get(ac, 0) - CONFIDENCE_RANK.get(bc, 0)
+    return ds <= 0 and dc <= 0 and (ds, dc) != (0, 0)
+
+
+def to_info(before: str, after: str) -> bool:
+    """Whether a finding moved from warning or error to info severity."""
+    return before.split("/")[0] != "info" and after.split("/")[0] == "info"
+
+
 def downgrade_vs_vanish(
     base: Path, head: Path, default_rows: list[list[str]], strict_rows: list[list[str]],
     labels: dict[tuple[str, str, str], tuple[str, str]],
 ) -> tuple[list[str], bool]:
-    """Per-rule split of the default run's GONE into downgraded (HEAD's strict
-    report still has the fingerprint) and of the strict-to-strict GONE into
-    vanished by label; and whether no `tp` vanished."""
+    """Per-rule split of the default run's GONE into recontexted (HEAD's strict
+    report still has the fingerprint at no lower level) and demoted, where the
+    default run's CHANGED findings whose level dropped are demoted too; of the
+    strict-to-strict GONE into vanished by label; and whether no `tp` vanished."""
     cache: dict[tuple[Path, str], dict[tuple[str, str], str]] = {}
+    level_cache: dict[str, dict[tuple[str, str], Counter]] = {}
 
     def keys(run: Path, slug: str) -> dict[tuple[str, str], str]:
         """(code, escaped fingerprint) -> target in one strict report."""
@@ -312,8 +336,30 @@ def downgrade_vs_vanish(
             cache[(run, slug)] = {(i["code"], tsv_field(i["fingerprint"])): i.get("target") or "?" for i in issues}
         return cache[(run, slug)]
 
-    gone = Counter(r[2] for r in default_rows if r[0] == "GONE")
-    downgraded = Counter(r[2] for r in default_rows if r[0] == "GONE" and (r[2], r[3]) in keys(head, r[1]))
+    def head_levels(slug: str, code: str, fp: str) -> list[str]:
+        """Levels of HEAD's strict findings with (code, escaped fingerprint)."""
+        if slug not in level_cache:
+            levels = report_levels(head / "strict", slug) or {}
+            level_cache[slug] = {(c, tsv_field(f)): n for (c, f), n in levels.items()}
+        return sorted(level_cache[slug].get((code, fp), Counter()))
+
+    gone: Counter = Counter()
+    recontexted: Counter = Counter()
+    demotions: list[tuple[str, str, str]] = []
+    for status, slug, code, fp, before, after in default_rows:
+        if status == "CHANGED" and demoted(before, after):
+            demotions.append((code, before, after))
+        if status != "GONE":
+            continue
+        gone[code] += 1
+        strict = head_levels(slug, code, fp)
+        lower = [level for level in strict if demoted(before, level)]
+        if lower and before not in strict:
+            demotions.append((code, before, lower[0]))
+        elif strict:
+            recontexted[code] += 1
+    demoted_n = Counter(code for code, _, _ in demotions)
+    info_n = Counter(code for code, before, after in demotions if to_info(before, after))
     vanished: Counter = Counter()
     lost: list[str] = []
     for _, slug, code, fp, _, _ in (r for r in strict_rows if r[0] == "GONE"):
@@ -327,21 +373,26 @@ def downgrade_vs_vanish(
     lines = [
         "## Downgrade vs vanish (--strict)",
         "",
-        "GONE = default-run GONE; downgraded = of those, still in HEAD's --strict report.",
+        "GONE = default-run GONE; recontexted = of those, still in HEAD's --strict report",
+        "at no lower level (a context change, e.g. examples/ became dev).",
+        "Demoted = default-run CHANGED to a lower severity or confidence, plus GONE",
+        "that HEAD's --strict report has only at a lower level; to info = of those,",
+        "warning or error that became info.",
         "Vanished = GONE between the two --strict reports (finding-diff-strict.tsv),",
         "by label; a vanished `tp` fails the gate, unlabelled ones need triage.",
         "",
     ]
-    codes = sorted(gone.keys() | {c for c, _ in vanished})
+    codes = sorted(gone.keys() | demoted_n.keys() | {c for c, _ in vanished})
     if not codes:
-        return [*lines, "_No finding is GONE._"], True
+        return [*lines, "_No finding is GONE or demoted._"], True
     return [
         *lines,
         *oc.md_table(
-            ["Rule", "GONE", "Downgraded", "Vanished tp", "Vanished fp", "Vanished other"],
-            [[c, gone[c], downgraded[c], vanished[(c, "tp")], vanished[(c, "fp")], vanished[(c, "other")]]
+            ["Rule", "GONE", "Recontexted", "Demoted", "To info", "Vanished tp", "Vanished fp", "Vanished other"],
+            [[c, gone[c], recontexted[c], demoted_n[c], info_n[c],
+              vanished[(c, "tp")], vanished[(c, "fp")], vanished[(c, "other")]]
              for c in codes],
-            "lrrrrr",
+            "lrrrrrrr",
         ),
         *(["", f"Vanished `tp`: {' '.join(lost)}"] if lost else []),
     ], not lost

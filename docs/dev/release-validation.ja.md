@@ -93,8 +93,20 @@ exit 2 で止まる。
 | 列 | 意味 |
 | --- | --- |
 | GONE | 既定 run の GONE (`finding-diff.tsv`) |
-| Downgraded | そのうち HEAD の strict 出力に同じ fingerprint が残るもの (降格) |
+| Recontexted | GONE のうち、HEAD の strict 出力に同じ fingerprint が baseline より低くない level で残るもの (文脈の再分類) |
+| Demoted | 既定 run の CHANGED のうち severity か confidence が下がったもの (どちらも上がっていない) と、GONE のうち HEAD の strict 出力に低い level でだけ残るもの (`maybe` への降格) |
+| To info | Demoted のうち warning / error から info になったもの |
 | Vanished tp / fp / other | strict 同士の GONE (`finding-diff-strict.tsv`、消失) を label 別に数えたもの |
+
+Recontexted は、既定 run の対象から外れただけで level は変わっていない finding を数える。
+たとえば `examples/` が dev context になると (#709)、そこの未宣言 import は既定 run から
+消え、`--strict` にだけ同じ severity / confidence で残る。v0.7.3 → v0.7.4 の 58 件
+(fastmcp / llama_index / langchain の `examples/**` の CHK003 / CHK004) はすべてこれだった。
+本当の降格は Demoted で、info は JSON にもともと出るので、warning → info の降格は GONE ではなく
+CHANGED 側に現れる。GONE に混ざる降格は、既定の confidence filter で隠れる `maybe` への降格だけ
+になる (#784)。v0.7.3 → v0.7.4 の Demoted は 341 件 (CHANGED 349 件から level が上がった
+CHK004 8 件を除いたもの)、そのうち To info は 165 件 (CHK010 134、CHK003 27、CHK009 4) だった。
+どの列も gate には掛からない。
 
 gate (`--gate`) が落ちるのは `tp` が消えたときだけ。ラベル無し (other) の消失は件数を
 出すだけにしている。FP を直すリリースでは消失が数百件出るからで、v0.7.3 → main では
@@ -108,7 +120,7 @@ awk -F'\t' '$1=="GONE" {print $3, $2}' "$S/metrics/head/finding-diff-strict.tsv"
 confidence を落とす変更でも、件数減のすべてが降格とは限らない。library mode の public
 symbol には CHK006 / CHK007 自体を出さない (spec §12) ので、`--strict` にも残らない。
 v0.7.2 → v0.7.3 では CHK006 1,578 件と CHK007 66 件がすべて other の消失になった。
-CHK001 も、1,329 件の GONE のうち Downgraded は 270 件だけだった (django の消失 744 件の
+CHK001 も、1,329 件の GONE のうち strict に残ったのは 270 件だけだった (django の消失 744 件の
 うち 742 件は `tests/` 配下)。
 
 `--with-strict` で増える時間は、corpus 一周の `-r 1` の 1 回分になる。
