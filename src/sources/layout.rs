@@ -836,6 +836,7 @@ mod tests {
     fn uv_path_source_providing_the_project_is_the_package_root() {
         let temp = tree(&["e2e_playwright", "lib/streamlit", "lib/tests"]);
         let uv = UvToolSettings {
+            build_constraints: std::collections::BTreeSet::new(),
             sources: vec![
                 UvSource {
                     name: "helper".to_owned(),
@@ -862,6 +863,7 @@ mod tests {
         let temp = tree(&["lib/acme_api"]);
         for path in ["lib/.", "./lib/./"] {
             let uv = UvToolSettings {
+                build_constraints: std::collections::BTreeSet::new(),
                 sources: vec![UvSource {
                     name: "acme".to_owned(),
                     kind: UvSourceKind::Path(path.to_owned()),
@@ -880,6 +882,7 @@ mod tests {
     fn uv_path_source_is_used_only_when_heuristics_guess() {
         let temp = tree(&["tools", "packages/acme/aaa", "packages/acme/acme"]);
         let uv = UvToolSettings {
+            build_constraints: std::collections::BTreeSet::new(),
             sources: vec![UvSource {
                 name: "acme".to_owned(),
                 kind: UvSourceKind::Path("packages/acme".to_owned()),
@@ -910,6 +913,7 @@ mod tests {
             ("acme", "./."),
         ] {
             let uv = UvToolSettings {
+                build_constraints: std::collections::BTreeSet::new(),
                 sources: vec![UvSource {
                     name: name.to_owned(),
                     kind: UvSourceKind::Path(path.to_owned()),
@@ -924,6 +928,7 @@ mod tests {
     fn project_named_package_beats_uv_source_sharing_its_prefix() {
         let temp = tree(&["acme_api", "packages/acme"]);
         let uv = UvToolSettings {
+            build_constraints: std::collections::BTreeSet::new(),
             sources: vec![UvSource {
                 name: "acme".to_owned(),
                 kind: UvSourceKind::Path("packages/acme".to_owned()),
@@ -959,6 +964,7 @@ mod tests {
     fn uv_path_source_outside_root_is_ignored() {
         let temp = tree(&["acme"]);
         let uv = UvToolSettings {
+            build_constraints: std::collections::BTreeSet::new(),
             sources: vec![UvSource {
                 name: "acme".to_owned(),
                 kind: UvSourceKind::Path("../acme".to_owned()),
@@ -1234,6 +1240,7 @@ mod tests {
 
         fn uv_for(tree: &Tree) -> UvToolSettings {
             UvToolSettings {
+                build_constraints: std::collections::BTreeSet::new(),
                 sources: tree
                     .uv
                     .iter()

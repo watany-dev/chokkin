@@ -607,6 +607,7 @@ mod tests {
                 .collect(),
             constraints: Vec::new(),
             uv: crate::manifest::UvToolSettings {
+                build_constraints: std::collections::BTreeSet::new(),
                 sources: workspace_sources
                     .iter()
                     .map(|source| crate::manifest::UvSource {

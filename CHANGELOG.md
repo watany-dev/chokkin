@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imports resolve through `[build-system].requires` (#782).
 - The PEP 517 and PEP 660 hooks of either kind of build backend are no longer
   CHK006, since the frontend calls them (#782).
+- A build script's import of a `[build-system].requires` distribution counts
+  as a use of that distribution where the project declares it, so `--strict`
+  no longer reports CHK002 for openai-python's `hatchling` in its `build`
+  group. Such imports still need no declaration for CHK003–CHK005 (#783).
+- A dependency group that declares a `[build-system].requires` distribution
+  no longer gets CHK002 for its entries that `[tool.uv]
+  build-constraint-dependencies` also pins: they export the build
+  environment and are never imported (openai-python's `pathspec`, `pluggy`
+  and `trove-classifiers`). The same name in another group is still checked
+  (#819).
 - Sphinx extensions that `docs/conf.py` takes from a constant in an imported
   first-party module (`extensions = BASIC_SPHINX_EXTENSIONS`) are now read,
   and the `sys.path` edits of that module apply to `conf.py`, so airflow's

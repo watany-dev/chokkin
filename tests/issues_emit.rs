@@ -82,37 +82,26 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     let reachability = analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, false)
         .expect("reachability");
+    let rules = RuleContext {
+        resolution: &resolution,
+        reachability: &reachability,
+        graph: &graph,
+        sources: &sources,
+        parse: &parse,
+    };
     let deps = reconcile_with_context(
         &DependencyRuleContext {
-            rules: &RuleContext {
-                resolution: &resolution,
-                reachability: &reachability,
-                graph: &graph,
-                sources: &sources,
-                parse: &parse,
-            },
+            rules: &rules,
             config: &loaded.effective,
             strict: strict_deps,
+            build_scripts: &BTreeMap::new(),
         },
         &manifest,
         &plugins,
         &[],
         &[],
     );
-    let symbols = analyze_with_context(
-        &RuleContext {
-            resolution: &resolution,
-            reachability: &reachability,
-            graph: &graph,
-            sources: &sources,
-            parse: &parse,
-        },
-        &entry,
-        &plugins,
-        &manifest,
-        &[],
-        None,
-    );
+    let symbols = analyze_with_context(&rules, &entry, &plugins, &manifest, &[], None);
 
     EmitInputs {
         config: loaded.effective,

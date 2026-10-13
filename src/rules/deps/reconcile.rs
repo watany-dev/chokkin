@@ -1,6 +1,6 @@
 //! Dependency reconciliation orchestration (pipeline step 10).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use indexmap::IndexSet;
 
@@ -10,7 +10,7 @@ use crate::manifest::{
     normalize_distribution_name,
 };
 use crate::plugins::PluginHints;
-use crate::resolver::ImportMap;
+use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{
     DependencyReport, IssueCandidate, RuleId, Severity, WorkspaceDependencyBoundary,
     sort_candidates,
@@ -116,6 +116,7 @@ fn reconcile_project(
         rules: context,
         config,
         strict,
+        ..
     } = *dependency;
     let RuleContext {
         resolution,
@@ -124,9 +125,6 @@ fn reconcile_project(
         ..
     } = *context;
     let declared = build_declared_index(manifest);
-    let workspace_declared = workspace_declared_indices(manifest, workspace_boundaries);
-    let import_declared = build_import_declared_index(manifest, &manifest.lockfile);
-    let lockfile_present = has_lockfile(manifest, resolution);
     let reachable = reachable_paths(graph, reachability);
     let usage = usage_paths(&reachable, reachability);
 
@@ -150,11 +148,13 @@ fn reconcile_project(
     };
 
     let metapackage = ships_no_code(manifest, context.sources);
+    let build_groups = build_environment_groups(manifest);
     for deps in declared.values() {
         let deps: Vec<&DeclaredDependency> = deps
             .iter()
             .copied()
             .filter(|dep| !metapackage || matches!(dep.context, DependencyContext::Group(_)))
+            .filter(|dep| !is_build_environment_pin(dep, manifest, &build_groups))
             .collect();
         candidates.extend(detect_unused_dependencies(
             &deps,
@@ -166,26 +166,11 @@ fn reconcile_project(
     }
     lower_unused_when_a_skipped_file_is_reached(&mut candidates, context, &reachable);
 
-    let mut missing = detect_missing_dependencies(
-        &import_declared,
+    candidates.extend(detect_undeclared_imports(
         dependency,
+        manifest,
+        workspace_boundaries,
         &reachable,
-        lockfile_present,
-        &workspace_declared,
-    );
-    if manifest.sources.runtime_dependencies_unknown {
-        lower_missing_when_runtime_dependencies_unknown(&mut missing);
-    }
-    candidates.extend(missing);
-
-    candidates.extend(detect_misplaced_dependencies(
-        &import_declared,
-        dependency,
-        &reachable,
-        &workspace_declared,
-        &pytest11_modules(
-            std::iter::once(manifest).chain(workspace_boundaries.iter().map(|b| b.manifest)),
-        ),
     ));
 
     let providers = BinaryProviders::new(&declared, manifest, workspace_boundaries, plugins);
@@ -201,6 +186,104 @@ fn reconcile_project(
     DependencyReport {
         candidates,
         used_distributions: used,
+    }
+}
+
+/// CHK003 / CHK004 for undeclared imports and CHK005 for misplaced ones.
+fn detect_undeclared_imports(
+    dependency: &DependencyRuleContext<'_>,
+    manifest: &LoadedManifest,
+    workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
+    reachable: &HashSet<&str>,
+) -> Vec<IssueCandidate> {
+    // Build scripts still use what they import (#783), but need no
+    // declaration for what the build environment installs (#735).
+    let resolution = dependency.rules.resolution;
+    let without_build = without_build_environment_imports(resolution, dependency.build_scripts);
+    let rules = RuleContext {
+        resolution: without_build.as_ref().unwrap_or(resolution),
+        ..*dependency.rules
+    };
+    let dependency = DependencyRuleContext {
+        rules: &rules,
+        ..*dependency
+    };
+    let workspace_declared = workspace_declared_indices(manifest, workspace_boundaries);
+    let import_declared = build_import_declared_index(manifest, &manifest.lockfile);
+    let mut candidates = detect_missing_dependencies(
+        &import_declared,
+        &dependency,
+        reachable,
+        has_lockfile(manifest, resolution),
+        &workspace_declared,
+    );
+    if manifest.sources.runtime_dependencies_unknown {
+        lower_missing_when_runtime_dependencies_unknown(&mut candidates);
+    }
+    candidates.extend(detect_misplaced_dependencies(
+        &import_declared,
+        &dependency,
+        reachable,
+        &workspace_declared,
+        &pytest11_modules(
+            std::iter::once(manifest).chain(workspace_boundaries.iter().map(|b| b.manifest)),
+        ),
+    ));
+    candidates
+}
+
+/// A build script imports what `[build-system].requires` installs into the
+/// build environment, which no project declaration needs to cover (#735).
+fn without_build_environment_imports(
+    resolution: &ResolutionIndex,
+    build_scripts: &BTreeMap<String, BTreeSet<String>>,
+) -> Option<ResolutionIndex> {
+    let provided = |import: &ResolvedImport| {
+        build_scripts
+            .get(&import.file)
+            .zip(import.distribution.as_ref())
+            .is_some_and(|(requires, distribution)| requires.contains(distribution))
+    };
+    resolution.imports.iter().any(provided).then(|| {
+        let mut resolution = resolution.clone();
+        resolution.imports.retain(|import| !provided(import));
+        resolution
+    })
+}
+
+/// `(file, group)` of each dependency group that declares a
+/// `[build-system].requires` distribution (#819).
+fn build_environment_groups(manifest: &LoadedManifest) -> HashSet<(&str, &str)> {
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dep| {
+            manifest
+                .metadata
+                .build_requires
+                .iter()
+                .any(|build| build.name == dep.name)
+        })
+        .filter_map(group_key)
+        .collect()
+}
+
+/// A group that declares a build requirement and lists what `[tool.uv]
+/// build-constraint-dependencies` also pins exports the build environment
+/// (openai-python's `build` group), so its pins import nothing (#819).
+fn is_build_environment_pin(
+    dep: &DeclaredDependency,
+    manifest: &LoadedManifest,
+    build_groups: &HashSet<(&str, &str)>,
+) -> bool {
+    manifest.uv.build_constraints.contains(&dep.name)
+        && group_key(dep).is_some_and(|key| build_groups.contains(&key))
+}
+
+fn group_key(dep: &DeclaredDependency) -> Option<(&str, &str)> {
+    match &dep.context {
+        DependencyContext::Group(group) => Some((dep.origin.file.as_str(), group.as_str())),
+        _ => None,
     }
 }
 
@@ -392,6 +475,7 @@ mod tests {
                 },
                 config: &config,
                 strict: false,
+                build_scripts: &BTreeMap::new(),
             },
             &manifest,
             &plugins,
@@ -447,6 +531,7 @@ mod tests {
                 },
                 config: &config,
                 strict: false,
+                build_scripts: &BTreeMap::new(),
             },
             &manifest,
             &plugins,
@@ -514,6 +599,7 @@ mod tests {
                 },
                 config: &config,
                 strict: true,
+                build_scripts: &BTreeMap::new(),
             },
             &manifest,
             &plugins,
@@ -592,6 +678,7 @@ mod tests {
                 },
                 config: &config,
                 strict: false,
+                build_scripts: &BTreeMap::new(),
             },
             &manifest,
             &plugins,

@@ -2,7 +2,7 @@
 
 use toml::Value;
 
-use super::pep508_util::normalize_distribution_name;
+use super::pep508_util::{normalize_distribution_name, pep508_distribution_name};
 use super::types::{DeclaredDependency, DependencyContext, UvSource, UvSourceKind, UvToolSettings};
 use super::util::{DependencyPush, push_dependency};
 use super::warnings::ManifestWarning;
@@ -14,7 +14,7 @@ pub(super) struct UvToolExtraction {
     pub dependencies: Vec<DeclaredDependency>,
     /// `constraint-dependencies` and `override-dependencies`.
     pub constraints: Vec<DeclaredDependency>,
-    /// Sources.
+    /// Sources and build constraints.
     pub settings: UvToolSettings,
 }
 
@@ -66,6 +66,17 @@ pub(super) fn extract_uv_tool(
         }
     }
 
+    if let Some(items) = uv
+        .get("build-constraint-dependencies")
+        .and_then(Value::as_array)
+    {
+        result.settings.build_constraints = items
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(pep508_distribution_name)
+            .collect();
+    }
+
     if let Some(sources) = uv.get("sources").and_then(Value::as_table) {
         result.settings.sources = parse_sources(sources);
     }
@@ -104,6 +115,8 @@ fn source_kind(entry: &toml::Table) -> UvSourceKind {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     fn extract(contents: &str) -> UvToolExtraction {
@@ -144,6 +157,19 @@ mod tests {
                 ("urllib3", "tool.uv.constraint-dependencies[0]"),
                 ("idna", "tool.uv.override-dependencies[0]"),
             ]
+        );
+    }
+
+    #[test]
+    fn build_constraints_keep_normalized_names_only() {
+        let result = extract(
+            "[tool.uv]\nbuild-constraint-dependencies = [\"Trove_Classifiers==2026.6.1\", \"pluggy\"]\n",
+        );
+        assert_eq!(result.dependencies, []);
+        assert_eq!(result.constraints, []);
+        assert_eq!(
+            result.settings.build_constraints,
+            BTreeSet::from(["pluggy".to_owned(), "trove-classifiers".to_owned()])
         );
     }
 

@@ -33,6 +33,7 @@ pub(super) fn detect_misplaced_dependencies(
         rules: context,
         config,
         strict,
+        ..
     } = *dependency;
     let RuleContext {
         resolution,
