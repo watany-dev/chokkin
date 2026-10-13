@@ -74,6 +74,7 @@ pub fn resolve_imports_for_analysis(
     let local_modules = local_modules(&sources.files, workspace_members);
     let indexed_roots = indexed_roots(sources);
     let owners = MemberOwners::new(workspace_members);
+    let declared = DeclaredNames::new(manifest);
 
     for module in &parse.modules {
         let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
@@ -103,6 +104,7 @@ pub fn resolve_imports_for_analysis(
                 file_stdlib,
                 sources,
                 manifest,
+                &declared,
                 config,
                 workspace_members,
                 &owners,
@@ -129,6 +131,7 @@ pub fn resolve_imports_for_analysis(
                 file_stdlib,
                 sources,
                 manifest,
+                &declared,
                 config,
                 workspace_members,
                 &owners,
@@ -168,6 +171,7 @@ pub fn resolve_imports_for_analysis(
                 file_stdlib,
                 sources,
                 manifest,
+                &declared,
                 config,
                 workspace_members,
                 &owners,
@@ -201,6 +205,7 @@ pub fn resolve_imports_for_analysis(
             stdlib,
             sources,
             manifest,
+            &declared,
             config,
             workspace_members,
             &owners,
@@ -221,6 +226,49 @@ pub fn resolve_imports_for_analysis(
         transitive: manifest.lockfile.clone(),
         binary_resolutions,
         pytest_plugin_distributions: venv_index.pytest_plugins,
+    }
+}
+
+/// Root-manifest names normalized once per resolve: every import site
+/// compares its root and candidates against them (#758).
+struct DeclaredNames<'a> {
+    /// Declared dependencies in declaration order; the affix step takes the
+    /// first match.
+    dependencies: Vec<String>,
+    lookup: HashSet<String>,
+    locked: &'a BTreeMap<String, Vec<String>>,
+    /// Contextless requirements, then `[build-system].requires`.
+    contextless: Vec<String>,
+}
+
+impl<'a> DeclaredNames<'a> {
+    fn new(manifest: &'a LoadedManifest) -> Self {
+        let dependencies: Vec<String> = manifest
+            .dependencies
+            .iter()
+            .map(|dep| normalize_distribution_name(&dep.name))
+            .collect();
+        let build = manifest.metadata.build_requires.iter();
+        Self {
+            lookup: dependencies.iter().cloned().collect(),
+            dependencies,
+            locked: &manifest.lockfile.edges,
+            contextless: manifest
+                .sources
+                .extra_requirements
+                .iter()
+                .cloned()
+                .chain(build.map(|dep| normalize_distribution_name(&dep.name)))
+                .collect(),
+        }
+    }
+
+    fn declares(&self, distribution: &str) -> bool {
+        self.lookup.contains(distribution)
+    }
+
+    fn declares_or_locks(&self, distribution: &str) -> bool {
+        self.declares(distribution) || self.locked.contains_key(distribution)
     }
 }
 
@@ -248,6 +296,7 @@ fn resolve_import_site(
     stdlib: StdlibRange,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
+    declared: &DeclaredNames<'_>,
     config: &ChokkinConfig,
     workspace_members: &[ResolvedWorkspaceMember],
     owners: &MemberOwners<'_>,
@@ -263,7 +312,7 @@ fn resolve_import_site(
     let root_name = import_root(full_module).to_owned();
     let workspace_member = owners.owner(file);
     let member = workspace_member.as_deref();
-    let pick = |candidates: &[String]| site_candidate(candidates, file, member, scoped, manifest);
+    let pick = |candidates: &[String]| site_candidate(candidates, file, member, scoped, declared);
     let core = if let Some(origin) = site_origin(&root_name, file, context, stdlib, pytest_paths) {
         RootResolution {
             origin,
@@ -279,6 +328,7 @@ fn resolve_import_site(
                     stdlib,
                     sources,
                     manifest,
+                    declared,
                     config,
                     workspace_members,
                     import_map,
@@ -317,8 +367,8 @@ fn resolve_import_site(
     // affixed root declaration (`pyfoo` must not take a script's `foo`).
     let core = if core.origin == ModuleOrigin::Unknown {
         scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
-            .or_else(|| namespace_declared_match(imported, manifest))
-            .or_else(|| root_loose_match(&root_name, manifest))
+            .or_else(|| namespace_declared_match(imported, declared))
+            .or_else(|| root_loose_match(&root_name, declared))
             .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
             // A root that reachability maps to a file is local, even beside a
             // member's declared package (`devel-common/src/docs/`, #612), and so
@@ -333,7 +383,7 @@ fn resolve_import_site(
                     confidence: ResolveConfidence::Certain,
                 })
             })
-            .or_else(|| contextless_requirement_match(&root_name, manifest))
+            .or_else(|| contextless_requirement_match(&root_name, declared))
             .or_else(|| runtime_provided(&root_name))
             .unwrap_or(core)
     } else {
@@ -390,6 +440,7 @@ fn resolve_import_root(
     stdlib: StdlibRange,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
+    declared: &DeclaredNames<'_>,
     config: &ChokkinConfig,
     workspace_members: &[ResolvedWorkspaceMember],
     import_map: &ImportMap,
@@ -434,7 +485,7 @@ fn resolve_import_root(
     // normalized name matches (`openai`, or `Foo_Bar` for `import foo_bar`)
     // is the only evidence left; the spelling alone is not, or a local module
     // like `e2e_config` would pass as a missing `e2e-config` (#361).
-    if let Some(resolution) = declared_match(normalize_distribution_name(root_name), manifest) {
+    if let Some(resolution) = declared_match(normalize_distribution_name(root_name), declared) {
         return resolution;
     }
 
@@ -447,42 +498,35 @@ fn resolve_import_root(
     }
 }
 
-fn declared_match(distribution: String, manifest: &LoadedManifest) -> Option<RootResolution> {
-    (manifest
-        .dependencies
-        .iter()
-        .any(|dep| normalize_distribution_name(&dep.name) == distribution)
-        || manifest.lockfile.edges.contains_key(&distribution))
-    .then_some(RootResolution {
-        origin: ModuleOrigin::ThirdParty,
-        distribution: Some(distribution),
-        confidence: ResolveConfidence::Likely,
-    })
+fn declared_match(distribution: String, declared: &DeclaredNames<'_>) -> Option<RootResolution> {
+    declared
+        .declares_or_locks(&distribution)
+        .then_some(RootResolution {
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some(distribution),
+            confidence: ResolveConfidence::Likely,
+        })
 }
 
 /// A namespace package portion declared under its first two segments
 /// (`sphinxcontrib-log-cabinet` for `sphinxcontrib.log_cabinet`, #809). The
 /// shared root alone names no distribution.
-fn namespace_declared_match(module: &str, manifest: &LoadedManifest) -> Option<RootResolution> {
+fn namespace_declared_match(module: &str, declared: &DeclaredNames<'_>) -> Option<RootResolution> {
     let mut segments = module.split('.');
     let (namespace, portion) = (segments.next()?, segments.next()?);
     declared_match(
         normalize_distribution_name(&format!("{namespace}-{portion}")),
-        manifest,
+        declared,
     )
 }
 
 /// Affixed counterpart of the declared-or-locked step in
 /// [`resolve_import_root`] (`pyfoo` for `import foo`).
-fn root_loose_match(root_name: &str, manifest: &LoadedManifest) -> Option<RootResolution> {
-    let declared = manifest
-        .dependencies
-        .iter()
-        .map(|dep| normalize_distribution_name(&dep.name));
-    let locked = manifest.lockfile.edges.keys().cloned();
+fn root_loose_match(root_name: &str, declared: &DeclaredNames<'_>) -> Option<RootResolution> {
+    let locked = declared.locked.keys();
     loose_declared_match(
         &normalize_distribution_name(root_name),
-        declared.chain(locked),
+        declared.dependencies.iter().chain(locked).cloned(),
     )
 }
 
@@ -493,23 +537,13 @@ fn root_loose_match(root_name: &str, manifest: &LoadedManifest) -> Option<RootRe
 /// neither source gives.
 fn contextless_requirement_match(
     root_name: &str,
-    manifest: &LoadedManifest,
+    declared: &DeclaredNames<'_>,
 ) -> Option<RootResolution> {
-    let declared = || {
-        let build = manifest.metadata.build_requires.iter();
-        let build = build.map(|dep| normalize_distribution_name(&dep.name));
-        manifest
-            .sources
-            .extra_requirements
-            .iter()
-            .cloned()
-            .chain(build)
-    };
     let distribution = normalize_distribution_name(root_name);
-    let confidence = if declared().any(|name| name == distribution) {
+    let confidence = if declared.contextless.contains(&distribution) {
         ResolveConfidence::Likely
     } else {
-        loose_declared_match(&distribution, declared())?.confidence
+        loose_declared_match(&distribution, declared.contextless.iter().cloned())?.confidence
     };
     Some(RootResolution {
         origin: ModuleOrigin::ThirdParty,
@@ -725,7 +759,7 @@ fn site_candidate(
     file: &str,
     member: Option<&str>,
     scoped: &ScopedDeclarations,
-    manifest: &LoadedManifest,
+    declared: &DeclaredNames<'_>,
 ) -> Option<String> {
     let in_member = |sets: &BTreeMap<String, BTreeSet<String>>, name: &str| {
         member
@@ -740,14 +774,9 @@ fn site_candidate(
                 .is_some_and(|names| names.contains(name))
         },
         &|name| in_member(&scoped.members, name),
-        &|name| {
-            manifest
-                .dependencies
-                .iter()
-                .any(|dep| normalize_distribution_name(&dep.name) == name)
-        },
+        &|name| declared.declares(name),
         &|name| in_member(&scoped.member_locks, name),
-        &|name| manifest.lockfile.edges.contains_key(name),
+        &|name| declared.locked.contains_key(name),
     ];
     prefers
         .iter()
@@ -997,5 +1026,57 @@ mod tests {
             found("foo_bar", "packages/api/x.py", Some("api")).as_deref(),
             Some("foo-bar")
         );
+    }
+
+    #[test]
+    fn declared_names_are_normalized_once_in_declaration_order() {
+        use crate::manifest::{
+            DeclaredDependency, DependencyContext, DependencyOrigin, ProjectMetadata,
+        };
+
+        let dependency = |name: &str| DeclaredDependency {
+            name: name.to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(1),
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        };
+        let mut manifest = LoadedManifest {
+            root: crate::discovery::ProjectRoot {
+                path: std::env::temp_dir(),
+                marker: crate::discovery::RootMarker::PyProjectToml,
+            },
+            metadata: ProjectMetadata::default(),
+            dependencies: Vec::new(),
+            constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: crate::manifest::LockfileGraph::default(),
+            sources: crate::manifest::ManifestSources::default(),
+            warnings: Vec::new(),
+        };
+        manifest
+            .lockfile
+            .edges
+            .insert("locked-only".to_owned(), Vec::new());
+        manifest.dependencies = vec![dependency("Zope.Interface"), dependency("py-Foo")];
+        manifest.metadata.build_requires = vec![dependency("setuptools_scm")];
+        manifest.sources.extra_requirements = BTreeSet::from(["tox".to_owned()]);
+
+        let declared = DeclaredNames::new(&manifest);
+        assert_eq!(declared.dependencies, ["zope-interface", "py-foo"]);
+        assert_eq!(declared.contextless, ["tox", "setuptools-scm"]);
+        assert!(declared.declares("zope-interface"));
+        assert!(!declared.declares("locked-only"));
+        assert!(declared.declares_or_locks("locked-only"));
+        assert!(!declared.declares_or_locks("zope.interface"));
     }
 }
