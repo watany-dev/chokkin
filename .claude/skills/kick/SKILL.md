@@ -1,13 +1,13 @@
 ---
-name: handle
+name: kick
 description: >
   指定した issue を修正し、実機で確かめ、/wrapup を通してから issue を閉じる PR を
   出す。その後 15 分ごとに issue と PR を確認して CI を緑に保ち、残課題は起票する。
-  user が「/handle #123 #456」のように issue 番号を渡したときに発動する。
+  user が「/kick #123 #456」のように issue 番号を渡したときに発動する。
 argument-hint: "<issue番号> [<issue番号>...]"
 ---
 
-# handle
+# kick
 
 指定された issue をすべて片付ける。PR は 1 本にする。
 
