@@ -37,6 +37,7 @@ pub(super) fn detect_missing_dependencies(
         rules: context,
         config,
         strict,
+        ..
     } = *dependency;
     let RuleContext {
         resolution,
@@ -575,6 +576,7 @@ mod tests {
                 },
                 config: &config,
                 strict,
+                build_scripts: &BTreeMap::new(),
             },
             &HashSet::from([FILE]),
             has_lockfile,

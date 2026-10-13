@@ -133,6 +133,7 @@ fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::internals::De
             },
             config: &inputs.config,
             strict,
+            build_scripts: &BTreeMap::new(),
         },
         &inputs.manifest,
         &inputs.plugins,
