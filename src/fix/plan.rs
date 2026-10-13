@@ -711,6 +711,22 @@ mod tests {
         assert!(skipped[0].detail.contains("non-Poetry"));
         manifest.sources.poetry = false;
 
+        // Only a dynamic `dependencies` field blocks insertion.
+        let add_missing = FixOptions {
+            add_missing: true,
+            ..FixOptions::default()
+        };
+        manifest.metadata.dynamic = vec!["version".to_owned()];
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], add_missing);
+        assert_eq!(skipped, []);
+        assert_eq!(actions.len(), 1);
+        manifest.metadata.dynamic = vec!["dependencies".to_owned()];
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], add_missing);
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].detail, "project.dependencies is dynamic");
+        manifest.metadata.dynamic = Vec::new();
+
         // #581: requests keeps only `[tool.*]` in pyproject.toml and declares
         // dependencies in setup.py.
         manifest.sources.pyproject_project_table = false;
