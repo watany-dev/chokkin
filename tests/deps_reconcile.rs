@@ -863,6 +863,19 @@ fn source_dependency_is_used_through_its_member_tree() {
     }
 }
 
+/// Issue #557: a member that ships `acme.core` under a PEP 420 namespace
+/// package, with no `acme/__init__.py`, is still used, so there is no CHK010
+/// for `acme` and no CHK002 for `acme-core`.
+#[test]
+fn source_dependency_with_namespace_package_is_used() {
+    for name in [
+        "uv_path_source_namespace_package_src_layout",
+        "uv_workspace_namespace_package_src_layout",
+    ] {
+        assert_eq!(analyze_issues(name), [], "{name}");
+    }
+}
+
 fn analyze_issues(name: &str) -> Vec<chokkin::internals::Issue> {
     chokkin::analyze_project(
         &fixture(name),

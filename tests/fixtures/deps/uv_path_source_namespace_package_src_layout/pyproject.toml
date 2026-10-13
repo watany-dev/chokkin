@@ -1,0 +1,10 @@
+[project]
+name = "app"
+version = "0.1.0"
+dependencies = ["acme-core"]
+
+[project.scripts]
+app = "app.main:main"
+
+[tool.uv.sources]
+acme-core = { path = "packages/core" }
