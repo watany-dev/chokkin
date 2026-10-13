@@ -195,14 +195,16 @@ mod tests {
         let path = dir.path().join("setup.cfg");
         std::fs::write(
             &path,
-            "[options]\npython_requires = >=3.9\ninstall_requires =\n    boto3\n    requests\n",
+            "[options]\npython_requires = >=3.9\ninstall_requires =\n    boto3\n    requests\n\
+             [options.extras_require]\ntest =\n    pytest\n",
         )
         .expect("write");
         remove_dependency(&path, "boto3").expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert_eq!(
             updated,
-            "[options]\npython_requires = >=3.9\ninstall_requires = requests\n"
+            "[options]\npython_requires = >=3.9\ninstall_requires = requests\n\
+             [options.extras_require]\ntest =\n    pytest\n"
         );
     }
 }
