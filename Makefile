@@ -59,6 +59,7 @@ oss-metrics:
 
 # oss-gate:   determinism (cold/warm/--no-cache byte-identical), JSON schema
 #             and crash gates over the corpus + recall sentinels (#342).
+#             ARGS=--in-repo runs the in-repo fixtures instead (no clones; CI, #835).
 oss-gate:
 	scripts/oss-gate.py --build $(ARGS)
 

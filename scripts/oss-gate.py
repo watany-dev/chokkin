@@ -2,7 +2,9 @@
 """Corpus-wide determinism and schema gate (issue #342, #85 WS5).
 
 Runs chokkin over every cloned project of the pinned corpus plus the in-repo
-recall sentinels, three times each:
+recall sentinels, three times each. With --in-repo it needs no clones: it runs
+over the recall sentinels and every in-repo fixture project (tests/fixtures/*/*)
+instead, which is what CI gates on each pull request (#835).
 
   cold     .chokkin/ cache removed first (the run writes a fresh cache)
   warm     immediately after, reading that cache
@@ -15,6 +17,12 @@ Gates (each an automatic pass/fail):
                summary.by_code agree with the issues array
   crash        no run exits 3 (internal error) or prints non-JSON
 
+  rejection    (--in-repo) the fixtures chokkin rejects on every run (exit 2,
+               no output) are exactly those listed in --expect-rejected
+
+A listed fixture is not gated otherwise: the invalid-config fixtures are meant
+to be rejected. Any other rejected project fails the crash gate.
+
 chokkin only reads the analyzed project (plus its own .chokkin/ cache, which is
 removed again afterwards); nothing from the project is executed, so this is
 safe for CI once the clones exist.
@@ -26,6 +34,11 @@ Options:
   -m, --manifest PATH   Clone list (default: scripts/oss-clones.manifest)
   -R, --recall PATH     Recall sentinels (default: scripts/oss-recall.manifest)
   -c, --clones DIR      Clone root (default: target/oss-clones)
+  --in-repo             Skip the clones; run the in-repo fixtures instead
+  -F, --fixtures DIR    Fixture root for --in-repo (default: tests/fixtures)
+  --expect-rejected PATH
+                        Fixtures expected to be rejected, one slug per line
+                        (default: scripts/oss-gate-rejected.txt)
   -o, --output DIR      Report directory (default: target/oss-gate)
   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
   --build               cargo build --release before running
@@ -55,6 +68,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-m", "--manifest", type=Path, default=oc.DEFAULT_MANIFEST)
     p.add_argument("-R", "--recall", type=Path, default=oc.DEFAULT_RECALL)
     p.add_argument("-c", "--clones", type=Path, default=oc.DEFAULT_CLONES)
+    p.add_argument("--in-repo", action="store_true")
+    p.add_argument("-F", "--fixtures", type=Path, default=oc.ROOT / "tests/fixtures")
+    p.add_argument(
+        "--expect-rejected", type=Path, default=oc.ROOT / "scripts/oss-gate-rejected.txt"
+    )
     p.add_argument("-o", "--output", type=Path, default=oc.ROOT / "target/oss-gate")
     p.add_argument("-b", "--bin", type=Path, default=oc.DEFAULT_BIN)
     p.add_argument("--build", action="store_true")
@@ -77,6 +95,20 @@ def contract_errors(report: dict) -> list[str]:
     if summary.get("by_code") != by_code:
         errs.append(f"summary.by_code {summary.get('by_code')} != counted {by_code}")
     return errs
+
+
+def is_rejected(res: dict, blobs: dict) -> bool:
+    """chokkin refused the project the same way on every run (a config error)."""
+    return all(res["exit"].get(v) == 2 and not blobs.get(v, b"").strip() for v in VARIANTS)
+
+
+def fixture_projects(root: Path) -> list[tuple[str, Path]]:
+    """Each tests/fixtures/<area>/<case> directory, as the Rust tests use them."""
+    return [
+        (p.relative_to(root).as_posix(), p)
+        for p in sorted(root.glob("*/*"))
+        if p.is_dir() and p.name != ".chokkin"
+    ]
 
 
 def measure(slug: str, proj: Path, args, validator) -> dict:
@@ -110,6 +142,7 @@ def measure(slug: str, proj: Path, args, validator) -> dict:
     finally:
         # Leave the clone as clone-oss-fixtures.sh left it.
         shutil.rmtree(cache, ignore_errors=True)
+    res["rejected"] = is_rejected(res, blobs)
     res["deterministic"] = len(set(blobs.values())) == 1
     res["differs"] = [v for v in VARIANTS[1:] if blobs.get(v) != blobs.get("cold")]
     return res
@@ -130,23 +163,39 @@ def main() -> int:
 
     targets: list[tuple[str, Path]] = []
     skipped = []
-    for row in oc.read_manifest(args.manifest, core_only=True):
-        proj = args.clones / row["slug"]
-        if proj.is_dir():
-            targets.append((row["slug"], proj))
-        else:
-            skipped.append(row["slug"])
-    if not targets:
-        print("no clones found — run scripts/clone-oss-fixtures.sh first", file=sys.stderr)
-        return 2
+    if not args.in_repo:
+        for row in oc.read_manifest(args.manifest, core_only=True):
+            proj = args.clones / row["slug"]
+            if proj.is_dir():
+                targets.append((row["slug"], proj))
+            else:
+                skipped.append(row["slug"])
+        if not targets:
+            print("no clones found — run scripts/clone-oss-fixtures.sh first", file=sys.stderr)
+            return 2
     if args.recall.is_file():
         targets += [(s, p) for s, p in oc.read_recall(args.recall) if p.is_dir()]
+    expected: set[str] = set()
+    if args.in_repo:
+        lines = args.expect_rejected.read_text(encoding="utf-8").splitlines()
+        expected = {s for line in lines if (s := line.split("#", 1)[0].strip())}
+        # A recall sentinel is measured once, under its slug.
+        seen = {p.resolve() for _, p in targets}
+        targets += [(s, p) for s, p in fixture_projects(args.fixtures) if p.resolve() not in seen]
+        if not targets:
+            print(f"no fixture projects under {args.fixtures}", file=sys.stderr)
+            return 2
 
     shutil.rmtree(args.output, ignore_errors=True)
     args.output.mkdir(parents=True)
     results = {}
+    rejected = []
     for slug, proj in targets:
         r = measure(slug, proj, args, validator)
+        if slug in expected and r["rejected"]:
+            rejected.append(slug)
+            print(f"==> {slug}: rejected (exit 2)", flush=True)
+            continue
         results[slug] = r
         flag = "ok" if r["deterministic"] and not r["schema_errors"] and not r["crash"] else "FAIL"
         print(f"==> {slug}: {r.get('issues', '?')} issue(s) {flag}", flush=True)
@@ -154,10 +203,12 @@ def main() -> int:
     nondet = [s for s, r in results.items() if not r["deterministic"]]
     invalid = [s for s, r in results.items() if r["schema_errors"]]
     crashed = [s for s, r in results.items() if r["crash"]]
+    not_rejected = sorted(expected - set(rejected))
     gates = {
         "determinism": not nondet,
         "schema": not invalid,
         "crash": not crashed,
+        "rejection": not not_rejected,
     }
     summary = {
         "chokkin_version": oc.chokkin_version(args.bin),
@@ -169,7 +220,9 @@ def main() -> int:
         "schema_invalid": invalid,
         "crashed": crashed,
         "skipped_not_cloned": skipped,
-        "corpus": oc.read_lock(args.clones),
+        "rejected": rejected,
+        "not_rejected": not_rejected,
+        "corpus": {} if args.in_repo else oc.read_lock(args.clones),
         "results": results,
     }
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -182,7 +235,8 @@ def main() -> int:
         "",
         f"- chokkin: `{summary['chokkin_version']}`",
         f"- generated: {summary['generated']}",
-        f"- projects: {len(results)} ({len(results) * len(VARIANTS)} JSON outputs)",
+        f"- projects: {len(results)} ({len(results) * len(VARIANTS)} JSON outputs)"
+        + (f"; {len(rejected)} fixture(s) rejected as invalid config" if rejected else ""),
         "",
         *oc.md_table(
             ["Gate", "Criterion", "Measured", "Result"],
@@ -193,6 +247,9 @@ def main() -> int:
                  f"{len(results) - len(invalid)}/{len(results)} valid", verdict(gates["schema"])],
                 ["crash", "no exit 3 / non-JSON output",
                  f"{len(crashed)} crashed", verdict(gates["crash"])],
+                *([["rejection", "listed fixtures exit 2",
+                    f"{len(expected) - len(not_rejected)}/{len(expected)} rejected",
+                    verdict(gates["rejection"])]] if args.in_repo else []),
             ],
         ),
         "",
@@ -207,6 +264,8 @@ def main() -> int:
             "lrlll",
         ),
     ]
+    if not_rejected:
+        lines += ["", "Listed in --expect-rejected but not rejected: " + ", ".join(not_rejected)]
     for slug in invalid:
         lines += ["", f"## Schema errors: {slug}", ""]
         lines += [f"- {e}" for e in results[slug]["schema_errors"][:20]]
