@@ -694,6 +694,23 @@ mod tests {
             }]
         );
 
+        // Poetry owns its own dependency table; insertion does not touch it.
+        manifest.sources.poetry = true;
+        let (actions, skipped) = plan_fixes(
+            &report,
+            &manifest,
+            &[],
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        );
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+        assert!(skipped[0].detail.contains("non-Poetry"));
+        manifest.sources.poetry = false;
+
         // #581: requests keeps only `[tool.*]` in pyproject.toml and declares
         // dependencies in setup.py.
         manifest.sources.pyproject_project_table = false;
