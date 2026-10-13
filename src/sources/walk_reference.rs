@@ -486,6 +486,23 @@ mod tests {
         assert_eq!(paths(&outcomes[0]), ["app.py"]);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn nested_directory_symlinks_stay_unread_like_the_ignore_walker() {
+        let temp = tempdir().expect("tempdir");
+        let other = temp.path().join("other");
+        write_file(&other.join(".gitignore"), "foo{bar\n");
+        write_file(&other.join("lib.py"), "");
+        let root = temp.path().join("repo");
+        write_file(&root.join(".git/HEAD"), "");
+        write_file(&root.join("app.py"), "");
+        std::os::unix::fs::symlink(&other, root.join("vendor")).expect("symlink");
+
+        let outcomes = assert_equivalent(std::slice::from_ref(&root), &[]);
+        assert_eq!(outcomes[0].1, []);
+        assert_eq!(paths(&outcomes[0]), ["app.py"]);
+    }
+
     #[test]
     fn concurrent_walks_sharing_a_cache_match_the_ignore_walker() {
         let temp = tempdir().expect("tempdir");

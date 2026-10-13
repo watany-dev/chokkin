@@ -316,22 +316,24 @@ fn strip<'a>(root: &Path, path: &'a Path) -> &'a Path {
     path
 }
 
-/// `ignore`'s `pathutil::strip_prefix`: byte-wise on Unix.
-#[cfg(unix)]
+/// `ignore`'s `pathutil::strip_prefix`: byte-wise on Unix. One function
+/// for both platforms, so mutation tests on Unix reach its signature.
 fn strip_prefix<'a>(prefix: &Path, path: &'a Path) -> Option<&'a Path> {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
+    #[cfg(unix)]
+    {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
 
-    let rest = path
-        .as_os_str()
-        .as_bytes()
-        .strip_prefix(prefix.as_os_str().as_bytes())?;
-    Some(Path::new(OsStr::from_bytes(rest)))
-}
-
-#[cfg(not(unix))]
-fn strip_prefix<'a>(prefix: &Path, path: &'a Path) -> Option<&'a Path> {
-    path.strip_prefix(prefix).ok()
+        let rest = path
+            .as_os_str()
+            .as_bytes()
+            .strip_prefix(prefix.as_os_str().as_bytes())?;
+        Some(Path::new(OsStr::from_bytes(rest)))
+    }
+    #[cfg(not(unix))]
+    {
+        path.strip_prefix(prefix).ok()
+    }
 }
 
 /// `ignore`'s `pathutil::is_file_name`.
@@ -462,5 +464,49 @@ impl<'a> MatchState<'a> {
             }
         }
         self.saw_git |= dir.has_git;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A shared matcher with [`strip`] answers as `ignore`'s matcher rooted
+    /// at the directory, including for bare names that merely start with it.
+    #[test]
+    fn shared_rules_strip_like_a_directory_rooted_gitignore() {
+        let content = b"bar\n/top.py\nsub/\n";
+        for root in ["pkg", "a/pkg"] {
+            let mut builder = GitignoreBuilder::new(root);
+            for line in content.lines() {
+                builder.add_line(None, &line.expect("line")).expect("rule");
+            }
+            let own = builder.build().expect("gitignore");
+            let shared = Rules::Shared {
+                root: PathBuf::from(root),
+                gitignore: Arc::new(compile(content).expect("compile")),
+            };
+            for path in [
+                format!("{root}/bar"),
+                format!("{root}/x/bar"),
+                format!("{root}/top.py"),
+                format!("{root}/x/top.py"),
+                format!("./{root}/top.py"),
+                format!("{root}/sub"),
+                format!("{root}bar"),
+                "pkgbar".to_owned(),
+                "bar".to_owned(),
+            ] {
+                for is_dir in [false, true] {
+                    let expected = own.matched(&path, is_dir);
+                    let actual = shared.matched(Path::new(&path), is_dir);
+                    assert_eq!(
+                        (actual.is_ignore(), actual.is_whitelist()),
+                        (expected.is_ignore(), expected.is_whitelist()),
+                        "root {root}, path {path}, is_dir {is_dir}"
+                    );
+                }
+            }
+        }
     }
 }
