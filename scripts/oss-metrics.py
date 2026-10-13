@@ -91,16 +91,21 @@ per-rule issue counts. The gate fails when the reachable count drops below
 the floor (the package root, entry points or workspace were missed) or a
 rule's count grows past base + max(5, base/5) (a new false-positive pattern).
 
-Downgrade vs vanish (#700): a confidence or severity change can hide a
-finding from the default output (GONE in finding-diff.tsv) while --strict
-still reports it. --strict also changes some verdicts (a member's dev
-declaration turns CHK003 into CHK005), so the strict reports are compared with
-each other, never with a default run (#716). A finding GONE between the two
-strict reports vanished; a default-run GONE whose fingerprint HEAD's strict
-report still has was downgraded, which is informational only. The gate fails
-on a vanished `tp`; vanished findings without a label are counted for triage
-but do not gate, because a release that fixes false positives makes hundreds
-of them vanish.
+Downgrade vs vanish (#700): a confidence or severity change can hide a finding
+from the default output (GONE in finding-diff.tsv) while --strict still
+reports it. --strict also changes some verdicts (a member's dev declaration
+turns CHK003 into CHK005), so the strict reports are compared with each other,
+never with a default run (#716). A finding GONE between the two strict reports
+vanished. A default-run GONE whose fingerprint HEAD's strict report adds over
+its default report was demoted when that strict finding is at `maybe` (hidden
+by the confidence floor, #784) and recontexted otherwise (a context change:
+examples/ became dev, #709); only confidences and counts are compared, since
+--strict raises some severities. A default-run CHANGED to a lower severity, or
+to the same severity at a lower confidence, is demoted too, and those from
+warning or error to info are counted apart. These columns are informational
+only. The gate fails on a vanished `tp`; vanished findings without a label are
+counted for triage but do not gate, because a release that fixes false
+positives makes hundreds of them vanish.
 
 chokkin only reads the analyzed projects; nothing from them is executed.
 """
@@ -296,14 +301,30 @@ def finding_diff(base: Path, head: Path, slugs: list[str]) -> tuple[list[list[st
     return rows, skipped
 
 
+SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2}
+CONFIDENCE_RANK = {"maybe": 0, "likely": 1, "certain": 2}
+
+
+def demoted(before: str, after: str) -> bool:
+    """Whether level `after` (`severity/confidence`) is below `before`: the
+    severity dropped, or it held and the confidence dropped."""
+    def rank(level: str) -> tuple[int, int]:
+        severity, confidence = level.split("/")
+        return SEVERITY_RANK.get(severity, 0), CONFIDENCE_RANK.get(confidence, 0)
+    return rank(after) < rank(before)
+
+
 def downgrade_vs_vanish(
     base: Path, head: Path, default_rows: list[list[str]], strict_rows: list[list[str]],
     labels: dict[tuple[str, str, str], tuple[str, str]],
 ) -> tuple[list[str], bool]:
-    """Per-rule split of the default run's GONE into downgraded (HEAD's strict
-    report still has the fingerprint) and of the strict-to-strict GONE into
-    vanished by label; and whether no `tp` vanished."""
+    """Per-rule split of the default run's GONE into recontexted and demoted
+    (HEAD findings only its strict report shows, `maybe` ones demoted), plus the
+    default run's CHANGED findings whose level dropped, which are demoted too;
+    of the strict-to-strict GONE into vanished by label; and whether no `tp`
+    vanished."""
     cache: dict[tuple[Path, str], dict[tuple[str, str], str]] = {}
+    conf_cache: dict[tuple[Path, str], dict[tuple[str, str], Counter]] = {}
 
     def keys(run: Path, slug: str) -> dict[tuple[str, str], str]:
         """(code, escaped fingerprint) -> target in one strict report."""
@@ -312,8 +333,37 @@ def downgrade_vs_vanish(
             cache[(run, slug)] = {(i["code"], tsv_field(i["fingerprint"])): i.get("target") or "?" for i in issues}
         return cache[(run, slug)]
 
-    gone = Counter(r[2] for r in default_rows if r[0] == "GONE")
-    downgraded = Counter(r[2] for r in default_rows if r[0] == "GONE" and (r[2], r[3]) in keys(head, r[1]))
+    def confidences(run: Path, slug: str) -> dict[tuple[str, str], Counter]:
+        """(code, escaped fingerprint) -> confidences of its findings in one report."""
+        if (run, slug) not in conf_cache:
+            out: dict[tuple[str, str], Counter] = {}
+            for i in report_issues(run, slug) or []:
+                out.setdefault((i["code"], tsv_field(i["fingerprint"])), Counter())[i.get("confidence") or "?"] += 1
+            conf_cache[(run, slug)] = out
+        return conf_cache[(run, slug)]
+
+    gone: Counter = Counter()
+    recontexted: Counter = Counter()
+    demoted_n: Counter = Counter()
+    info_n: Counter = Counter()
+    hidden: dict[tuple[str, str, str], Counter] = {}
+    for status, slug, code, fp, before, after in default_rows:
+        if status == "CHANGED" and demoted(before, after):
+            demoted_n[code] += 1
+            info_n[code] += is_hit(before.split("/")[0]) and not is_hit(after.split("/")[0])
+        if status != "GONE":
+            continue
+        gone[code] += 1
+        if (slug, code, fp) not in hidden:
+            strict = confidences(head / "strict", slug).get((code, fp), Counter())
+            hidden[(slug, code, fp)] = strict - confidences(head, slug).get((code, fp), Counter())
+        left = hidden[(slug, code, fp)]
+        if left["maybe"] > 0:
+            left["maybe"] -= 1
+            demoted_n[code] += 1
+        elif +left:
+            left[next(iter(+left))] -= 1
+            recontexted[code] += 1
     vanished: Counter = Counter()
     lost: list[str] = []
     for _, slug, code, fp, _, _ in (r for r in strict_rows if r[0] == "GONE"):
@@ -327,21 +377,26 @@ def downgrade_vs_vanish(
     lines = [
         "## Downgrade vs vanish (--strict)",
         "",
-        "GONE = default-run GONE; downgraded = of those, still in HEAD's --strict report.",
+        "GONE = default-run GONE; recontexted = of those, reported by HEAD's --strict run",
+        "but not its default run, above `maybe` (a context change, e.g. examples/ became dev).",
+        "Demoted = default-run CHANGED to a lower severity, or the same severity and a lower",
+        "confidence, plus GONE that HEAD's --strict run reports at `maybe`; to info = of the",
+        "CHANGED, warning or error that became info.",
         "Vanished = GONE between the two --strict reports (finding-diff-strict.tsv),",
         "by label; a vanished `tp` fails the gate, unlabelled ones need triage.",
         "",
     ]
-    codes = sorted(gone.keys() | {c for c, _ in vanished})
+    codes = sorted(gone.keys() | demoted_n.keys() | {c for c, _ in vanished})
     if not codes:
-        return [*lines, "_No finding is GONE._"], True
+        return [*lines, "_No finding is GONE or demoted._"], True
     return [
         *lines,
         *oc.md_table(
-            ["Rule", "GONE", "Downgraded", "Vanished tp", "Vanished fp", "Vanished other"],
-            [[c, gone[c], downgraded[c], vanished[(c, "tp")], vanished[(c, "fp")], vanished[(c, "other")]]
+            ["Rule", "GONE", "Recontexted", "Demoted", "To info", "Vanished tp", "Vanished fp", "Vanished other"],
+            [[c, gone[c], recontexted[c], demoted_n[c], info_n[c],
+              vanished[(c, "tp")], vanished[(c, "fp")], vanished[(c, "other")]]
              for c in codes],
-            "lrrrrr",
+            "lrrrrrrr",
         ),
         *(["", f"Vanished `tp`: {' '.join(lost)}"] if lost else []),
     ], not lost
