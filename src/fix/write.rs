@@ -129,12 +129,14 @@ mod tests {
     fn create_temp_in_skips_a_stale_temp_file() {
         let dir = TempDir::new().expect("tempdir");
         let next = TEMP_SEQ.load(Ordering::Relaxed);
-        for seq in next..next + 4 {
+        // Fewer than the 16 attempts, and wide enough that other tests bumping
+        // TEMP_SEQ in the meantime still leave a stale file in the way.
+        for seq in next..next + 8 {
             fs::write(dir.path().join(temp_name(seq)), "stale").expect("write");
         }
         let (path, _file) = create_temp_in(dir.path()).expect("temp file");
         assert_eq!(fs::read_to_string(&path).expect("read"), "");
-        assert_eq!(fs::read_dir(dir.path()).expect("read_dir").count(), 5);
+        assert_eq!(fs::read_dir(dir.path()).expect("read_dir").count(), 9);
     }
 
     #[cfg(unix)]

@@ -6,12 +6,9 @@ name: Verification
 # within a job timeout. kani runs on demand or weekly.
 
 on:
+  # No paths filter: `Mutants` is meant to be a required check, and a PR without
+  # Rust changes passes it with zero mutants instead of leaving it pending.
   pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
@@ -90,6 +87,7 @@ jobs:
         with:
           tool: cargo-mutants@27.1.0
       - name: Mutate
+        id: mutate
         env:
           SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         # Exit 2 (missed) and 3 (timeout) are left to the next step: a timeout
@@ -97,11 +95,13 @@ jobs:
         run: |
           status=0
           make "$MUTANTS_TARGET" ARGS="--shard $SHARD" || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
           case "$status" in 0 | 2 | 3) ;; *) exit "$status" ;; esac
       - name: Fail on missed mutants
         if: always()
         env:
           SHARD: ${{ matrix.shard }}
+          STATUS: ${{ steps.mutate.outputs.status }}
         run: |
           {
             echo "### cargo-mutants (shard $SHARD)"
@@ -111,8 +111,10 @@ jobs:
               echo '```'
               cat mutants.out/missed.txt
               echo '```'
-            else
+            elif [ "$STATUS" = 0 ] || [ "$STATUS" = 3 ]; then
               echo "No missed mutants."
+            else
+              echo "cargo-mutants did not finish (exit ${STATUS:-none}); see the Mutate step."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           test ! -s mutants.out/missed.txt
