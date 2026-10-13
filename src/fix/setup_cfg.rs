@@ -206,5 +206,14 @@ mod tests {
             "[options]\npython_requires = >=3.9\ninstall_requires = requests\n\
              [options.extras_require]\ntest =\n    pytest\n"
         );
+
+        // Not in install_requires: the extras line goes by the line fallback.
+        remove_dependency(&path, "pytest").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            updated,
+            "[options]\npython_requires = >=3.9\ninstall_requires = requests\n\
+             [options.extras_require]\ntest =\n"
+        );
     }
 }
