@@ -44,6 +44,8 @@ pub enum EntryOrigin {
         /// Human-readable origin label.
         label: String,
     },
+    /// A module providing the PEP 517 build hooks (#782).
+    BuildBackend,
 }
 
 /// One merged entry root after deduplication.

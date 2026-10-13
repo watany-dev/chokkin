@@ -2423,6 +2423,46 @@ fn binary_hatch_build_scripts_are_dev_entry_roots() {
     );
 }
 
+/// poetry's `poetry.masonry.api` re-exports the PEP 517 hooks for projects
+/// that name it as their `build-backend`; nothing in the repository imports
+/// it (#782).
+#[test]
+fn binary_pep517_backend_modules_are_entry_roots() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+        (
+            "src/acme/masonry/api.py",
+            "from acme.core import build_sdist, build_wheel\n\n\
+             __all__ = [\"build_sdist\", \"build_wheel\"]\n",
+        ),
+        (
+            "src/acme/core.py",
+            "def build_wheel(wheel_directory):\n    pass\n\n\
+             def build_sdist(sdist_directory):\n    pass\n",
+        ),
+        (
+            "src/acme/wheel_only.py",
+            "def build_wheel(wheel_directory):\n    pass\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        issue_keys(&issues)
+            .into_iter()
+            .filter(|(code, _)| code == "CHK001")
+            .collect::<Vec<_>>(),
+        [("CHK001".to_owned(), "src/acme/wheel_only.py".to_owned())],
+        "{issues:#?}"
+    );
+}
+
 /// #731: a workspace member's own `pytest11` entry point makes its plugin
 /// module pytest-loaded; its other modules still need what they import.
 #[test]

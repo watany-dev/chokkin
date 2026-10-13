@@ -439,6 +439,8 @@ root 直下の `scripts/**` と `.github/**` の `.py` も entry にする（rul
 
 hatchling が build 時に path で読み込む custom builder / hook も entry にする (#735)。root と各 workspace member の `pyproject.toml` の `[tool.hatch.build.targets.custom]`・`[tool.hatch.build.hooks.custom]`・`[tool.hatch.build.targets.<target>.hooks.custom]`・`[tool.hatch.metadata.hooks.custom]` の `path`（省略時 `hatch_build.py`、manifest 相対）が discovery 済みの file を指すときに限り、origin `manifest: [<table>].path` の entry とする。build 時にだけ動き wheel には入らないので dev context とし（§10）、`--production` では落とす。その file の import は build 環境が入れる `[build-system].requires` で解決し、宣言済みとして CHK003 / CHK004 / CHK005 の対象外にする（airflow の `hatch_build.py` の `hatchling`）。
 
+PEP 517 の build backend として frontend が import する module も entry にする (#782)。PEP 517 で必須の hook `build_wheel` と `build_sdist` を、両方とも定義するか `__all__` で再 export する runtime context の module が対象で、origin は `build backend: PEP 517`。利用者の `build-backend` に書かれて読まれる互換 module（poetry の `poetry.masonry.api`）や、`backend-path` 配下の in-tree backend は、リポジトリの中から import されないため。片方の hook だけを持つ module や、test などの runtime 以外の file は対象外。
+
 discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry にする（rule `auto:**/*.ipynb`、#514）。notebook は cell 単位で直接実行され他の file から import されないため、PEP 723 script と同じく root としてしか使われない。そのため notebook 自身は CHK001 にならず、notebook からだけ import される module も到達可能になる。app 判定（`has_clear_app_signals`）は file 名で見るため、notebook があっても mode は変わらない。
 
 ただし、library projectではaggressiveにunused filesを出すと誤検知が増える。`mode = "auto"` の判定は次にする。
