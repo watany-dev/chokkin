@@ -213,7 +213,6 @@ struct Evaluator<'a> {
     functions: HashMap<String, &'a StmtFunctionDef>,
     depth: usize,
     steps: usize,
-    /// Objects allocated so far, for fresh [`Identity`]s.
     objects: usize,
     probed_missing: Vec<String>,
     /// Items of the lists `requirement_table_lookup` found an entry in, read
@@ -1221,7 +1220,6 @@ mod props {
             St::Assign(name, value)
         }
 
-        /// `new = old`: a second name for a list or dict.
         fn alias(&mut self) -> St {
             let kind = self.tape.choose(&[Kind::List, Kind::Dict]);
             let Some(old) = self.var(kind) else {
@@ -1371,7 +1369,6 @@ mod props {
             Ref::Obj(self.heap.len() - 1)
         }
 
-        /// The items of a list, as a shallow copy.
         fn list(&self, value: &Ref) -> Option<Vec<Ref>> {
             match value {
                 Ref::Obj(id) => match &self.heap[*id] {
@@ -1393,7 +1390,6 @@ mod props {
             }
         }
 
-        /// The value as plain data, for comparison with the evaluator.
         fn resolve(&self, value: &Ref) -> Py {
             match value {
                 Ref::Str(text) => Py::Str(text.clone()),
@@ -1416,7 +1412,6 @@ mod props {
             self.eval(expr, &env)
         }
 
-        /// `expr` evaluated at module level, as plain data.
         fn value(&mut self, expr: &Ex) -> Option<Py> {
             let value = self.eval_global(expr)?;
             Some(self.resolve(&value))

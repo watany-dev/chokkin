@@ -283,7 +283,6 @@ fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
     })
 }
 
-/// Sorted names of the importable directories under `parent` that `keep` accepts.
 fn package_dirs(
     parent: &Path,
     skip_non_packages: bool,
