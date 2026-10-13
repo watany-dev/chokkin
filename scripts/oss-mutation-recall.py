@@ -252,6 +252,16 @@ MUTATIONS = [
 ]
 
 
+def outcome(kind: str, expected: set, before: set, after: set) -> tuple[str, list[str]]:
+    """Verdict for one mutation at one confidence and the expected keys that
+    appeared: only keys new over the unmutated run count, so a name the project
+    already reported does not pass for a detection."""
+    hit = sorted(f"{c}:{k}" for c, k in expected & (after - before))
+    if kind == "injection":
+        return ("detected" if hit else "missed"), hit
+    return ("triggered" if hit else "clean"), hit
+
+
 def run_project(slug: str, src: Path, work: Path, bin_path: Path) -> list[dict]:
     oc.fresh_copy(src, work)
     oc.reset_tree(work)
@@ -277,11 +287,7 @@ def run_project(slug: str, src: Path, work: Path, bin_path: Path) -> list[dict]:
             row["note"] = f"in {mod.relative_to(work).as_posix()}"
         got = scan(bin_path, work)
         for conf in CONFIDENCES:
-            hit = sorted(f"{c}:{k}" for c, k in expected & (got[conf] - base[conf]))
-            if kind == "injection":
-                row[conf] = "detected" if hit else "missed"
-            else:
-                row[conf] = "triggered" if hit else "clean"
+            row[conf], hit = outcome(kind, expected, base[conf], got[conf])
             if hit and kind == "trap":
                 row["note"] = ", ".join(hit)
         rows.append(row)
