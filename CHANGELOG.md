@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build_wheel` and `build_sdist`, is an entry root, so a build backend that
   frontends import by its `build-backend` name (poetry's `poetry.masonry.api`)
   is no longer CHK001 (#782).
+- An in-tree build backend, a top-level module under `[build-system].backend-path`,
+  is a dev build script like a hatchling hook: it is an entry root and its
+  imports resolve through `[build-system].requires` (#782).
 
 ## [0.7.5] - 2026-10-12
 

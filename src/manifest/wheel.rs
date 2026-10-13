@@ -133,6 +133,37 @@ fn hatch_targets(tool: &toml::Table) -> Option<WheelTargets> {
     })
 }
 
+/// An in-tree backend's module under each `backend-path` directory: the
+/// frontend imports it into the build environment, which installs
+/// `[build-system].requires` for it, like a hatchling build script (#782).
+/// Only a top-level module counts: a dotted name is a module of a package the
+/// project may ship, as self-hosting backends do (`poetry.core.masonry.api`
+/// under `src`).
+pub(super) fn parse_in_tree_backend(table: &toml::Table) -> Vec<BuildScript> {
+    let Some(build_system) = table_at(table, &["build-system"]) else {
+        return Vec::new();
+    };
+    let Some(backend) = build_system.get("build-backend").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    // `module:object` names an object in the module.
+    let module = backend.split(':').next().unwrap_or(backend).trim();
+    if module.is_empty() || module.contains('.') {
+        return Vec::new();
+    }
+    build_system
+        .get("backend-path")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|dir| BuildScript {
+            table: "build-system.backend-path".to_owned(),
+            path: join_rel(&normalize_path(dir), &format!("{module}.py")),
+        })
+        .collect()
+}
+
 /// Files hatchling loads while building, whatever `build-backend` says: the
 /// `custom` target's builder and every `custom` build or metadata hook. An
 /// omitted `path` is hatch's default `hatch_build.py` (#735).
@@ -452,6 +483,36 @@ mod tests {
                     "build/wheel_hook.py"
                 ),
             ]
+        );
+    }
+
+    fn in_tree_backend(contents: &str) -> Vec<String> {
+        let table: toml::Table = toml::from_str(contents).expect("valid toml");
+        parse_in_tree_backend(&table)
+            .into_iter()
+            .map(|script| script.path)
+            .collect()
+    }
+
+    #[test]
+    fn in_tree_backend_module_under_each_backend_path() {
+        assert_eq!(
+            in_tree_backend(
+                "[build-system]\nbuild-backend = \"backend:api\"\n\
+                 backend-path = [\"./_custom_build\", \".\"]\n",
+            ),
+            ["_custom_build/backend.py", "backend.py"]
+        );
+    }
+
+    #[test]
+    fn a_dotted_backend_is_no_build_script() {
+        assert!(
+            in_tree_backend(
+                "[build-system]\nbuild-backend = \"poetry.core.masonry.api\"\n\
+                 backend-path = [\"src\"]\n",
+            )
+            .is_empty()
         );
     }
 

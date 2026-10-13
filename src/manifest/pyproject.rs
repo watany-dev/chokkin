@@ -17,7 +17,9 @@ use super::types::{
 use super::util::{DependencyPush, push_dependency, read_to_string};
 use super::uv_tool::extract_uv_tool;
 use super::warnings::ManifestWarning;
-use super::wheel::{parse_hatch_build_scripts, parse_version_files, parse_wheel_targets};
+use super::wheel::{
+    parse_hatch_build_scripts, parse_in_tree_backend, parse_version_files, parse_wheel_targets,
+};
 
 /// Partial extraction result from `pyproject.toml`.
 #[derive(Debug, Default)]
@@ -277,6 +279,10 @@ fn extract_build_system(table: &toml::Table, rel: &str, result: &mut PyprojectEx
         result.metadata.name.as_deref(),
     );
     result.metadata.build_scripts = parse_hatch_build_scripts(table);
+    result
+        .metadata
+        .build_scripts
+        .extend(parse_in_tree_backend(table));
     result.metadata.version_files = parse_version_files(table);
 }
 

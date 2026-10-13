@@ -14,14 +14,13 @@ const REQUIRED_HOOKS: [&str; 2] = ["build_wheel", "build_sdist"];
 ///
 /// A frontend imports the module named by a `build-backend` key, so nothing in
 /// the project imports it: poetry's `poetry.masonry.api` re-exports
-/// `poetry.core`'s hooks for projects that still name it, and an in-tree
-/// backend under `backend-path` defines them itself.
+/// `poetry.core`'s hooks for projects that still name it. An in-tree backend
+/// under `backend-path` is a dev build script instead (`parse_in_tree_backend`).
 pub(crate) fn add_build_backend_roots(
     plan: &mut EntryPlan,
     parse: &ParseSummary,
     files: &[DiscoveredFile],
 ) {
-    let mut added = false;
     for module in parse.modules.iter().filter(|module| provides_hooks(module)) {
         let Some(file) = files.iter().find(|file| file.path == module.path) else {
             continue;
@@ -47,12 +46,9 @@ pub(crate) fn add_build_backend_roots(
             context: file.context,
             origins: vec![EntryOrigin::BuildBackend],
         });
-        added = true;
     }
-    if added {
-        plan.roots
-            .sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
-    }
+    plan.roots
+        .sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
 }
 
 /// Whether `module` defines or re-exports (`__all__`) every required hook.
@@ -90,7 +86,11 @@ mod tests {
         }
     }
 
-    fn roots_for(modules: Vec<ParsedModule>, files: &[(&str, FileContext)]) -> Vec<EntryRoot> {
+    fn roots_for(
+        roots: Vec<EntryRoot>,
+        modules: Vec<ParsedModule>,
+        files: &[(&str, FileContext)],
+    ) -> Vec<EntryRoot> {
         let files: Vec<_> = files
             .iter()
             .map(|(path, context)| DiscoveredFile {
@@ -101,7 +101,7 @@ mod tests {
             .collect();
         let mut plan = EntryPlan {
             mode: ProjectMode::App,
-            roots: Vec::new(),
+            roots,
             warnings: Vec::new(),
             library_members: Vec::new(),
         };
@@ -110,33 +110,9 @@ mod tests {
     }
 
     #[test]
-    fn modules_providing_both_hooks_are_roots() {
-        let roots = roots_for(
-            vec![
-                module(
-                    "src/poetry/masonry/api.py",
-                    &[],
-                    &["build_sdist", "build_wheel"],
-                ),
-                module("_build/backend.py", &["build_wheel", "build_sdist"], &[]),
-            ],
-            &[
-                ("src/poetry/masonry/api.py", FileContext::Runtime),
-                ("_build/backend.py", FileContext::Runtime),
-            ],
-        );
-        let paths: Vec<_> = roots.iter().map(|root| root.spec.path.as_str()).collect();
-        assert_eq!(paths, ["_build/backend.py", "src/poetry/masonry/api.py"]);
-        assert!(
-            roots
-                .iter()
-                .all(|root| root.origins == [EntryOrigin::BuildBackend])
-        );
-    }
-
-    #[test]
     fn one_hook_or_a_test_module_is_not_a_root() {
         let roots = roots_for(
+            Vec::new(),
             vec![
                 module("src/acme/wheel.py", &["build_wheel"], &[]),
                 module(
@@ -151,5 +127,40 @@ mod tests {
             ],
         );
         assert!(roots.is_empty(), "{roots:#?}");
+    }
+
+    #[test]
+    fn an_existing_root_gains_the_origin_once() {
+        let existing = EntryRoot {
+            spec: EntrySpec {
+                path: "src/poetry/masonry/api.py".to_owned(),
+                symbol: None,
+            },
+            context: FileContext::Runtime,
+            origins: vec![EntryOrigin::Config],
+        };
+        let modules = || {
+            vec![
+                module(
+                    "src/poetry/masonry/api.py",
+                    &[],
+                    &["build_sdist", "build_wheel"],
+                ),
+                module("src/acme/backend.py", &["build_wheel", "build_sdist"], &[]),
+            ]
+        };
+        let files = [
+            ("src/poetry/masonry/api.py", FileContext::Runtime),
+            ("src/acme/backend.py", FileContext::Runtime),
+        ];
+        let once = roots_for(vec![existing], modules(), &files);
+        let roots = roots_for(once, modules(), &files);
+        let paths: Vec<_> = roots.iter().map(|root| root.spec.path.as_str()).collect();
+        assert_eq!(paths, ["src/acme/backend.py", "src/poetry/masonry/api.py"]);
+        assert_eq!(roots[0].origins, [EntryOrigin::BuildBackend]);
+        assert_eq!(
+            roots[1].origins,
+            [EntryOrigin::Config, EntryOrigin::BuildBackend]
+        );
     }
 }

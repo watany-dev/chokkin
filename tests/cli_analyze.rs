@@ -2463,6 +2463,32 @@ fn binary_pep517_backend_modules_are_entry_roots() {
     );
 }
 
+/// An in-tree backend under `backend-path` runs in the build environment, so
+/// its imports resolve through `[build-system].requires` (#782).
+#[test]
+fn binary_in_tree_backend_imports_resolve_through_build_requires() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"setuptools\", \"tomli\"]\n\
+             build-backend = \"backend\"\nbackend-path = [\"_custom_build\"]\n\n\
+             [project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+        (
+            "_custom_build/backend.py",
+            "import tomli\nfrom setuptools import build_meta\n\n\
+             def build_wheel(wheel_directory):\n    return build_meta.build_wheel(wheel_directory)\n\n\
+             def build_sdist(sdist_directory):\n    return build_meta.build_sdist(sdist_directory)\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert!(issue_keys(&issues).is_empty(), "{issues:#?}");
+}
+
 /// #731: a workspace member's own `pytest11` entry point makes its plugin
 /// module pytest-loaded; its other modules still need what they import.
 #[test]
