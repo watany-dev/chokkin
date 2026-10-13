@@ -96,6 +96,16 @@ impl GitignoreFilter {
         };
         let mut guard = self.stack.lock().unwrap_or_else(PoisonError::into_inner);
         let (paths, dirs) = &mut *guard;
+        // Most entries sit in the directory of the previous one; skip the
+        // component-wise comparisons below for them.
+        if paths
+            .last()
+            .is_some_and(|top| top.as_os_str() == parent.as_os_str())
+        {
+            let skips = gitignore_skips(dirs, self.ancestors.as_deref(), &self.root, path, is_dir);
+            drop(guard);
+            return skips;
+        }
         // The walk is depth-first: drop the directories it has left, then
         // add the ones it entered since the last entry.
         while paths.last().is_some_and(|top| !parent.starts_with(top)) {
