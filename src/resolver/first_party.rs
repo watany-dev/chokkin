@@ -202,6 +202,7 @@ mod tests {
 
     fn my_lib_path_source(path: &str) -> UvToolSettings {
         UvToolSettings {
+            build_constraints: std::collections::BTreeSet::new(),
             sources: vec![crate::manifest::UvSource {
                 name: "my-lib".to_owned(),
                 kind: UvSourceKind::Path(path.to_owned()),

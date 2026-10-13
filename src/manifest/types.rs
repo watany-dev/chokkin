@@ -166,6 +166,10 @@ pub struct UvSource {
 pub struct UvToolSettings {
     /// `[tool.uv.sources]` entries.
     pub sources: Vec<UvSource>,
+    /// Normalized names in `build-constraint-dependencies`: the versions uv
+    /// installs into the build environment (#819).
+    #[serde(default)]
+    pub build_constraints: BTreeSet<String>,
 }
 
 impl UvToolSettings {

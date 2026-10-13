@@ -148,11 +148,13 @@ fn reconcile_project(
     };
 
     let metapackage = ships_no_code(manifest, context.sources);
+    let build_groups = build_environment_groups(manifest);
     for deps in declared.values() {
         let deps: Vec<&DeclaredDependency> = deps
             .iter()
             .copied()
             .filter(|dep| !metapackage || matches!(dep.context, DependencyContext::Group(_)))
+            .filter(|dep| !is_build_environment_pin(dep, manifest, &build_groups))
             .collect();
         candidates.extend(detect_unused_dependencies(
             &deps,
@@ -247,6 +249,42 @@ fn without_build_environment_imports(
         resolution.imports.retain(|import| !provided(import));
         resolution
     })
+}
+
+/// `(file, group)` of each dependency group that declares a
+/// `[build-system].requires` distribution (#819).
+fn build_environment_groups(manifest: &LoadedManifest) -> HashSet<(&str, &str)> {
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dep| {
+            manifest
+                .metadata
+                .build_requires
+                .iter()
+                .any(|build| build.name == dep.name)
+        })
+        .filter_map(group_key)
+        .collect()
+}
+
+/// A group that declares a build requirement and lists what `[tool.uv]
+/// build-constraint-dependencies` also pins exports the build environment
+/// (openai-python's `build` group), so its pins import nothing (#819).
+fn is_build_environment_pin(
+    dep: &DeclaredDependency,
+    manifest: &LoadedManifest,
+    build_groups: &HashSet<(&str, &str)>,
+) -> bool {
+    manifest.uv.build_constraints.contains(&dep.name)
+        && group_key(dep).is_some_and(|key| build_groups.contains(&key))
+}
+
+fn group_key(dep: &DeclaredDependency) -> Option<(&str, &str)> {
+    match &dep.context {
+        DependencyContext::Group(group) => Some((dep.origin.file.as_str(), group.as_str())),
+        _ => None,
+    }
 }
 
 /// A wheel target that matches no source file ships a metapackage, whose
