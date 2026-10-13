@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 40f3d39387d46e980ffd46c1a1ee973318d0653ac6a100563f9f0b4bcabf61e1 # shrinks to git_dirs = [0], ignores = [], excludes = [0], roots = [2]
+cc 45e7e4c14416e2dde797e4119644180d3ca0388c9a5e7040c4f1a4f9711627cc # shrinks to git_dirs = [], ignores = [(3, [0])], excludes = [], roots = [1]
+cc d4a1c3d8039c44248b0fd79f2f2c4fdb65a8f8f8b5b764eb0c5fd145e71e5264 # shrinks to git_dirs = [0], ignores = [(2, [7])], excludes = [], roots = [0]

@@ -4,8 +4,9 @@ use crate::config::LoadedConfig;
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
 
+use super::cache::SourcesCache;
 use super::error::SourcesError;
-use super::glob::{build_glob_set, effective_exclude};
+use super::glob::effective_exclude;
 use super::layout::{infer_layout, pytest_testpaths};
 use super::types::DiscoveredSources;
 use super::walk::{
@@ -17,6 +18,18 @@ pub fn discover_sources(
     root: &ProjectRoot,
     config: &LoadedConfig,
     manifest: &LoadedManifest,
+) -> Result<DiscoveredSources, SourcesError> {
+    discover_sources_cached(root, config, manifest, &SourcesCache::default())
+}
+
+/// [`discover_sources`] reusing the ignore files and globs that earlier calls
+/// sharing `cache` parsed: a workspace probe walks member trees the root walk
+/// already covered.
+pub(crate) fn discover_sources_cached(
+    root: &ProjectRoot,
+    config: &LoadedConfig,
+    manifest: &LoadedManifest,
+    cache: &SourcesCache,
 ) -> Result<DiscoveredSources, SourcesError> {
     let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
     // Only inferred globs take testpaths: the parse cache keys on the globs,
@@ -38,12 +51,12 @@ pub fn discover_sources(
     };
 
     let exclude_patterns = effective_exclude(&config.effective.exclude);
-    let project_matcher = build_glob_set(&effective_globs)?;
-    let exclude_matcher = build_glob_set(&exclude_patterns)?;
-    let test_matcher = build_glob_set(&test_globs)?;
+    let project_matcher = cache.glob_set(&effective_globs)?;
+    let exclude_matcher = cache.glob_set(&exclude_patterns)?;
+    let test_matcher = cache.glob_set(&test_globs)?;
 
     let (gitignore, gitignore_warning) = if config.effective.respect_gitignore {
-        load_gitignore(&root.path)
+        load_gitignore(&root.path, cache)
     } else {
         (None, None)
     };
@@ -55,8 +68,9 @@ pub fn discover_sources(
         test_matcher: &test_matcher,
         exclude_patterns: &exclude_patterns,
         respect_gitignore: config.effective.respect_gitignore,
-        gitignore: gitignore.as_ref(),
+        gitignore: gitignore.as_deref(),
         production: config.effective.production,
+        cache,
     };
     let (files, walk_warnings) = collect_files(&collect_options)?;
 
