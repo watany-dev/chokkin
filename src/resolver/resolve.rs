@@ -874,6 +874,10 @@ mod tests {
         ] {
             assert!(modules.contains(expected), "{expected}: {modules:?}");
         }
+        assert!(
+            modules.iter().all(|module| !module.is_empty() && !module.starts_with('.')),
+            "{modules:?}"
+        );
     }
 
     #[test]
