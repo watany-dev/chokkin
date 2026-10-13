@@ -438,7 +438,6 @@ fn celery_plugin_records_app_symbol() {
     );
 }
 
-/// `(module, symbol, file, line, label)` of each symbol ref, sorted.
 fn symbol_ref_keys(
     contrib: &chokkin::internals::PluginContribution,
 ) -> Vec<(&str, &str, &str, Option<u32>, &str)> {
@@ -459,7 +458,6 @@ fn symbol_ref_keys(
     keys
 }
 
-/// `(binary, file, line)` of each binary usage, sorted.
 fn binary_usage_keys(
     contrib: &chokkin::internals::PluginContribution,
 ) -> Vec<(&str, &str, Option<u32>)> {

@@ -340,8 +340,6 @@ fn copy_dir_recursive(source: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Write a flat-layout `acme` package whose `__init__.py` holds `source`
-/// next to `setup_cfg`, and run `--fix` on it.
 fn fix_setup_cfg_project(setup_cfg: &str, source: &str, strict: bool) -> (String, usize) {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();

@@ -2840,8 +2840,6 @@ fn binary_trace_reports_undiscovered_file() {
     );
 }
 
-/// The negative trace lists every entry root with its origin and the
-/// unreachable importers of the target.
 #[test]
 fn binary_trace_explains_unreachable_file() {
     assert_eq!(
