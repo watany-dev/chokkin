@@ -287,6 +287,73 @@ fn binary_json_import_issues_carry_distribution_and_module() {
     }
 }
 
+/// A plugin reference (`INSTALLED_APPS`, Sphinx `extensions`) has no line, so
+/// its CHK010 must not report the internal line 0 the schema rejects (#835).
+#[test]
+fn binary_json_plugin_import_issues_have_no_line() {
+    for fixture in ["django_manage", "sphinx_docs"] {
+        let issues = json_issues(&fixture_path(&["plugins", fixture]), &["--no-cache"]);
+        let unresolved = issues
+            .iter()
+            .filter(|issue| issue["code"] == "CHK010")
+            .collect::<Vec<_>>();
+        assert!(!unresolved.is_empty(), "{fixture}");
+        for issue in unresolved {
+            assert_eq!(issue["line"], serde_json::Value::Null, "{fixture}: {issue}");
+            let message = issue["message"].as_str().unwrap_or_default();
+            assert!(!message.contains(":0`"), "{fixture}: {message}");
+        }
+    }
+}
+
+/// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 with
+/// no position, so neither its message nor its explain shows `:0`.
+#[test]
+fn binary_plugin_missing_dependency_has_no_line() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django>=4.0\"]\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = [\"django.contrib.admin\", \"requests\"]\n",
+        ),
+    ];
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create dir");
+        }
+        fs::write(path, text).expect("write fixture");
+    }
+
+    let issues = json_issues(temp.path(), &["--no-cache"]);
+    let missing = issues
+        .iter()
+        .find(|issue| issue["code"] == "CHK003")
+        .expect("CHK003 for requests");
+    assert_eq!(missing["line"], serde_json::Value::Null);
+    let message = missing["message"].as_str().unwrap_or_default();
+    assert!(message.contains("mysite/settings.py"), "{message}");
+    assert!(!message.contains(":0"), "{message}");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK003:requests"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("import at mysite/settings.py"), "{stderr}");
+    assert!(!stderr.contains(":0"), "{stderr}");
+}
+
 const PEP723_TOOL: &str = r#"# /// script
 # requires-python = ">=3.11"
 # dependencies = [

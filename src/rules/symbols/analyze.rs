@@ -14,7 +14,8 @@ use crate::resolver::{ResolutionIndex, ResolveWarning};
 use crate::rules::RuleContext;
 use crate::rules::deps::file_context;
 use crate::rules::types::{
-    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, sort_candidates,
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
+    sort_candidates,
 };
 use crate::sources::{DiscoveredSources, FileContext, PublicSurface, member_ships, path_to_module};
 
@@ -435,10 +436,11 @@ fn unresolved_import_candidate(
         .filter(|other| *other != line && *other != 0)
         .collect::<BTreeSet<_>>();
     let first_party = is_first_party_import(import, &sources.layout, &manifest.metadata);
+    let site = import_site(file, line);
     let message = if first_party {
-        format!("import `{import}` in `{file}:{line}` does not resolve to a first-party module")
+        format!("import `{import}` in `{site}` does not resolve to a first-party module")
     } else {
-        format!("import `{import}` in `{file}:{line}` could not be resolved")
+        format!("import `{import}` in `{site}` could not be resolved")
     };
     let mut details = vec![
         "check for typos in first-party module names".to_owned(),
