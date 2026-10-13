@@ -64,15 +64,19 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<
     result
 }
 
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn temp_name(seq: u64) -> String {
+    format!(".chokkin-{}-{seq}.tmp", process::id())
+}
+
 /// Create a fresh `.chokkin-*.tmp` file in `dir`; `create_new` guarantees we
 /// never clobber a file another process (or a stale run) left behind.
 fn create_temp_in(dir: &Path) -> io::Result<(PathBuf, fs::File)> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let mut last_error = None;
     for _ in 0..16 {
-        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let name = format!(".chokkin-{}-{seq}.tmp", process::id());
-        let candidate = dir.join(name);
+        let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let candidate = dir.join(temp_name(seq));
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -119,6 +123,18 @@ mod tests {
 
         assert!(atomic_write(&target, b"new", false).is_err());
         assert_no_temp_files(dir.path());
+    }
+
+    #[test]
+    fn create_temp_in_skips_a_stale_temp_file() {
+        let dir = TempDir::new().expect("tempdir");
+        let next = TEMP_SEQ.load(Ordering::Relaxed);
+        for seq in next..next + 4 {
+            fs::write(dir.path().join(temp_name(seq)), "stale").expect("write");
+        }
+        let (path, _file) = create_temp_in(dir.path()).expect("temp file");
+        assert_eq!(fs::read_to_string(&path).expect("read"), "");
+        assert_eq!(fs::read_dir(dir.path()).expect("read_dir").count(), 5);
     }
 
     #[cfg(unix)]

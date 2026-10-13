@@ -6,5 +6,5 @@ exclude_re = [
     "verification::",
     # Retrying every open error instead of only AlreadyExists still returns the
     # same error after 16 tries: only the retry count changes.
-    "with true in create_temp_in",
+    "AlreadyExists with true in create_temp_in",
 ]
