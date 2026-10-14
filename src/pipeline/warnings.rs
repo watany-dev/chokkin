@@ -3,6 +3,7 @@
 use std::fmt;
 use std::io::{self, Write};
 
+use crate::entry::EntryWarning;
 use crate::manifest::ManifestWarning;
 use crate::plugins::PluginsWarning;
 use crate::sources::SourcesWarning;
@@ -16,6 +17,8 @@ pub enum ProbeWarning {
     Sources(SourcesWarning),
     /// Warning from plugin hint extraction.
     Plugin(PluginsWarning),
+    /// Warning from entry root construction.
+    Entry(EntryWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
     AutoWorkspace { member_count: usize },
     /// Nested projects outside the workspace were left out of the analysis.
@@ -58,6 +61,7 @@ impl fmt::Display for ProbeWarning {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
             Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
             Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
+            Self::Entry(warning) => fmt::Display::fmt(warning, formatter),
             Self::AutoWorkspace { member_count } => write!(
                 formatter,
                 "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
@@ -206,6 +210,7 @@ pub(super) fn collect_warnings(
 #[cfg(test)]
 mod tests {
     use crate::config::PluginId;
+    use crate::entry::EntryWarning;
     use crate::manifest::ManifestWarning;
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
@@ -347,6 +352,26 @@ mod tests {
         assert_eq!(
             diagnostic(0).to_string(),
             "parse: `a.py`: unsupported `__all__` assignment form"
+        );
+    }
+
+    #[test]
+    fn entry_warnings_render_exact_text() {
+        assert_eq!(
+            ProbeWarning::Entry(EntryWarning::MissingEntryPath {
+                path: "a.py".to_owned(),
+            })
+            .to_string(),
+            "entry: skipped entry `a.py`: not a discovered source file"
+        );
+        assert_eq!(
+            ProbeWarning::Entry(EntryWarning::UnresolvedModuleTarget {
+                module: "acme.cli".to_owned(),
+                file: "pyproject.toml".to_owned(),
+                label: "project.scripts.acme".to_owned(),
+            })
+            .to_string(),
+            "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)"
         );
     }
 

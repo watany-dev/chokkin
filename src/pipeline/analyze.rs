@@ -7,7 +7,7 @@ use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
 use crate::entry::{
-    EntryPlan, add_member_manifest_roots, build_entry_roots, is_library_member,
+    EntryPlan, EntryWarning, add_member_manifest_roots, build_entry_roots, is_library_member,
     mark_command_scripts_dev,
 };
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
@@ -28,7 +28,7 @@ use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
 use crate::sources::{
-    DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, discover_sources,
+    DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning, discover_sources,
 };
 
 use super::error::AnalyzeError;
@@ -201,7 +201,7 @@ fn run_analysis_core(
         parse: &parse,
         cache: Some(&options.cache),
     })?;
-    let warnings: Vec<ProbeWarning> = parse
+    let mut warnings: Vec<ProbeWarning> = parse
         .modules
         .iter()
         .chain(&member_parse)
@@ -229,6 +229,7 @@ fn run_analysis_core(
             .iter()
             .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
     );
+    warnings.extend(entry_warnings(&entry, &probe.sources));
     if probe.effective_config.mode == ProjectMode::Auto {
         entry.library_members = probe
             .workspace_inputs
@@ -364,6 +365,33 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// The entry plan's warnings, less the config entries that source discovery
+/// already reported missing or a directory. A target two extractors read
+/// (a uvicorn `project.scripts` value) is reported once.
+fn entry_warnings(entry: &EntryPlan, sources: &DiscoveredSources) -> Vec<ProbeWarning> {
+    let reported: HashSet<&str> = sources
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            SourcesWarning::MissingEntryPath { path }
+            | SourcesWarning::EntryPathIsDirectory { path } => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut warnings: Vec<ProbeWarning> = Vec::new();
+    for warning in &entry.warnings {
+        if matches!(warning, EntryWarning::MissingEntryPath { path } if reported.contains(path.as_str()))
+        {
+            continue;
+        }
+        let warning = ProbeWarning::Entry(warning.clone());
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
+    }
+    warnings
 }
 
 /// What the user needs to know about one parsed module: a skipped module is

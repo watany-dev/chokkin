@@ -1986,6 +1986,56 @@ fn binary_parse_warnings_reach_stderr_and_json_diagnostics() {
     }
 }
 
+/// An entry point that maps to no source file reaches stderr, for the root
+/// manifest and for a workspace member's own manifest alike. A config entry
+/// missing on disk is reported once, by source discovery.
+#[test]
+fn binary_entry_warnings_reach_stderr() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/tool\"]\n\n\
+             [tool.chokkin]\nmode = \"app\"\nexclude = [\"acme/excluded.py\"]\n\
+             entry = [\"acme/excluded.py\", \"acme/gone.py\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/excluded.py", ""),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\ntool = \"tool.missing:run\"\n",
+        ),
+        ("packages/tool/tool/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for line in [
+        "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)",
+        "entry: could not map `tool.missing` to a source file (`project.scripts.tool` in `packages/tool/pyproject.toml`)",
+        "entry: skipped entry `acme/excluded.py`: not a discovered source file",
+    ] {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    assert_eq!(
+        stderr.matches("acme/gone.py").count(),
+        1,
+        "reported by sources only\n{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    assert!(
+        diagnostics.contains("could not map `acme.cli`"),
+        "{diagnostics}"
+    );
+}
+
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not
 /// abort the run (#486).
 #[test]

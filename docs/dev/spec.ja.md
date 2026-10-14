@@ -447,6 +447,8 @@ PEP 517 の build backend として frontend が import する module も entry 
 
 discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry にする（rule `**/*.ipynb`、#514）。notebook は cell 単位で直接実行され他の file から import されないため、PEP 723 script と同じく root としてしか使われない。そのため notebook 自身は CHK001 にならず、notebook からだけ import される module も到達可能になる。app 判定（`has_clear_app_signals`）は file 名で見るため、notebook があっても mode は変わらない。
 
+entry の参照先 (`module:attr`) を source file に対応付けられないとき、その entry は root にせず、`` entry: could not map `mod` to a source file (`project.scripts.x` in `pyproject.toml`) `` を warning に出す。workspace member の manifest の entry も同じで、file は root からの path で書く。root にしようとした file が discovery の inventory に無いとき (exclude した config entry など) も、`` entry: skipped entry `path`: not a discovered source file `` を出す。disk に無い config entry や directory を指す config entry は source discovery が `sources: …` で報告するので、重ねて出さない。
+
 ただし、library projectではaggressiveにunused filesを出すと誤検知が増える。`mode = "auto"` の判定は次にする。
 
 ```text

@@ -83,13 +83,27 @@ pub(crate) fn add_member_manifest_roots<'a>(
     let root_paths = known_file_paths(root_sources);
     for (member_path, manifest, sources) in members {
         let mut candidates = Vec::new();
+        let mut warnings = Vec::new();
         collect_manifest_entries(
             manifest,
             sources,
             &known_file_paths(sources),
             &mut candidates,
-            &mut Vec::new(),
+            &mut warnings,
         );
+        plan.warnings
+            .extend(warnings.into_iter().map(|warning| match warning {
+                EntryWarning::UnresolvedModuleTarget {
+                    module,
+                    file,
+                    label,
+                } => EntryWarning::UnresolvedModuleTarget {
+                    module,
+                    file: join_rel(member_path, &file),
+                    label,
+                },
+                other @ EntryWarning::MissingEntryPath { .. } => other,
+            }));
         candidates.extend(build_script_entries(manifest));
         for candidate in candidates {
             let path = format!("{member_path}/{}", candidate.spec.path);
@@ -157,7 +171,8 @@ fn collect_manifest_entries(
         let Some(path) = resolve_module_to_path(&module, &sources.layout, known_paths) else {
             warnings.push(EntryWarning::UnresolvedModuleTarget {
                 module: module.clone(),
-                origin: format!("{}.{}", entry_point.group, entry_point.name),
+                file: entry_point.origin.file.clone(),
+                label: entry_point.origin.label.clone(),
             });
             continue;
         };
@@ -322,7 +337,8 @@ fn collect_symbol_ref_entries(
         else {
             warnings.push(EntryWarning::UnresolvedModuleTarget {
                 module: symbol_ref.module.clone(),
-                origin: symbol_ref.origin.label.clone(),
+                file: symbol_ref.origin.file.clone(),
+                label: symbol_ref.origin.label.clone(),
             });
             continue;
         };
