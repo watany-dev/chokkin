@@ -863,6 +863,35 @@ fn library_mode_declared_public_api_is_not_reported() {
     }
 }
 
+/// Names added by `__all__ +=`, `.extend` and `.append`, also inside a
+/// block, are declared library API like the assigned ones (#567).
+#[test]
+fn library_mode_appended_all_names_are_public_api() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        ("src/acme/__init__.py", "from . import _api\n"),
+        (
+            "src/acme/_api.py",
+            "__all__ = [\"listed\"]\n__all__ += [\"added\"]\n__all__.extend([\"extended\"])\n\
+             __all__.append(\"appended\")\nif HAS_X:\n    __all__ += [\"optional\"]\n\n\
+             def listed():\n    pass\n\ndef added():\n    pass\n\ndef extended():\n    pass\n\n\
+             def appended():\n    pass\n\ndef optional():\n    pass\n\ndef unlisted():\n    pass\n",
+        ),
+    ]);
+    for name in ["listed", "added", "extended", "appended", "optional"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "acme._api", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme._api",
+        "unlisted"
+    ));
+}
+
 /// An `__init__` that reads its own import uses it; an alias is the name the
 /// package exposes (#489).
 #[test]

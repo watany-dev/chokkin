@@ -480,16 +480,18 @@ mod source_bytes_props {
         }
 
         /// The last literal `__all__` assignment, annotated or not, is the
-        /// export list; a non-literal one only warns and keeps the previous.
+        /// export list, and later literal `+=` / `.extend` / `.append` add to
+        /// it; a non-literal one only warns and keeps the previous. Before any
+        /// literal assignment there is no list to add to (#567).
         #[test]
         fn exports_follow_last_literal_all(
             assignments in prop::collection::vec(
-                (prop::collection::vec("_?[a-z]{1,4}", 0..4), 0usize..6),
+                (prop::collection::vec("_?[a-z]{1,4}", 0..4), 0usize..11),
                 1..5,
             ),
         ) {
             let mut source = String::new();
-            let mut want = Vec::new();
+            let mut want: Option<Vec<String>> = None;
             let mut warnings = 0;
             for (names, form) in &assignments {
                 let quoted: Vec<String> = names.iter().map(|name| format!("{name:?}")).collect();
@@ -500,17 +502,30 @@ mod source_bytes_props {
                     2 => format!("__all__: list[str] = [{list}]"),
                     3 => format!("__all__: tuple[str, ...] = ({list}{})", if quoted.len() == 1 { "," } else { "" }),
                     4 => "__all__ = sorted(names)".to_owned(),
-                    _ => "__all__: list[str]".to_owned(),
+                    5 => "__all__: list[str]".to_owned(),
+                    6 => format!("__all__ += [{list}]"),
+                    7 => format!("__all__.extend([{list}])"),
+                    8 => match quoted.first() {
+                        Some(name) => format!("__all__.append({name})"),
+                        None => "__all__.append(name)".to_owned(),
+                    },
+                    9 => "__all__ += sub.__all__".to_owned(),
+                    _ => "__all__.extend(names)".to_owned(),
                 };
                 match form {
-                    0..=3 => want.clone_from(names),
-                    4 => warnings += 1,
+                    0..=3 => want = Some(names.clone()),
+                    6 | 7 => want.iter_mut().for_each(|want| want.extend(names.iter().cloned())),
+                    8 => match names.first() {
+                        Some(name) => want.iter_mut().for_each(|want| want.push(name.clone())),
+                        None => warnings += 1,
+                    },
+                    4 | 9 | 10 => warnings += 1,
                     _ => {},
                 }
                 let _ = writeln!(source, "{statement}");
             }
             let parsed = parse_bytes(source.as_bytes());
-            prop_assert_eq!(&parsed.exports, &want);
+            prop_assert_eq!(&parsed.exports, &want.unwrap_or_default());
             let got_warnings = parsed
                 .diagnostics
                 .iter()

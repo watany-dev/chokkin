@@ -274,7 +274,7 @@ pub(super) fn raises_import_error(body: &[Stmt]) -> bool {
     matches!(exc, Expr::Name(name) if matches!(name.id.as_str(), "ImportError" | "ModuleNotFoundError"))
 }
 
-fn string_literal(expr: &Expr) -> Option<&str> {
+pub(super) fn string_literal(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::StringLiteral(literal) => Some(literal.value.to_str()),
         _ => None,

@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The GitHub Action's `version` input also takes the path of a chokkin wheel
   (`*.whl`, relative to `working-directory`), which it runs with
   `uvx --from` (#834).
+- Literal `__all__ += [...]`, `__all__.extend([...])` and
+  `__all__.append("...")` add to the export list after a literal
+  `__all__` assignment, also from inside top-level `if` / `try` / `with`
+  blocks, so the added names count as public API (CHK006) and pass through
+  star imports. A non-literal addition (`__all__ += sub.__all__`) warns and
+  keeps the list (#567).
 
 ### Changed
 - CHK005 for a package that runtime code imports only inside functions is

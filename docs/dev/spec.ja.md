@@ -895,6 +895,8 @@ entry point target
 
 decorator 由来の used 判定は `src/rules/symbols/external.rs` の `REGISTRATION_DECORATOR_SUFFIXES` 1 か所で持つ (`get` / `post` / `put` / `delete` / `patch` / `route` / `websocket` / `fixture` / `shared_task` / `task` / `command` の suffix、`pytest.mark.*`、最後の属性名が `hookimpl` / `hookspec` で終わる pluggy の marker (`@hookimpl`、`@pm.hookspec(firstresult=True)`、airflow の `local_settings_hookspec = pluggy.HookspecMarker("airflow.policy")` で作った `@local_settings_hookspec`、#777))。parser は静的に名前の付く decorator をすべて記録し、Flask route / Celery task の module reference は各 plugin が自前の述語で判定する。suffix を足すのは、`tests/fixtures/symbols/` にその誤検知を再現する fixture を置いてからにする。
 
+`__all__` は module top-level の文を上から読む (`src/parser/exports.rs`)。`__all__ = [...]` / `__all__: T = (...)` は文字列 literal の list か tuple で置き換え、その後の `__all__ += [...]`・`__all__.extend([...])`(tuple も可)と `__all__.append("x")` は追記する (#567)。右辺や引数が literal でない (`__all__ += sub.__all__`、`sorted(names)` など) 文は `unsupported __all__ assignment form` の warning を出し、それまでの list を保つ。`if` / `try` / `with` の block 内では追記だけを読む。どの分岐が走るかは分からないが、mlflow の `if` 内の `__all__ += [...]` や django の `try/else` のように optional 依存で増える export も公開 API なので、全分岐の名前を足す。block 内の代入は list を置き換えず、関数・class の本体も読まない。top-level の literal 代入より前の追記 (`from .sub import __all__` の後や、block 内でだけ代入した後など) は捨てる。読めない list に足した名前だけが `__all__` 全体と扱われ、他の公開名が隠れるのを避けるため。
+
 `__all__` があるmoduleでは、`__all__` をpublic API宣言として扱う。`__all__` にあるが内部から使われないものは、app modeではwarning (confidence certain) にする。library modeでは、次のいずれかに当てはまるsymbolを公開APIとみなし、CHK006 / CHK007 を出さない (`src/rules/symbols/public.rs`、#489)。それ以外の未参照symbolはinfoにする。wheel target から public surface が求まる場合、surface 外 module の symbol は library mode でも app mode 相当 (warning、公開API扱いなし) にする (§8)。
 
 ```text
