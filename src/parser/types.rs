@@ -279,7 +279,8 @@ pub struct ParsedModule {
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,
-    /// The source could not be decoded, so nothing was extracted from it.
+    /// The source could not be decoded or has a syntax error, so nothing was
+    /// extracted from it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub skipped: bool,
 }

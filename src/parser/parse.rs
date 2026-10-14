@@ -26,9 +26,10 @@ use super::visit::ModuleVisitor;
 
 /// Parse one `.py` file under `root` (static only; never executes Python).
 ///
-/// Syntax errors are recorded in [`ParsedModule::diagnostics`]; the function still
-/// returns `Ok` unless the file cannot be read. A file that cannot be decoded
-/// comes back with [`ParsedModule::skipped`] set.
+/// The function returns `Ok` unless the file cannot be read. A file that
+/// cannot be decoded or has a syntax error comes back with
+/// [`ParsedModule::skipped`] set; the syntax error is recorded in
+/// [`ParsedModule::diagnostics`].
 ///
 /// # Errors
 ///
@@ -89,15 +90,13 @@ fn parse_python_source(
             note_unsupported_syntax(target, module.suite(), &mut parsed.diagnostics);
             parsed
         },
+        // Nothing was read past the error, so the module's imports are as
+        // unknown as an undecodable file's; an empty module would read as a
+        // module with no imports.
         Err(error) => {
-            let mut parsed = ParsedModule {
-                path: path.to_owned(),
-                ..ParsedModule::default()
-            };
-            parsed
-                .diagnostics
-                .push(syntax_diagnostic(path, &lines, &error));
-            parsed
+            let mut parsed = skipped_module(path);
+            parsed.diagnostics.push(syntax_diagnostic(&lines, &error));
+            return parsed;
         },
     };
 
@@ -471,7 +470,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v35".to_owned(),
+        unit_version: "parse-v36".to_owned(),
     }
 }
 
@@ -505,11 +504,11 @@ fn source_fingerprint(
     })
 }
 
-fn syntax_diagnostic(path: &str, lines: &LineIndex, error: &RuffParseError) -> ParseDiagnostic {
+fn syntax_diagnostic(lines: &LineIndex, error: &RuffParseError) -> ParseDiagnostic {
     // `ParseError`'s own Display appends a byte range; the line is reported separately.
     ParseDiagnostic {
         line: lines.line(error.location.start()),
-        message: format!("syntax error in `{path}`: {}", error.error),
+        message: error.error.to_string(),
         severity: ParseSeverity::Error,
     }
 }
@@ -576,6 +575,34 @@ mod tests {
             sites,
             vec![("shared_task", 4, false), ("app.route", 12, true)]
         );
+    }
+
+    #[test]
+    fn syntax_error_skips_the_module_and_keeps_the_error() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = write_temp_py(
+            temp.path(),
+            "app.py",
+            "import requests  # chokkin: ignore[CHK003]\ndef main(:\n    pass\n",
+        );
+        let parsed = parse_file(
+            &root,
+            "app.py",
+            &empty_layout(),
+            FileContext::Runtime,
+            &TargetVersion::default_py311(),
+        )
+        .expect("parse");
+
+        assert!(parsed.skipped);
+        assert!(parsed.imports.is_empty() && parsed.ignores.is_empty());
+        let errors: Vec<_> = parsed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == ParseSeverity::Error)
+            .map(|diagnostic| diagnostic.line)
+            .collect();
+        assert_eq!(errors, [2]);
     }
 
     #[test]

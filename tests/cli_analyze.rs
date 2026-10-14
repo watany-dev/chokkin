@@ -1854,6 +1854,66 @@ fn binary_non_utf8_setup_py_does_not_abort_the_run() {
     assert!(keys.iter().all(|(code, _)| code != "CHK003"), "{keys:?}");
 }
 
+/// A reachable module with a syntax error is skipped like an undecodable one:
+/// its imports are unknown, so what it may use is reported below certain,
+/// `--fix` leaves the declaration alone, and stderr names the error.
+#[test]
+fn binary_syntax_error_source_is_skipped_with_a_diagnostic() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"acme.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", ""),
+        (
+            "acme/main.py",
+            "import requests\nfrom acme import helper\ndef main(:\n    pass\n",
+        ),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("parse: skipped `acme/main.py`: syntax error at line 3"),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        issues,
+        [
+            ("CHK001", "acme/helper.py", "likely"),
+            ("CHK002", "requests", "likely"),
+        ],
+        "{parsed}"
+    );
+
+    let status = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--fix"])
+        .arg(project.path())
+        .status()
+        .expect("run chokkin --fix");
+    assert!(status.code().is_some(), "{status:?}");
+    assert_eq!(
+        fs::read_to_string(project.path().join("pyproject.toml")).expect("read pyproject"),
+        pyproject
+    );
+}
+
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not
 /// abort the run (#486).
 #[test]

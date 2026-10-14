@@ -289,8 +289,8 @@ mod source_bytes_props {
     use std::fs;
 
     use chokkin::internals::{
-        FileContext, LayoutInfo, ParsedModule, ProjectLayout, ProjectRoot, RootMarker,
-        TargetVersion, parse_file,
+        FileContext, LayoutInfo, ParseSeverity, ParsedModule, ProjectLayout, ProjectRoot,
+        RootMarker, TargetVersion, parse_file,
     };
     use proptest::prelude::*;
     use tempfile::TempDir;
@@ -362,13 +362,17 @@ mod source_bytes_props {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(128))]
 
-        /// Any bytes come back `Ok`; valid UTF-8 is never skipped, and a
-        /// skipped file yields nothing.
+        /// Any bytes come back `Ok`; valid UTF-8 is skipped only for a syntax
+        /// error, and a skipped file yields nothing.
         #[test]
         fn parse_file_is_total_on_bytes(bytes in prop::collection::vec(any::<u8>(), 0..200)) {
             let parsed = parse_bytes(&bytes);
             if std::str::from_utf8(&bytes).is_ok() {
-                prop_assert!(!parsed.skipped);
+                let syntax_error = parsed
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.severity == ParseSeverity::Error);
+                prop_assert_eq!(parsed.skipped, syntax_error);
             }
             if parsed.skipped {
                 prop_assert!(parsed.imports.is_empty() && parsed.ignores.is_empty());
