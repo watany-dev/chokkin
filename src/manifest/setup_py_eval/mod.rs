@@ -2,16 +2,20 @@
 //!
 //! Only literals, names, `+`, string-key subscripts, single-`return` helper
 //! functions, and filter-free comprehensions are evaluated. Everything else is
-//! [`Value::Unknown`], which callers treat as "could not be read" (#491).
+//! [`Value::Unknown`], which callers treat as "could not be read" (#491),
+//! except the known project idioms in [`idioms`], tried just before that.
+
+mod idioms;
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
-use ruff_python_ast::{Comprehension, Expr, ExprCall, Operator, Stmt, StmtFunctionDef, Suite};
+use ruff_python_ast::{
+    Comprehension, Expr, ExprCall, ExprSubscript, Operator, Stmt, StmtFunctionDef, Suite,
+};
 
 use crate::path_util::rel_to_root;
 
-use super::pep508_util::normalize_distribution_name;
 use super::util::path_is_within_root;
 
 const MAX_CALL_DEPTH: usize = 16;
@@ -154,8 +158,9 @@ struct Evaluator<'a> {
     depth: usize,
     steps: usize,
     probed_missing: Vec<String>,
-    /// Items of the lists `requirement_table_lookup` found an entry in, read
-    /// at lookup time: a later rebinding does not change what was looked up.
+    /// Items of the lists [`idioms::requirement_table_lookup`] found an entry
+    /// in, read at lookup time: a later rebinding does not change what was
+    /// looked up.
     table_requirements: BTreeSet<String>,
 }
 
@@ -504,23 +509,7 @@ impl<'a> Evaluator<'a> {
             Expr::BinOp(binop) if binop.op == Operator::Add => {
                 add(self.eval(&binop.left), self.eval(&binop.right))
             },
-            Expr::Subscript(subscript) => {
-                let base = self.eval(&subscript.value);
-                let Value::Str(key) = self.eval(&subscript.slice) else {
-                    return Value::Unknown;
-                };
-                match base {
-                    Value::Dict(items) => items
-                        .into_iter()
-                        .find(|(existing, _)| *existing == key)
-                        .map_or(Value::Unknown, |(_, value)| value),
-                    // Only a table this file assigned, not `os.environ[...]`.
-                    Value::Unknown if matches!(&*subscript.value, Expr::Name(name) if self.env.contains_key(name.id.as_str())) => {
-                        self.requirement_table_lookup(&key)
-                    },
-                    _ => Value::Unknown,
-                }
-            },
+            Expr::Subscript(subscript) => self.eval_subscript(subscript),
             Expr::Call(call) => self.eval_call(call),
             Expr::ListComp(comp) => self.eval_list_comprehension(&comp.elt, &comp.generators),
             Expr::SetComp(comp) => self.eval_list_comprehension(&comp.elt, &comp.generators),
@@ -542,6 +531,27 @@ impl<'a> Evaluator<'a> {
                     insert_entry(&mut items, key, value);
                 }
                 Value::Dict(items)
+            },
+            _ => Value::Unknown,
+        }
+    }
+
+    fn eval_subscript(&mut self, subscript: &ExprSubscript) -> Value {
+        let base = self.eval(&subscript.value);
+        let Value::Str(key) = self.eval(&subscript.slice) else {
+            return Value::Unknown;
+        };
+        match base {
+            Value::Dict(items) => items
+                .into_iter()
+                .find(|(existing, _)| *existing == key)
+                .map_or(Value::Unknown, |(_, value)| value),
+            // Only a table this file assigned, not `os.environ[...]`.
+            Value::Unknown if matches!(&*subscript.value, Expr::Name(name) if self.env.contains_key(name.id.as_str())) => {
+                idioms::requirement_table_lookup(&self.env, &key).map_or(Value::Unknown, |entry| {
+                    self.table_requirements.extend(entry.table);
+                    Value::Str(entry.requirement)
+                })
             },
             _ => Value::Unknown,
         }
@@ -709,54 +719,6 @@ impl<'a> Evaluator<'a> {
         }
         Value::Unknown
     }
-
-    /// `deps["tokenizers"]` on a table built at install time (transformers):
-    /// find a known requirement string whose name matches the key. The bare
-    /// key itself (e.g. a `deps_list("torch")` argument) loses to a fuller one.
-    fn requirement_table_lookup(&mut self, key: &str) -> Value {
-        let wanted = normalize_distribution_name(key);
-        let mut found: Vec<&String> = Vec::new();
-        for value in self.env.values() {
-            let Value::List(items) = value else {
-                continue;
-            };
-            for item in items {
-                if let Value::Str(raw) = item
-                    && normalize_distribution_name(requirement_table_key(raw)) == wanted
-                    && !found.contains(&raw)
-                {
-                    found.push(raw);
-                }
-            }
-        }
-        if found.len() > 1 {
-            found.retain(|raw| raw.as_str() != key);
-        }
-        let [raw] = found.as_slice() else {
-            return Value::Unknown;
-        };
-        let raw = Value::Str((*raw).clone());
-        for value in self.env.values() {
-            if let Value::List(items) = value
-                && items.contains(&raw)
-            {
-                self.table_requirements
-                    .extend(items.iter().filter_map(|item| match item {
-                        Value::Str(text) => Some(text.clone()),
-                        _ => None,
-                    }));
-            }
-        }
-        raw
-    }
-}
-
-/// Requirement text before its version or marker, extras kept.
-fn requirement_table_key(raw: &str) -> &str {
-    raw.split(['!', '=', '<', '>', '~', ' ', ';', '@'])
-        .next()
-        .unwrap_or(raw)
-        .trim()
 }
 
 /// `dict[key] = value`: a repeated key keeps its first position and the last value.
