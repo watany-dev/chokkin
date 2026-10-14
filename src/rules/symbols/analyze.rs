@@ -417,7 +417,6 @@ fn detect_unresolved_imports(
         .collect()
 }
 
-/// One unresolved site of a module in a file.
 struct UnresolvedSite<'a> {
     line: Option<u32>,
     /// `TYPE_CHECKING` or optional: the import never fails.
@@ -529,7 +528,6 @@ fn symbol_kind_label(kind: crate::parser::SymbolKind) -> &'static str {
 mod tests {
     use super::*;
 
-    /// Line of the anchor site; panics when there is none.
     fn anchor_line(sites: &[(Option<u32>, bool)]) -> Option<u32> {
         let sites = sites
             .iter()
