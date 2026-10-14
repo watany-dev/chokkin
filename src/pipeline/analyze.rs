@@ -204,11 +204,8 @@ fn run_analysis_core(
     let warnings: Vec<ProbeWarning> = parse
         .modules
         .iter()
-        .filter(|module| module.skipped)
-        .map(|module| ProbeWarning::SkippedSource {
-            path: module.path.clone(),
-            reason: skip_reason(module),
-        })
+        .chain(&member_parse)
+        .flat_map(parse_warnings)
         .chain(plugins.warnings.iter().cloned().map(ProbeWarning::Plugin))
         .collect();
     let mut sources = probe.sources.clone();
@@ -367,6 +364,26 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// What the user needs to know about one parsed module: a skipped module is
+/// one warning naming why, a kept one is a warning per diagnostic (#877).
+fn parse_warnings(module: &ParsedModule) -> Vec<ProbeWarning> {
+    if module.skipped {
+        return vec![ProbeWarning::SkippedSource {
+            path: module.path.clone(),
+            reason: skip_reason(module),
+        }];
+    }
+    module
+        .diagnostics
+        .iter()
+        .map(|diagnostic| ProbeWarning::ParseDiagnostic {
+            path: module.path.clone(),
+            line: diagnostic.line,
+            message: diagnostic.message.clone(),
+        })
+        .collect()
 }
 
 /// Why a skipped module was left out: a module the parser stopped on carries

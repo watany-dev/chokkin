@@ -27,6 +27,15 @@ pub enum ProbeWarning {
         /// Why the source could not be read.
         reason: SkipReason,
     },
+    /// Something the parser could not read in a source it kept.
+    ParseDiagnostic {
+        /// Root-relative path of the source.
+        path: String,
+        /// 1-based line, or 0 when the diagnostic covers the whole file.
+        line: u32,
+        /// The parser's message.
+        message: String,
+    },
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -74,6 +83,16 @@ impl fmt::Display for ProbeWarning {
                 formatter,
                 "parse: skipped `{path}`: syntax error at line {line}: {message}"
             ),
+            Self::ParseDiagnostic {
+                path,
+                line: 0,
+                message,
+            } => write!(formatter, "parse: `{path}`: {message}"),
+            Self::ParseDiagnostic {
+                path,
+                line,
+                message,
+            } => write!(formatter, "parse: `{path}:{line}`: {message}"),
         }
     }
 }
@@ -310,6 +329,24 @@ mod tests {
         assert_eq!(
             syntax.to_string(),
             "parse: skipped `b.py`: syntax error at line 3: Expected an expression"
+        );
+    }
+
+    #[test]
+    fn parse_diagnostic_names_its_line_unless_it_covers_the_file() {
+        let diagnostic = |line| ProbeWarning::ParseDiagnostic {
+            path: "a.py".to_owned(),
+            line,
+            message: "unsupported `__all__` assignment form".to_owned(),
+        };
+
+        assert_eq!(
+            diagnostic(4).to_string(),
+            "parse: `a.py:4`: unsupported `__all__` assignment form"
+        );
+        assert_eq!(
+            diagnostic(0).to_string(),
+            "parse: `a.py`: unsupported `__all__` assignment form"
         );
     }
 

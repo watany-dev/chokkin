@@ -293,6 +293,36 @@ fn binary_member_imports_outside_root_inventory_are_cached() {
     );
 }
 
+/// The member files parsed for that check report what the parser could not
+/// read like root files do, since a skipped one hides its imports.
+#[test]
+fn binary_member_files_outside_root_inventory_report_parse_warnings() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(
+        &fixture_path(&["deps", "uv_workspace_member_import_src_layout"]),
+        temp.path(),
+    )
+    .expect("copy");
+    fs::write(
+        temp.path().join("packages/core/src/acme/core/__init__.py"),
+        "from acme_util import y\ndef broken(:\n",
+    )
+    .expect("edit member");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "parse: skipped `packages/core/src/acme/core/__init__.py`: syntax error at line 2"
+        ),
+        "{stderr}"
+    );
+}
+
 fn json_issues(root: &std::path::Path, extra: &[&str]) -> Vec<serde_json::Value> {
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--reporter", "json"])
@@ -1912,6 +1942,48 @@ fn binary_syntax_error_source_is_skipped_with_a_diagnostic() {
         fs::read_to_string(project.path().join("pyproject.toml")).expect("read pyproject"),
         pyproject
     );
+}
+
+/// What the parser could not read in a file it kept reaches stderr and the
+/// JSON diagnostics, so a finding it causes has a visible reason (#877).
+#[test]
+fn binary_parse_warnings_reach_stderr_and_json_diagnostics() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "acme/__init__.py",
+            "from acme import other\n\n__all__ = [\"VALUE\"]\n__all__ += other.__all__\nVALUE = 1\n",
+        ),
+        ("acme/other.py", "__all__ = [\"OTHER\"]\nOTHER = 2\n"),
+        ("scripts/tool.py", "from . import helper\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let expected = [
+        "parse: `acme/__init__.py:4`: unsupported `__all__` assignment form",
+        "parse: `scripts/tool.py:1`: could not resolve relative import (missing package context)",
+    ];
+    for line in expected {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics: Vec<_> = parsed["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter_map(|diagnostic| diagnostic["message"].as_str())
+        .collect();
+    for line in expected {
+        assert!(diagnostics.contains(&line), "{line}\n{diagnostics:?}");
+    }
 }
 
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not

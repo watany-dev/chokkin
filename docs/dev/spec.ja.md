@@ -366,6 +366,8 @@ Python parserはRust実装でよい。Ruff ecosystemのparserを使うか、Rust
 
 source は byte で読み、UTF-8 として decode する（`src/parser/encoding.rs`）。UTF-8 でない file は PEP 263 の coding 宣言（先頭2行、2行目は1行目が comment か空行のときだけ）を見て、latin-1 と cp1252 は decode する。それ以外の encoding や宣言のない非UTF-8 file は解析を止めずに `ParsedModule::skipped` を立てて skip し、`parse: skipped …` の warning を stderr と JSON reporter の `diagnostics` に出す。中身を読めていないので、skip した file は CHK001 の候補にしない。到達可能な file を skip した場合は、その import が分からないため opaque dynamic import と同じく CHK001 の confidence を下げ、CHK002 も Likely にして `--fix` の対象から外す (#486)。また PEP 723 の inline script も同じ decode を通して読む (#486)。構文エラーで parse できない file も同じく `skipped` にして、`parse: skipped …: syntax error at line N: …` の warning を出す。parser は error の手前までの AST を返さないので、中身の無い module として流すと「import が無い module」と区別できず、その file だけが使う依存が CHK002 certain になって `--fix` で消えてしまう。Flask / Celery の decorator 走査は、error diagnostic を見て行単位のテキスト走査に切り替える（後述）。
 
+skip せずに残した file でも、parser が読めなかったものは `ParsedModule::diagnostics` に warning として積む。`__all__` の未対応の書き方、package context の無い相対 import、notebook から code を取り出せなかったこと、`target_version` に無い構文がこれにあたる。どれも `` parse: `path:line`: … `` (行を持たないものは `` parse: `path`: … ``) として stderr と JSON reporter の `diagnostics` に出す (#877)。集計せず 1 件 1 行で出すのは、finding と同じく file と行から原因を探せるようにするため。root の inventory に無い workspace member の file (#712) も root の file と同じく、skip と diagnostic を warning に出す。warning は finding の confidence を変えない。読めなかった範囲で finding を下げるのは ADR 0005 の gap の役目にする。
+
 ## 7. import resolution仕様
 
 Pythonの依存解析で最大の罠は、distribution名とimport名が一致しないこと。Python標準の `importlib.metadata` でも、distribution package名とtop-level import package名は必ずしも1:1対応しない。1つのdistributionが複数import packageを持つことも、namespace packageで1つのimport名に複数distributionが対応することもある。

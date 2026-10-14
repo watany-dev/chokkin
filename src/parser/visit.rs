@@ -453,7 +453,7 @@ impl<'a> ModuleVisitor<'a> {
                 let module = resolved.unwrap_or_else(|| {
                     self.parsed
                         .diagnostics
-                        .push(unresolved_relative_diagnostic(self.path, line));
+                        .push(unresolved_relative_diagnostic(line));
                     String::new()
                 });
                 let name = if module_suffix.is_some() || is_star {
