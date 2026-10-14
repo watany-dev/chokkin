@@ -4,7 +4,7 @@
     {
       "path": "src/acme/__main__.py",
       "origins": [
-        "auto:auto:__main__.py"
+        "auto:__main__.py"
       ]
     },
     {

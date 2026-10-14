@@ -265,13 +265,10 @@ fn library_roots_mark_subpackages_below_the_package_init() {
             rule: rule.to_owned(),
         }]
     };
-    assert_eq!(
-        origins_of("src/acme/__init__.py"),
-        auto("auto:library package")
-    );
+    assert_eq!(origins_of("src/acme/__init__.py"), auto("library package"));
     assert_eq!(
         origins_of("src/acme/sub/__init__.py"),
-        auto("auto:library subpackage")
+        auto("library subpackage")
     );
 }
 

@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and mlflow's `pyspark` drop to info (#808).
 
 ### Fixed
+- The negative `--trace` names an automatic entry root's rule once
+  (`auto: __main__.py` instead of `auto: auto:__main__.py`) (#850).
 - A runtime module that defines or re-exports (`__all__`) both PEP 517 hooks,
   `build_wheel` and `build_sdist`, is an entry root, so a build backend that
   frontends import by its `build-backend` name (poetry's `poetry.masonry.api`)

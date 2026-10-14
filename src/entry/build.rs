@@ -196,7 +196,7 @@ fn build_script_entries(manifest: &LoadedManifest) -> impl Iterator<Item = Entry
 
 /// Rule of a library root for a subpackage `__init__.py` below the package's
 /// own: callers may import it, but nothing shows the package loads it (#802).
-pub(crate) const LIBRARY_SUBPACKAGE_RULE: &str = "auto:library subpackage";
+pub(crate) const LIBRARY_SUBPACKAGE_RULE: &str = "library subpackage";
 
 /// A library's public API is its own entry point: without this, a library
 /// with no script, test, or config root reaches nothing and every runtime
@@ -221,7 +221,7 @@ fn collect_library_package_entries(
             let rule = if is_submodule(path, in_package) {
                 LIBRARY_SUBPACKAGE_RULE
             } else {
-                "auto:library package"
+                "library package"
             };
             candidates.push(EntryCandidate {
                 spec: EntrySpec {
