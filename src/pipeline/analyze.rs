@@ -353,6 +353,8 @@ fn run_analysis_core(
     } else {
         None
     };
+    // A test the parser could not read is evidence lost, like a root file.
+    warnings.extend(production_tests.iter().flatten().flat_map(parse_warnings));
     let symbols = crate::rules::symbols::analyze_with_context(
         &context,
         &entry,

@@ -1884,6 +1884,33 @@ fn binary_non_utf8_setup_py_does_not_abort_the_run() {
     assert!(keys.iter().all(|(code, _)| code != "CHK003"), "{keys:?}");
 }
 
+/// `--production` still parses a library's tests for CHK006, so what the
+/// parser could not read there is reported like any other file (#894).
+#[test]
+fn binary_production_reports_parse_warnings_in_library_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.chokkin]\nmode = \"library\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("tests/test_api.py", "from acme import api\ndef broken(:\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--production", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let skipped = "parse: skipped `tests/test_api.py`: syntax error at line 2";
+    assert!(stderr.contains(skipped), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    assert!(diagnostics.contains(skipped), "{diagnostics}");
+}
+
 /// A notebook whose JSON cannot be read is skipped like a syntax error: the
 /// imports it hides may use any declared dependency (#893).
 #[test]
