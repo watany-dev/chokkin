@@ -273,7 +273,6 @@ pub fn write_diagnostics(diagnostics: &[String], err: &mut impl Write) -> io::Re
     Ok(())
 }
 
-/// Write pipeline warnings to `err`, one per line.
 pub fn write_probe_warnings(warnings: &[ProbeWarning], err: &mut impl Write) -> io::Result<()> {
     write_diagnostics(&diagnostic_lines(warnings), err)
 }
