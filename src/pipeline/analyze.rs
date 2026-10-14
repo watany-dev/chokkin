@@ -13,7 +13,7 @@ use crate::entry::{
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
-use crate::parser::{ParseSummary, ParsedModule, parse_project_sources_with_cache};
+use crate::parser::{ParseSeverity, ParseSummary, ParsedModule, parse_project_sources_with_cache};
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
     ReachabilityReport, analyze_reachability, apply_member_surfaces, apply_public_surface,
@@ -33,7 +33,7 @@ use crate::sources::{
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, WorkspaceMemberInputs, probe_project_with_cache};
-use super::warnings::ProbeWarning;
+use super::warnings::{ProbeWarning, SkipReason};
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +207,7 @@ fn run_analysis_core(
         .filter(|module| module.skipped)
         .map(|module| ProbeWarning::SkippedSource {
             path: module.path.clone(),
+            reason: skip_reason(module),
         })
         .chain(plugins.warnings.iter().cloned().map(ProbeWarning::Plugin))
         .collect();
@@ -366,6 +367,21 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// Why a skipped module was left out: a module the parser stopped on carries
+/// its syntax error as an error diagnostic, an undecodable one carries none.
+fn skip_reason(module: &ParsedModule) -> SkipReason {
+    module
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.severity == ParseSeverity::Error)
+        .map_or(SkipReason::Undecodable, |diagnostic| {
+            SkipReason::SyntaxError {
+                line: diagnostic.line,
+                message: diagnostic.message.clone(),
+            }
+        })
 }
 
 /// Parse the root inventory together with the files of the root's

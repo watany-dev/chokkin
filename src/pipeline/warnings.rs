@@ -20,10 +20,26 @@ pub enum ProbeWarning {
     AutoWorkspace { member_count: usize },
     /// Nested projects outside the workspace were left out of the analysis.
     NestedProjectsSkipped { count: usize },
-    /// A source that could not be decoded and was left out of the analysis.
+    /// A source that could not be read and was left out of the analysis.
     SkippedSource {
         /// Root-relative path of the source.
         path: String,
+        /// Why the source could not be read.
+        reason: SkipReason,
+    },
+}
+
+/// Why [`ProbeWarning::SkippedSource`] left a source out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkipReason {
+    /// Not UTF-8 and no supported PEP 263 coding declaration.
+    Undecodable,
+    /// The parser stopped at a syntax error.
+    SyntaxError {
+        /// 1-based line of the error.
+        line: u32,
+        /// The parser's message.
+        message: String,
     },
 }
 
@@ -44,9 +60,19 @@ impl fmt::Display for ProbeWarning {
                 formatter,
                 "workspace: skipped {count} nested projects that are not workspace members (--no-auto-workspace keeps them)"
             ),
-            Self::SkippedSource { path } => write!(
+            Self::SkippedSource {
+                path,
+                reason: SkipReason::Undecodable,
+            } => write!(
                 formatter,
                 "parse: skipped `{path}`: not UTF-8 and no supported PEP 263 coding declaration"
+            ),
+            Self::SkippedSource {
+                path,
+                reason: SkipReason::SyntaxError { line, message },
+            } => write!(
+                formatter,
+                "parse: skipped `{path}`: syntax error at line {line}: {message}"
             ),
         }
     }
@@ -165,7 +191,7 @@ mod tests {
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
 
-    use super::{ProbeWarning, write_probe_warnings};
+    use super::{ProbeWarning, SkipReason, write_probe_warnings};
 
     #[test]
     fn plugin_warning_formats_partial_settings_parse() {
@@ -261,6 +287,30 @@ mod tests {
         for (warning, expected) in cases {
             assert_eq!(warning.to_string(), expected);
         }
+    }
+
+    #[test]
+    fn skipped_source_names_its_reason() {
+        let undecodable = ProbeWarning::SkippedSource {
+            path: "a.py".to_owned(),
+            reason: SkipReason::Undecodable,
+        };
+        let syntax = ProbeWarning::SkippedSource {
+            path: "b.py".to_owned(),
+            reason: SkipReason::SyntaxError {
+                line: 3,
+                message: "Expected an expression".to_owned(),
+            },
+        };
+
+        assert_eq!(
+            undecodable.to_string(),
+            "parse: skipped `a.py`: not UTF-8 and no supported PEP 263 coding declaration"
+        );
+        assert_eq!(
+            syntax.to_string(),
+            "parse: skipped `b.py`: syntax error at line 3: Expected an expression"
+        );
     }
 
     #[test]
