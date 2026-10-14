@@ -2,7 +2,7 @@
 
 リリースごとの実測は `v<version>-release-validation.md` に固定する。このページは
 その測り方の共通手順で、過去の検証で踏んだ落とし穴を避けるための手順を含む。
-判定基準は spec §17 の exit criteria と corpus regression gate (#495)、測定は
+判定基準は spec §17 の exit criteria と corpus regression gate (#495)、rule 別 precision の下限 (#701)、測定は
 `scripts/oss-metrics.py` で行う (`oss-metrics.yml` と同じ)。
 
 ## 1. バージョンごとにビルドを分ける

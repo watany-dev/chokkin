@@ -10,6 +10,9 @@ repository = "https://github.com/watany-dev/chokkin"
 homepage = "https://github.com/watany-dev/chokkin"
 keywords = ["python", "dead-code", "dependencies", "unused", "knip"]
 categories = ["command-line-utilities", "development-tools"]
+# What `cargo package` and the maturin sdist ship: only what the build needs
+# (#858). scripts/wheel-smoke.py fails on anything else in the sdist.
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/pyproject.toml", "/README.md", "/LICENSE"]
 
 [dependencies]
 # Minimal features: help/version output is hand-rolled in main.rs (USAGE), so

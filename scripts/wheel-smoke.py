@@ -13,6 +13,8 @@ catches an sdist that lacks a file the build needs.
 
 Checks:
 
+  files     (sdist only) nothing but Cargo.toml, Cargo.lock, pyproject.toml,
+            PKG-INFO, README.md, LICENSE and src/ (#858)
   version   `chokkin --version` prints the Cargo.toml version
   analyze   `chokkin --no-cache --reporter json` on a copy of
             tests/fixtures/wheel_smoke exits 1 and prints
@@ -37,6 +39,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import venv
 from pathlib import Path
@@ -45,6 +48,8 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests/fixtures/wheel_smoke"
 EXPECTED = ROOT / "tests/fixtures/wheel_smoke.json"
 ISSUES_FOUND = 1
+# Besides src/; PKG-INFO is written by maturin.
+SDIST_FILES = {"Cargo.toml", "Cargo.lock", "pyproject.toml", "PKG-INFO", "README.md", "LICENSE"}
 
 
 def cargo_version() -> str:
@@ -80,6 +85,17 @@ def install(dist: Path, env_dir: Path) -> Path:
     if done.returncode != 0:
         sys.exit(f"pip install failed:\n{done.stdout}{done.stderr}")
     return bin_dir / ("chokkin.exe" if os.name == "nt" else "chokkin")
+
+
+def check_sdist_files(dist: Path) -> list[str]:
+    """Files in the sdist that the build does not need (#858). Cargo.toml's
+    `include` decides what goes in; this keeps it from widening unnoticed."""
+    if not dist.name.endswith(".tar.gz"):
+        return []
+    with tarfile.open(dist) as tar:
+        names = [m.name.split("/", 1)[1] for m in tar.getmembers() if not m.isdir()]
+    extra = sorted(n for n in names if n not in SDIST_FILES and not n.startswith("src/"))
+    return [f"sdist: unexpected files: {' '.join(extra)}"] if extra else []
 
 
 def check_version(chokkin: Path, version: str) -> list[str]:
@@ -120,10 +136,11 @@ def main() -> int:
         return 2
     dist = Path(sys.argv[1]).resolve()
     version = cargo_version()
+    errors = check_sdist_files(dist)
     with tempfile.TemporaryDirectory(prefix="chokkin-wheel-smoke-") as tmp:
         work = Path(tmp)
         chokkin = install(dist, work / "venv")
-        errors = check_version(chokkin, version)
+        errors += check_version(chokkin, version)
         errors += check_analyze(chokkin, version, work)
     for error in errors:
         print(f"FAIL {error}", file=sys.stderr)
