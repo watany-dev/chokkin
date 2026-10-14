@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::VERSION;
 use crate::cache::CacheOptions;
 use crate::config::{
-    ChokkinConfig, ConfigSources, DependencyGroupsConfig, ResolvedWorkspaceMember,
+    ChokkinConfig, ConfigSources, DependencyGroupsConfig, LoadedConfig, ResolvedWorkspaceMember,
     RuntimeOverrides, TargetVersion, apply_overrides, load_config, load_root_config,
     nested_projects,
 };
@@ -23,7 +23,8 @@ use crate::plugins::{
 };
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
-    DiscoveredSources, FileContext, FileKind, MemberLayout, apply_member_context, discover_sources,
+    DiscoveredSources, FileContext, FileKind, MemberLayout, SourcesCache, apply_member_context,
+    discover_sources_cached,
 };
 
 use super::error::ProbeError;
@@ -109,7 +110,8 @@ pub(super) fn probe_project_with_cache(
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
 
-    let mut sources = discover_sources(&root, &loaded, &manifest)?;
+    let (mut sources, mut workspace_inputs) =
+        discover_root_and_members(&root, &loaded, &manifest, overrides, cache)?;
     let nested = if overrides.no_auto_workspace == Some(true) {
         BTreeSet::new()
     } else {
@@ -132,11 +134,6 @@ pub(super) fn probe_project_with_cache(
                 .is_empty())
     });
     let member_count = loaded.workspace_members.len();
-    // The manifest cache lives under each member root; an undeclared monorepo
-    // would gain hundreds of untracked `.chokkin/` directories.
-    let member_cache = if loaded.auto_workspace { None } else { cache };
-    let mut workspace_inputs =
-        collect_workspace_inputs(&root, &loaded.workspace_members, overrides, member_cache)?;
     if loaded.effective.production {
         drop_dev_only_members(
             &mut sources,
@@ -327,11 +324,45 @@ fn activate_plugins(
     activations
 }
 
+/// The root's sources and every member's inputs. Member trees sit inside the
+/// root tree: one cache parses each ignore file once across every walk, and
+/// the root walk overlaps the members' manifests and walks instead of
+/// preceding them (#757).
+fn discover_root_and_members(
+    root: &ProjectRoot,
+    loaded: &LoadedConfig,
+    manifest: &LoadedManifest,
+    overrides: &RuntimeOverrides,
+    cache: Option<&CacheOptions>,
+) -> Result<(DiscoveredSources, Vec<WorkspaceMemberInputs>), ProbeError> {
+    let sources_cache = SourcesCache::default();
+    // The manifest cache lives under each member root; an undeclared monorepo
+    // would gain hundreds of untracked `.chokkin/` directories.
+    let member_cache = if loaded.auto_workspace { None } else { cache };
+    let (sources, workspace_inputs) = std::thread::scope(|scope| {
+        let root_walk =
+            scope.spawn(|| discover_sources_cached(root, loaded, manifest, &sources_cache));
+        let workspace_inputs = collect_workspace_inputs(
+            root,
+            &loaded.workspace_members,
+            overrides,
+            member_cache,
+            &sources_cache,
+        );
+        let sources = root_walk
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+        (sources, workspace_inputs)
+    });
+    Ok((sources?, workspace_inputs?))
+}
+
 fn collect_workspace_inputs(
     root: &ProjectRoot,
     members: &[ResolvedWorkspaceMember],
     overrides: &RuntimeOverrides,
     cache: Option<&CacheOptions>,
+    sources_cache: &SourcesCache,
 ) -> Result<Vec<WorkspaceMemberInputs>, ProbeError> {
     // Members are independent, and an undeclared monorepo's hundreds of member
     // lockfiles dominate the probe when read one after another (#488).
@@ -350,7 +381,10 @@ fn collect_workspace_inputs(
                         let Some(member) = members.get(index) else {
                             return done;
                         };
-                        done.push((index, member_inputs(root, member, overrides, cache)));
+                        done.push((
+                            index,
+                            member_inputs(root, member, overrides, cache, sources_cache),
+                        ));
                     }
                 })
             })
@@ -376,6 +410,7 @@ fn member_inputs(
     member: &ResolvedWorkspaceMember,
     overrides: &RuntimeOverrides,
     cache: Option<&CacheOptions>,
+    sources_cache: &SourcesCache,
 ) -> Result<Option<WorkspaceMemberInputs>, ProbeError> {
     let member_root = member_project_root(root, member);
     if !member_root.path.is_dir() {
@@ -386,7 +421,7 @@ fn member_inputs(
     let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
-    let sources = discover_sources(&member_root, &loaded, &manifest)?;
+    let sources = discover_sources_cached(&member_root, &loaded, &manifest, sources_cache)?;
     Ok(Some(WorkspaceMemberInputs {
         member: member.clone(),
         manifest,

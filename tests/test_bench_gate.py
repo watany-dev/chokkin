@@ -2,9 +2,11 @@
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts_import import load
 
@@ -30,9 +32,9 @@ class CollectTest(unittest.TestCase):
     def test_reads_criterion_change_estimates_as_percent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            self.write_estimates(root / "analyze/medium/change", 0.123, 0.051, 0.2)
-            self.write_estimates(root / "parse/change", -0.02, -0.04, 0.01)
-            stale = self.write_estimates(root / "old/change", 0.5, 0.4, 0.6)
+            self.write_estimates(root / "analyze/medium", "analyze/medium", 0.123, 0.051, 0.2)
+            self.write_estimates(root / "parse", "parse", -0.02, -0.04, 0.01)
+            stale = self.write_estimates(root / "old", "old", 0.5, 0.4, 0.6)
             os.utime(stale, (1_000, 1_000))
 
             rows = gate.collect(2_000, root)
@@ -43,10 +45,22 @@ class CollectTest(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["ci_high_pct"], 20.0)
         self.assertAlmostEqual(rows[1]["mean_pct"], -2.0)
 
+    def test_names_benchmarks_by_their_criterion_id(self) -> None:
+        # criterion turns "/" in a function name into "_" in the directory
+        # name, and a re-run filter built from the directory matches nothing.
+        full_id = "extract_manifest/setup_py_300deps"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_estimates(root / "extract_manifest_setup_py_300deps", full_id, 0.15, 0.09, 0.2)
+            rows = gate.collect(0, root)
+        self.assertEqual([r["bench"] for r in rows], [full_id])
+
     @staticmethod
-    def write_estimates(change: Path, mean: float, low: float, high: float) -> Path:
-        change.mkdir(parents=True)
-        path = change / "estimates.json"
+    def write_estimates(bench: Path, full_id: str, mean: float, low: float, high: float) -> Path:
+        (bench / "change").mkdir(parents=True)
+        (bench / "new").mkdir()
+        (bench / "new/benchmark.json").write_text(json.dumps({"full_id": full_id}), encoding="utf-8")
+        path = bench / "change/estimates.json"
         estimate = {
             "confidence_interval": {"confidence_level": 0.95, "lower_bound": low, "upper_bound": high},
             "point_estimate": mean,
@@ -54,6 +68,24 @@ class CollectTest(unittest.TestCase):
         }
         path.write_text(json.dumps({"mean": estimate, "median": estimate}), encoding="utf-8")
         return path
+
+
+class RunBenchTest(unittest.TestCase):
+    def run_bench(self, only=None) -> list[str]:
+        done = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(gate.subprocess, "run", return_value=done) as run:
+            self.assertTrue(gate.run_bench("base", only))
+        return run.call_args.args[0]
+
+    def test_skips_benchmarks_the_baseline_lacks(self) -> None:
+        # A PR that adds a benchmark has no baseline for it on the base commit;
+        # criterion's strict --baseline panics on that and the gate exits 2.
+        cmd = self.run_bench()
+        self.assertEqual(cmd[cmd.index("--") + 1 :], ["--baseline-lenient", "base"])
+
+    def test_reruns_only_the_named_benchmarks(self) -> None:
+        cmd = self.run_bench(["pipeline/analyze_cold/1000"])
+        self.assertEqual(cmd[-1], "^(pipeline/analyze_cold/1000)$")
 
 
 class ConfirmTest(unittest.TestCase):

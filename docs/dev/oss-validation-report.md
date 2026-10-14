@@ -239,7 +239,8 @@ make oss-metrics
 ```
 
 `.github/workflows/oss-metrics.yml` runs the same steps on GitHub Actions
-(`workflow_dispatch`, or a push that touches the corpus / labels / scripts),
+(`workflow_dispatch`, weekly, and on pull requests and main pushes that touch
+`src/**`, `Cargo.lock` or the corpus / labels / scripts; #835),
 prints the table below and the unclassified HEAD findings to the job summary,
 and fails unless the §17 Phase 4 gate passes and the CHK003 total, without
 info-severity findings (#773), `tp`-labelled findings and recall fixtures,

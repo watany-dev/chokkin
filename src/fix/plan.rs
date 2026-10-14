@@ -500,6 +500,170 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
+    fn dependency_fixes_require_certain_confidence() {
+        let manifest = manifest_with(vec![DeclaredDependency {
+            name: "boto3".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: Some(">=1.0".to_owned()),
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        }]);
+        let report_for = |rule, confidence| IssueReport {
+            issues: vec![Issue {
+                rule,
+                severity: Severity::Error,
+                confidence,
+                message: "finding".to_owned(),
+                workspace_member: None,
+                location: IssueLocation {
+                    file: None,
+                    line: None,
+                    manifest: Some(DependencyOrigin {
+                        file: "pyproject.toml".to_owned(),
+                        line: None,
+                        label: "project.dependencies[0]".to_owned(),
+                    }),
+                },
+                subject: IssueSubject::Distribution {
+                    name: "boto3".to_owned(),
+                },
+                explain: None,
+            }],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        let add_missing = FixOptions {
+            add_missing: true,
+            ..FixOptions::default()
+        };
+        for (rule, options, detail) in [
+            (
+                RuleId::Chk002,
+                FixOptions::default(),
+                "only Certain-confidence dependency issues are auto-fixable",
+            ),
+            (
+                RuleId::Chk005,
+                FixOptions::default(),
+                "only Certain-confidence dependency issues are auto-fixable",
+            ),
+            (
+                RuleId::Chk009,
+                FixOptions::default(),
+                "only Certain-confidence dependency issues are auto-fixable",
+            ),
+            (
+                RuleId::Chk003,
+                add_missing,
+                "only Certain-confidence missing dependencies can be added automatically",
+            ),
+        ] {
+            let (actions, skipped) = plan_fixes(
+                &report_for(rule, Confidence::Likely),
+                &manifest,
+                &[],
+                options,
+            );
+            assert!(actions.is_empty(), "{rule:?}: {actions:?}");
+            assert_eq!(skipped.len(), 1, "{rule:?}");
+            assert_eq!(skipped[0].reason, SkippedReason::NotFixable, "{rule:?}");
+            assert_eq!(skipped[0].detail, detail, "{rule:?}");
+        }
+
+        // Without --add-missing a CHK003 finding is not a fix candidate at all.
+        let (actions, skipped) = plan_fixes(
+            &report_for(RuleId::Chk003, Confidence::Certain),
+            &manifest,
+            &[],
+            FixOptions::default(),
+        );
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(skipped.is_empty(), "{skipped:?}");
+    }
+
+    #[test]
+    fn chk009_picks_which_duplicate_to_remove() {
+        let declaration = |index: usize, opaque| DeclaredDependency {
+            name: "boto3".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: format!("project.dependencies[{index}]"),
+            },
+            opaque,
+            included_via: Vec::new(),
+        };
+        let manifest = manifest_with(vec![declaration(0, false), declaration(1, true)]);
+        let report = IssueReport {
+            issues: vec![Issue {
+                rule: RuleId::Chk009,
+                severity: Severity::Warning,
+                confidence: Confidence::Certain,
+                message: "duplicate".to_owned(),
+                workspace_member: None,
+                location: IssueLocation {
+                    file: None,
+                    line: None,
+                    manifest: None,
+                },
+                subject: IssueSubject::Distribution {
+                    name: "boto3".to_owned(),
+                },
+                explain: None,
+            }],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
+
+        // With repeats in two contexts, the group repeat goes before the
+        // runtime one, whatever the declaration order.
+        let mut manifest = manifest_with(
+            [
+                (0, DependencyContext::Group("dev".to_owned())),
+                (1, DependencyContext::Group("dev".to_owned())),
+                (2, DependencyContext::Runtime),
+                (3, DependencyContext::Runtime),
+            ]
+            .into_iter()
+            .map(|(index, context)| DeclaredDependency {
+                context,
+                ..declaration(index, false)
+            })
+            .collect(),
+        );
+        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let [FixAction::RemoveDependency { label, .. }] = actions.as_slice() else {
+            panic!("expected one removal: {actions:?}");
+        };
+        assert_eq!(label, "project.dependencies[1]");
+        manifest.dependencies.reverse();
+        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let [FixAction::RemoveDependency { label, .. }] = actions.as_slice() else {
+            panic!("expected one removal: {actions:?}");
+        };
+        assert_eq!(label, "project.dependencies[0]");
+    }
+
+    #[test]
     fn chk005_move_drops_only_a_poetry_only_constraint() {
         for (specifier, raw) in [("^1.2", "dulwich"), (">=1.2.1", "dulwich>=1.2.1")] {
             let manifest = manifest_with(vec![DeclaredDependency {
@@ -552,6 +716,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn plans_chk003_add_missing_for_pyproject() {
         let mut manifest = manifest_with(Vec::new());
         manifest.sources.pyproject_toml = true;
@@ -603,6 +768,39 @@ mod tests {
                 file: "pyproject.toml".to_owned(),
             }]
         );
+
+        // Poetry owns its own dependency table; insertion does not touch it.
+        manifest.sources.poetry = true;
+        let (actions, skipped) = plan_fixes(
+            &report,
+            &manifest,
+            &[],
+            FixOptions {
+                add_missing: true,
+                ..FixOptions::default()
+            },
+        );
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+        assert!(skipped[0].detail.contains("non-Poetry"));
+        manifest.sources.poetry = false;
+
+        // Only a dynamic `dependencies` field blocks insertion.
+        let add_missing = FixOptions {
+            add_missing: true,
+            ..FixOptions::default()
+        };
+        manifest.metadata.dynamic = vec!["version".to_owned()];
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], add_missing);
+        assert_eq!(skipped, []);
+        assert_eq!(actions.len(), 1);
+        manifest.metadata.dynamic = vec!["dependencies".to_owned()];
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], add_missing);
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].detail, "project.dependencies is dynamic");
+        manifest.metadata.dynamic = Vec::new();
 
         // #581: requests keeps only `[tool.*]` in pyproject.toml and declares
         // dependencies in setup.py.

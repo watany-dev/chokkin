@@ -1,0 +1,15 @@
+[project]
+name = "trace-origins"
+version = "0.0.0"
+dependencies = ["flask"]
+
+[project.scripts]
+acme = "acme.main:run"
+
+[tool.chokkin]
+mode = "app"
+entry = ["src/acme/cli.py"]
+
+[tool.chokkin.plugins]
+flask = true
+pytest = true

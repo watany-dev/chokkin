@@ -196,6 +196,16 @@ warm (cache reused) and `--no-cache`. It then gates the 90 JSON outputs:
 | schema | valid against `docs/schema/chokkin-report.schema.json`; `summary.total`/`by_code` agree with `issues` | 30/30 valid | PASS |
 | crash | no exit 3 and no non-JSON output | 0 crashed | PASS |
 
+`scripts/oss-gate.py --in-repo` runs the same three gates without clones,
+over the recall sentinels and every in-repo fixture project
+(`tests/fixtures/*/*`). The invalid-config fixtures listed in
+`scripts/oss-gate-rejected.txt` must be rejected with exit 2 and no output on
+every run, and are not gated otherwise; a fourth gate, rejection, fails when
+one of them is accepted, and any other rejected fixture fails the crash gate.
+The CI workflow's
+`oss-gate` job runs it on every pull request; `oss-metrics.yml` runs the
+corpus version (#835).
+
 The recall sentinels include CHK004 (`lock_unused_pylock`, `lock_unused_poetry`,
 `lock_unused_pdm`). `make oss-metrics` gates their expected findings and the
 determinism gate gates their stability.
@@ -206,6 +216,10 @@ compares the current tree with a criterion baseline saved on the base commit
 than 10% slower and its 95% confidence interval lies entirely above zero.
 Flagged benchmarks are re-run (`--confirm`, default 1), and only a
 regression that repeats fails the gate.
+Benchmarks the baseline lacks run without a comparison. On pull requests that
+touch `src/`, `benches/`, `Cargo.toml`, `Cargo.lock` or the gate itself, the
+`bench-gate` job in `verification.yml` saves the base commit's baseline and runs
+the gate with `--confirm 3` on the same runner; it is non-blocking for now (#836).
 Result for this branch: see [`oss-validation-report.md`](./oss-validation-report.md#346-corpus-measurements-338342).
 
 ## Reproducing

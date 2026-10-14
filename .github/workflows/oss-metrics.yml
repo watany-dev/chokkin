@@ -4,18 +4,36 @@ name: OSS metrics
 # corpus (#323). Clones third-party projects and only reads them statically;
 # nothing from the clones is executed.
 
+# Runs on every change to the analysis (src/**, Cargo.lock) or the corpus
+# tooling, on main and on pull requests, and weekly (#835). Not a required
+# check: a red run on a PR is the §17 / corpus regression signal to review.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
   push:
+    branches: [main]
     paths:
+      - src/**
+      - Cargo.lock
+      - .github/workflows/oss-metrics.yml
+      - scripts/oss-*
+      - scripts/oss_corpus.py
+      - scripts/clone-oss-fixtures.sh
+  pull_request:
+    paths:
+      - src/**
+      - Cargo.lock
       - .github/workflows/oss-metrics.yml
       - scripts/oss-*
       - scripts/oss_corpus.py
       - scripts/clone-oss-fixtures.sh
 
+# A pull request run is superseded by its next push; a main push or the weekly
+# run is not cancelled by the other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -40,6 +58,11 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install jsonschema
+        run: python -m pip install jsonschema==4.26.0
       - name: Build HEAD
         run: cargo build --release --locked --bin chokkin
       - name: Test HEAD
@@ -64,12 +87,21 @@ jobs:
           status=0
           scripts/oss-metrics.py -o target/oss-metrics --baseline target/oss-metrics-baseline --gate || status=$?
           echo "$status" >target/oss-metrics/gate.status
+      - name: Determinism / schema / crash gate
+        # The 20 clones plus the recall sentinels; enforced in the last step.
+        run: |
+          status=0
+          scripts/oss-gate.py || status=$?
+          echo "$status" >target/oss-gate.status
       - name: Report
         # The full scorecard lists every finding and outgrows the job summary
         # limit, so it only goes to the artifact.
         run: |
           { echo "# Before/after (${BASELINE_REV} vs HEAD)"; echo ""; cat target/oss-metrics/compare.md; } |
             tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -f target/oss-gate/report.md ]; then
+            { echo ""; cat target/oss-gate/report.md; } >>"$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -81,6 +113,11 @@ jobs:
             target/oss-metrics-baseline/*.tsv
             target/oss-metrics-baseline/report.md
             target/oss-clones/clones.lock.tsv
+            target/oss-gate/summary.json
+            target/oss-gate/report.md
           retention-days: 30
       - name: Release gate
-        run: exit "$(cat target/oss-metrics/gate.status)"
+        run: |
+          echo "oss-metrics --gate: $(cat target/oss-metrics/gate.status), oss-gate: $(cat target/oss-gate.status)"
+          test "$(cat target/oss-metrics/gate.status)" = 0
+          test "$(cat target/oss-gate.status)" = 0

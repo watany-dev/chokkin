@@ -42,9 +42,13 @@ them when a maintainer, workflow, or job name changes.
   - `Test (ubuntu-24.04)`, `Test (macos-14)`, `Test (windows-latest)`
   - `Security (cargo-deny)`
 
-  Also worth requiring: `MSRV (1.96) + chokkin baseline` and
-  `Repo checks (actionlint, generated maps, action)`. A renamed job drops out
-  of the required list silently, so update the ruleset in the same PR.
+  Also worth requiring: `MSRV (1.96) + chokkin baseline`,
+  `Repo checks (actionlint, generated maps)`, and from the Release workflow
+  `Test (dist profile, RUST_TOOLCHAIN)`, `Test action (HEAD wheel)`, each
+  `Test wheel (<target>)`, and the `Wheel (<target>)` and `sdist` builds they
+  need (a job skipped because a job it needs failed counts as passing). A
+  renamed job drops out of the required list silently, so update the ruleset
+  in the same PR.
 
 **`pypi-chokkin` environment** (Settings → Environments):
 
@@ -128,7 +132,6 @@ is implemented:
 | Job | Reason |
 |-----|--------|
 | `fuzz` | No parser/engine code to fuzz yet |
-| `mutants` | No security-critical decision core yet |
 | `e2e` | No end-to-end behavior to test yet |
 | `pbt-deep` | No property-based tests yet |
 
@@ -136,18 +139,24 @@ Add `nightly.yml` with these jobs during Phase 1 implementation.
 
 ## cargo-mutants scope
 
-When mutation testing is added, scope it to the analysis engine (analogous to
-ptuf's decision core). Suggested initial `examine_globs` for `.cargo/mutants.toml`:
+`make mutants` covers the analysis engine (analogous to ptuf's decision core)
+plus the only code path that rewrites user files:
 
-```toml
-examine_globs = [
-    "src/graph/**/*.rs",
-    "src/rules/**/*.rs",
-    "src/resolver/**/*.rs",
-]
+- `src/rules/**`, `src/resolver/**`, `src/graph/**`
+- `src/fix/**` (`--fix`: path containment and the manifest edits)
 
-additional_cargo_args = []
-```
+`.github/workflows/verification.yml` runs it weekly and on demand
+(`full-mutants`), and on a PR only the mutants on the lines the PR changes
+(`make mutants-diff`, any file under `src/`). Both fail on a missed mutant
+(#837); a weekly failure reaches whoever last edited the cron through GitHub's
+scheduled-workflow notification. The plan job counts the mutants with
+`--list` and splits the run into shards of about 100 (at most 8), so a large
+diff still finishes within the 60-minute job timeout. `Mutants` is the one
+stable check name to require in branch protection.
+
+A missed mutant is either a missing test (add it) or an equivalent mutant (no
+observable behavior changes): exclude the latter in `.cargo/mutants.toml`
+`exclude_re` with a comment saying why it is equivalent.
 
 ## crates.io
 

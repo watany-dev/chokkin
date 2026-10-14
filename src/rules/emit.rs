@@ -169,6 +169,12 @@ fn candidate_to_issue(candidate: IssueCandidate) -> Issue {
     }
 }
 
+/// Line 0 marks a plugin reference (`INSTALLED_APPS`, Sphinx `extensions`)
+/// that has no position; the report shows it as no line.
+fn known_line(line: u32) -> Option<u32> {
+    (line != 0).then_some(line)
+}
+
 fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
     let mut file = None;
     let mut line = None;
@@ -184,7 +190,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
                 ..
             } if file.is_none() => {
                 file = Some(import_file.clone());
-                line = Some(*import_line);
+                line = known_line(*import_line);
             },
             Origin::Import { .. } => {},
             Origin::Binary(origin) => {
@@ -203,7 +209,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
                 ..
             } => {
                 file = Some(import_file.clone());
-                line = Some(*import_line);
+                line = known_line(*import_line);
             },
             IssueSubject::ScriptDistribution { script, .. } => {
                 file = Some(script.clone());

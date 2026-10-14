@@ -1,5 +1,6 @@
 //! Source file discovery (pipeline step 4).
 
+mod cache;
 mod context;
 mod discover;
 mod error;
@@ -8,12 +9,16 @@ mod layout;
 mod surface;
 mod types;
 mod walk;
+#[cfg(test)]
+mod walk_reference;
 mod warnings;
 
+pub(crate) use cache::SourcesCache;
 pub(crate) use context::{
     apply_member_context, assign_file_context, assign_layout_file_context, is_test_data_path,
 };
 pub use discover::discover_sources;
+pub(crate) use discover::discover_sources_cached;
 pub use error::SourcesError;
 pub(crate) use glob::build_glob_set;
 pub(crate) use layout::infer_layout;

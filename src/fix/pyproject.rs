@@ -618,6 +618,20 @@ dependencies = ["pytest>=8", "coverage>=7"]
     }
 
     #[test]
+    fn poetry_group_label_needs_both_group_and_name() {
+        assert_eq!(
+            parse_poetry_group_dependency_label("tool.poetry.group.dev.dependencies.pytest"),
+            Some(("dev".to_owned(), "pytest".to_owned()))
+        );
+        for label in [
+            "tool.poetry.group..dependencies.pytest",
+            "tool.poetry.group.dev.dependencies.",
+        ] {
+            assert_eq!(parse_poetry_group_dependency_label(label), None, "{label}");
+        }
+    }
+
+    #[test]
     fn removes_uv_dynamic_versioning_hook_dependencies() {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("pyproject.toml");

@@ -7,7 +7,9 @@ use crate::graph::ModuleOrigin;
 use crate::manifest::{InlineScript, normalize_distribution_name};
 use crate::parser::ParseSummary;
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
-use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
+use crate::rules::types::{
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
+};
 use crate::sources::DiscoveredFile;
 
 /// Third-party imports made directly by a script file; project reconciliation
@@ -191,7 +193,7 @@ fn missing_in_script(
             explain: ExplainData {
                 summary: format!("{name} is missing from the `# /// script` dependencies"),
                 details: vec![
-                    format!("import at {}:{}", import.file, import.line),
+                    format!("import at {}", import_site(&import.file, import.line)),
                     "script imports are checked against the script block, not the project manifest"
                         .to_owned(),
                 ],
