@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal mutants mutants-diff kani help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal tlc mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -101,13 +101,21 @@ check-generated:
 	git diff --exit-code src/resolver/bundled/ src/resolver/stdlib/
 
 ## ─── Formal models (docs/dev/formal) ──────────────────────────────────────────
-# Requires python3 with z3-solver (`pip install z3-solver`). Runs every model and
-# fails if any property has a counterexample. TLA+ (TLC) is run separately; see
-# docs/dev/formal/README.md.
+# formal: requires python3 with z3-solver (`pip install z3-solver`). Runs every
+#         Python model and fails if any property has a counterexample.
+# tlc:    model-checks Reachability.tla; pass TLA2TOOLS=<path to tla2tools.jar>
+#         (~7 min). CI runs both (.github/workflows/formal.yml); see
+#         docs/dev/formal/README.md.
+TLA2TOOLS ?= tla2tools.jar
+
 formal:
 	@status=0; for m in relative_import_model deps_rules_z3 exit_status_z3 ignore_model; do \
 		python3 docs/dev/formal/$$m.py || status=1; \
 	done; exit $$status
+
+tlc:
+	java -XX:+UseParallelGC -cp "$(TLA2TOOLS)" tlc2.TLC -deadlock -workers auto \
+		-metadir target/tlc docs/dev/formal/MCReachability
 
 ## ─── Test effectiveness (#418) ────────────────────────────────────────────────
 # mutants:      cargo-mutants over src/rules/ and src/resolver/ (~70 min at -j 2
