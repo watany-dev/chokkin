@@ -67,6 +67,11 @@ pub enum SkipReason {
         /// The parser's message.
         message: String,
     },
+    /// The notebook JSON has no code cells to read.
+    InvalidNotebook {
+        /// What the notebook reader could not read.
+        message: String,
+    },
 }
 
 impl fmt::Display for ProbeWarning {
@@ -105,6 +110,10 @@ impl fmt::Display for ProbeWarning {
                 formatter,
                 "parse: skipped `{path}`: syntax error at line {line}: {message}"
             ),
+            Self::SkippedSource {
+                path,
+                reason: SkipReason::InvalidNotebook { message },
+            } => write!(formatter, "parse: skipped `{path}`: {message}"),
             Self::ParseDiagnostic {
                 path,
                 line: 0,

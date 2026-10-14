@@ -429,15 +429,24 @@ fn parse_warnings(module: &ParsedModule) -> Vec<ProbeWarning> {
 }
 
 /// Why a skipped module was left out: a module the parser stopped on carries
-/// its syntax error as an error diagnostic, an undecodable one carries none.
+/// its syntax error as an error diagnostic, a notebook without readable cells
+/// carries a warning naming why, and an undecodable one carries none.
 fn skip_reason(module: &ParsedModule) -> SkipReason {
-    module
+    if let Some(diagnostic) = module
         .diagnostics
         .iter()
         .find(|diagnostic| diagnostic.severity == ParseSeverity::Error)
+    {
+        return SkipReason::SyntaxError {
+            line: diagnostic.line,
+            message: diagnostic.message.clone(),
+        };
+    }
+    module
+        .diagnostics
+        .first()
         .map_or(SkipReason::Undecodable, |diagnostic| {
-            SkipReason::SyntaxError {
-                line: diagnostic.line,
+            SkipReason::InvalidNotebook {
                 message: diagnostic.message.clone(),
             }
         })

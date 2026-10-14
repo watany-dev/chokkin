@@ -117,10 +117,8 @@ fn parse_notebook_file(
     let extracted = match notebook_python_source(&source) {
         Ok(source) => source,
         Err(message) => {
-            let mut parsed = ParsedModule {
-                path: path.to_owned(),
-                ..ParsedModule::default()
-            };
+            // No cell was read, so the notebook's imports are unknown (#893).
+            let mut parsed = skipped_module(path);
             parsed.diagnostics.push(ParseDiagnostic {
                 line: 0,
                 message,

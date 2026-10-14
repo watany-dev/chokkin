@@ -1884,6 +1884,46 @@ fn binary_non_utf8_setup_py_does_not_abort_the_run() {
     assert!(keys.iter().all(|(code, _)| code != "CHK003"), "{keys:?}");
 }
 
+/// A notebook whose JSON cannot be read is skipped like a syntax error: the
+/// imports it hides may use any declared dependency (#893).
+#[test]
+fn binary_invalid_notebook_is_skipped_with_a_diagnostic() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/demo.ipynb", "{\"cells\": 1}"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.lines().any(|line| line
+            == "parse: skipped `acme/demo.ipynb`: invalid notebook JSON: missing cells array"),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(issues, [("CHK002", "requests", "likely")], "{parsed}");
+}
+
 /// A reachable module with a syntax error is skipped like an undecodable one:
 /// its imports are unknown, so what it may use is reported below certain,
 /// `--fix` leaves the declaration alone, and stderr names the error.
