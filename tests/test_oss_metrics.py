@@ -51,6 +51,43 @@ class CountHitsTest(unittest.TestCase):
         self.assertEqual(om.count_hits(findings, "CHK002"), 0)
 
 
+class PrecisionTest(unittest.TestCase):
+    def test_labelled_hits_only(self) -> None:
+        findings = [
+            finding("CHK003", "tp"),
+            finding("CHK003", "info-expected"),
+            finding("CHK003", "tp", "info"),
+            finding("CHK003", "unknown"),
+            finding("CHK003", "deferred"),
+        ]
+        self.assertEqual(om.precision(findings, "CHK003"), (1, 1))
+        self.assertEqual(om.precision([], "CHK003"), (0, 0))
+
+
+class PrecisionMissesTest(unittest.TestCase):
+    def test_a_rule_at_its_floor_passes(self) -> None:
+        findings = [finding("CHK003", "fp")] + [finding("CHK003", "tp")] * 9  # 90%
+        self.assertEqual(om.precision_misses(findings), [])
+
+    def test_a_rule_below_its_floor_fails(self) -> None:
+        findings = [finding("CHK003", "info-expected")] + [finding("CHK003", "tp")] * 8  # 88.9%
+        self.assertEqual(om.precision_misses(findings), ["CHK003=88.9%<90%"])
+
+    def test_rules_without_a_floor_are_recorded_only(self) -> None:
+        self.assertNotIn("CHK008", om.PRECISION_FLOORS)
+        self.assertEqual(om.precision_misses([finding("CHK008", "fp")]), [])
+
+    def test_chk002_is_floored_by_the_fp_gate(self) -> None:
+        # 95% precision is a 5% FP rate, which the §17 gate already fails.
+        findings = [finding("CHK002", "fp")] + [finding("CHK002", "tp")] * 19
+        self.assertEqual(om.precision_misses(findings), [])
+        self.assertFalse(om.fp_gate(findings)[0])
+
+    def test_a_rule_with_no_labelled_hit_passes(self) -> None:
+        findings = [finding("CHK003", "unknown"), finding("CHK003", "fp", "info")]
+        self.assertEqual(om.precision_misses(findings), [])
+
+
 class RecallMissedTest(unittest.TestCase):
     def test_every_tp_label_must_be_reported_as_a_hit(self) -> None:
         labels = {

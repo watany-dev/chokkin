@@ -1226,8 +1226,16 @@ severity が `info` の finding (例: optional try-import の CHK003) はヒッ�
 (rule あたり約 50 件、project あたり最大 6 件、順位は sha256(slug, code, target)
 で固定) し、人手で `tp`/`fp` を付ける。`report.md` は rule ごとの precision
 (tp / (tp + fp)) と、今回の findings に現れなくなった **stale** ラベル数を記録する
-(#656、閾値なしの記録のみ)。clone の revision を上げて stale が出たら該当行を
-消し、同スクリプトを再実行してサンプルを補充する。計測はキャッシュの影響を避ける
+(#656)。precision は info を除くヒットのうち `tp` / `fp` のラベルが付いたものだけで
+計算し、**CHK003 は 90%、CHK004 は 95%、CHK006 / CHK010 は 90% を下限**として
+gate にかける (#701)。件数の gate では、件数を変えずに誤検知が増える精度低下を検出
+できないため。下限は計測時の precision を 5 の倍数に切り下げた値。CHK002 は上の
+FP 率 gate (未分類 0 件で FP 率 < 5%) がそのまま precision > 95% の下限なので、
+重ねて置かない。ラベル付きのヒットが 0 件の rule は測れないので通す (何も出さなく
+なった rule は recall gate が捕まえる)。CHK001 は下の oracle で測り、CHK005 /
+CHK007 / CHK008 / CHK009 はラベル付きのヒットがまだ少ないので記録のみにする
+(#862)。clone の revision を上げて stale が出たら該当行を消し、同スクリプトを
+再実行してサンプルを補充する。計測はキャッシュの影響を避ける
 ため `--no-cache` で行う。
 
 CHK001 の実世界 precision は opt-in の remove-and-test oracle

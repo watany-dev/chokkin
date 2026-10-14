@@ -9,11 +9,12 @@ Exit criteria (docs/dev/spec.ja.md §17):
 Corpus regression gates (#495):
   4. CLI/config errors (exit 2) == 0
   5. every project in --expect stays within its floors (see below)
+  6. every rule in PRECISION_FLOORS stays at or above its floor (see Precision)
 
 Release gate (with --baseline, #325):
-  6. CHK003 hits (not info) not labelled `tp`, outside --expect projects and
+  7. CHK003 hits (not info) not labelled `tp`, outside --expect projects and
      recall sentinels, do not grow over the baseline run
-  7. with --with-strict on both runs: no finding labelled `tp` vanishes from
+  8. with --with-strict on both runs: no finding labelled `tp` vanishes from
      the --strict output (see Downgrade vs vanish below)
 
 Usage:
@@ -35,7 +36,7 @@ Options:
                         --output. A --baseline must be --strict too
   --with-strict         Also run every project once with --strict and keep
                         its JSON under strict/; with --baseline (also run with
-                        --with-strict) adds criterion 7
+                        --with-strict) adds criterion 8
   --build               cargo build --release before running
   --clone               Run clone-oss-fixtures.sh first
   --gate                Exit non-zero if any criterion fails
@@ -75,7 +76,11 @@ correct only at info severity (e.g. a CHK003 for an optional try-import, #504);
 reported at any other severity it counts as `fp`.
 
 Precision: every rule's precision tp / (tp + fp) over its labelled hits is
-recorded in report.md (record only, no threshold yet; #656). CHK001 / CHK004 /
+recorded in report.md (#656). CHK003 / CHK004 / CHK006 / CHK010 have a floor
+(#701), so a precision drop fails the gate even when the counts hold. CHK002's
+floor is criterion 1: with no unclassified finding, FP rate < 5% is precision
+> 95%. The other rules are recorded only until their labels can carry one
+(#862). CHK001 / CHK004 /
 CHK006 / CHK010 labels are a per-project stratified sample drawn by
 scripts/sample-precision-labels.py, so their precision is a sample estimate.
 Labels whose finding no longer appears are listed as stale.
@@ -127,6 +132,11 @@ import oss_corpus as oc
 ALL_RULES = [f"CHK{n:03d}" for n in range(1, 11)]
 MEDIUM_GATE_MS = 2000
 FP_GATE_PCT = 5
+# Per-rule precision floors in percent (#701): the measured precision rounded
+# down to a multiple of 5. CHK002 has none here: the §17 FP-rate gate is its
+# floor, and a stricter one. CHK005 / CHK007 / CHK008 / CHK009 have too few
+# labelled hits yet and are recorded only (#862).
+PRECISION_FLOORS = {"CHK003": 90, "CHK004": 95, "CHK006": 90, "CHK010": 90}
 
 
 def parse_args() -> argparse.Namespace:
@@ -234,6 +244,23 @@ def fp_gate(findings: list[list[str]]) -> tuple[bool, int, int, int]:
     unclassified = count_hits(findings, "CHK002", "unknown") + count_hits(findings, "CHK002", "deferred")
     ok = unclassified == 0 and (total == 0 or 100 * fp / total < FP_GATE_PCT)
     return ok, total, fp, unclassified
+
+
+def precision(findings: list[list[str]], code: str) -> tuple[int, int]:
+    """(tp, fp) over the labelled hits of `code`; unknown and deferred are left out."""
+    return count_hits(findings, code, "tp"), count_hits(findings, code, "fp")
+
+
+def precision_misses(findings: list[list[str]]) -> list[str]:
+    """Rules in PRECISION_FLOORS whose precision is below the floor. A rule
+    with no labelled hit is not measured, so it passes; the recall gate is
+    what catches a rule that stopped reporting."""
+    misses = []
+    for code, floor in PRECISION_FLOORS.items():
+        tp, fp = precision(findings, code)
+        if 100 * tp < floor * (tp + fp):
+            misses.append(f"{code}={100 * tp / (tp + fp):.1f}%<{floor}%")
+    return misses
 
 
 def recall_missed(
@@ -647,8 +674,8 @@ def main() -> int:
     def info_count(code: str) -> int:
         return sum(1 for f in findings if f[1] == code and f[7] == "info")
 
-    def precision(code: str) -> str:
-        tp, fp = count(code, "tp"), count(code, "fp")
+    def precision_pct(code: str) -> str:
+        tp, fp = precision(findings, code)
         return f"{100 * tp / (tp + fp):.1f}" if tp + fp else "n/a"
 
     def stale(code: str) -> int:
@@ -661,9 +688,11 @@ def main() -> int:
 
     tp_labels = [k for k, (v, _) in labels.items() if v == "tp"]
     missed = recall_missed(labels, reported)
+    precision_low = precision_misses(findings)
 
     passes = {
         "fp": fp_ok,
+        "precision": not precision_low,
         "recall": not missed,
         "crash": crashes == 0,
         "config": config_errors == 0,
@@ -705,6 +734,10 @@ def main() -> int:
                 ["Unused-dep FP rate (CHK002)", f"< {FP_GATE_PCT}%",
                  f"{fp_rate}% ({y002_fp} FP / {y002_total} reported, {y002_unclassified} unclassified)",
                  verdict(passes["fp"])],
+                ["Precision floor (labelled hits)",
+                 ", ".join(f"{c} >= {f}%" for c, f in PRECISION_FLOORS.items()),
+                 " ".join(precision_low) or "all at or above",
+                 verdict(passes["precision"])],
                 ["Recall (`tp` labels)", "all detected",
                  f"{tp_detected}/{len(tp_labels)} detected" + (f" (missed: {' '.join(missed)})" if missed else ""),
                  verdict(passes["recall"])],
@@ -722,7 +755,8 @@ def main() -> int:
         "",
         "Reported counts hits (severity above info); Info is the info-severity",
         "findings left out of every other column. Coverage % = (tp + fp) / reported.",
-        "Precision % = tp / (tp + fp), recorded only (no threshold yet). For",
+        "Precision % = tp / (tp + fp); a rule in the precision-floor criterion fails",
+        "the gate below its floor, CHK002 the FP-rate gate, the others are recorded only. For",
         "CHK001/CHK004/CHK006/CHK010 the labels are a stratified sample",
         "(scripts/sample-precision-labels.py). Deferred triage is not ground truth.",
         "Stale = labels whose finding is absent from this run. Reported=0 means the",
@@ -733,7 +767,7 @@ def main() -> int:
             [
                 [
                     c, count(c), info_count(c), count(c, "tp"), count(c, "fp"), count(c, "deferred"),
-                    count(c, "unknown"), coverage(c), precision(c), stale(c),
+                    count(c, "unknown"), coverage(c), precision_pct(c), stale(c),
                 ]
                 for c in ALL_RULES
             ],
@@ -777,7 +811,8 @@ def main() -> int:
         "- Recall gate counts every `tp` label (all rules, incl. sentinels); an info-severity finding does not satisfy it.",
         f"- CHK003 (missing dependency): {count('CHK003')} reported ({count('CHK003', 'fp')} FP, "
         f"{count('CHK003', 'tp')} tp, {count('CHK003', 'deferred')} deferred, "
-        f"{count('CHK003', 'unknown')} unknown) plus {info_count('CHK003')} at info — informational, not a §17 gate.",
+        f"{count('CHK003', 'unknown')} unknown) plus {info_count('CHK003')} at info — the count is not a §17 gate;",
+        "  its precision has a floor.",
         "- Large-size projects are reported but excluded from the medium cold-run gate.",
     ]
     report_path = out / "report.md"
