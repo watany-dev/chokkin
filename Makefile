@@ -105,7 +105,7 @@ check-generated:
 # formal: requires python3 with z3-solver (`pip install z3-solver`). Runs every
 #         Python model and fails if any property has a counterexample.
 # tlc:    model-checks Reachability.tla; pass TLA2TOOLS=<path to tla2tools.jar>
-#         (~7 min). CI runs both (.github/workflows/formal.yml); see
+#         (a few seconds). CI runs both (.github/workflows/formal.yml); see
 #         docs/dev/formal/README.md.
 TLA2TOOLS ?= tla2tools.jar
 

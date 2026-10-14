@@ -117,12 +117,19 @@ Enqueue(q, r, p, target, from, step) ==
             r \cup {target},
             p @@ (target :> [from |-> from, step |-> step]) >>
 
+(* Op(v), with v evaluated once.  TLC does not cache LET definitions or    *)
+(* operator arguments while it evaluates ENABLED (for WF_vars(Next)), so a *)
+(* recursion that passes e[1], e[2], ... of a LET re-evaluates the whole   *)
+(* previous level at each use, and checking Terminates took ~7 min (#853). *)
+(* The bound variable x is a value, so each level is evaluated once.       *)
+Bind(v, Op(_)) == CHOOSE y \in {Op(x) : x \in {v}} : TRUE
+
 (* Seed a list of files with no predecessor. *)
 RECURSIVE Seed(_, _, _, _, _, _)
 Seed(ts, i, step, q, r, p) ==
     IF i > Len(ts) THEN <<q, r, p>>
-    ELSE LET e == Enqueue(q, r, p, ts[i], None, step)
-         IN Seed(ts, i + 1, step, e[1], e[2], e[3])
+    ELSE Bind(Enqueue(q, r, p, ts[i], None, step),
+              LAMBDA e : Seed(ts, i + 1, step, e[1], e[2], e[3]))
 
 (* enqueue_resolved_module over the files of one site *)
 RECURSIVE Walk(_, _, _, _, _, _, _, _)
@@ -130,15 +137,15 @@ Walk(f, ts, i, via, q, r, p, bag) ==
     IF i > Len(ts) THEN <<q, r, p, bag>>
     ELSE LET t == ts[i]
              bag2 == IF t # f THEN AddEdge(bag, EdgeRec(f, t, via)) ELSE bag
-             e == Enqueue(q, r, p, t, f, via)
-         IN Walk(f, ts, i + 1, via, e[1], e[2], e[3], bag2)
+         IN Bind(Enqueue(q, r, p, t, f, via) \o <<bag2>>,
+                 LAMBDA e : Walk(f, ts, i + 1, via, e[1], e[2], e[3], e[4]))
 
 (* enqueue_import over every site of one kind *)
 RECURSIVE Sites(_, _, _, _, _, _, _, _)
 Sites(f, ms, i, via, q, r, p, bag) ==
     IF i > Len(ms) THEN <<q, r, p, bag>>
-    ELSE LET s == Walk(f, Targets(ms[i]), 1, via, q, r, p, bag)
-         IN Sites(f, ms, i + 1, via, s[1], s[2], s[3], s[4])
+    ELSE Bind(Walk(f, Targets(ms[i]), 1, via, q, r, p, bag),
+              LAMBDA s : Sites(f, ms, i + 1, via, s[1], s[2], s[3], s[4]))
 
 RECURSIVE Concat(_)
 Concat(ms) == IF ms = <<>> THEN <<>> ELSE Targets(Head(ms)) \o Concat(Tail(ms))
