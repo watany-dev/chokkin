@@ -554,6 +554,17 @@ fn merge_optional_field(
 mod tests {
     use super::*;
 
+    /// An absolute path in an I/O error would make the warning differ by
+    /// machine.
+    #[test]
+    fn unreadable_reason_leaves_the_path_out_of_io_errors() {
+        let error = ManifestError::Io {
+            path: std::path::PathBuf::from("/abs/requirements-dev.txt"),
+            source: std::io::Error::other("denied"),
+        };
+        assert_eq!(unreadable_reason(&error), "could not be read");
+    }
+
     #[test]
     fn infers_highest_minor_from_compound_specifier() {
         let inferred = infer_target_version_from_requires_python(">=3.10,<3.13").expect("infer");

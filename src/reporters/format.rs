@@ -253,5 +253,9 @@ mod tests {
             diagnostic_kind("parse: `a.py:3`: relative import"),
             diagnostic_kind("parse: `a.py:3`: invalid notebook")
         );
+        assert_eq!(
+            diagnostic_kind("parse: `a.py`: line 12, column 3"),
+            "parse: ``: line #, column #"
+        );
     }
 }

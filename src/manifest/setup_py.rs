@@ -340,6 +340,44 @@ setuptools.setup(install_requires=install_requires(), extras_require=extras_requ
         )));
     }
 
+    /// A requirements file that cannot be fully read leaves the argument
+    /// partly unknown even when the read itself returned.
+    #[test]
+    fn unreadable_requirements_files_leave_the_argument_partial() {
+        let contents = r"
+import os
+
+def reqs(f):
+    return [r.strip() for r in open(os.path.join(os.getcwd(), 'requirements', f)).readlines() if r]
+
+setuptools.setup(install_requires=reqs('default.txt'), extras_require={'bin': reqs('bin.txt')})
+";
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(temp.path().join("requirements")).expect("mkdir");
+        // An include of itself fails; bytes that are not UTF-8 are skipped.
+        std::fs::write(
+            temp.path().join("requirements/default.txt"),
+            "-r default.txt\n",
+        )
+        .expect("write");
+        std::fs::write(temp.path().join("requirements/bin.txt"), [0xff, 0xfe, 0x00])
+            .expect("write");
+        let setup = temp.path().join("setup.py");
+        std::fs::write(&setup, contents).expect("write setup.py");
+        let result = extract_setup_py(temp.path(), &setup).expect("extract");
+
+        for expected in ["install_requires", "extras_require.bin"] {
+            assert!(
+                result.warnings.iter().any(|warning| matches!(
+                    warning,
+                    ManifestWarning::SetupPyPartiallyStatic { argument, .. } if argument == expected
+                )),
+                "{expected}: {:?}",
+                result.warnings
+            );
+        }
+    }
+
     #[test]
     fn computed_requirement_table_is_looked_up_by_name() {
         let contents = r#"

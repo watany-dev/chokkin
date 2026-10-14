@@ -953,6 +953,8 @@ fn extra_requirements_files_keep_what_they_could_read() {
         ("requirements/broken.txt", "boto3\n-r missing.txt\n"),
         // A readable file without names is still a requirements file.
         ("requirements/empty.txt", "# nothing yet\n"),
+        // A failed file without names is not.
+        ("requirements/loop.txt", "-r loop.txt\n"),
     ] {
         std::fs::write(temp.path().join(name), contents).expect("write project file");
     }
@@ -966,5 +968,12 @@ fn extra_requirements_files_keep_what_they_could_read() {
             .requirements_files
             .iter()
             .any(|file| file.ends_with("empty.txt"))
+    );
+    assert!(
+        !manifest
+            .sources
+            .requirements_files
+            .iter()
+            .any(|file| file.ends_with("loop.txt"))
     );
 }
