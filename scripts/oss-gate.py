@@ -111,41 +111,56 @@ def fixture_projects(root: Path) -> list[tuple[str, Path]]:
     ]
 
 
+def judge(outputs: dict[str, tuple[int, bytes]], validator) -> dict:
+    """Verdicts for one project from its (exit code, stdout) per variant."""
+    res: dict = {"exit": {}, "schema_errors": [], "crash": False}
+    for variant, (code, stdout) in outputs.items():
+        res["exit"][variant] = code
+        if code == 3:
+            res["crash"] = True
+        try:
+            report = json.loads(stdout)
+        except json.JSONDecodeError as err:
+            res["crash"] = True
+            res["schema_errors"].append(f"{variant}: not JSON ({err})")
+            continue
+        for e in validator.iter_errors(report):
+            loc = "/".join(str(x) for x in e.absolute_path) or "<root>"
+            res["schema_errors"].append(f"{variant}: {loc}: {e.message}")
+        res["schema_errors"] += [f"{variant}: {e}" for e in contract_errors(report)]
+        if variant == "cold":
+            res["issues"] = len(report.get("issues", []))
+    blobs = {v: stdout for v, (_, stdout) in outputs.items()}
+    res["differs"] = [v for v in VARIANTS[1:] if blobs.get(v) != blobs.get("cold")]
+    res["deterministic"] = not res["differs"]
+    res["rejected"] = is_rejected(res, blobs)
+    return res
+
+
+def failing(results: dict[str, dict]) -> dict[str, list[str]]:
+    return {
+        "determinism": [s for s, r in results.items() if not r["deterministic"]],
+        "schema": [s for s, r in results.items() if r["schema_errors"]],
+        "crash": [s for s, r in results.items() if r["crash"]],
+    }
+
+
 def measure(slug: str, proj: Path, args, validator) -> dict:
     out_dir = args.output / "json" / slug
     out_dir.mkdir(parents=True, exist_ok=True)
     cache = proj / ".chokkin"
     shutil.rmtree(cache, ignore_errors=True)
-    res: dict = {"exit": {}, "schema_errors": [], "crash": False}
-    blobs = {}
+    outputs = {}
     try:
         for variant in VARIANTS:
             extra = ("--no-cache",) if variant == "nocache" else ()
             run = oc.chokkin_raw(args.bin, proj, *extra)
             (out_dir / f"{variant}.json").write_bytes(run.stdout)
-            res["exit"][variant] = run.returncode
-            blobs[variant] = run.stdout
-            if run.returncode == 3:
-                res["crash"] = True
-            try:
-                report = json.loads(run.stdout)
-            except json.JSONDecodeError as err:
-                res["crash"] = True
-                res["schema_errors"].append(f"{variant}: not JSON ({err})")
-                continue
-            for e in validator.iter_errors(report):
-                loc = "/".join(str(x) for x in e.absolute_path) or "<root>"
-                res["schema_errors"].append(f"{variant}: {loc}: {e.message}")
-            res["schema_errors"] += [f"{variant}: {e}" for e in contract_errors(report)]
-            if variant == "cold":
-                res["issues"] = len(report.get("issues", []))
+            outputs[variant] = (run.returncode, run.stdout)
     finally:
         # Leave the clone as clone-oss-fixtures.sh left it.
         shutil.rmtree(cache, ignore_errors=True)
-    res["rejected"] = is_rejected(res, blobs)
-    res["deterministic"] = len(set(blobs.values())) == 1
-    res["differs"] = [v for v in VARIANTS[1:] if blobs.get(v) != blobs.get("cold")]
-    return res
+    return judge(outputs, validator)
 
 
 def main() -> int:
@@ -200,16 +215,11 @@ def main() -> int:
         flag = "ok" if r["deterministic"] and not r["schema_errors"] and not r["crash"] else "FAIL"
         print(f"==> {slug}: {r.get('issues', '?')} issue(s) {flag}", flush=True)
 
-    nondet = [s for s, r in results.items() if not r["deterministic"]]
-    invalid = [s for s, r in results.items() if r["schema_errors"]]
-    crashed = [s for s, r in results.items() if r["crash"]]
+    fails = failing(results)
+    nondet, invalid, crashed = fails["determinism"], fails["schema"], fails["crash"]
+    gates = {gate: not slugs for gate, slugs in fails.items()}
     not_rejected = sorted(expected - set(rejected))
-    gates = {
-        "determinism": not nondet,
-        "schema": not invalid,
-        "crash": not crashed,
-        "rejection": not not_rejected,
-    }
+    gates["rejection"] = not not_rejected
     summary = {
         "chokkin_version": oc.chokkin_version(args.bin),
         "generated": oc.utc_now(),

@@ -206,6 +206,68 @@ def chokkin_keys(report: dict) -> dict[str, set]:
     return keys
 
 
+def dead_code_keys(rx: re.Pattern, out: str, proj: Path, top: TopLevel) -> set:
+    """(file, name) of the public top-level names a vulture / deadcode report
+    calls unused in shipped code."""
+    keys = set()
+    for m in filter(None, map(rx.match, out.splitlines())):
+        rel, name = rel_path(proj, m.group(1)), m.group(4)
+        if in_scope(rel) and name in top.names(rel):
+            keys.add((rel, name))
+    return keys
+
+
+def deptry_keys(violations: list[dict], proj: Path) -> dict[str, set]:
+    """Rule -> keys of deptry's --json-output violations in shipped code."""
+    keys: dict[str, set] = defaultdict(set)
+    for v in violations:
+        rule = DEPTRY_RULE.get(v["error"]["code"])
+        loc = (v.get("location") or {}).get("file") or ""
+        if not in_scope(rel_path(proj, loc)):
+            continue
+        if rule == "CHK002":
+            keys[rule].add(norm_dist(v["module"]))
+        elif rule:
+            keys[rule].add(top_import(v["module"]))
+    return keys
+
+
+def fawltydeps_keys(data: dict, proj: Path) -> dict[str, set]:
+    """Rule -> keys of a fawltydeps --json report referenced from shipped code."""
+    def scoped(d: dict) -> bool:
+        return any(in_scope(rel_path(proj, r.get("path", ""))) for r in d.get("references") or [])
+
+    keys: dict[str, set] = defaultdict(set)
+    for d in data.get("undeclared_deps") or []:
+        if scoped(d):
+            keys["CHK003"].add(top_import(d["name"]))
+    for d in data.get("unused_deps") or []:
+        if scoped(d):
+            keys["CHK002"].add(norm_dist(d["name"]))
+    return keys
+
+
+def ruff_keys(ruff: list[dict], proj: Path) -> set:
+    """(file, bound name) of ruff F401 findings in shipped __init__.py files."""
+    keys = set()
+    for v in ruff:
+        rel = rel_path(proj, v["filename"])
+        m = RUFF_NAME_RE.search(v["message"])
+        if m and Path(rel).name == "__init__.py" and in_scope(rel):
+            keys.add((rel, bound_name(m.group(1))))
+    return keys
+
+
+def pyflakes_keys(out: str, proj: Path) -> set:
+    """(file, bound name) of pyflakes' unused imports in shipped __init__.py files."""
+    keys = set()
+    for m in filter(None, map(PYFLAKES_RE.match, out.splitlines())):
+        rel = rel_path(proj, m.group(1))
+        if Path(rel).name == "__init__.py" and in_scope(rel):
+            keys.add((rel, bound_name(m.group(3))))
+    return keys
+
+
 def other_keys(slug: str, proj: Path, raw: Path, envs: Path) -> dict[tuple[str, str], set]:
     keys: dict[tuple[str, str], set] = defaultdict(set)
     top = TopLevel(proj)
@@ -213,24 +275,14 @@ def other_keys(slug: str, proj: Path, raw: Path, envs: Path) -> dict[tuple[str, 
     for tool, rx, extra in (("vulture", VULTURE_RE, []),
                             ("deadcode", DEADCODE_RE, ["--no-color"])):
         out = run_tool([*TOOLS[tool], ".", *extra], proj, raw / f"{tool}.txt")
-        for m in filter(None, map(rx.match, out.splitlines())):
-            rel, name = rel_path(proj, m.group(1)), m.group(4)
-            if in_scope(rel) and name in top.names(rel):
-                keys[("CHK006", tool)].add((rel, name))
+        keys[("CHK006", tool)] = dead_code_keys(rx, out, proj, top)
 
     deptry_json = raw / "deptry.json"
     deptry_json.unlink(missing_ok=True)
     run_tool([*TOOLS["deptry"], ".", "--json-output", str(deptry_json)], proj, raw / "deptry.txt")
     if deptry_json.is_file():
-        for v in json.loads(deptry_json.read_text(encoding="utf-8")):
-            rule = DEPTRY_RULE.get(v["error"]["code"])
-            loc = (v.get("location") or {}).get("file") or ""
-            if not in_scope(rel_path(proj, loc)):
-                continue
-            if rule == "CHK002":
-                keys[(rule, "deptry")].add(norm_dist(v["module"]))
-            elif rule:
-                keys[(rule, "deptry")].add(top_import(v["module"]))
+        violations = json.loads(deptry_json.read_text(encoding="utf-8"))
+        keys.update({(rule, "deptry"): found for rule, found in deptry_keys(violations, proj).items()})
 
     fawlty = [*TOOLS["fawltydeps"], "--check", "--json"]
     if (envs / slug / "bin/python").exists():
@@ -240,15 +292,7 @@ def other_keys(slug: str, proj: Path, raw: Path, envs: Path) -> dict[tuple[str, 
         data = json.loads(out)
     except json.JSONDecodeError:
         data = {}
-    def scoped(d: dict) -> bool:
-        return any(in_scope(rel_path(proj, r.get("path", ""))) for r in d.get("references") or [])
-
-    for d in data.get("undeclared_deps") or []:
-        if scoped(d):
-            keys[("CHK003", "fawltydeps")].add(top_import(d["name"]))
-    for d in data.get("unused_deps") or []:
-        if scoped(d):
-            keys[("CHK002", "fawltydeps")].add(norm_dist(d["name"]))
+    keys.update({(rule, "fawltydeps"): found for rule, found in fawltydeps_keys(data, proj).items()})
 
     out = run_tool([*TOOLS["ruff"], "check", "--isolated", "--select", "F401", "--output-format",
                     "json", "--exit-zero", "--no-cache", "."], proj, raw / "ruff.json")
@@ -256,20 +300,26 @@ def other_keys(slug: str, proj: Path, raw: Path, envs: Path) -> dict[tuple[str, 
         ruff = json.loads(out)
     except json.JSONDecodeError:
         ruff = []
-    for v in ruff:
-        rel = rel_path(proj, v["filename"])
-        m = RUFF_NAME_RE.search(v["message"])
-        if m and Path(rel).name == "__init__.py" and in_scope(rel):
-            keys[("CHK007", "ruff")].add((rel, bound_name(m.group(1))))
+    keys[("CHK007", "ruff")] = ruff_keys(ruff, proj)
 
     out = run_tool([*TOOLS["pyflakes"], "."], proj, raw / "pyflakes.txt")
-    for line in out.splitlines():
-        m = PYFLAKES_RE.match(line)
-        if m:
-            rel = rel_path(proj, m.group(1))
-            if Path(rel).name == "__init__.py" and in_scope(rel):
-                keys[("CHK007", "pyflakes")].add((rel, bound_name(m.group(3))))
+    keys[("CHK007", "pyflakes")] = pyflakes_keys(out, proj)
     return keys
+
+
+def matrix_rows(cells: dict[tuple[str, str], dict[str, list]]) -> list[dict]:
+    """Per (rule, tool) totals and the Jaccard index of chokkin's and the
+    tool's keys; None when neither reported anything."""
+    rows = []
+    for (rule, tool), c in cells.items():
+        a, co, oo = len(c["agree"]), len(c["chokkin_only"]), len(c["other_only"])
+        union = a + co + oo
+        rows.append({
+            "rule": rule, "tool": tool, "chokkin": a + co, "other": a + oo, "agree": a,
+            "chokkin_only": co, "other_only": oo,
+            "jaccard_pct": round(100 * a / union, 1) if union else None,
+        })
+    return rows
 
 
 def fmt_key(key) -> str:
@@ -323,15 +373,7 @@ def main() -> int:
                 }
     (args.output / "findings.tsv").write_text("\n".join(tsv) + "\n", encoding="utf-8")
 
-    matrix = []
-    for (rule, tool), c in cells.items():
-        a, co, oo = len(c["agree"]), len(c["chokkin_only"]), len(c["other_only"])
-        union = a + co + oo
-        matrix.append({
-            "rule": rule, "tool": tool, "chokkin": a + co, "other": a + oo, "agree": a,
-            "chokkin_only": co, "other_only": oo,
-            "jaccard_pct": round(100 * a / union, 1) if union else None,
-        })
+    matrix = matrix_rows(cells)
     summary = {
         "chokkin_version": oc.chokkin_version(args.bin),
         "generated": oc.utc_now(),

@@ -36,6 +36,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 import oss_corpus as oc
 
@@ -63,9 +64,9 @@ def bench_id(change_dir: Path) -> str:
     return json.loads(meta.read_text(encoding="utf-8"))["full_id"]
 
 
-def collect(since: float) -> list[dict]:
+def collect(since: float, root: Path = CRITERION) -> list[dict]:
     rows = []
-    for est in sorted(CRITERION.glob("**/change/estimates.json")):
+    for est in sorted(root.glob("**/change/estimates.json")):
         if est.stat().st_mtime < since:
             continue  # left over from an earlier comparison
         mean = json.loads(est.read_text(encoding="utf-8"))["mean"]
@@ -79,6 +80,39 @@ def collect(since: float) -> list[dict]:
             }
         )
     return rows
+
+
+def is_regressed(row: dict, threshold: float) -> bool:
+    """Slower by more than `threshold` percent, with the 95% CI above zero."""
+    return row["mean_pct"] > threshold and row["ci_low_pct"] > 0
+
+
+def confirm(
+    rows: list[dict], threshold: float, rounds: int, rerun: Callable[[list[str]], dict | None]
+) -> list[dict] | None:
+    """Mark each row regressed or not, then re-run the regressed ones up to
+    `rounds` times; one stays regressed only while every re-run regresses.
+    `rerun(benches)` returns the new rows by bench, or None when cargo bench
+    failed; then this returns None too."""
+    for r in rows:
+        r["regressed"] = is_regressed(r, threshold)
+        r["runs"] = [round(r["mean_pct"], 1)]
+    regressed = [r for r in rows if r["regressed"]]
+    for _ in range(rounds):
+        if not regressed:
+            break
+        again = rerun([r["bench"] for r in regressed])
+        if again is None:
+            return None
+        for r in regressed:
+            new = again.get(r["bench"])
+            if new is None:
+                continue
+            r["runs"].append(round(new["mean_pct"], 1))
+            r.update({k: new[k] for k in ("mean_pct", "ci_low_pct", "ci_high_pct")})
+            r["regressed"] = is_regressed(r, threshold)
+        regressed = [r for r in regressed if r["regressed"]]
+    return regressed
 
 
 def run_bench(baseline: str, only: list[str] | None = None) -> bool:
@@ -102,25 +136,16 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    for r in rows:
-        r["regressed"] = r["mean_pct"] > args.threshold and r["ci_low_pct"] > 0
-        r["runs"] = [round(r["mean_pct"], 1)]
-    regressed = [r for r in rows if r["regressed"]]
-    for _ in range(args.confirm):
-        if not regressed:
-            break
+
+    def rerun(benches: list[str]) -> dict | None:
         since = time.time()
-        if not run_bench(args.baseline, [r["bench"] for r in regressed]):
-            return 2
-        again = {r["bench"]: r for r in collect(since)}
-        for r in regressed:
-            new = again.get(r["bench"])
-            if new is None:
-                continue
-            r["runs"].append(round(new["mean_pct"], 1))
-            r.update({k: new[k] for k in ("mean_pct", "ci_low_pct", "ci_high_pct")})
-            r["regressed"] = r["mean_pct"] > args.threshold and r["ci_low_pct"] > 0
-        regressed = [r for r in regressed if r["regressed"]]
+        if not run_bench(args.baseline, benches):
+            return None
+        return {r["bench"]: r for r in collect(since)}
+
+    regressed = confirm(rows, args.threshold, args.confirm, rerun)
+    if regressed is None:
+        return 2
 
     args.output.mkdir(parents=True, exist_ok=True)
     summary = {

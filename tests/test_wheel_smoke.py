@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
 
-import importlib.util
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "wheel-smoke.py"
+from scripts_import import load
 
-spec = importlib.util.spec_from_file_location("wheel_smoke", SCRIPT)
-smoke = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(smoke)
+smoke = load("wheel-smoke.py")
 
 
 class InstallTest(unittest.TestCase):
