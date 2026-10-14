@@ -442,9 +442,12 @@ mod tests {
 
     #[test]
     fn member_manifest_warnings_name_root_relative_files_or_the_member() {
-        let member = |warning: ManifestWarning| ProbeWarning::MemberManifest {
-            member: "packages/x".to_owned(),
-            warning: warning.rebased("packages/x"),
+        let member = |mut warning: ManifestWarning| {
+            warning.rebase("packages/x");
+            ProbeWarning::MemberManifest {
+                member: "packages/x".to_owned(),
+                warning,
+            }
         };
         let cases = [
             (

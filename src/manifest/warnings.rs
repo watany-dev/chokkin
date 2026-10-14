@@ -110,80 +110,33 @@ pub enum ManifestWarning {
 }
 
 impl ManifestWarning {
-    /// The same warning with every file joined onto `base`, the
-    /// root-relative directory of the manifest that emitted it.
-    #[must_use]
-    pub(crate) fn rebased(self, base: &str) -> Self {
-        let join = |file: String| join_rel(base, &file);
+    /// Join every file onto `base`, the root-relative directory of the
+    /// manifest that emitted the warning.
+    pub(crate) fn rebase(&mut self, base: &str) {
         match self {
-            Self::SetupPyNotStatic { file } => Self::SetupPyNotStatic { file: join(file) },
-            Self::RuntimeDependenciesUnknown { file } => {
-                Self::RuntimeDependenciesUnknown { file: join(file) }
-            },
-            Self::InvalidRequirementLine {
-                file,
-                line,
-                label,
-                raw,
-            } => Self::InvalidRequirementLine {
-                file: join(file),
-                line,
-                label,
-                raw,
-            },
-            Self::SetupPyPartiallyStatic { file, argument } => Self::SetupPyPartiallyStatic {
-                file: join(file),
-                argument,
-            },
+            Self::SetupPyNotStatic { file }
+            | Self::RuntimeDependenciesUnknown { file }
+            | Self::InvalidRequirementLine { file, .. }
+            | Self::SetupPyPartiallyStatic { file, .. }
+            | Self::RequirementsOptionIgnored { file, .. }
+            | Self::RequirementsUnreadable { file, .. }
+            | Self::DependencyGroupIncludeUndefined { file, .. }
+            | Self::DependencyGroupIncludeCycle { file, .. }
+            | Self::FileUndecodable { file }
+            | Self::InlineScriptInvalid { file, .. } => *file = join_rel(base, file),
             Self::MetadataConflict {
-                field,
-                kept,
-                ignored,
                 kept_source,
                 ignored_source,
-            } => Self::MetadataConflict {
-                field,
-                kept,
-                ignored,
-                kept_source: join(kept_source),
-                ignored_source: join(ignored_source),
-            },
-            Self::RequirementsOptionIgnored { file, line, raw } => {
-                Self::RequirementsOptionIgnored {
-                    file: join(file),
-                    line,
-                    raw,
-                }
-            },
-            Self::RequirementsUnreadable { file, reason } => Self::RequirementsUnreadable {
-                file: join(file),
-                reason,
-            },
-            Self::DependencyGroupIncludeUndefined {
-                file,
-                group,
-                include,
-            } => Self::DependencyGroupIncludeUndefined {
-                file: join(file),
-                group,
-                include,
-            },
-            Self::DependencyGroupIncludeCycle { file, groups } => {
-                Self::DependencyGroupIncludeCycle {
-                    file: join(file),
-                    groups,
-                }
-            },
-            Self::FileUndecodable { file } => Self::FileUndecodable { file: join(file) },
-            Self::InlineScriptInvalid { file, reason } => Self::InlineScriptInvalid {
-                file: join(file),
-                reason,
+                ..
+            } => {
+                *kept_source = join_rel(base, kept_source);
+                *ignored_source = join_rel(base, ignored_source);
             },
             // No file to rebase: the member path is printed beside them.
-            warning @ (Self::PoetryDetected
+            Self::PoetryDetected
             | Self::PdmDetected
             | Self::HatchDetected
-            | Self::RequirementsConstraintMissing { .. }) => warning,
+            | Self::RequirementsConstraintMissing { .. } => {},
         }
     }
 }

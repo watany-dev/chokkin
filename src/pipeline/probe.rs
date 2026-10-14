@@ -196,9 +196,13 @@ fn member_manifest_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<P
                 .manifest
                 .warnings
                 .iter()
-                .map(|warning| ProbeWarning::MemberManifest {
-                    member: input.member.path.clone(),
-                    warning: warning.clone().rebased(&input.member.path),
+                .map(|warning| {
+                    let mut warning = warning.clone();
+                    warning.rebase(&input.member.path);
+                    ProbeWarning::MemberManifest {
+                        member: input.member.path.clone(),
+                        warning,
+                    }
                 })
         })
         .collect()

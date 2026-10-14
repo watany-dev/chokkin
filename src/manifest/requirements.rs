@@ -103,20 +103,9 @@ fn files_matching(dir: &Path, matches: impl Fn(&str, &str) -> bool) -> Vec<PathB
     paths
 }
 
-/// Parse a requirements file that `setup.py` reads, keeping what was parsed
-/// before an unresolvable include; the flag is `false` when parsing stopped early.
+/// Parse a requirements file that `setup.py` or `extra_requirements` reads,
+/// keeping what was parsed before the error that stopped parsing.
 pub(super) fn extract_requirements_path(
-    root: &Path,
-    path: &Path,
-    default_context: &DependencyContext,
-) -> (RequirementsExtraction, bool) {
-    let (result, outcome) = extract_requirements_path_outcome(root, path, default_context);
-    let complete = outcome.is_ok() && !result.skipped;
-    (result, complete)
-}
-
-/// [`extract_requirements_path`], keeping the error that stopped parsing.
-pub(super) fn extract_requirements_path_outcome(
     root: &Path,
     path: &Path,
     default_context: &DependencyContext,
@@ -652,12 +641,12 @@ mod tests {
         std::fs::write(temp.path().join("extra.txt"), b"# Ren\xe9\nurllib3\n")
             .expect("write extra");
 
-        let (result, complete) = extract_requirements_path(
+        let (result, outcome) = extract_requirements_path(
             temp.path(),
             &temp.path().join("requirements.txt"),
             &DependencyContext::Runtime,
         );
-        assert!(!complete);
+        outcome.expect("an include that is read is not an error");
         assert!(result.skipped);
         assert_eq!(
             result

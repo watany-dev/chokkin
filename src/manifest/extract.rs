@@ -17,7 +17,7 @@ use super::pep508::{Operator, parse_version_specifiers};
 use super::pep508_util::normalize_distribution_name;
 use super::pyproject::extract_pyproject;
 use super::requirements::{
-    extra_requirements_candidates, extract_requirements_file, extract_requirements_path_outcome,
+    extra_requirements_candidates, extract_requirements_file, extract_requirements_path,
     requirements_path_context,
 };
 use super::setup_cfg::extract_setup_cfg;
@@ -339,7 +339,7 @@ fn read_extra_requirements(
             continue;
         }
         let (extracted, outcome) =
-            extract_requirements_path_outcome(root, path, &DependencyContext::Runtime);
+            extract_requirements_path(root, path, &DependencyContext::Runtime);
         warnings.extend(extracted.warnings);
         if let Err(error) = &outcome {
             warnings.push(ManifestWarning::RequirementsUnreadable {

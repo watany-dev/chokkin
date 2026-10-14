@@ -152,12 +152,12 @@ fn push_items(
                 line: None,
             }),
             DependencyItem::RequirementsFile(path) => {
-                let (extracted, read_fully) = extract_requirements_path(root, path, context);
+                let (extracted, outcome) = extract_requirements_path(root, path, context);
+                complete &= outcome.is_ok() && !extracted.skipped;
                 result.dependencies.extend(extracted.dependencies);
                 result.warnings.extend(extracted.warnings);
                 result.files_read.extend(extracted.files_read);
                 result.files_missing.extend(extracted.files_missing);
-                complete &= read_fully;
             },
         }
     }

@@ -91,19 +91,12 @@ pub(crate) fn add_member_manifest_roots<'a>(
             &mut candidates,
             &mut warnings,
         );
-        plan.warnings
-            .extend(warnings.into_iter().map(|warning| match warning {
-                EntryWarning::UnresolvedModuleTarget {
-                    module,
-                    file,
-                    label,
-                } => EntryWarning::UnresolvedModuleTarget {
-                    module,
-                    file: join_rel(member_path, &file),
-                    label,
-                },
-                other @ EntryWarning::MissingEntryPath { .. } => other,
-            }));
+        for warning in &mut warnings {
+            if let EntryWarning::UnresolvedModuleTarget { file, .. } = warning {
+                *file = join_rel(member_path, file);
+            }
+        }
+        plan.warnings.append(&mut warnings);
         candidates.extend(build_script_entries(manifest));
         for candidate in candidates {
             let path = format!("{member_path}/{}", candidate.spec.path);
