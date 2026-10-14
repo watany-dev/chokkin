@@ -2,16 +2,20 @@
 //!
 //! Only literals, names, `+`, string-key subscripts, single-`return` helper
 //! functions, and filter-free comprehensions are evaluated. Everything else is
-//! [`Value::Unknown`], which callers treat as "could not be read" (#491).
+//! [`Value::Unknown`], which callers treat as "could not be read" (#491),
+//! except the known project idioms in [`idioms`], tried just before that.
+
+mod idioms;
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
-use ruff_python_ast::{Comprehension, Expr, ExprCall, Operator, Stmt, StmtFunctionDef, Suite};
+use ruff_python_ast::{
+    Comprehension, Expr, ExprCall, ExprSubscript, Operator, Stmt, StmtFunctionDef, Suite,
+};
 
 use crate::path_util::rel_to_root;
 
-use super::pep508_util::normalize_distribution_name;
 use super::util::path_is_within_root;
 
 const MAX_CALL_DEPTH: usize = 16;
@@ -154,8 +158,9 @@ struct Evaluator<'a> {
     depth: usize,
     steps: usize,
     probed_missing: Vec<String>,
-    /// Items of the lists `requirement_table_lookup` found an entry in, read
-    /// at lookup time: a later rebinding does not change what was looked up.
+    /// Items of the lists [`idioms::requirement_table_lookup`] found an entry
+    /// in, read at lookup time: a later rebinding does not change what was
+    /// looked up.
     table_requirements: BTreeSet<String>,
 }
 
@@ -268,13 +273,8 @@ impl<'a> Evaluator<'a> {
 
     /// `reqs.append(...)` and friends change a value we only track by assignment.
     fn taint_mutation(&mut self, call: &ExprCall) {
-        let Expr::Attribute(attribute) = &*call.func else {
-            return;
-        };
-        if let Some(value) = self.place_mut(&attribute.value) {
-            value.taint();
-        } else {
-            self.taint_target(&attribute.value);
+        if let Expr::Attribute(attribute) = &*call.func {
+            self.taint_place(&attribute.value);
         }
     }
 
@@ -290,7 +290,7 @@ impl<'a> Evaluator<'a> {
                     {
                         items.retain(|(existing, _)| *existing != key);
                     } else {
-                        self.taint_target(&subscript.value);
+                        self.taint_place(&subscript.value);
                     }
                 },
                 Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
@@ -317,6 +317,16 @@ impl<'a> Evaluator<'a> {
                 }
             },
             _ => None,
+        }
+    }
+
+    /// The value `expr` refers to may have changed: taint it, or the
+    /// variables it may reach when it is not a place we track.
+    fn taint_place(&mut self, expr: &Expr) {
+        if let Some(value) = self.place_mut(expr) {
+            value.taint();
+        } else {
+            self.taint_target(expr);
         }
     }
 
@@ -421,14 +431,18 @@ impl<'a> Evaluator<'a> {
             Expr::Name(name) => {
                 self.env.insert(name.id.to_string(), value);
             },
+            // A key that is not a string is dropped as in a dict literal: an
+            // added entry cannot undeclare the known ones, and tainting the
+            // dict would lose them all (#827). Any other base leaves it partial.
             Expr::Subscript(subscript) => {
-                let (Expr::Name(base), Value::Str(key)) =
-                    (&*subscript.value, self.eval(&subscript.slice))
-                else {
-                    return;
-                };
-                if let Some(Value::Dict(items)) = self.env.get_mut(base.id.as_str()) {
-                    insert_entry(items, key, value);
+                let key = self.eval(&subscript.slice);
+                match self.place_mut(&subscript.value) {
+                    Some(Value::Dict(items)) => {
+                        if let Value::Str(key) = key {
+                            insert_entry(items, key, value);
+                        }
+                    },
+                    _ => self.taint_place(&subscript.value),
                 }
             },
             Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
@@ -498,23 +512,7 @@ impl<'a> Evaluator<'a> {
             Expr::BinOp(binop) if binop.op == Operator::Add => {
                 add(self.eval(&binop.left), self.eval(&binop.right))
             },
-            Expr::Subscript(subscript) => {
-                let base = self.eval(&subscript.value);
-                let Value::Str(key) = self.eval(&subscript.slice) else {
-                    return Value::Unknown;
-                };
-                match base {
-                    Value::Dict(items) => items
-                        .into_iter()
-                        .find(|(existing, _)| *existing == key)
-                        .map_or(Value::Unknown, |(_, value)| value),
-                    // Only a table this file assigned, not `os.environ[...]`.
-                    Value::Unknown if matches!(&*subscript.value, Expr::Name(name) if self.env.contains_key(name.id.as_str())) => {
-                        self.requirement_table_lookup(&key)
-                    },
-                    _ => Value::Unknown,
-                }
-            },
+            Expr::Subscript(subscript) => self.eval_subscript(subscript),
             Expr::Call(call) => self.eval_call(call),
             Expr::ListComp(comp) => self.eval_list_comprehension(&comp.elt, &comp.generators),
             Expr::SetComp(comp) => self.eval_list_comprehension(&comp.elt, &comp.generators),
@@ -536,6 +534,27 @@ impl<'a> Evaluator<'a> {
                     insert_entry(&mut items, key, value);
                 }
                 Value::Dict(items)
+            },
+            _ => Value::Unknown,
+        }
+    }
+
+    fn eval_subscript(&mut self, subscript: &ExprSubscript) -> Value {
+        let base = self.eval(&subscript.value);
+        let Value::Str(key) = self.eval(&subscript.slice) else {
+            return Value::Unknown;
+        };
+        match base {
+            Value::Dict(items) => items
+                .into_iter()
+                .find(|(existing, _)| *existing == key)
+                .map_or(Value::Unknown, |(_, value)| value),
+            // Only a table this file assigned, not `os.environ[...]`.
+            Value::Unknown if matches!(&*subscript.value, Expr::Name(name) if self.env.contains_key(name.id.as_str())) => {
+                idioms::requirement_table_lookup(&self.env, &key).map_or(Value::Unknown, |entry| {
+                    self.table_requirements.extend(entry.table);
+                    Value::Str(entry.requirement)
+                })
             },
             _ => Value::Unknown,
         }
@@ -703,54 +722,6 @@ impl<'a> Evaluator<'a> {
         }
         Value::Unknown
     }
-
-    /// `deps["tokenizers"]` on a table built at install time (transformers):
-    /// find a known requirement string whose name matches the key. The bare
-    /// key itself (e.g. a `deps_list("torch")` argument) loses to a fuller one.
-    fn requirement_table_lookup(&mut self, key: &str) -> Value {
-        let wanted = normalize_distribution_name(key);
-        let mut found: Vec<&String> = Vec::new();
-        for value in self.env.values() {
-            let Value::List(items) = value else {
-                continue;
-            };
-            for item in items {
-                if let Value::Str(raw) = item
-                    && normalize_distribution_name(requirement_table_key(raw)) == wanted
-                    && !found.contains(&raw)
-                {
-                    found.push(raw);
-                }
-            }
-        }
-        if found.len() > 1 {
-            found.retain(|raw| raw.as_str() != key);
-        }
-        let [raw] = found.as_slice() else {
-            return Value::Unknown;
-        };
-        let raw = Value::Str((*raw).clone());
-        for value in self.env.values() {
-            if let Value::List(items) = value
-                && items.contains(&raw)
-            {
-                self.table_requirements
-                    .extend(items.iter().filter_map(|item| match item {
-                        Value::Str(text) => Some(text.clone()),
-                        _ => None,
-                    }));
-            }
-        }
-        raw
-    }
-}
-
-/// Requirement text before its version or marker, extras kept.
-fn requirement_table_key(raw: &str) -> &str {
-    raw.split(['!', '=', '<', '>', '~', ' ', ';', '@'])
-        .next()
-        .unwrap_or(raw)
-        .trim()
 }
 
 /// `dict[key] = value`: a repeated key keeps its first position and the last value.
@@ -1404,12 +1375,13 @@ mod props {
         Some((install_strings, pairs))
     }
 
-    const MUTATIONS: [&str; 5] = [
+    const MUTATIONS: [&str; 6] = [
         ".append('z')",
         ".extend(['z'])",
         ".insert(0, 'z')",
         ".clear()",
         ".remove('a')",
+        "[0] = 'z'",
     ];
 
     /// Statements outside the modelled subset, applied to a variable of any kind.
@@ -1605,6 +1577,91 @@ mod props {
                 "c".to_owned(),
                 Py::List(vec![Py::Str("z".to_owned())])
             )]))
+        );
+    }
+
+    #[test]
+    fn assignment_under_an_unknown_key_keeps_the_known_entries() {
+        let call = evaluate(
+            "extras = {'s3': ['boto3']}\nkey = compute()\nextras[key] = ['gcs']\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            call.keyword("extras_require"),
+            Some(&Value::Dict(vec![(
+                "s3".to_owned(),
+                Value::List(vec![Value::Str("boto3".to_owned())])
+            )]))
+        );
+    }
+
+    #[test]
+    fn index_assignment_marks_the_list_partial() {
+        let call = evaluate("reqs = ['a']\nreqs[0] = 'b'\nsetup(install_requires=reqs)\n")
+            .expect("setup() call");
+        let value = call.keyword("install_requires").expect("install_requires");
+        assert!(!dependency_items(value).complete);
+    }
+
+    #[test]
+    fn nested_subscript_assignment_follows_string_keys() {
+        let call = evaluate(
+            "extras = {'dev': {'lint': ['ruff']}, 'test': ['pytest']}\n\
+             extras['dev']['type'] = ['mypy']\n\
+             extras['test'][0] = 'nose'\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        let Some(Value::Dict(items)) = call.keyword("extras_require") else {
+            panic!("extras_require is not a dict");
+        };
+        let list = |texts: &[&str]| {
+            Value::List(
+                texts
+                    .iter()
+                    .map(|text| Value::Str((*text).to_owned()))
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            items,
+            &vec![
+                (
+                    "dev".to_owned(),
+                    Value::Dict(vec![
+                        ("lint".to_owned(), list(&["ruff"])),
+                        ("type".to_owned(), list(&["mypy"])),
+                    ])
+                ),
+                (
+                    "test".to_owned(),
+                    Value::List(vec![Value::Str("pytest".to_owned()), Value::Unknown])
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn del_by_index_marks_only_that_entry_partial() {
+        let call = evaluate(
+            "extras = {'dev': ['ruff'], 'test': ['pytest']}\ndel extras['dev'][0]\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        let Some(Value::Dict(items)) = call.keyword("extras_require") else {
+            panic!("extras_require is not a dict");
+        };
+        assert_eq!(
+            items[0],
+            (
+                "dev".to_owned(),
+                Value::List(vec![Value::Str("ruff".to_owned()), Value::Unknown])
+            )
+        );
+        assert_eq!(
+            known(Some(&items[1].1)),
+            Some(Py::List(vec![Py::Str("pytest".to_owned())]))
         );
     }
 
