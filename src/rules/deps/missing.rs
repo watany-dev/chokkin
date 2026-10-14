@@ -7,7 +7,9 @@ use crate::graph::ModuleOrigin;
 use crate::manifest::{DeclaredDependency, LockfileGraph};
 use crate::parser::ParseSummary;
 use crate::resolver::ResolvedImport;
-use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
+use crate::rules::types::{
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
+};
 use crate::rules::{DependencyRuleContext, RuleContext};
 
 use super::context::{is_directly_declared, usage_context_for_import};
@@ -220,8 +222,8 @@ fn workspace_missing_candidate(
         severity: Severity::Error,
         confidence: Confidence::Certain,
         message: format!(
-            "imported {distribution} in {}:{} but workspace member {member_id} does not declare it directly",
-            import.file, import.line
+            "imported {distribution} in {} but workspace member {member_id} does not declare it directly",
+            import_site(&import.file, import.line)
         ),
         workspace_member: Some(member_id.to_owned()),
         origins: vec![Origin::Import {
@@ -233,7 +235,10 @@ fn workspace_missing_candidate(
             summary: format!(
                 "{distribution} is declared at the workspace root but not by member {member_id}"
             ),
-            details: vec![format!("import at {}:{}", import.file, import.line)],
+            details: vec![format!(
+                "import at {}",
+                import_site(&import.file, import.line)
+            )],
         },
     }
 }
@@ -371,8 +376,9 @@ fn missing_candidate(
         severity: Severity::Error,
         confidence: Confidence::Certain,
         message: format!(
-            "imported {distribution} in {}:{}{} but not declared in matching dependency context",
-            import.file, import.line, lockfile_note
+            "imported {distribution} in {}{} but not declared in matching dependency context",
+            import_site(&import.file, import.line),
+            lockfile_note
         ),
         workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
@@ -382,7 +388,10 @@ fn missing_candidate(
         }],
         explain: ExplainData {
             summary: format!("{distribution} is imported but not declared"),
-            details: vec![format!("import at {}:{}", import.file, import.line)],
+            details: vec![format!(
+                "import at {}",
+                import_site(&import.file, import.line)
+            )],
         },
     }
 }

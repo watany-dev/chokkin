@@ -116,6 +116,50 @@ jobs:
           path: chokkin.sarif
           retention-days: 14
 
+  # Determinism (cold / warm / --no-cache byte-identical), JSON schema and
+  # crash gates over every in-repo fixture project and recall sentinel (#835).
+  # The cargo tests run with --no-cache, so this is the only per-PR check
+  # that a warm run returns what a cold run does. Needs no network or clones;
+  # the full corpus runs in oss-metrics.yml.
+  oss-gate:
+    name: OSS gate (in-repo fixtures)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install jsonschema
+        run: python -m pip install jsonschema==4.26.0
+      - name: Test the gate script
+        run: python tests/test_oss_gate.py
+      # Dev profile: the findings do not depend on the profile (see msrv).
+      - name: Build chokkin
+        run: cargo build --locked --bin chokkin
+      - name: Gate
+        run: |
+          status=0
+          python scripts/oss-gate.py --in-repo -b target/debug/chokkin || status=$?
+          if [ -f target/oss-gate/report.md ]; then
+            cat target/oss-gate/report.md >>"$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: oss-gate
+          path: target/oss-gate
+          retention-days: 14
+
   coverage:
     name: Coverage
     if: github.event_name != 'schedule'

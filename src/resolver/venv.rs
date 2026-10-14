@@ -287,6 +287,28 @@ mod tests {
     }
 
     #[test]
+    fn entry_points_record_binaries_and_only_pytest11_plugins() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        for (name, entry_points) in [
+            ("tool", "[console_scripts]\ntool-cli = tool.main:main\n"),
+            ("plug", "[pytest11]\nplug = plug.plugin\n"),
+        ] {
+            let dist_info = dir.path().join(format!("{name}-1.0.dist-info"));
+            std::fs::create_dir(&dist_info).expect("mkdir");
+            std::fs::write(dist_info.join("METADATA"), format!("Name: {name}\n")).expect("write");
+            std::fs::write(dist_info.join("entry_points.txt"), entry_points).expect("write");
+        }
+        let mut index = VenvIndex::default();
+        merge_dist_info(&dir.path().join("tool-1.0.dist-info"), &mut index);
+        merge_dist_info(&dir.path().join("plug-1.0.dist-info"), &mut index);
+        assert_eq!(
+            index.binaries,
+            BTreeMap::from([("tool-cli".to_owned(), "tool".to_owned())])
+        );
+        assert_eq!(index.pytest_plugins, BTreeSet::from(["plug".to_owned()]));
+    }
+
+    #[test]
     fn record_skips_dist_info_and_parent_relative_paths() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let record = dir.path().join("RECORD");

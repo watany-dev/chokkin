@@ -188,4 +188,35 @@ mod tests {
         assert!(!updated.contains("requests,"));
         assert!(updated.contains("requests-oauthlib"));
     }
+
+    #[test]
+    fn leaves_other_options_keys_alone() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("setup.cfg");
+        std::fs::write(
+            &path,
+            "[options]\npython_requires = >=3.9\ninstall_requires =\n    boto3\n    requests\n\
+             [options.extras_require]\ntest =\n    pytest\n",
+        )
+        .expect("write");
+        assert_eq!(
+            remove_dependency(&path, "boto3").expect("remove"),
+            "removed `boto3` from setup.cfg"
+        );
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            updated,
+            "[options]\npython_requires = >=3.9\ninstall_requires = requests\n\
+             [options.extras_require]\ntest =\n    pytest\n"
+        );
+
+        // Not in install_requires: the extras line goes by the line fallback.
+        remove_dependency(&path, "pytest").expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            updated,
+            "[options]\npython_requires = >=3.9\ninstall_requires = requests\n\
+             [options.extras_require]\ntest =\n"
+        );
+    }
 }
