@@ -476,6 +476,107 @@ fn binary_usage_keys(
     keys
 }
 
+fn module_ref_keys(
+    contrib: &chokkin::internals::PluginContribution,
+) -> Vec<(&str, &str, Option<u32>, &str)> {
+    let mut keys: Vec<_> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.module.as_str(),
+                reference.origin.file.as_str(),
+                reference.origin.line,
+                reference.origin.label.as_str(),
+            )
+        })
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+fn used_symbol_keys(contrib: &chokkin::internals::PluginContribution) -> Vec<(&str, &str)> {
+    let mut keys: Vec<_> = contrib
+        .used_symbols
+        .iter()
+        .map(|reference| (reference.module.as_str(), reference.symbol.as_str()))
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
+/// A bare module after `FLASK_APP=` / `--app` is the module Flask searches for
+/// its app or factory, so it is a module reference and those names are used;
+/// the quoted `module:factory()` form names the factory (#851).
+#[test]
+fn flask_plugin_reads_bare_app_modules() {
+    let hints = extract_fixture("flask_bare_module");
+    let contrib = plugin_contrib(&hints, PluginId::Flask);
+    assert_eq!(
+        module_ref_keys(contrib),
+        [
+            ("web.app", ".flaskenv", Some(1), "FLASK_APP"),
+            ("web.dev", "bin/dev.sh", Some(2), "flask --app"),
+            ("web.wsgi", "scripts/run.sh", Some(2), "flask --app"),
+        ]
+    );
+    let used = used_symbol_keys(contrib);
+    for module in ["web.app", "web.dev", "web.wsgi"] {
+        for name in ["app", "application", "create_app", "make_app"] {
+            assert!(used.contains(&(module, name)), "{module}:{name} {used:?}");
+        }
+    }
+    assert_eq!(used.len(), 12, "{used:?}");
+    assert_eq!(
+        symbol_ref_keys(contrib),
+        [(
+            "web.factory",
+            "create_app",
+            "bin/serve.sh",
+            Some(2),
+            "flask --app"
+        )]
+    );
+}
+
+/// `celery -A pkg.mod` names the module Celery searches for `app` / `celery`,
+/// or the attribute `mod` of `pkg` (#851).
+#[test]
+fn celery_plugin_reads_bare_app_modules() {
+    let hints = extract_fixture("celery_bare_module");
+    let contrib = plugin_contrib(&hints, PluginId::Celery);
+    assert_eq!(
+        module_ref_keys(contrib),
+        [
+            ("worker.celery", "bin/worker.sh", Some(2), "celery app"),
+            (
+                "worker.instance",
+                "pyproject.toml",
+                None,
+                "project.scripts.worker"
+            ),
+            ("worker.monitor", "scripts/flower.sh", Some(2), "celery app"),
+        ]
+    );
+    assert_eq!(
+        used_symbol_keys(contrib),
+        [
+            ("worker", "celery"),
+            ("worker", "instance"),
+            ("worker", "monitor"),
+            ("worker.celery", "app"),
+            ("worker.celery", "celery"),
+            ("worker.instance", "app"),
+            ("worker.instance", "celery"),
+            ("worker.monitor", "app"),
+            ("worker.monitor", "celery"),
+        ]
+    );
+    assert!(contrib.symbol_refs.is_empty(), "{:?}", contrib.symbol_refs);
+    assert_eq!(binary_usage_keys(contrib).len(), 3);
+}
+
 #[test]
 fn flask_plugin_reads_app_from_shell_scripts() {
     // `scripts/run.sh` spells `--app X`, `bin/serve.sh` spells `--app=X`; the

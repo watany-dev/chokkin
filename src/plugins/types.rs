@@ -103,6 +103,10 @@ pub struct PluginContribution {
     pub module_refs: Vec<ModuleReference>,
     /// `module:symbol` references.
     pub symbol_refs: Vec<SymbolReference>,
+    /// Symbols a tool looks up by name in a module it was given, such as
+    /// Celery's `app` in the module `celery -A` names (#851). They are used,
+    /// but unlike `symbol_refs` add no entry root: the module reference does.
+    pub used_symbols: Vec<SymbolReference>,
     /// CLI binary usages.
     pub binary_usages: Vec<BinaryUsage>,
     /// Framework-used file globs.
@@ -120,6 +124,7 @@ impl PluginContribution {
             entries: Vec::new(),
             module_refs: Vec::new(),
             symbol_refs: Vec::new(),
+            used_symbols: Vec::new(),
             binary_usages: Vec::new(),
             framework_used_globs: Vec::new(),
             sys_path_imports: Vec::new(),
@@ -178,6 +183,13 @@ impl PluginHints {
         self.contributions
             .iter()
             .flat_map(|contrib| contrib.symbol_refs.iter())
+    }
+
+    /// Iterate all symbols used by name lookup (no entry roots).
+    pub fn used_symbols(&self) -> impl Iterator<Item = &SymbolReference> {
+        self.contributions
+            .iter()
+            .flat_map(|contrib| contrib.used_symbols.iter())
     }
 
     /// Iterate all imports whose `sys.path` edits the importer sees.
