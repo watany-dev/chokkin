@@ -920,6 +920,8 @@ library modeでは、定義元module自身がその名前を読んでいるsymbo
 
 CHK007 は、再exportした `__init__.py` 自身がその名前を読んでいる import (parser の `ParsedModule::used_import_bindings`) を対象外にする。`from .x import a as b` の再export名は `b` とする。
 
+CHK007 は、CHK006 と同じ外部利用扱いの集合 (`collect_external_symbols` ほか) に `package:name` が入っている再exportも対象外にする (#743)。`[project.scripts] instr = "instr:main"` のように entry point が package の再export を指す場合や、plugin が `package.name` を参照する場合が当たる。console script やホストはコードの import を経ずにその名前を読むため。entry が定義元 module (`instr.cli:main`) を指す場合、`__init__.py` の再exportは従来どおり報告する。
+
 CHK007 は mode によらず、wheel が配布する `__init__.py` で明示的に公開した再export（`__all__` に載っている、または `import a as a`）も対象外にする (#678)。app signal を持つ workspace root と CLI を持つ member は app mode になる (§8) が、その wheel の利用者はこれらの名前を package から import できるため。配布するかは root の wheel target から求めた public surface で判定し、workspace member の file は library / app を問わず最も深い member 自身の wheel target（member 相対）で判定する。wheel target を宣言せず `[project].name` と `[build-system]` の `build-backend` を持つ member は、build backend の自動検出（hatchling の `src/<name>` 等）と同じく layout が推定した package を配布するものとみなす (#733、llama-index-instrumentation)。`[build-system]` のない member は uv が package にしないので何も配布しない。この推定は配布判定だけに使い、CHK001 の到達性を絞る library surface は宣言された wheel target からだけ求める。wheel target を宣言していない root の file や、surface に含まれない file（`examples/` の app 内 `__all__` 等）は従来どおり app mode で warning にする。
 
 同じ理由で、wheel が配布する file の `__all__` に載っている名前は、module 内でしか使われていなくても CHK006 にしない (#727)。app mode の workspace root (§8) では、fastmcp の `fastmcp_slim` の配布 module の `__all__` 定数が warning / certain になっていた。`__all__` に載っていない名前と、配布されない file の `__all__` は従来どおり app mode の判定に従う。CHK001 の判定は変えない。

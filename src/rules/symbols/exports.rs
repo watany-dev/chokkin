@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexSet;
+
 use crate::parser::{ImportKind, ParsedModule};
 use crate::sources::{LayoutInfo, path_to_module};
 
@@ -86,11 +88,13 @@ pub(super) fn collect_reexports(
     reexports
 }
 
-/// Returns `true` when the package-level re-export name is referenced.
+/// Returns `true` when the package-level re-export name is referenced, or
+/// named from outside the code such as by an entry point or a plugin (#743).
 pub(super) fn is_reexport_used(
     reexport: &ReExport,
     references: &super::graph::ReferenceIndex,
+    external_symbols: &IndexSet<SymbolId>,
 ) -> bool {
     let package_symbol = SymbolId::new(&reexport.package_module, &reexport.name);
-    references.is_referenced(&package_symbol)
+    references.is_referenced(&package_symbol) || external_symbols.contains(&package_symbol)
 }
