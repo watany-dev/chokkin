@@ -455,6 +455,11 @@ mod tests {
             path: "acme/latin.py".to_owned(),
             reason: SkipReason::Undecodable,
         };
+        let diagnostic = |line| ProbeWarning::ParseDiagnostic {
+            path: "acme/aliases.py".to_owned(),
+            line,
+            message: "file uses `type` aliases; set target_version to py312".to_owned(),
+        };
 
         assert_eq!(
             located(&syntax_error),
@@ -467,6 +472,15 @@ mod tests {
         assert_eq!(
             located(&undecodable),
             (Some("acme/latin.py".to_owned()), None)
+        );
+        assert_eq!(
+            located(&diagnostic(1)),
+            (Some("acme/aliases.py".to_owned()), Some(1))
+        );
+        // Line 0 is a file-wide diagnostic, not a position.
+        assert_eq!(
+            located(&diagnostic(0)),
+            (Some("acme/aliases.py".to_owned()), None)
         );
         assert_eq!(
             located(&ProbeWarning::Manifest(ManifestWarning::HatchDetected)),
