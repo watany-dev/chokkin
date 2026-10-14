@@ -1490,6 +1490,45 @@ fn reexport_named_by_an_entry_point_is_not_chk007() {
     );
 }
 
+/// An entry target `module:object.attr [extras]` names `object`: the console
+/// script imports the module and walks the attributes from there (#872).
+#[test]
+fn entry_point_with_an_attribute_path_uses_its_object() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\ndirect = \"app.cli:Cli.main\"\nvia = \"app:Runner.run\"\nextra = \"app.tool:Tool.main [cli]\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("app/__init__.py", "from .runner import Runner, Other\n"),
+        (
+            "app/cli.py",
+            "class Cli:\n    @staticmethod\n    def main():\n        pass\n",
+        ),
+        (
+            "app/runner.py",
+            "class Runner:\n    @staticmethod\n    def run():\n        pass\n\n\nclass Other:\n    pass\n",
+        ),
+        (
+            "app/tool.py",
+            "class Tool:\n    @staticmethod\n    def main():\n        pass\n",
+        ),
+    ]);
+    for (rule, module, name) in [
+        (RuleId::Chk006, "app.cli", "Cli"),
+        (RuleId::Chk007, "app", "Runner"),
+        (RuleId::Chk006, "app.tool", "Tool"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, rule, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk007, "app", "Other"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");

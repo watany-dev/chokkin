@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "instr:main"` with `from .cli import main` in `instr/__init__.py`) or a
   plugin references is no longer CHK007, since the console script or host
   reads it without an import (#743).
+- An entry point or plugin target with an attribute path or extras
+  (`tool = "tool.cli:Cli.main [cli]"`) marks the object it starts from
+  (`Cli`) as used, so that class is no longer CHK006, nor CHK007 when a
+  package re-exports it (#872).
 
 ## [0.7.5] - 2026-10-12
 
