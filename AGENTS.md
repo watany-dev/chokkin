@@ -16,6 +16,8 @@ analysis logic.
   `pub(crate)`, and tests/benches import from `chokkin::internals` — add an
   item there only when they need it.
 - Use `std::path` for all paths; wheels ship for Linux/macOS/Windows.
+- An extractor states what happens to input it does not recognize; dropping it
+  silently is a false positive waiting to happen (ADR 0005).
 - Run `make check` before every push.
 - Commit messages: imperative mood with a type prefix (`feat:`, `fix:`,
   `refactor:`, `chore:`, `docs:`, `ci:`). Push to a feature branch, not `main`.
