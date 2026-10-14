@@ -102,21 +102,17 @@ impl ReferenceIndex {
                 }
                 match import.kind {
                     ImportKind::ImportFrom => {
-                        let (package, name) = match &import.name {
-                            Some(name) => (import.module.as_str(), name.as_str()),
-                            // `from . import x` carries no `name`: the parser folds `x` into `module`.
-                            None => match import.module.rsplit_once('.') {
-                                Some(parts) => parts,
-                                None => continue,
-                            },
+                        let Some((package, name)) = import.import_target() else {
+                            continue;
                         };
                         // `from . import x` in the package's own `__init__` defines a re-export, not a use.
                         if import.name.is_some() || package != importer {
                             index.record(importer, SymbolId::new(package, name), &mut stars);
                         }
                         let submodule = format!("{package}.{name}");
-                        if known_modules.contains(submodule.as_str()) {
-                            let binding = import.alias.as_deref().unwrap_or(name);
+                        if let Some(binding) = import.bound_name()
+                            && known_modules.contains(submodule.as_str())
+                        {
                             for target in accesses(module, &submodule, &[binding]) {
                                 index.record(importer, target, &mut stars);
                             }
@@ -314,20 +310,8 @@ fn bound_names(module: &ParsedModule) -> HashSet<&str> {
     let imported = module
         .imports
         .iter()
-        .filter(|import| {
-            import.kind == ImportKind::ImportFrom && import.name.as_deref() != Some("*")
-        })
-        .map(|import| {
-            // `from . import x` carries no `name`: the parser folds `x` into `module`.
-            let imported = match &import.name {
-                Some(name) => name.as_str(),
-                None => import
-                    .module
-                    .rsplit_once('.')
-                    .map_or(import.module.as_str(), |(_, last)| last),
-            };
-            import.alias.as_deref().unwrap_or(imported)
-        });
+        .filter(|import| import.kind == ImportKind::ImportFrom)
+        .filter_map(|import| import.bound_name());
     defined.chain(imported).collect()
 }
 

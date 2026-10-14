@@ -141,7 +141,7 @@ impl<'a> ModuleVisitor<'a> {
             .parsed
             .imports
             .iter()
-            .filter_map(import_binding)
+            .filter_map(ImportRef::bound_name)
             .filter(|binding| self.loaded_names.contains(*binding))
             .map(str::to_owned)
             .collect();
@@ -1052,20 +1052,6 @@ fn suppresses_import_error(expr: &Expr) -> bool {
 
 fn alias_as_name(alias: &Alias) -> Option<String> {
     alias.asname.as_ref().map(ToString::to_string)
-}
-
-/// The name an import binds in the importing module, if any.
-fn import_binding(import: &ImportRef) -> Option<&str> {
-    if let Some(alias) = &import.alias {
-        return Some(alias);
-    }
-    match (import.kind, import.name.as_deref()) {
-        (ImportKind::ImportFrom, Some("*")) => None,
-        (ImportKind::ImportFrom, Some(name)) => Some(name),
-        // `from . import x` carries no `name`: the parser folds `x` into `module`.
-        (ImportKind::ImportFrom, None) => import.module.rsplit('.').next(),
-        (ImportKind::Import, _) => import.module.split('.').next(),
-    }
 }
 
 #[cfg(test)]

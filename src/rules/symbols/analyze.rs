@@ -114,6 +114,7 @@ pub fn analyze_with_context(
     candidates.extend(detect_unused_reexports(
         &reexports,
         &reference_index,
+        &external_symbols,
         &wheels,
     ));
     candidates.extend(detect_unresolved_imports(
@@ -306,12 +307,13 @@ fn detect_unused_exports(
 fn detect_unused_reexports(
     reexports: &[ReExport],
     references: &ReferenceIndex,
+    external_symbols: &indexmap::IndexSet<SymbolId>,
     wheels: &Wheels<'_>,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
 
     for reexport in reexports {
-        if is_reexport_used(reexport, references) {
+        if is_reexport_used(reexport, references, external_symbols) {
             continue;
         }
         let mode = wheels.mode(&reexport.path);

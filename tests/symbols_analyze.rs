@@ -1465,6 +1465,31 @@ fn reexport_in_a_star_imported_package_is_used_through_the_outer_package() {
     );
 }
 
+/// A console script is called from outside, so the re-export it names is
+/// used; the others in the same `__init__` stay reported in app mode (#743).
+#[test]
+fn reexport_named_by_an_entry_point_is_not_chk007() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("app/__init__.py", "from .cli import main, other\n"),
+        (
+            "app/cli.py",
+            "def main():\n    pass\n\n\ndef other():\n    pass\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk007, "app", "main"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk007, "app", "other"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");

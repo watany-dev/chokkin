@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mkdocs-macros-plugin` to `mkdocs_macros`, and `mkdocstrings-python` to
   `mkdocstrings_handlers.python`. airflow's `sphinxarg` and `autoapi` Sphinx
   extensions are no longer CHK010 (#822).
+- A package re-export that an entry point names (`[project.scripts] instr =
+  "instr:main"` with `from .cli import main` in `instr/__init__.py`) or a
+  plugin references is no longer CHK007, since the console script or host
+  reads it without an import (#743).
 
 ## [0.7.5] - 2026-10-12
 
