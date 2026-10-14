@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The GitHub Action's `version` input also takes the path of a chokkin wheel
   (`*.whl`, relative to `working-directory`), which it runs with
   `uvx --from` (#834).
+- Literal `__all__ += [...]`, `__all__.extend([...])` and
+  `__all__.append("...")` add to the export list after a literal
+  `__all__` assignment, also from inside top-level `if` / `try` / `with`
+  blocks, so the added names count as public API (CHK006) and pass through
+  star imports. A non-literal addition (`__all__ += sub.__all__`) warns and
+  keeps the list (#567).
 
 ### Changed
 - CHK005 for a package that runtime code imports only inside functions is
@@ -74,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "instr:main"` with `from .cli import main` in `instr/__init__.py`) or a
   plugin references is no longer CHK007, since the console script or host
   reads it without an import (#743).
+- An entry point or plugin target with an attribute path or extras
+  (`tool = "tool.cli:Cli.main [cli]"`) marks the object it starts from
+  (`Cli`) as used, so that class is no longer CHK006, nor CHK007 when a
+  package re-exports it (#872).
+- A host hook that a package re-exports from a submodule (a Sphinx
+  extension's `from .core import setup`, a pytest plugin's `pytest_*` hook,
+  a PEP 517 backend package's `build_wheel`) is no longer CHK007, since the
+  host reads it from the package (#873).
 - An arbitrary-equality (`===`) value in a manifest requirement is read the
   way `packaging` reads it: up to whitespace, `;` or `)`, commas included,
   with empty items dropped. `foo===1.0,,>=1` is accepted, and

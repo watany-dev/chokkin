@@ -299,7 +299,7 @@ mod tests {
             subject: crate::rules::IssueSubject::Import {
                 module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
-                line: 1,
+                line: Some(1),
                 distribution: Some(distribution.to_owned()),
             },
             explain: Some(ExplainData {

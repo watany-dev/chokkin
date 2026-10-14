@@ -129,9 +129,15 @@ fn subject_key_matches(subject: &IssueSubject, key: &str) -> bool {
         IssueSubject::File { path } => path == key,
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name == key,
         IssueSubject::Symbol { module, name } => format!("{module}:{name}") == key || name == key,
+        // `file:module` is the fingerprint's target; a config reference
+        // without a position has no `file:line:module` form (#830).
         IssueSubject::Import {
             module, file, line, ..
-        } => format!("{file}:{line}:{module}") == key || module == key,
+        } => {
+            module == key
+                || format!("{file}:{module}") == key
+                || line.is_some_and(|line| format!("{file}:{line}:{module}") == key)
+        },
         IssueSubject::ScriptDistribution { script, name } => {
             format!("script:{script}:{name}") == key || name == key
         },
@@ -169,12 +175,6 @@ fn candidate_to_issue(candidate: IssueCandidate) -> Issue {
     }
 }
 
-/// Line 0 marks a plugin reference (`INSTALLED_APPS`, Sphinx `extensions`)
-/// that has no position; the report shows it as no line.
-fn known_line(line: u32) -> Option<u32> {
-    (line != 0).then_some(line)
-}
-
 fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
     let mut file = None;
     let mut line = None;
@@ -190,7 +190,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
                 ..
             } if file.is_none() => {
                 file = Some(import_file.clone());
-                line = known_line(*import_line);
+                line = *import_line;
             },
             Origin::Import { .. } => {},
             Origin::Binary(origin) => {
@@ -209,7 +209,7 @@ fn location_from_candidate(candidate: &IssueCandidate) -> IssueLocation {
                 ..
             } => {
                 file = Some(import_file.clone());
-                line = known_line(*import_line);
+                line = *import_line;
             },
             IssueSubject::ScriptDistribution { script, .. } => {
                 file = Some(script.clone());
@@ -416,7 +416,7 @@ mod tests {
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: file.to_owned(),
-                line: 1,
+                line: Some(1),
                 module: "pkg.mod".to_owned(),
             }],
             explain: ExplainData::default(),
@@ -621,7 +621,7 @@ mod tests {
                 IssueSubject::Import {
                     module: "requets".to_owned(),
                     file: "src/app.py".to_owned(),
-                    line: 3,
+                    line: Some(3),
                     distribution: None,
                 },
                 "import",
@@ -687,6 +687,44 @@ mod tests {
         }
     }
 
+    /// The fingerprint's `file:module` target selects an import issue too,
+    /// including a config reference without a line (#830).
+    #[test]
+    fn explain_issue_selects_an_import_by_its_target() {
+        let import = |module: &str, file: &str, line, summary| {
+            let subject = IssueSubject::Import {
+                module: module.to_owned(),
+                file: file.to_owned(),
+                line,
+                distribution: None,
+            };
+            candidate_to_issue(bare_candidate(RuleId::Chk010, subject, summary))
+        };
+        let issues = vec![
+            import("requets", "src/app.py", Some(3), "import"),
+            import("myapp", "mysite/settings.py", None, "reference"),
+        ];
+        let report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: ExitStatus::IssuesFound,
+        };
+
+        for (selector, expected) in [
+            ("CHK010:src/app.py:requets", Some("import")),
+            ("CHK010:mysite/settings.py:myapp", Some("reference")),
+            ("CHK010:myapp", Some("reference")),
+            ("CHK010:mysite/settings.py:0:myapp", None),
+        ] {
+            assert_eq!(
+                explain_issue(&report, selector).as_deref(),
+                expected,
+                "{selector}"
+            );
+        }
+    }
+
     #[test]
     fn candidate_explain_is_dropped_only_when_summary_and_details_are_both_empty() {
         let subject = || IssueSubject::Distribution {
@@ -716,7 +754,7 @@ mod tests {
             IssueSubject::Import {
                 module: "requets".to_owned(),
                 file: "src/app.py".to_owned(),
-                line: 3,
+                line: Some(3),
                 distribution: None,
             },
             "",
@@ -762,7 +800,7 @@ mod tests {
             IssueSubject::Import {
                 module: "lazypkg".to_owned(),
                 file: "src/app.py".to_owned(),
-                line: 8,
+                line: Some(8),
                 distribution: None,
             },
             "",
@@ -771,7 +809,7 @@ mod tests {
             .into_iter()
             .map(|line| Origin::Import {
                 file: "src/app.py".to_owned(),
-                line,
+                line: Some(line),
                 module: "lazypkg".to_owned(),
             })
             .collect();

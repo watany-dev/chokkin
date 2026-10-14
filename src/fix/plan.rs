@@ -735,7 +735,7 @@ mod tests {
             subject: IssueSubject::Import {
                 module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
-                line: 1,
+                line: Some(1),
                 distribution: Some("pyyaml".to_owned()),
             },
             explain: Some(ExplainData {
@@ -840,7 +840,7 @@ mod tests {
             subject: IssueSubject::Import {
                 module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
-                line: 1,
+                line: Some(1),
                 distribution: Some("pyyaml".to_owned()),
             },
             explain: Some(ExplainData {
@@ -887,7 +887,7 @@ mod tests {
             subject: IssueSubject::Import {
                 module: "yaml".to_owned(),
                 file: "services/api/src/app.py".to_owned(),
-                line: 1,
+                line: Some(1),
                 distribution: Some("pyyaml".to_owned()),
             },
             explain: Some(ExplainData {

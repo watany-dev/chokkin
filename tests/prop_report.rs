@@ -35,7 +35,7 @@ fn subject() -> impl Strategy<Value = IssueSubject> {
         (
             nasty_text(),
             path_text(),
-            1u32..500,
+            proptest::option::of(1u32..500),
             proptest::option::of(nasty_text())
         )
             .prop_map(|(module, file, line, distribution)| IssueSubject::Import {

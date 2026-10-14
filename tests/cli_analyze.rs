@@ -335,29 +335,97 @@ fn binary_json_import_issues_carry_distribution_and_module() {
     }
 }
 
-/// A plugin reference (`INSTALLED_APPS`, Sphinx `extensions`) has no line, so
-/// its CHK010 must not report the internal line 0 the schema rejects (#835).
+/// A plugin reference (`INSTALLED_APPS`, Sphinx `extensions`) carries the
+/// line of its string and says which setting named it, while the fingerprint
+/// keeps `file:module` (#830).
 #[test]
-fn binary_json_plugin_import_issues_have_no_line() {
-    for fixture in ["django_manage", "sphinx_docs"] {
+fn binary_json_plugin_import_issues_carry_their_string_line() {
+    for (fixture, label, lines) in [
+        ("django_manage", "INSTALLED_APPS", vec![4]),
+        ("sphinx_docs", "extensions", vec![4, 6, 8]),
+    ] {
         let issues = json_issues(&fixture_path(&["plugins", fixture]), &["--no-cache"]);
         let unresolved = issues
             .iter()
             .filter(|issue| issue["code"] == "CHK010")
             .collect::<Vec<_>>();
-        assert!(!unresolved.is_empty(), "{fixture}");
+        let found = unresolved
+            .iter()
+            .map(|issue| issue["line"].as_u64().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(found, lines, "{fixture}");
         for issue in unresolved {
-            assert_eq!(issue["line"], serde_json::Value::Null, "{fixture}: {issue}");
             let message = issue["message"].as_str().unwrap_or_default();
-            assert!(!message.contains(":0`"), "{fixture}: {message}");
+            assert!(
+                message.contains(&format!("`{label}` entry `")),
+                "{fixture}: {message}"
+            );
         }
+    }
+
+    let root = fixture_path(&["plugins", "sphinx_docs"]);
+    let issues = json_issues(&root, &["--no-cache"]);
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue["fingerprint"] == "CHK010:docs/conf.py:myst_parser"),
+        "{issues:?}"
+    );
+    for selector in [
+        "CHK010:docs/conf.py:myst_parser",
+        "CHK010:docs/conf.py:4:myst_parser",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", selector])
+            .arg(&root)
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(
+            stderr.contains("`myst_parser` is not stdlib"),
+            "{selector}: {stderr}"
+        );
     }
 }
 
-/// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 with
-/// no position, so neither its message nor its explain shows `:0`.
+/// With a line, an `extensions` entry takes an inline ignore on its string
+/// like any import (#830).
 #[test]
-fn binary_plugin_missing_dependency_has_no_line() {
+fn binary_inline_ignore_covers_a_plugin_reference_line() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"docs\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n\
+             [tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        (
+            "docs/conf.py",
+            "extensions = [\n    \"myst_parser\",  # chokkin: ignore[CHK010]\n    \"sphinx_design\",\n]\n",
+        ),
+    ];
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create dir");
+        }
+        fs::write(path, text).expect("write fixture");
+    }
+
+    let issues = json_issues(temp.path(), &["--no-cache"]);
+    let unresolved = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK010")
+        .map(|issue| issue["symbol"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(unresolved, ["sphinx_design"]);
+}
+
+/// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 at the
+/// string's line, and its message and explain name the setting, not an
+/// `import` (#830).
+#[test]
+fn binary_plugin_missing_dependency_names_its_setting() {
     let temp = tempfile::TempDir::new().expect("tempdir");
     let files = [
         (
@@ -371,7 +439,7 @@ fn binary_plugin_missing_dependency_has_no_line() {
         ("mysite/__init__.py", ""),
         (
             "mysite/settings.py",
-            "INSTALLED_APPS = [\"django.contrib.admin\", \"requests\"]\n",
+            "INSTALLED_APPS = [\n    \"django.contrib.admin\",\n    \"requests\",\n    \"requests.adapters\",\n]\n",
         ),
     ];
     for (file, text) in files {
@@ -383,14 +451,20 @@ fn binary_plugin_missing_dependency_has_no_line() {
     }
 
     let issues = json_issues(temp.path(), &["--no-cache"]);
-    let missing = issues
+    // Entries of one distribution on separate lines stay one issue, as when
+    // they had no line: the fingerprint set must not grow.
+    let missing: Vec<_> = issues
         .iter()
-        .find(|issue| issue["code"] == "CHK003")
-        .expect("CHK003 for requests");
-    assert_eq!(missing["line"], serde_json::Value::Null);
+        .filter(|issue| issue["code"] == "CHK003")
+        .collect();
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    let missing = missing[0];
+    assert_eq!(missing["line"], 3);
     let message = missing["message"].as_str().unwrap_or_default();
-    assert!(message.contains("mysite/settings.py"), "{message}");
-    assert!(!message.contains(":0"), "{message}");
+    assert!(
+        message.contains("referenced requests from `INSTALLED_APPS` in mysite/settings.py:3"),
+        "{message}"
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--no-cache", "--explain", "CHK003:requests"])
@@ -398,8 +472,10 @@ fn binary_plugin_missing_dependency_has_no_line() {
         .output()
         .expect("run chokkin");
     let stderr = String::from_utf8(output.stderr).expect("utf8");
-    assert!(stderr.contains("import at mysite/settings.py"), "{stderr}");
-    assert!(!stderr.contains(":0"), "{stderr}");
+    assert!(
+        stderr.contains("`INSTALLED_APPS` entry at mysite/settings.py:3"),
+        "{stderr}"
+    );
 }
 
 const PEP723_TOOL: &str = r#"# /// script
@@ -2742,6 +2818,45 @@ fn binary_pep517_backend_modules_are_entry_roots() {
             ("CHK001".to_owned(), "src/acme/wheel_only.py".to_owned()),
             ("CHK006".to_owned(), "src/acme/backend.py:helper".to_owned()),
         ],
+        "{issues:#?}"
+    );
+}
+
+/// A backend package that re-exports its hooks from `__init__.py`: the
+/// frontend reads them from the package, so they are no CHK007, even the
+/// optional hooks `__all__` leaves out (#873).
+#[test]
+fn binary_pep517_backend_package_reexports_are_not_chk007() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+        (
+            "src/acme/backend/__init__.py",
+            "from ._impl import build_sdist, build_wheel, helper, \
+             prepare_metadata_for_build_wheel\n\n\
+             __all__ = [\"build_sdist\", \"build_wheel\"]\n",
+        ),
+        (
+            "src/acme/backend/_impl.py",
+            "def build_wheel(wheel_directory):\n    pass\n\n\
+             def build_sdist(sdist_directory):\n    pass\n\n\
+             def prepare_metadata_for_build_wheel(metadata_directory):\n    pass\n\n\
+             def helper():\n    pass\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        issue_keys(&issues),
+        [(
+            "CHK007".to_owned(),
+            "src/acme/backend/__init__.py:helper".to_owned()
+        )],
         "{issues:#?}"
     );
 }

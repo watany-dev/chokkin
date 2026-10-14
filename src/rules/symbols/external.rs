@@ -56,14 +56,14 @@ pub(super) fn collect_external_symbols(
             .cloned()
             .or_else(|| path_to_module(&entry.spec.path, layout))
         {
-            external.insert(SymbolId::new(module, symbol.clone()));
+            external.insert(SymbolId::new(module, target_object(symbol)));
         }
     }
 
     for reference in plugins.symbol_refs().chain(plugins.used_symbols()) {
         external.insert(SymbolId::new(
             reference.module.clone(),
-            reference.symbol.clone(),
+            target_object(&reference.symbol),
         ));
     }
 
@@ -79,6 +79,17 @@ pub(super) fn collect_external_symbols(
     }
 
     external
+}
+
+/// The module-level name an `object.attr [extras]` target reads: the loader
+/// imports the module, gets `object`, and walks the attributes from there
+/// (#872).
+fn target_object(symbol: &str) -> &str {
+    let symbol = symbol.split_once('[').map_or(symbol, |(name, _)| name);
+    symbol
+        .split_once('.')
+        .map_or(symbol, |(name, _)| name)
+        .trim()
 }
 
 /// Classes a loader may fetch by a computed name: `import_module("pkg." + x)`
@@ -122,7 +133,22 @@ fn is_registration_decorator(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_registration_decorator;
+    use super::{is_registration_decorator, target_object};
+
+    #[test]
+    fn target_object_drops_the_attribute_path_and_extras() {
+        for (symbol, object) in [
+            ("main", "main"),
+            ("Cli.main", "Cli"),
+            ("Cli.group.main", "Cli"),
+            ("main [cli]", "main"),
+            ("Cli.main [cli, extra]", "Cli"),
+            ("main[cli]", "main"),
+            (" main ", "main"),
+        ] {
+            assert_eq!(target_object(symbol), object, "{symbol}");
+        }
+    }
 
     #[test]
     fn registration_decorators_are_recognized() {
