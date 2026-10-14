@@ -79,7 +79,6 @@ pub enum SkipReason {
 }
 
 impl ProbeWarning {
-    /// The warning as reporters see it.
     pub(crate) fn diagnostic(&self) -> Diagnostic {
         let (file, line) = self.location();
         Diagnostic {
