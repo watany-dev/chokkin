@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal tlc mutants mutants-diff kani help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts formal tlc mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -95,11 +95,13 @@ machete:
 
 ## ─── Generated artifacts ───────────────────────────────────────────────────────
 check-generated:
-	python3 tests/test_harvest_package_map.py
-	python3 tests/test_generate_stdlib_modules.py
 	python3 scripts/generate-package-map.py
 	python3 scripts/generate-stdlib-modules.py
 	git diff --exit-code src/resolver/bundled/ src/resolver/stdlib/
+
+# Unit tests of scripts/ (tests/test_*.py), stdlib unittest only.
+test-scripts:
+	python3 -m unittest discover -s tests -p 'test_*.py'
 
 ## ─── Formal models (docs/dev/formal) ──────────────────────────────────────────
 # formal: requires python3 with z3-solver (`pip install z3-solver`). Runs every

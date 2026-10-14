@@ -218,6 +218,43 @@ def effective(verdict: str) -> str:
     return "fp" if verdict == "info-expected" else verdict
 
 
+def count_hits(findings: list[list[str]], code: str, verdict: str | None = None) -> int:
+    """findings.tsv rows of `code` that are hits, with the effective `verdict`
+    when one is given."""
+    return sum(
+        1 for f in findings
+        if f[1] == code and is_hit(f[7]) and (verdict is None or effective(f[3]) == verdict)
+    )
+
+
+def fp_gate(findings: list[list[str]]) -> tuple[bool, int, int, int]:
+    """The §17 CHK002 FP-rate gate: (pass, reported, fp, unclassified). It
+    cannot pass while an unknown or deferred CHK002 finding remains."""
+    total, fp = count_hits(findings, "CHK002"), count_hits(findings, "CHK002", "fp")
+    unclassified = count_hits(findings, "CHK002", "unknown") + count_hits(findings, "CHK002", "deferred")
+    ok = unclassified == 0 and (total == 0 or 100 * fp / total < FP_GATE_PCT)
+    return ok, total, fp, unclassified
+
+
+def recall_missed(
+    labels: dict[tuple[str, str, str], tuple[str, str]], reported: set[tuple[str, str, str]]
+) -> list[str]:
+    return [f"{s}/{c}/{t}" for (s, c, t), (v, _) in labels.items() if v == "tp" and (s, c, t) not in reported]
+
+
+def too_slow(size: str, median_ms: int) -> bool:
+    return size == "medium" and median_ms > MEDIUM_GATE_MS
+
+
+def parse_report(stdout: bytes) -> dict | None:
+    """The JSON report, or None when the output is not a JSON object (crash)."""
+    try:
+        report = json.loads(stdout)
+    except ValueError:
+        return None
+    return report if isinstance(report, dict) else None
+
+
 def remove_caches(proj: Path) -> None:
     # Workspace members get their own .chokkin/ next to the project root's.
     for cache in list(proj.rglob(".chokkin")):
@@ -547,12 +584,8 @@ def main() -> int:
         run, median_ms = timed_run(args.bin, proj, args.runs, ("--strict",) if args.strict else ())
         (out / f"{slug}.json").write_bytes(run.stdout)
         (out / f"{slug}.stderr").write_bytes(run.stderr)
-        try:
-            report = json.loads(run.stdout)
-        except ValueError:
-            report = None
-        if not isinstance(report, dict):
-            report = None
+        report = parse_report(run.stdout)
+        if report is None:
             print(f"  non-JSON output (see {out / f'{slug}.stderr'})", file=sys.stderr)
 
         issues = report.get("issues", []) if report else []
@@ -590,7 +623,7 @@ def main() -> int:
             runtime = summary.get("files", {}).get("reachable_runtime") or 0
             expect_rows.append([slug, runtime * 9 // 10, counts])
             expect_misses += expectation_misses(slug, report or {}, expect[slug])
-        if size == "medium" and median_ms > MEDIUM_GATE_MS:
+        if too_slow(size, median_ms):
             medium_slow.append(f"{slug}={median_ms}ms")
 
     def write_tsv(name: str, header: list[str], rows: list[list]) -> Path:
@@ -609,10 +642,7 @@ def main() -> int:
     write_tsv("expectations.tsv", ["# slug", "runtime_min", "counts"], expect_rows)
 
     def count(code: str, verdict: str | None = None) -> int:
-        return sum(
-            1 for f in findings
-            if f[1] == code and is_hit(f[7]) and (verdict is None or effective(f[3]) == verdict)
-        )
+        return count_hits(findings, code, verdict)
 
     def info_count(code: str) -> int:
         return sum(1 for f in findings if f[1] == code and f[7] == "info")
@@ -626,15 +656,14 @@ def main() -> int:
         # fixed, or a clone revision bump moved its target.
         return sum(1 for (s, c, t), (v, _) in labels.items() if c == code and v != "deferred" and (s, c, t) not in seen)
 
-    y002_total, y002_fp = count("CHK002"), count("CHK002", "fp")
-    y002_unclassified = count("CHK002", "unknown") + count("CHK002", "deferred")
+    fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate(findings)
     fp_rate = f"{100 * y002_fp / y002_total:.1f}" if y002_total else "n/a"
 
     tp_labels = [k for k, (v, _) in labels.items() if v == "tp"]
-    missed = [f"{s}/{c}/{t}" for s, c, t in tp_labels if (s, c, t) not in reported]
+    missed = recall_missed(labels, reported)
 
     passes = {
-        "fp": y002_unclassified == 0 and (y002_total == 0 or 100 * y002_fp / y002_total < FP_GATE_PCT),
+        "fp": fp_ok,
         "recall": not missed,
         "crash": crashes == 0,
         "config": config_errors == 0,
