@@ -99,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `foo===1.0, >=1` is an invalid requirement. `foo_ @ <url>` is an invalid
   requirement instead of a dependency with an empty name. Names and extras
   ending in `_` stay invalid even though `packaging` accepts them (#572).
+- Only space and tab separate the tokens of a manifest requirement, as in
+  `packaging`: `foo\u00a0>=1` and `foo>=1\u00a0,<2` are invalid requirements.
+  Any whitespace is still allowed between an operator and its version and
+  around the whole requirement (#879).
 
 ## [0.7.5] - 2026-10-12
 
