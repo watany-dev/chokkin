@@ -140,7 +140,7 @@ uvx chokkin --fix --allow-remove-files    # certain な未到達ファイルも�
 
 - `--production` は dev/test/docs/lint/type context を外し、runtime code だけで到達性を判定します。dev 専用のファイル・依存は消え、「production で未使用」が厳密に出ます。
 - `--strict` は transitive 依存の直接 import を error にし、workspace member ごとの依存宣言を要求し、未宣言の type/test/docs/dev import も `CHK003` にし、environment marker 付き依存の unused も error にし、`maybe` の finding も表示します。
-- `--reporter default|compact|json|markdown|github|sarif` で出力を選びます。`github` は workflow annotation、`sarif` は code scanning 用の SARIF 2.1.0 subset です。読めなかった入力についての warning は常に stderr に出ます。`json`・`markdown`・`github`・`sarif` は warning を 1 件ずつ載せ、`default` と `compact` は最後に `Warnings: N (see stderr)` と件数を出します。
+- `--reporter default|compact|json|markdown|github|sarif` で出力を選びます。`github` は workflow annotation、`sarif` は code scanning 用の SARIF 2.1.0 subset です。読めなかった入力についての warning は常に stderr に出ます。`json`・`markdown`・`github`・`sarif` は warning を 1 件ずつ載せ、`default` と `compact` は最後に `Warnings: N (see stderr)` と件数を出します。同じ種類の warning が 5 件を超えると、stderr・`markdown`・`github` は最初の 5 件だけを出して残りは件数にまとめます。`json` と `sarif` は全件を残します。
 - `--no-exit-code` は finding があっても 0 を返します。導入期間や summary 用です。
 - `--no-cache` は `.chokkin/` 配下の parse cache を無効化します。cache は file stat をキーにし、stale や破損は miss として扱います。
 - `--no-auto-workspace` は入れ子の `pyproject.toml` を workspace member にしたり、別 project として除外したりしません。

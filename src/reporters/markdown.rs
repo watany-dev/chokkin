@@ -5,7 +5,8 @@ use std::fmt::Write as _;
 use crate::rules::{IssueReport, RuleId};
 
 use super::format::{
-    baseline_suppressed_count, format_issue_subject, format_location_column, group_title,
+    baseline_suppressed_count, condense_diagnostics, format_issue_subject, format_location_column,
+    group_title,
 };
 use super::types::RenderContext;
 
@@ -67,13 +68,13 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
 }
 
 /// The step summary is often the only output a CI reader opens, so the
-/// warnings are listed in full rather than counted.
+/// warnings are listed rather than counted, repeated kinds condensed.
 fn write_diagnostics(out: &mut String, diagnostics: &[String]) {
     if diagnostics.is_empty() {
         return;
     }
     let _ = writeln!(out, "## Warnings  {}\n", diagnostics.len());
-    for diagnostic in diagnostics {
+    for diagnostic in condense_diagnostics(diagnostics) {
         let _ = writeln!(out, "- {}", diagnostic.replace(['\r', '\n'], " "));
     }
 }

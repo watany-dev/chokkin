@@ -2086,6 +2086,100 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
     );
 }
 
+/// An include shared by several requirements files is read once per includer,
+/// but its warning is printed once (#888).
+#[test]
+fn binary_prints_a_shared_include_warning_once() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "requirements/base.txt",
+            "--index-url https://pypi.example/simple\nrequests\n",
+        ),
+        ("requirements/dev.txt", "-r base.txt\npytest\n"),
+        ("requirements/test.txt", "-r base.txt\ncoverage\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let line = "manifest: ignored requirements option at `requirements/base.txt:1`: --index-url https://pypi.example/simple";
+    assert_eq!(
+        stderr.lines().filter(|seen| *seen == line).count(),
+        1,
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.to_string().contains("requirements/base.txt:1"))
+            .count(),
+        1,
+        "{diagnostics:?}"
+    );
+}
+
+/// stderr cuts a repeated warning kind to five lines and a count, while JSON
+/// keeps every warning (#888).
+#[test]
+fn binary_condenses_repeated_warnings_on_stderr_only() {
+    let mut files = vec![
+        (
+            "pyproject.toml".to_owned(),
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n".to_owned(),
+        ),
+        ("acme/__init__.py".to_owned(), String::new()),
+    ];
+    for n in 1..=7 {
+        files.push((
+            format!("requirements/r{n}.txt"),
+            "not a requirement!!\n".to_owned(),
+        ));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, contents)| (path.as_str(), contents.as_str()))
+        .collect();
+    let project = write_project(&files);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.starts_with("manifest: invalid requirement at"))
+            .count(),
+        5,
+        "{stderr}"
+    );
+    assert!(
+        stderr.lines().any(|line| line
+            == "manifest: … and 2 more like the above (`--reporter json` lists every warning)"),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let invalid = parsed["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter(|diagnostic| diagnostic.to_string().contains("invalid requirement"))
+        .count();
+    assert_eq!(invalid, 7);
+}
+
 /// The resolver's ambiguous mappings and an unreadable `.venv` lower or drop
 /// what resolution knows, so they are reported too (#888).
 #[test]

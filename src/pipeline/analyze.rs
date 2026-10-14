@@ -33,7 +33,7 @@ use crate::sources::{
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, WorkspaceMemberInputs, probe_project_with_cache};
-use super::warnings::{ProbeWarning, SkipReason};
+use super::warnings::{ProbeWarning, SkipReason, diagnostic_lines};
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +57,12 @@ pub struct AnalysisReport {
 }
 
 impl AnalysisReport {
+    /// Every probe and analysis warning's text, once each.
+    #[must_use]
+    pub fn diagnostics(&self) -> Vec<String> {
+        diagnostic_lines(self.probe.warnings.iter().chain(&self.warnings))
+    }
+
     /// Counts runtime-context files in the graph and how many are reachable.
     #[must_use]
     pub fn runtime_file_counts(&self) -> FileCounts {

@@ -11,7 +11,8 @@ use std::process::ExitCode;
 use chokkin::{
     AnalysisReport, CliArgs, ExitStatus, RenderContext, RuntimeOverrides, VERSION, analyze_project,
     config_label_from_sources, explain_issue, init_project, parse_cli_args, probe_project,
-    render_fix_report, render_issues, trace_output, write_probe_report, write_probe_warnings,
+    render_fix_report, render_issues, trace_output, write_diagnostics, write_probe_report,
+    write_probe_warnings,
 };
 
 const USAGE: &str = "\
@@ -116,9 +117,8 @@ fn run_probe(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverr
 }
 
 fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
-    if write_probe_warnings(&report.probe.warnings, &mut std::io::stderr()).is_err()
-        || write_probe_warnings(&report.warnings, &mut std::io::stderr()).is_err()
-    {
+    let diagnostics = report.diagnostics();
+    if write_diagnostics(&diagnostics, &mut std::io::stderr()).is_err() {
         return ExitCode::from(ExitStatus::InternalError.code());
     }
 
@@ -157,13 +157,7 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
         production: report.probe.effective_config.production,
         version: VERSION,
         config_label: Some(config_label_from_sources(&report.probe.config_sources)),
-        diagnostics: report
-            .probe
-            .warnings
-            .iter()
-            .chain(&report.warnings)
-            .map(ToString::to_string)
-            .collect(),
+        diagnostics,
         files: Some(report.runtime_file_counts()),
     };
 

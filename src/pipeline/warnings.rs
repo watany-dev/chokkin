@@ -1,11 +1,13 @@
 //! Pipeline warning aggregation and display.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Write};
 
 use crate::entry::EntryWarning;
 use crate::manifest::ManifestWarning;
 use crate::plugins::PluginsWarning;
+use crate::reporters::condense_diagnostics;
 use crate::resolver::ResolveWarning;
 use crate::sources::SourcesWarning;
 
@@ -248,12 +250,32 @@ fn write_manifest_warning(
     }
 }
 
-/// Write pipeline warnings to `err`, one per line.
-pub fn write_probe_warnings(warnings: &[ProbeWarning], err: &mut impl Write) -> io::Result<()> {
-    for warning in warnings {
-        writeln!(err, "{warning}")?;
+/// Each warning's text once, in order. Two stages can report the same
+/// file (a shared `-r` include, a member the root also scans), and the
+/// reader needs it once.
+#[must_use]
+pub(crate) fn diagnostic_lines<'a>(
+    warnings: impl IntoIterator<Item = &'a ProbeWarning>,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    warnings
+        .into_iter()
+        .map(ToString::to_string)
+        .filter(|line| seen.insert(line.clone()))
+        .collect()
+}
+
+/// Write warning lines to `err`, repeated kinds condensed.
+pub fn write_diagnostics(diagnostics: &[String], err: &mut impl Write) -> io::Result<()> {
+    for line in condense_diagnostics(diagnostics) {
+        writeln!(err, "{line}")?;
     }
     Ok(())
+}
+
+/// Write pipeline warnings to `err`, one per line.
+pub fn write_probe_warnings(warnings: &[ProbeWarning], err: &mut impl Write) -> io::Result<()> {
+    write_diagnostics(&diagnostic_lines(warnings), err)
 }
 
 pub(super) fn collect_warnings(

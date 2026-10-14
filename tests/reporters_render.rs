@@ -502,6 +502,64 @@ fn github_reporter_annotates_each_diagnostic_as_a_warning() {
     );
 }
 
+fn context_with_repeated_diagnostics() -> RenderContext {
+    RenderContext {
+        diagnostics: (1..=7)
+            .map(|n| format!("parse: `tests/t{n}.py:1`: relative import without a package"))
+            .collect(),
+        ..context()
+    }
+}
+
+/// A flood of one kind is cut to five lines and a count (#888); the
+/// heading still counts every warning.
+#[test]
+fn markdown_reporter_condenses_repeated_diagnostics() {
+    let rendered = render_issues(
+        ReporterId::Markdown,
+        &empty_report(),
+        &context_with_repeated_diagnostics(),
+    );
+    assert!(rendered.contains("## Warnings  7\n"), "{rendered}");
+    assert!(rendered.contains("`tests/t5.py:1`"), "{rendered}");
+    assert!(!rendered.contains("`tests/t6.py:1`"), "{rendered}");
+    assert!(
+        rendered.ends_with(
+            "- parse: … and 2 more like the above (`--reporter json` lists every warning)\n"
+        ),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn github_reporter_condenses_repeated_diagnostics() {
+    let rendered = render_issues(
+        ReporterId::Github,
+        &empty_report(),
+        &context_with_repeated_diagnostics(),
+    );
+    assert_eq!(rendered.lines().count(), 6, "{rendered}");
+    assert!(
+        rendered.ends_with("and 2 more like the above (`--reporter json` lists every warning)\n"),
+        "{rendered}"
+    );
+}
+
+/// SARIF is read by tools, so it keeps every warning.
+#[test]
+fn sarif_reporter_keeps_every_repeated_diagnostic() {
+    let rendered = render_issues(
+        ReporterId::Sarif,
+        &empty_report(),
+        &context_with_repeated_diagnostics(),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("sarif json");
+    let notifications = parsed["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+        .as_array()
+        .expect("notifications");
+    assert_eq!(notifications.len(), 7);
+}
+
 #[test]
 fn sarif_reporter_writes_diagnostics_as_tool_execution_notifications() {
     let rendered = render_issues(

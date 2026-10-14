@@ -1,5 +1,6 @@
 //! Shared formatting helpers for reporters.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::manifest::DependencyOrigin;
@@ -97,6 +98,47 @@ pub(super) fn write_warning_count(out: &mut String, diagnostics: &[String]) {
     }
 }
 
+/// Lines of one warning kind shown before the rest are only counted.
+const REPEATS_SHOWN: usize = 5;
+
+/// `diagnostics` with each kind cut to its first [`REPEATS_SHOWN`] lines and
+/// a count of the rest, for outputs a person reads top to bottom (#888).
+pub(crate) fn condense_diagnostics(diagnostics: &[String]) -> Vec<String> {
+    let mut totals = HashMap::<String, usize>::new();
+    for diagnostic in diagnostics {
+        *totals.entry(diagnostic_kind(diagnostic)).or_default() += 1;
+    }
+    let mut shown = HashMap::<String, usize>::new();
+    let mut out = Vec::new();
+    for diagnostic in diagnostics {
+        let kind = diagnostic_kind(diagnostic);
+        let seen = shown.entry(kind.clone()).or_default();
+        *seen += 1;
+        if *seen <= REPEATS_SHOWN {
+            out.push(diagnostic.clone());
+        }
+        let total = totals[&kind];
+        if *seen == REPEATS_SHOWN && total > REPEATS_SHOWN {
+            let area = diagnostic.split_once(':').map_or("", |(area, _)| area);
+            out.push(format!(
+                "{area}: … and {} more like the above (`--reporter json` lists every warning)",
+                total - REPEATS_SHOWN
+            ));
+        }
+    }
+    out
+}
+
+/// A warning with its quoted paths and names blanked out, so warnings that
+/// differ only in where they point share a kind.
+fn diagnostic_kind(diagnostic: &str) -> String {
+    diagnostic
+        .split('`')
+        .step_by(2)
+        .collect::<Vec<_>>()
+        .join("``")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +184,56 @@ mod tests {
         };
 
         assert_eq!(format_subject(&subject), "mysite/settings.py myapp");
+    }
+
+    /// Seven warnings of one kind keep five lines and count the rest;
+    /// a kind under the limit and a later kind are untouched (#888).
+    #[test]
+    fn condense_counts_repeats_past_the_limit_per_kind() {
+        let mut diagnostics: Vec<String> = (1..=7)
+            .map(|n| format!("parse: `tests/t{n}.py:1`: relative import without a package"))
+            .collect();
+        diagnostics.insert(
+            2,
+            "resolve: could not read virtualenv `.venv`: gone".to_owned(),
+        );
+
+        let condensed = condense_diagnostics(&diagnostics);
+
+        assert_eq!(
+            condensed,
+            [
+                "parse: `tests/t1.py:1`: relative import without a package",
+                "parse: `tests/t2.py:1`: relative import without a package",
+                "resolve: could not read virtualenv `.venv`: gone",
+                "parse: `tests/t3.py:1`: relative import without a package",
+                "parse: `tests/t4.py:1`: relative import without a package",
+                "parse: `tests/t5.py:1`: relative import without a package",
+                "parse: … and 2 more like the above (`--reporter json` lists every warning)",
+            ]
+        );
+    }
+
+    /// Exactly the limit is shown as is, without a count line.
+    #[test]
+    fn condense_keeps_a_kind_at_the_limit() {
+        let diagnostics: Vec<String> = (1..=REPEATS_SHOWN)
+            .map(|n| format!("manifest: `packages/p{n}`: Hatch detected"))
+            .collect();
+
+        assert_eq!(condense_diagnostics(&diagnostics), diagnostics);
+    }
+
+    /// Text outside backticks tells kinds apart; quoted paths do not.
+    #[test]
+    fn diagnostic_kind_blanks_quoted_spans() {
+        assert_eq!(
+            diagnostic_kind("parse: `a.py:3`: relative import"),
+            diagnostic_kind("parse: `b/c.py:9`: relative import")
+        );
+        assert_ne!(
+            diagnostic_kind("parse: `a.py:3`: relative import"),
+            diagnostic_kind("parse: `a.py:3`: invalid notebook")
+        );
     }
 }
