@@ -95,11 +95,7 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
             }
             None
         } else {
-            let specifiers = split_specifier_list(spec)?
-                .into_iter()
-                .map(parse_version_specifier)
-                .collect::<Option<Vec<_>>>()?;
-            Some(join_specifiers(&specifiers))
+            Some(join_specifiers(parse_specifier_list(spec)?))
         };
         (version, marker)
     };
@@ -166,12 +162,12 @@ fn has_url_scheme(url: &str) -> bool {
     })
 }
 
-/// Split a requirement's specifier list the way `packaging` tokenizes it:
+/// Parse a requirement's specifier list the way `packaging` tokenizes it:
 /// one trailing comma is allowed, and `===` reads its value up to whitespace
 /// or `)`, commas included, which the set then splits, dropping empty items
 /// (`===1.0,,>=1` is two specifiers, `===1.0, >=1` is invalid).
-fn split_specifier_list(spec: &str) -> Option<Vec<&str>> {
-    let mut items = Vec::new();
+fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
+    let mut specifiers = Vec::new();
     let mut rest = spec;
     loop {
         rest = rest.trim_start();
@@ -181,25 +177,24 @@ fn split_specifier_list(spec: &str) -> Option<Vec<&str>> {
                 .find(|ch: char| ch.is_whitespace() || ch == ')')
                 .unwrap_or(value.len());
             let tail = &value[end..];
-            items.extend(
-                rest[..rest.len() - tail.len()]
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty()),
-            );
+            for item in rest[..rest.len() - tail.len()].split(',') {
+                if !item.trim().is_empty() {
+                    specifiers.push(parse_version_specifier(item)?);
+                }
+            }
             rest = tail;
         } else {
             let end = rest.find(',').unwrap_or(rest.len());
-            items.push(rest[..end].trim());
+            specifiers.push(parse_version_specifier(&rest[..end])?);
             rest = &rest[end..];
         }
         rest = rest.trim_start();
         let Some(after) = rest.strip_prefix(',') else {
-            return rest.is_empty().then_some(items);
+            return rest.is_empty().then_some(specifiers);
         };
         rest = after;
         if rest.trim().is_empty() {
-            return Some(items);
+            return Some(specifiers);
         }
     }
 }
@@ -212,22 +207,26 @@ pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifi
 /// A PEP 440 specifier set in the form `DeclaredDependency::specifier`
 /// stores (`>=3.10, <4`); `None` when it is not one.
 pub(crate) fn canonical_version_specifiers(input: &str) -> Option<String> {
-    Some(join_specifiers(&parse_version_specifiers(input)?))
+    Some(join_specifiers(parse_version_specifiers(input)?))
 }
 
 /// Join with `, `, except right after `===`: its value would swallow the
 /// comma and stop at the space (`===1.0, >=1` is invalid).
-fn join_specifiers(specifiers: &[VersionSpecifier]) -> String {
-    let mut joined = String::new();
-    let mut previous = None;
+fn join_specifiers(specifiers: Vec<VersionSpecifier>) -> String {
+    let mut specifiers = specifiers.into_iter();
+    let Some(first) = specifiers.next() else {
+        return String::new();
+    };
+    let mut joined = first.text;
+    let mut previous = first.operator;
     for specifier in specifiers {
-        match previous {
-            Some(Operator::ExactEqual) => joined.push(','),
-            Some(_) => joined.push_str(", "),
-            None => {},
+        if previous == Operator::ExactEqual {
+            joined.push(',');
+        } else {
+            joined.push_str(", ");
         }
         joined.push_str(&specifier.text);
-        previous = Some(specifier.operator);
+        previous = specifier.operator;
     }
     joined
 }
