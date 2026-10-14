@@ -15,6 +15,7 @@ use crate::parser::{ParseSeverity, ParsedModule};
 use crate::path_util::rel_to_root;
 use crate::sources::path_to_module;
 
+use super::commands::is_dotted_identifier;
 use super::context::PluginContext;
 use super::error::PluginsError;
 use super::types::{
@@ -90,19 +91,55 @@ fn push_decorated_module(
     });
 }
 
-/// Push a symbol reference when `value` parses as `module:symbol`.
-pub(super) fn push_symbol_ref(
+/// Push the app a `FLASK_APP` / `flask --app` / `celery -A` value names.
+///
+/// `module:attr` is a symbol reference; Flask's `module:factory(args)` names
+/// the factory. A bare dotted module is a module reference: both tools import
+/// it and look up `app_names` in it, so those are used (#851). Shell quotes
+/// around the value are dropped. Returns the bare module, if any.
+pub(super) fn push_app_ref<'a>(
     contrib: &mut PluginContribution,
-    value: &str,
-    origin: ReferenceOrigin,
-) {
+    value: &'a str,
+    origin: &ReferenceOrigin,
+    app_names: &[&str],
+) -> Option<&'a str> {
+    let value = value.trim().trim_matches(['"', '\'']);
     if let Some((module, symbol)) = parse_module_symbol(value) {
+        let symbol = symbol
+            .split_once('(')
+            .map_or(symbol.as_str(), |(name, _)| name);
         contrib.symbol_refs.push(SymbolReference {
             module,
-            symbol,
-            origin,
+            symbol: symbol.trim().to_owned(),
+            origin: origin.clone(),
         });
+        return None;
     }
+    if !is_dotted_identifier(value) {
+        return None;
+    }
+    for name in app_names {
+        push_used_symbol(contrib, value, name, origin);
+    }
+    contrib.module_refs.push(ModuleReference {
+        module: value.to_owned(),
+        origin: origin.clone(),
+    });
+    Some(value)
+}
+
+/// Record that a tool looks `symbol` up by name in `module`.
+pub(super) fn push_used_symbol(
+    contrib: &mut PluginContribution,
+    module: &str,
+    symbol: &str,
+    origin: &ReferenceOrigin,
+) {
+    contrib.used_symbols.push(SymbolReference {
+        module: module.to_owned(),
+        symbol: symbol.to_owned(),
+        origin: origin.clone(),
+    });
 }
 
 /// Record a CLI binary usage.

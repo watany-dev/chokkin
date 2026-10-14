@@ -37,24 +37,24 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
         let file_name = path.rsplit('/').next().unwrap_or(path);
 
         if ALL_DEPTH_ENTRY_NAMES.contains(&file_name) {
-            candidates.push(candidate(path, file.context, format!("auto:{file_name}")));
+            candidates.push(candidate(path, file.context, file_name.to_owned()));
             continue;
         }
 
         if SHALLOW_ENTRY_NAMES.contains(&file_name)
             && is_shallow_entry_path(path, file_name, layout)
         {
-            candidates.push(candidate(path, file.context, format!("auto:{file_name}")));
+            candidates.push(candidate(path, file.context, file_name.to_owned()));
             continue;
         }
 
         if EXACT_PATH_ENTRIES.contains(&path) {
-            candidates.push(candidate(path, file.context, format!("auto:{path}")));
+            candidates.push(candidate(path, file.context, path.to_owned()));
             continue;
         }
 
         if let Some(tree) = script_tree(path, layout) {
-            candidates.push(candidate(path, file.context, format!("auto:{tree}/**")));
+            candidates.push(candidate(path, file.context, format!("{tree}/**")));
             continue;
         }
 
@@ -65,7 +65,7 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
         {
-            candidates.push(candidate(path, file.context, format!("auto:{tree}/**")));
+            candidates.push(candidate(path, file.context, format!("{tree}/**")));
         }
     }
 
@@ -76,11 +76,7 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
         .iter()
         .filter(|file| file.kind == FileKind::Notebook)
     {
-        candidates.push(candidate(
-            &file.path,
-            file.context,
-            "auto:**/*.ipynb".to_owned(),
-        ));
+        candidates.push(candidate(&file.path, file.context, "**/*.ipynb".to_owned()));
     }
 
     candidates
@@ -256,7 +252,7 @@ mod tests {
             [(
                 ".github/scripts/check_diff.py".to_owned(),
                 EntryOrigin::Auto {
-                    rule: "auto:.github/**".to_owned()
+                    rule: ".github/**".to_owned()
                 }
             )]
         );
@@ -286,13 +282,10 @@ mod tests {
             [
                 (
                     "examples/apps/server.py".to_owned(),
-                    "auto:examples/**".to_owned()
+                    "examples/**".to_owned()
                 ),
-                (
-                    "docs/apps/demos/demo.py".to_owned(),
-                    "auto:docs/**".to_owned()
-                ),
-                ("docs/conf.py".to_owned(), "auto:docs/conf.py".to_owned()),
+                ("docs/apps/demos/demo.py".to_owned(), "docs/**".to_owned()),
+                ("docs/conf.py".to_owned(), "docs/conf.py".to_owned()),
             ]
         );
     }

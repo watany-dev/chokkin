@@ -2898,23 +2898,26 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
 }
 
 /// Apps named by `flask --app` / `celery -A` in `scripts/` and `bin/` shell
-/// scripts are entry roots, so only the control module is unused.
+/// scripts are entry roots, so only the control module is unused. The
+/// `*_bare_module` fixtures name a module without `:attr`, whose app the tool
+/// finds by name, so it is no unused export either (#851).
 #[test]
 fn binary_shell_script_apps_are_entry_roots() {
     for (fixture, unused) in [
         ("flask_shell_scripts", "src/myapp/orphan.py"),
         ("celery_shell_scripts", "src/worker/orphan.py"),
+        ("flask_bare_module", "src/web/orphan.py"),
+        ("celery_bare_module", "src/worker/orphan.py"),
     ] {
         let keys = issue_keys(&json_issues(
             &fixture_path(&["plugins", fixture]),
-            &["--include", "CHK001"],
+            &["--strict"],
         ));
-        let reported: Vec<&str> = keys
-            .iter()
-            .filter(|(code, _)| code == "CHK001")
-            .map(|(_, target)| target.as_str())
-            .collect();
-        assert_eq!(reported, [unused], "{fixture}: {keys:?}");
+        assert_eq!(
+            keys,
+            [("CHK001".to_owned(), unused.to_owned())],
+            "{fixture}: {keys:?}"
+        );
     }
 }
 
@@ -2965,7 +2968,7 @@ Negative trace for src/acme/legacy.py:
   reason: not reachable from any entry root
 
   entry roots analyzed:
-    ├─ src/acme/__main__.py (auto: auto:__main__.py)
+    ├─ src/acme/__main__.py (auto: __main__.py)
     ├─ src/acme/backend.py (build backend: PEP 517)
     ├─ src/acme/cli.py (config)
     ├─ src/acme/main.py (manifest: [console].acme)

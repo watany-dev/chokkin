@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexSet;
+
 use crate::parser::{ImportKind, ParsedModule};
 use crate::sources::{LayoutInfo, path_to_module};
 
@@ -50,19 +52,14 @@ pub(super) fn collect_reexports(
             }
             // `module` is already resolved to an absolute name by the parser; an
             // empty one means the relative import could not be resolved.
-            // `from .m import *` re-exports no statically known name.
-            if import.module.is_empty() || import.name.as_deref() == Some("*") {
+            if import.module.is_empty() {
                 continue;
             }
-            // `from . import x` carries no `name`: the parser folds `x` into `module`.
-            let imported = match &import.name {
-                Some(name) => name.as_str(),
-                None => import
-                    .module
-                    .rsplit_once('.')
-                    .map_or(import.module.as_str(), |(_, last)| last),
+            // `from .m import *` re-exports no statically known name.
+            let (Some((_, imported)), Some(name)) = (import.import_target(), import.bound_name())
+            else {
+                continue;
             };
-            let name = import.alias.as_deref().unwrap_or(imported);
             let in_all = module.exports.iter().any(|export| export == name);
             if name.starts_with('_') && !in_all {
                 continue;
@@ -86,11 +83,13 @@ pub(super) fn collect_reexports(
     reexports
 }
 
-/// Returns `true` when the package-level re-export name is referenced.
+/// Returns `true` when the package-level re-export name is referenced, or
+/// named from outside the code such as by an entry point or a plugin (#743).
 pub(super) fn is_reexport_used(
     reexport: &ReExport,
     references: &super::graph::ReferenceIndex,
+    external_symbols: &IndexSet<SymbolId>,
 ) -> bool {
     let package_symbol = SymbolId::new(&reexport.package_module, &reexport.name);
-    references.is_referenced(&package_symbol)
+    references.is_referenced(&package_symbol) || external_symbols.contains(&package_symbol)
 }

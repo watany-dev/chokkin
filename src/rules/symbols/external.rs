@@ -60,7 +60,7 @@ pub(super) fn collect_external_symbols(
         }
     }
 
-    for reference in plugins.symbol_refs() {
+    for reference in plugins.symbol_refs().chain(plugins.used_symbols()) {
         external.insert(SymbolId::new(
             reference.module.clone(),
             reference.symbol.clone(),

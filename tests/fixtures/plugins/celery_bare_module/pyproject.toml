@@ -1,0 +1,13 @@
+[project]
+name = "celery-bare-module"
+version = "0.1.0"
+dependencies = ["celery"]
+
+[project.scripts]
+worker = "celery -A worker.instance worker"
+
+[tool.chokkin]
+mode = "app"
+
+[tool.chokkin.plugins]
+celery = true

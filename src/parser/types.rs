@@ -63,6 +63,40 @@ pub struct ImportRef {
     pub fallback_for: Vec<String>,
 }
 
+impl ImportRef {
+    /// `from package import name` as `(package, name)`, before any `as`.
+    /// `from . import x` carries no `name`: the parser folds `x` into
+    /// `module`, so the package is what precedes its last dot. `None` for
+    /// `import module`, and for an unresolved `from . import x`, which loses `x`.
+    #[must_use]
+    pub(crate) fn import_target(&self) -> Option<(&str, &str)> {
+        if self.kind != ImportKind::ImportFrom {
+            return None;
+        }
+        match &self.name {
+            Some(name) => Some((&self.module, name)),
+            None => self.module.rsplit_once('.'),
+        }
+    }
+
+    /// The name this import binds in the importing module: the `as` name,
+    /// else the top-level package of `import a.b`, else the imported name.
+    /// `None` for `from m import *`, which binds no statically known name.
+    #[must_use]
+    pub(crate) fn bound_name(&self) -> Option<&str> {
+        if let Some(alias) = &self.alias {
+            return Some(alias);
+        }
+        match self.kind {
+            ImportKind::Import => self.module.split('.').next(),
+            ImportKind::ImportFrom => self
+                .import_target()
+                .map(|(_, name)| name)
+                .filter(|&name| name != "*"),
+        }
+    }
+}
+
 /// Serialization helper: `relative_level` is `0` for the common absolute import.
 // serde's `skip_serializing_if` hands the field by reference.
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -263,5 +297,87 @@ pub(crate) const fn import_context_for_file(file_context: FileContext) -> Import
     match file_context {
         FileContext::Test => ImportContext::Test,
         FileContext::Runtime | FileContext::Docs | FileContext::Dev => ImportContext::Runtime,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn import(
+        kind: ImportKind,
+        module: &str,
+        name: Option<&str>,
+        alias: Option<&str>,
+    ) -> ImportRef {
+        ImportRef {
+            module: module.to_owned(),
+            name: name.map(str::to_owned),
+            alias: alias.map(str::to_owned),
+            line: 1,
+            kind,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            deferred: false,
+            relative_level: 0,
+            fallback_for: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn import_target_splits_folded_relative_imports() {
+        use ImportKind::{Import, ImportFrom};
+        let cases = [
+            (
+                import(ImportFrom, "pkg.core", Some("helper"), None),
+                Some(("pkg.core", "helper")),
+            ),
+            (
+                import(ImportFrom, "pkg.core", Some("tool"), Some("t")),
+                Some(("pkg.core", "tool")),
+            ),
+            (
+                import(ImportFrom, "pkg.other", Some("*"), None),
+                Some(("pkg.other", "*")),
+            ),
+            // `from . import sub` in `pkg`.
+            (
+                import(ImportFrom, "pkg.sub", None, None),
+                Some(("pkg", "sub")),
+            ),
+            // An unresolved `from .m import x` keeps `x`; `from . import x` loses it.
+            (import(ImportFrom, "", Some("x"), None), Some(("", "x"))),
+            (import(ImportFrom, "", None, None), None),
+            (import(Import, "os.path", None, None), None),
+        ];
+        for (import, expected) in cases {
+            assert_eq!(import.import_target(), expected, "{import:?}");
+        }
+    }
+
+    #[test]
+    fn bound_name_prefers_alias_and_skips_star_imports() {
+        use ImportKind::{Import, ImportFrom};
+        let cases = [
+            (
+                import(ImportFrom, "pkg.core", Some("helper"), None),
+                Some("helper"),
+            ),
+            (
+                import(ImportFrom, "pkg.core", Some("tool"), Some("t")),
+                Some("t"),
+            ),
+            (import(ImportFrom, "pkg.other", Some("*"), None), None),
+            (import(ImportFrom, "pkg.sub", None, None), Some("sub")),
+            (import(ImportFrom, "pkg.sub", None, Some("s")), Some("s")),
+            (import(ImportFrom, "", None, Some("s")), Some("s")),
+            (import(ImportFrom, "", None, None), None),
+            (import(Import, "os.path", None, None), Some("os")),
+            (import(Import, "json", None, Some("js")), Some("js")),
+        ];
+        for (import, expected) in cases {
+            assert_eq!(import.bound_name(), expected, "{import:?}");
+        }
     }
 }

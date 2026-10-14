@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and mlflow's `pyspark` drop to info (#808).
 
 ### Fixed
+- The negative `--trace` names an automatic entry root's rule once
+  (`auto: __main__.py` instead of `auto: auto:__main__.py`) (#850).
 - A runtime module that defines or re-exports (`__all__`) both PEP 517 hooks,
   `build_wheel` and `build_sdist`, is an entry root, so a build backend that
   frontends import by its `build-backend` name (poetry's `poetry.masonry.api`)
@@ -68,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mkdocs-macros-plugin` to `mkdocs_macros`, and `mkdocstrings-python` to
   `mkdocstrings_handlers.python`. airflow's `sphinxarg` and `autoapi` Sphinx
   extensions are no longer CHK010 (#822).
+- A package re-export that an entry point names (`[project.scripts] instr =
+  "instr:main"` with `from .cli import main` in `instr/__init__.py`) or a
+  plugin references is no longer CHK007, since the console script or host
+  reads it without an import (#743).
 - An arbitrary-equality (`===`) value in a manifest requirement is read the
   way `packaging` reads it: up to whitespace, `;` or `)`, commas included,
   with empty items dropped. `foo===1.0,,>=1` is accepted, and

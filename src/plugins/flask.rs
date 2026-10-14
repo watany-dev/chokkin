@@ -7,7 +7,10 @@ use crate::path_util::rel_to_root;
 
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
-use super::util::{decorator_suffix, push_binary, push_decorated_modules, push_symbol_ref};
+use super::util::{decorator_suffix, push_app_ref, push_binary, push_decorated_modules};
+
+/// Attributes and factories Flask looks up in the module `--app` names.
+const APP_NAMES: [&str; 4] = ["app", "application", "create_app", "make_app"];
 
 /// Extract Flask app references from static configuration.
 pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
@@ -40,24 +43,13 @@ fn extract_flaskenv(root: &Path, contrib: &mut PluginContribution) {
             let Some(value) = env_assignment(line, "FLASK_APP") else {
                 continue;
             };
-            push_symbol_ref(
-                contrib,
-                value,
-                ReferenceOrigin {
-                    file: rel.clone(),
-                    line: u32::try_from(line_index + 1).ok(),
-                    label: "FLASK_APP".to_owned(),
-                },
-            );
-            push_binary(
-                contrib,
-                "flask",
-                ReferenceOrigin {
-                    file: rel.clone(),
-                    line: u32::try_from(line_index + 1).ok(),
-                    label: "FLASK_APP".to_owned(),
-                },
-            );
+            let origin = ReferenceOrigin {
+                file: rel.clone(),
+                line: u32::try_from(line_index + 1).ok(),
+                label: "FLASK_APP".to_owned(),
+            };
+            push_app_ref(contrib, value, &origin, &APP_NAMES);
+            push_binary(contrib, "flask", origin);
         }
     }
 }
@@ -89,7 +81,7 @@ fn extract_scripts(root: &Path, contrib: &mut PluginContribution) {
                     line: u32::try_from(line_index + 1).ok(),
                     label: "flask --app".to_owned(),
                 };
-                push_symbol_ref(contrib, target, origin.clone());
+                push_app_ref(contrib, target, &origin, &APP_NAMES);
                 push_binary(contrib, "flask", origin);
             }
         }
