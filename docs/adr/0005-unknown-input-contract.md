@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Open questions 1 and 2 below must be decided before acceptance.
+Accepted.
 
 ## Context
 
@@ -119,45 +119,34 @@ Review (`/wrapup`, `/code-review`) checks for this. Issues filed for leftover
 work (`kick` step 6) record whether the issue is a missing form or a missing
 gap.
 
-## Open questions
+### 6. A gap's scope is set per gap kind
 
-### 1. Scope granularity
+Each gap kind declares the narrowest scope that is still sound. Some examples:
 
-A gap's scope decides how much recall the contract costs.
+- A partial `__all__` in module M affects CHK006 and CHK007 in M only.
+- Unknown extras in member X affect CHK003 and CHK005 for X only.
+- An unresolved entry target affects CHK001 for files under the target's
+  package.
+- An unreadable module's imports are unknown, so it affects CHK002 for every
+  dependency it could reach and CHK001 for every file. This is what `skipped`
+  does today.
 
-- **Global**: any gap lowers every absence finding. This is simple and sound.
+Two alternatives were rejected:
+
+- **Global scope** (any gap lowers every absence finding) is simple and sound.
   But most real projects have at least one gap, so certain findings would
   almost disappear.
-- **Per gap kind (proposed)**: each gap kind declares the narrowest scope that
-  is still sound. Some examples:
-  - A partial `__all__` in module M affects CHK006 and CHK007 in M only.
-  - Unknown extras in member X affect CHK003 and CHK005 for X only.
-  - An unresolved entry target affects CHK001 for files under the target's
-    package.
-  - An unreadable module's imports are unknown, so it affects CHK002 for
-    every dependency it could reach and CHK001 for every file. This is what
-    `skipped` does today.
-- **Per subject with evidence**: narrow the scope further by using partial
-  evidence, for example the names on the lines that did parse. This gives the
-  most recall, but every narrowing is another hand-written form. That is the
-  same trap as the current approach, so this ADR does not adopt it.
+- **Per-subject scope from partial evidence** (for example, the names on the
+  lines that did parse) gives the most recall. But every narrowing is another
+  hand-written form, which is the trap this ADR exists to leave.
 
-Acceptance requires a recall measurement of the proposed scopes on the pinned
-corpus (`make oss-mutation`, `make oss-diff`; see
-`docs/dev/oss-differential-and-recall.md`). The measurement must compare
-certain findings before and after.
+### 7. Lowering does not change the exit code
 
-### 2. Exit code for lowered findings
-
-App-mode CHK001 is still `Error` at `Likely` (`rules/chk001.rs`), so a
-lowered finding still fails CI. There are two options:
-
-- **Keep it**: lowering then protects only `--fix` and `--confidence`
-  filtering.
-- **Exempt a finding lowered by a gap from the error threshold**: this is a
-  change to exit-code policy. Under ADR 0004 it needs a release note, and if
-  it changes the meaning for the same invocation and issue set, a breaking
-  release.
+A finding lowered by a gap keeps the severity its rule gives it at that
+confidence. App-mode CHK001 is still `Error` at `Likely` (`rules/chk001.rs`).
+Lowering protects `--fix` (ADR 0003) and `--confidence` filtering. The exit
+code is protected by the warning that names the gap, which tells the user
+what to fix or ignore. This keeps the ADR 0004 exit-code contract unchanged.
 
 ## Consequences
 
@@ -169,8 +158,9 @@ lowered finding still fails CI. There are two options:
   on a clean stderr will see new lines. Under ADR 0004, prose and warnings are
   not a compatibility contract.
 - Some `Certain` findings become `Likely` or `Maybe`. ADR 0004 treats fewer
-  false positives with the rule's meaning kept as a non-breaking change. The
-  exit-code part is open question 2.
+  false positives with the rule's meaning kept as a non-breaking change.
+- A lowered finding can still fail CI. The gap's warning explains why the
+  finding may be wrong, but the user still has to act on it.
 
 ## Migration
 
@@ -184,7 +174,10 @@ This is ordered so that each step is useful without the next ones.
 3. Introduce the gap value and the demotion stage in `rules/emit.rs`. Move
    the three existing signals onto it, with no change in behavior.
 4. Connect the L0 and L2 sources one gap kind at a time. Each kind comes with
-   its scope and a fixture.
+   its scope, a fixture, and a recall measurement on the pinned corpus
+   (`make oss-mutation`, `make oss-diff`; see
+   `docs/dev/oss-differential-and-recall.md`) that compares certain findings
+   before and after.
 
 The false positives confirmed in the stocktake become the acceptance fixtures
 for steps 3 and 4. They are not filed as separate issues.
