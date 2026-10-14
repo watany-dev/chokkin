@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension's `from .core import setup`, a pytest plugin's `pytest_*` hook,
   a PEP 517 backend package's `build_wheel`) is no longer CHK007, since the
   host reads it from the package (#873).
+- An arbitrary-equality (`===`) value in a manifest requirement is read the
+  way `packaging` reads it: up to whitespace, `;` or `)`, commas included,
+  with empty items dropped. `foo===1.0,,>=1` is accepted, and
+  `foo===1.0, >=1` is an invalid requirement. `foo_ @ <url>` is an invalid
+  requirement instead of a dependency with an empty name. Names and extras
+  ending in `_` stay invalid even though `packaging` accepts them (#572).
 
 ## [0.7.5] - 2026-10-12
 

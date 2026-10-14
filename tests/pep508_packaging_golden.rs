@@ -26,7 +26,21 @@ struct Case {
     name: String,
     #[serde(default)]
     extras: Vec<String>,
+    #[serde(default)]
+    specifiers: Vec<String>,
 }
+
+/// Names `packaging` accepts but chokkin rejects on purpose (#572): its name
+/// token ends at a regex word boundary, so a trailing `_` slips past the
+/// PEP 508 rule that a name ends in a letter or digit. uv rejects these too.
+const STRICTER_THAN_PACKAGING: [&str; 6] = [
+    "foo_",
+    "foo-_",
+    "foo._",
+    "foo[te_]",
+    "foo_[a]>=1",
+    "foo_ @ https://h/x.whl",
+];
 
 #[test]
 fn pyproject_dependencies_match_packaging() {
@@ -66,13 +80,31 @@ fn pyproject_dependencies_match_packaging() {
         let warned = manifest.warnings.iter().any(|warning| {
             matches!(warning, ManifestWarning::InvalidRequirementLine { label: l, .. } if *l == label)
         });
-        if case.valid {
+        let stricter = STRICTER_THAN_PACKAGING.contains(&case.input.as_str());
+        assert!(
+            !stricter || case.valid,
+            "{:?} is no longer a deviation",
+            case.input
+        );
+        if case.valid && !stricter {
             let dep = dep.unwrap_or_else(|| panic!("{:?} must be accepted", case.input));
             let mut extras = dep.extras.clone();
             extras.sort();
+            // A direct reference stores its URL where a version set would go.
+            let mut specifiers: Vec<_> = dep
+                .specifier
+                .iter()
+                .filter(|spec| spec.starts_with(['<', '>', '=', '!', '~']))
+                .flat_map(|spec| spec.split(',').map(|item| item.trim().to_owned()))
+                .collect();
+            specifiers.sort();
             assert_eq!(
-                (dep.name.as_str(), extras),
-                (case.name.as_str(), case.extras.clone()),
+                (dep.name.as_str(), extras, specifiers),
+                (
+                    case.name.as_str(),
+                    case.extras.clone(),
+                    case.specifiers.clone()
+                ),
                 "{:?}",
                 case.input
             );

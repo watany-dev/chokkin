@@ -89,18 +89,13 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
             Some(inner) => (inner.strip_suffix(')')?.trim(), true),
             None => (spec, false),
         };
-        // `packaging` allows one trailing comma after the last specifier.
-        let spec = match spec.strip_suffix(',').map(str::trim_end) {
-            Some(head) if !head.is_empty() && !head.ends_with(',') => head,
-            _ => spec,
-        };
         let version = if spec.is_empty() {
             if parenthesized {
                 return None;
             }
             None
         } else {
-            Some(canonical_version_specifiers(spec)?)
+            Some(join_specifiers(parse_specifier_list(spec)?))
         };
         (version, marker)
     };
@@ -167,6 +162,43 @@ fn has_url_scheme(url: &str) -> bool {
     })
 }
 
+/// Parse a requirement's specifier list the way `packaging` tokenizes it:
+/// one trailing comma is allowed, and `===` reads its value up to whitespace
+/// or `)`, commas included, which the set then splits, dropping empty items
+/// (`===1.0,,>=1` is two specifiers, `===1.0, >=1` is invalid).
+fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
+    let mut specifiers = Vec::new();
+    let mut rest = spec;
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = rest.strip_prefix("===") {
+            let value = after.trim_start();
+            let end = value
+                .find(|ch: char| ch.is_whitespace() || ch == ')')
+                .unwrap_or(value.len());
+            let tail = &value[end..];
+            for item in rest[..rest.len() - tail.len()].split(',') {
+                if !item.trim().is_empty() {
+                    specifiers.push(parse_version_specifier(item)?);
+                }
+            }
+            rest = tail;
+        } else {
+            let end = rest.find(',').unwrap_or(rest.len());
+            specifiers.push(parse_version_specifier(&rest[..end])?);
+            rest = &rest[end..];
+        }
+        rest = rest.trim_start();
+        let Some(after) = rest.strip_prefix(',') else {
+            return rest.is_empty().then_some(specifiers);
+        };
+        rest = after;
+        if rest.trim().is_empty() {
+            return Some(specifiers);
+        }
+    }
+}
+
 /// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`).
 pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
     input.split(',').map(parse_version_specifier).collect()
@@ -175,13 +207,28 @@ pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifi
 /// A PEP 440 specifier set in the form `DeclaredDependency::specifier`
 /// stores (`>=3.10, <4`); `None` when it is not one.
 pub(crate) fn canonical_version_specifiers(input: &str) -> Option<String> {
-    Some(
-        parse_version_specifiers(input)?
-            .iter()
-            .map(|specifier| specifier.text.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
+    Some(join_specifiers(parse_version_specifiers(input)?))
+}
+
+/// Join with `, `, except right after `===`: its value would swallow the
+/// comma and stop at the space (`===1.0, >=1` is invalid).
+fn join_specifiers(specifiers: Vec<VersionSpecifier>) -> String {
+    let mut specifiers = specifiers.into_iter();
+    let Some(first) = specifiers.next() else {
+        return String::new();
+    };
+    let mut joined = first.text;
+    let mut previous = first.operator;
+    for specifier in specifiers {
+        if previous == Operator::ExactEqual {
+            joined.push(',');
+        } else {
+            joined.push_str(", ");
+        }
+        joined.push_str(&specifier.text);
+        previous = specifier.operator;
+    }
+    joined
 }
 
 fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
@@ -613,6 +660,33 @@ mod tests {
             ")".repeat(MAX_MARKER_DEPTH)
         );
         assert!(parse(&shallow).is_some());
+    }
+
+    #[test]
+    fn arbitrary_equality_reads_commas_like_packaging() {
+        let version = |input: &str| parse(input).map(|req| req.version_or_url);
+        // A space after an `===` value's comma would end the value, so the
+        // stored set keeps that comma tight and re-parses to itself.
+        for (input, stored) in [
+            ("foo===1.0,,>=1", "===1.0,>=1"),
+            ("foo>=1,===2,,", ">=1, ===2"),
+            ("foo===,>=1", "===,>=1"),
+            ("foo===1.0 , >=1", "===1.0,>=1"),
+            ("foo<2,===1.0,>=1", "<2, ===1.0,>=1"),
+        ] {
+            assert_eq!(version(input), Some(Some(stored.to_owned())), "{input}");
+            assert_eq!(
+                version(&format!("foo{stored}")),
+                Some(Some(stored.to_owned())),
+                "{stored}"
+            );
+        }
+        // The `===` value runs to the next whitespace, so a gap after its
+        // comma leaves the next specifier dangling.
+        assert_eq!(version("foo===1.0, >=1"), None);
+        assert_eq!(version("foo===1.0,>= 2"), None);
+        assert_eq!(version("foo===1.0)"), None);
+        assert_eq!(version("foo>=1,,<2"), None);
     }
 
     #[test]
