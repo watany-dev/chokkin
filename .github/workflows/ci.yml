@@ -245,6 +245,9 @@ jobs:
       - name: Test bench-gate script
         if: ${{ !cancelled() }}
         run: python3 tests/test_bench_gate.py
+      - name: Test wheel-smoke script
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_wheel_smoke.py
 
   zizmor:
     name: Zizmor

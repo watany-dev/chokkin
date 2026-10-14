@@ -220,6 +220,34 @@ jobs:
           docker run --rm --platform "$PLATFORM" -v "$PWD:/src:ro" -w /src
           "$IMAGE" python3 scripts/wheel-smoke.py dist/*.whl
 
+  # Where no wheel fits (FreeBSD, riscv64, old glibc, ...), `pip install chokkin`
+  # builds the sdist with the user's toolchain and the release profile. Build
+  # it with the oldest toolchain Cargo.toml allows, which nothing else builds
+  # and runs (#846).
+  test-sdist:
+    name: Test sdist (source build, MSRV)
+    needs: [build-sdist]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheel-sdist
+          path: dist
+      - name: Install the MSRV toolchain
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal
+          rustup default "$msrv"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Smoke-test the sdist
+        run: python scripts/wheel-smoke.py dist/*.tar.gz
+
   # The dist profile builds the binary with panic = "abort" and fat LTO, which
   # the integration tests then run; the in-process unit tests still unwind.
   test-dist:
@@ -274,7 +302,7 @@ jobs:
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-wheels, build-sdist, test-wheels, test-dist, test-action]
+    needs: [build-wheels, build-sdist, test-wheels, test-sdist, test-dist, test-action]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
