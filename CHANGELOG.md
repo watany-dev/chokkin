@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and mlflow's `pyspark` drop to info (#808).
 
 ### Fixed
+- A source with a syntax error is skipped like an undecodable one, with a
+  `parse: skipped …: syntax error at line N: …` warning, instead of being read
+  as a module without imports. Its imports are unknown, so CHK001 and CHK002
+  for what it may use drop to likely and `--fix` no longer removes a
+  dependency only that file imports.
 - The negative `--trace` names an automatic entry root's rule once
   (`auto: __main__.py` instead of `auto: auto:__main__.py`) (#850).
 - A runtime module that defines or re-exports (`__all__`) both PEP 517 hooks,
