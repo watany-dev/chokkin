@@ -317,6 +317,17 @@ impl IssueReport {
     }
 }
 
+/// `file:line` of an import; line 0 marks a plugin reference
+/// (`INSTALLED_APPS`, Sphinx `extensions`) that has no position.
+#[must_use]
+pub(crate) fn import_site(file: &str, line: u32) -> String {
+    if line == 0 {
+        file.to_owned()
+    } else {
+        format!("{file}:{line}")
+    }
+}
+
 /// Stable target identifier used by baseline and machine-readable reporters.
 #[must_use]
 pub(crate) fn issue_stable_target(issue: &Issue) -> String {

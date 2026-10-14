@@ -55,6 +55,41 @@ mod tests {
         assert_eq!(resolved, expected);
     }
 
+    #[test]
+    fn rejects_absolute_target() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let absolute = dir.path().join("pyproject.toml");
+        let file = absolute.to_str().expect("utf-8 tempdir");
+
+        let error = resolve_contained_path(dir.path(), file).expect_err("absolute target");
+
+        assert!(matches!(error, FixError::Unsupported { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("absolute fix target `{file}` is not allowed")),
+            "{error}"
+        );
+    }
+
+    /// A `..` below a missing directory leaves no existing ancestor to
+    /// canonicalize. Windows resolves `..` lexically, so the root would exist.
+    #[cfg(unix)]
+    #[test]
+    fn rejects_target_whose_parent_cannot_be_resolved() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let root = dir.path().join("missing").join("..");
+
+        let error = resolve_contained_path(&root, "pyproject.toml").expect_err("unresolvable");
+
+        assert!(
+            error
+                .to_string()
+                .contains("fix target parent for `pyproject.toml` cannot be resolved"),
+            "{error}"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_missing_file_under_symlinked_outside_parent() {

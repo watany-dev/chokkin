@@ -262,6 +262,18 @@ mod merge_tests {
             ModuleOrigin::FirstParty
         );
     }
+
+    #[test]
+    fn merge_keeps_current_on_rank_tie() {
+        assert_eq!(
+            merge_module_origin(ModuleOrigin::FirstParty, ModuleOrigin::Stdlib),
+            ModuleOrigin::FirstParty
+        );
+        assert_eq!(
+            merge_module_origin(ModuleOrigin::Stdlib, ModuleOrigin::FirstParty),
+            ModuleOrigin::Stdlib
+        );
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal mutants mutants-diff kani help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal tlc mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -59,6 +59,7 @@ oss-metrics:
 
 # oss-gate:   determinism (cold/warm/--no-cache byte-identical), JSON schema
 #             and crash gates over the corpus + recall sentinels (#342).
+#             ARGS=--in-repo runs the in-repo fixtures instead (no clones; CI, #835).
 oss-gate:
 	scripts/oss-gate.py --build $(ARGS)
 
@@ -101,19 +102,29 @@ check-generated:
 	git diff --exit-code src/resolver/bundled/ src/resolver/stdlib/
 
 ## ─── Formal models (docs/dev/formal) ──────────────────────────────────────────
-# Requires python3 with z3-solver (`pip install z3-solver`). Runs every model and
-# fails if any property has a counterexample. TLA+ (TLC) is run separately; see
-# docs/dev/formal/README.md.
+# formal: requires python3 with z3-solver (`pip install z3-solver`). Runs every
+#         Python model and fails if any property has a counterexample.
+# tlc:    model-checks Reachability.tla; pass TLA2TOOLS=<path to tla2tools.jar>
+#         (~7 min). CI runs both (.github/workflows/formal.yml); see
+#         docs/dev/formal/README.md.
+TLA2TOOLS ?= tla2tools.jar
+
 formal:
 	@status=0; for m in relative_import_model deps_rules_z3 exit_status_z3 ignore_model; do \
 		python3 docs/dev/formal/$$m.py || status=1; \
 	done; exit $$status
 
+tlc:
+	java -XX:+UseParallelGC -cp "$(TLA2TOOLS)" tlc2.TLC -deadlock -workers auto \
+		-metadir target/tlc docs/dev/formal/MCReachability
+
 ## ─── Test effectiveness (#418) ────────────────────────────────────────────────
-# mutants:      cargo-mutants over src/rules/ and src/resolver/ (~70 min at -j 2
-#               on 4 vCPU; most of it is builds). Narrow with ARGS, e.g.
-#               ARGS="-f src/rules/emit.rs". Results: mutants.out/.
-# mutants-diff: only the mutants on lines changed since BASE (default origin/main).
+# mutants:      cargo-mutants over src/rules/, src/resolver/, src/fix/ and
+#               src/graph/ (most of the time is builds).
+#               Narrow with ARGS, e.g. ARGS="-f src/rules/emit.rs".
+#               Results: mutants.out/. CI fails on any missed mutant (#837).
+# mutants-diff: only the mutants on lines changed since BASE (default origin/main);
+#               what the PR check runs.
 # kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
 #               kani-verifier@0.68.0 && cargo kani setup`.
 #               Not part of `make check`. See docs/dev/formal/README.md.
@@ -121,7 +132,7 @@ MUTANTS_ENV = CARGO_PROFILE_DEV_DEBUG=0
 BASE       ?= origin/main
 
 mutants:
-	$(MUTANTS_ENV) cargo mutants -j 2 -f 'src/rules/**' -f 'src/resolver/**' $(ARGS)
+	$(MUTANTS_ENV) cargo mutants -j 2 -f 'src/rules/**' -f 'src/resolver/**' -f 'src/fix/**' -f 'src/graph/**' $(ARGS)
 
 mutants-diff:
 	mkdir -p target

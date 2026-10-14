@@ -287,6 +287,73 @@ fn binary_json_import_issues_carry_distribution_and_module() {
     }
 }
 
+/// A plugin reference (`INSTALLED_APPS`, Sphinx `extensions`) has no line, so
+/// its CHK010 must not report the internal line 0 the schema rejects (#835).
+#[test]
+fn binary_json_plugin_import_issues_have_no_line() {
+    for fixture in ["django_manage", "sphinx_docs"] {
+        let issues = json_issues(&fixture_path(&["plugins", fixture]), &["--no-cache"]);
+        let unresolved = issues
+            .iter()
+            .filter(|issue| issue["code"] == "CHK010")
+            .collect::<Vec<_>>();
+        assert!(!unresolved.is_empty(), "{fixture}");
+        for issue in unresolved {
+            assert_eq!(issue["line"], serde_json::Value::Null, "{fixture}: {issue}");
+            let message = issue["message"].as_str().unwrap_or_default();
+            assert!(!message.contains(":0`"), "{fixture}: {message}");
+        }
+    }
+}
+
+/// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 with
+/// no position, so neither its message nor its explain shows `:0`.
+#[test]
+fn binary_plugin_missing_dependency_has_no_line() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django>=4.0\"]\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = [\"django.contrib.admin\", \"requests\"]\n",
+        ),
+    ];
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create dir");
+        }
+        fs::write(path, text).expect("write fixture");
+    }
+
+    let issues = json_issues(temp.path(), &["--no-cache"]);
+    let missing = issues
+        .iter()
+        .find(|issue| issue["code"] == "CHK003")
+        .expect("CHK003 for requests");
+    assert_eq!(missing["line"], serde_json::Value::Null);
+    let message = missing["message"].as_str().unwrap_or_default();
+    assert!(message.contains("mysite/settings.py"), "{message}");
+    assert!(!message.contains(":0"), "{message}");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK003:requests"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("import at mysite/settings.py"), "{stderr}");
+    assert!(!stderr.contains(":0"), "{stderr}");
+}
+
 const PEP723_TOOL: &str = r#"# /// script
 # requires-python = ">=3.11"
 # dependencies = [
@@ -2780,4 +2847,91 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
             "{keys:?}"
         );
     }
+}
+
+/// Apps named by `flask --app` / `celery -A` in `scripts/` and `bin/` shell
+/// scripts are entry roots, so only the control module is unused.
+#[test]
+fn binary_shell_script_apps_are_entry_roots() {
+    for (fixture, unused) in [
+        ("flask_shell_scripts", "src/myapp/orphan.py"),
+        ("celery_shell_scripts", "src/worker/orphan.py"),
+    ] {
+        let keys = issue_keys(&json_issues(
+            &fixture_path(&["plugins", fixture]),
+            &["--include", "CHK001"],
+        ));
+        let reported: Vec<&str> = keys
+            .iter()
+            .filter(|(code, _)| code == "CHK001")
+            .map(|(_, target)| target.as_str())
+            .collect();
+        assert_eq!(reported, [unused], "{fixture}: {keys:?}");
+    }
+}
+
+/// stderr of `--trace <target>` on the `trace_origins` fixture, which has an
+/// entry root of every origin kind.
+fn trace_stderr(target: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-exit-code", "--trace", target])
+        .arg(fixture_path(&["reachability", "trace_origins"]))
+        .output()
+        .expect("run chokkin");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stderr).expect("utf8")
+}
+
+#[test]
+fn binary_trace_prints_path_to_reachable_file() {
+    assert_eq!(
+        trace_stderr("src/acme/util.py"),
+        "Trace path:\n├─ file src/acme/cli.py\n└─ import acme.util (line 3)\n\n"
+    );
+    // `./` and `\` spellings name the same root-relative file.
+    assert_eq!(
+        trace_stderr("./src/acme/dyn.py"),
+        "Trace path:\n├─ file src/acme/cli.py\n└─ dynamic import acme.dyn (line 5)\n\n"
+    );
+    assert_eq!(
+        trace_stderr(r"src\acme\views.py"),
+        "Trace path:\n└─ plugin ref acme.views (flask route decorator)\n\n"
+    );
+}
+
+#[test]
+fn binary_trace_reports_undiscovered_file() {
+    assert_eq!(
+        trace_stderr("src/acme/missing.py"),
+        "trace: file `src/acme/missing.py` was not discovered in this project\n\n"
+    );
+}
+
+#[test]
+fn binary_trace_explains_unreachable_file() {
+    assert_eq!(
+        trace_stderr("src/acme/legacy.py"),
+        "\
+Negative trace for src/acme/legacy.py:
+
+  reason: not reachable from any entry root
+
+  entry roots analyzed:
+    ├─ src/acme/__main__.py (auto: auto:__main__.py)
+    ├─ src/acme/backend.py (build backend: PEP 517)
+    ├─ src/acme/cli.py (config)
+    ├─ src/acme/main.py (manifest: [console].acme)
+    ├─ src/acme/web.py (symbol: FLASK_APP)
+    ├─ src/tools/gen.py (command: workflow run (.github/workflows/ci.yml:6))
+    ├─ src/tools/report.py (script: PEP 723)
+    └─ tests/test_smoke.py (plugin: pytest (pytest defaults))
+
+  incoming imports (all unreachable):
+    ├─ src/acme/compat.py:1 imports acme.legacy (file also unreachable)
+    └─ src/acme/old_api.py:1 imports acme.legacy (file also unreachable)
+
+  suggestion: add to [tool.chokkin].entry or verify import chain
+
+"
+    );
 }

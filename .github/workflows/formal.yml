@@ -1,0 +1,102 @@
+name: Formal models
+
+# Runs docs/dev/formal (#838). The models are Python / TLA+ ports of specific
+# Rust functions and never read src/, so a Rust change alone cannot fail them.
+# The PR filter lists those Rust files so the job shows up on every PR that
+# touches one, and the "Models to review" step warns when such a PR leaves the
+# matching model unchanged. Keep the paths, that step's table, and the table in
+# docs/dev/formal/README.md in sync.
+
+on:
+  pull_request:
+    paths:
+      - "docs/dev/formal/**"
+      - ".github/workflows/formal.yml"
+      - "Makefile"
+      # relative_import_model.py
+      - "src/parser/relative.rs"
+      - "src/sources/layout.rs"
+      # deps_rules_z3.py
+      - "src/rules/deps/context.rs"
+      - "src/rules/deps/missing.rs"
+      - "src/rules/deps/misplaced.rs"
+      # exit_status_z3.py
+      - "src/rules/emit.rs"
+      - "src/rules/filter.rs"
+      - "src/baseline/store.rs"
+      # ignore_model.py
+      - "src/rules/ignore.rs"
+      # Reachability.tla
+      - "src/reachability/bfs.rs"
+      - "src/reachability/build.rs"
+      - "src/reachability/trace.rs"
+      - "src/graph/edges.rs"
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # A stable release: the rolling v1.8.0 pre-release asset is replaced in place.
+  TLA2TOOLS_URL: https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+  TLA2TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+
+jobs:
+  python:
+    name: Python models (Z3, exhaustive)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Models to review
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          # A model counts as updated when any docs/dev/formal file named after
+          # it changed (Reachability also covers MCReachability.{tla,cfg}).
+          while read -r model targets; do
+            if grep -q "^docs/dev/formal/.*${model}" <<< "$changed"; then
+              continue
+            fi
+            for t in $targets; do
+              if grep -qxF "$t" <<< "$changed"; then
+                echo "::warning file=${t}::${t} is ported in docs/dev/formal (${model}); update the port if this PR changes its behavior"
+              fi
+            done
+          done <<'EOF'
+          relative_import_model src/parser/relative.rs src/sources/layout.rs
+          deps_rules_z3 src/rules/deps/context.rs src/rules/deps/missing.rs src/rules/deps/misplaced.rs
+          exit_status_z3 src/rules/emit.rs src/rules/filter.rs src/baseline/store.rs
+          ignore_model src/rules/ignore.rs
+          Reachability src/reachability/bfs.rs src/reachability/build.rs src/reachability/trace.rs src/graph/edges.rs
+          EOF
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.15"
+      - run: python -m pip install z3-solver==5.1.0.0
+      - run: make formal
+
+  tlc:
+    name: TLA+ (TLC)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download tla2tools.jar
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/tla2tools.jar" "$TLA2TOOLS_URL"
+          echo "${TLA2TOOLS_SHA256}  $RUNNER_TEMP/tla2tools.jar" | sha256sum -c -
+      - run: make tlc TLA2TOOLS="$RUNNER_TEMP/tla2tools.jar"

@@ -1,0 +1,20 @@
+# Fixtures chokkin must reject (exit 2, no output) — `oss-gate.py --in-repo`
+# skips them and fails if any other fixture is rejected or one listed is not.
+config/backslash_entry
+config/broken_toml
+config/empty_workspace_path
+config/entry_empty_symbol
+config/invalid_confidence
+config/invalid_entry
+config/invalid_exclude_path
+config/invalid_ignore
+config/invalid_mode
+config/invalid_plugin_type
+config/invalid_project_path
+config/invalid_target_version
+config/invalid_uv_workspace_members
+config/unknown_dependencies_key
+config/unknown_plugin
+config/unknown_top_level_key
+config/unknown_workspace_key
+manifest/broken_pyproject
