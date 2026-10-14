@@ -8,8 +8,12 @@ use crate::path_util::rel_to_root;
 use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
 use super::util::{
-    decorator_suffix, push_binary, push_decorated_modules, push_symbol_ref, read_pyproject_table,
+    decorator_suffix, push_app_ref, push_binary, push_decorated_modules, push_used_symbol,
+    read_pyproject_table,
 };
+
+/// Attributes Celery looks up in the module `-A` names.
+const APP_NAMES: [&str; 2] = ["app", "celery"];
 
 /// Extract Celery app references from static command configuration.
 pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
@@ -56,7 +60,7 @@ fn extract_pyproject_scripts(root: &Path, contrib: &mut PluginContribution) {
             line: None,
             label: format!("project.scripts.{name}"),
         };
-        push_symbol_ref(contrib, app, origin.clone());
+        push_celery_app(contrib, app, &origin);
         push_binary(contrib, "celery", origin);
     }
 }
@@ -88,7 +92,7 @@ fn extract_shell_scripts(root: &Path, contrib: &mut PluginContribution) {
                     line: u32::try_from(line_index + 1).ok(),
                     label: "celery app".to_owned(),
                 };
-                push_symbol_ref(contrib, app, origin.clone());
+                push_celery_app(contrib, app, &origin);
                 push_binary(contrib, "celery", origin);
             }
         }
@@ -104,6 +108,17 @@ fn is_task_decorator(name: &str, _is_call: bool) -> bool {
         "shared_task" => true,
         "task" => receiver.is_some(),
         _ => false,
+    }
+}
+
+/// `-A pkg.mod` is the module Celery searches for [`APP_NAMES`], or, since
+/// Celery resolves the value as `pkg` plus an attribute first, the attribute
+/// `mod` of `pkg`.
+fn push_celery_app(contrib: &mut PluginContribution, value: &str, origin: &ReferenceOrigin) {
+    if let Some((package, attribute)) =
+        push_app_ref(contrib, value, origin, &APP_NAMES).and_then(|module| module.rsplit_once('.'))
+    {
+        push_used_symbol(contrib, package, attribute, origin);
     }
 }
 

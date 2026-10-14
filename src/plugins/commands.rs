@@ -324,7 +324,7 @@ fn known_binary(name: &str, known: KnownBinary<'_>) -> Option<String> {
     (!ENVIRONMENT_TOOLS.contains(&name) && known(name)).then(|| name.to_owned())
 }
 
-fn is_dotted_identifier(module: &str) -> bool {
+pub(super) fn is_dotted_identifier(module: &str) -> bool {
     !module.is_empty()
         && module.split('.').all(|part| {
             part.chars()
