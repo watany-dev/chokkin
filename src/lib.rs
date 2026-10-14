@@ -62,7 +62,9 @@ pub mod internals {
         ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule, extract_ignores,
         parse_file, parse_project_sources_with_cache,
     };
-    pub use crate::pipeline::{AnalyzeOptions, WorkspaceMemberInputs};
+    pub use crate::pipeline::{
+        AnalyzeOptions, ProbeWarning, SkipReason, WorkspaceMemberInputs, diagnostic_lines,
+    };
     pub use crate::plugins::{
         PluginContribution, PluginExtractRequest, PluginHints, PluginsWarning,
         extract_plugin_hints_with_parse,
@@ -71,7 +73,7 @@ pub mod internals {
         ReachabilityReport, TracePath, TraceStep, UsedModule, analyze_reachability,
         apply_public_surface, trace_to_file,
     };
-    pub use crate::reporters::{FileCounts, ReporterId};
+    pub use crate::reporters::{Diagnostic, FileCounts, ReporterId};
     pub use crate::resolver::{
         ImportMap, ResolutionIndex, ResolveConfidence, ResolveWarning, ScopedDeclarations,
         StdlibRange, VenvIndex, apply_resolution_to_graph, build_binary_map, import_root,

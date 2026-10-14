@@ -7,7 +7,7 @@ use crate::path_util::normalize_rel_path;
 use crate::rules::{Issue, IssueReport};
 
 use super::format::{baseline_suppressed_count, condense_diagnostics, format_issue_subject};
-use super::types::RenderContext;
+use super::types::{Diagnostic, RenderContext};
 
 /// GitHub Actions workflow-command reporter.
 pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
@@ -18,11 +18,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     // Annotations are the only channel a workflow run surfaces; stderr is
     // buried in the step log.
     for diagnostic in condense_diagnostics(&context.diagnostics) {
-        let _ = writeln!(
-            out,
-            "::warning title=chokkin::{}",
-            escape_message(&diagnostic)
-        );
+        render_diagnostic(&mut out, &diagnostic);
     }
     let suppressed = baseline_suppressed_count(report);
     if suppressed > 0 {
@@ -68,6 +64,28 @@ fn render_annotation(out: &mut String, issue: &Issue) {
     ));
     let _ = write!(out, "::{level} {}::", properties.join(","));
     let _ = writeln!(out, "{}", escape_message(&issue.message));
+}
+
+/// A warning that points into a file lands on it, so it shows on the PR
+/// diff (#895).
+fn render_diagnostic(out: &mut String, diagnostic: &Diagnostic) {
+    let mut properties = Vec::new();
+    if let Some(file) = &diagnostic.file {
+        properties.push(format!(
+            "file={}",
+            escape_property(&normalize_rel_path(Path::new(file)))
+        ));
+    }
+    if let Some(line) = diagnostic.line {
+        properties.push(format!("line={line}"));
+    }
+    properties.push("title=chokkin".to_owned());
+    let _ = writeln!(
+        out,
+        "::warning {}::{}",
+        properties.join(","),
+        escape_message(&diagnostic.text)
+    );
 }
 
 fn escape_property(value: &str) -> String {

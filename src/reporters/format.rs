@@ -8,6 +8,8 @@ use crate::rules::{
     Issue, IssueLocation, IssueReport, IssueSubject, RuleId, SuppressReason, import_site,
 };
 
+use super::types::Diagnostic;
+
 /// Format a primary location column for human reporters.
 pub(super) fn format_location_column(location: &IssueLocation) -> String {
     if let Some(origin) = &location.manifest {
@@ -92,7 +94,7 @@ pub(super) fn baseline_suppressed_count(report: &IssueReport) -> usize {
 }
 
 /// Point text reporters at stderr, which carries the full warning list.
-pub(super) fn write_warning_count(out: &mut String, diagnostics: &[String]) {
+pub(super) fn write_warning_count(out: &mut String, diagnostics: &[Diagnostic]) {
     if !diagnostics.is_empty() {
         let _ = writeln!(out, "Warnings: {} (see stderr)", diagnostics.len());
     }
@@ -101,57 +103,46 @@ pub(super) fn write_warning_count(out: &mut String, diagnostics: &[String]) {
 /// Lines of one warning kind shown before the rest are only counted.
 const REPEATS_SHOWN: usize = 5;
 
-/// `diagnostics` with each kind cut to its first [`REPEATS_SHOWN`] lines and
-/// a count of the rest, for outputs a person reads top to bottom (#888).
-pub(crate) fn condense_diagnostics(diagnostics: &[String]) -> Vec<String> {
-    let mut totals = HashMap::<String, usize>::new();
+/// `diagnostics` with each kind cut to its first [`REPEATS_SHOWN`] warnings
+/// and a count of the rest, for outputs a person reads top to bottom (#888).
+/// The count points nowhere: it stands for warnings in many files.
+pub(crate) fn condense_diagnostics(diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
+    let mut totals = HashMap::<u64, usize>::new();
     for diagnostic in diagnostics {
-        *totals.entry(diagnostic_kind(diagnostic)).or_default() += 1;
+        *totals.entry(diagnostic.kind).or_default() += 1;
     }
-    let mut shown = HashMap::<String, usize>::new();
+    let mut shown = HashMap::<u64, usize>::new();
     let mut out = Vec::new();
     for diagnostic in diagnostics {
-        let kind = diagnostic_kind(diagnostic);
-        let seen = shown.entry(kind.clone()).or_default();
+        let seen = shown.entry(diagnostic.kind).or_default();
         *seen += 1;
         if *seen <= REPEATS_SHOWN {
             out.push(diagnostic.clone());
         }
-        let total = totals[&kind];
+        let total = totals[&diagnostic.kind];
         if *seen == REPEATS_SHOWN && total > REPEATS_SHOWN {
-            let area = diagnostic.split_once(':').map_or("", |(area, _)| area);
-            out.push(format!(
-                "{area}: … and {} more like the above (`--reporter json` lists every warning)",
-                total - REPEATS_SHOWN
-            ));
+            let area = diagnostic.text.split_once(':').map_or("", |(area, _)| area);
+            out.push(Diagnostic {
+                kind: diagnostic.kind,
+                file: None,
+                line: None,
+                text: format!(
+                    "{area}: … and {} more like the above (`--reporter json` lists every warning)",
+                    total - REPEATS_SHOWN
+                ),
+            });
         }
     }
     out
-}
-
-/// A warning with its quoted paths and names and its numbers blanked out, so
-/// warnings that differ only in where they point share a kind.
-fn diagnostic_kind(diagnostic: &str) -> String {
-    let unquoted = diagnostic
-        .split('`')
-        .step_by(2)
-        .collect::<Vec<_>>()
-        .join("``");
-    let mut kind = String::with_capacity(unquoted.len());
-    for ch in unquoted.chars() {
-        if !ch.is_ascii_digit() {
-            kind.push(ch);
-        } else if !kind.ends_with('#') {
-            kind.push('#');
-        }
-    }
-    kind
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Confidence;
+    use crate::manifest::ManifestWarning;
+    use crate::pipeline::{ProbeWarning, SkipReason, diagnostic_lines};
+    use crate::resolver::ResolveWarning;
     use crate::rules::{Issue, IssueLocation, RuleId, Severity};
 
     #[test]
@@ -195,22 +186,45 @@ mod tests {
         assert_eq!(format_subject(&subject), "mysite/settings.py myapp");
     }
 
+    fn parse_diagnostic(path: &str, message: &str) -> ProbeWarning {
+        ProbeWarning::ParseDiagnostic {
+            path: path.to_owned(),
+            line: 1,
+            message: message.to_owned(),
+        }
+    }
+
+    fn texts(diagnostics: &[Diagnostic]) -> Vec<&str> {
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.text.as_str())
+            .collect()
+    }
+
     /// Seven warnings of one kind keep five lines and count the rest;
     /// a kind under the limit and a later kind are untouched (#888).
     #[test]
     fn condense_counts_repeats_past_the_limit_per_kind() {
-        let mut diagnostics: Vec<String> = (1..=7)
-            .map(|n| format!("parse: `tests/t{n}.py:1`: relative import without a package"))
+        let mut warnings: Vec<ProbeWarning> = (1..=7)
+            .map(|n| {
+                parse_diagnostic(
+                    &format!("tests/t{n}.py"),
+                    "relative import without a package",
+                )
+            })
             .collect();
-        diagnostics.insert(
+        warnings.insert(
             2,
-            "resolve: could not read virtualenv `.venv`: gone".to_owned(),
+            ProbeWarning::Resolve(ResolveWarning::VenvUnreadable {
+                path: ".venv".to_owned(),
+                reason: "gone".to_owned(),
+            }),
         );
 
-        let condensed = condense_diagnostics(&diagnostics);
+        let condensed = condense_diagnostics(&diagnostic_lines(&warnings));
 
         assert_eq!(
-            condensed,
+            texts(&condensed),
             [
                 "parse: `tests/t1.py:1`: relative import without a package",
                 "parse: `tests/t2.py:1`: relative import without a package",
@@ -221,41 +235,56 @@ mod tests {
                 "parse: … and 2 more like the above (`--reporter json` lists every warning)",
             ]
         );
+        assert_eq!(condensed[5].file.as_deref(), Some("tests/t5.py"));
+        assert_eq!(condensed[6].file, None);
     }
 
     /// Exactly the limit is shown as is, without a count line.
     #[test]
     fn condense_keeps_a_kind_at_the_limit() {
-        let diagnostics: Vec<String> = (1..=REPEATS_SHOWN)
-            .map(|n| format!("manifest: `packages/p{n}`: Hatch detected"))
+        let warnings: Vec<ProbeWarning> = (1..=REPEATS_SHOWN)
+            .map(|n| ProbeWarning::MemberManifest {
+                member: format!("packages/p{n}"),
+                warning: ManifestWarning::HatchDetected,
+            })
             .collect();
+        let diagnostics = diagnostic_lines(&warnings);
 
         assert_eq!(condense_diagnostics(&diagnostics), diagnostics);
     }
 
-    /// Text outside backticks tells kinds apart; quoted paths and line
-    /// numbers do not.
+    /// The variant tells kinds apart, and a parse diagnostic's message
+    /// with it; where a warning points and what a syntax error says do not
+    /// (#895).
     #[test]
-    fn diagnostic_kind_blanks_quoted_spans_and_numbers() {
+    fn diagnostic_kind_is_the_variant() {
+        let kind = |warning: ProbeWarning| warning.diagnostic().kind;
+        let syntax_error = |path: &str, line, message: &str| ProbeWarning::SkippedSource {
+            path: path.to_owned(),
+            reason: SkipReason::SyntaxError {
+                line,
+                message: message.to_owned(),
+            },
+        };
+
         assert_eq!(
-            diagnostic_kind("parse: `a.py:3`: relative import"),
-            diagnostic_kind("parse: `b/c.py:9`: relative import")
-        );
-        assert_eq!(
-            diagnostic_kind(
-                "parse: skipped `a.ipynb`: syntax error at line 1: Expected a statement"
-            ),
-            diagnostic_kind(
-                "parse: skipped `b.ipynb`: syntax error at line 96: Expected a statement"
-            )
+            kind(parse_diagnostic("a.py", "relative import")),
+            kind(parse_diagnostic("b/c.py", "relative import"))
         );
         assert_ne!(
-            diagnostic_kind("parse: `a.py:3`: relative import"),
-            diagnostic_kind("parse: `a.py:3`: invalid notebook")
+            kind(parse_diagnostic("a.py", "relative import")),
+            kind(parse_diagnostic(
+                "a.py",
+                "unsupported `__all__` assignment form"
+            ))
         );
         assert_eq!(
-            diagnostic_kind("parse: `a.py`: line 12, column 3"),
-            "parse: ``: line #, column #"
+            kind(syntax_error("a.ipynb", 1, "Expected a statement")),
+            kind(syntax_error("b.py", 96, "unexpected indent"))
+        );
+        assert_ne!(
+            kind(ProbeWarning::Manifest(ManifestWarning::HatchDetected)),
+            kind(ProbeWarning::Manifest(ManifestWarning::PdmDetected))
         );
     }
 }

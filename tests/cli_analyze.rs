@@ -3626,3 +3626,30 @@ Negative trace for src/acme/legacy.py:
 "
     );
 }
+
+/// A warning that names a file is annotated on it, so a workflow run shows
+/// it on the PR diff (#895).
+#[test]
+fn binary_github_annotates_warnings_on_their_file() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/broken.py", "import os\ndef broken(:\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "github"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        stdout.lines().any(|line| line.starts_with(
+            "::warning file=acme/broken.py,line=2,title=chokkin::parse: skipped `acme/broken.py`: syntax error at line 2"
+        )),
+        "{stdout}"
+    );
+}

@@ -1,13 +1,16 @@
 //! Pipeline warning aggregation and display.
 
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
+use std::mem::discriminant;
 
 use crate::entry::EntryWarning;
 use crate::manifest::ManifestWarning;
 use crate::plugins::PluginsWarning;
-use crate::reporters::condense_diagnostics;
+use crate::reporters::{Diagnostic, condense_diagnostics};
 use crate::resolver::ResolveWarning;
 use crate::sources::SourcesWarning;
 
@@ -72,6 +75,107 @@ pub enum SkipReason {
         /// What the notebook reader could not read.
         message: String,
     },
+}
+
+impl ProbeWarning {
+    /// The warning as reporters see it.
+    pub(crate) fn diagnostic(&self) -> Diagnostic {
+        let (file, line) = self.location();
+        Diagnostic {
+            kind: self.kind(),
+            file: file.map(str::to_owned),
+            line,
+            text: self.to_string(),
+        }
+    }
+
+    /// The variant, down to the wrapped stage warning: warnings that differ
+    /// only in where they point share it. A parse diagnostic's kind is its
+    /// message too, which the parser picks from a fixed set.
+    fn kind(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        discriminant(self).hash(&mut hasher);
+        match self {
+            Self::Manifest(warning) | Self::MemberManifest { warning, .. } => {
+                discriminant(warning).hash(&mut hasher);
+            },
+            Self::Sources(warning) => discriminant(warning).hash(&mut hasher),
+            Self::Plugin(warning) => discriminant(warning).hash(&mut hasher),
+            Self::Entry(warning) => discriminant(warning).hash(&mut hasher),
+            Self::Resolve(warning) => discriminant(warning).hash(&mut hasher),
+            Self::SkippedSource { reason, .. } => discriminant(reason).hash(&mut hasher),
+            Self::ParseDiagnostic { message, .. } => message.hash(&mut hasher),
+            Self::AutoWorkspace { .. } | Self::NestedProjectsSkipped { .. } => {},
+        }
+        hasher.finish()
+    }
+
+    /// The root-relative file the warning points into, and its line when the
+    /// warning names one. A path that is missing, a directory, absolute, or
+    /// one of several candidates points nowhere a reader can open.
+    fn location(&self) -> (Option<&str>, Option<u32>) {
+        match self {
+            Self::Manifest(warning) | Self::MemberManifest { warning, .. } => {
+                manifest_location(warning)
+            },
+            Self::Sources(warning) => match warning {
+                SourcesWarning::GitignoreUnreadable { path } => (Some(path), None),
+                SourcesWarning::MissingEntryPath { .. }
+                | SourcesWarning::EntryPathIsDirectory { .. }
+                | SourcesWarning::AmbiguousFlatLayout { .. }
+                | SourcesWarning::GuessedPackageDir { .. }
+                | SourcesWarning::PathUnreadable { .. }
+                | SourcesWarning::LargeProject { .. } => (None, None),
+            },
+            Self::Plugin(warning) => match warning {
+                PluginsWarning::PartialSettingsParse { path, .. }
+                | PluginsWarning::PytestConfigUnreadable { path } => (Some(path), None),
+                PluginsWarning::AmbiguousSettings { .. }
+                | PluginsWarning::PluginExtractFailed { .. } => (None, None),
+            },
+            Self::Entry(warning) => match warning {
+                EntryWarning::UnresolvedModuleTarget { file, .. } => (Some(file), None),
+                EntryWarning::MissingEntryPath { .. } => (None, None),
+            },
+            Self::Resolve(warning) => match warning {
+                ResolveWarning::UnresolvedImport { file, line, .. } => (Some(file), *line),
+                ResolveWarning::AmbiguousImport { .. } | ResolveWarning::VenvUnreadable { .. } => {
+                    (None, None)
+                },
+            },
+            Self::AutoWorkspace { .. } | Self::NestedProjectsSkipped { .. } => (None, None),
+            Self::SkippedSource {
+                path,
+                reason: SkipReason::SyntaxError { line, .. },
+            } => (Some(path), Some(*line)),
+            Self::SkippedSource { path, .. } | Self::ParseDiagnostic { path, line: 0, .. } => {
+                (Some(path), None)
+            },
+            Self::ParseDiagnostic { path, line, .. } => (Some(path), Some(*line)),
+        }
+    }
+}
+
+fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
+    match warning {
+        ManifestWarning::InvalidRequirementLine { file, line, .. } => (Some(file), *line),
+        ManifestWarning::RequirementsOptionIgnored { file, line, .. } => (Some(file), Some(*line)),
+        ManifestWarning::SetupPyNotStatic { file }
+        | ManifestWarning::RuntimeDependenciesUnknown { file }
+        | ManifestWarning::SetupPyPartiallyStatic { file, .. }
+        | ManifestWarning::RequirementsUnreadable { file, .. }
+        | ManifestWarning::DependencyGroupIncludeUndefined { file, .. }
+        | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
+        | ManifestWarning::FileUndecodable { file }
+        | ManifestWarning::InlineScriptInvalid { file, .. } => (Some(file), None),
+        // The sections are named, not the file; a conflict spans two files;
+        // a missing constraints file does not exist.
+        ManifestWarning::PoetryDetected
+        | ManifestWarning::PdmDetected
+        | ManifestWarning::HatchDetected
+        | ManifestWarning::MetadataConflict { .. }
+        | ManifestWarning::RequirementsConstraintMissing { .. } => (None, None),
+    }
 }
 
 impl fmt::Display for ProbeWarning {
@@ -259,25 +363,25 @@ fn write_manifest_warning(
     }
 }
 
-/// Each warning's text once, in order. Two stages can report the same
-/// file (a shared `-r` include, a member the root also scans), and the
-/// reader needs it once.
+/// Each warning once, in order, told apart by its text. Two stages can
+/// report the same file (a shared `-r` include, a member the root also
+/// scans), and the reader needs it once.
 #[must_use]
-pub(crate) fn diagnostic_lines<'a>(
+pub fn diagnostic_lines<'a>(
     warnings: impl IntoIterator<Item = &'a ProbeWarning>,
-) -> Vec<String> {
+) -> Vec<Diagnostic> {
     let mut seen = HashSet::new();
     warnings
         .into_iter()
-        .map(ToString::to_string)
-        .filter(|line| seen.insert(line.clone()))
+        .map(ProbeWarning::diagnostic)
+        .filter(|diagnostic| seen.insert(diagnostic.text.clone()))
         .collect()
 }
 
 /// Write warning lines to `err`, repeated kinds condensed.
-pub fn write_diagnostics(diagnostics: &[String], err: &mut impl Write) -> io::Result<()> {
-    for line in condense_diagnostics(diagnostics) {
-        writeln!(err, "{line}")?;
+pub fn write_diagnostics(diagnostics: &[Diagnostic], err: &mut impl Write) -> io::Result<()> {
+    for diagnostic in condense_diagnostics(diagnostics) {
+        writeln!(err, "{}", diagnostic.text)?;
     }
     Ok(())
 }

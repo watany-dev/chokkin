@@ -61,10 +61,24 @@ pub struct RenderContext {
     pub version: &'static str,
     /// Primary config file label for the header.
     pub config_label: Option<String>,
-    /// Non-fatal pipeline warnings, already rendered as text.
-    pub diagnostics: Vec<String>,
+    /// Non-fatal pipeline warnings, once each.
+    pub diagnostics: Vec<Diagnostic>,
     /// Runtime file counts from reachability; `None` when not analyzed.
     pub files: Option<FileCounts>,
+}
+
+/// A non-fatal pipeline warning as reporters see it (#895).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    /// Shared by warnings that differ only in where they point.
+    pub(crate) kind: u64,
+    /// Root-relative file the warning points into, when it names one that
+    /// exists.
+    pub(crate) file: Option<String>,
+    /// 1-based line in `file`, when the warning names one.
+    pub(crate) line: Option<u32>,
+    /// The full warning line, `area: message`.
+    pub(crate) text: String,
 }
 
 /// Runtime-context source files and how many of them are reachable.

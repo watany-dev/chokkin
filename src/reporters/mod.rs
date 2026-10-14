@@ -14,7 +14,7 @@ pub(crate) use default::config_label;
 pub use default::config_label_from_sources;
 pub use fix::render_fix_report;
 pub(crate) use format::condense_diagnostics;
-pub use types::{FileCounts, RenderContext, ReporterId};
+pub use types::{Diagnostic, FileCounts, RenderContext, ReporterId};
 
 use crate::rules::IssueReport;
 

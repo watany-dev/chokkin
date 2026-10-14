@@ -18,7 +18,7 @@ use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
     ReachabilityReport, analyze_reachability, apply_member_surfaces, apply_public_surface,
 };
-use crate::reporters::FileCounts;
+use crate::reporters::{Diagnostic, FileCounts};
 use crate::resolver::{
     ResolveWarning, ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
     resolve_imports_for_analysis,
@@ -59,7 +59,7 @@ pub struct AnalysisReport {
 impl AnalysisReport {
     /// Every probe and analysis warning's text, once each.
     #[must_use]
-    pub fn diagnostics(&self) -> Vec<String> {
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
         diagnostic_lines(self.probe.warnings.iter().chain(&self.warnings))
     }
 
