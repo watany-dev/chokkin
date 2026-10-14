@@ -1918,9 +1918,10 @@ fn binary_invalid_notebook_is_skipped_with_a_diagnostic() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
         ),
         ("acme/__init__.py", ""),
+        ("acme/helper.py", ""),
         ("acme/demo.ipynb", "{\"cells\": 1}"),
     ]);
 
@@ -1948,7 +1949,14 @@ fn binary_invalid_notebook_is_skipped_with_a_diagnostic() {
             )
         })
         .collect();
-    assert_eq!(issues, [("CHK002", "requests", "likely")], "{parsed}");
+    assert_eq!(
+        issues,
+        [
+            ("CHK001", "acme/helper.py", "likely"),
+            ("CHK002", "requests", "likely"),
+        ],
+        "{parsed}"
+    );
 }
 
 /// A reachable module with a syntax error is skipped like an undecodable one:

@@ -642,9 +642,44 @@ mod tests {
 
     use super::*;
     use crate::ExitStatus;
+    use crate::parser::ParseDiagnostic;
     use crate::rules::IssueSubject;
     use crate::rules::RuleId;
     use crate::rules::Severity;
+
+    /// A syntax error names the skip even after an earlier warning; a
+    /// warning alone is the notebook's reason, and no diagnostic means the
+    /// bytes did not decode (#893).
+    #[test]
+    fn skip_reason_prefers_the_syntax_error() {
+        let diagnostic = |severity, message: &str| ParseDiagnostic {
+            line: 4,
+            message: message.to_owned(),
+            severity,
+        };
+        let mut module = ParsedModule::default();
+
+        assert_eq!(skip_reason(&module), SkipReason::Undecodable);
+        module
+            .diagnostics
+            .push(diagnostic(ParseSeverity::Warning, "invalid notebook JSON"));
+        assert_eq!(
+            skip_reason(&module),
+            SkipReason::InvalidNotebook {
+                message: "invalid notebook JSON".to_owned()
+            }
+        );
+        module
+            .diagnostics
+            .push(diagnostic(ParseSeverity::Error, "Expected a statement"));
+        assert_eq!(
+            skip_reason(&module),
+            SkipReason::SyntaxError {
+                line: 4,
+                message: "Expected a statement".to_owned()
+            }
+        );
+    }
 
     #[test]
     fn analyze_unused_dependency_fixture() {
