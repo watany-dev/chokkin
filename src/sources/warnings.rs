@@ -98,6 +98,16 @@ mod tests {
                 chosen: "packages/x/alpha".to_owned(),
             }
         );
+        let mut gitignore = SourcesWarning::GitignoreUnreadable {
+            path: ".gitignore".to_owned(),
+        };
+        gitignore.rebase("packages/x");
+        assert_eq!(
+            gitignore,
+            SourcesWarning::GitignoreUnreadable {
+                path: "packages/x/.gitignore".to_owned(),
+            }
+        );
         let unreadable = SourcesWarning::PathUnreadable {
             path: "/abs/packages/x/data".to_owned(),
             reason: "denied".to_owned(),
