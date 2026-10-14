@@ -110,10 +110,20 @@ pub(super) fn extract_requirements_path(
     path: &Path,
     default_context: &DependencyContext,
 ) -> (RequirementsExtraction, bool) {
-    let mut result = RequirementsExtraction::default();
-    let complete = parse_requirements_root(root, path, default_context, &mut result).is_ok()
-        && !result.skipped;
+    let (result, outcome) = extract_requirements_path_outcome(root, path, default_context);
+    let complete = outcome.is_ok() && !result.skipped;
     (result, complete)
+}
+
+/// [`extract_requirements_path`], keeping the error that stopped parsing.
+pub(super) fn extract_requirements_path_outcome(
+    root: &Path,
+    path: &Path,
+    default_context: &DependencyContext,
+) -> (RequirementsExtraction, Result<(), ManifestError>) {
+    let mut result = RequirementsExtraction::default();
+    let outcome = parse_requirements_root(root, path, default_context, &mut result);
+    (result, outcome)
 }
 
 fn parse_requirements_root(

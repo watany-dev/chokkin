@@ -17,7 +17,7 @@ use super::pep508::{Operator, parse_version_specifiers};
 use super::pep508_util::normalize_distribution_name;
 use super::pyproject::extract_pyproject;
 use super::requirements::{
-    extra_requirements_candidates, extract_requirements_file, extract_requirements_path,
+    extra_requirements_candidates, extract_requirements_file, extract_requirements_path_outcome,
     requirements_path_context,
 };
 use super::setup_cfg::extract_setup_cfg;
@@ -186,7 +186,7 @@ pub fn extract_manifest(
         constraints.extend(extracted.constraints);
         warnings.extend(extracted.warnings);
     }
-    read_extra_requirements(root_path, &mut sources, &mut dependencies);
+    read_extra_requirements(root_path, &mut sources, &mut dependencies, &mut warnings);
 
     // Only declarations from another source vouch for the runtime set; a
     // partially read setup.py may still hide the rest of it.
@@ -291,7 +291,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v17".to_owned(),
+            unit_version: "manifest-extract-v18".to_owned(),
         },
         inputs,
     })
@@ -319,12 +319,13 @@ fn manifest_inputs_for_payload(
 /// like a PEP 735 one, so it never duplicates another file or a
 /// `[dependency-groups]` mirror, and a file already read declares once. A `.txt`
 /// compiled from a sibling `.in` pins the whole environment, so only the `.in`
-/// declares. Best effort: a broken file there only loses its names, never a
-/// warning or an error.
+/// declares. Best effort: a broken file there only loses its names, never an
+/// error, but what it could not read is still a warning (#888).
 fn read_extra_requirements(
     root: &Path,
     sources: &mut ManifestSources,
     dependencies: &mut Vec<DeclaredDependency>,
+    warnings: &mut Vec<ManifestWarning>,
 ) {
     let candidates = extra_requirements_candidates(root);
     let compiled = |file: &str| {
@@ -337,11 +338,18 @@ fn read_extra_requirements(
         if sources.requirements_files.contains(&rel) {
             continue;
         }
-        let (extracted, complete) =
-            extract_requirements_path(root, path, &DependencyContext::Runtime);
+        let (extracted, outcome) =
+            extract_requirements_path_outcome(root, path, &DependencyContext::Runtime);
+        warnings.extend(extracted.warnings);
+        if let Err(error) = &outcome {
+            warnings.push(ManifestWarning::RequirementsUnreadable {
+                file: rel.clone(),
+                reason: unreadable_reason(error),
+            });
+        }
         // Unreadable: nothing to declare, and the scan cache could not
         // fingerprint it.
-        if !complete && extracted.dependencies.is_empty() {
+        if (outcome.is_err() || extracted.skipped) && extracted.dependencies.is_empty() {
             continue;
         }
         sources.extra_requirements.extend(
@@ -365,6 +373,15 @@ fn read_extra_requirements(
         }));
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
+    }
+}
+
+/// Why an extra requirements file stopped parsing, without the absolute path
+/// an I/O error names.
+fn unreadable_reason(error: &ManifestError) -> String {
+    match error {
+        ManifestError::Io { .. } => "could not be read".to_owned(),
+        _ => error.to_string(),
     }
 }
 

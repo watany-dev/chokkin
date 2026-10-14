@@ -157,6 +157,8 @@ pub(super) fn probe_project_with_cache(
         sources.python_files().map(|file| file.path.as_str()),
     );
     let mut warnings = collect_warnings(&manifest, &sources);
+    // After `drop_dev_only_members`: a dropped member is not analyzed.
+    warnings.extend(member_manifest_warnings(&workspace_inputs));
     warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
     if loaded.auto_workspace {
         warnings.push(ProbeWarning::AutoWorkspace { member_count });
@@ -183,6 +185,23 @@ pub(super) fn probe_project_with_cache(
         plugin_activations,
         warnings,
     })
+}
+
+/// Each member's manifest warnings, under root-relative paths (#888).
+fn member_manifest_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<ProbeWarning> {
+    workspace_inputs
+        .iter()
+        .flat_map(|input| {
+            input
+                .manifest
+                .warnings
+                .iter()
+                .map(|warning| ProbeWarning::MemberManifest {
+                    member: input.member.path.clone(),
+                    warning: warning.clone().rebased(&input.member.path),
+                })
+        })
+        .collect()
 }
 
 /// hatchling runs its build hooks while building and never ships them, so

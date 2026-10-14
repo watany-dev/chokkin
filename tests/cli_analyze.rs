@@ -2036,6 +2036,56 @@ fn binary_entry_warnings_reach_stderr() {
     );
 }
 
+/// Member manifests and the extra requirements files are read like the root
+/// manifest, so what they could not read is reported too, under root-relative
+/// paths (#888).
+#[test]
+fn binary_member_and_extra_requirements_warnings_reach_stderr() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("requirements/docs.txt", "sphinx\nnot a requirement!!\n"),
+        ("requirements/ci.txt", "pytest\n-r missing-base.txt\n"),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.1.0\"\n\
+             dependencies = [\"requests >= 2 ;;\"]\n\n[tool.poetry]\n",
+        ),
+        ("packages/tool/tool/__init__.py", ""),
+        (
+            "packages/dyn/pyproject.toml",
+            "[project]\nname = \"dyn\"\nversion = \"0.1.0\"\ndynamic = [\"dependencies\"]\n",
+        ),
+        ("packages/dyn/dyn/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for line in [
+        "manifest: invalid requirement at `requirements/docs.txt:2`: not a requirement!!",
+        "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
+        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;",
+        "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
+        "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically",
+    ] {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    assert!(
+        diagnostics.contains("packages/dyn/pyproject.toml"),
+        "{diagnostics}"
+    );
+}
+
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not
 /// abort the run (#486).
 #[test]

@@ -13,6 +13,14 @@ use crate::sources::SourcesWarning;
 pub enum ProbeWarning {
     /// Warning from manifest extraction.
     Manifest(ManifestWarning),
+    /// Warning from a workspace member's manifest, with its files rebased
+    /// onto the root.
+    MemberManifest {
+        /// Root-relative member directory.
+        member: String,
+        /// The member's warning.
+        warning: ManifestWarning,
+    },
     /// Warning from source file discovery.
     Sources(SourcesWarning),
     /// Warning from plugin hint extraction.
@@ -59,6 +67,9 @@ impl fmt::Display for ProbeWarning {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
+            Self::MemberManifest { member, warning } => {
+                write_member_manifest_warning(formatter, member, warning)
+            },
             Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
             Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
             Self::Entry(warning) => fmt::Display::fmt(warning, formatter),
@@ -98,6 +109,31 @@ impl fmt::Display for ProbeWarning {
                 message,
             } => write!(formatter, "parse: `{path}:{line}`: {message}"),
         }
+    }
+}
+
+/// A member's warning reads like the root's, except that a warning naming no
+/// file names the member, and runtime dependencies it could not read do not
+/// lower any finding: only the root's do (#888 step 4).
+fn write_member_manifest_warning(
+    formatter: &mut fmt::Formatter<'_>,
+    member: &str,
+    warning: &ManifestWarning,
+) -> fmt::Result {
+    match warning {
+        ManifestWarning::RuntimeDependenciesUnknown { file } => write!(
+            formatter,
+            "manifest: runtime dependencies in `{file}` could not be read statically"
+        ),
+        ManifestWarning::PoetryDetected
+        | ManifestWarning::PdmDetected
+        | ManifestWarning::HatchDetected
+        | ManifestWarning::RequirementsConstraintMissing { .. } => {
+            let text = ProbeWarning::Manifest(warning.clone()).to_string();
+            let rest = text.strip_prefix("manifest: ").unwrap_or(&text);
+            write!(formatter, "manifest: `{member}`: {rest}")
+        },
+        _ => write_manifest_warning(formatter, warning),
     }
 }
 
@@ -158,6 +194,9 @@ fn write_manifest_warning(
         ),
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
+        },
+        ManifestWarning::RequirementsUnreadable { file, reason } => {
+            write!(formatter, "manifest: stopped reading `{file}`: {reason}")
         },
         ManifestWarning::FileUndecodable { file } => write!(
             formatter,
@@ -373,6 +412,52 @@ mod tests {
             .to_string(),
             "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)"
         );
+    }
+
+    #[test]
+    fn member_manifest_warnings_name_root_relative_files_or_the_member() {
+        let member = |warning: ManifestWarning| ProbeWarning::MemberManifest {
+            member: "packages/x".to_owned(),
+            warning: warning.rebased("packages/x"),
+        };
+        let cases = [
+            (
+                member(ManifestWarning::MetadataConflict {
+                    field: "name".to_owned(),
+                    kept: "a".to_owned(),
+                    ignored: "b".to_owned(),
+                    kept_source: "pyproject.toml".to_owned(),
+                    ignored_source: "setup.cfg".to_owned(),
+                }),
+                "manifest: metadata conflict on `name`: kept `a` from `packages/x/pyproject.toml`, ignored `b` from `packages/x/setup.cfg`",
+            ),
+            (
+                member(ManifestWarning::HatchDetected),
+                "manifest: `packages/x`: Hatch sections detected (partial dependency extraction)",
+            ),
+            (
+                member(ManifestWarning::RequirementsConstraintMissing {
+                    path: "c.txt".to_owned(),
+                }),
+                "manifest: `packages/x`: missing constraints file `c.txt`",
+            ),
+            (
+                member(ManifestWarning::RuntimeDependenciesUnknown {
+                    file: "setup.py".to_owned(),
+                }),
+                "manifest: runtime dependencies in `packages/x/setup.py` could not be read statically",
+            ),
+            (
+                ProbeWarning::Manifest(ManifestWarning::RequirementsUnreadable {
+                    file: "requirements/ci.txt".to_owned(),
+                    reason: "could not be read".to_owned(),
+                }),
+                "manifest: stopped reading `requirements/ci.txt`: could not be read",
+            ),
+        ];
+        for (warning, expected) in cases {
+            assert_eq!(warning.to_string(), expected);
+        }
     }
 
     #[test]

@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::path_util::join_rel;
+
 /// Warning that does not prevent manifest extraction from completing.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +70,14 @@ pub enum ManifestWarning {
         /// Missing constraints file path as written.
         path: String,
     },
+    /// An extra requirements file stopped parsing partway; what came before
+    /// the error is kept.
+    RequirementsUnreadable {
+        /// Root-relative file path.
+        file: String,
+        /// Why parsing stopped.
+        reason: String,
+    },
     /// A PEP 735 `{include-group = "..."}` names a group that is not defined.
     DependencyGroupIncludeUndefined {
         /// Root-relative path to `pyproject.toml`.
@@ -97,4 +107,83 @@ pub enum ManifestWarning {
         /// Why the block was rejected.
         reason: String,
     },
+}
+
+impl ManifestWarning {
+    /// The same warning with every file joined onto `base`, the
+    /// root-relative directory of the manifest that emitted it.
+    #[must_use]
+    pub(crate) fn rebased(self, base: &str) -> Self {
+        let join = |file: String| join_rel(base, &file);
+        match self {
+            Self::SetupPyNotStatic { file } => Self::SetupPyNotStatic { file: join(file) },
+            Self::RuntimeDependenciesUnknown { file } => {
+                Self::RuntimeDependenciesUnknown { file: join(file) }
+            },
+            Self::InvalidRequirementLine {
+                file,
+                line,
+                label,
+                raw,
+            } => Self::InvalidRequirementLine {
+                file: join(file),
+                line,
+                label,
+                raw,
+            },
+            Self::SetupPyPartiallyStatic { file, argument } => Self::SetupPyPartiallyStatic {
+                file: join(file),
+                argument,
+            },
+            Self::MetadataConflict {
+                field,
+                kept,
+                ignored,
+                kept_source,
+                ignored_source,
+            } => Self::MetadataConflict {
+                field,
+                kept,
+                ignored,
+                kept_source: join(kept_source),
+                ignored_source: join(ignored_source),
+            },
+            Self::RequirementsOptionIgnored { file, line, raw } => {
+                Self::RequirementsOptionIgnored {
+                    file: join(file),
+                    line,
+                    raw,
+                }
+            },
+            Self::RequirementsUnreadable { file, reason } => Self::RequirementsUnreadable {
+                file: join(file),
+                reason,
+            },
+            Self::DependencyGroupIncludeUndefined {
+                file,
+                group,
+                include,
+            } => Self::DependencyGroupIncludeUndefined {
+                file: join(file),
+                group,
+                include,
+            },
+            Self::DependencyGroupIncludeCycle { file, groups } => {
+                Self::DependencyGroupIncludeCycle {
+                    file: join(file),
+                    groups,
+                }
+            },
+            Self::FileUndecodable { file } => Self::FileUndecodable { file: join(file) },
+            Self::InlineScriptInvalid { file, reason } => Self::InlineScriptInvalid {
+                file: join(file),
+                reason,
+            },
+            // No file to rebase: the member path is printed beside them.
+            warning @ (Self::PoetryDetected
+            | Self::PdmDetected
+            | Self::HatchDetected
+            | Self::RequirementsConstraintMissing { .. }) => warning,
+        }
+    }
 }
