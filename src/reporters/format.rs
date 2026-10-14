@@ -1,7 +1,9 @@
 //! Shared formatting helpers for reporters.
 
 use crate::manifest::DependencyOrigin;
-use crate::rules::{Issue, IssueLocation, IssueReport, IssueSubject, RuleId, SuppressReason};
+use crate::rules::{
+    Issue, IssueLocation, IssueReport, IssueSubject, RuleId, SuppressReason, import_site,
+};
 
 /// Format a primary location column for human reporters.
 pub(super) fn format_location_column(location: &IssueLocation) -> String {
@@ -30,7 +32,7 @@ pub(super) fn format_subject(subject: &IssueSubject) -> String {
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
         IssueSubject::Import {
             module, file, line, ..
-        } => format!("{file}:{line} {module}"),
+        } => format!("{} {module}", import_site(file, *line)),
         IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
     }
 }
@@ -118,5 +120,18 @@ mod tests {
             format_issue_subject(&issue),
             "api:services/api/src/api/main.py:1 requests"
         );
+    }
+
+    /// Line 0 is a plugin reference with no position (#835).
+    #[test]
+    fn plugin_import_subject_has_no_line() {
+        let subject = IssueSubject::Import {
+            module: "myapp".to_owned(),
+            file: "mysite/settings.py".to_owned(),
+            line: 0,
+            distribution: None,
+        };
+
+        assert_eq!(format_subject(&subject), "mysite/settings.py myapp");
     }
 }

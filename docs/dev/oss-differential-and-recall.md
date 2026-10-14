@@ -196,6 +196,16 @@ warm (cache reused) and `--no-cache`. It then gates the 90 JSON outputs:
 | schema | valid against `docs/schema/chokkin-report.schema.json`; `summary.total`/`by_code` agree with `issues` | 30/30 valid | PASS |
 | crash | no exit 3 and no non-JSON output | 0 crashed | PASS |
 
+`scripts/oss-gate.py --in-repo` runs the same three gates without clones,
+over the recall sentinels and every in-repo fixture project
+(`tests/fixtures/*/*`). The invalid-config fixtures listed in
+`scripts/oss-gate-rejected.txt` must be rejected with exit 2 and no output on
+every run, and are not gated otherwise; a fourth gate, rejection, fails when
+one of them is accepted, and any other rejected fixture fails the crash gate.
+The CI workflow's
+`oss-gate` job runs it on every pull request; `oss-metrics.yml` runs the
+corpus version (#835).
+
 The recall sentinels include CHK004 (`lock_unused_pylock`, `lock_unused_poetry`,
 `lock_unused_pdm`). `make oss-metrics` gates their expected findings and the
 determinism gate gates their stability.
