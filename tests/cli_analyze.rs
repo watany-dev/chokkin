@@ -2086,6 +2086,36 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
     );
 }
 
+/// An extra requirements file that stops at a missing include still watches
+/// that include, so creating it refreshes the cached run (#888).
+#[test]
+fn binary_cached_run_sees_a_created_extra_requirements_include() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("requirements/ci.txt", "-r ../shared.txt\n"),
+    ]);
+    let run = || {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        String::from_utf8(output.stderr).expect("utf8")
+    };
+    let stopped = "manifest: stopped reading `requirements/ci.txt`";
+
+    let stderr = run();
+    assert!(stderr.contains(stopped), "{stderr}");
+
+    fs::write(project.path().join("shared.txt"), "pytest\n").expect("write include");
+    let stderr = run();
+    assert!(!stderr.contains(stopped), "{stderr}");
+}
+
 /// An include shared by several requirements files is read once per includer,
 /// but its warning is printed once (#888).
 #[test]

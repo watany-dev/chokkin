@@ -347,6 +347,9 @@ fn read_extra_requirements(
                 reason: unreadable_reason(error),
             });
         }
+        // A missing include is watched even when nothing was declared, so
+        // creating it refreshes the cached run.
+        sources.requirements_missing.extend(extracted.files_missing);
         // Unreadable: nothing to declare, and the scan cache could not
         // fingerprint it.
         if (outcome.is_err() || extracted.skipped) && extracted.dependencies.is_empty() {
@@ -372,7 +375,6 @@ fn read_extra_requirements(
             Some(dep)
         }));
         sources.requirements_files.extend(extracted.files_read);
-        sources.requirements_missing.extend(extracted.files_missing);
     }
 }
 
