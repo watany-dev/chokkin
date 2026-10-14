@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mkdocs-macros-plugin` to `mkdocs_macros`, and `mkdocstrings-python` to
   `mkdocstrings_handlers.python`. airflow's `sphinxarg` and `autoapi` Sphinx
   extensions are no longer CHK010 (#822).
+- An arbitrary-equality (`===`) value in a manifest requirement is read the
+  way `packaging` reads it: up to whitespace, `;` or `)`, commas included,
+  with empty items dropped. `foo===1.0,,>=1` is accepted, and
+  `foo===1.0, >=1` is an invalid requirement. `foo_ @ <url>` is an invalid
+  requirement instead of a dependency with an empty name. Names and extras
+  ending in `_` stay invalid even though `packaging` accepts them (#572).
 
 ## [0.7.5] - 2026-10-12
 

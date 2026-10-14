@@ -5,49 +5,67 @@
       "input": "foo==1.99999999999999999999",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "==1.99999999999999999999"
+      ]
     },
     {
       "input": "foo>=1.99999999999999999999",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        ">=1.99999999999999999999"
+      ]
     },
     {
       "input": "foo~=1.99999999999999999999",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "~=1.99999999999999999999"
+      ]
     },
     {
       "input": "foo===1.*",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "===1.*"
+      ]
     },
     {
       "input": "foo===",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "==="
+      ]
     },
     {
       "input": "foo @ HTTPS://example.com/foo.whl",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @ Git+HTTPS://example.com/foo.git",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @ ftp://example.com/foo.tar.gz",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @ https://example.com/a b.whl",
@@ -59,13 +77,15 @@
       "name": "foo-whl",
       "extras": [
         "tests"
-      ]
+      ],
+      "specifiers": []
     },
     {
       "input": "foo.tar.gz",
       "valid": true,
       "name": "foo-tar-gz",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo[tests,]",
@@ -83,13 +103,15 @@
       "input": "A",
       "valid": true,
       "name": "a",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "Foo_Bar.baz-qux",
       "valid": true,
       "name": "foo-bar-baz-qux",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo-",
@@ -103,7 +125,8 @@
       "input": "foo[]",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo [ Tests , Dev ]",
@@ -112,7 +135,8 @@
       "extras": [
         "dev",
         "tests"
-      ]
+      ],
+      "specifiers": []
     },
     {
       "input": "foo[tests dev]",
@@ -130,13 +154,21 @@
       "input": "foo>=1.0,<2",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "<2",
+        ">=1.0"
+      ]
     },
     {
       "input": "foo (>=1.0, <2)",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "<2",
+        ">=1.0"
+      ]
     },
     {
       "input": "foo (>=1.0",
@@ -146,13 +178,20 @@
       "input": "foo>=1.0,",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        ">=1.0"
+      ]
     },
     {
       "input": "foo (>=1.0, <2 ,)",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "<2",
+        ">=1.0"
+      ]
     },
     {
       "input": "foo>=1.0,,",
@@ -166,13 +205,19 @@
       "input": "foo==1.0.*",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "==1.0.*"
+      ]
     },
     {
       "input": "foo!=1.0.*",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "!=1.0.*"
+      ]
     },
     {
       "input": "foo>=1.0.*",
@@ -190,7 +235,10 @@
       "input": "foo~=1.0.post1",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "~=1.0.post1"
+      ]
     },
     {
       "input": "foo>=1.0+local",
@@ -200,25 +248,37 @@
       "input": "foo==1.0+local",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "==1.0+local"
+      ]
     },
     {
       "input": "foo===2013b-custom",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "===2013b-custom"
+      ]
     },
     {
       "input": "foo==v1.0",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "==v1.0"
+      ]
     },
     {
       "input": "foo==1!2.0rc1.post3.dev4",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": [
+        "==1!2.0rc1.post3.dev4"
+      ]
     },
     {
       "input": "foo>= 1.0 extra",
@@ -236,25 +296,29 @@
       "input": "foo @ https://h/x.whl ; python_version < '3.11'",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @ https://h/x.whl;python_version<'3.11'",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @ https://h/x.whl#sha256=abc",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @ file:///tmp/x",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @ https://h/x trailing",
@@ -264,7 +328,8 @@
       "input": "foo@https://h/x",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo @",
@@ -274,19 +339,22 @@
       "input": "foo ; python_version >= '3.8'",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo; extra == 'tests' and (os_name == 'nt' or sys_platform == 'linux')",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo ; extra not in 'a'",
       "valid": true,
       "name": "foo",
-      "extras": []
+      "extras": [],
+      "specifiers": []
     },
     {
       "input": "foo ;",
@@ -310,6 +378,175 @@
     },
     {
       "input": "foo ; python_version == '3",
+      "valid": false
+    },
+    {
+      "input": "foo_",
+      "valid": true,
+      "name": "foo-",
+      "extras": [],
+      "specifiers": []
+    },
+    {
+      "input": "foo-_",
+      "valid": true,
+      "name": "foo-",
+      "extras": [],
+      "specifiers": []
+    },
+    {
+      "input": "foo._",
+      "valid": true,
+      "name": "foo-",
+      "extras": [],
+      "specifiers": []
+    },
+    {
+      "input": "foo_.",
+      "valid": false
+    },
+    {
+      "input": "foo[te_]",
+      "valid": true,
+      "name": "foo",
+      "extras": [
+        "te-"
+      ],
+      "specifiers": []
+    },
+    {
+      "input": "foo_[a]>=1",
+      "valid": true,
+      "name": "foo-",
+      "extras": [
+        "a"
+      ],
+      "specifiers": [
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo_ @ https://h/x.whl",
+      "valid": true,
+      "name": "foo-",
+      "extras": [],
+      "specifiers": []
+    },
+    {
+      "input": "foo- @ https://h/x.whl",
+      "valid": false
+    },
+    {
+      "input": "foo===1.0,>=1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo===1.0 , >=1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo===1.0, >=1",
+      "valid": false
+    },
+    {
+      "input": "foo (===1.0,>=1)",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo (===1.0, >=1)",
+      "valid": false
+    },
+    {
+      "input": "foo===1.0,,",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0"
+      ]
+    },
+    {
+      "input": "foo===1.0,,>=1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo>=1,===2,,",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===2",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo===,>=1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo=== 1.0,>=1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo===1.0,>= 2",
+      "valid": false
+    },
+    {
+      "input": "foo===1.0,foo",
+      "valid": false
+    },
+    {
+      "input": "foo===1.0)",
+      "valid": false
+    },
+    {
+      "input": "foo===1.0,>=1;python_version>'3'",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0",
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo>=1,,<2",
       "valid": false
     }
   ]

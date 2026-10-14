@@ -9,6 +9,7 @@ from pathlib import Path
 
 import packaging
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import InvalidSpecifier
 from packaging.utils import canonicalize_name
 
 CASES = [
@@ -73,19 +74,47 @@ CASES = [
     "foo ; python_version << '3'",
     "foo ; (python_version == '3'",
     "foo ; python_version == '3",
+    # Issue #572: `packaging` ends a name at a word boundary, so `_` may end it
+    "foo_",
+    "foo-_",
+    "foo._",
+    "foo_.",
+    "foo[te_]",
+    "foo_[a]>=1",
+    "foo_ @ https://h/x.whl",
+    "foo- @ https://h/x.whl",
+    # Issue #572: `===` reads up to whitespace, `;` or `)`, commas included,
+    # and the set is split on commas afterwards
+    "foo===1.0,>=1",
+    "foo===1.0 , >=1",
+    "foo===1.0, >=1",
+    "foo (===1.0,>=1)",
+    "foo (===1.0, >=1)",
+    "foo===1.0,,",
+    "foo===1.0,,>=1",
+    "foo>=1,===2,,",
+    "foo===,>=1",
+    "foo=== 1.0,>=1",
+    "foo===1.0,>= 2",
+    "foo===1.0,foo",
+    "foo===1.0)",
+    "foo===1.0,>=1;python_version>'3'",
+    "foo>=1,,<2",
 ]
 
 
 def read(raw: str) -> dict:
     try:
         req = Requirement(raw)
-    except InvalidRequirement:
+    # Before 26.0, a bad item after `===`'s commas escapes as InvalidSpecifier.
+    except (InvalidRequirement, InvalidSpecifier):
         return {"input": raw, "valid": False}
     return {
         "input": raw,
         "valid": True,
         "name": canonicalize_name(req.name),
         "extras": sorted(canonicalize_name(extra) for extra in req.extras),
+        "specifiers": sorted(str(specifier) for specifier in req.specifier),
     }
 
 

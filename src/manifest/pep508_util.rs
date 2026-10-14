@@ -124,11 +124,13 @@ fn egg_name_fallback(trimmed: &str) -> Option<String> {
     extract_egg_name(trimmed)
 }
 
-/// `name [extras] @ ...`, the PEP 508 direct-reference form.
+/// `name [extras] @ ...`, the PEP 508 direct-reference form. The name only
+/// needs name characters, so `foo_ @ url` is a malformed requirement rather
+/// than an opaque URL.
 fn is_direct_reference(trimmed: &str) -> bool {
     trimmed.split_once('@').is_some_and(|(head, _)| {
         let name = head.split('[').next().unwrap_or(head).trim();
-        leading_name_token(name) == name && is_strict_pep508_name(name)
+        !name.is_empty() && leading_name_token(name) == name
     })
 }
 
@@ -346,6 +348,9 @@ mod tests {
         for raw in [
             "foo @ https://h/a b.whl",
             "foo[x] @ https://h/a b.whl#egg=foo",
+            // #572: a name `packaging` reads but PEP 508 rejects
+            "foo_ @ https://h/x.whl",
+            "foo- @ https://h/x.whl",
         ] {
             assert!(
                 parse_requirement(raw, DependencyContext::Runtime, origin.clone()).is_err(),
