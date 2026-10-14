@@ -268,13 +268,8 @@ impl<'a> Evaluator<'a> {
 
     /// `reqs.append(...)` and friends change a value we only track by assignment.
     fn taint_mutation(&mut self, call: &ExprCall) {
-        let Expr::Attribute(attribute) = &*call.func else {
-            return;
-        };
-        if let Some(value) = self.place_mut(&attribute.value) {
-            value.taint();
-        } else {
-            self.taint_target(&attribute.value);
+        if let Expr::Attribute(attribute) = &*call.func {
+            self.taint_place(&attribute.value);
         }
     }
 
@@ -290,7 +285,7 @@ impl<'a> Evaluator<'a> {
                     {
                         items.retain(|(existing, _)| *existing != key);
                     } else {
-                        self.taint_target(&subscript.value);
+                        self.taint_place(&subscript.value);
                     }
                 },
                 Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
@@ -317,6 +312,16 @@ impl<'a> Evaluator<'a> {
                 }
             },
             _ => None,
+        }
+    }
+
+    /// The value `expr` refers to may have changed: taint it, or the
+    /// variables it may reach when it is not a place we track.
+    fn taint_place(&mut self, expr: &Expr) {
+        if let Some(value) = self.place_mut(expr) {
+            value.taint();
+        } else {
+            self.taint_target(expr);
         }
     }
 
@@ -421,14 +426,15 @@ impl<'a> Evaluator<'a> {
             Expr::Name(name) => {
                 self.env.insert(name.id.to_string(), value);
             },
+            // As with `del`, a key that is not a string or a base that is not
+            // a dict leaves the base partial.
             Expr::Subscript(subscript) => {
-                let (Expr::Name(base), Value::Str(key)) =
-                    (&*subscript.value, self.eval(&subscript.slice))
-                else {
-                    return;
-                };
-                if let Some(Value::Dict(items)) = self.env.get_mut(base.id.as_str()) {
+                if let Value::Str(key) = self.eval(&subscript.slice)
+                    && let Some(Value::Dict(items)) = self.place_mut(&subscript.value)
+                {
                     insert_entry(items, key, value);
+                } else {
+                    self.taint_place(&subscript.value);
                 }
             },
             Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
@@ -1404,12 +1410,13 @@ mod props {
         Some((install_strings, pairs))
     }
 
-    const MUTATIONS: [&str; 5] = [
+    const MUTATIONS: [&str; 6] = [
         ".append('z')",
         ".extend(['z'])",
         ".insert(0, 'z')",
         ".clear()",
         ".remove('a')",
+        "[0] = 'z'",
     ];
 
     /// Statements outside the modelled subset, applied to a variable of any kind.
@@ -1605,6 +1612,85 @@ mod props {
                 "c".to_owned(),
                 Py::List(vec![Py::Str("z".to_owned())])
             )]))
+        );
+    }
+
+    #[test]
+    fn assignment_under_an_unknown_key_marks_the_dict_partial() {
+        let call = evaluate(
+            "extras = {'s3': ['boto3']}\nkey = compute()\nextras[key] = ['gcs']\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        assert_eq!(call.keyword("extras_require"), Some(&Value::Unknown));
+    }
+
+    #[test]
+    fn index_assignment_marks_the_list_partial() {
+        let call = evaluate("reqs = ['a']\nreqs[0] = 'b'\nsetup(install_requires=reqs)\n")
+            .expect("setup() call");
+        let value = call.keyword("install_requires").expect("install_requires");
+        assert!(!dependency_items(value).complete);
+    }
+
+    #[test]
+    fn nested_subscript_assignment_follows_string_keys() {
+        let call = evaluate(
+            "extras = {'dev': {'lint': ['ruff']}, 'test': ['pytest']}\n\
+             extras['dev']['type'] = ['mypy']\n\
+             extras['test'][0] = 'nose'\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        let Some(Value::Dict(items)) = call.keyword("extras_require") else {
+            panic!("extras_require is not a dict");
+        };
+        let list = |texts: &[&str]| {
+            Value::List(
+                texts
+                    .iter()
+                    .map(|text| Value::Str((*text).to_owned()))
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            items,
+            &vec![
+                (
+                    "dev".to_owned(),
+                    Value::Dict(vec![
+                        ("lint".to_owned(), list(&["ruff"])),
+                        ("type".to_owned(), list(&["mypy"])),
+                    ])
+                ),
+                (
+                    "test".to_owned(),
+                    Value::List(vec![Value::Str("pytest".to_owned()), Value::Unknown])
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn del_by_index_marks_only_that_entry_partial() {
+        let call = evaluate(
+            "extras = {'dev': ['ruff'], 'test': ['pytest']}\ndel extras['dev'][0]\n\
+             setup(extras_require=extras)\n",
+        )
+        .expect("setup() call");
+        let Some(Value::Dict(items)) = call.keyword("extras_require") else {
+            panic!("extras_require is not a dict");
+        };
+        assert_eq!(
+            items[0],
+            (
+                "dev".to_owned(),
+                Value::List(vec![Value::Str("ruff".to_owned()), Value::Unknown])
+            )
+        );
+        assert_eq!(
+            known(Some(&items[1].1)),
+            Some(Py::List(vec![Py::Str("pytest".to_owned())]))
         );
     }
 
