@@ -2965,7 +2965,7 @@ Negative trace for src/acme/legacy.py:
   reason: not reachable from any entry root
 
   entry roots analyzed:
-    ├─ src/acme/__main__.py (auto: auto:__main__.py)
+    ├─ src/acme/__main__.py (auto: __main__.py)
     ├─ src/acme/backend.py (build backend: PEP 517)
     ├─ src/acme/cli.py (config)
     ├─ src/acme/main.py (manifest: [console].acme)

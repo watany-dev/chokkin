@@ -4,13 +4,13 @@
     {
       "path": "src/acme/__init__.py",
       "origins": [
-        "auto:auto:library package"
+        "auto:library package"
       ]
     },
     {
       "path": "src/acme/__main__.py",
       "origins": [
-        "auto:auto:__main__.py"
+        "auto:__main__.py"
       ]
     },
     {

@@ -1147,7 +1147,7 @@ mod tests {
             let entry = EntryPlan {
                 mode,
                 roots: vec![
-                    root_at("src/acme/main.py", "auto:library package"),
+                    root_at("src/acme/main.py", "library package"),
                     root_at("src/acme/b.py", LIBRARY_SUBPACKAGE_RULE),
                 ],
                 ..entry_plan()
