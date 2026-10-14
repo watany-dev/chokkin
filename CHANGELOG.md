@@ -78,6 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`tool = "tool.cli:Cli.main [cli]"`) marks the object it starts from
   (`Cli`) as used, so that class is no longer CHK006, nor CHK007 when a
   package re-exports it (#872).
+- A host hook that a package re-exports from a submodule (a Sphinx
+  extension's `from .core import setup`, a pytest plugin's `pytest_*` hook,
+  a PEP 517 backend package's `build_wheel`) is no longer CHK007, since the
+  host reads it from the package (#873).
 
 ## [0.7.5] - 2026-10-12
 

@@ -2746,6 +2746,45 @@ fn binary_pep517_backend_modules_are_entry_roots() {
     );
 }
 
+/// A backend package that re-exports its hooks from `__init__.py`: the
+/// frontend reads them from the package, so they are no CHK007, even the
+/// optional hooks `__all__` leaves out (#873).
+#[test]
+fn binary_pep517_backend_package_reexports_are_not_chk007() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+        (
+            "src/acme/backend/__init__.py",
+            "from ._impl import build_sdist, build_wheel, helper, \
+             prepare_metadata_for_build_wheel\n\n\
+             __all__ = [\"build_sdist\", \"build_wheel\"]\n",
+        ),
+        (
+            "src/acme/backend/_impl.py",
+            "def build_wheel(wheel_directory):\n    pass\n\n\
+             def build_sdist(sdist_directory):\n    pass\n\n\
+             def prepare_metadata_for_build_wheel(metadata_directory):\n    pass\n\n\
+             def helper():\n    pass\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        issue_keys(&issues),
+        [(
+            "CHK007".to_owned(),
+            "src/acme/backend/__init__.py:helper".to_owned()
+        )],
+        "{issues:#?}"
+    );
+}
+
 /// An in-tree backend under `backend-path` runs in the build environment, so
 /// its imports resolve through `[build-system].requires`, and the frontend
 /// calls its hooks (#782).
