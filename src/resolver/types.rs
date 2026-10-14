@@ -84,7 +84,7 @@ pub enum ResolveWarning {
     },
     /// Project `.venv` metadata could not be read.
     VenvUnreadable {
-        /// Virtualenv path.
+        /// Root-relative virtualenv path.
         path: String,
         /// Failure reason.
         reason: String,

@@ -20,7 +20,7 @@ use crate::reachability::{
 };
 use crate::reporters::FileCounts;
 use crate::resolver::{
-    ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
+    ResolveWarning, ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
     resolve_imports_for_analysis,
 };
 use crate::rules::deps::local_source_member;
@@ -264,6 +264,14 @@ fn run_analysis_core(
         &scoped_declarations(probe),
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
+    warnings.extend(
+        resolution
+            .warnings
+            .iter()
+            .filter(|warning| !matches!(warning, ResolveWarning::UnresolvedImport { .. }))
+            .cloned()
+            .map(ProbeWarning::Resolve),
+    );
 
     let mut reachability =
         analyze_reachability(&mut graph, sources, &entry, &plugins, &parse, production)?;

@@ -2086,6 +2086,68 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
     );
 }
 
+/// The resolver's ambiguous mappings and an unreadable `.venv` lower or drop
+/// what resolution knows, so they are reported too (#888).
+#[test]
+fn binary_resolver_warnings_reach_stderr() {
+    let ambiguous = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", "import shared\n"),
+        (
+            ".venv/lib/python3.11/site-packages/alpha-1.0.dist-info/METADATA",
+            "Name: alpha\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/alpha-1.0.dist-info/top_level.txt",
+            "shared\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/beta-1.0.dist-info/METADATA",
+            "Name: beta\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/beta-1.0.dist-info/top_level.txt",
+            "shared\n",
+        ),
+    ]);
+    let unreadable = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        (".venv/pyvenv.cfg", ""),
+    ]);
+
+    for (project, line) in [
+        (
+            &ambiguous,
+            "resolve: import `shared` maps to several distributions (alpha, beta)",
+        ),
+        (
+            &unreadable,
+            "resolve: could not read virtualenv `.venv`: site-packages not found",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        assert!(
+            parsed["diagnostics"].to_string().contains("resolve: "),
+            "{}",
+            parsed["diagnostics"]
+        );
+    }
+}
+
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not
 /// abort the run (#486).
 #[test]

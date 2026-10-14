@@ -399,6 +399,8 @@ PEP 723 script の CHK002/CHK003 は script block に対して判定する。scr
 
 `azure` のように root 自体を提供する distribution が無い namespace は dotted key(`azure.identity` など)だけを bundled map に載せ、未登録の sub-package を任意の 1 distribution に誤って寄せない。同じ import 名を別の distribution も提供する場合(`paddle` の `paddlepaddle` / `paddlepaddle-gpu`、`haystack` の `haystack-ai` / `farm-haystack`)は両方を載せる。片方だけだと、もう片方を宣言した project では step 8 の宣言名照合より先に map の候補で決まり、宣言は未使用・import は未宣言に見えてしまう。候補が複数あれば import site ごとに宣言されている方を選ぶ(#732, #748)。map に無い namespace portion は、root が step 8 の宣言名照合で `Unknown` のままなら、先頭 2 segment を `-` で繋いだ名前(`sphinxcontrib.log_cabinet` → `sphinxcontrib-log-cabinet`、`sphinxext.opengraph` → `sphinxext-opengraph`)を同じく宣言依存・lock 名と照合する(confidence `Likely`)。共有 root だけでは distribution を決めない(#809)。bundled map は `data/package-map.seed.json` から `scripts/generate-package-map.py` で生成し、`--verify-wheels`(ネットワーク必須、CI 対象外)で各 entry の import 名を PyPI 最新 wheel の `top_level.txt` / RECORD と照合する。
 
+resolver の warning は pipeline warning として報告する(#888)。venv・map で 1 つの import root に distribution 候補が複数あるときは `resolve: import `<root>` maps to several distributions (<候補>)`、`.venv` / `venv` はあるが site-packages や metadata を読めないときは `resolve: could not read virtualenv `<root からの相対 path>`: <理由>` を出す。venv を読めなくても解析は venv なしの経路で続け、finding の confidence は変えない。未解決の import は warning ではなく CHK010 として報告する。
+
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 
 Core Metadata 2.5(PEP 794、2025年9月承認)には `Import-Name` と `Import-Namespace` が定義されており、distributionが提供するimport名を表す。ただし承認直後でエコシステムへの普及はこれからであり、当面はこのfieldを持つpackageがほぼ存在しない。したがって現時点ではbundled package-module-mapと `.venv` metadataを主情報源とし、`Import-Name` は普及に応じて優先度を上げていく将来の主情報源と位置付ける。

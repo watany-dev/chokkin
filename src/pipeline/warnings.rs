@@ -6,6 +6,7 @@ use std::io::{self, Write};
 use crate::entry::EntryWarning;
 use crate::manifest::ManifestWarning;
 use crate::plugins::PluginsWarning;
+use crate::resolver::ResolveWarning;
 use crate::sources::SourcesWarning;
 
 /// Non-fatal warning collected during probe or analysis pipeline steps.
@@ -27,6 +28,9 @@ pub enum ProbeWarning {
     Plugin(PluginsWarning),
     /// Warning from entry root construction.
     Entry(EntryWarning),
+    /// Warning from import resolution. Never
+    /// [`ResolveWarning::UnresolvedImport`]: CHK010 reports those.
+    Resolve(ResolveWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
     AutoWorkspace { member_count: usize },
     /// Nested projects outside the workspace were left out of the analysis.
@@ -73,6 +77,7 @@ impl fmt::Display for ProbeWarning {
             Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
             Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
             Self::Entry(warning) => fmt::Display::fmt(warning, formatter),
+            Self::Resolve(warning) => write_resolve_warning(formatter, warning),
             Self::AutoWorkspace { member_count } => write!(
                 formatter,
                 "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
@@ -109,6 +114,27 @@ impl fmt::Display for ProbeWarning {
                 message,
             } => write!(formatter, "parse: `{path}:{line}`: {message}"),
         }
+    }
+}
+
+fn write_resolve_warning(
+    formatter: &mut fmt::Formatter<'_>,
+    warning: &ResolveWarning,
+) -> fmt::Result {
+    match warning {
+        ResolveWarning::AmbiguousImport { import, candidates } => write!(
+            formatter,
+            "resolve: import `{import}` maps to several distributions ({})",
+            candidates.join(", ")
+        ),
+        ResolveWarning::UnresolvedImport { import, file, .. } => write!(
+            formatter,
+            "resolve: could not resolve import `{import}` in `{file}`"
+        ),
+        ResolveWarning::VenvUnreadable { path, reason } => write!(
+            formatter,
+            "resolve: could not read virtualenv `{path}`: {reason}"
+        ),
     }
 }
 
