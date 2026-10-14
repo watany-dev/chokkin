@@ -129,14 +129,23 @@ pub(crate) fn condense_diagnostics(diagnostics: &[String]) -> Vec<String> {
     out
 }
 
-/// A warning with its quoted paths and names blanked out, so warnings that
-/// differ only in where they point share a kind.
+/// A warning with its quoted paths and names and its numbers blanked out, so
+/// warnings that differ only in where they point share a kind.
 fn diagnostic_kind(diagnostic: &str) -> String {
-    diagnostic
+    let unquoted = diagnostic
         .split('`')
         .step_by(2)
         .collect::<Vec<_>>()
-        .join("``")
+        .join("``");
+    let mut kind = String::with_capacity(unquoted.len());
+    for ch in unquoted.chars() {
+        if !ch.is_ascii_digit() {
+            kind.push(ch);
+        } else if !kind.ends_with('#') {
+            kind.push('#');
+        }
+    }
+    kind
 }
 
 #[cfg(test)]
@@ -224,12 +233,21 @@ mod tests {
         assert_eq!(condense_diagnostics(&diagnostics), diagnostics);
     }
 
-    /// Text outside backticks tells kinds apart; quoted paths do not.
+    /// Text outside backticks tells kinds apart; quoted paths and line
+    /// numbers do not.
     #[test]
-    fn diagnostic_kind_blanks_quoted_spans() {
+    fn diagnostic_kind_blanks_quoted_spans_and_numbers() {
         assert_eq!(
             diagnostic_kind("parse: `a.py:3`: relative import"),
             diagnostic_kind("parse: `b/c.py:9`: relative import")
+        );
+        assert_eq!(
+            diagnostic_kind(
+                "parse: skipped `a.ipynb`: syntax error at line 1: Expected a statement"
+            ),
+            diagnostic_kind(
+                "parse: skipped `b.ipynb`: syntax error at line 96: Expected a statement"
+            )
         );
         assert_ne!(
             diagnostic_kind("parse: `a.py:3`: relative import"),
