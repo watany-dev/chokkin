@@ -8,7 +8,8 @@ use crate::manifest::{InlineScript, normalize_distribution_name};
 use crate::parser::ParseSummary;
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{
-    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_evidence,
+    imported_in,
 };
 use crate::sources::DiscoveredFile;
 
@@ -181,8 +182,8 @@ fn missing_in_script(
             severity: Severity::Error,
             confidence: Confidence::Certain,
             message: format!(
-                "imported {name} in {}:{} but the PEP 723 script block does not declare it",
-                import.file, import.line
+                "{} but the PEP 723 script block does not declare it",
+                imported_in(&name, import)
             ),
             workspace_member: None,
             origins: vec![Origin::Import {
@@ -193,7 +194,7 @@ fn missing_in_script(
             explain: ExplainData {
                 summary: format!("{name} is missing from the `# /// script` dependencies"),
                 details: vec![
-                    format!("import at {}", import_site(&import.file, import.line)),
+                    import_evidence(import),
                     "script imports are checked against the script block, not the project manifest"
                         .to_owned(),
                 ],
@@ -283,7 +284,8 @@ mod tests {
             full_module: module.to_owned(),
             file: "scripts/tool.py".to_owned(),
             workspace_member: None,
-            line,
+            line: Some(line),
+            reference: None,
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,

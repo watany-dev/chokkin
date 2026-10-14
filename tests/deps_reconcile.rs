@@ -439,7 +439,7 @@ fn misplaced_confidence_follows_the_strongest_import() {
     let xarray = candidate_for_distribution(&report, RuleId::Chk005, "xarray").expect("xarray");
     assert!(matches!(
         xarray.origins.as_slice(),
-        [chokkin::internals::Origin::Import { line: 15, .. }]
+        [chokkin::internals::Origin::Import { line: Some(15), .. }]
     ));
     // Only imports of the module an already-imported check names are
     // optional; a `__main__` block is dev context (#681).
@@ -454,7 +454,7 @@ fn misplaced_confidence_follows_the_strongest_import() {
     let sympy = candidate_for_distribution(&report, RuleId::Chk005, "sympy").expect("sympy");
     assert!(matches!(
         sympy.origins.as_slice(),
-        [chokkin::internals::Origin::Import { line: 19, .. }]
+        [chokkin::internals::Origin::Import { line: Some(19), .. }]
     ));
 }
 

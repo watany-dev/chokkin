@@ -2,12 +2,15 @@
 
 use ruff_python_ast::{Expr, Stmt, Suite};
 use ruff_python_parser::Parsed;
+use ruff_text_size::{Ranged, TextSize};
 
 /// Result of reading a Python list literal for string elements.
 #[derive(Debug)]
 pub(crate) struct LiteralScan {
     /// String elements in source order.
     pub values: Vec<String>,
+    /// Source offset of each string in `values`, for its line.
+    pub starts: Vec<TextSize>,
     /// `false` when the list also holds non-string elements.
     pub complete: bool,
 }
@@ -47,10 +50,15 @@ pub(crate) fn string_list(expr: &Expr) -> Option<LiteralScan> {
     let Expr::List(list) = expr else {
         return None;
     };
-    let values: Vec<String> = list.elts.iter().filter_map(string_value).collect();
+    let (values, starts): (Vec<String>, Vec<TextSize>) = list
+        .elts
+        .iter()
+        .filter_map(|elt| Some((string_value(elt)?, elt.start())))
+        .unzip();
     Some(LiteralScan {
         complete: values.len() == list.elts.len(),
         values,
+        starts,
     })
 }
 
@@ -68,6 +76,7 @@ mod tests {
         let scan = list_assignment("X = [\"a\", # comment\n \"b\"]\n", "X").expect("found");
         assert!(scan.complete);
         assert_eq!(scan.values, vec!["a".to_owned(), "b".to_owned()]);
+        assert_eq!(scan.starts, [TextSize::new(5), TextSize::new(21)]);
     }
 
     #[test]

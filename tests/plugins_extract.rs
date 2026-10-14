@@ -244,6 +244,40 @@ fn django_installed_apps() {
     }));
 }
 
+/// Each module a settings string names carries that string's line (#830).
+#[test]
+fn django_module_refs_carry_their_string_line() {
+    let hints = extract_fixture("django_manage");
+    let contrib = django_contrib(&hints);
+    let lines: Vec<(&str, &str, Option<u32>)> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.module.as_str(),
+                reference.origin.file.as_str(),
+                reference.origin.line,
+            )
+        })
+        .collect();
+    for expected in [
+        ("mysite.settings", "manage.py", Some(6)),
+        ("django.contrib.admin", "mysite/settings.py", Some(2)),
+        ("myapp", "mysite/settings.py", Some(4)),
+        (
+            "django.middleware.security.SecurityMiddleware",
+            "mysite/settings.py",
+            Some(8),
+        ),
+        ("mysite.urls", "mysite/settings.py", Some(11)),
+    ] {
+        assert!(lines.contains(&expected), "{expected:?} in {lines:?}");
+    }
+    assert!(contrib.symbol_refs.iter().any(|reference| {
+        reference.module == "mysite.wsgi" && reference.origin.line == Some(12)
+    }));
+}
+
 #[test]
 fn django_migrations_framework_used() {
     let hints = extract_fixture("django_migrations");
@@ -580,6 +614,28 @@ fn sphinx_plugin_records_docs_conf_entry() {
             .module_refs
             .iter()
             .any(|reference| ["_build", "alabaster"].contains(&reference.module.as_str()))
+    );
+}
+
+/// Each extension carries the line of the string that names it (#830).
+#[test]
+fn sphinx_extensions_carry_their_string_line() {
+    let hints = extract_fixture("sphinx_docs");
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let lines: Vec<(&str, Option<u32>)> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| (reference.module.as_str(), reference.origin.line))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            ("sphinx.ext.autodoc", Some(3)),
+            ("myst_parser", Some(4)),
+            ("sphinx_copybutton", Some(6)),
+            ("sphinx.ext.napoleon", Some(7)),
+            ("sphinx_design", Some(8)),
+        ]
     );
 }
 

@@ -8,7 +8,8 @@ use crate::manifest::{DeclaredDependency, LockfileGraph};
 use crate::parser::ParseSummary;
 use crate::resolver::ResolvedImport;
 use crate::rules::types::{
-    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_evidence,
+    imported_in,
 };
 use crate::rules::{DependencyRuleContext, RuleContext};
 
@@ -118,7 +119,7 @@ pub(super) fn detect_missing_dependencies(
             boundary.and_then(|boundary| Some((seeds, boundary.lockfile?))),
             has_lockfile.then_some((seeds, &resolution.transitive)),
         ];
-        let optional = optional_imports.contains(&(import.file.clone(), import.line));
+        let optional = is_optional(&optional_imports, import);
         candidates.push(undeclared_candidate(
             import,
             distribution,
@@ -222,8 +223,8 @@ fn workspace_missing_candidate(
         severity: Severity::Error,
         confidence: Confidence::Certain,
         message: format!(
-            "imported {distribution} in {} but workspace member {member_id} does not declare it directly",
-            import_site(&import.file, import.line)
+            "{} but workspace member {member_id} does not declare it directly",
+            imported_in(distribution, import)
         ),
         workspace_member: Some(member_id.to_owned()),
         origins: vec![Origin::Import {
@@ -235,10 +236,7 @@ fn workspace_missing_candidate(
             summary: format!(
                 "{distribution} is declared at the workspace root but not by member {member_id}"
             ),
-            details: vec![format!(
-                "import at {}",
-                import_site(&import.file, import.line)
-            )],
+            details: vec![import_evidence(import)],
         },
     }
 }
@@ -376,9 +374,8 @@ fn missing_candidate(
         severity: Severity::Error,
         confidence: Confidence::Certain,
         message: format!(
-            "imported {distribution} in {}{} but not declared in matching dependency context",
-            import_site(&import.file, import.line),
-            lockfile_note
+            "{}{lockfile_note} but not declared in matching dependency context",
+            imported_in(distribution, import)
         ),
         workspace_member: import.workspace_member.clone(),
         origins: vec![Origin::Import {
@@ -388,10 +385,7 @@ fn missing_candidate(
         }],
         explain: ExplainData {
             summary: format!("{distribution} is imported but not declared"),
-            details: vec![format!(
-                "import at {}",
-                import_site(&import.file, import.line)
-            )],
+            details: vec![import_evidence(import)],
         },
     }
 }
@@ -431,6 +425,14 @@ pub(super) fn is_transitive_only(
     }
 
     false
+}
+
+/// Whether `import` is a statement in [`collect_optional_imports`]; a config
+/// reference is no statement, so it never is (#830).
+fn is_optional(optional_imports: &HashSet<(String, u32)>, import: &ResolvedImport) -> bool {
+    import
+        .statement_line()
+        .is_some_and(|line| optional_imports.contains(&(import.file.clone(), line)))
 }
 
 /// Build a set of conditional import locations from parse output.
@@ -494,7 +496,8 @@ mod tests {
             full_module: distribution.to_owned(),
             file: FILE.to_owned(),
             workspace_member: None,
-            line: 1,
+            line: Some(1),
+            reference: None,
             context: crate::parser::ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
@@ -601,7 +604,7 @@ mod tests {
                 module: import.full_module.clone(),
                 name: None,
                 alias: None,
-                line: import.line,
+                line: import.line.unwrap_or_default(),
                 kind: crate::parser::ImportKind::Import,
                 context: import.context,
                 optional: import.optional,
