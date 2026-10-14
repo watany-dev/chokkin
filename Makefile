@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts formal tlc mutants mutants-diff kani help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist sdist-smoke tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts formal tlc mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -107,7 +107,7 @@ test-scripts:
 # formal: requires python3 with z3-solver (`pip install z3-solver`). Runs every
 #         Python model and fails if any property has a counterexample.
 # tlc:    model-checks Reachability.tla; pass TLA2TOOLS=<path to tla2tools.jar>
-#         (~7 min). CI runs both (.github/workflows/formal.yml); see
+#         (a few seconds). CI runs both (.github/workflows/formal.yml); see
 #         docs/dev/formal/README.md.
 TLA2TOOLS ?= tla2tools.jar
 
@@ -161,6 +161,13 @@ wheel-smoke:
 	rm -rf target/wheel-smoke
 	uvx maturin build --profile dist --locked --out target/wheel-smoke
 	python3 scripts/wheel-smoke.py target/wheel-smoke/*.whl
+
+# sdist-smoke: build the sdist and run scripts/wheel-smoke.py on it, as the
+#              release's test-sdist job does (with the default toolchain, not MSRV).
+sdist-smoke:
+	rm -rf target/sdist-smoke
+	uvx maturin sdist --out target/sdist-smoke
+	python3 scripts/wheel-smoke.py target/sdist-smoke/*.tar.gz
 
 sdist:
 	uvx maturin sdist

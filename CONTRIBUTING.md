@@ -81,10 +81,11 @@ for all platforms and publishes to PyPI via Trusted Publishing:
    validation (v0.7.4 was tagged at the tip and shipped #765–#772 and #774
    this way).
 6. GitHub Actions builds wheels, tests them (each wheel installed and run on
-   its platform, and the test suite with the `dist` profile on
-   `RUST_TOOLCHAIN`), creates a GitHub Release, and publishes to PyPI. A
-   failing test publishes nothing; the same jobs run on every pull request,
-   and `make wheel-smoke` runs the wheel test locally.
+   its platform, the sdist built from source on the MSRV toolchain, and the
+   test suite with the `dist` profile on `RUST_TOOLCHAIN`), creates a GitHub
+   Release, and publishes to PyPI. A failing test publishes nothing; the same
+   jobs run on every pull request, and `make wheel-smoke` / `make sdist-smoke`
+   run the wheel and sdist tests locally.
 
 Wheels are built with the toolchain pinned by `RUST_TOOLCHAIN` in
 `.github/workflows/release.yml`, not the latest stable. To move it, bump it in

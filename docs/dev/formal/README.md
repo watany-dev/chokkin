@@ -33,13 +33,19 @@ make formal   # Python モデルを全て実行 (個別実行: python3 docs/dev/
 
 # TLA+ (tla2tools.jar は CI と同じ v1.7.4 を
 # https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar から取得)
-make tlc TLA2TOOLS=/path/to/tla2tools.jar   # 約 7 分
+make tlc TLA2TOOLS=/path/to/tla2tools.jar   # 数秒
 # 個別 invariant を確認する場合は MCReachability.cfg の INVARIANTS 行を絞る
 ```
 
 各スクリプトは性質が成立すれば exit 0、反例があれば反例を出力して exit 1 で終了する。
 TLC は最初に違反した invariant で停止するため、複数の invariant を個別に確認する場合は
 `INVARIANTS` を 1 つずつ指定する。
+
+`Reachability.tla` で状態 (queue など) を引き回す再帰演算子を書くときは、前の段の結果を
+`LET` で受けて `e[1]`, `e[2]` と渡さず、`Bind` で 1 度だけ評価した値を渡す。TLC は
+`Terminates` の公平性 (`WF_vars(Next)`) のための ENABLED 評価では `LET` も演算子引数も
+キャッシュしないので、参照のたびに前の段を評価し直し、所要時間が段数に対して指数的に
+増える (#853 では 12 状態で約 7 分かかった)。
 
 ## CI とモデルの更新
 

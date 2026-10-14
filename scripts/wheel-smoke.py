@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Install a built chokkin wheel and run the binary inside it (issue #834).
+"""Install a built chokkin wheel or sdist and run the binary (#834, #846).
 
 The Release workflow builds the wheels with the pinned toolchain and the `dist`
 profile (fat LTO, opt-level "s", panic = "abort"); the CI tests run neither.
 This installs one wheel into a fresh venv with pip, which also rejects a wheel
-whose tags do not fit the running interpreter, then checks:
+whose tags do not fit the running interpreter, then checks the binary.
+
+Given an sdist, pip builds it from source the way `pip install chokkin` does
+on a platform without a wheel: maturin from PyPI, the `release` profile, and
+the `cargo` on PATH. That needs network access and a Rust toolchain, and
+catches an sdist that lacks a file the build needs.
+
+Checks:
 
   version   `chokkin --version` prints the Cargo.toml version
   analyze   `chokkin --no-cache --reporter json` on a copy of
@@ -17,7 +24,7 @@ Standard library only, so it also runs in emulated containers that have
 nothing but Python.
 
 Usage:
-  scripts/wheel-smoke.py WHEEL
+  scripts/wheel-smoke.py WHEEL_OR_SDIST
 
 Exit status: 0 all checks pass, 1 a check failed.
 """
@@ -55,13 +62,20 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
                           check=False, **kwargs)
 
 
-def install(wheel: Path, env_dir: Path) -> Path:
+def install(dist: Path, env_dir: Path) -> Path:
+    if dist.name.endswith(".whl"):
+        source = ["--no-index"]
+    elif dist.name.endswith(".tar.gz"):
+        # No --no-index: the isolated build fetches maturin from PyPI.
+        source = []
+    else:
+        sys.exit(f"{dist.name}: want a .whl or .tar.gz")
     venv.create(env_dir, with_pip=True)
     bin_dir = env_dir / ("Scripts" if os.name == "nt" else "bin")
     python = bin_dir / ("python.exe" if os.name == "nt" else "python")
     done = run(
-        [str(python), "-m", "pip", "install", "--no-index", "--no-deps",
-         "--disable-pip-version-check", str(wheel)]
+        [str(python), "-m", "pip", "install", *source, "--no-deps",
+         "--disable-pip-version-check", str(dist)]
     )
     if done.returncode != 0:
         sys.exit(f"pip install failed:\n{done.stdout}{done.stderr}")
@@ -104,17 +118,17 @@ def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
         return 2
-    wheel = Path(sys.argv[1]).resolve()
+    dist = Path(sys.argv[1]).resolve()
     version = cargo_version()
     with tempfile.TemporaryDirectory(prefix="chokkin-wheel-smoke-") as tmp:
         work = Path(tmp)
-        chokkin = install(wheel, work / "venv")
+        chokkin = install(dist, work / "venv")
         errors = check_version(chokkin, version)
         errors += check_analyze(chokkin, version, work)
     for error in errors:
         print(f"FAIL {error}", file=sys.stderr)
     if not errors:
-        print(f"ok {wheel.name}")
+        print(f"ok {dist.name}")
     return 1 if errors else 0
 
 
