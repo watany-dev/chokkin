@@ -2086,6 +2086,46 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
     );
 }
 
+/// A member's source discovery is reported like the root's, under
+/// root-relative paths (#892).
+#[test]
+fn binary_member_sources_warnings_reach_every_reporter() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.chokkin]\nentry = [\"missing.py\"]\n",
+        ),
+        ("packages/tool/other/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let lines = [
+        "sources: missing entry path `packages/tool/missing.py`",
+        "sources: no package directory matches project `tool`; guessed `packages/tool/other` \
+         (declare it in the build backend config or [tool.chokkin] project)",
+    ];
+    for line in lines {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    for line in lines {
+        assert!(diagnostics.contains(line), "{line}\n{diagnostics}");
+    }
+}
+
 /// An extra requirements file that stops at a missing include still watches
 /// that include, so creating it refreshes the cached run (#888).
 #[test]

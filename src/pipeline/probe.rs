@@ -23,8 +23,8 @@ use crate::plugins::{
 };
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
-    DiscoveredSources, FileContext, FileKind, MemberLayout, SourcesCache, apply_member_context,
-    discover_sources_cached,
+    DiscoveredSources, FileContext, FileKind, MemberLayout, SourcesCache, SourcesWarning,
+    apply_member_context, discover_sources_cached,
 };
 
 use super::error::ProbeError;
@@ -159,6 +159,7 @@ pub(super) fn probe_project_with_cache(
     let mut warnings = collect_warnings(&manifest, &sources);
     // After `drop_dev_only_members`: a dropped member is not analyzed.
     warnings.extend(member_manifest_warnings(&workspace_inputs));
+    warnings.extend(member_sources_warnings(&workspace_inputs));
     warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
     if loaded.auto_workspace {
         warnings.push(ProbeWarning::AutoWorkspace { member_count });
@@ -200,6 +201,27 @@ fn member_manifest_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<P
                     warning,
                 }
             })
+        })
+        .collect()
+}
+
+/// Each member's source discovery warnings, under root-relative paths (#892).
+fn member_sources_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<ProbeWarning> {
+    workspace_inputs
+        .iter()
+        .flat_map(|input| {
+            input
+                .sources
+                .warnings
+                .iter()
+                // The root walk covers every member tree, so the root's count
+                // already includes these files.
+                .filter(|warning| !matches!(warning, SourcesWarning::LargeProject { .. }))
+                .map(|warning| {
+                    let mut warning = warning.clone();
+                    warning.rebase(&input.member.path);
+                    ProbeWarning::Sources(warning)
+                })
         })
         .collect()
 }
