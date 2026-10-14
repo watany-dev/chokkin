@@ -23,11 +23,11 @@ pub(super) fn extract_exports(
     exports.unwrap_or_default()
 }
 
-/// Apply the `__all__` updates in `stmts` in source order. Inside a block
-/// (`top_level` false) only additions count: which branch runs is unknown,
-/// and adding the names of every branch keeps each optional export public.
-/// Until a top-level literal assignment there is no list (`None`) to add
-/// to: the added names alone would pass for the whole `__all__`.
+/// Inside a block (`top_level` false) only additions count: which branch
+/// runs is unknown, and adding the names of every branch keeps each optional
+/// export public. Until a top-level literal assignment there is no list
+/// (`None`) to add to: the added names alone would pass for the whole
+/// `__all__`.
 fn read_body(
     stmts: &[Stmt],
     top_level: bool,
@@ -87,17 +87,10 @@ fn read_body(
     }
 }
 
-/// How a statement changes `__all__`, with the expression that
-/// carries the names.
 enum AllUpdate<'a> {
-    /// `__all__ = …` or `__all__: T = …`.
     Replace(&'a Expr),
-    /// `__all__ += …` or `__all__.extend(…)`.
     Extend(&'a Expr),
-    /// `__all__.append(…)`.
     Append(&'a Expr),
-    /// `__all__.extend(…)` or `.append(…)` without exactly one positional
-    /// argument.
     Unreadable,
 }
 
