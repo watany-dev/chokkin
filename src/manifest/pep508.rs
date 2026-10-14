@@ -207,8 +207,8 @@ fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
     }
 }
 
-/// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`). Like
-/// `SpecifierSet`, each item is stripped of any whitespace.
+/// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`). Each item is
+/// stripped of any whitespace, as `SpecifierSet` does with `str.strip`.
 pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
     input
         .split(',')
