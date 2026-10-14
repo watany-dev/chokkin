@@ -131,10 +131,15 @@ fn candidate_lines(candidate: &IssueCandidate) -> Vec<u32> {
         })
         .collect::<Vec<_>>();
     if !imports.is_empty() {
-        return imports;
+        // A site without a line takes no inline directive, so neither does
+        // the candidate it belongs to.
+        return imports
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default();
     }
     match &candidate.subject {
-        IssueSubject::Import { line, .. } => vec![*line],
+        IssueSubject::Import { line, .. } => line.iter().copied().collect(),
         IssueSubject::ScriptDistribution { .. } => candidate
             .origins
             .iter()
@@ -289,7 +294,7 @@ mod tests {
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: file.to_owned(),
-                line: 1,
+                line: Some(1),
                 module: "pip._vendor.rich".to_owned(),
             }],
             explain: ExplainData::default(),
@@ -344,7 +349,7 @@ mod tests {
             subject: IssueSubject::Import {
                 module: module.to_owned(),
                 file: APP.to_owned(),
-                line: 1,
+                line: Some(1),
                 distribution: distribution.map(str::to_owned),
             },
             severity: Severity::Error,
@@ -353,7 +358,7 @@ mod tests {
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: APP.to_owned(),
-                line: 1,
+                line: Some(1),
                 module: module.to_owned(),
             }],
             explain: ExplainData::default(),
@@ -496,7 +501,7 @@ mod tests {
             subject: IssueSubject::Import {
                 module: "missing".to_owned(),
                 file: "src/acme/main.py".to_owned(),
-                line: 4,
+                line: Some(4),
                 distribution: None,
             },
             severity: Severity::Error,
@@ -505,7 +510,7 @@ mod tests {
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: "src/acme/main.py".to_owned(),
-                line: 4,
+                line: Some(4),
                 module: "missing".to_owned(),
             }],
             explain: ExplainData::default(),
@@ -557,7 +562,7 @@ mod tests {
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: "src/acme/api.py".to_owned(),
-                line: 12,
+                line: Some(12),
                 module: "acme.api".to_owned(),
             }],
             explain: ExplainData::default(),
@@ -592,7 +597,7 @@ mod tests {
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: "src/acme/api.py".to_owned(),
-                line: 12,
+                line: Some(12),
                 module: "acme.api".to_owned(),
             }],
             explain: ExplainData::default(),
@@ -702,7 +707,7 @@ mod tests {
         IssueSubject::Import {
             module: module.to_owned(),
             file: APP.to_owned(),
-            line: 7,
+            line: Some(7),
             distribution: None,
         }
     }
@@ -724,7 +729,7 @@ mod tests {
     fn api_origin() -> Vec<Origin> {
         vec![Origin::Import {
             file: "src/acme/api.py".to_owned(),
-            line: 12,
+            line: Some(12),
             module: "acme.api".to_owned(),
         }]
     }
@@ -838,7 +843,7 @@ mod tests {
         };
         let origin = |line| Origin::Import {
             file: APP.to_owned(),
-            line,
+            line: Some(line),
             module: "legacy".to_owned(),
         };
         let unresolved = candidate(
@@ -1039,7 +1044,7 @@ mod tests {
                     IssueSubject::Import {
                         module: case.module.clone(),
                         file: case.file.clone(),
-                        line: 1,
+                        line: Some(1),
                         distribution: dist.clone(),
                     },
                     None,

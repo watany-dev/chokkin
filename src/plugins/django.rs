@@ -4,11 +4,14 @@
 
 use std::collections::BTreeMap;
 
+use ruff_text_size::{Ranged, TextSize};
+
 use crate::config::PluginId;
 use crate::manifest::literals::{
     LiteralScan, assigned_value, parse_module, string_list, string_value,
 };
 use crate::manifest::util::read_to_string;
+use crate::parser::LineIndex;
 use crate::path_util::rel_to_root;
 use crate::sources::FileContext;
 
@@ -58,18 +61,18 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
             },
         });
 
-        if let Ok(contents) = read_to_string(&manage_py) {
-            settings_module = extract_django_settings_module(&contents);
-            if let Some(module) = &settings_module {
-                contrib.module_refs.push(ModuleReference {
-                    module: module.clone(),
-                    origin: ReferenceOrigin {
-                        file: rel_to_root(root, &manage_py),
-                        line: None,
-                        label: "DJANGO_SETTINGS_MODULE".to_owned(),
-                    },
-                });
-            }
+        if let Ok(contents) = read_to_string(&manage_py)
+            && let Some((module, line)) = extract_django_settings_module(&contents)
+        {
+            contrib.module_refs.push(ModuleReference {
+                module: module.clone(),
+                origin: ReferenceOrigin {
+                    file: rel_to_root(root, &manage_py),
+                    line: Some(line),
+                    label: "DJANGO_SETTINGS_MODULE".to_owned(),
+                },
+            });
+            settings_module = Some(module);
         }
     } else if !manifest_has_dependency(ctx.manifest, "django") {
         return (contrib, warnings);
@@ -114,6 +117,12 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
 
     if let Ok(contents) = read_to_string(&settings_path_abs) {
         let stmts = parse_module(&contents).unwrap_or_default();
+        let lines = LineIndex::new(&contents);
+        let origin = |start: TextSize, label: &str| ReferenceOrigin {
+            file: settings_rel.clone(),
+            line: Some(lines.line(start)),
+            label: label.to_owned(),
+        };
         let lists: BTreeMap<String, LiteralScan> = LIST_FIELDS
             .iter()
             .filter_map(|field| {
@@ -137,26 +146,20 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         }
 
         for (field, scan) in &lists {
-            for module in &scan.values {
+            for (module, start) in scan.values.iter().zip(&scan.starts) {
                 contrib.module_refs.push(ModuleReference {
                     module: module.clone(),
-                    origin: ReferenceOrigin {
-                        file: settings_rel.clone(),
-                        line: None,
-                        label: field.clone(),
-                    },
+                    origin: origin(*start, field),
                 });
             }
         }
 
-        if let Some(urlconf) = assigned_value(&stmts, "ROOT_URLCONF").and_then(string_value) {
+        if let Some(value) = assigned_value(&stmts, "ROOT_URLCONF")
+            && let Some(urlconf) = string_value(value)
+        {
             contrib.module_refs.push(ModuleReference {
                 module: urlconf.clone(),
-                origin: ReferenceOrigin {
-                    file: settings_rel.clone(),
-                    line: None,
-                    label: "ROOT_URLCONF".to_owned(),
-                },
+                origin: origin(value.start(), "ROOT_URLCONF"),
             });
             let urls_path = module_to_py_path(&urlconf);
             if ctx.sources.files.iter().any(|f| f.path == urls_path) {
@@ -176,17 +179,14 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         }
 
         for field in ["WSGI_APPLICATION", "ASGI_APPLICATION"] {
-            if let Some(target) = assigned_value(&stmts, field).and_then(string_value)
+            if let Some(value) = assigned_value(&stmts, field)
+                && let Some(target) = string_value(value)
                 && let Some((module, symbol)) = parse_module_symbol(&target)
             {
                 contrib.symbol_refs.push(SymbolReference {
                     module,
                     symbol,
-                    origin: ReferenceOrigin {
-                        file: settings_rel.clone(),
-                        line: None,
-                        label: field.to_owned(),
-                    },
+                    origin: origin(value.start(), field),
                 });
             }
         }

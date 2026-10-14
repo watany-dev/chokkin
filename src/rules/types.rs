@@ -8,6 +8,7 @@ use crate::config::Confidence;
 use crate::manifest::{DependencyOrigin, LoadedManifest};
 use crate::path_util::normalize_rel_path;
 use crate::plugins::ReferenceOrigin;
+use crate::resolver::ResolvedImport;
 use crate::sources::DiscoveredFile;
 
 /// CHK001–CHK010 rule identifiers (§3).
@@ -139,8 +140,8 @@ pub enum IssueSubject {
         module: String,
         /// Source file path.
         file: String,
-        /// 1-based line number.
-        line: u32,
+        /// 1-based line number; `None` when a plugin reference has no position.
+        line: Option<u32>,
         /// Normalized distribution the import resolved to; `None` when the
         /// import is unresolved (CHK010).
         distribution: Option<String>,
@@ -163,8 +164,8 @@ pub enum Origin {
     Import {
         /// Source file path.
         file: String,
-        /// 1-based line number.
-        line: u32,
+        /// 1-based line number; `None` when a plugin reference has no position.
+        line: Option<u32>,
         /// Imported module name.
         module: String,
     },
@@ -317,15 +318,33 @@ impl IssueReport {
     }
 }
 
-/// `file:line` of an import; line 0 marks a plugin reference
-/// (`INSTALLED_APPS`, Sphinx `extensions`) that has no position.
+/// `file:line` of an import, or `file` alone when it has no position.
 #[must_use]
-pub(crate) fn import_site(file: &str, line: u32) -> String {
-    if line == 0 {
-        file.to_owned()
-    } else {
-        format!("{file}:{line}")
-    }
+pub(crate) fn import_site(file: &str, line: Option<u32>) -> String {
+    line.map_or_else(|| file.to_owned(), |line| format!("{file}:{line}"))
+}
+
+/// `imported {what} in file:line`, or `` referenced {what} from `label` in
+/// file:line `` when a config setting (`INSTALLED_APPS`, Sphinx `extensions`)
+/// names the module instead of an `import` statement (#830).
+#[must_use]
+pub(crate) fn imported_in(what: &str, import: &ResolvedImport) -> String {
+    let site = import_site(&import.file, import.line);
+    import.reference.as_ref().map_or_else(
+        || format!("imported {what} in {site}"),
+        |label| format!("referenced {what} from `{label}` in {site}"),
+    )
+}
+
+/// `import at file:line`, or `` `label` entry at file:line `` for a config
+/// reference (see [`imported_in`]).
+#[must_use]
+pub(crate) fn import_evidence(import: &ResolvedImport) -> String {
+    let site = import_site(&import.file, import.line);
+    import.reference.as_ref().map_or_else(
+        || format!("import at {site}"),
+        |label| format!("`{label}` entry at {site}"),
+    )
 }
 
 /// Stable target identifier used by baseline and machine-readable reporters.
@@ -365,7 +384,7 @@ pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
         IssueSubject::Import {
             module, file, line, ..
-        } => format!("{file}:{line}:{module}"),
+        } => format!("{file}:{}:{module}", line.unwrap_or(0)),
         IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
     }
 }

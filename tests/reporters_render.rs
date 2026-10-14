@@ -35,7 +35,7 @@ fn issue() -> Issue {
         subject: IssueSubject::Import {
             module: "requests".to_owned(),
             file: "src/acme/app.py".to_owned(),
-            line: 7,
+            line: Some(7),
             distribution: Some("requests".to_owned()),
         },
         explain: None,
@@ -160,7 +160,7 @@ fn json_reporter_normalizes_path_separators() {
     report.issues[0].subject = IssueSubject::Import {
         module: "requests".to_owned(),
         file: "src\\acme\\app.py".to_owned(),
-        line: 7,
+        line: Some(7),
         distribution: Some("requests".to_owned()),
     };
 
@@ -192,7 +192,7 @@ fn sarif_reporter_includes_stable_partial_fingerprint() {
     report.issues[0].subject = IssueSubject::Import {
         module: "requests".to_owned(),
         file: "src\\acme\\app.py".to_owned(),
-        line: 7,
+        line: Some(7),
         distribution: Some("requests".to_owned()),
     };
 

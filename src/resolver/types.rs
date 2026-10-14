@@ -29,8 +29,11 @@ pub struct ResolvedImport {
     pub file: String,
     /// Workspace member id that owns `file`, when the import comes from a member.
     pub workspace_member: Option<String>,
-    /// 1-based line number.
-    pub line: u32,
+    /// 1-based line number; `None` when a plugin reference has no position.
+    pub line: Option<u32>,
+    /// Config setting that names the module (`extensions`, `INSTALLED_APPS`,
+    /// `pytest_plugins`); `None` for an `import` statement (#830).
+    pub reference: Option<String>,
     /// Import context from the parser.
     pub context: ImportContext,
     /// `true` when the import appears inside a `try` block body.
@@ -43,6 +46,15 @@ pub struct ResolvedImport {
     pub distribution: Option<String>,
     /// Resolution confidence.
     pub confidence: ResolveConfidence,
+}
+
+impl ResolvedImport {
+    /// Line of the `import` statement; `None` for a config reference, which
+    /// no statement-keyed index (optional, deferred) covers.
+    #[must_use]
+    pub fn statement_line(&self) -> Option<u32> {
+        self.line.filter(|_| self.reference.is_none())
+    }
 }
 
 /// Non-fatal resolver warnings.
@@ -61,8 +73,10 @@ pub enum ResolveWarning {
         import: String,
         /// Source file path.
         file: String,
-        /// 1-based line number.
-        line: u32,
+        /// 1-based line number; `None` when a plugin reference has no position.
+        line: Option<u32>,
+        /// Config setting that names the module (see `ResolvedImport::reference`).
+        reference: Option<String>,
         /// Context of the import statement.
         context: ImportContext,
         /// `true` when a failed import is caught (see `ImportRef::optional`).

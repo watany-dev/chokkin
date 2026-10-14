@@ -3,14 +3,14 @@
 use ruff_text_size::TextSize;
 
 /// Start offsets of every line, for binary-search line lookup.
-pub(super) struct LineIndex {
+pub(crate) struct LineIndex {
     starts: Vec<TextSize>,
 }
 
 impl LineIndex {
     /// Index `source`, treating `\n`, `\r\n`, and a lone `\r` as line ends.
     #[must_use]
-    pub(super) fn new(source: &str) -> Self {
+    pub(crate) fn new(source: &str) -> Self {
         let mut starts = vec![TextSize::default()];
         let bytes = source.as_bytes();
         for (index, &byte) in bytes.iter().enumerate() {
@@ -25,7 +25,7 @@ impl LineIndex {
 
     /// 1-based line containing `offset`.
     #[must_use]
-    pub(super) fn line(&self, offset: TextSize) -> u32 {
+    pub(crate) fn line(&self, offset: TextSize) -> u32 {
         let line = self.starts.partition_point(|&start| start <= offset);
         u32::try_from(line).unwrap_or(u32::MAX)
     }

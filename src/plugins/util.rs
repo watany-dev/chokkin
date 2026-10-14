@@ -6,12 +6,13 @@ use std::str::CharIndices;
 use std::sync::LazyLock;
 
 use regex::Regex;
+use ruff_text_size::TextSize;
 use toml::Value;
 
 use crate::manifest::ManifestError;
 use crate::manifest::literals::LiteralScan;
 use crate::manifest::util::{path_is_within_root, read_to_string};
-use crate::parser::{ParseSeverity, ParsedModule};
+use crate::parser::{LineIndex, ParseSeverity, ParsedModule};
 use crate::path_util::rel_to_root;
 use crate::sources::path_to_module;
 
@@ -400,12 +401,14 @@ pub(super) fn module_to_py_path(module: &str) -> String {
     format!("{}.py", module.replace('.', "/"))
 }
 
-/// Extract `DJANGO_SETTINGS_MODULE` from `manage.py`.
-pub(super) fn extract_django_settings_module(contents: &str) -> Option<String> {
-    DJANGO_SETTINGS_RE
-        .captures(contents)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_owned())
+/// `DJANGO_SETTINGS_MODULE` set in `manage.py`, with the 1-based line of its value.
+pub(super) fn extract_django_settings_module(contents: &str) -> Option<(String, u32)> {
+    let value = DJANGO_SETTINGS_RE.captures(contents)?.get(1)?;
+    let start = TextSize::try_from(value.start()).ok()?;
+    Some((
+        value.as_str().to_owned(),
+        LineIndex::new(contents).line(start),
+    ))
 }
 
 /// Parse `module:symbol` from a uvicorn-style target string.

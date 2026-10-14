@@ -5,10 +5,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use ruff_python_ast::{Expr, Stmt};
+use ruff_text_size::{Ranged, TextSize};
 
 use crate::config::{EntrySpec, PluginId};
 use crate::manifest::literals::{assigned_value, parse_module, string_list, string_value};
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
+use crate::parser::LineIndex;
 use crate::path_util::rel_to_root;
 use crate::sources::{DiscoveredSources, FileContext, path_to_module};
 
@@ -71,14 +73,15 @@ fn extract_sphinx(
             let theme = declared_theme(&stmts, ctx.manifest);
             let refs = sphinx_extensions(&stmts, &|name| imports.strings(root, name))
                 .into_iter()
-                .map(|module| (module, "extensions"))
-                .chain(theme.map(|module| (module, "html_theme")));
-            for (module, label) in refs {
+                .map(|(module, start)| (module, start, "extensions"))
+                .chain(theme.map(|(module, start)| (module, start, "html_theme")));
+            let lines = LineIndex::new(&contents);
+            for (module, start, label) in refs {
                 contrib.module_refs.push(ModuleReference {
                     module,
                     origin: ReferenceOrigin {
                         file: file.clone(),
-                        line: None,
+                        line: Some(lines.line(start)),
                         label: label.to_owned(),
                     },
                 });
@@ -151,6 +154,9 @@ impl ConfImports {
         assigned_value(&stmts, name)
             .map(|value| literal_strings(value, &|_| Vec::new()))
             .unwrap_or_default()
+            .into_iter()
+            .map(|(module, _)| module)
+            .collect()
     }
 }
 
@@ -170,21 +176,27 @@ fn module_files(sources: &DiscoveredSources) -> HashMap<String, String> {
 /// `sphinx_rtd_theme`). A theme is registered by name rather than imported,
 /// and Sphinx ships its own (`alabaster`, `classic`), so an undeclared name
 /// is no module to resolve (#809).
-fn declared_theme(stmts: &[Stmt], manifest: &LoadedManifest) -> Option<String> {
-    let theme = assigned_value(stmts, "html_theme").and_then(string_value)?;
+fn declared_theme(stmts: &[Stmt], manifest: &LoadedManifest) -> Option<(String, TextSize)> {
+    let value = assigned_value(stmts, "html_theme")?;
+    let theme = string_value(value)?;
     let distribution = normalize_distribution_name(&theme);
     manifest
         .dependencies
         .iter()
         .any(|dep| normalize_distribution_name(&dep.name) == distribution)
-        .then_some(theme)
+        .then_some((theme, value.start()))
 }
 
 /// The names in `extensions = [...]` and in later top-level
-/// `extensions.append(...)`, `.extend([...])` and `+= [...]`. A bare name
-/// instead of a literal goes through `constant` (`extensions =
-/// BASIC_SPHINX_EXTENSIONS` imported from a constants module, #779).
-fn sphinx_extensions(stmts: &[Stmt], constant: &dyn Fn(&str) -> Vec<String>) -> Vec<String> {
+/// `extensions.append(...)`, `.extend([...])` and `+= [...]`, each with the
+/// offset of the string that names it. A bare name instead of a literal goes
+/// through `constant` (`extensions = BASIC_SPHINX_EXTENSIONS` imported from a
+/// constants module, #779) and takes the name's offset, so the reference stays
+/// in `conf.py` (#830).
+fn sphinx_extensions(
+    stmts: &[Stmt],
+    constant: &dyn Fn(&str) -> Vec<String>,
+) -> Vec<(String, TextSize)> {
     let mut names = assigned_value(stmts, "extensions")
         .map(|value| literal_strings(value, constant))
         .unwrap_or_default();
@@ -217,13 +229,19 @@ fn sphinx_extensions(stmts: &[Stmt], constant: &dyn Fn(&str) -> Vec<String>) -> 
     names
 }
 
-/// The strings of a string or list literal, or of the constant a name binds.
-fn literal_strings(expr: &Expr, constant: &dyn Fn(&str) -> Vec<String>) -> Vec<String> {
+/// The strings of a string or list literal, or of the constant a name binds,
+/// with their offsets.
+fn literal_strings(expr: &Expr, constant: &dyn Fn(&str) -> Vec<String>) -> Vec<(String, TextSize)> {
     match expr {
-        Expr::Name(name) => constant(name.id.as_str()),
+        Expr::Name(name) => constant(name.id.as_str())
+            .into_iter()
+            .map(|value| (value, name.start()))
+            .collect(),
         _ => string_value(expr)
-            .map(|value| vec![value])
-            .or_else(|| string_list(expr).map(|scan| scan.values))
+            .map(|value| vec![(value, expr.start())])
+            .or_else(|| {
+                string_list(expr).map(|scan| scan.values.into_iter().zip(scan.starts).collect())
+            })
             .unwrap_or_default(),
     }
 }
@@ -265,11 +283,22 @@ mod tests {
     use super::*;
 
     fn extensions(source: &str) -> Vec<String> {
+        extension_lines(source)
+            .into_iter()
+            .map(|(module, _)| module)
+            .collect()
+    }
+
+    fn extension_lines(source: &str) -> Vec<(String, u32)> {
         let stmts = parse_module(source).expect("valid python");
+        let lines = LineIndex::new(source);
         sphinx_extensions(&stmts, &|name| match name {
             "BASE" => vec!["ext_constant".to_owned()],
             _ => Vec::new(),
         })
+        .into_iter()
+        .map(|(module, start)| (module, lines.line(start)))
+        .collect()
     }
 
     #[test]
@@ -289,6 +318,20 @@ mod tests {
         assert_eq!(
             extensions("extensions = BASE\nextensions.extend(BASE)\nextensions += MISSING\n"),
             ["ext_constant", "ext_constant"]
+        );
+    }
+
+    /// An imported constant's extensions point at the name in `conf.py`, not
+    /// at the constants module (#830).
+    #[test]
+    fn extensions_take_the_line_of_their_string_or_name() {
+        assert_eq!(
+            extension_lines("extensions = [\n    'a',\n    'b',\n]\nextensions += BASE\n"),
+            [
+                ("a".to_owned(), 2),
+                ("b".to_owned(), 3),
+                ("ext_constant".to_owned(), 5),
+            ]
         );
     }
 

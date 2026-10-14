@@ -340,7 +340,7 @@ fn optional_unresolved_import_is_info() {
             .filter(|candidate| candidate.rule == RuleId::Chk010)
             .filter_map(|candidate| match &candidate.subject {
                 chokkin::internals::IssueSubject::Import { module, line, .. } if module == root => {
-                    Some((candidate.severity, *line))
+                    line.map(|line| (candidate.severity, line))
                 },
                 _ => None,
             })
@@ -366,7 +366,7 @@ fn fallback_for_stdlib_every_supported_python_ships_is_info() {
             .filter(|candidate| candidate.rule == RuleId::Chk010)
             .filter_map(|candidate| match &candidate.subject {
                 chokkin::internals::IssueSubject::Import { module, line, .. } if module == root => {
-                    Some((candidate.severity, *line))
+                    line.map(|line| (candidate.severity, line))
                 },
                 _ => None,
             })
@@ -1541,7 +1541,7 @@ fn repeated_unresolved_import_emits_one_chk010_per_file() {
     // severity and anchor.
     assert!(matches!(
         &main[0].subject,
-        chokkin::internals::IssueSubject::Import { line: 8, .. }
+        chokkin::internals::IssueSubject::Import { line: Some(8), .. }
     ));
     assert_eq!(main[0].severity, Severity::Warning);
     let origin_lines = main[0]
@@ -1552,7 +1552,7 @@ fn repeated_unresolved_import_emits_one_chk010_per_file() {
             other => panic!("unexpected origin: {other:?}"),
         })
         .collect::<Vec<_>>();
-    assert_eq!(origin_lines, vec![8, 4, 14]);
+    assert_eq!(origin_lines, vec![Some(8), Some(4), Some(14)]);
     assert!(
         main[0]
             .explain

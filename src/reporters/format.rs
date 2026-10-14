@@ -110,7 +110,7 @@ mod tests {
             subject: IssueSubject::Import {
                 module: "requests".to_owned(),
                 file: "services/api/src/api/main.py".to_owned(),
-                line: 1,
+                line: Some(1),
                 distribution: Some("requests".to_owned()),
             },
             explain: None,
@@ -122,13 +122,13 @@ mod tests {
         );
     }
 
-    /// Line 0 is a plugin reference with no position (#835).
+    /// A plugin reference without a position shows no line (#835).
     #[test]
     fn plugin_import_subject_has_no_line() {
         let subject = IssueSubject::Import {
             module: "myapp".to_owned(),
             file: "mysite/settings.py".to_owned(),
-            line: 0,
+            line: None,
             distribution: None,
         };
 

@@ -7,9 +7,11 @@ use crate::graph::GraphEdge;
 use crate::manifest::DeclaredDependency;
 use crate::manifest::normalize_distribution_name;
 use crate::reachability::ReachabilityReport;
-use crate::resolver::import_root;
+use crate::resolver::{ResolvedImport, import_root};
 use crate::rules::RuleContext;
-use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
+use crate::rules::types::{
+    ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
+};
 
 use super::context::{DeclarationBucket, declaration_buckets, include_path_details};
 
@@ -151,21 +153,29 @@ fn build_reachability_evidence(
         for import in unreachable_imports {
             let suffix = unreachable_file_suffix(&import.file, context.rules.reachability);
             details.push(format!(
-                "  - {}:{} imports {} (file is unreachable{suffix})",
-                import.file, import.line, import.full_module
+                "  - {} (file is unreachable{suffix})",
+                import_evidence_line(import)
             ));
         }
     } else {
         details.push("evidence (reachable imports found, but not counted as used):".to_owned());
         for import in reachable_imports {
-            details.push(format!(
-                "  - {}:{} imports {}",
-                import.file, import.line, import.full_module
-            ));
+            details.push(format!("  - {}", import_evidence_line(import)));
         }
     }
 
     details
+}
+
+/// `file:line imports module`, or `` file:line names module in `label` `` for
+/// a config reference (#830).
+fn import_evidence_line(import: &ResolvedImport) -> String {
+    let site = import_site(&import.file, import.line);
+    let module = &import.full_module;
+    import.reference.as_ref().map_or_else(
+        || format!("{site} imports {module}"),
+        |label| format!("{site} names {module} in `{label}`"),
+    )
 }
 
 fn top_level_modules_for_distribution(
@@ -486,7 +496,8 @@ mod tests {
             full_module: "boto3".to_owned(),
             file: "src/legacy/aws.py".to_owned(),
             workspace_member: None,
-            line: 5,
+            line: Some(5),
+            reference: None,
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,

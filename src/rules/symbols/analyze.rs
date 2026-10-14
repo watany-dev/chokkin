@@ -284,7 +284,7 @@ fn detect_unused_exports(
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: entry.path.clone(),
-                line: entry.def.line,
+                line: Some(entry.def.line),
                 module: entry.id.module.clone(),
             }],
             explain: ExplainData {
@@ -339,7 +339,7 @@ fn detect_unused_reexports(
             workspace_member: None,
             origins: vec![Origin::Import {
                 file: reexport.path.clone(),
-                line: reexport.line,
+                line: Some(reexport.line),
                 module: reexport.source_module.clone(),
             }],
             explain: ExplainData {
@@ -384,12 +384,13 @@ fn detect_unresolved_imports(
 ) -> Vec<IssueCandidate> {
     // One issue per (file, module): lazy imports inside functions repeat the
     // same unresolved module many times in one file and bury the rest.
-    let mut sites: HashMap<(&str, &str), Vec<(u32, bool)>> = HashMap::new();
+    let mut sites: HashMap<(&str, &str), Vec<UnresolvedSite<'_>>> = HashMap::new();
     for warning in &resolution.warnings {
         let ResolveWarning::UnresolvedImport {
             import,
             file,
             line,
+            reference,
             context,
             optional,
         } = warning
@@ -403,46 +404,63 @@ fn detect_unresolved_imports(
         sites
             .entry((file.as_str(), import.as_str()))
             .or_default()
-            .push((*line, guarded));
+            .push(UnresolvedSite {
+                line: *line,
+                guarded,
+                reference: reference.as_deref(),
+            });
     }
 
     sites
         .into_iter()
-        .filter_map(|((file, import), lines)| {
-            unresolved_import_candidate(file, import, &lines, manifest, sources)
+        .filter_map(|((file, import), sites)| {
+            unresolved_import_candidate(file, import, &sites, manifest, sources)
         })
         .collect()
 }
 
-// Anchor at a real line that can fail: line 0 is a plugin reference with no
-// position, and a guarded (`TYPE_CHECKING` or optional) import never fails.
-fn anchor_line(lines: &[(u32, bool)]) -> Option<u32> {
-    lines
+struct UnresolvedSite<'a> {
+    line: Option<u32>,
+    /// `TYPE_CHECKING` or optional: the import never fails.
+    guarded: bool,
+    /// Config setting naming the module, `None` for an `import` statement.
+    reference: Option<&'a str>,
+}
+
+// Anchor at a site that can fail, preferring one with a position.
+fn anchor_site<'s>(sites: &'s [UnresolvedSite<'_>]) -> Option<&'s UnresolvedSite<'s>> {
+    sites
         .iter()
-        .min_by_key(|(line, guarded)| (*guarded, *line == 0, *line))
-        .map(|(line, _)| *line)
+        .min_by_key(|site| (site.guarded, site.line.is_none(), site.line))
 }
 
 fn unresolved_import_candidate(
     file: &str,
     import: &str,
-    lines: &[(u32, bool)],
+    sites: &[UnresolvedSite<'_>],
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> Option<IssueCandidate> {
-    let line = anchor_line(lines)?;
-    let guarded_only = lines.iter().all(|(_, guarded)| *guarded);
-    let others = lines
+    let anchor = anchor_site(sites)?;
+    let line = anchor.line;
+    let guarded_only = sites.iter().all(|site| site.guarded);
+    let others = sites
         .iter()
-        .map(|(other, _)| *other)
-        .filter(|other| *other != line && *other != 0)
+        .filter_map(|site| site.line)
+        .filter(|other| Some(*other) != line)
         .collect::<BTreeSet<_>>();
     let first_party = is_first_party_import(import, &sources.layout, &manifest.metadata);
     let site = import_site(file, line);
+    // A config string (Sphinx `extensions`, `INSTALLED_APPS`) is no `import`
+    // statement; say which setting names the module (#830).
+    let subject = anchor.reference.map_or_else(
+        || format!("import `{import}`"),
+        |label| format!("`{label}` entry `{import}`"),
+    );
     let message = if first_party {
-        format!("import `{import}` in `{site}` does not resolve to a first-party module")
+        format!("{subject} in `{site}` does not resolve to a first-party module")
     } else {
-        format!("import `{import}` in `{site}` could not be resolved")
+        format!("{subject} in `{site}` could not be resolved")
     };
     let mut details = vec![
         "check for typos in first-party module names".to_owned(),
@@ -482,7 +500,7 @@ fn unresolved_import_candidate(
         workspace_member: None,
         // Every site, anchor first, so an inline ignore must cover them all.
         origins: std::iter::once(line)
-            .chain(others.iter().copied())
+            .chain(others.iter().copied().map(Some))
             .map(|line| Origin::Import {
                 file: file.to_owned(),
                 line,
@@ -512,12 +530,24 @@ fn symbol_kind_label(kind: crate::parser::SymbolKind) -> &'static str {
 mod tests {
     use super::*;
 
+    fn anchor_line(sites: &[(Option<u32>, bool)]) -> Option<u32> {
+        let sites = sites
+            .iter()
+            .map(|&(line, guarded)| UnresolvedSite {
+                line,
+                guarded,
+                reference: None,
+            })
+            .collect::<Vec<_>>();
+        anchor_site(&sites).expect("anchor").line
+    }
+
     #[test]
     fn anchor_prefers_unguarded_then_positioned_then_earliest_line() {
-        assert_eq!(anchor_line(&[]), None);
-        assert_eq!(anchor_line(&[(4, true), (8, false)]), Some(8));
-        assert_eq!(anchor_line(&[(0, false), (8, false)]), Some(8));
-        assert_eq!(anchor_line(&[(14, false), (8, false)]), Some(8));
-        assert_eq!(anchor_line(&[(0, false), (4, true)]), Some(0));
+        assert!(anchor_site(&[]).is_none());
+        assert_eq!(anchor_line(&[(Some(4), true), (Some(8), false)]), Some(8));
+        assert_eq!(anchor_line(&[(None, false), (Some(8), false)]), Some(8));
+        assert_eq!(anchor_line(&[(Some(14), false), (Some(8), false)]), Some(8));
+        assert_eq!(anchor_line(&[(None, false), (Some(4), true)]), None);
     }
 }

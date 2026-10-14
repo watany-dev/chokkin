@@ -108,8 +108,9 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         }
 
-        let mut strength = strengths
-            .get(&(import.file.clone(), import.line))
+        let mut strength = import
+            .statement_line()
+            .and_then(|line| strengths.get(&(import.file.clone(), line)))
             .copied()
             .unwrap_or(ImportStrength::TopLevel);
         // The package copes without it somewhere, so its function-local
