@@ -5,7 +5,9 @@ use std::fmt::Write as _;
 use crate::config::ConfigSources;
 use crate::rules::{IssueReport, RuleId};
 
-use super::format::{baseline_suppressed_count, format_issue_line, group_title};
+use super::format::{
+    baseline_suppressed_count, format_issue_line, group_title, write_warning_count,
+};
 use super::types::RenderContext;
 
 /// Default human-readable reporter grouped by issue kind.
@@ -50,6 +52,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     } else {
         let _ = writeln!(out, "Summary: {} issues", report.summary.total);
     }
+    write_warning_count(&mut out, &context.diagnostics);
     out
 }
 

@@ -6,6 +6,7 @@ use crate::rules::IssueReport;
 
 use super::format::{
     baseline_suppressed_count, format_issue_subject, format_location_column, severity_label,
+    write_warning_count,
 };
 use super::types::RenderContext;
 
@@ -34,5 +35,6 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     if suppressed > 0 {
         let _ = writeln!(out, "baseline suppressed {suppressed}");
     }
+    write_warning_count(&mut out, &context.diagnostics);
     out
 }

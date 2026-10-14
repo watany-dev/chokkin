@@ -30,7 +30,17 @@ struct SarifLog {
 #[derive(Serialize)]
 struct SarifRun {
     tool: SarifTool,
+    // Omitted without diagnostics so warning-free runs keep their output.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    invocations: Vec<SarifInvocation>,
     results: Vec<SarifResult>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SarifInvocation {
+    execution_successful: bool,
+    tool_execution_notifications: Vec<Value>,
 }
 
 #[derive(Serialize)]
@@ -80,10 +90,24 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
                     rules: RuleId::ALL.into_iter().map(sarif_rule).collect(),
                 },
             },
+            invocations: sarif_invocations(&context.diagnostics),
             results: report.issues.iter().map(sarif_result).collect(),
         }],
     };
     serde_json::to_string_pretty(&log).unwrap_or_default()
+}
+
+fn sarif_invocations(diagnostics: &[String]) -> Vec<SarifInvocation> {
+    if diagnostics.is_empty() {
+        return Vec::new();
+    }
+    vec![SarifInvocation {
+        execution_successful: true,
+        tool_execution_notifications: diagnostics
+            .iter()
+            .map(|text| json!({ "level": "warning", "message": { "text": text } }))
+            .collect(),
+    }]
 }
 
 fn sarif_rule(rule: RuleId) -> SarifRule {

@@ -25,11 +25,16 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     if suppressed > 0 {
         let _ = writeln!(out, "- Baseline suppressed: **{suppressed}**");
     }
+    if !context.diagnostics.is_empty() {
+        let _ = writeln!(out, "- Warnings: **{}**", context.diagnostics.len());
+    }
     let _ = writeln!(out);
 
     if report.issues.is_empty() {
         let _ = writeln!(out, "_No issues found._");
-        return out;
+        if !context.diagnostics.is_empty() {
+            let _ = writeln!(out);
+        }
     }
 
     for rule in RuleId::ALL {
@@ -57,5 +62,18 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         let _ = writeln!(out);
     }
 
+    write_diagnostics(&mut out, &context.diagnostics);
     out
+}
+
+/// The step summary is often the only output a CI reader opens, so the
+/// warnings are listed in full rather than counted.
+fn write_diagnostics(out: &mut String, diagnostics: &[String]) {
+    if diagnostics.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "## Warnings  {}\n", diagnostics.len());
+    for diagnostic in diagnostics {
+        let _ = writeln!(out, "- {}", diagnostic.replace(['\r', '\n'], " "));
+    }
 }

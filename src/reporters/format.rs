@@ -1,5 +1,7 @@
 //! Shared formatting helpers for reporters.
 
+use std::fmt::Write as _;
+
 use crate::manifest::DependencyOrigin;
 use crate::rules::{
     Issue, IssueLocation, IssueReport, IssueSubject, RuleId, SuppressReason, import_site,
@@ -86,6 +88,13 @@ pub(super) fn baseline_suppressed_count(report: &IssueReport) -> usize {
         .iter()
         .filter(|suppressed| suppressed.reason == SuppressReason::Baseline)
         .count()
+}
+
+/// Point text reporters at stderr, which carries the full warning list.
+pub(super) fn write_warning_count(out: &mut String, diagnostics: &[String]) {
+    if !diagnostics.is_empty() {
+        let _ = writeln!(out, "Warnings: {} (see stderr)", diagnostics.len());
+    }
 }
 
 #[cfg(test)]
