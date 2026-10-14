@@ -7,7 +7,7 @@ branding:
 
 inputs:
   version:
-    description: chokkin version to run from PyPI (e.g. "0.6.0"), or "latest".
+    description: chokkin version to run from PyPI (e.g. "0.6.0"), "latest", or the path of a chokkin wheel (*.whl, relative to working-directory).
     required: false
     # Bumped together with Cargo.toml / pyproject.toml on each release.
     default: "0.7.5"
@@ -59,9 +59,12 @@ runs:
         CHOKKIN_CACHE: ${{ inputs.cache }}
       run: |
         set -euo pipefail -f
-        spec=chokkin
-        [ "$CHOKKIN_VERSION" = latest ] || spec="chokkin@$CHOKKIN_VERSION"
-        cmd=(uvx "$spec" --no-exit-code --reporter sarif)
+        case "$CHOKKIN_VERSION" in
+          latest) spec=(chokkin) ;;
+          *.whl) spec=(--from "$CHOKKIN_VERSION" chokkin) ;;
+          *) spec=("chokkin@$CHOKKIN_VERSION") ;;
+        esac
+        cmd=(uvx "${spec[@]}" --no-exit-code --reporter sarif)
         [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
         # A repeated --no-cache is a usage error.
         [ "$CHOKKIN_CACHE" = true ] || [[ " $CHOKKIN_ARGS " == *" --no-cache "* ]] || cmd+=(--no-cache)
@@ -81,9 +84,12 @@ runs:
         CHOKKIN_CACHE: ${{ inputs.cache }}
       run: |
         set -euo pipefail -f
-        spec=chokkin
-        [ "$CHOKKIN_VERSION" = latest ] || spec="chokkin@$CHOKKIN_VERSION"
-        cmd=(uvx "$spec" --reporter "$CHOKKIN_REPORTER")
+        case "$CHOKKIN_VERSION" in
+          latest) spec=(chokkin) ;;
+          *.whl) spec=(--from "$CHOKKIN_VERSION" chokkin) ;;
+          *) spec=("chokkin@$CHOKKIN_VERSION") ;;
+        esac
+        cmd=(uvx "${spec[@]}" --reporter "$CHOKKIN_REPORTER")
         [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
         # A repeated --no-cache is a usage error.
         [ "$CHOKKIN_CACHE" = true ] || [[ " $CHOKKIN_ARGS " == *" --no-cache "* ]] || cmd+=(--no-cache)

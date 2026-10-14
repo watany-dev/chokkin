@@ -195,7 +195,7 @@ jobs:
 
 | Input | Default | 説明 |
 | --- | --- | --- |
-| `version` | action の ref と同じリリース | PyPI から実行する chokkin のバージョン。`latest` も可 |
+| `version` | action の ref と同じリリース | PyPI から実行する chokkin のバージョン。`latest` か、chokkin の wheel のパス（`*.whl`）も可 |
 | `working-directory` | `.` | 解析する project root |
 | `baseline` | — | baseline ファイル。新規 finding だけで失敗 |
 | `reporter` | `github` | 判定用 run の reporter |

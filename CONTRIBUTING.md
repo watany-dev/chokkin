@@ -80,11 +80,16 @@ for all platforms and publishes to PyPI via Trusted Publishing:
    merged after it ships in the wheels without a CHANGELOG entry or release
    validation (v0.7.4 was tagged at the tip and shipped #765–#772 and #774
    this way).
-6. GitHub Actions builds wheels, creates a GitHub Release, and publishes to PyPI.
+6. GitHub Actions builds wheels, tests them (each wheel installed and run on
+   its platform, and the test suite with the `dist` profile on
+   `RUST_TOOLCHAIN`), creates a GitHub Release, and publishes to PyPI. A
+   failing test publishes nothing; the same jobs run on every pull request,
+   and `make wheel-smoke` runs the wheel test locally.
 
 Wheels are built with the toolchain pinned by `RUST_TOOLCHAIN` in
 `.github/workflows/release.yml`, not the latest stable. To move it, bump it in
-its own `ci:` PR (the release workflow builds every wheel on pull requests)
+its own `ci:` PR (the release workflow builds and tests every wheel on pull
+requests)
 before tagging, not in the release commit.
 
 Before publishing the first release, a PyPI Trusted Publisher must be

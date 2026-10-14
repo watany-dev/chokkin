@@ -213,7 +213,7 @@ jobs:
       - run: cargo deny check advisories licenses bans sources
 
   repo-checks:
-    name: Repo checks (actionlint, generated maps, action)
+    name: Repo checks (actionlint, generated maps)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -239,27 +239,6 @@ jobs:
       - name: Check generated resolver maps
         if: ${{ !cancelled() }}
         run: make check-generated
-      - name: Create action smoke-test fixture
-        if: ${{ !cancelled() }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/demo/src/demo"
-          printf '[project]\nname = "demo"\nversion = "0.0.0"\n' > "$RUNNER_TEMP/demo/pyproject.toml"
-          echo 'VALUE = 1' > "$RUNNER_TEMP/demo/src/demo/__init__.py"
-      - id: chokkin
-        if: ${{ !cancelled() }}
-        uses: ./
-        with:
-          # The default pins the next release, which may not be on PyPI yet.
-          version: latest
-          working-directory: ${{ runner.temp }}/demo
-          sarif-file: out/chokkin.sarif
-      - name: Check action SARIF output
-        if: ${{ !cancelled() }}
-        env:
-          SARIF: ${{ steps.chokkin.outputs.sarif-file }}
-        run: |
-          jq -e '.version == "2.1.0"' "$SARIF"
-          test ! -e "$RUNNER_TEMP/demo/.chokkin"
 
   zizmor:
     name: Zizmor
