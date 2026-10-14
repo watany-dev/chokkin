@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::discovery::ProjectRoot;
 use crate::manifest::normalize_distribution_name;
+use crate::path_util::rel_to_root;
 
 use super::metadata::parse_metadata;
 use super::types::ResolveWarning;
@@ -32,7 +33,7 @@ pub(super) fn load_venv_index(root: &ProjectRoot, warnings: &mut Vec<ResolveWarn
         Ok(index) => index,
         Err(reason) => {
             warnings.push(ResolveWarning::VenvUnreadable {
-                path: venv_path.display().to_string(),
+                path: rel_to_root(&root.path, &venv_path),
                 reason,
             });
             VenvIndex::default()

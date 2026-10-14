@@ -415,3 +415,175 @@ fn markdown_reporter_renders_rule_tables_and_escapes_pipes_exactly() {
         )
     );
 }
+
+fn context_with_diagnostics() -> RenderContext {
+    RenderContext {
+        diagnostics: vec![
+            "parse: `acme/app.py:3`: relative import without a package".to_owned(),
+            "resolve: could not read virtualenv `.venv`: site-packages not found".to_owned(),
+        ],
+        ..context()
+    }
+}
+
+#[test]
+fn default_reporter_counts_diagnostics_after_the_summary() {
+    let rendered = render_issues(
+        ReporterId::Default,
+        &empty_report(),
+        &context_with_diagnostics(),
+    );
+    assert!(
+        rendered.ends_with("Summary: 0 issues\nWarnings: 2 (see stderr)\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn default_reporter_omits_the_warning_count_without_diagnostics() {
+    let rendered = render_issues(ReporterId::Default, &empty_report(), &context());
+    assert!(!rendered.contains("Warnings"), "{rendered}");
+}
+
+#[test]
+fn compact_reporter_counts_diagnostics_on_the_last_line() {
+    let rendered = render_issues(
+        ReporterId::Compact,
+        &mixed_report(),
+        &context_with_diagnostics(),
+    );
+    assert!(
+        rendered.ends_with("baseline suppressed 1\nWarnings: 2 (see stderr)\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn markdown_reporter_lists_diagnostics_even_without_issues() {
+    let rendered = render_issues(
+        ReporterId::Markdown,
+        &empty_report(),
+        &context_with_diagnostics(),
+    );
+    assert_eq!(
+        rendered,
+        concat!(
+            "# chokkin report \u{2014} demo\n",
+            "\n",
+            "- Version: `0.2.0-test`\n",
+            "- Mode: `app` (production=false)\n",
+            "- Issues: **0**\n",
+            "- Warnings: **2**\n",
+            "\n",
+            "_No issues found._\n",
+            "\n",
+            "## Warnings  2\n",
+            "\n",
+            "- parse: `acme/app.py:3`: relative import without a package\n",
+            "- resolve: could not read virtualenv `.venv`: site-packages not found\n",
+        )
+    );
+}
+
+#[test]
+fn github_reporter_annotates_each_diagnostic_as_a_warning() {
+    let mut context = context_with_diagnostics();
+    context
+        .diagnostics
+        .push("manifest: stopped reading `a.txt`: 100% bad\nnext".to_owned());
+    let rendered = render_issues(ReporterId::Github, &empty_report(), &context);
+    assert_eq!(
+        rendered,
+        concat!(
+            "::warning title=chokkin::parse: `acme/app.py:3`: relative import without a package\n",
+            "::warning title=chokkin::resolve: could not read virtualenv `.venv`: site-packages not found\n",
+            "::warning title=chokkin::manifest: stopped reading `a.txt`: 100%25 bad%0Anext\n",
+        )
+    );
+}
+
+fn context_with_repeated_diagnostics() -> RenderContext {
+    RenderContext {
+        diagnostics: (1..=7)
+            .map(|n| format!("parse: `tests/t{n}.py:1`: relative import without a package"))
+            .collect(),
+        ..context()
+    }
+}
+
+/// A flood of one kind is cut to five lines and a count (#888); the
+/// heading still counts every warning.
+#[test]
+fn markdown_reporter_condenses_repeated_diagnostics() {
+    let rendered = render_issues(
+        ReporterId::Markdown,
+        &empty_report(),
+        &context_with_repeated_diagnostics(),
+    );
+    assert!(rendered.contains("## Warnings  7\n"), "{rendered}");
+    assert!(rendered.contains("`tests/t5.py:1`"), "{rendered}");
+    assert!(!rendered.contains("`tests/t6.py:1`"), "{rendered}");
+    assert!(
+        rendered.ends_with(
+            "- parse: … and 2 more like the above (`--reporter json` lists every warning)\n"
+        ),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn github_reporter_condenses_repeated_diagnostics() {
+    let rendered = render_issues(
+        ReporterId::Github,
+        &empty_report(),
+        &context_with_repeated_diagnostics(),
+    );
+    assert_eq!(rendered.lines().count(), 6, "{rendered}");
+    assert!(
+        rendered.ends_with("and 2 more like the above (`--reporter json` lists every warning)\n"),
+        "{rendered}"
+    );
+}
+
+/// SARIF is read by tools, so it keeps every warning.
+#[test]
+fn sarif_reporter_keeps_every_repeated_diagnostic() {
+    let rendered = render_issues(
+        ReporterId::Sarif,
+        &empty_report(),
+        &context_with_repeated_diagnostics(),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("sarif json");
+    let notifications = parsed["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+        .as_array()
+        .expect("notifications");
+    assert_eq!(notifications.len(), 7);
+}
+
+#[test]
+fn sarif_reporter_writes_diagnostics_as_tool_execution_notifications() {
+    let rendered = render_issues(
+        ReporterId::Sarif,
+        &empty_report(),
+        &context_with_diagnostics(),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("sarif json");
+    let invocation = &parsed["runs"][0]["invocations"][0];
+    assert_eq!(invocation["executionSuccessful"], true);
+    let notifications = invocation["toolExecutionNotifications"]
+        .as_array()
+        .expect("notifications");
+    assert_eq!(notifications.len(), 2);
+    assert_eq!(notifications[0]["level"], "warning");
+    assert_eq!(
+        notifications[1]["message"]["text"],
+        "resolve: could not read virtualenv `.venv`: site-packages not found"
+    );
+}
+
+#[test]
+fn sarif_reporter_omits_invocations_without_diagnostics() {
+    let rendered = render_issues(ReporterId::Sarif, &empty_report(), &context());
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("sarif json");
+    assert!(parsed["runs"][0].get("invocations").is_none(), "{rendered}");
+}

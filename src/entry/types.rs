@@ -1,5 +1,7 @@
 //! Entry root construction types (pipeline step 8).
 
+use std::fmt;
+
 use crate::config::{EntrySpec, PluginId, ProjectMode};
 use crate::sources::FileContext;
 
@@ -118,9 +120,30 @@ pub enum EntryWarning {
     UnresolvedModuleTarget {
         /// Dotted module name.
         module: String,
-        /// Human-readable origin.
-        origin: String,
+        /// Root-relative file that declares the target.
+        file: String,
+        /// Where in `file` the target is declared.
+        label: String,
     },
+}
+
+impl fmt::Display for EntryWarning {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingEntryPath { path } => write!(
+                formatter,
+                "entry: skipped entry `{path}`: not a discovered source file"
+            ),
+            Self::UnresolvedModuleTarget {
+                module,
+                file,
+                label,
+            } => write!(
+                formatter,
+                "entry: could not map `{module}` to a source file (`{label}` in `{file}`)"
+            ),
+        }
+    }
 }
 
 /// Candidate entry before merge and validation.

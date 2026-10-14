@@ -28,7 +28,7 @@ use crate::sources::{
 };
 
 use super::error::ProbeError;
-use super::warnings::{ProbeWarning, collect_warnings};
+use super::warnings::{ProbeWarning, collect_warnings, diagnostic_lines};
 
 /// Outcome of running pipeline steps 1–4 for CLI probe output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +157,8 @@ pub(super) fn probe_project_with_cache(
         sources.python_files().map(|file| file.path.as_str()),
     );
     let mut warnings = collect_warnings(&manifest, &sources);
+    // After `drop_dev_only_members`: a dropped member is not analyzed.
+    warnings.extend(member_manifest_warnings(&workspace_inputs));
     warnings.extend(script_warnings.into_iter().map(ProbeWarning::Manifest));
     if loaded.auto_workspace {
         warnings.push(ProbeWarning::AutoWorkspace { member_count });
@@ -183,6 +185,23 @@ pub(super) fn probe_project_with_cache(
         plugin_activations,
         warnings,
     })
+}
+
+/// Each member's manifest warnings, under root-relative paths (#888).
+fn member_manifest_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<ProbeWarning> {
+    workspace_inputs
+        .iter()
+        .flat_map(|input| {
+            input.manifest.warnings.iter().map(|warning| {
+                let mut warning = warning.clone();
+                warning.rebase(&input.member.path);
+                ProbeWarning::MemberManifest {
+                    member: input.member.path.clone(),
+                    warning,
+                }
+            })
+        })
+        .collect()
 }
 
 /// hatchling runs its build hooks while building and never ships them, so
@@ -542,7 +561,11 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     if report.warnings.is_empty() {
         writeln!(out, "Warnings: 0")?;
     } else {
-        writeln!(out, "Warnings: {} (see stderr)", report.warnings.len())?;
+        writeln!(
+            out,
+            "Warnings: {} (see stderr)",
+            diagnostic_lines(&report.warnings).len()
+        )?;
     }
     writeln!(out)?;
     writeln!(out, "Summary: probe complete — analyzer not run yet")?;

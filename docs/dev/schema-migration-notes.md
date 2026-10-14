@@ -174,6 +174,12 @@ rules and one result per emitted issue. Each result includes:
 - `partialFingerprints["chokkin/v0"]`, a stable fingerprint based on rule code
   plus the normalized target; workspace findings include the member prefix
 
+Non-fatal warnings (the stderr lines that JSON puts in `diagnostics`) go to
+`runs[0].invocations[0].toolExecutionNotifications` as
+`{"level": "warning", "message": {"text": …}}`, with
+`executionSuccessful: true`. `invocations` is omitted when there are no
+warnings (#888).
+
 The `chokkin/v0` fingerprint intentionally mirrors the baseline identity shape
 so GitHub code scanning and baseline workflows group the same finding the same
 way. It may gain a new fingerprint key in a future schema, but existing keys

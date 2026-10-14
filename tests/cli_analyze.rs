@@ -293,6 +293,36 @@ fn binary_member_imports_outside_root_inventory_are_cached() {
     );
 }
 
+/// The member files parsed for that check report what the parser could not
+/// read like root files do, since a skipped one hides its imports.
+#[test]
+fn binary_member_files_outside_root_inventory_report_parse_warnings() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(
+        &fixture_path(&["deps", "uv_workspace_member_import_src_layout"]),
+        temp.path(),
+    )
+    .expect("copy");
+    fs::write(
+        temp.path().join("packages/core/src/acme/core/__init__.py"),
+        "from acme_util import y\ndef broken(:\n",
+    )
+    .expect("edit member");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "parse: skipped `packages/core/src/acme/core/__init__.py`: syntax error at line 2"
+        ),
+        "{stderr}"
+    );
+}
+
 fn json_issues(root: &std::path::Path, extra: &[&str]) -> Vec<serde_json::Value> {
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--reporter", "json"])
@@ -1912,6 +1942,334 @@ fn binary_syntax_error_source_is_skipped_with_a_diagnostic() {
         fs::read_to_string(project.path().join("pyproject.toml")).expect("read pyproject"),
         pyproject
     );
+}
+
+/// What the parser could not read in a file it kept reaches stderr and the
+/// JSON diagnostics, so a finding it causes has a visible reason (#877).
+#[test]
+fn binary_parse_warnings_reach_stderr_and_json_diagnostics() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "acme/__init__.py",
+            "from acme import other\n\n__all__ = [\"VALUE\"]\n__all__ += other.__all__\nVALUE = 1\n",
+        ),
+        ("acme/other.py", "__all__ = [\"OTHER\"]\nOTHER = 2\n"),
+        ("scripts/tool.py", "from . import helper\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let expected = [
+        "parse: `acme/__init__.py:4`: unsupported `__all__` assignment form",
+        "parse: `scripts/tool.py:1`: could not resolve relative import (missing package context)",
+    ];
+    for line in expected {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics: Vec<_> = parsed["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter_map(|diagnostic| diagnostic["message"].as_str())
+        .collect();
+    for line in expected {
+        assert!(diagnostics.contains(&line), "{line}\n{diagnostics:?}");
+    }
+}
+
+/// An entry point that maps to no source file reaches stderr, for the root
+/// manifest and for a workspace member's own manifest alike. A config entry
+/// missing on disk is reported once, by source discovery.
+#[test]
+fn binary_entry_warnings_reach_stderr() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/tool\"]\n\n\
+             [tool.chokkin]\nmode = \"app\"\nexclude = [\"acme/excluded.py\"]\n\
+             entry = [\"acme/excluded.py\", \"acme/gone.py\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/excluded.py", ""),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\ntool = \"tool.missing:run\"\n",
+        ),
+        ("packages/tool/tool/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for line in [
+        "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)",
+        "entry: could not map `tool.missing` to a source file (`project.scripts.tool` in `packages/tool/pyproject.toml`)",
+        "entry: skipped entry `acme/excluded.py`: not a discovered source file",
+    ] {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    assert_eq!(
+        stderr.matches("acme/gone.py").count(),
+        1,
+        "reported by sources only\n{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    assert!(
+        diagnostics.contains("could not map `acme.cli`"),
+        "{diagnostics}"
+    );
+}
+
+/// Member manifests and the extra requirements files are read like the root
+/// manifest, so what they could not read is reported too, under root-relative
+/// paths (#888).
+#[test]
+fn binary_member_and_extra_requirements_warnings_reach_stderr() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("requirements/docs.txt", "sphinx\nnot a requirement!!\n"),
+        ("requirements/ci.txt", "pytest\n-r missing-base.txt\n"),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.1.0\"\n\
+             dependencies = [\"requests >= 2 ;;\"]\n\n[tool.poetry]\n",
+        ),
+        ("packages/tool/tool/__init__.py", ""),
+        (
+            "packages/dyn/pyproject.toml",
+            "[project]\nname = \"dyn\"\nversion = \"0.1.0\"\ndynamic = [\"dependencies\"]\n",
+        ),
+        ("packages/dyn/dyn/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for line in [
+        "manifest: invalid requirement at `requirements/docs.txt:2`: not a requirement!!",
+        "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
+        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;",
+        "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
+        "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically",
+    ] {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    assert!(
+        diagnostics.contains("packages/dyn/pyproject.toml"),
+        "{diagnostics}"
+    );
+}
+
+/// An extra requirements file that stops at a missing include still watches
+/// that include, so creating it refreshes the cached run (#888).
+#[test]
+fn binary_cached_run_sees_a_created_extra_requirements_include() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("requirements/ci.txt", "-r ../shared.txt\n"),
+    ]);
+    let run = || {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        String::from_utf8(output.stderr).expect("utf8")
+    };
+    let stopped = "manifest: stopped reading `requirements/ci.txt`";
+
+    let stderr = run();
+    assert!(stderr.contains(stopped), "{stderr}");
+
+    fs::write(project.path().join("shared.txt"), "pytest\n").expect("write include");
+    let stderr = run();
+    assert!(!stderr.contains(stopped), "{stderr}");
+}
+
+/// An include shared by several requirements files is read once per includer,
+/// but its warning is printed once (#888).
+#[test]
+fn binary_prints_a_shared_include_warning_once() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "requirements/base.txt",
+            "--index-url https://pypi.example/simple\nrequests\n",
+        ),
+        ("requirements/dev.txt", "-r base.txt\npytest\n"),
+        ("requirements/test.txt", "-r base.txt\ncoverage\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let line = "manifest: ignored requirements option at `requirements/base.txt:1`: --index-url https://pypi.example/simple";
+    assert_eq!(
+        stderr.lines().filter(|seen| *seen == line).count(),
+        1,
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.to_string().contains("requirements/base.txt:1"))
+            .count(),
+        1,
+        "{diagnostics:?}"
+    );
+}
+
+/// stderr cuts a repeated warning kind to five lines and a count, while JSON
+/// keeps every warning (#888).
+#[test]
+fn binary_condenses_repeated_warnings_on_stderr_only() {
+    let mut files = vec![
+        (
+            "pyproject.toml".to_owned(),
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n".to_owned(),
+        ),
+        ("acme/__init__.py".to_owned(), String::new()),
+    ];
+    for n in 1..=7 {
+        files.push((
+            format!("requirements/r{n}.txt"),
+            "not a requirement!!\n".to_owned(),
+        ));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, contents)| (path.as_str(), contents.as_str()))
+        .collect();
+    let project = write_project(&files);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.starts_with("manifest: invalid requirement at"))
+            .count(),
+        5,
+        "{stderr}"
+    );
+    assert!(
+        stderr.lines().any(|line| line
+            == "manifest: … and 2 more like the above (`--reporter json` lists every warning)"),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let invalid = parsed["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter(|diagnostic| diagnostic.to_string().contains("invalid requirement"))
+        .count();
+    assert_eq!(invalid, 7);
+}
+
+/// The resolver's ambiguous mappings and an unreadable `.venv` lower or drop
+/// what resolution knows, so they are reported too (#888).
+#[test]
+fn binary_resolver_warnings_reach_stderr() {
+    let ambiguous = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", "import shared\n"),
+        (
+            ".venv/lib/python3.11/site-packages/alpha-1.0.dist-info/METADATA",
+            "Name: alpha\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/alpha-1.0.dist-info/top_level.txt",
+            "shared\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/beta-1.0.dist-info/METADATA",
+            "Name: beta\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/beta-1.0.dist-info/top_level.txt",
+            "shared\n",
+        ),
+    ]);
+    let unreadable = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        (".venv/pyvenv.cfg", ""),
+    ]);
+
+    for (project, line) in [
+        (
+            &ambiguous,
+            "resolve: import `shared` maps to several distributions (alpha, beta)",
+        ),
+        (
+            &unreadable,
+            "resolve: could not read virtualenv `.venv`: site-packages not found",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        assert!(
+            parsed["diagnostics"].to_string().contains("resolve: "),
+            "{}",
+            parsed["diagnostics"]
+        );
+    }
 }
 
 /// langchain ships a deliberately non-UTF-8 fixture; one such file must not

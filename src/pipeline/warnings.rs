@@ -1,10 +1,14 @@
 //! Pipeline warning aggregation and display.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Write};
 
+use crate::entry::EntryWarning;
 use crate::manifest::ManifestWarning;
 use crate::plugins::PluginsWarning;
+use crate::reporters::condense_diagnostics;
+use crate::resolver::ResolveWarning;
 use crate::sources::SourcesWarning;
 
 /// Non-fatal warning collected during probe or analysis pipeline steps.
@@ -12,10 +16,23 @@ use crate::sources::SourcesWarning;
 pub enum ProbeWarning {
     /// Warning from manifest extraction.
     Manifest(ManifestWarning),
+    /// Warning from a workspace member's manifest, with its files rebased
+    /// onto the root.
+    MemberManifest {
+        /// Root-relative member directory.
+        member: String,
+        /// The member's warning.
+        warning: ManifestWarning,
+    },
     /// Warning from source file discovery.
     Sources(SourcesWarning),
     /// Warning from plugin hint extraction.
     Plugin(PluginsWarning),
+    /// Warning from entry root construction.
+    Entry(EntryWarning),
+    /// Warning from import resolution. Never
+    /// [`ResolveWarning::UnresolvedImport`]: CHK010 reports those.
+    Resolve(ResolveWarning),
     /// Workspace members were inferred from nested `pyproject.toml` files.
     AutoWorkspace { member_count: usize },
     /// Nested projects outside the workspace were left out of the analysis.
@@ -26,6 +43,15 @@ pub enum ProbeWarning {
         path: String,
         /// Why the source could not be read.
         reason: SkipReason,
+    },
+    /// Something the parser could not read in a source it kept.
+    ParseDiagnostic {
+        /// Root-relative path of the source.
+        path: String,
+        /// 1-based line, or 0 when the diagnostic covers the whole file.
+        line: u32,
+        /// The parser's message.
+        message: String,
     },
 }
 
@@ -47,8 +73,13 @@ impl fmt::Display for ProbeWarning {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
+            Self::MemberManifest { member, warning } => {
+                write_member_manifest_warning(formatter, member, warning)
+            },
             Self::Sources(warning) => fmt::Display::fmt(warning, formatter),
             Self::Plugin(warning) => fmt::Display::fmt(warning, formatter),
+            Self::Entry(warning) => fmt::Display::fmt(warning, formatter),
+            Self::Resolve(warning) => write_resolve_warning(formatter, warning),
             Self::AutoWorkspace { member_count } => write!(
                 formatter,
                 "workspace: treating {member_count} nested pyproject.toml as workspace members (disable with --no-auto-workspace)"
@@ -74,7 +105,63 @@ impl fmt::Display for ProbeWarning {
                 formatter,
                 "parse: skipped `{path}`: syntax error at line {line}: {message}"
             ),
+            Self::ParseDiagnostic {
+                path,
+                line: 0,
+                message,
+            } => write!(formatter, "parse: `{path}`: {message}"),
+            Self::ParseDiagnostic {
+                path,
+                line,
+                message,
+            } => write!(formatter, "parse: `{path}:{line}`: {message}"),
         }
+    }
+}
+
+fn write_resolve_warning(
+    formatter: &mut fmt::Formatter<'_>,
+    warning: &ResolveWarning,
+) -> fmt::Result {
+    match warning {
+        ResolveWarning::AmbiguousImport { import, candidates } => write!(
+            formatter,
+            "resolve: import `{import}` maps to several distributions ({})",
+            candidates.join(", ")
+        ),
+        ResolveWarning::UnresolvedImport { import, file, .. } => write!(
+            formatter,
+            "resolve: could not resolve import `{import}` in `{file}`"
+        ),
+        ResolveWarning::VenvUnreadable { path, reason } => write!(
+            formatter,
+            "resolve: could not read virtualenv `{path}`: {reason}"
+        ),
+    }
+}
+
+/// A member's warning reads like the root's, except that a warning naming no
+/// file names the member, and runtime dependencies it could not read do not
+/// lower any finding: only the root's do (#888 step 4).
+fn write_member_manifest_warning(
+    formatter: &mut fmt::Formatter<'_>,
+    member: &str,
+    warning: &ManifestWarning,
+) -> fmt::Result {
+    match warning {
+        ManifestWarning::RuntimeDependenciesUnknown { file } => write!(
+            formatter,
+            "manifest: runtime dependencies in `{file}` could not be read statically"
+        ),
+        ManifestWarning::PoetryDetected
+        | ManifestWarning::PdmDetected
+        | ManifestWarning::HatchDetected
+        | ManifestWarning::RequirementsConstraintMissing { .. } => {
+            let text = ProbeWarning::Manifest(warning.clone()).to_string();
+            let rest = text.strip_prefix("manifest: ").unwrap_or(&text);
+            write!(formatter, "manifest: `{member}`: {rest}")
+        },
+        _ => write_manifest_warning(formatter, warning),
     }
 }
 
@@ -136,6 +223,9 @@ fn write_manifest_warning(
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
         },
+        ManifestWarning::RequirementsUnreadable { file, reason } => {
+            write!(formatter, "manifest: stopped reading `{file}`: {reason}")
+        },
         ManifestWarning::FileUndecodable { file } => write!(
             formatter,
             "manifest: skipped `{file}`: not UTF-8 and no supported PEP 263 coding declaration"
@@ -160,12 +250,31 @@ fn write_manifest_warning(
     }
 }
 
-/// Write pipeline warnings to `err`, one per line.
-pub fn write_probe_warnings(warnings: &[ProbeWarning], err: &mut impl Write) -> io::Result<()> {
-    for warning in warnings {
-        writeln!(err, "{warning}")?;
+/// Each warning's text once, in order. Two stages can report the same
+/// file (a shared `-r` include, a member the root also scans), and the
+/// reader needs it once.
+#[must_use]
+pub(crate) fn diagnostic_lines<'a>(
+    warnings: impl IntoIterator<Item = &'a ProbeWarning>,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    warnings
+        .into_iter()
+        .map(ToString::to_string)
+        .filter(|line| seen.insert(line.clone()))
+        .collect()
+}
+
+/// Write warning lines to `err`, repeated kinds condensed.
+pub fn write_diagnostics(diagnostics: &[String], err: &mut impl Write) -> io::Result<()> {
+    for line in condense_diagnostics(diagnostics) {
+        writeln!(err, "{line}")?;
     }
     Ok(())
+}
+
+pub fn write_probe_warnings(warnings: &[ProbeWarning], err: &mut impl Write) -> io::Result<()> {
+    write_diagnostics(&diagnostic_lines(warnings), err)
 }
 
 pub(super) fn collect_warnings(
@@ -187,6 +296,7 @@ pub(super) fn collect_warnings(
 #[cfg(test)]
 mod tests {
     use crate::config::PluginId;
+    use crate::entry::EntryWarning;
     use crate::manifest::ManifestWarning;
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
@@ -311,6 +421,93 @@ mod tests {
             syntax.to_string(),
             "parse: skipped `b.py`: syntax error at line 3: Expected an expression"
         );
+    }
+
+    #[test]
+    fn parse_diagnostic_names_its_line_unless_it_covers_the_file() {
+        let diagnostic = |line| ProbeWarning::ParseDiagnostic {
+            path: "a.py".to_owned(),
+            line,
+            message: "unsupported `__all__` assignment form".to_owned(),
+        };
+
+        assert_eq!(
+            diagnostic(4).to_string(),
+            "parse: `a.py:4`: unsupported `__all__` assignment form"
+        );
+        assert_eq!(
+            diagnostic(0).to_string(),
+            "parse: `a.py`: unsupported `__all__` assignment form"
+        );
+    }
+
+    #[test]
+    fn entry_warnings_render_exact_text() {
+        assert_eq!(
+            ProbeWarning::Entry(EntryWarning::MissingEntryPath {
+                path: "a.py".to_owned(),
+            })
+            .to_string(),
+            "entry: skipped entry `a.py`: not a discovered source file"
+        );
+        assert_eq!(
+            ProbeWarning::Entry(EntryWarning::UnresolvedModuleTarget {
+                module: "acme.cli".to_owned(),
+                file: "pyproject.toml".to_owned(),
+                label: "project.scripts.acme".to_owned(),
+            })
+            .to_string(),
+            "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)"
+        );
+    }
+
+    #[test]
+    fn member_manifest_warnings_name_root_relative_files_or_the_member() {
+        let member = |mut warning: ManifestWarning| {
+            warning.rebase("packages/x");
+            ProbeWarning::MemberManifest {
+                member: "packages/x".to_owned(),
+                warning,
+            }
+        };
+        let cases = [
+            (
+                member(ManifestWarning::MetadataConflict {
+                    field: "name".to_owned(),
+                    kept: "a".to_owned(),
+                    ignored: "b".to_owned(),
+                    kept_source: "pyproject.toml".to_owned(),
+                    ignored_source: "setup.cfg".to_owned(),
+                }),
+                "manifest: metadata conflict on `name`: kept `a` from `packages/x/pyproject.toml`, ignored `b` from `packages/x/setup.cfg`",
+            ),
+            (
+                member(ManifestWarning::HatchDetected),
+                "manifest: `packages/x`: Hatch sections detected (partial dependency extraction)",
+            ),
+            (
+                member(ManifestWarning::RequirementsConstraintMissing {
+                    path: "c.txt".to_owned(),
+                }),
+                "manifest: `packages/x`: missing constraints file `c.txt`",
+            ),
+            (
+                member(ManifestWarning::RuntimeDependenciesUnknown {
+                    file: "setup.py".to_owned(),
+                }),
+                "manifest: runtime dependencies in `packages/x/setup.py` could not be read statically",
+            ),
+            (
+                ProbeWarning::Manifest(ManifestWarning::RequirementsUnreadable {
+                    file: "requirements/ci.txt".to_owned(),
+                    reason: "could not be read".to_owned(),
+                }),
+                "manifest: stopped reading `requirements/ci.txt`: could not be read",
+            ),
+        ];
+        for (warning, expected) in cases {
+            assert_eq!(warning.to_string(), expected);
+        }
     }
 
     #[test]

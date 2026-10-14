@@ -6,13 +6,23 @@ use std::path::Path;
 use crate::path_util::normalize_rel_path;
 use crate::rules::{Issue, IssueReport};
 
-use super::format::{baseline_suppressed_count, format_issue_subject};
+use super::format::{baseline_suppressed_count, condense_diagnostics, format_issue_subject};
+use super::types::RenderContext;
 
 /// GitHub Actions workflow-command reporter.
-pub(super) fn render(report: &IssueReport) -> String {
+pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     let mut out = String::new();
     for issue in &report.issues {
         render_annotation(&mut out, issue);
+    }
+    // Annotations are the only channel a workflow run surfaces; stderr is
+    // buried in the step log.
+    for diagnostic in condense_diagnostics(&context.diagnostics) {
+        let _ = writeln!(
+            out,
+            "::warning title=chokkin::{}",
+            escape_message(&diagnostic)
+        );
     }
     let suppressed = baseline_suppressed_count(report);
     if suppressed > 0 {

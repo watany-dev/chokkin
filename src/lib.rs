@@ -31,8 +31,8 @@ pub use cli::{CliArgs, parse_cli_args};
 pub use config::RuntimeOverrides;
 pub use init::init_project;
 pub use pipeline::{
-    AnalysisReport, analyze_project, probe_project, trace_output, write_probe_report,
-    write_probe_warnings,
+    AnalysisReport, analyze_project, probe_project, trace_output, write_diagnostics,
+    write_probe_report, write_probe_warnings,
 };
 pub use reporters::{RenderContext, config_label_from_sources, render_fix_report, render_issues};
 pub use rules::explain_issue;

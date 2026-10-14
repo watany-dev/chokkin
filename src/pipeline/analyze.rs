@@ -7,7 +7,7 @@ use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
 use crate::entry::{
-    EntryPlan, add_member_manifest_roots, build_entry_roots, is_library_member,
+    EntryPlan, EntryWarning, add_member_manifest_roots, build_entry_roots, is_library_member,
     mark_command_scripts_dev,
 };
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
@@ -20,7 +20,7 @@ use crate::reachability::{
 };
 use crate::reporters::FileCounts;
 use crate::resolver::{
-    ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
+    ResolveWarning, ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
     resolve_imports_for_analysis,
 };
 use crate::rules::deps::local_source_member;
@@ -28,12 +28,12 @@ use crate::rules::{
     DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, emit_issues,
 };
 use crate::sources::{
-    DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, discover_sources,
+    DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning, discover_sources,
 };
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, WorkspaceMemberInputs, probe_project_with_cache};
-use super::warnings::{ProbeWarning, SkipReason};
+use super::warnings::{ProbeWarning, SkipReason, diagnostic_lines};
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +57,12 @@ pub struct AnalysisReport {
 }
 
 impl AnalysisReport {
+    /// Every probe and analysis warning's text, once each.
+    #[must_use]
+    pub fn diagnostics(&self) -> Vec<String> {
+        diagnostic_lines(self.probe.warnings.iter().chain(&self.warnings))
+    }
+
     /// Counts runtime-context files in the graph and how many are reachable.
     #[must_use]
     pub fn runtime_file_counts(&self) -> FileCounts {
@@ -201,14 +207,11 @@ fn run_analysis_core(
         parse: &parse,
         cache: Some(&options.cache),
     })?;
-    let warnings: Vec<ProbeWarning> = parse
+    let mut warnings: Vec<ProbeWarning> = parse
         .modules
         .iter()
-        .filter(|module| module.skipped)
-        .map(|module| ProbeWarning::SkippedSource {
-            path: module.path.clone(),
-            reason: skip_reason(module),
-        })
+        .chain(&member_parse)
+        .flat_map(parse_warnings)
         .chain(plugins.warnings.iter().cloned().map(ProbeWarning::Plugin))
         .collect();
     let mut sources = probe.sources.clone();
@@ -232,6 +235,7 @@ fn run_analysis_core(
             .iter()
             .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
     );
+    warnings.extend(entry_warnings(&entry, &probe.sources));
     if probe.effective_config.mode == ProjectMode::Auto {
         entry.library_members = probe
             .workspace_inputs
@@ -266,6 +270,14 @@ fn run_analysis_core(
         &scoped_declarations(probe),
     );
     apply_resolution_to_graph(&mut graph, &resolution)?;
+    warnings.extend(
+        resolution
+            .warnings
+            .iter()
+            .filter(|warning| !matches!(warning, ResolveWarning::UnresolvedImport { .. }))
+            .cloned()
+            .map(ProbeWarning::Resolve),
+    );
 
     let mut reachability =
         analyze_reachability(&mut graph, sources, &entry, &plugins, &parse, production)?;
@@ -367,6 +379,53 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// The entry plan's warnings, less the config entries that source discovery
+/// already reported missing or a directory. A target two extractors read
+/// (a uvicorn `project.scripts` value) is reported once.
+fn entry_warnings(entry: &EntryPlan, sources: &DiscoveredSources) -> Vec<ProbeWarning> {
+    let reported: HashSet<&str> = sources
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            SourcesWarning::MissingEntryPath { path }
+            | SourcesWarning::EntryPathIsDirectory { path } => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut warnings: Vec<ProbeWarning> = Vec::new();
+    for warning in &entry.warnings {
+        if matches!(warning, EntryWarning::MissingEntryPath { path } if reported.contains(path.as_str()))
+        {
+            continue;
+        }
+        let warning = ProbeWarning::Entry(warning.clone());
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
+    }
+    warnings
+}
+
+/// What the user needs to know about one parsed module: a skipped module is
+/// one warning naming why, a kept one is a warning per diagnostic (#877).
+fn parse_warnings(module: &ParsedModule) -> Vec<ProbeWarning> {
+    if module.skipped {
+        return vec![ProbeWarning::SkippedSource {
+            path: module.path.clone(),
+            reason: skip_reason(module),
+        }];
+    }
+    module
+        .diagnostics
+        .iter()
+        .map(|diagnostic| ProbeWarning::ParseDiagnostic {
+            path: module.path.clone(),
+            line: diagnostic.line,
+            message: diagnostic.message.clone(),
+        })
+        .collect()
 }
 
 /// Why a skipped module was left out: a module the parser stopped on carries

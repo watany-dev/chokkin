@@ -192,7 +192,12 @@ and reports anything it skipped on stderr.
   environment-marker dependencies, and shows `maybe` findings.
 - `--reporter default|compact|json|markdown|github|sarif` picks the output.
   `github` emits workflow annotations; `sarif` writes a SARIF 2.1.0 subset for
-  code scanning.
+  code scanning. Warnings about input chokkin could not read always go to
+  stderr. `json`, `markdown`, `github` and `sarif` also carry each warning;
+  `default` and `compact` end with a `Warnings: N (see stderr)` count. When
+  one kind of warning repeats more than five times, stderr, `markdown` and
+  `github` show the first five and count the rest; `json` and `sarif` keep
+  every one.
 - `--no-exit-code` returns 0 even with findings, for adoption periods and
   summaries.
 - `--no-cache` disables the on-disk parse cache under `.chokkin/`. The cache is

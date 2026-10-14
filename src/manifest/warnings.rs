@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::path_util::join_rel;
+
 /// Warning that does not prevent manifest extraction from completing.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +70,14 @@ pub enum ManifestWarning {
         /// Missing constraints file path as written.
         path: String,
     },
+    /// An extra requirements file stopped parsing partway; what came before
+    /// the error is kept.
+    RequirementsUnreadable {
+        /// Root-relative file path.
+        file: String,
+        /// Why parsing stopped.
+        reason: String,
+    },
     /// A PEP 735 `{include-group = "..."}` names a group that is not defined.
     DependencyGroupIncludeUndefined {
         /// Root-relative path to `pyproject.toml`.
@@ -97,4 +107,36 @@ pub enum ManifestWarning {
         /// Why the block was rejected.
         reason: String,
     },
+}
+
+impl ManifestWarning {
+    /// Join every file onto `base`, the root-relative directory of the
+    /// manifest that emitted the warning.
+    pub(crate) fn rebase(&mut self, base: &str) {
+        match self {
+            Self::SetupPyNotStatic { file }
+            | Self::RuntimeDependenciesUnknown { file }
+            | Self::InvalidRequirementLine { file, .. }
+            | Self::SetupPyPartiallyStatic { file, .. }
+            | Self::RequirementsOptionIgnored { file, .. }
+            | Self::RequirementsUnreadable { file, .. }
+            | Self::DependencyGroupIncludeUndefined { file, .. }
+            | Self::DependencyGroupIncludeCycle { file, .. }
+            | Self::FileUndecodable { file }
+            | Self::InlineScriptInvalid { file, .. } => *file = join_rel(base, file),
+            Self::MetadataConflict {
+                kept_source,
+                ignored_source,
+                ..
+            } => {
+                *kept_source = join_rel(base, kept_source);
+                *ignored_source = join_rel(base, ignored_source);
+            },
+            // No file to rebase: the member path is printed beside them.
+            Self::PoetryDetected
+            | Self::PdmDetected
+            | Self::HatchDetected
+            | Self::RequirementsConstraintMissing { .. } => {},
+        }
+    }
 }

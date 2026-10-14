@@ -70,10 +70,10 @@ pub(super) fn resolve_relative_name(name: &str, package: &str) -> Option<String>
 
 /// Build a diagnostic for an unresolved relative import.
 #[must_use]
-pub(super) fn unresolved_relative_diagnostic(path: &str, line: u32) -> ParseDiagnostic {
+pub(super) fn unresolved_relative_diagnostic(line: u32) -> ParseDiagnostic {
     ParseDiagnostic {
         line,
-        message: format!("could not resolve relative import in `{path}` (missing package context)"),
+        message: "could not resolve relative import (missing package context)".to_owned(),
         severity: ParseSeverity::Warning,
     }
 }

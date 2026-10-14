@@ -13,6 +13,7 @@ mod types;
 pub(crate) use default::config_label;
 pub use default::config_label_from_sources;
 pub use fix::render_fix_report;
+pub(crate) use format::condense_diagnostics;
 pub use types::{FileCounts, RenderContext, ReporterId};
 
 use crate::rules::IssueReport;
@@ -25,7 +26,7 @@ pub fn render_issues(id: ReporterId, report: &IssueReport, context: &RenderConte
         ReporterId::Compact => compact::render(report, context),
         ReporterId::Json => json::render(report, context),
         ReporterId::Markdown => markdown::render(report, context),
-        ReporterId::Github => github::render(report),
+        ReporterId::Github => github::render(report, context),
         ReporterId::Sarif => sarif::render(report, context),
     }
 }
