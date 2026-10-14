@@ -693,6 +693,19 @@ fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
         warning,
         chokkin::internals::ResolveWarning::UnresolvedImport { import, .. } if import == "pytest_asyncio"
     )));
+
+    // A `pytest_plugins` string is a config reference, not an `import`, so
+    // messages name the setting and statement-keyed indexes skip it (#830).
+    let plugin = index
+        .imports
+        .iter()
+        .find(|resolved| {
+            resolved.full_module == "pytest_asyncio" && resolved.file == "tests/conftest.py"
+        })
+        .expect("pytest_asyncio reference");
+    assert_eq!(plugin.reference.as_deref(), Some("pytest_plugins"));
+    assert_eq!(plugin.line, Some(1));
+    assert_eq!(plugin.statement_line(), None);
 }
 
 #[test]

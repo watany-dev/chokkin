@@ -439,7 +439,7 @@ fn binary_plugin_missing_dependency_names_its_setting() {
         ("mysite/__init__.py", ""),
         (
             "mysite/settings.py",
-            "INSTALLED_APPS = [\"django.contrib.admin\", \"requests\"]\n",
+            "INSTALLED_APPS = [\n    \"django.contrib.admin\",\n    \"requests\",\n    \"requests.adapters\",\n]\n",
         ),
     ];
     for (file, text) in files {
@@ -451,14 +451,18 @@ fn binary_plugin_missing_dependency_names_its_setting() {
     }
 
     let issues = json_issues(temp.path(), &["--no-cache"]);
-    let missing = issues
+    // Entries of one distribution on separate lines stay one issue, as when
+    // they had no line: the fingerprint set must not grow.
+    let missing: Vec<_> = issues
         .iter()
-        .find(|issue| issue["code"] == "CHK003")
-        .expect("CHK003 for requests");
-    assert_eq!(missing["line"], 1);
+        .filter(|issue| issue["code"] == "CHK003")
+        .collect();
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    let missing = missing[0];
+    assert_eq!(missing["line"], 3);
     let message = missing["message"].as_str().unwrap_or_default();
     assert!(
-        message.contains("referenced requests from `INSTALLED_APPS` in mysite/settings.py:1"),
+        message.contains("referenced requests from `INSTALLED_APPS` in mysite/settings.py:3"),
         "{message}"
     );
 
@@ -469,7 +473,7 @@ fn binary_plugin_missing_dependency_names_its_setting() {
         .expect("run chokkin");
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     assert!(
-        stderr.contains("`INSTALLED_APPS` entry at mysite/settings.py:1"),
+        stderr.contains("`INSTALLED_APPS` entry at mysite/settings.py:3"),
         "{stderr}"
     );
 }

@@ -384,10 +384,7 @@ pub(super) fn subject_sort_key(subject: &IssueSubject) -> String {
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
         IssueSubject::Import {
             module, file, line, ..
-        } => format!(
-            "{file}:{}:{module}",
-            line.map(|line| line.to_string()).unwrap_or_default()
-        ),
+        } => format!("{file}:{}:{module}", line.unwrap_or(0)),
         IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
     }
 }

@@ -62,7 +62,7 @@ pub(super) fn detect_missing_dependencies(
             continue;
         }
 
-        if !reported.insert((distribution.clone(), import.file.clone(), import.line)) {
+        if !reported.insert(report_key(distribution, import)) {
             continue;
         }
 
@@ -425,6 +425,17 @@ pub(super) fn is_transitive_only(
     }
 
     false
+}
+
+/// One issue per distribution and `import` statement; a config reference keys
+/// without its line, so a setting's entries from one distribution stay one
+/// issue as before they had lines (#830).
+fn report_key(distribution: &str, import: &ResolvedImport) -> (String, String, Option<u32>) {
+    (
+        distribution.to_owned(),
+        import.file.clone(),
+        import.statement_line(),
+    )
 }
 
 /// Whether `import` is a statement in [`collect_optional_imports`]; a config
