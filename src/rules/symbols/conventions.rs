@@ -9,6 +9,7 @@ use crate::parser::{ImportContext, ParsedModule, SymbolKind};
 use crate::plugins::{DJANGO_SETTINGS_LABEL, PluginHints};
 use crate::reachability::ReachabilityReport;
 
+use super::exports::ReExport;
 use super::graph::{RegistryEntry, SymbolId};
 use super::public::{star_closure, star_imports};
 
@@ -163,10 +164,13 @@ pub(super) fn config_star_symbols(
 
 /// Functions a host calls by name (#777): a `pytest_*` hook in a module pytest
 /// loads as a plugin, the `setup` of a Sphinx extension, and the hooks of a
-/// build backend (#782). pluggy hooks are marked by their decorator
+/// build backend (#782), defined there or re-exported by a package (#873).
+/// pluggy hooks are marked by their decorator
 /// (`external::is_registration_decorator`).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn host_hook_symbols(
     registry: &[RegistryEntry],
+    reexports: &[ReExport],
     modules: &[&ParsedModule],
     plan: &EntryPlan,
     plugins: &PluginHints,
@@ -219,23 +223,27 @@ pub(super) fn host_hook_symbols(
         })
         .map(|root| root.spec.path.as_str())
         .collect();
+    let is_hook = |name: &str, module: &str, path: &str| match name {
+        name if name.starts_with("pytest_") => {
+            pytest_plugins.contains(module) || pytest_files.contains(path)
+        },
+        "setup" => extension_files.contains(path),
+        name if BUILD_BACKEND_HOOKS.contains(&name) => backend_files.contains(path),
+        _ => false,
+    };
+    // A package can hand the host a hook it imports from a submodule
+    // (`from .core import setup`): the name the host reads is the package's
+    // (#873).
+    let reexported = reexports
+        .iter()
+        .filter(|reexport| is_hook(&reexport.name, &reexport.package_module, &reexport.path))
+        .map(|reexport| SymbolId::new(reexport.package_module.clone(), reexport.name.clone()));
     registry
         .iter()
         .filter(|entry| entry.def.kind == SymbolKind::Function)
-        .filter(|entry| {
-            let module = entry.id.module.as_str();
-            match entry.id.name.as_str() {
-                name if name.starts_with("pytest_") => {
-                    pytest_plugins.contains(module) || pytest_files.contains(entry.path.as_str())
-                },
-                "setup" => extension_files.contains(entry.path.as_str()),
-                name if BUILD_BACKEND_HOOKS.contains(&name) => {
-                    backend_files.contains(entry.path.as_str())
-                },
-                _ => false,
-            }
-        })
+        .filter(|entry| is_hook(&entry.id.name, &entry.id.module, &entry.path))
         .map(|entry| entry.id.clone())
+        .chain(reexported)
         .collect()
 }
 

@@ -1519,6 +1519,89 @@ fn reexport_named_by_an_entry_point_is_not_chk007() {
     );
 }
 
+/// An entry target `module:object.attr [extras]` names `object`: the console
+/// script imports the module and walks the attributes from there (#872).
+#[test]
+fn entry_point_with_an_attribute_path_uses_its_object() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\ndirect = \"app.cli:Cli.main\"\nvia = \"app:Runner.run\"\nextra = \"app.tool:Tool.main [cli]\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("app/__init__.py", "from .runner import Runner, Other\n"),
+        (
+            "app/cli.py",
+            "class Cli:\n    @staticmethod\n    def main():\n        pass\n",
+        ),
+        (
+            "app/runner.py",
+            "class Runner:\n    @staticmethod\n    def run():\n        pass\n\n\nclass Other:\n    pass\n",
+        ),
+        (
+            "app/tool.py",
+            "class Tool:\n    @staticmethod\n    def main():\n        pass\n",
+        ),
+    ]);
+    for (rule, module, name) in [
+        (RuleId::Chk006, "app.cli", "Cli"),
+        (RuleId::Chk007, "app", "Runner"),
+        (RuleId::Chk006, "app.tool", "Tool"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, rule, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk007, "app", "Other"),
+        "{report:?}"
+    );
+}
+
+/// A host reads its hook by name from the package it loads, so a hook the
+/// package's `__init__` re-exports is used; other re-exports there are not
+/// (#873).
+#[test]
+fn host_hooks_reexported_from_a_package_are_not_chk007() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[project.entry-points.pytest11]\nacme = \"acme.pytest_plugin\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/sphinx_ext/__init__.py",
+            "from .core import setup, helper\n",
+        ),
+        (
+            "acme/sphinx_ext/core.py",
+            "def setup(app):\n    return {}\n\n\ndef helper():\n    pass\n",
+        ),
+        (
+            "acme/pytest_plugin/__init__.py",
+            "from .hooks import pytest_configure\n",
+        ),
+        (
+            "acme/pytest_plugin/hooks.py",
+            "def pytest_configure(config):\n    pass\n",
+        ),
+        ("docs/conf.py", "extensions = [\"acme.sphinx_ext\"]\n"),
+    ]);
+    for (module, name) in [
+        ("acme.sphinx_ext", "setup"),
+        ("acme.pytest_plugin", "pytest_configure"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk007, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk007, "acme.sphinx_ext", "helper"),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn repeated_unresolved_import_emits_one_chk010_per_file() {
     let report = analyze_fixture("repeated_unresolved");

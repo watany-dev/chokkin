@@ -87,6 +87,7 @@ pub fn analyze_with_context(
     external_symbols.extend(dynamically_fetched_classes(&registry, &reachable_modules));
     external_symbols.extend(host_hook_symbols(
         &registry,
+        &reexports,
         &reachable_modules,
         entry,
         plugins,
