@@ -431,15 +431,18 @@ impl<'a> Evaluator<'a> {
             Expr::Name(name) => {
                 self.env.insert(name.id.to_string(), value);
             },
-            // As with `del`, a key that is not a string or a base that is not
-            // a dict leaves the base partial.
+            // A key that is not a string is dropped as in a dict literal: an
+            // added entry cannot undeclare the known ones, and tainting the
+            // dict would lose them all (#827). Any other base leaves it partial.
             Expr::Subscript(subscript) => {
-                if let Value::Str(key) = self.eval(&subscript.slice)
-                    && let Some(Value::Dict(items)) = self.place_mut(&subscript.value)
-                {
-                    insert_entry(items, key, value);
-                } else {
-                    self.taint_place(&subscript.value);
+                let key = self.eval(&subscript.slice);
+                match self.place_mut(&subscript.value) {
+                    Some(Value::Dict(items)) => {
+                        if let Value::Str(key) = key {
+                            insert_entry(items, key, value);
+                        }
+                    },
+                    _ => self.taint_place(&subscript.value),
                 }
             },
             Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. })
@@ -1578,13 +1581,19 @@ mod props {
     }
 
     #[test]
-    fn assignment_under_an_unknown_key_marks_the_dict_partial() {
+    fn assignment_under_an_unknown_key_keeps_the_known_entries() {
         let call = evaluate(
             "extras = {'s3': ['boto3']}\nkey = compute()\nextras[key] = ['gcs']\n\
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
-        assert_eq!(call.keyword("extras_require"), Some(&Value::Unknown));
+        assert_eq!(
+            call.keyword("extras_require"),
+            Some(&Value::Dict(vec![(
+                "s3".to_owned(),
+                Value::List(vec![Value::Str("boto3".to_owned())])
+            )]))
+        );
     }
 
     #[test]
