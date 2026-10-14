@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The GitHub Action's `version` input also takes the path of a chokkin wheel
+  (`*.whl`, relative to `working-directory`), which it runs with
+  `uvx --from` (#834).
+
 ### Changed
 - CHK005 for a package that runtime code imports only inside functions is
   info instead of warning when the same workspace member also treats the

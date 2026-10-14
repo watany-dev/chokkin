@@ -1,0 +1,10 @@
+[project]
+name = "smoke"
+version = "0.1.0"
+dependencies = ["requests", "boto3"]
+
+[project.scripts]
+smoke = "smoke.cli:main"
+
+[tool.chokkin]
+mode = "app"

@@ -42,9 +42,13 @@ them when a maintainer, workflow, or job name changes.
   - `Test (ubuntu-24.04)`, `Test (macos-14)`, `Test (windows-latest)`
   - `Security (cargo-deny)`
 
-  Also worth requiring: `MSRV (1.96) + chokkin baseline` and
-  `Repo checks (actionlint, generated maps, action)`. A renamed job drops out
-  of the required list silently, so update the ruleset in the same PR.
+  Also worth requiring: `MSRV (1.96) + chokkin baseline`,
+  `Repo checks (actionlint, generated maps)`, and from the Release workflow
+  `Test (dist profile, RUST_TOOLCHAIN)`, `Test action (HEAD wheel)`, each
+  `Test wheel (<target>)`, and the `Wheel (<target>)` and `sdist` builds they
+  need (a job skipped because a job it needs failed counts as passing). A
+  renamed job drops out of the required list silently, so update the ruleset
+  in the same PR.
 
 **`pypi-chokkin` environment** (Settings → Environments):
 

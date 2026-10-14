@@ -255,7 +255,7 @@ can be moved, a SHA cannot, and Dependabot still bumps both.
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `version` | release of the action ref | chokkin version from PyPI, or `latest` |
+| `version` | release of the action ref | chokkin version from PyPI, `latest`, or the path of a chokkin wheel (`*.whl`) |
 | `working-directory` | `.` | Project root to analyze |
 | `baseline` | — | Baseline file; only new findings fail the job |
 | `reporter` | `github` | Reporter for the gating run |

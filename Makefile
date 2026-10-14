@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal tlc mutants mutants-diff kani help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated formal tlc mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -152,6 +152,13 @@ coverage:
 ## ─── Python / maturin distribution ───────────────────────────────────────────
 wheel:
 	uvx maturin build --release
+
+# wheel-smoke: build the wheel the way release.yml does (dist profile) and run
+#              scripts/wheel-smoke.py on it, as the release's test-wheels job does.
+wheel-smoke:
+	rm -rf target/wheel-smoke
+	uvx maturin build --profile dist --locked --out target/wheel-smoke
+	python3 scripts/wheel-smoke.py target/wheel-smoke/*.whl
 
 sdist:
 	uvx maturin sdist

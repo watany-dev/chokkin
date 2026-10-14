@@ -63,6 +63,54 @@ fn binary_json_reporter_outputs_schema_fields() {
     assert!(stdout.contains("\"summary\""));
 }
 
+/// `scripts/wheel-smoke.py` runs each release wheel on the same fixture and
+/// compares against the same file, so the shipped binaries match this build
+/// (#834).
+#[test]
+fn binary_wheel_smoke_fixture_matches_expected_report() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let project = temp.path().join("wheel_smoke");
+    copy_dir_recursive(&fixture_path(&["wheel_smoke"]), &project).expect("copy fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json", "."])
+        .current_dir(&project)
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    let mut report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    let version = report
+        .as_object_mut()
+        .and_then(|fields| fields.remove("version"));
+    assert_eq!(version, Some(env!("CARGO_PKG_VERSION").into()));
+
+    let expected_path = fixture_path(&["wheel_smoke.json"]);
+    let expected: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&expected_path).expect("read expected"))
+            .expect("parse expected");
+    assert_eq!(
+        report,
+        expected,
+        "update {} to this output (without \"version\"):\n{:#}",
+        expected_path.display(),
+        report
+    );
+
+    let schema_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/schema/chokkin-report.schema.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(schema_path).expect("read schema"))
+            .expect("parse schema");
+    let mut versioned = expected;
+    versioned["version"] = env!("CARGO_PKG_VERSION").into();
+    jsonschema::Validator::new(&schema)
+        .expect("compile schema")
+        .validate(&versioned)
+        .expect("expected report matches the published schema");
+}
+
 #[test]
 fn binary_github_reporter_outputs_annotations() {
     let root = fixture_path(&["deps", "unused_boto3"]);

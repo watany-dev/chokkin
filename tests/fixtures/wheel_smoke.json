@@ -1,0 +1,92 @@
+{
+  "schema_version": "1",
+  "project": "smoke",
+  "mode": "app",
+  "production": false,
+  "issues": [
+    {
+      "code": "CHK001",
+      "severity": "error",
+      "confidence": "certain",
+      "message": "file `src/smoke/orphan.py` is not reachable from any entry root",
+      "fingerprint": "CHK001:src/smoke/orphan.py",
+      "target": "src/smoke/orphan.py",
+      "workspace_member": null,
+      "file": "src/smoke/orphan.py",
+      "line": null,
+      "path": "src/smoke/orphan.py",
+      "distribution": null,
+      "symbol": null,
+      "binary": null,
+      "manifest": null
+    },
+    {
+      "code": "CHK002",
+      "severity": "error",
+      "confidence": "certain",
+      "message": "declared in project.dependencies[1], no reachable import, config, or binary usage found",
+      "fingerprint": "CHK002:boto3",
+      "target": "boto3",
+      "workspace_member": null,
+      "file": null,
+      "line": null,
+      "path": null,
+      "distribution": "boto3",
+      "symbol": null,
+      "binary": null,
+      "manifest": {
+        "file": "pyproject.toml",
+        "line": null
+      }
+    },
+    {
+      "code": "CHK003",
+      "severity": "error",
+      "confidence": "certain",
+      "message": "imported pyyaml in src/smoke/cli.py:2 (no lockfile — transitive check skipped) but not declared in matching dependency context",
+      "fingerprint": "CHK003:src/smoke/cli.py:yaml",
+      "target": "src/smoke/cli.py:yaml",
+      "workspace_member": null,
+      "file": "src/smoke/cli.py",
+      "line": 2,
+      "path": "src/smoke/cli.py",
+      "distribution": "pyyaml",
+      "symbol": "yaml",
+      "binary": null,
+      "manifest": null
+    },
+    {
+      "code": "CHK006",
+      "severity": "warning",
+      "confidence": "likely",
+      "message": "public function `unused` in `smoke.util` is not referenced from outside the module",
+      "fingerprint": "CHK006:src/smoke/util.py:unused",
+      "target": "src/smoke/util.py:unused",
+      "workspace_member": null,
+      "file": "src/smoke/util.py",
+      "line": 5,
+      "path": null,
+      "distribution": null,
+      "symbol": "smoke.util:unused",
+      "binary": null,
+      "manifest": null
+    }
+  ],
+  "summary": {
+    "total": 4,
+    "by_code": {
+      "CHK001": 1,
+      "CHK002": 1,
+      "CHK003": 1,
+      "CHK006": 1
+    },
+    "files": {
+      "runtime": 4,
+      "reachable_runtime": 3
+    }
+  },
+  "suppressed": {
+    "baseline": 0
+  },
+  "diagnostics": []
+}
