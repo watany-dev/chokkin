@@ -239,6 +239,9 @@ jobs:
       - name: Check generated resolver maps
         if: ${{ !cancelled() }}
         run: make check-generated
+      - name: Test bench-gate script
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_bench_gate.py
 
   zizmor:
     name: Zizmor

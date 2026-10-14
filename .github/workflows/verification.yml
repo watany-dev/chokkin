@@ -3,7 +3,8 @@ name: Verification
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
 # PR only the mutants on lines the PR changes, weekly all of `make mutants`.
 # Both split into shards of about 100 mutants so a large diff still finishes
-# within a job timeout. kani runs on demand or weekly.
+# within a job timeout. kani runs on demand or weekly. On PRs the benchmark
+# regression gate (#836) also runs, but only reports: it never fails the PR.
 
 on:
   # No paths filter: `Mutants` is meant to be a required check, and a PR without
@@ -123,6 +124,69 @@ jobs:
           name: mutants-${{ matrix.shard }}
           path: mutants.out
           retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
+
+  bench-gate:
+    # Non-blocking until a few weeks of results show how noisy the runners are
+    # and whether --threshold needs tuning (#836).
+    name: Bench gate (PR vs base, non-blocking)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # HEAD is the PR merge commit; HEAD^1 is the base it was merged onto.
+          fetch-depth: 2
+      - name: Check for changes that can move a benchmark
+        id: changes
+        run: |
+          # Changes to the gate itself run it too, as an A/A check of the job.
+          if git diff --quiet HEAD^1 HEAD -- src benches Cargo.toml Cargo.lock \
+            scripts/bench-gate.py .github/workflows/verification.yml; then
+            echo "No change that can move a benchmark; skipped." >>"$GITHUB_STEP_SUMMARY"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          fi
+      - name: Install toolchain
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changes.outputs.run == 'true'
+      - name: Benchmark base
+        # Base and head run back to back on the same runner, so runner-to-runner
+        # differences do not show up as a change. CRITERION_HOME puts the base
+        # baseline where the head comparison looks for it. The target directory
+        # must stay separate: both checkouts have the same package version, and
+        # cargo would reuse the base build for head (release-validation.ja.md §1).
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          rm -rf target/criterion
+          git worktree add "$RUNNER_TEMP/base" HEAD^1
+          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" CRITERION_HOME="$PWD/target/criterion" \
+            make -C "$RUNNER_TEMP/base" bench-save BASELINE=base
+      - name: Compare head with base
+        if: steps.changes.outputs.run == 'true'
+        run: scripts/bench-gate.py --baseline base --confirm 3
+      - name: Summarize
+        if: always() && steps.changes.outputs.run == 'true'
+        run: |
+          if [ -f target/bench-gate/report.md ]; then
+            cat target/bench-gate/report.md >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "Benchmark gate produced no report; see the job log." >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.changes.outputs.run == 'true'
+        with:
+          name: bench-gate
+          path: target/bench-gate
+          if-no-files-found: ignore
+          retention-days: 14
 
   # One stable check name for branch protection, whatever the shard count.
   mutants-result:
