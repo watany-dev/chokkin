@@ -6,6 +6,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::mem::discriminant;
+use std::path::Path;
 
 use crate::entry::EntryWarning;
 use crate::manifest::ManifestWarning;
@@ -144,16 +145,28 @@ impl ProbeWarning {
                 },
             },
             Self::AutoWorkspace { .. } | Self::NestedProjectsSkipped { .. } => (None, None),
-            Self::SkippedSource {
-                path,
-                reason: SkipReason::SyntaxError { line, .. },
-            } => (Some(path), Some(*line)),
-            Self::SkippedSource { path, .. } | Self::ParseDiagnostic { path, line: 0, .. } => {
-                (Some(path), None)
+            Self::SkippedSource { path, reason } => {
+                let line = match reason {
+                    SkipReason::SyntaxError { line, .. } => Some(*line),
+                    SkipReason::Undecodable | SkipReason::InvalidNotebook { .. } => None,
+                };
+                (Some(path), source_line(path, line))
             },
-            Self::ParseDiagnostic { path, line, .. } => (Some(path), Some(*line)),
+            Self::ParseDiagnostic { path, line, .. } => (
+                Some(path),
+                source_line(path, Some(*line).filter(|line| *line > 0)),
+            ),
         }
     }
+}
+
+/// A notebook's line counts its joined code cells, not the JSON a reader
+/// opens, so it points at no line.
+fn source_line(path: &str, line: Option<u32>) -> Option<u32> {
+    let notebook = Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ipynb"));
+    line.filter(|_| !notebook)
 }
 
 fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
@@ -415,6 +428,79 @@ mod tests {
     use crate::sources::SourcesWarning;
 
     use super::{ProbeWarning, SkipReason, write_probe_warnings};
+
+    fn located(warning: &ProbeWarning) -> (Option<String>, Option<u32>) {
+        let diagnostic = warning.diagnostic();
+        (diagnostic.file, diagnostic.line)
+    }
+
+    /// A warning lands on the file and line it names (#895).
+    #[test]
+    fn warnings_locate_their_file_and_line() {
+        let syntax_error = ProbeWarning::SkippedSource {
+            path: "acme/broken.py".to_owned(),
+            reason: SkipReason::SyntaxError {
+                line: 9,
+                message: "Expected a statement".to_owned(),
+            },
+        };
+        let option = ProbeWarning::MemberManifest {
+            member: "packages/a".to_owned(),
+            warning: ManifestWarning::RequirementsOptionIgnored {
+                file: "packages/a/requirements.txt".to_owned(),
+                line: 4,
+                raw: "--hash=sha256:00".to_owned(),
+            },
+        };
+        let undecodable = ProbeWarning::SkippedSource {
+            path: "acme/latin.py".to_owned(),
+            reason: SkipReason::Undecodable,
+        };
+
+        assert_eq!(
+            located(&syntax_error),
+            (Some("acme/broken.py".to_owned()), Some(9))
+        );
+        assert_eq!(
+            located(&option),
+            (Some("packages/a/requirements.txt".to_owned()), Some(4))
+        );
+        assert_eq!(
+            located(&undecodable),
+            (Some("acme/latin.py".to_owned()), None)
+        );
+        assert_eq!(
+            located(&ProbeWarning::Manifest(ManifestWarning::HatchDetected)),
+            (None, None)
+        );
+    }
+
+    /// A notebook's line numbers count its joined code cells, not the JSON a
+    /// reader opens, so its warnings point at the file alone (#895).
+    #[test]
+    fn notebook_warnings_point_at_the_file_alone() {
+        let syntax_error = ProbeWarning::SkippedSource {
+            path: "acme/demo.ipynb".to_owned(),
+            reason: SkipReason::SyntaxError {
+                line: 3,
+                message: "Expected a statement".to_owned(),
+            },
+        };
+        let diagnostic = ProbeWarning::ParseDiagnostic {
+            path: "acme/Demo.IPYNB".to_owned(),
+            line: 1,
+            message: "relative import without a package".to_owned(),
+        };
+
+        assert_eq!(
+            located(&syntax_error),
+            (Some("acme/demo.ipynb".to_owned()), None)
+        );
+        assert_eq!(
+            located(&diagnostic),
+            (Some("acme/Demo.IPYNB".to_owned()), None)
+        );
+    }
 
     #[test]
     fn plugin_warning_formats_partial_settings_parse() {
