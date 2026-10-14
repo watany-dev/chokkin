@@ -48,6 +48,11 @@ pub(super) struct VersionSpecifier {
     pub text: String,
 }
 
+/// PEP 508 `WS`: only space and tab separate tokens, so `packaging` rejects
+/// `foo\u{a0}>=1`. Callers still strip any whitespace around the whole
+/// requirement, as pip and setuptools do with `str.strip`.
+const WS: [char; 2] = [' ', '\t'];
+
 /// Parse a PEP 508 requirement; `None` when it does not match the grammar.
 pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
     let input = input.trim();
@@ -55,24 +60,27 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
     if !is_strict_pep508_name(name) {
         return None;
     }
-    let mut rest = input[name.len()..].trim_start();
+    let mut rest = input[name.len()..].trim_start_matches(WS);
 
     let mut extras = Vec::new();
     if let Some(after) = rest.strip_prefix('[') {
         let end = after.find(']')?;
         extras = parse_extras(&after[..end])?;
-        rest = after[end + 1..].trim_start();
+        rest = after[end + 1..].trim_start_matches(WS);
     }
 
     let (version_or_url, marker) = if let Some(after) = rest.strip_prefix('@') {
-        let after = after.trim_start();
+        let after = after.trim_start_matches(WS);
         let (url, tail) = after
-            .split_once([' ', '\t'])
+            .split_once(WS)
             .map_or((after, ""), |(url, _)| (url, &after[url.len()..]));
+        // `packaging` keeps a leading NBSP in the URL; skip it so the scheme
+        // check accepts what `packaging` accepts.
+        let url = url.trim_start();
         if !has_url_scheme(url) {
             return None;
         }
-        let tail = tail.trim_start();
+        let tail = tail.trim_start_matches(WS);
         let marker = if tail.is_empty() {
             None
         } else {
@@ -84,9 +92,9 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
             Some((spec, marker)) => (spec, Some(marker)),
             None => (rest, None),
         };
-        let spec = spec.trim();
+        let spec = spec.trim_matches(WS);
         let (spec, parenthesized) = match spec.strip_prefix('(') {
-            Some(inner) => (inner.strip_suffix(')')?.trim(), true),
+            Some(inner) => (inner.strip_suffix(')')?.trim_matches(WS), true),
             None => (spec, false),
         };
         let version = if spec.is_empty() {
@@ -102,7 +110,7 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
 
     let marker = match marker {
         Some(raw) => {
-            let raw = raw.trim();
+            let raw = raw.trim_matches(WS);
             if !is_valid_marker(raw) {
                 return None;
             }
@@ -120,13 +128,13 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
 }
 
 fn parse_extras(inner: &str) -> Option<Vec<String>> {
-    if inner.trim().is_empty() {
+    if inner.trim_matches(WS).is_empty() {
         return Some(Vec::new());
     }
     inner
         .split(',')
         .map(|extra| {
-            let extra = extra.trim();
+            let extra = extra.trim_matches(WS);
             (leading_name_token(extra) == extra && is_strict_pep508_name(extra))
                 .then(|| normalize_distribution_name(extra))
         })
@@ -170,7 +178,7 @@ fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
     let mut specifiers = Vec::new();
     let mut rest = spec;
     loop {
-        rest = rest.trim_start();
+        rest = rest.trim_start_matches(WS);
         if let Some(after) = rest.strip_prefix("===") {
             let value = after.trim_start();
             let end = value
@@ -188,20 +196,24 @@ fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
             specifiers.push(parse_version_specifier(&rest[..end])?);
             rest = &rest[end..];
         }
-        rest = rest.trim_start();
+        rest = rest.trim_start_matches(WS);
         let Some(after) = rest.strip_prefix(',') else {
             return rest.is_empty().then_some(specifiers);
         };
         rest = after;
-        if rest.trim().is_empty() {
+        if rest.trim_matches(WS).is_empty() {
             return Some(specifiers);
         }
     }
 }
 
-/// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`).
+/// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`). Like
+/// `SpecifierSet`, each item is stripped of any whitespace.
 pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
-    input.split(',').map(parse_version_specifier).collect()
+    input
+        .split(',')
+        .map(|item| parse_version_specifier(item.trim()))
+        .collect()
 }
 
 /// A PEP 440 specifier set in the form `DeclaredDependency::specifier`
@@ -231,8 +243,10 @@ fn join_specifiers(specifiers: Vec<VersionSpecifier>) -> String {
     joined
 }
 
+/// `packaging` allows any whitespace (`\s*`) only between the operator and
+/// the version.
 fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
-    let input = input.trim();
+    let input = input.trim_matches(WS);
     let (op_text, operator) = [
         ("===", Operator::ExactEqual),
         ("==", Operator::Equal),
@@ -245,7 +259,7 @@ fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
     ]
     .into_iter()
     .find(|(op, _)| input.starts_with(op))?;
-    let version = input[op_text.len()..].trim();
+    let version = input[op_text.len()..].trim_start();
     if version.contains(char::is_whitespace) {
         return None;
     }
@@ -370,7 +384,7 @@ fn is_valid_marker(input: &str) -> bool {
 
 fn tokenize_marker(input: &str) -> Option<Vec<MarkerToken<'_>>> {
     let mut tokens = Vec::new();
-    let mut rest = input.trim_start();
+    let mut rest = input.trim_start_matches(WS);
     while let Some(ch) = rest.chars().next() {
         let len = match ch {
             '(' => {
@@ -410,7 +424,7 @@ fn tokenize_marker(input: &str) -> Option<Vec<MarkerToken<'_>>> {
                 len
             },
         };
-        rest = rest[len..].trim_start();
+        rest = rest[len..].trim_start_matches(WS);
     }
     Some(tokens)
 }
@@ -718,6 +732,28 @@ mod tests {
         assert_eq!(specifiers[0].release, [3, u64::MAX]);
         let specifiers = parse_version_specifiers("===3.11.*").expect("valid");
         assert_eq!(specifiers[0].release, Vec::<u64>::new());
+    }
+
+    #[test]
+    fn only_space_and_tab_separate_tokens() {
+        let requirement = parse("foo\t[a]\t>=1 ,\t<2\t;\tos_name == 'nt'").expect("valid");
+        assert_eq!(requirement.version_or_url.as_deref(), Some(">=1, <2"));
+        assert_eq!(requirement.marker.as_deref(), Some("os_name == 'nt'"));
+        for input in [
+            "foo\u{a0}>=1",
+            "foo>=1\u{a0},<2",
+            "foo[a\u{a0}]",
+            "foo (>=1\u{a0})",
+            "foo;\u{a0}os_name == 'nt'",
+            "foo\u{3000}>=1",
+        ] {
+            assert_eq!(parse(input), None, "{input:?}");
+        }
+        // Between an operator and its version `packaging` reads `\s*`.
+        let requirement = parse("foo>=\u{a0}1").expect("valid");
+        assert_eq!(requirement.version_or_url.as_deref(), Some(">=1"));
+        // `SpecifierSet` strips each item with `str.strip`.
+        assert!(parse_version_specifiers(">=3.10\u{a0},\u{3000}<4").is_some());
     }
 
     mod props {

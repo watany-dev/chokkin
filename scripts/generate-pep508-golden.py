@@ -100,6 +100,32 @@ CASES = [
     "foo===1.0)",
     "foo===1.0,>=1;python_version>'3'",
     "foo>=1,,<2",
+    # Issue #879: only space and tab separate tokens; `packaging` reads
+    # `\s*` (any Unicode whitespace) only between an operator and its version
+    "foo\u00a0>=1",
+    "bar>=1\u00a0,<2",
+    "foo>=1,\u00a0<2",
+    "baz\u00a0[a]",
+    "foo[\u00a0a]",
+    "foo[a\u00a0]",
+    "foo\u00a0@ https://h/x.whl",
+    "foo @\u00a0https://h/x.whl",
+    "foo @\u00a0 https://h/x.whl",
+    "foo @\u3000https://h/x.whl",
+    "foo @ https://h/x.whl \u00a0;python_version>'3'",
+    "foo;\u00a0python_version>'3'",
+    "foo; python_version\u00a0>'3'",
+    "foo; python_version>'\u00a03'",
+    "foo (\u00a0>=1)",
+    "foo (>=1\u00a0)",
+    "foo>=\u00a01",
+    "foo===\u00a01.0",
+    "foo===1.0\u00a0,>=1",
+    "foo\u3000>=1",
+    "foo\x0b>=1",
+    "foo>=1\n,<2",
+    "foo\t>=1",
+    "foo>=1 ;\tpython_version>'3'",
 ]
 
 
@@ -120,4 +146,4 @@ def read(raw: str) -> dict:
 
 golden = {"packaging": packaging.__version__, "cases": [read(raw) for raw in CASES]}
 out = Path(__file__).resolve().parent.parent / "tests/fixtures/pep508/packaging_golden.json"
-out.write_text(json.dumps(golden, indent=2, ensure_ascii=False) + "\n")
+out.write_text(json.dumps(golden, indent=2) + "\n")

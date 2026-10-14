@@ -548,6 +548,131 @@
     {
       "input": "foo>=1,,<2",
       "valid": false
+    },
+    {
+      "input": "foo\u00a0>=1",
+      "valid": false
+    },
+    {
+      "input": "bar>=1\u00a0,<2",
+      "valid": false
+    },
+    {
+      "input": "foo>=1,\u00a0<2",
+      "valid": false
+    },
+    {
+      "input": "baz\u00a0[a]",
+      "valid": false
+    },
+    {
+      "input": "foo[\u00a0a]",
+      "valid": false
+    },
+    {
+      "input": "foo[a\u00a0]",
+      "valid": false
+    },
+    {
+      "input": "foo\u00a0@ https://h/x.whl",
+      "valid": false
+    },
+    {
+      "input": "foo @\u00a0https://h/x.whl",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": []
+    },
+    {
+      "input": "foo @\u00a0 https://h/x.whl",
+      "valid": false
+    },
+    {
+      "input": "foo @\u3000https://h/x.whl",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": []
+    },
+    {
+      "input": "foo @ https://h/x.whl \u00a0;python_version>'3'",
+      "valid": false
+    },
+    {
+      "input": "foo;\u00a0python_version>'3'",
+      "valid": false
+    },
+    {
+      "input": "foo; python_version\u00a0>'3'",
+      "valid": false
+    },
+    {
+      "input": "foo; python_version>'\u00a03'",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": []
+    },
+    {
+      "input": "foo (\u00a0>=1)",
+      "valid": false
+    },
+    {
+      "input": "foo (>=1\u00a0)",
+      "valid": false
+    },
+    {
+      "input": "foo>=\u00a01",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo===\u00a01.0",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0"
+      ]
+    },
+    {
+      "input": "foo===1.0\u00a0,>=1",
+      "valid": false
+    },
+    {
+      "input": "foo\u3000>=1",
+      "valid": false
+    },
+    {
+      "input": "foo\u000b>=1",
+      "valid": false
+    },
+    {
+      "input": "foo>=1\n,<2",
+      "valid": false
+    },
+    {
+      "input": "foo\t>=1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo>=1 ;\tpython_version>'3'",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        ">=1"
+      ]
     }
   ]
 }

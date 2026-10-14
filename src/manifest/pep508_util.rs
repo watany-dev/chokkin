@@ -317,6 +317,23 @@ mod tests {
     }
 
     #[test]
+    fn surrounding_whitespace_may_be_any_unicode_whitespace() {
+        // pip and setuptools strip each line with `str.strip` (#879).
+        let dep = parse_pep508_requirement(
+            "\u{a0}foo>=1\u{3000}",
+            DependencyContext::Runtime,
+            DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "project.dependencies[0]".to_owned(),
+            },
+        )
+        .expect("valid");
+        assert_eq!(dep.name, "foo");
+        assert_eq!(dep.specifier.as_deref(), Some(">=1"));
+    }
+
+    #[test]
     fn invalid_manifest_field_keeps_its_label() {
         let result = parse_pep508_requirement(
             "pkg >=",
