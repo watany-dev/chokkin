@@ -242,8 +242,7 @@ mod tests {
         }
     }
 
-    fn lowered(gaps: &[Gap], candidates: Vec<IssueCandidate>) -> Vec<(Severity, Confidence)> {
-        let mut candidates = candidates;
+    fn lowered(gaps: &[Gap], mut candidates: Vec<IssueCandidate>) -> Vec<(Severity, Confidence)> {
         apply_gaps(&mut candidates, gaps);
         candidates
             .iter()
