@@ -207,18 +207,28 @@ fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
     }
 }
 
-/// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`). Each item is
-/// stripped of any whitespace, as `SpecifierSet` does with `str.strip`.
+/// Parse a comma-separated PEP 440 specifier set (`>=3.10, <4`) the way
+/// `SpecifierSet` does, not the requirement grammar: split on `,`, strip each
+/// item of any whitespace (`str.strip`) and drop the empty ones (`>=3.9,,<4`).
+/// `None` when an item is not a specifier, or when none is left: an empty set
+/// bounds nothing.
 pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
-    input
+    let specifiers = input
         .split(',')
-        .map(|item| parse_version_specifier(item.trim()))
-        .collect()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(parse_version_specifier)
+        .collect::<Option<Vec<_>>>()?;
+    (!specifiers.is_empty()).then_some(specifiers)
 }
 
 /// A PEP 440 specifier set in the form `DeclaredDependency::specifier`
-/// stores (`>=3.10, <4`); `None` when it is not one.
+/// stores (`>=3.10, <4`); `None` when it is not one, or has an empty item:
+/// a Poetry constraint is not a `SpecifierSet` (poetry-core rejects `>=1,,<2`).
 pub(crate) fn canonical_version_specifiers(input: &str) -> Option<String> {
+    if input.split(',').any(|item| item.trim().is_empty()) {
+        return None;
+    }
     Some(join_specifiers(parse_version_specifiers(input)?))
 }
 
@@ -704,6 +714,19 @@ mod tests {
     }
 
     #[test]
+    fn canonical_specifiers_keep_empty_items_unread() {
+        // Only requires-python is read as a `SpecifierSet`; a Poetry
+        // constraint with an empty item stays as written.
+        for input in [">=1.0,", ">=1.0,,<2", " , >=1.0", ","] {
+            assert_eq!(canonical_version_specifiers(input), None, "{input:?}");
+        }
+        assert_eq!(
+            canonical_version_specifiers(">= 1.2,<2").as_deref(),
+            Some(">=1.2, <2")
+        );
+    }
+
+    #[test]
     fn version_specifiers_expose_operator_and_release() {
         let specifiers = parse_version_specifiers(">=3.10.1, ==3.11.*, ~=3.9").expect("valid");
         let summary: Vec<_> = specifiers
@@ -723,7 +746,37 @@ mod tests {
             ]
         );
         assert_eq!(parse_version_specifiers(""), None);
-        assert_eq!(parse_version_specifiers(">=3.8,"), None);
+    }
+
+    #[test]
+    fn specifier_set_drops_empty_items_like_packaging() {
+        // `SpecifierSet` splits on `,` and drops items that strip to nothing,
+        // unlike the requirement grammar (`foo>=1,,<2` is invalid there).
+        let texts = |input: &str| {
+            parse_version_specifiers(input).map(|specifiers| {
+                specifiers
+                    .into_iter()
+                    .map(|spec| spec.text)
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(texts(">=3.9,"), Some(vec![">=3.9".to_owned()]));
+        assert_eq!(
+            texts(">=3.9,,<4"),
+            Some(vec![">=3.9".to_owned(), "<4".to_owned()])
+        );
+        assert_eq!(texts(" , >=3.9"), Some(vec![">=3.9".to_owned()]));
+        assert_eq!(texts(">=3.9\u{a0},\t"), Some(vec![">=3.9".to_owned()]));
+        // The split comes first, so `===` never reads past a comma here.
+        assert_eq!(
+            texts("===1.0, >=1"),
+            Some(vec!["===1.0".to_owned(), ">=1".to_owned()])
+        );
+        // An empty set bounds nothing, so there is nothing to read.
+        assert_eq!(texts(","), None);
+        assert_eq!(texts(" , \t"), None);
+        // A non-empty item that is not a specifier still invalidates the set.
+        assert_eq!(texts(">=3.9,,bogus"), None);
     }
 
     #[test]
