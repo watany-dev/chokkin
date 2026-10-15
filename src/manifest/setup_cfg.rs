@@ -90,6 +90,11 @@ fn split_requirement_lines(value: &str) -> impl Iterator<Item = &str> {
     value.lines().map(str::trim).filter(|line| !line.is_empty())
 }
 
+/// Split `setup.cfg` into sections the way `configparser` does: an option
+/// line splits at its first `=` or `:`, and an indented line continues the
+/// previous option. Lines `configparser` would reject (no delimiter, or a
+/// continuation with no option before it) are skipped: setuptools cannot
+/// read such a file either, so no declaration hides in them.
 fn parse_ini_sections(
     contents: &str,
 ) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> {
@@ -123,7 +128,7 @@ fn parse_ini_sections(
                     true,
                 );
             }
-        } else if let Some((key, value)) = trimmed.split_once('=') {
+        } else if let Some((key, value)) = trimmed.split_once(['=', ':']) {
             let key = key.trim().to_ascii_lowercase();
             append_value(
                 sections.entry(current.clone()).or_default(),
@@ -180,6 +185,24 @@ install_requires =
             split_requirement_lines(requires).collect::<Vec<_>>(),
             ["requests", "flask>=1.0"]
         );
+    }
+
+    #[test]
+    fn accepts_colon_delimiters_like_configparser() {
+        let contents =
+            "[options]\ninstall_requires:\n    requests\npython_requires : >=3.9\nurl = http://x\n";
+        let sections = parse_ini_sections(contents);
+        let options = sections.get("options").expect("options section");
+        assert_eq!(
+            options.get("install_requires").map(String::as_str),
+            Some("requests")
+        );
+        assert_eq!(
+            options.get("python_requires").map(String::as_str),
+            Some(">=3.9")
+        );
+        // The first delimiter wins, so a colon inside the value stays put.
+        assert_eq!(options.get("url").map(String::as_str), Some("http://x"));
     }
 
     #[test]
