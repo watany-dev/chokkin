@@ -108,7 +108,7 @@ fn parse_with(
     })
 }
 
-fn invalid(raw: &str, origin: DependencyOrigin) -> ManifestWarning {
+pub(super) fn invalid(raw: &str, origin: DependencyOrigin) -> ManifestWarning {
     ManifestWarning::InvalidRequirementLine {
         file: origin.file,
         line: origin.line,
