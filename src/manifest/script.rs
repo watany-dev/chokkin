@@ -10,6 +10,7 @@ use toml::Value;
 use crate::config::TargetVersion;
 
 use super::extract::infer_target_version_from_requires_python;
+use super::pep508::parse_version_specifiers;
 use super::pep508_util::parse_pep508_requirement;
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::warnings::ManifestWarning;
@@ -196,6 +197,14 @@ fn build_script(
         Some(_) => return Err("`dependencies` must be an array of strings".to_owned()),
     };
     let dependencies = declared_dependencies(path, block, &raw_dependencies, warnings);
+    if let Some(value) = &requires_python
+        && parse_version_specifiers(value).is_none()
+    {
+        warnings.push(ManifestWarning::InlineScriptRequiresPythonUnreadable {
+            file: path.to_owned(),
+            value: value.clone(),
+        });
+    }
     let target_version = requires_python
         .as_deref()
         .and_then(infer_target_version_from_requires_python);

@@ -191,6 +191,8 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
         | ManifestWarning::FileUndecodable { file }
         | ManifestWarning::DynamicExtrasUnread { file, .. }
+        | ManifestWarning::RequiresPythonUnreadable { file, .. }
+        | ManifestWarning::InlineScriptRequiresPythonUnreadable { file, .. }
         | ManifestWarning::InlineScriptInvalid { file, .. } => (Some(file), None),
         // The sections are named, not the file; a conflict spans two files;
         // a missing constraints file does not exist.
@@ -381,6 +383,14 @@ fn write_manifest_warning(
         ManifestWarning::DynamicExtrasUnread { file, extras } => {
             write_dynamic_extras_unread(formatter, file, extras)
         },
+        ManifestWarning::RequiresPythonUnreadable { file, value } => write!(
+            formatter,
+            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311"
+        ),
+        ManifestWarning::InlineScriptRequiresPythonUnreadable { file, value } => write!(
+            formatter,
+            "manifest: could not read `requires-python` \"{value}\" in the PEP 723 block of `{file}`; using the project's target version"
+        ),
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
             "manifest: ignored PEP 723 script block in `{file}`: {reason}"

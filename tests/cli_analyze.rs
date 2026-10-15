@@ -4003,3 +4003,56 @@ fn binary_unreadable_nested_gitignore_warns_once_in_a_workspace() {
         );
     }
 }
+
+/// #917: a `requires-python` that is not a specifier set falls back to py311,
+/// and says so; an explicit `target_version` makes it moot.
+#[test]
+fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\nversion = \"0\"\nrequires-python = \">=3.12,bogus\"\n",
+        ),
+        ("src/pkg/__init__.py", "type Alias = int\n"),
+        (
+            "scripts/tool.py",
+            "# /// script\n# requires-python = \",\"\n# dependencies = []\n# ///\nimport os\n",
+        ),
+    ]);
+    let manifest_lines = |root: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(root)
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        stderr
+            .lines()
+            .filter(|line| line.contains("requires-python"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        manifest_lines(project.path()),
+        [
+            "manifest: could not read `requires-python` \">=3.12,bogus\" in `pyproject.toml`; \
+             assuming target version py311",
+            "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
+             `scripts/tool.py`; using the project's target version",
+        ]
+    );
+
+    fs::write(
+        project.path().join("pyproject.toml"),
+        "[project]\nname = \"pkg\"\nversion = \"0\"\nrequires-python = \">=3.12,bogus\"\n\n\
+         [tool.chokkin]\ntarget_version = \"py312\"\n",
+    )
+    .expect("write pyproject");
+    assert_eq!(
+        manifest_lines(project.path()),
+        [
+            "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
+          `scripts/tool.py`; using the project's target version"
+        ]
+    );
+}

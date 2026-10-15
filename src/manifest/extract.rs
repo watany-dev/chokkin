@@ -65,6 +65,10 @@ pub fn extract_manifest(
         pyproject_dynamic_extras = extracted.dynamic_extras;
     }
     let pyproject_requires_python = metadata.requires_python.clone();
+    // Manifest the kept `requires-python` comes from: the first one setting it.
+    let mut requires_python_file = pyproject_requires_python
+        .is_some()
+        .then_some("pyproject.toml");
 
     // Manifest whose runtime dependencies could not be read, if any.
     let mut runtime_unknown_in: Option<&str> = None;
@@ -90,6 +94,9 @@ pub fn extract_manifest(
         setup_files_read.extend(extracted.files_read.iter().cloned());
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
+        if requires_python_file.is_none() && extracted.metadata.requires_python.is_some() {
+            requires_python_file = Some("setup.cfg");
+        }
         let kept_source = if sources.pyproject_toml {
             "pyproject.toml"
         } else {
@@ -120,6 +127,9 @@ pub fn extract_manifest(
         {
             // A fully read `install_requires` vouches for a skipped setup.cfg.
             runtime_unknown_in = None;
+        }
+        if requires_python_file.is_none() && extracted.metadata.requires_python.is_some() {
+            requires_python_file = Some("setup.py");
         }
         let kept_source = if sources.pyproject_toml {
             "pyproject.toml"
@@ -181,7 +191,21 @@ pub fn extract_manifest(
             .iter()
             .any(|field| field == "requires-python")
     {
+        requires_python_file = pyproject_requires_python
+            .is_some()
+            .then_some("pyproject.toml");
         metadata.requires_python = pyproject_requires_python;
+    }
+    // An explicit `target_version` replaces the inference, so an unreadable
+    // `requires-python` changes nothing then (#917).
+    if config.effective.target_version.is_none()
+        && let (Some(file), Some(value)) = (requires_python_file, &metadata.requires_python)
+        && parse_version_specifiers(value).is_none()
+    {
+        warnings.push(ManifestWarning::RequiresPythonUnreadable {
+            file: file.to_owned(),
+            value: value.clone(),
+        });
     }
 
     let dev_group = DependencyContext::Group("dev".to_owned());
@@ -328,7 +352,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v19".to_owned(),
+            unit_version: "manifest-extract-v20".to_owned(),
         },
         inputs,
     })
@@ -600,6 +624,66 @@ mod tests {
             source: std::io::Error::other("denied"),
         };
         assert_eq!(unreadable_reason(&error), "could not be read");
+    }
+
+    /// #917: the warning names the manifest whose `requires-python` was kept.
+    #[test]
+    fn unreadable_requires_python_names_the_kept_manifest() {
+        let unreadable = |files: &[(&str, &str)]| {
+            let temp = tempfile::tempdir().expect("tempdir");
+            for (file, text) in files {
+                std::fs::write(temp.path().join(file), text).expect("write");
+            }
+            let root = ProjectRoot {
+                path: temp.path().to_path_buf(),
+                marker: crate::discovery::RootMarker::PyProjectToml,
+            };
+            let config = crate::config::load_config(&root).expect("config");
+            extract_manifest(&root, &config)
+                .expect("extract")
+                .warnings
+                .into_iter()
+                .filter_map(|warning| match warning {
+                    ManifestWarning::RequiresPythonUnreadable { file, value } => {
+                        Some((file, value))
+                    },
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let setup_cfg = "[metadata]\nname = pkg\n[options]\npython_requires = >=3.9,bogus\n";
+        assert_eq!(
+            unreadable(&[("setup.cfg", setup_cfg)]),
+            [("setup.cfg".to_owned(), ">=3.9,bogus".to_owned())]
+        );
+        // PEP 621 keeps `[project]`'s value and ignores setup.cfg's.
+        let project = "[project]\nname = \"pkg\"\nversion = \"0\"\nrequires-python = \",\"\n";
+        assert_eq!(
+            unreadable(&[("pyproject.toml", project), ("setup.cfg", setup_cfg)]),
+            [("pyproject.toml".to_owned(), ",".to_owned())]
+        );
+        // The first manifest setting the value names it; one without it does not.
+        let setup_py = "from setuptools import setup\nsetup(name='pkg', python_requires='>=3.8')\n";
+        assert_eq!(
+            unreadable(&[("setup.cfg", setup_cfg), ("setup.py", setup_py)]),
+            [("setup.cfg".to_owned(), ">=3.9,bogus".to_owned())]
+        );
+        let bogus_py =
+            "from setuptools import setup\nsetup(name='pkg', python_requires='>=3.8,bogus')\n";
+        assert_eq!(
+            unreadable(&[
+                ("setup.cfg", "[metadata]\nname = pkg\n"),
+                ("setup.py", bogus_py)
+            ]),
+            [("setup.py".to_owned(), ">=3.8,bogus".to_owned())]
+        );
+        let no_python = "[project]\nname = \"pkg\"\nversion = \"0\"\n";
+        let none = unreadable(&[("pyproject.toml", no_python), ("setup.cfg", setup_cfg)]);
+        assert!(none.is_empty(), "{none:?}");
+        // No lower bound is readable, just not a target version.
+        let no_floor = "[project]\nname = \"pkg\"\nversion = \"0\"\nrequires-python = \"<3.13\"\n";
+        let none = unreadable(&[("pyproject.toml", no_floor)]);
+        assert!(none.is_empty(), "{none:?}");
     }
 
     #[test]
