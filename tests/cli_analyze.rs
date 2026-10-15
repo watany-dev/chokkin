@@ -2972,6 +2972,74 @@ fn binary_unreadable_requires_python_turns_version_dependent_imports_into_hints(
     );
 }
 
+/// An invalid requirement line may have declared the distribution its
+/// leading name names, so an import of that one becomes a hint; a line with
+/// no name lowers nothing, and other imports keep their level (#928).
+#[test]
+fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\n",
+        ),
+        // `rich_` cannot end a PEP 508 name, so the name read is `rich`.
+        (
+            "requirements.txt",
+            "PyYAML>=\nrich_ >=13\n>=1.0\nclick==8.1 \\\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "import yaml\nimport rich\nimport click\nimport idna\n",
+        ),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        [
+            "CHK003 acme/main.py:yaml info maybe",
+            "CHK003 acme/main.py:rich info maybe",
+            "CHK003 acme/main.py:click info maybe",
+            "CHK003 acme/main.py:idna error certain",
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--confidence",
+            "maybe",
+            "--explain",
+            "CHK003:yaml",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "manifest: invalid requirement at `requirements.txt:1`: PyYAML>=; undeclared imports of `pyyaml` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:2`: rich_ >=13; undeclared imports of `rich` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:3`: >=1.0\n",
+    ] {
+        assert!(stderr.contains(warning), "{warning}\n{stderr}");
+    }
+    assert!(
+        stderr.contains("a requirement line naming the distribution could not be read: `pyyaml` in `requirements.txt:1`"),
+        "{stderr}"
+    );
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]
@@ -3100,7 +3168,7 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
     for line in [
         "manifest: invalid requirement at `requirements/docs.txt:2`: not a requirement!!",
         "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
-        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;",
+        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;; undeclared imports of `requests` are reported as hints",
         "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
         "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically; missing-dependency findings in `packages/dyn` are reported as low-confidence info",
     ] {

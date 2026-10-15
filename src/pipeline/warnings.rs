@@ -9,7 +9,7 @@ use std::mem::discriminant;
 use std::path::Path;
 
 use crate::entry::EntryWarning;
-use crate::manifest::ManifestWarning;
+use crate::manifest::{ManifestWarning, invalid_requirement_name};
 use crate::plugins::PluginsWarning;
 use crate::reporters::{Diagnostic, condense_diagnostics};
 use crate::resolver::ResolveWarning;
@@ -388,7 +388,16 @@ fn write_manifest_warning(
                 || format!("`{file}` ({label})"),
                 |line| format!("`{file}:{line}`"),
             );
-            write!(formatter, "manifest: invalid requirement at {at}: {raw}")
+            write!(formatter, "manifest: invalid requirement at {at}: {raw}")?;
+            // A PEP 723 block's line is not a gap (§11), so it lowers nothing.
+            let script = label.starts_with("script.");
+            match invalid_requirement_name(raw).filter(|_| !script) {
+                Some(name) => write!(
+                    formatter,
+                    "; undeclared imports of `{name}` are reported as hints"
+                ),
+                None => Ok(()),
+            }
         },
         ManifestWarning::SetupPyPartiallyStatic { file, argument } => write!(
             formatter,
@@ -890,11 +899,22 @@ mod tests {
 
         assert_eq!(
             warning(Some(3)).to_string(),
-            "manifest: invalid requirement at `pyproject.toml:3`: foo @"
+            "manifest: invalid requirement at `pyproject.toml:3`: foo @; undeclared imports of `foo` are reported as hints"
         );
         assert_eq!(
             warning(None).to_string(),
-            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @"
+            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @; undeclared imports of `foo` are reported as hints"
+        );
+        // A PEP 723 block's line lowers nothing, so it promises no hint.
+        let script = ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
+            file: "tool.py".to_owned(),
+            line: Some(4),
+            label: "script.dependencies[0]".to_owned(),
+            raw: "rich>=".to_owned(),
+        });
+        assert_eq!(
+            script.to_string(),
+            "manifest: invalid requirement at `tool.py:4`: rich>="
         );
     }
 

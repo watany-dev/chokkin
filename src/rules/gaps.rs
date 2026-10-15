@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::{Confidence, TargetVersion};
 use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
-use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning};
+use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning, invalid_requirement_name};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
@@ -66,6 +66,10 @@ pub enum GapKind {
     /// be read statically (#491): the root's for every finding, a member's
     /// for that member's (#910).
     RuntimeDependenciesUnknown,
+    /// A manifest line that may declare the distribution its leading name
+    /// names could not be parsed (#928): an import of that distribution may
+    /// be declared.
+    InvalidRequirement,
     /// A reachable import no source resolved to a module (§7): any declared
     /// distribution may provide it (#911).
     UnresolvedImport,
@@ -134,6 +138,11 @@ impl GapKind {
                 IssueSubject::Import { .. },
             )
             | (
+                Self::InvalidRequirement,
+                RuleId::Chk003 | RuleId::Chk004,
+                IssueSubject::Import { .. },
+            )
+            | (
                 Self::AssumedTargetVersion,
                 RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
                 IssueSubject::Import { .. },
@@ -153,6 +162,9 @@ impl GapKind {
                 "a reachable module imports a module by a name computed at runtime"
             },
             Self::RuntimeDependenciesUnknown => "runtime dependencies could not be read statically",
+            Self::InvalidRequirement => {
+                "a requirement line naming the distribution could not be read"
+            },
             Self::UnresolvedImport => "a reachable import could not be resolved to a distribution",
             Self::UnresolvedScriptImport => {
                 "an import in the script could not be resolved to a distribution"
@@ -169,7 +181,8 @@ impl GapKind {
 impl Gap {
     /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
     /// member's findings, a script's import that script's alone, and an
-    /// assumed stdlib status the imports of that root in that file.
+    /// assumed stdlib status the imports of that root in that file, and an
+    /// invalid requirement the imports of the distribution it names.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
         let in_site = match (self.kind, &candidate.subject) {
@@ -183,6 +196,10 @@ impl Gap {
                         .as_ref()
                         .is_some_and(|(root, _)| root == import_root(module))
             },
+            (GapKind::InvalidRequirement, IssueSubject::Import { distribution, .. }) => self
+                .site
+                .as_ref()
+                .is_some_and(|(name, _)| distribution.as_deref() == Some(name.as_str())),
             _ => true,
         };
         in_member && in_site
@@ -227,12 +244,18 @@ pub fn collect_gaps(
     ));
     gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(manifest_gap(manifest));
+    gaps.extend(invalid_requirement_gaps(manifest));
     gaps.extend(assumed_target_gaps(context.parse, manifest, scripts));
-    gaps.extend(members.iter().filter_map(|member| {
-        let mut gap = manifest_gap(member.manifest)?;
-        gap.file = join_rel(member.path, &gap.file);
-        gap.member = Some(member.id.to_owned());
-        Some(gap)
+    gaps.extend(members.iter().flat_map(|member| {
+        let manifest = member.manifest;
+        manifest_gap(manifest)
+            .into_iter()
+            .chain(invalid_requirement_gaps(manifest))
+            .map(|mut gap| {
+                gap.file = join_rel(member.path, &gap.file);
+                gap.member = Some(member.id.to_owned());
+                gap
+            })
     }));
     // The root's gap sorts before its members', so it is the one `--explain` names first.
     gaps.sort_by(|left, right| {
@@ -477,6 +500,29 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
     })
 }
 
+/// One gap per invalid requirement line that names a distribution (#928).
+/// A line with no name (`>=1.0`, `{{ name }}>=1`) lowers nothing: it names
+/// no distribution, and reading it as an unread manifest would turn every
+/// missing declaration into a hint for one stray line. Constraint lines are
+/// not told apart from declarations, so they lower the same way.
+fn invalid_requirement_gaps(manifest: &LoadedManifest) -> Vec<Gap> {
+    manifest
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            ManifestWarning::InvalidRequirementLine {
+                file, line, raw, ..
+            } => Some(Gap {
+                file: file.clone(),
+                kind: GapKind::InvalidRequirement,
+                member: None,
+                site: Some((invalid_requirement_name(raw)?, *line)),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Lower each finding a gap's scope covers and name the gap in `--explain`
 /// (ADR 0005 §4). Exit codes still follow severity alone (§7). A cap never
 /// reaches `Maybe`, so a severity a rule derived from confidence (a library
@@ -693,6 +739,70 @@ mod tests {
                 (Severity::Info, Confidence::Maybe, detail),
                 (Severity::Error, Confidence::Certain, Vec::new()),
                 (Severity::Error, Confidence::Certain, Vec::new()),
+            ]
+        );
+    }
+
+    /// An invalid line may declare the distribution it names, so it lowers
+    /// the missing-declaration findings for that one: the root's line in
+    /// every member, a member's in that member alone (#928).
+    #[test]
+    fn invalid_requirement_hints_only_imports_of_the_distribution_it_names() {
+        let resolved = |module: &str, name: &str| IssueSubject::Import {
+            module: module.to_owned(),
+            file: "acme/main.py".to_owned(),
+            line: Some(1),
+            distribution: Some(name.to_owned()),
+        };
+        let invalid = |file: &str, name: &str, member: Option<&str>| Gap {
+            file: file.to_owned(),
+            kind: GapKind::InvalidRequirement,
+            member: member.map(str::to_owned),
+            site: Some((name.to_owned(), Some(2))),
+        };
+        let mut candidates = vec![
+            candidate(RuleId::Chk003, resolved("yaml", "pyyaml")),
+            in_member(candidate(RuleId::Chk004, resolved("yaml", "pyyaml")), "y"),
+            candidate(RuleId::Chk003, resolved("idna", "idna")),
+            in_member(candidate(RuleId::Chk003, resolved("rich", "rich")), "x"),
+            in_member(candidate(RuleId::Chk003, resolved("rich", "rich")), "y"),
+            candidate(RuleId::Chk003, import("pyyaml")),
+            candidate(RuleId::Chk002, distribution("pyyaml")),
+        ];
+        apply_gaps(
+            &mut candidates,
+            &[
+                invalid("requirements.txt", "pyyaml", None),
+                invalid("packages/x/pyproject.toml", "rich", Some("x")),
+            ],
+        );
+        let found: Vec<_> = candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.severity,
+                    candidate.confidence,
+                    candidate.explain.details.clone(),
+                )
+            })
+            .collect();
+        let detail = |site: &str| {
+            vec![format!(
+                "a requirement line naming the distribution could not be read: {site}"
+            )]
+        };
+        let hint = |site| (Severity::Info, Confidence::Maybe, detail(site));
+        let kept = (Severity::Error, Confidence::Certain, Vec::new());
+        assert_eq!(
+            found,
+            [
+                hint("`pyyaml` in `requirements.txt:2`"),
+                hint("`pyyaml` in `requirements.txt:2`"),
+                kept.clone(),
+                hint("`rich` in `packages/x/pyproject.toml:2`"),
+                kept.clone(),
+                kept.clone(),
+                kept,
             ]
         );
     }

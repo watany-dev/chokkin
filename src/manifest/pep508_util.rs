@@ -160,6 +160,26 @@ pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
         .or_else(|| egg_name_fallback(trimmed))
 }
 
+/// Distribution an invalid requirement line may have declared (#928): its
+/// leading name token, less the separators a PEP 508 name cannot start or end
+/// on, so `rich_ >=13` names `rich`. `None` when no name character leads it
+/// (`>=1.0`, `./pkg`), the token is a path or an archive pip reads as a file
+/// (`wheels/foo.whl`, `C:\pkg`, `foo-1.0-py3-none-any.whl`), or another word
+/// follows it (`not a requirement`), which no requirement has: such a line
+/// names nothing to lower.
+#[must_use]
+pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let token = leading_name_token(trimmed);
+    let after = &trimmed[token.len()..];
+    let name = token.trim_matches(['-', '_', '.']);
+    let file = after.starts_with(['/', '\\', ':']) || looks_like_archive(token);
+    let followed_by_word = after
+        .trim_start()
+        .starts_with(|ch: char| ch.is_ascii_alphanumeric());
+    (!name.is_empty() && !file && !followed_by_word).then(|| normalize_distribution_name(name))
+}
+
 /// Leading run of PEP 508 name characters (`[A-Za-z0-9._-]`).
 #[must_use]
 pub(super) fn leading_name_token(spec: &str) -> &str {
@@ -207,6 +227,31 @@ mod tests {
             ("pkg+git", false),
         ] {
             assert_eq!(is_url_like(spec), expected, "{spec:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_requirement_name_reads_the_leading_name() {
+        for (raw, expected) in [
+            ("PyYAML>=", Some("pyyaml")),
+            (" rich_ >=13", Some("rich")),
+            ("click==8.1 \\", Some("click")),
+            ("zope.interface[", Some("zope-interface")),
+            (">=1.0", None),
+            ("./pkg", None),
+            ("{{ name }}>=1", None),
+            ("not a requirement!!", None),
+            ("requests >= 2 ;;", Some("requests")),
+            ("wheels/foo-1.0-py3-none-any.whl", None),
+            ("C:\\wheels\\foo.whl", None),
+            ("foo-1.0-py3-none-any.whl", None),
+            ("", None),
+        ] {
+            assert_eq!(
+                invalid_requirement_name(raw).as_deref(),
+                expected,
+                "{raw:?}"
+            );
         }
     }
 
