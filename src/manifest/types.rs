@@ -291,8 +291,7 @@ pub struct ManifestSources {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", content = "extras", rename_all = "snake_case")]
 pub enum ExtrasState {
-    /// Every extra and its requirement list were read, except the dict
-    /// entries the `setup.py` evaluator drops without a signal (#869).
+    /// Every extra and its requirement list were read.
     #[default]
     Known,
     /// The requirement lists of these extras were only partly read; the

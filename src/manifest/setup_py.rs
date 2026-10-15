@@ -82,11 +82,12 @@ pub(super) fn extract_setup_py(
     result.metadata.requires_python = string_keyword(&call, "python_requires");
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
-    // `extras_require` the evaluator could not read, or one `**kwargs` may
-    // pass (a keyword passed twice is a `TypeError`, so an explicit one wins).
+    // `extras_require` the evaluator could not read, entries of it the
+    // evaluator could not key (#869), or one `**kwargs` may pass (a keyword
+    // passed twice is a `TypeError`, so an explicit one wins).
     let (extras_require, extras_hidden): (&[(String, Value)], bool) =
         match call.keyword("extras_require") {
-            Some(Value::Dict(items)) => (items, false),
+            Some(Value::Dict { items, partial }) => (items, *partial),
             Some(_) => (&[], true),
             None => (&[], call.unpacked),
         };
@@ -131,7 +132,8 @@ pub(super) fn extract_setup_py(
             lost.insert(extra.clone());
         }
     }
-    if !lost.is_empty() {
+    // Extras we cannot name dominate the ones we named but could not read.
+    if !lost.is_empty() && !extras_hidden {
         result.extras = ExtrasState::Partial(lost);
     }
 
@@ -505,6 +507,38 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
             ExtrasState::Partial(["doc", "yaml"].map(str::to_owned).into())
         );
         assert_eq!(names_in(&result, &extra("test")), vec!["pytest"]);
+    }
+
+    /// A dict entry the evaluator cannot key, or code it cannot follow,
+    /// leaves the read entries in place and says the dict is incomplete (#869).
+    #[test]
+    fn extras_require_with_unread_entries_keeps_the_read_ones() {
+        for script in [
+            "setup(extras_require={'s3': ['boto3'], compute(): ['x']})\n",
+            "setup(extras_require={'s3': ['boto3'], **load()})\n",
+            "extras = {'s3': ['boto3']}\nextras[name()] = ['x']\nsetup(extras_require=extras)\n",
+            "extras = {'s3': ['boto3']}\nfor k in ('gcs',):\n    extras[k] = ['gcs']\n\
+             setup(install_requires=['requests'], extras_require=extras)\n",
+            "extras = {'s3': ['boto3']}\ndel extras[name()]\nsetup(extras_require=extras)\n",
+            "extras = {'s3': ['boto3']}\nextras.update(load())\nsetup(extras_require=extras)\n",
+            "setup(extras_require={'s3': ['boto3'], **{key: [] for key in load()}})\n",
+            "extras = {'s3': ['boto3']}\nif flag:\n    extras.update(load())\n\
+             setup(extras_require=extras)\n",
+        ] {
+            let result = extract(script, &[]);
+            assert!(result.parsed, "{script}");
+            assert_eq!(names_in(&result, &extra("s3")), vec!["boto3"], "{script}");
+            assert_eq!(result.extras, ExtrasState::Unknown, "{script}");
+            assert!(
+                result.warnings.iter().any(|warning| matches!(
+                    warning,
+                    ManifestWarning::SetupPyPartiallyStatic { argument, .. }
+                        if argument == "extras_require"
+                )),
+                "{script}: {:?}",
+                result.warnings
+            );
+        }
     }
 
     #[test]
