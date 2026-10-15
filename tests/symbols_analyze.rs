@@ -1558,6 +1558,33 @@ fn entry_point_with_an_attribute_path_uses_its_object() {
     );
 }
 
+/// Several entry points into one module name one object each, and every one
+/// of them is used; a public function no entry names is still CHK006 (#884).
+#[test]
+fn every_entry_point_into_one_module_uses_its_object() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.0.0\"\n\n[project.scripts]\na = \"tool.cli:main_a\"\nb = \"tool.cli:main_b\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("tool/__init__.py", ""),
+        (
+            "tool/cli.py",
+            "def main_a():\n    pass\n\n\ndef main_b():\n    pass\n\n\ndef unnamed():\n    pass\n",
+        ),
+    ]);
+    for name in ["main_a", "main_b"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "tool.cli", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "tool.cli", "unnamed"),
+        "{report:?}"
+    );
+}
+
 /// A host reads its hook by name from the package it loads, so a hook the
 /// package's `__init__` re-exports is used; other re-exports there are not
 /// (#873).

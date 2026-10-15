@@ -193,7 +193,7 @@ fn test_file_paths<'a>(sources: &'a DiscoveredSources, entry: &'a EntryPlan) -> 
         .roots
         .iter()
         .filter(|root| root.context == FileContext::Test)
-        .map(|root| root.spec.path.as_str());
+        .map(|root| root.path.as_str());
     by_path.chain(by_root).collect()
 }
 

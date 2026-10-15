@@ -714,6 +714,43 @@ fn binary_scoped_declarations_resolve_normalized_roots() {
     assert!(!unresolved("member_dep"), "{keys:?}");
 }
 
+/// A workspace member's entry points into one of its files each keep their
+/// object used (#884).
+#[test]
+fn member_entry_points_into_one_module_each_keep_their_object() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.0.0\"\n\n[tool.uv.workspace]\nmembers = [\"svc\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "svc/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.0.0\"\n\n[project.scripts]\na = \"tool.cli:main_a\"\nb = \"tool.cli:main_b\"\n",
+        ),
+        ("svc/src/tool/__init__.py", ""),
+        (
+            "svc/src/tool/cli.py",
+            "def main_a():\n    pass\n\n\ndef main_b():\n    pass\n\n\ndef unnamed():\n    pass\n",
+        ),
+    ];
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        fs::write(path, text).expect("write fixture");
+    }
+
+    let keys = issue_keys(&json_issues(temp.path(), &[]));
+    let unused = |name: &str| {
+        keys.iter().any(|(code, target)| {
+            code == "CHK006" && target == &format!("svc/src/tool/cli.py:{name}")
+        })
+    };
+    assert!(!unused("main_a"), "{keys:?}");
+    assert!(!unused("main_b"), "{keys:?}");
+    assert!(unused("unnamed"), "{keys:?}");
+}
+
 #[test]
 fn binary_scoped_exact_declaration_beats_affixed_root_name() {
     // `pyzzfoo` / `zzbar-py` at the root only loosely match `zzfoo` / `zzbar`;

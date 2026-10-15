@@ -1,6 +1,7 @@
 //! PEP 723 scripts as entry roots.
 
-use crate::config::EntrySpec;
+use std::collections::BTreeSet;
+
 use crate::manifest::InlineScript;
 use crate::sources::{DiscoveredSources, FileContext};
 
@@ -25,25 +26,18 @@ pub(crate) fn add_script_roots(
         if production && !context.is_included_in_production() {
             continue;
         }
-        if let Some(root) = plan
-            .roots
-            .iter_mut()
-            .find(|root| root.spec.path == script.path)
-        {
+        if let Some(root) = plan.roots.iter_mut().find(|root| root.path == script.path) {
             if !root.origins.contains(&EntryOrigin::Script) {
                 root.origins.push(EntryOrigin::Script);
             }
             continue;
         }
         plan.roots.push(EntryRoot {
-            spec: EntrySpec {
-                path: script.path.clone(),
-                symbol: None,
-            },
+            path: script.path.clone(),
+            symbols: BTreeSet::new(),
             context,
             origins: vec![EntryOrigin::Script],
         });
     }
-    plan.roots
-        .sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
+    plan.roots.sort_by(|left, right| left.path.cmp(&right.path));
 }

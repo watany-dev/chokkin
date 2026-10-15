@@ -190,7 +190,7 @@ pub(super) fn host_hook_symbols(
                 |origin| matches!(origin, EntryOrigin::Manifest { group, .. } if group == "pytest11"),
             )
         })
-        .map(|root| root.spec.path.as_str())
+        .map(|root| root.path.as_str())
         .chain(
             modules
                 .iter()
@@ -221,7 +221,7 @@ pub(super) fn host_hook_symbols(
                 _ => false,
             })
         })
-        .map(|root| root.spec.path.as_str())
+        .map(|root| root.path.as_str())
         .collect();
     let is_hook = |name: &str, module: &str, path: &str| match name {
         name if name.starts_with("pytest_") => {
