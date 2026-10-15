@@ -55,7 +55,7 @@ pub(super) fn build_registry(
             if !seen.insert(id.clone()) {
                 continue;
             }
-            let in_all = module.exports.iter().any(|export| export == &symbol.name);
+            let in_all = module.exports.contains(&symbol.name);
             entries.push(RegistryEntry {
                 id,
                 path: module.path.clone(),
@@ -215,10 +215,10 @@ impl<'a> StarImports<'a> {
                         .map(|symbol| symbol.name.as_str()),
                 );
             }
-            if !module.exports.is_empty() {
+            if !module.exports.names().is_empty() {
                 stars.exports.insert(
                     name.as_str(),
-                    module.exports.iter().map(String::as_str).collect(),
+                    module.exports.names().iter().map(String::as_str).collect(),
                 );
             }
         }

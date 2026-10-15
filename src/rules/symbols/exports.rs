@@ -60,7 +60,7 @@ pub(super) fn collect_reexports(
             else {
                 continue;
             };
-            let in_all = module.exports.iter().any(|export| export == name);
+            let in_all = module.exports.contains(name);
             if name.starts_with('_') && !in_all {
                 continue;
             }

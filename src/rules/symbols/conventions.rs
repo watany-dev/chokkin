@@ -146,7 +146,7 @@ pub(super) fn config_star_symbols(
                 .entry(name.as_str())
                 .or_default()
                 .extend(star_imports(module));
-            if !module.exports.is_empty() {
+            if !module.exports.names().is_empty() {
                 declares_all.insert(name.as_str());
             }
         }

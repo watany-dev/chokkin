@@ -289,7 +289,7 @@ mod source_bytes_props {
     use std::fs;
 
     use chokkin::internals::{
-        FileContext, LayoutInfo, ParseSeverity, ParsedModule, ProjectLayout, ProjectRoot,
+        Exports, FileContext, LayoutInfo, ParseSeverity, ParsedModule, ProjectLayout, ProjectRoot,
         RootMarker, TargetVersion, parse_file,
     };
     use proptest::prelude::*;
@@ -328,7 +328,7 @@ mod source_bytes_props {
         Vec<(String, u32)>,
         Vec<(bool, Vec<String>, u32)>,
         Vec<(String, u32)>,
-        Vec<String>,
+        Exports,
     );
 
     /// Imports, ignores, symbols and exports: the parts later steps read.
@@ -485,8 +485,9 @@ mod source_bytes_props {
 
         /// The last literal `__all__` assignment, annotated or not, is the
         /// export list, and later literal `+=` / `.extend` / `.append` add to
-        /// it; a non-literal one only warns and keeps the previous. Before any
-        /// literal assignment there is no list to add to (#567).
+        /// it (#567). A non-literal assignment or addition warns and makes it
+        /// partial. Before any literal assignment there is no list to add to
+        /// (ADR 0005).
         #[test]
         fn exports_follow_last_literal_all(
             assignments in prop::collection::vec(
@@ -495,7 +496,7 @@ mod source_bytes_props {
             ),
         ) {
             let mut source = String::new();
-            let mut want: Option<Vec<String>> = None;
+            let mut want = Exports::Absent;
             let mut warnings = 0;
             for (names, form) in &assignments {
                 let quoted: Vec<String> = names.iter().map(|name| format!("{name:?}")).collect();
@@ -516,20 +517,35 @@ mod source_bytes_props {
                     9 => "__all__ += sub.__all__".to_owned(),
                     _ => "__all__.extend(names)".to_owned(),
                 };
-                match form {
-                    0..=3 => want = Some(names.clone()),
-                    6 | 7 => want.iter_mut().for_each(|want| want.extend(names.iter().cloned())),
-                    8 => match names.first() {
-                        Some(name) => want.iter_mut().for_each(|want| want.push(name.clone())),
-                        None => warnings += 1,
+                let added = match form {
+                    0..=3 => {
+                        want = Exports::Known(names.clone());
+                        None
                     },
-                    4 | 9 | 10 => warnings += 1,
-                    _ => {},
+                    6 | 7 => Some(Some(names.clone())),
+                    8 => Some(names.first().map(|name| vec![name.clone()])),
+                    4 | 9 | 10 => Some(None),
+                    _ => None,
+                };
+                match (added, &mut want) {
+                    (None, _) | (Some(Some(_)), Exports::Unknown) => {},
+                    (Some(Some(names)), Exports::Known(list) | Exports::Partial(list)) => {
+                        list.extend(names);
+                    },
+                    (Some(None), Exports::Known(list) | Exports::Partial(list)) => {
+                        want = Exports::Partial(std::mem::take(list));
+                        warnings += 1;
+                    },
+                    (Some(Some(_)), Exports::Absent)
+                    | (Some(None), Exports::Absent | Exports::Unknown) => {
+                        want = Exports::Unknown;
+                        warnings += 1;
+                    },
                 }
                 let _ = writeln!(source, "{statement}");
             }
             let parsed = parse_bytes(source.as_bytes());
-            prop_assert_eq!(&parsed.exports, &want.unwrap_or_default());
+            prop_assert_eq!(&parsed.exports, &want);
             let got_warnings = parsed
                 .diagnostics
                 .iter()

@@ -219,6 +219,57 @@ pub struct ParseDiagnostic {
     pub severity: ParseSeverity,
 }
 
+/// What a module's `__all__` reads as (ADR 0005).
+///
+/// The parser reads literal lists and literal additions; every other way of
+/// binding or growing `__all__` makes what it read incomplete instead of
+/// being dropped.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", content = "names", rename_all = "snake_case")]
+pub enum Exports {
+    /// The module never binds `__all__`.
+    #[default]
+    Absent,
+    /// Every assignment and addition was read.
+    Known(Vec<String>),
+    /// A literal list was read, but later additions or a rebinding in a
+    /// block were not: `__all__` has these names and possibly others.
+    Partial(Vec<String>),
+    /// `__all__` was bound in a form the parser cannot read.
+    Unknown,
+}
+
+impl Exports {
+    /// Names read from a literal `__all__`; empty when there is no list to
+    /// read, which consumers treat like a module without `__all__`.
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        match self {
+            Self::Known(names) | Self::Partial(names) => names,
+            Self::Absent | Self::Unknown => &[],
+        }
+    }
+
+    /// Whether `name` is in [`Self::names`].
+    #[must_use]
+    pub fn contains(&self, name: &str) -> bool {
+        self.names().iter().any(|export| export == name)
+    }
+
+    fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    /// The state after an update the parser could not read: a read list
+    /// keeps its names but may miss others, and no list stays unreadable.
+    pub(super) fn lose(&mut self) {
+        *self = match std::mem::take(self) {
+            Self::Known(names) | Self::Partial(names) => Self::Partial(names),
+            Self::Absent | Self::Unknown => Self::Unknown,
+        };
+    }
+}
+
 /// Result of parsing one `.py` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
@@ -246,9 +297,9 @@ pub struct ParsedModule {
     pub symbols: Vec<SymbolDef>,
     /// Statically named decorators seen anywhere in the module.
     pub decorator_sites: Vec<DecoratorSite>,
-    /// Names listed in `__all__`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub exports: Vec<String>,
+    /// What `__all__` reads as.
+    #[serde(default, skip_serializing_if = "Exports::is_absent")]
+    pub exports: Exports,
     /// Names bound by an import and read in this module (`from .x import f; f()`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub used_import_bindings: Vec<String>,

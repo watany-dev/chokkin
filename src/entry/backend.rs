@@ -48,8 +48,7 @@ pub(crate) fn add_build_backend_roots(
 /// Whether `module` defines or re-exports (`__all__`) every required hook.
 fn provides_hooks(module: &ParsedModule) -> bool {
     REQUIRED_HOOKS.iter().all(|hook| {
-        module.symbols.iter().any(|symbol| symbol.name == *hook)
-            || module.exports.iter().any(|name| name == hook)
+        module.symbols.iter().any(|symbol| symbol.name == *hook) || module.exports.contains(hook)
     })
 }
 
@@ -75,7 +74,9 @@ mod tests {
                     used_in_module: false,
                 })
                 .collect(),
-            exports: exports.iter().map(|name| (*name).to_owned()).collect(),
+            exports: crate::parser::Exports::Known(
+                exports.iter().map(|name| (*name).to_owned()).collect(),
+            ),
             ..ParsedModule::default()
         }
     }

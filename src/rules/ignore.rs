@@ -479,7 +479,7 @@ mod tests {
             pytest_plugins: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
-            exports: Vec::new(),
+            exports: crate::parser::Exports::Absent,
             used_import_bindings: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
@@ -533,7 +533,7 @@ mod tests {
             pytest_plugins: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
-            exports: Vec::new(),
+            exports: crate::parser::Exports::Absent,
             used_import_bindings: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
@@ -682,7 +682,7 @@ mod tests {
             pytest_plugins: Vec::new(),
             attribute_accesses: Vec::new(),
             symbols: Vec::new(),
-            exports: Vec::new(),
+            exports: crate::parser::Exports::Absent,
             used_import_bindings: Vec::new(),
             ignores,
             has_opaque_dynamic_import: false,

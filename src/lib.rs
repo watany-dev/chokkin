@@ -59,8 +59,8 @@ pub mod internals {
         resolve_target_version,
     };
     pub use crate::parser::{
-        ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule, extract_ignores,
-        parse_file, parse_project_sources_with_cache,
+        Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule,
+        extract_ignores, parse_file, parse_project_sources_with_cache,
     };
     pub use crate::pipeline::{
         AnalyzeOptions, ProbeWarning, SkipReason, WorkspaceMemberInputs, diagnostic_lines,
