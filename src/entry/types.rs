@@ -136,7 +136,7 @@ impl fmt::Display for EntryWarning {
         match self {
             Self::MissingEntryPath { path } => write!(
                 formatter,
-                "entry: skipped entry `{path}`: not a discovered source file"
+                "entry: skipped entry `{path}`: not a discovered source file; unused files and dependencies are reported below certain"
             ),
             Self::UnresolvedModuleTarget {
                 module,

@@ -457,7 +457,7 @@ PEP 517 の build backend として frontend が import する module も entry 
 
 discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry にする（rule `**/*.ipynb`、#514）。notebook は cell 単位で直接実行され他の file から import されないため、PEP 723 script と同じく root としてしか使われない。そのため notebook 自身は CHK001 にならず、notebook からだけ import される module も到達可能になる。app 判定（`has_clear_app_signals`）は file 名で見るため、notebook があっても mode は変わらない。
 
-entry の参照先 (`module:attr`) を source file に対応付けられないとき、その entry は root にせず、`` entry: could not map `mod` to a source file (`project.scripts.x` in `pyproject.toml`) `` を warning に出す。workspace member の manifest の entry も同じで、file は root からの path で書く。root にしようとした file が discovery の inventory に無いとき (exclude した config entry など) も、`` entry: skipped entry `path`: not a discovered source file `` を出す。disk に無い config entry や directory を指す config entry は source discovery が `sources: …` で報告するので、重ねて出さない。
+entry の参照先 (`module:attr`) を source file に対応付けられないとき、その entry は root にせず、`` entry: could not map `mod` to a source file (`project.scripts.x` in `pyproject.toml`) `` を warning に出す。workspace member の manifest の entry も同じで、file は root からの path で書く。root にしようとした file が discovery の inventory に無いとき (exclude した config entry や `manage.py` など) も、`` entry: skipped entry `path`: not a discovered source file; unused files and dependencies are reported below certain `` を出す。その file が import するものは読まないので、skip した entry は gap にする (§11、#923)。disk に無い config entry や directory を指す config entry は source discovery が `sources: …` で報告するので、重ねて出さず、何も実行しないので gap にもしない。
 
 ただし、library projectではaggressiveにunused filesを出すと誤検知が増える。`mode = "auto"` の判定は次にする。
 
@@ -862,6 +862,7 @@ confidenceとseverityは独立した2軸として扱う。severityはissue種別
 
 ```text
 到達可能な file を skip した (UnreadModule)            -> CHK001 と distribution の CHK002 を likely 以下に
+discovery に無い entry を skip した (SkippedEntry)           -> CHK001 と distribution の CHK002 を likely 以下に
 到達可能な notebook の一部の cell を読めなかった (UnreadNotebookCells) -> CHK001 と distribution の CHK002 を likely 以下に
 到達可能な file に opaque dynamic import (OpaqueDynamicImport) -> CHK001 を likely 以下に
 runtime 依存が読めない (RuntimeDependenciesUnknown)        -> import の CHK003 / CHK004 を info / maybe に
@@ -879,7 +880,7 @@ Django の settings は、`INSTALLED_APPS` の app、`MIDDLEWARE`、`ROOT_URLCON
 
 `member` は gap が下げる finding を 1 つの workspace member に絞る。root manifest と module の gap は `None` で、表の範囲の finding をすべて下げる。member manifest の `RuntimeDependenciesUnknown` は、その member の id を持ち、`workspace_member` がその member の finding だけを下げる (#910)。member の宣言が読めなくても、宣言できるのはその member の import だけで、root や他の member の宣言の欠落は変わらないため。root の gap は member の finding も下げる。member の import は root の宣言でも満たされうるので、root の宣言が読めなければ member の欠落も確かではない。`--explain` が数えるのは、その finding に届く gap だけにする。
 
-不在を言う finding (CHK001 / CHK002) は certain から外し、宣言の欠落を言う finding (CHK003 / CHK004) は hint にする。上限として当てるので confidence を上げることはない。exit code は下がった後の severity / confidence で決まり、gap 自体は exit code を変えない (§7)。下げた finding の `--explain` には、gap の種類ごとに理由と最初の file を 1 行出す (`` a reachable module could not be read: `acme/a.py` (and 1 more) ``)。gap はどれも warning として利用者に届く (ADR 0005 §3)。skip した file と読めなかった cell は parse の warning、読めない runtime 依存は manifest の warning、読めない Django の settings は plugin の warning が名指しする。opaque dynamic import には記録した段の warning がないので、gap を集めた後に 1 run 1 回だけ、最初の file と残りの数を出す (`` parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain ``、#909)。command の target には記録した段の warning がないので、gap を集めた後に command を書いた file ごとに 1 回、最初の target と残りの数を出す (`` plugin: `Makefile:3` runs `scripts/gen.py` as Python code no entry reaches; unused files are reported below certain ``、#913)。
+不在を言う finding (CHK001 / CHK002) は certain から外し、宣言の欠落を言う finding (CHK003 / CHK004) は hint にする。上限として当てるので confidence を上げることはない。exit code は下がった後の severity / confidence で決まり、gap 自体は exit code を変えない (§7)。下げた finding の `--explain` には、gap の種類ごとに理由と最初の file を 1 行出す (`` a reachable module could not be read: `acme/a.py` (and 1 more) ``)。gap はどれも warning として利用者に届く (ADR 0005 §3)。skip した file と読めなかった cell は parse の warning、skip した entry は entry の warning、読めない runtime 依存は manifest の warning、読めない Django の settings は plugin の warning が名指しする。opaque dynamic import には記録した段の warning がないので、gap を集めた後に 1 run 1 回だけ、最初の file と残りの数を出す (`` parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain ``、#909)。command の target には記録した段の warning がないので、gap を集めた後に command を書いた file ごとに 1 回、最初の target と残りの数を出す (`` plugin: `Makefile:3` runs `scripts/gen.py` as Python code no entry reaches; unused files are reported below certain ``、#913)。
 
 ## 12. unused exports判定
 

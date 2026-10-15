@@ -2716,6 +2716,73 @@ fn binary_django_gap_needs_a_django_project() {
     assert!(!warnings.contains("plugin: django:"), "{warnings}");
 }
 
+/// An entry chokkin skips because it is not a discovered source runs code
+/// whose imports are unknown, so the files and distributions it may use fall
+/// to likely; one that does not exist hides nothing (#923).
+#[test]
+fn binary_skipped_entry_lowers_unused_files_and_distributions() {
+    let level = |code: &str, target: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nexclude = [\"manage.py\"]\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\nfrom mysite import helper\n",
+        ),
+        ("mysite/__init__.py", ""),
+        // No public name: Django reading settings is not what this checks.
+        ("mysite/settings.py", "# settings\n"),
+        ("mysite/helper.py", "# helper\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "mysite/helper.py", "likely"),
+            level("CHK002", "django", "likely"),
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:django"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: skipped entry `manage.py`: not a discovered source file; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("an entry point is not a discovered source file: `manage.py`"),
+        "{stderr}"
+    );
+
+    // A config entry that does not exist runs nothing.
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/missing.py\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", "# helper\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "acme/helper.py", "certain"),
+            level("CHK002", "requests", "certain"),
+        ]
+    );
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]
@@ -2791,7 +2858,7 @@ fn binary_entry_warnings_reach_stderr() {
     for line in [
         "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)",
         "entry: could not map `tool.missing` to a source file (`project.scripts.tool` in `packages/tool/pyproject.toml`)",
-        "entry: skipped entry `acme/excluded.py`: not a discovered source file",
+        "entry: skipped entry `acme/excluded.py`: not a discovered source file; unused files and dependencies are reported below certain",
     ] {
         assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
     }

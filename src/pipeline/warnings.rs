@@ -797,7 +797,7 @@ mod tests {
                 path: "a.py".to_owned(),
             })
             .to_string(),
-            "entry: skipped entry `a.py`: not a discovered source file"
+            "entry: skipped entry `a.py`: not a discovered source file; unused files and dependencies are reported below certain"
         );
         assert_eq!(
             ProbeWarning::Entry(EntryWarning::UnresolvedModuleTarget {

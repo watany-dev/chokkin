@@ -54,6 +54,9 @@ pub struct MemberManifest<'a> {
 pub enum GapKind {
     /// A reachable module that was skipped: none of its imports are known.
     UnreadModule,
+    /// An entry point that is not a discovered source, so it was skipped
+    /// (#923): the code it runs is not followed.
+    SkippedEntry,
     /// A reachable notebook was read, but some cells that may be code were
     /// not (#902): what those cells import is unknown.
     UnreadNotebookCells,
@@ -99,6 +102,7 @@ impl GapKind {
         match (self, candidate.rule, &candidate.subject) {
             (
                 Self::UnreadModule
+                | Self::SkippedEntry
                 | Self::UnreadNotebookCells
                 | Self::OpaqueDynamicImport
                 | Self::UnreadCommandTarget
@@ -107,7 +111,10 @@ impl GapKind {
                 _,
             )
             | (
-                Self::UnreadModule | Self::UnreadNotebookCells | Self::UnreadDjangoSettings,
+                Self::UnreadModule
+                | Self::SkippedEntry
+                | Self::UnreadNotebookCells
+                | Self::UnreadDjangoSettings,
                 RuleId::Chk002,
                 IssueSubject::Distribution { .. },
             )
@@ -129,6 +136,7 @@ impl GapKind {
     const fn reason(self) -> &'static str {
         match self {
             Self::UnreadModule => "a reachable module could not be read",
+            Self::SkippedEntry => "an entry point is not a discovered source file",
             Self::UnreadNotebookCells => {
                 "some code cells of a reachable notebook could not be read"
             },
@@ -169,17 +177,29 @@ impl Gap {
     }
 }
 
-/// Gaps that can affect a finding: one in a module that never runs hides
-/// nothing, so module and import gaps count only where the module is reached.
+/// Gaps that can affect a finding.
+///
+/// One in a module that never runs hides nothing, so module and import gaps
+/// count only where the module is reached. `skipped_entries` are the entry
+/// paths skipped as not discovered, less those that do not exist, which run
+/// nothing.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn collect_gaps(
     context: &RuleContext<'_>,
     manifest: &LoadedManifest,
     members: &[MemberManifest<'_>],
     scripts: &[InlineScript],
     plugins: &PluginHints,
+    skipped_entries: &[String],
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
+    gaps.extend(skipped_entries.iter().map(|path| Gap {
+        file: path.clone(),
+        kind: GapKind::SkippedEntry,
+        member: None,
+        site: None,
+    }));
     gaps.extend(unresolved_import_gaps(context, manifest, scripts));
     gaps.extend(command_target_gaps(
         context,
@@ -495,9 +515,10 @@ mod tests {
     }
 
     #[test]
-    fn unread_module_and_django_settings_cap_absence_findings_but_not_script_ones() {
+    fn unread_module_skipped_entry_and_django_settings_cap_absence_findings_but_not_script_ones() {
         for gap in [
             gap("acme/latin.py", GapKind::UnreadModule),
+            gap("manage.py", GapKind::SkippedEntry),
             gap("manage.py", GapKind::UnreadDjangoSettings),
         ] {
             let found = lowered(
