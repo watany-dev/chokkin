@@ -508,6 +508,26 @@ mod tests {
         assert_eq!(located(&three), (Some("acme/main.py".to_owned()), None));
     }
 
+    /// The unread-extras warning names the extras, or says none were named (#905).
+    #[test]
+    fn dynamic_extras_warning_names_the_unread_extras() {
+        let unread = |extras: &[&str]| {
+            ProbeWarning::Manifest(ManifestWarning::DynamicExtrasUnread {
+                file: "pyproject.toml".to_owned(),
+                extras: extras.iter().map(|extra| (*extra).to_owned()).collect(),
+            })
+            .to_string()
+        };
+        assert_eq!(
+            unread(&[]),
+            "manifest: `pyproject.toml` lists `optional-dependencies` in `dynamic`, but no source chokkin reads fills them"
+        );
+        assert_eq!(
+            unread(&["s3", "gcs"]),
+            "manifest: extras `s3`, `gcs` in `pyproject.toml` are filled at build time and could not be read statically"
+        );
+    }
+
     /// A warning lands on the file and line it names (#895).
     #[test]
     fn warnings_locate_their_file_and_line() {

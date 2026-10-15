@@ -1593,6 +1593,65 @@ mod props {
     }
 
     #[test]
+    fn nodes_counts_every_container_and_leaf() {
+        let leaf = || Value::Str("a".to_owned());
+        assert_eq!(Value::List(vec![leaf(), leaf()]).nodes(), 3);
+        let dict = Value::Dict {
+            items: vec![("k".to_owned(), leaf())],
+            partial: false,
+        };
+        assert_eq!(dict.nodes(), 2);
+    }
+
+    #[test]
+    fn spreading_a_partial_dict_keeps_it_partial() {
+        let call = evaluate(
+            "base = {'a': ['x'], **opaque()}
+setup(extras_require={**base, 'b': ['y']})
+",
+        )
+        .expect("setup() call");
+        let Some(Value::Dict { items, partial }) = call.keyword("extras_require") else {
+            panic!("extras_require is not a dict");
+        };
+        assert!(partial);
+        let keys: Vec<&str> = items.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(keys, ["a", "b"]);
+    }
+
+    #[test]
+    fn missing_key_of_a_known_dict_is_not_looked_up_in_the_tables() {
+        let call = evaluate(
+            "reqs = ['requests>=2']
+table = {'other': 'y'}
+\
+             setup(install_requires=[table['requests']])
+",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            call.keyword("install_requires"),
+            Some(&Value::List(vec![Value::Unknown]))
+        );
+    }
+
+    #[test]
+    fn missing_key_of_a_partial_dict_is_looked_up_in_the_tables() {
+        let call = evaluate(
+            "reqs = ['requests>=2']
+table = {'other': 'y', **opaque()}
+\
+             setup(install_requires=[table['requests']])
+",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            call.keyword("install_requires"),
+            Some(&Value::List(vec![Value::Str("requests>=2".to_owned())]))
+        );
+    }
+
+    #[test]
     fn del_name_forgets_the_value() {
         let call = evaluate("reqs = ['a']\ndel reqs\nsetup(install_requires=reqs)\n")
             .expect("setup() call");

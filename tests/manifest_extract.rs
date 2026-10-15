@@ -627,6 +627,22 @@ fn undecodable_setup_py_is_covered_by_pyproject_dependencies() {
     assert_eq!(runtime_unknown_file(&manifest), None);
 }
 
+/// A fully read setup.cfg `install_requires` vouches for a skipped
+/// `setup.py`.
+#[test]
+fn undecodable_setup_py_is_covered_by_setup_cfg_dependencies() {
+    let manifest = extract_files(&[
+        (
+            "setup.cfg",
+            b"[metadata]\nname = acme\n[options]\ninstall_requires =\n    requests\n",
+        ),
+        ("setup.py", UNDECODABLE_SETUP_PY),
+    ]);
+    assert_eq!(dependency_names(&manifest), ["requests"]);
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), None);
+}
+
 /// A root `requirements.txt` read as runtime vouches for a skipped
 /// `setup.py`.
 #[test]

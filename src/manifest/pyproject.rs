@@ -1076,6 +1076,33 @@ mod tests {
         );
     }
 
+    /// A multiple-constraint dependency is optional only when every form is.
+    #[test]
+    fn poetry_multiple_constraints_are_optional_when_every_form_is() {
+        let result = extract(
+            r#"[tool.poetry]
+name = "x"
+[tool.poetry.dependencies]
+both = [{ version = "^1", python = "<3.9", optional = true }, { version = "^2", python = ">=3.9", optional = true }]
+half = [{ version = "^1", python = "<3.9", optional = true }, { version = "^2", python = ">=3.9" }]
+"#,
+        )
+        .expect("valid pyproject");
+        let mut contexts: Vec<_> = result
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.as_str(), &dep.context))
+            .collect();
+        contexts.sort_unstable_by_key(|dep| dep.0);
+        assert_eq!(
+            contexts,
+            vec![
+                ("both", &DependencyContext::OptionalExtra("both".to_owned())),
+                ("half", &DependencyContext::Runtime),
+            ]
+        );
+    }
+
     #[test]
     fn reads_when_poetry_installs_a_dependency() {
         let result = extract(
