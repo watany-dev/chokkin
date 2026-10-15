@@ -286,7 +286,14 @@ fn parse_pip_line(
     let Some((requirement, marker)) = split_pip_marker(line) else {
         return Err(invalid(line, origin));
     };
-    let mut dep = parse(requirement, context, origin.clone()).map_err(|_| invalid(line, origin))?;
+    // Rewrite the warning's `raw` rather than clone `origin` up front: that
+    // clone cost every valid line two allocations.
+    let mut dep = parse(requirement, context, origin).map_err(|mut warning| {
+        if let ManifestWarning::InvalidRequirementLine { raw, .. } = &mut warning {
+            line.clone_into(raw);
+        }
+        warning
+    })?;
     if let Some(marker) = marker {
         dep.marker = Some(marker.to_owned());
     }
@@ -299,8 +306,13 @@ fn parse_pip_line(
 /// (`foo ;`), as in pip (#889). `None` when the marker is not PEP 508, which
 /// pip rejects.
 fn split_pip_marker(line: &str) -> Option<(&str, Option<&str>)> {
-    let separator = if is_pip_url(line) { "; " } else { ";" };
-    let Some((requirement, marker)) = line.split_once(separator) else {
+    // A `char` for `;`: a `&str` pattern builds a two-way searcher per line.
+    let split = if is_pip_url(line) {
+        line.split_once("; ")
+    } else {
+        line.split_once(';')
+    };
+    let Some((requirement, marker)) = split else {
         return Some((line, None));
     };
     let marker = strip_python(marker);
