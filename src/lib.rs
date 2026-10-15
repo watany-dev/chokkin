@@ -54,9 +54,9 @@ pub mod internals {
         GraphEdge, GraphError, ModuleOrigin, ProjectGraph, add_parsed_imports, build_graph_skeleton,
     };
     pub use crate::manifest::{
-        DependencyContext, DependencyOrigin, LoadedManifest, LockfileKind, ManifestError,
-        ManifestWarning, discover_inline_scripts, extract_manifest, extract_manifest_with_cache,
-        resolve_target_version,
+        DependencyContext, DependencyOrigin, ExtrasState, LoadedManifest, LockfileKind,
+        ManifestError, ManifestWarning, discover_inline_scripts, extract_manifest,
+        extract_manifest_with_cache, resolve_target_version,
     };
     pub use crate::parser::{
         Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule,

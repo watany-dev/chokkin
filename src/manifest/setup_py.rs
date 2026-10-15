@@ -1,6 +1,6 @@
 //! Static `setup.py` manifest extraction.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use crate::path_util::rel_to_root;
@@ -11,7 +11,7 @@ use super::requirements::{extract_requirements_path, requirements_line_distribut
 use super::setup_py_eval::{
     DependencyItem, SetupCall, Value, dependency_items, evaluate_setup_call,
 };
-use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
+use super::types::{DeclaredDependency, DependencyContext, ExtrasState, ProjectMetadata};
 use super::util::{DependencyPush, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
@@ -31,6 +31,8 @@ pub(super) struct SetupPyExtraction {
     /// `install_requires` could not be fully read (no static `setup()` call,
     /// or a value the evaluator cannot follow).
     pub runtime_unknown: bool,
+    /// How much of `extras_require` could be read.
+    pub extras: ExtrasState,
     /// Root-relative requirements files that `setup.py` reads.
     pub files_read: Vec<String>,
     /// Root-relative requirements file candidates probed but absent.
@@ -49,6 +51,7 @@ pub(super) fn extract_setup_py(
     let mut result = SetupPyExtraction::default();
     let Some(contents) = read_text(path)? else {
         result.runtime_unknown = true;
+        result.extras = ExtrasState::Unknown;
         result
             .warnings
             .push(ManifestWarning::FileUndecodable { file: rel });
@@ -58,6 +61,7 @@ pub(super) fn extract_setup_py(
     let call = parse_module(&contents).and_then(|stmts| evaluate_setup_call(root, &stmts));
     let Some(call) = call else {
         result.runtime_unknown = true;
+        result.extras = ExtrasState::Unknown;
         result
             .warnings
             .push(ManifestWarning::SetupPyNotStatic { file: rel });
@@ -78,10 +82,17 @@ pub(super) fn extract_setup_py(
     result.metadata.requires_python = string_keyword(&call, "python_requires");
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
-    let extras_require: &[(String, Value)] = match call.keyword("extras_require") {
-        Some(Value::Dict(items)) => items,
-        _ => &[],
-    };
+    // `extras_require` the evaluator could not read, or one `**kwargs` may
+    // pass (a keyword passed twice is a `TypeError`, so an explicit one wins).
+    let (extras_require, extras_hidden): (&[(String, Value)], bool) =
+        match call.keyword("extras_require") {
+            Some(Value::Dict(items)) => (items, false),
+            Some(_) => (&[], true),
+            None => (&[], call.unpacked),
+        };
+    if extras_hidden {
+        result.extras = ExtrasState::Unknown;
+    }
     let nothing_read = install_requires
         .as_ref()
         .is_none_or(|items| items.items.is_empty() && !items.complete);
@@ -94,21 +105,34 @@ pub(super) fn extract_setup_py(
     }
 
     result.parsed = true;
+    if extras_hidden {
+        result
+            .warnings
+            .push(ManifestWarning::SetupPyPartiallyStatic {
+                file: rel.clone(),
+                argument: "extras_require".to_owned(),
+            });
+    }
 
     result.runtime_unknown = match install_requires {
         Some(items) => !push_items(root, &mut result, &rel, &items, &DependencyContext::Runtime),
         None => call.unpacked,
     };
 
+    let mut lost = BTreeSet::new();
     for (extra, value) in extras_require {
-        let items = dependency_items(value);
-        let _ = push_items(
+        if !push_items(
             root,
             &mut result,
             &rel,
-            &items,
+            &dependency_items(value),
             &DependencyContext::SetupExtra(extra.clone()),
-        );
+        ) {
+            lost.insert(extra.clone());
+        }
+    }
+    if !lost.is_empty() {
+        result.extras = ExtrasState::Partial(lost);
     }
 
     Ok(result)
@@ -460,6 +484,74 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
     }
 
     #[test]
+    fn readable_extras_are_known() {
+        let result = extract(
+            "setup(install_requires=['requests'], extras_require={'test': ['pytest']})\n",
+            &[],
+        );
+        assert_eq!(result.extras, ExtrasState::Known);
+        let shim = extract("from setuptools import setup\nsetup()\n", &[]);
+        assert_eq!(shim.extras, ExtrasState::Known);
+    }
+
+    #[test]
+    fn unreadable_extras_are_partial_per_extra() {
+        let result = extract(
+            "setup(extras_require={'test': ['pytest'], 'doc': load(), 'yaml': ['pyyaml'] + more})\n",
+            &[],
+        );
+        assert_eq!(
+            result.extras,
+            ExtrasState::Partial(["doc", "yaml"].map(str::to_owned).into())
+        );
+        assert_eq!(names_in(&result, &extra("test")), vec!["pytest"]);
+    }
+
+    #[test]
+    fn extras_require_that_is_not_a_dict_is_unknown() {
+        let result = extract(
+            "setup(install_requires=['requests'], extras_require=load())\n",
+            &[],
+        );
+        assert!(result.parsed);
+        assert_eq!(result.extras, ExtrasState::Unknown);
+        assert!(result.warnings.iter().any(|warning| matches!(
+            warning,
+            ManifestWarning::SetupPyPartiallyStatic { argument, .. } if argument == "extras_require"
+        )));
+    }
+
+    #[test]
+    fn unpacked_setup_kwargs_hide_extras_require() {
+        let hidden = extract(
+            "kw = load()\nsetup(install_requires=['requests'], **kw)\n",
+            &[],
+        );
+        assert_eq!(hidden.extras, ExtrasState::Unknown);
+        assert!(hidden.warnings.iter().any(|warning| matches!(
+            warning,
+            ManifestWarning::SetupPyPartiallyStatic { argument, .. } if argument == "extras_require"
+        )));
+        // Python rejects a keyword passed twice, so `**kw` cannot replace it.
+        let explicit = extract(
+            "kw = load()\nsetup(extras_require={'test': ['pytest']}, **kw)\n",
+            &[],
+        );
+        assert_eq!(explicit.extras, ExtrasState::Known);
+    }
+
+    #[test]
+    fn unread_setup_py_leaves_extras_unknown() {
+        for script in [
+            "from setuptools import setup\nsetup_kwargs = {}\n",
+            "setup(extras_require={'test': [\n",
+        ] {
+            let result = extract(script, &[]);
+            assert_eq!(result.extras, ExtrasState::Unknown, "{script}");
+        }
+    }
+
+    #[test]
     fn unreadable_install_requires_is_unknown() {
         let result = extract(
             "import pathlib\nsetup(install_requires=pathlib.Path('requirements.txt').read_text().splitlines())\n",
@@ -606,6 +698,7 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
         );
         assert!(!result.parsed);
         assert!(result.runtime_unknown);
+        assert_eq!(result.extras, ExtrasState::Unknown);
         assert_eq!(result.dependencies, []);
         assert_eq!(
             result.warnings,

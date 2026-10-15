@@ -10,9 +10,10 @@
 use std::path::{Path, PathBuf};
 
 use chokkin::internals::{
-    CacheOptions, ConfigSources, DependencyContext, LoadedConfig, LockfileKind, ManifestError,
-    ManifestWarning, ProjectRoot, RootMarker, TargetVersion, default_config, discover_project_root,
-    extract_manifest, extract_manifest_with_cache, load_config, resolve_target_version,
+    CacheOptions, ConfigSources, DependencyContext, ExtrasState, LoadedConfig, LockfileKind,
+    ManifestError, ManifestWarning, ProjectRoot, RootMarker, TargetVersion, default_config,
+    discover_project_root, extract_manifest, extract_manifest_with_cache, load_config,
+    resolve_target_version,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -365,6 +366,23 @@ fn setup_py_unreadable_install_requires_marks_runtime_unknown() {
         warning,
         ManifestWarning::RuntimeDependenciesUnknown { file } if file == "setup.py"
     )));
+}
+
+/// The setup.py extras state reaches the manifest sources (ADR 0005 step 2).
+#[test]
+fn setup_py_extras_state_reaches_the_sources() {
+    let partial = extract_files(&[(
+        "setup.py",
+        b"setup(install_requires=['requests'], extras_require={'test': ['pytest'], 'doc': load()})\n",
+    )]);
+    assert_eq!(
+        partial.sources.extras,
+        ExtrasState::Partial(["doc".to_owned()].into())
+    );
+    let unknown = extract_files(&[("setup.py", UNDECODABLE_SETUP_PY)]);
+    assert_eq!(unknown.sources.extras, ExtrasState::Unknown);
+    let known = extract_files(&[("pyproject.toml", b"[project]\nname = \"acme\"\n")]);
+    assert_eq!(known.sources.extras, ExtrasState::Known);
 }
 
 /// A `setup.py` that is neither UTF-8 nor declares its coding no longer

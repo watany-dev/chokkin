@@ -280,6 +280,26 @@ pub struct ManifestSources {
     /// statically, so CHK003/CHK004 findings are downgraded (#491).
     #[serde(default)]
     pub runtime_dependencies_unknown: bool,
+    /// How much of the `setup.py` extras could be read (ADR 0005 step 2).
+    /// No rule reads it yet.
+    #[serde(default)]
+    pub extras: ExtrasState,
+}
+
+/// How much of a manifest's extras could be read.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", content = "extras", rename_all = "snake_case")]
+pub enum ExtrasState {
+    /// Every extra and its requirement list were read, except the dict
+    /// entries the `setup.py` evaluator drops without a signal (#869).
+    #[default]
+    Known,
+    /// The requirement lists of these extras were only partly read; the
+    /// other extras were read in full.
+    Partial(BTreeSet<String>),
+    /// Which extras exist, or what they hold, could not be read.
+    Unknown,
 }
 
 /// Fully extracted manifest for a project root.
