@@ -2329,6 +2329,148 @@ fn binary_unresolved_script_import_lowers_only_its_block() {
     );
 }
 
+const COMMAND_PYPROJECT: &str = "[project]\nname = \"mypkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmypkg = \"mypkg.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+
+/// A command may be the only thing that runs a file, and commands add no
+/// entries yet (#912): one that runs Python no entry reaches lowers unused
+/// files to likely and is warned once per file (#913).
+#[test]
+fn binary_unread_command_target_lowers_unused_files() {
+    let file = |path: &str| (path.to_owned(), "likely".to_owned());
+    let mut files = vec![
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        (
+            "Makefile",
+            "gen:\n\tpython mypkg/gen.py\n\nmod:\n\tpython -m mypkg.modrun\n",
+        ),
+        (
+            "tox.ini",
+            "[testenv:gen]\ncommands = python mypkg/toxgen.py\n",
+        ),
+        (
+            ".pre-commit-config.yaml",
+            "repos:\n  - repo: local\n    hooks:\n      - id: ghgen\n        name: ghgen\n        entry: python -m mypkg.ghgen\n        language: system\n",
+        ),
+        ("Procfile", "web: gunicorn mypkg.server:app\n"),
+    ];
+    for path in [
+        "mypkg/gen.py",
+        "mypkg/modrun.py",
+        "mypkg/toxgen.py",
+        "mypkg/ghgen.py",
+        "mypkg/server.py",
+    ] {
+        files.push((path, "app = None\n"));
+    }
+    let project = write_project(&files);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let unused: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        unused,
+        [
+            file("mypkg/gen.py"),
+            file("mypkg/ghgen.py"),
+            file("mypkg/modrun.py"),
+            file("mypkg/server.py"),
+            file("mypkg/toxgen.py"),
+        ],
+        "{parsed}"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "plugin: `.pre-commit-config.yaml:6` runs `mypkg.ghgen` as Python code no entry reaches; unused files are reported below certain",
+        "plugin: `Makefile:2` runs `mypkg/gen.py` and 1 more target as Python code no entry reaches; unused files are reported below certain",
+        "plugin: `Procfile:1` runs `mypkg.server` as Python code no entry reaches; unused files are reported below certain",
+        "plugin: `tox.ini:2` runs `mypkg/toxgen.py` as Python code no entry reaches; unused files are reported below certain",
+    ] {
+        assert!(stderr.contains(warning), "{stderr}");
+    }
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK001:mypkg/gen.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 4 more)"
+        ),
+        "{stderr}"
+    );
+}
+
+/// A computed target may run any file, so it lowers unused files (#913).
+#[test]
+fn binary_computed_command_target_lowers_unused_files() {
+    let computed = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/orphan.py", ""),
+        ("Makefile", "gen:\n\t$(PYTHON) $(SCRIPT)\n"),
+    ]);
+    assert_eq!(
+        issue_levels(computed.path()),
+        [(
+            "CHK001".to_owned(),
+            "mypkg/orphan.py".to_owned(),
+            "error".to_owned(),
+            "likely".to_owned()
+        )]
+    );
+}
+
+/// A typo names no file, and third-party and reached targets hide nothing
+/// (#913).
+#[test]
+fn binary_unresolved_command_target_keeps_unused_files_certain() {
+    let typo = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/orphan.py", ""),
+        (
+            "Makefile",
+            "gen:\n\tpython mypkg/gne.py\n\tpython -m json.tool a.json\n\tpython -m mypkg.main\n\tpython mypkg/main.py\n",
+        ),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(typo.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("no entry reaches"), "{stderr}");
+    assert_eq!(
+        issue_levels(typo.path()),
+        [(
+            "CHK001".to_owned(),
+            "mypkg/orphan.py".to_owned(),
+            "error".to_owned(),
+            "certain".to_owned()
+        )]
+    );
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]

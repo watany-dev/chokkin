@@ -47,6 +47,37 @@ pub struct ScriptReference {
     pub origin: ReferenceOrigin,
 }
 
+/// Python code a command runs (#913), as far as the command shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommandTarget {
+    /// A `.py` file run by path: root-relative candidates in priority order.
+    Script {
+        /// Candidates; the first discovered one is the script.
+        paths: Vec<String>,
+    },
+    /// A module run with `-m`, served by a WSGI/ASGI or task runner, or
+    /// imported by `python -c` code.
+    Module {
+        /// Dotted module name.
+        module: String,
+    },
+    /// A target the command computes (a variable or substitution) or names
+    /// in a shape that is not read.
+    Opaque {
+        /// The word as written.
+        text: String,
+    },
+}
+
+/// One [`CommandTarget`] and the command that runs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandTargetRef {
+    /// What the command runs.
+    pub target: CommandTarget,
+    /// The command's file and line.
+    pub origin: ReferenceOrigin,
+}
+
 /// A config file imports a first-party module whose `sys.path` edits apply to
 /// the config's own imports, as Sphinx's `conf.py` does with a shared
 /// constants module (#779).
@@ -152,6 +183,9 @@ pub struct PluginHints {
     /// Scripts CI workflows, local pre-commit hooks and agent skill docs run
     /// by path (#797).
     pub config_script_entries: Vec<ScriptReference>,
+    /// Python code task files and tool configs run (#913); the gap stage
+    /// reads it, since none of it is an entry yet.
+    pub config_command_targets: Vec<CommandTargetRef>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,
 }

@@ -7,10 +7,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::Confidence;
+use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
 use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
+use crate::plugins::{CommandTarget, CommandTargetRef};
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolveWarning, is_first_party_import};
 use crate::rules::RuleContext;
@@ -28,9 +30,10 @@ pub struct Gap {
     /// The workspace member whose findings alone the gap lowers; `None`
     /// lowers every finding in its kind's scope (#910).
     pub member: Option<String>,
-    /// The module an unresolved import names and its line, which `--explain`
-    /// shows in place of the file (#911).
-    pub import: Option<(String, Option<u32>)>,
+    /// What in the file could not be read and its line, which `--explain`
+    /// shows in place of the file: an unresolved import's module (#911), a
+    /// command's target (#913).
+    pub site: Option<(String, Option<u32>)>,
 }
 
 /// A workspace member's manifest: what it could not read lowers only the
@@ -66,6 +69,10 @@ pub enum GapKind {
     /// The same in a PEP 723 script, whose own block installs what it
     /// imports: it lowers that script's findings alone (#911).
     UnresolvedScriptImport,
+    /// A task file or tool config runs Python code no entry reaches: a
+    /// computed or unread target, or a file or module it names that nothing
+    /// else reaches (#913). What that code imports is unknown.
+    UnreadCommandTarget,
 }
 
 /// How a gap changes a finding in its scope.
@@ -87,7 +94,10 @@ impl GapKind {
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
         match (self, candidate.rule, &candidate.subject) {
             (
-                Self::UnreadModule | Self::UnreadNotebookCells | Self::OpaqueDynamicImport,
+                Self::UnreadModule
+                | Self::UnreadNotebookCells
+                | Self::OpaqueDynamicImport
+                | Self::UnreadCommandTarget,
                 RuleId::Chk001,
                 _,
             )
@@ -125,6 +135,7 @@ impl GapKind {
             Self::UnresolvedScriptImport => {
                 "an import in the script could not be resolved to a distribution"
             },
+            Self::UnreadCommandTarget => "a command runs Python code no entry reaches",
         }
     }
 }
@@ -143,10 +154,10 @@ impl Gap {
         in_member && in_script
     }
 
-    /// What `--explain` names: the import and its site, or else the file.
+    /// What `--explain` names: the import or target and its line, or else the file.
     fn label(&self) -> String {
-        match &self.import {
-            Some((module, line)) => format!("`{module}` in `{}`", import_site(&self.file, *line)),
+        match &self.site {
+            Some((what, line)) => format!("`{what}` in `{}`", import_site(&self.file, *line)),
             None => format!("`{}`", self.file),
         }
     }
@@ -160,9 +171,11 @@ pub fn collect_gaps(
     manifest: &LoadedManifest,
     members: &[MemberManifest<'_>],
     scripts: &[InlineScript],
+    commands: &[CommandTargetRef],
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
     gaps.extend(unresolved_import_gaps(context, manifest, scripts));
+    gaps.extend(command_target_gaps(context, commands));
     gaps.extend(manifest_gap(manifest));
     gaps.extend(members.iter().filter_map(|member| {
         let mut gap = manifest_gap(member.manifest)?;
@@ -172,11 +185,11 @@ pub fn collect_gaps(
     }));
     // The root's gap sorts before its members', so it is the one `--explain` names first.
     gaps.sort_by(|left, right| {
-        (left.kind, left.member.is_some(), &left.file, &left.import).cmp(&(
+        (left.kind, left.member.is_some(), &left.file, &left.site).cmp(&(
             right.kind,
             right.member.is_some(),
             &right.file,
-            &right.import,
+            &right.site,
         ))
     });
     gaps
@@ -203,7 +216,7 @@ fn module_gaps(
                 file: module.path.clone(),
                 kind,
                 member: None,
-                import: None,
+                site: None,
             });
         };
         if module.skipped {
@@ -275,7 +288,62 @@ fn unresolved_import_gaps(
                 GapKind::UnresolvedImport
             },
             member: None,
-            import: Some((import.to_owned(), line)),
+            site: Some((import.to_owned(), line)),
+        })
+        .collect()
+}
+
+/// One gap per command file and target. A computed or unread target may run
+/// any file; a file or module it names that no entry reaches runs code whose
+/// imports are not followed, since commands add no entries yet (#912). A
+/// target that names nothing discovered (a typo, a deleted file, a
+/// third-party module such as `pytest`) hides no project file, so it is no gap.
+fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef]) -> Vec<Gap> {
+    let known_paths: BTreeSet<String> = context
+        .sources
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    let unreached = |path: &String| !is_reached(path, context.graph, context.reachability);
+    let mut sites: BTreeMap<(&str, String), Option<u32>> = BTreeMap::new();
+    for command in commands {
+        let text = match &command.target {
+            CommandTarget::Opaque { text } => text.clone(),
+            CommandTarget::Script { paths } => {
+                match paths.iter().find(|path| known_paths.contains(*path)) {
+                    Some(path) if unreached(path) => path.clone(),
+                    _ => continue,
+                }
+            },
+            CommandTarget::Module { module } => {
+                let layout = &context.sources.layout;
+                let path =
+                    resolve_module_to_path(&format!("{module}.__main__"), layout, &known_paths)
+                        .or_else(|| resolve_module_to_path(module, layout, &known_paths));
+                match path {
+                    Some(path) if unreached(&path) => module.clone(),
+                    _ => continue,
+                }
+            },
+        };
+        let line = command.origin.line;
+        sites
+            .entry((command.origin.file.as_str(), text))
+            .and_modify(|kept| {
+                if (line.is_none(), line) < (kept.is_none(), *kept) {
+                    *kept = line;
+                }
+            })
+            .or_insert(line);
+    }
+    sites
+        .into_iter()
+        .map(|((file, text), line)| Gap {
+            file: file.to_owned(),
+            kind: GapKind::UnreadCommandTarget,
+            member: None,
+            site: Some((text, line)),
         })
         .collect()
 }
@@ -298,7 +366,7 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
         file,
         kind: GapKind::RuntimeDependenciesUnknown,
         member: None,
-        import: None,
+        site: None,
     })
 }
 
@@ -390,7 +458,7 @@ mod tests {
             file: file.to_owned(),
             kind,
             member: None,
-            import: None,
+            site: None,
         }
     }
 
@@ -430,21 +498,26 @@ mod tests {
     }
 
     #[test]
-    fn opaque_dynamic_import_caps_only_unused_files() {
-        let found = lowered(
-            &[gap("acme/main.py", GapKind::OpaqueDynamicImport)],
-            vec![
-                candidate(RuleId::Chk001, file("acme/orphan.py")),
-                candidate(RuleId::Chk002, distribution("requests")),
-            ],
-        );
-        assert_eq!(
-            found,
-            [
-                (Severity::Error, Confidence::Likely),
-                (Severity::Error, Confidence::Certain),
-            ]
-        );
+    fn opaque_dynamic_import_and_command_targets_cap_only_unused_files() {
+        for gap in [
+            gap("acme/main.py", GapKind::OpaqueDynamicImport),
+            gap("Makefile", GapKind::UnreadCommandTarget),
+        ] {
+            let found = lowered(
+                &[gap],
+                vec![
+                    candidate(RuleId::Chk001, file("acme/orphan.py")),
+                    candidate(RuleId::Chk002, distribution("requests")),
+                ],
+            );
+            assert_eq!(
+                found,
+                [
+                    (Severity::Error, Confidence::Likely),
+                    (Severity::Error, Confidence::Certain),
+                ]
+            );
+        }
     }
 
     #[test]
@@ -544,7 +617,7 @@ mod tests {
 
     fn unresolved(file: &str, kind: GapKind, module: &str, line: u32) -> Gap {
         let mut gap = gap(file, kind);
-        gap.import = Some((module.to_owned(), Some(line)));
+        gap.site = Some((module.to_owned(), Some(line)));
         gap
     }
 

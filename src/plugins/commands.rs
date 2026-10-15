@@ -6,7 +6,9 @@
 //! treated as commands, so `echo pytest` or `$(COVERAGE) run` stay silent.
 
 use super::plugin_map::plugin_module_distribution;
-use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin};
+use super::types::{
+    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin,
+};
 
 /// Predicate for binary names worth reporting (the binary map plus known tools).
 pub(super) type KnownBinary<'a> = &'a dyn Fn(&str) -> bool;
@@ -27,6 +29,7 @@ pub(super) struct SourceHits {
     pub(super) binaries: Vec<BinaryUsage>,
     pub(super) distributions: Vec<String>,
     pub(super) module_refs: Vec<ModuleReference>,
+    pub(super) command_targets: Vec<CommandTargetRef>,
 }
 
 impl SourceHits {
@@ -43,6 +46,8 @@ impl SourceHits {
                 config_section: false,
             });
         }
+        self.command_targets
+            .extend(command_target_refs(command, origin));
     }
 
     pub(super) fn push_module(&mut self, module: &str, origin: &ReferenceOrigin) {
@@ -64,6 +69,69 @@ impl SourceHits {
         }
         self.push_module(module, origin);
     }
+}
+
+/// [`command_targets`] as records the gap stage reads (#913). A script's
+/// path is joined to its directory; an absolute one is tried by each of its
+/// suffixes, since an image or CI job may check the project out anywhere, and
+/// one that leaves the root names no project file, so it is dropped.
+pub(super) fn command_target_refs(
+    command: &str,
+    origin: &ReferenceOrigin,
+) -> Vec<CommandTargetRef> {
+    command_targets(command)
+        .into_iter()
+        .filter_map(|target| {
+            let target = match target {
+                PythonTarget::Script(run) => script_target(&run)?,
+                PythonTarget::Module(module) => CommandTarget::Module { module },
+                PythonTarget::Opaque(text) => CommandTarget::Opaque { text },
+            };
+            Some(CommandTargetRef {
+                target,
+                origin: origin.clone(),
+            })
+        })
+        .collect()
+}
+
+fn script_target(run: &ScriptRun) -> Option<CommandTarget> {
+    let parts: Vec<&str> = run
+        .directory
+        .iter()
+        .map(String::as_str)
+        .chain([run.path.as_str()])
+        .collect();
+    if parts.iter().any(|part| is_computed(part)) {
+        return Some(CommandTarget::Opaque {
+            text: run.path.clone(),
+        });
+    }
+    let absolute = parts.iter().any(|part| part.starts_with(['/', '\\']));
+    let mut components = Vec::new();
+    for part in parts {
+        if part.starts_with(['/', '\\']) {
+            components.clear();
+        }
+        for component in part.split(['/', '\\']) {
+            match component {
+                "" | "." => {},
+                ".." => {
+                    components.pop()?;
+                },
+                name => components.push(name),
+            }
+        }
+    }
+    let paths = if absolute {
+        (0..components.len())
+            .filter_map(|start| components.get(start..))
+            .map(|rest| rest.join("/"))
+            .collect()
+    } else {
+        vec![components.join("/")]
+    };
+    Some(CommandTarget::Script { paths })
 }
 
 /// Known binaries invoked as the command word of `command`, deduplicated.
@@ -138,8 +206,44 @@ const UV_RUN_VALUE_OPTIONS: [&str; 26] = [
 ///
 /// A `cd <dir>` segment applies to the segments after it.
 pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
+    command_targets(command)
+        .into_iter()
+        .filter_map(|target| match target {
+            PythonTarget::Script(run) => Some(run),
+            PythonTarget::Module(_) | PythonTarget::Opaque(_) => None,
+        })
+        .collect()
+}
+
+/// Python code one command runs (#913).
+pub(super) enum PythonTarget {
+    /// A `.py` file run by path.
+    Script(ScriptRun),
+    /// A module run with `-m`, served by a runner, or imported by `-c` code.
+    Module(String),
+    /// A variable, a substitution, or an argument shape that is not read.
+    Opaque(String),
+}
+
+/// WSGI/ASGI servers and task runners whose argument names the module they load.
+const MODULE_RUNNERS: [&str; 6] = [
+    "gunicorn",
+    "uvicorn",
+    "hypercorn",
+    "daphne",
+    "waitress-serve",
+    "celery",
+];
+
+/// What each segment that runs Python (a `python` word, `uv run`, or one of
+/// [`MODULE_RUNNERS`]) runs. A segment whose command word is anything else, a
+/// variable included, runs nothing this reads; a bare `python` or one with
+/// flags alone runs no file. A `cd <dir>` segment applies to the scripts
+/// after it.
+pub(super) fn command_targets(command: &str) -> Vec<PythonTarget> {
     let mut cwd: Option<String> = None;
-    let mut scripts = Vec::new();
+    let mut targets = Vec::new();
+    let mut runs_code = false;
     for_each_segment(command, |words| {
         let rest = words.get(command_start(words)..).unwrap_or_default();
         if let [cd, dir] = rest
@@ -151,31 +255,46 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
             );
             return;
         }
-        if let Some(mut run) = segment_script(words) {
-            if let Some(cwd) = &cwd {
-                run.directory = Some(
-                    run.directory
-                        .map_or_else(|| cwd.clone(), |dir| format!("{cwd}/{dir}")),
-                );
-            }
-            scripts.push(run);
+        match segment_target(words) {
+            Some(Run::Target(PythonTarget::Script(mut run))) => {
+                if let Some(cwd) = &cwd {
+                    run.directory = Some(
+                        run.directory
+                            .map_or_else(|| cwd.clone(), |dir| format!("{cwd}/{dir}")),
+                    );
+                }
+                targets.push(PythonTarget::Script(run));
+            },
+            Some(Run::Target(target)) => targets.push(target),
+            Some(Run::Code) => runs_code = true,
+            None => {},
         }
     });
-    scripts
+    if runs_code {
+        targets.extend(code_targets(command));
+    }
+    targets
 }
 
-fn segment_script(words: &[&str]) -> Option<ScriptRun> {
+/// A segment's target, or `python -c` code, which the whole command holds
+/// since its `;` split it into segments.
+enum Run {
+    Target(PythonTarget),
+    Code,
+}
+
+fn segment_target(words: &[&str]) -> Option<Run> {
     let mut index = 0;
     while let Some(word) = words.get(index) {
         let rest = words.get(index + 1..).unwrap_or_default();
         if command_name(word) == "uv" && rest.first() == Some(&"run") {
-            return uv_run_script(rest.get(1..)?);
+            return uv_run_target(rest.get(1..)?);
         }
-        if is_python_word(word) {
-            return python_script(rest).map(|path| ScriptRun {
-                directory: None,
-                path: path.to_owned(),
-            });
+        if is_python_word(word) || is_python_variable(word) {
+            return python_target(rest);
+        }
+        if let Some(runner) = module_runner(word) {
+            return Some(Run::Target(runner_target(runner, rest)));
         }
         let width = prefix_width(word, rest.first().copied());
         if width == 0 {
@@ -186,22 +305,146 @@ fn segment_script(words: &[&str]) -> Option<ScriptRun> {
     None
 }
 
-fn python_script<'a>(args: &[&'a str]) -> Option<&'a str> {
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        if arg.starts_with("-m") || arg.starts_with("-c") {
-            return None;
+/// `$(PYTHON)`, `${PYTHON3}`, `{{python}}`: an interpreter a task file names
+/// by variable.
+fn is_python_variable(word: &str) -> bool {
+    (word.starts_with('$') || word.starts_with("{{"))
+        && word
+            .trim_matches(['$', '(', ')', '{', '}', ' '])
+            .to_ascii_lowercase()
+            .contains("python")
+}
+
+fn module_runner(word: &str) -> Option<&'static str> {
+    let name = command_name(word);
+    MODULE_RUNNERS.into_iter().find(|runner| *runner == name)
+}
+
+fn is_computed(word: &str) -> bool {
+    word.contains(['$', '{', '}', '%', '*'])
+}
+
+fn python_target(args: &[&str]) -> Option<Run> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        index += 1;
+        if let Some(module) = arg.strip_prefix("-m") {
+            let rest = args.get(index..).unwrap_or_default();
+            let (module, rest) = if module.is_empty() {
+                let (module, rest) = rest.split_first()?;
+                (*module, rest)
+            } else {
+                (module, rest)
+            };
+            return Some(Run::Target(match module_runner(module) {
+                Some(runner) => runner_target(runner, rest),
+                None => module_target(module),
+            }));
+        }
+        if arg.starts_with("-c") {
+            return Some(Run::Code);
         }
         if matches!(*arg, "-X" | "-W") {
-            args.next();
+            index += 1;
+        } else if *arg == "-" {
+            return Some(Run::Target(PythonTarget::Opaque((*arg).to_owned())));
         } else if !arg.starts_with('-') {
-            return is_python_path(arg).then_some(*arg);
+            return Some(Run::Target(path_target(arg)));
         }
     }
     None
 }
 
-fn uv_run_script(args: &[&str]) -> Option<ScriptRun> {
+fn module_target(module: &str) -> PythonTarget {
+    if is_dotted_identifier(module) {
+        PythonTarget::Module(module.to_owned())
+    } else {
+        PythonTarget::Opaque(module.to_owned())
+    }
+}
+
+/// A positional `python` argument: a `.py` path, or else something this does
+/// not place (a directory or zip app with a `__main__`, a computed path).
+fn path_target(arg: &str) -> PythonTarget {
+    if !is_computed(arg) && is_python_path(arg) {
+        PythonTarget::Script(ScriptRun {
+            directory: None,
+            path: arg.to_owned(),
+        })
+    } else {
+        PythonTarget::Opaque(arg.to_owned())
+    }
+}
+
+/// The module a runner loads: celery's `-A` / `--app`, else the first
+/// `module:attr` argument, else a lone dotted positional (gunicorn's
+/// `module` form). An app named only in a config file is not read.
+fn runner_target(runner: &str, args: &[&str]) -> PythonTarget {
+    let app = if runner == "celery" {
+        celery_app(args)
+    } else {
+        server_app(args)
+    };
+    match app {
+        Some(app) => {
+            let module = app.split_once(':').map_or(app, |(module, _)| module);
+            if is_computed(app) {
+                PythonTarget::Opaque(app.to_owned())
+            } else {
+                module_target(module)
+            }
+        },
+        None => PythonTarget::Opaque(runner.to_owned()),
+    }
+}
+
+fn celery_app<'a>(args: &[&'a str]) -> Option<&'a str> {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if matches!(*arg, "-A" | "--app") {
+            return args.next().copied();
+        }
+        if let Some(app) = arg
+            .strip_prefix("--app=")
+            .or_else(|| arg.strip_prefix("-A"))
+        {
+            return Some(app);
+        }
+    }
+    None
+}
+
+fn server_app<'a>(args: &[&'a str]) -> Option<&'a str> {
+    if let Some(app) = args.iter().find(|arg| is_app_reference(arg)) {
+        return Some(app);
+    }
+    let mut after_option = false;
+    for arg in args {
+        if arg.starts_with('-') {
+            after_option = !arg.contains('=');
+            continue;
+        }
+        if !after_option && (is_computed(arg) || is_dotted_identifier(arg)) {
+            return Some(arg);
+        }
+        after_option = false;
+    }
+    None
+}
+
+/// `module:attr`, `module:factory()` or a computed `$APP_MODULE`-like word
+/// with a colon.
+fn is_app_reference(arg: &str) -> bool {
+    arg.split_once(':').is_some_and(|(module, attr)| {
+        (is_dotted_identifier(module) || is_computed(module))
+            && !attr.is_empty()
+            && !attr.starts_with('/')
+            // `-b localhost:8000` binds a port; it names no app.
+            && !attr.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+fn uv_run_target(args: &[&str]) -> Option<Run> {
     let mut directory = None;
     let mut index = 0;
     while let Some(arg) = args.get(index) {
@@ -211,21 +454,111 @@ fn uv_run_script(args: &[&str]) -> Option<ScriptRun> {
         } else if *arg == "--directory" {
             directory = args.get(index).copied();
             index += 1;
+        } else if matches!(*arg, "-m" | "--module") {
+            return Some(Run::Target(module_target(args.get(index)?)));
         } else if UV_RUN_VALUE_OPTIONS.contains(arg) {
             index += 1;
         } else if !arg.starts_with('-') {
-            let path = if is_python_word(arg) {
-                python_script(args.get(index..)?)?
+            let rest = args.get(index..).unwrap_or_default();
+            let mut run = if is_python_word(arg) {
+                python_target(rest)?
+            } else if let Some(runner) = module_runner(arg) {
+                Run::Target(runner_target(runner, rest))
+            } else if is_python_path(arg) {
+                Run::Target(path_target(arg))
             } else {
-                is_python_path(arg).then_some(*arg)?
+                return None;
             };
-            return Some(ScriptRun {
-                directory: directory.map(str::to_owned),
-                path: path.to_owned(),
-            });
+            if let Run::Target(PythonTarget::Script(script)) = &mut run {
+                script.directory = directory.map(str::to_owned);
+            }
+            return Some(run);
         }
     }
     None
+}
+
+/// Modules `python -c` code imports. Code that imports by a computed name
+/// (`__import__`, `importlib`, `runpy`, `exec`) is opaque, and so is the
+/// command when the code is a variable.
+fn code_targets(command: &str) -> Vec<PythonTarget> {
+    let Some(code) = python_code(command) else {
+        return vec![PythonTarget::Opaque("-c".to_owned())];
+    };
+    if code.contains("__import__")
+        || code.contains("importlib")
+        || code.contains("runpy")
+        || code.contains("exec(")
+        || code.trim_start_matches([' ', '"', '\'']).starts_with('$')
+    {
+        return vec![PythonTarget::Opaque("-c".to_owned())];
+    }
+    let tokens: Vec<&str> = code
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ','))
+        .flat_map(|word| word.split_inclusive(','))
+        .flat_map(|word| {
+            word.strip_suffix(',')
+                .map_or([word, ""], |name| [name, ","])
+        })
+        .filter(|token| !token.is_empty())
+        .collect();
+    let mut modules: Vec<PythonTarget> = Vec::new();
+    let mut from: Option<&str> = None;
+    let mut index = 0;
+    while let Some(&token) = tokens.get(index) {
+        index += 1;
+        if token == "from" {
+            from = tokens.get(index).copied();
+            if let Some(module) = from {
+                push_module(&mut modules, module);
+            }
+        } else if token == "import" {
+            // `import a as x, b`: every name in the list is a module. A name
+            // after `from a import` may be the submodule `a.name`.
+            let from = from.take();
+            while let Some(name) = tokens.get(index) {
+                match from {
+                    Some(from) => push_module(&mut modules, &format!("{from}.{name}")),
+                    None => push_module(&mut modules, name),
+                }
+                index += 1;
+                if tokens.get(index) == Some(&"as") {
+                    index += 2;
+                }
+                if tokens.get(index) != Some(&",") {
+                    break;
+                }
+                index += 1;
+            }
+        }
+    }
+    modules
+}
+
+/// The code after python's own `-c`: the first `-c` word in a segment that
+/// runs python, not one of `pre-commit` or `pip install -c constraints.txt`.
+fn python_code(command: &str) -> Option<&str> {
+    command.match_indices("-c").find_map(|(at, _)| {
+        let before = command.get(..at)?;
+        let segment = before
+            .rsplit(['\n', ';', '&', '|'])
+            .next()
+            .unwrap_or(before);
+        let runs_python = segment
+            .split_whitespace()
+            .any(|word| is_python_word(word) || is_python_variable(word));
+        (runs_python && before.ends_with([' ', '\t'])).then(|| command.get(at + 2..))?
+    })
+}
+
+fn push_module(modules: &mut Vec<PythonTarget>, module: &str) {
+    if is_dotted_identifier(module)
+        && !modules
+            .iter()
+            .any(|seen| matches!(seen, PythonTarget::Module(name) if name == module))
+    {
+        modules.push(PythonTarget::Module(module.to_owned()));
+    }
 }
 
 fn is_python_path(word: &str) -> bool {
@@ -438,5 +771,156 @@ mod tests {
         assert_eq!(scripts("uv run pytest tests/test_a.py"), []);
         assert_eq!(scripts("uv run --with gen.py ruff check"), []);
         assert_eq!(scripts("echo python gen.py"), []);
+    }
+
+    fn targets(command: &str) -> Vec<String> {
+        command_targets(command)
+            .into_iter()
+            .map(|target| match target {
+                PythonTarget::Script(run) => match run.directory {
+                    Some(dir) => format!("script {dir}/{}", run.path),
+                    None => format!("script {}", run.path),
+                },
+                PythonTarget::Module(module) => format!("module {module}"),
+                PythonTarget::Opaque(text) => format!("opaque {text}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn command_targets_read_modules_runners_and_code() {
+        assert_eq!(
+            targets("python -m mypkg.modrun --x"),
+            ["module mypkg.modrun"]
+        );
+        assert_eq!(targets("python3 -mmypkg"), ["module mypkg"]);
+        assert_eq!(targets("uv run -m mypkg.cli"), ["module mypkg.cli"]);
+        assert_eq!(
+            targets("poetry run gunicorn -w 4 -b 0.0.0.0:80 mypkg.server:app"),
+            ["module mypkg.server"]
+        );
+        assert_eq!(
+            targets("uvicorn --factory mypkg.api:create_app() --reload"),
+            ["module mypkg.api"]
+        );
+        assert_eq!(targets("gunicorn mypkg.wsgi"), ["module mypkg.wsgi"]);
+        assert_eq!(
+            targets("python -m celery -A mypkg.tasks worker"),
+            ["module mypkg.tasks"]
+        );
+        assert_eq!(
+            targets("celery --app=mypkg.tasks beat"),
+            ["module mypkg.tasks"]
+        );
+        assert_eq!(
+            targets("python -c \"import mypkg.tasks; from mypkg import jobs; mypkg.tasks.run()\""),
+            ["module mypkg.tasks", "module mypkg", "module mypkg.jobs"]
+        );
+        assert_eq!(
+            targets("python -c 'import mypkg.a as a, mypkg.b; from mypkg.c import d, e'"),
+            [
+                "module mypkg.a",
+                "module mypkg.b",
+                "module mypkg.c",
+                "module mypkg.c.d",
+                "module mypkg.c.e"
+            ]
+        );
+        assert_eq!(
+            targets("pip install -c c.txt x && python -c 'import mypkg.a'"),
+            ["module mypkg.a"]
+        );
+        assert_eq!(
+            targets("gunicorn -b localhost:8000 mypkg.wsgi"),
+            ["module mypkg.wsgi"]
+        );
+        assert_eq!(
+            targets("gunicorn --bind localhost:8000 mypkg.wsgi:app"),
+            ["module mypkg.wsgi"]
+        );
+        assert_eq!(
+            targets("python -m gunicorn mypkg.wsgi"),
+            ["module mypkg.wsgi"]
+        );
+        assert_eq!(
+            targets("python -c 'import x, mypkg.a as a, mypkg.b'"),
+            ["module x", "module mypkg.a", "module mypkg.b"]
+        );
+        assert_eq!(
+            targets("python -c 'import mypkg.a; import mypkg.a'"),
+            ["module mypkg.a"]
+        );
+        // `-c` inside a word is not python's flag.
+        assert_eq!(
+            targets("python tools/pre-commit.py --from HEAD && python -c 'import mypkg.a'"),
+            ["script tools/pre-commit.py", "module mypkg.a"]
+        );
+        assert_eq!(targets("python -c 'print(1)'"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn command_targets_mark_computed_and_unread_shapes_opaque() {
+        assert_eq!(targets("python $(SCRIPT)"), ["opaque $(SCRIPT)"]);
+        assert_eq!(targets("$(PYTHON) -m $(MODULE)"), ["opaque $(MODULE)"]);
+        assert_eq!(targets("{{python}} tools/gen.py"), ["script tools/gen.py"]);
+        assert_eq!(targets("gunicorn \"$APP_MODULE\""), ["opaque $APP_MODULE"]);
+        assert_eq!(targets("gunicorn -c gunicorn.conf.py"), ["opaque gunicorn"]);
+        assert_eq!(targets("python mydir"), ["opaque mydir"]);
+        assert_eq!(targets("python - < gen.txt"), ["opaque -"]);
+        assert_eq!(
+            targets("python -c \"__import__(sys.argv[1])\""),
+            ["opaque -c"]
+        );
+        assert_eq!(
+            targets("python -c \"import runpy; runpy.run_module(name)\""),
+            ["opaque -c"]
+        );
+        assert_eq!(
+            targets("python -c \"exec(open('x').read())\""),
+            ["opaque -c"]
+        );
+        assert_eq!(
+            targets("pre-commit run && python -c \"$CODE\""),
+            ["opaque -c"]
+        );
+        // Nothing runs Python here.
+        assert_eq!(targets("python"), Vec::<String>::new());
+        assert_eq!(targets("python3 --version"), Vec::<String>::new());
+        assert_eq!(targets("$(CMD) gen.py"), Vec::<String>::new());
+        assert_eq!(targets("uv run pytest tests"), Vec::<String>::new());
+        assert_eq!(targets("echo python gen.py"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn command_target_refs_place_script_paths() {
+        let origin = ReferenceOrigin {
+            file: "Dockerfile".to_owned(),
+            line: Some(3),
+            label: "CMD".to_owned(),
+        };
+        let refs = |command: &str| -> Vec<CommandTarget> {
+            command_target_refs(command, &origin)
+                .into_iter()
+                .map(|reference| reference.target)
+                .collect()
+        };
+        let script = |paths: &[&str]| CommandTarget::Script {
+            paths: paths.iter().map(|path| (*path).to_owned()).collect(),
+        };
+        assert_eq!(
+            refs("cd tools && python ./gen.py"),
+            [script(&["tools/gen.py"])]
+        );
+        assert_eq!(
+            refs("python /app/mypkg/gen.py"),
+            [script(&["app/mypkg/gen.py", "mypkg/gen.py", "gen.py"])]
+        );
+        assert_eq!(refs("python ../other/gen.py"), []);
+        assert_eq!(
+            refs("cd $(DIR) && python gen.py"),
+            [CommandTarget::Opaque {
+                text: "gen.py".to_owned()
+            }]
+        );
     }
 }
