@@ -1359,6 +1359,132 @@ wrapped = { version = "*", markers = "os_name == 'nt' or\nos_name == 'java'", py
             "[A-Za-z0-9]([A-Za-z0-9._-]{0,12}[A-Za-z0-9])?"
         }
 
+        /// One Poetry python constraint term: an operator and 1..=3 version
+        /// components. `>`, `<=`, `==` and bare versions are left out:
+        /// `python_version` keeps only two components, so they differ from
+        /// the full-version reading by convention, not by a bug.
+        type PoetryTerm = (&'static str, Vec<u64>);
+
+        fn poetry_term() -> impl Strategy<Value = PoetryTerm> {
+            (
+                prop::sample::select(vec!["^", "~", ">=", "<", "*"]),
+                prop::collection::vec(0u64..3, 1..=3),
+            )
+        }
+
+        /// Alternatives (`||`) of AND terms.
+        fn poetry_constraint() -> impl Strategy<Value = Vec<Vec<PoetryTerm>>> {
+            prop::collection::vec(prop::collection::vec(poetry_term(), 1..=2), 1..=3)
+        }
+
+        fn poetry_render(constraint: &[Vec<PoetryTerm>], spelling: u8) -> String {
+            let or = ["||", " || ", "|"][usize::from(spelling % 3)];
+            let and = [",", ", ", " "][usize::from(spelling / 3 % 3)];
+            let gap = if spelling & 0x10 == 0 { "" } else { " " };
+            constraint
+                .iter()
+                .map(|terms| {
+                    terms
+                        .iter()
+                        .map(|(op, parts)| {
+                            if *op == "*" {
+                                return "*".to_owned();
+                            }
+                            let version = parts
+                                .iter()
+                                .map(u64::to_string)
+                                .collect::<Vec<_>>()
+                                .join(".");
+                            format!("{op}{gap}{version}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(and)
+                })
+                .collect::<Vec<_>>()
+                .join(or)
+        }
+
+        fn padded(parts: &[u64]) -> [u64; 3] {
+            let mut version = [0; 3];
+            version[..parts.len()].copy_from_slice(parts);
+            version
+        }
+
+        /// Poetry's documented meaning of a term on a full Python version.
+        fn poetry_allows((op, parts): &PoetryTerm, python: [u64; 3]) -> bool {
+            let lower = padded(parts);
+            let upper = |index: usize| {
+                let mut upper = [0; 3];
+                upper[..index].copy_from_slice(&parts[..index]);
+                upper[index] = parts[index] + 1;
+                upper
+            };
+            match *op {
+                "*" => true,
+                ">=" => python >= lower,
+                "<" => python < lower,
+                // `^1.2.3` < 2.0.0, `^0.2.3` < 0.3.0, `^0.0.3` < 0.0.4,
+                // `^0.0` < 0.1.0, `^0` < 1.0.0.
+                "^" => {
+                    let index = parts.iter().position(|&part| part != 0);
+                    python >= lower && python < upper(index.unwrap_or(parts.len() - 1))
+                },
+                // `~1.2.3` < 1.3.0, `~1.2` < 1.3.0, `~1` < 2.0.0.
+                "~" => python >= lower && python < upper(usize::from(parts.len() != 1)),
+                op => panic!("unexpected operator {op}"),
+            }
+        }
+
+        /// Evaluates the `python_version` / `python_full_version` markers
+        /// `poetry_python_marker` writes; `python_version` is `X.Y`.
+        fn marker_allows(marker: &str, python: [u64; 3]) -> bool {
+            marker.split(" or ").any(|alternative| {
+                let alternative = alternative.trim_start_matches('(').trim_end_matches(')');
+                alternative.split(" and ").all(|term| {
+                    let mut words = term.splitn(3, ' ');
+                    let variable = words.next().expect("variable");
+                    let op = words.next().expect("operator");
+                    let version = words.next().expect("version").trim_matches('"');
+                    let parts: Vec<u64> = version
+                        .split('.')
+                        .map(|part| part.parse().expect("number"))
+                        .collect();
+                    let value = match variable {
+                        "python_version" => [python[0], python[1], 0],
+                        "python_full_version" => python,
+                        variable => panic!("unexpected variable {variable} in {marker}"),
+                    };
+                    let bound = padded(&parts);
+                    match op {
+                        ">=" => value >= bound,
+                        "<" => value < bound,
+                        op => panic!("unexpected operator {op} in {marker}"),
+                    }
+                })
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn poetry_python_marker_matches_poetry_semantics(
+                constraint in poetry_constraint(),
+                spelling in any::<u8>(),
+            ) {
+                let rendered = poetry_render(&constraint, spelling);
+                let marker = poetry_python_marker(&rendered);
+                if let Some(marker) = &marker {
+                    prop_assert!(!marker.starts_with("python "), "{rendered} -> {marker}");
+                }
+                for python in (0..4).flat_map(|a| (0..4).flat_map(move |b| (0..4).map(move |c| [a, b, c]))) {
+                    let expected = constraint
+                        .iter()
+                        .any(|terms| terms.iter().all(|term| poetry_allows(term, python)));
+                    let actual = marker.as_deref().is_none_or(|marker| marker_allows(marker, python));
+                    prop_assert_eq!(actual, expected, "{} -> {:?} at {:?}", rendered, marker, python);
+                }
+            }
+        }
+
         proptest! {
             #[test]
             fn extract_pyproject_never_panics(contents in "\\PC{0,300}") {
