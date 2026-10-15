@@ -3157,6 +3157,11 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
             "[project]\nname = \"dyn\"\nversion = \"0.1.0\"\ndynamic = [\"dependencies\"]\n",
         ),
         ("packages/dyn/dyn/__init__.py", ""),
+        (
+            "packages/old/pyproject.toml",
+            "[project]\nname = \"old\"\nversion = \"0.1.0\"\nrequires-python = \"3.10+\"\n",
+        ),
+        ("packages/old/old/__init__.py", ""),
     ]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -3167,6 +3172,9 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     for line in [
         "manifest: invalid requirement at `requirements/docs.txt:2`: not a requirement!!",
+        // Only the root's `requires-python` picks the stdlib, so a member's
+        // lowers nothing and the warning claims no hints.
+        "manifest: could not read `requires-python` \"3.10+\" in `packages/old/pyproject.toml`; assuming target version py311",
         "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
         "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;; undeclared imports of `requests` are reported as hints",
         "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
