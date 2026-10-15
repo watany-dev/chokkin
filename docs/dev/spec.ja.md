@@ -739,6 +739,12 @@ project 自身への参照 (all = ["pkg[s3,sqs]"])、marker が異なる宣言�
 同じ origin (file:line) を別経路で 2 回読んだもの
   (requirements-dev.txt の -r requirements.txt と、直接読む requirements.txt)
   -> include 側の context が違っても 1 つの宣言なので報告しない
+  -> --fix は行ごと消すので、消してよいのはその行を読むすべての context に別の行の重複が
+     ある行だけ。requirements.txt と requirements-dev.txt が両方 -r base.txt し、
+     requirements.txt にも requests がある場合、runtime の重複として報告するが、base.txt の
+     行を消すと requirements-dev.txt だけの install から消えるので requirements.txt 側を消し、
+     issue の位置もその行にする。
+     消せる行が 1 つも無ければ context 間の重複として info / likely で報告する (#860)
 setup.py で評価したリストに同じ文字列が 2 回入ったもの
   (extras["dev"] = extras["all"] + extras["testing"] で両方に datasets)
   -> 1 つの宣言として読むので報告しない (#726)。setup.py の要素は行を持たず
