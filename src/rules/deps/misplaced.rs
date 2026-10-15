@@ -671,6 +671,31 @@ mod tests {
         weight.settle()
     }
 
+    /// `--explain` says why a finding below Certain is not Certain, so
+    /// every other strength names its own reason.
+    #[test]
+    fn each_strength_below_top_level_explains_itself() {
+        use ImportStrength as S;
+        assert_eq!(S::TopLevel.detail(), None);
+        let details: std::collections::BTreeSet<_> = [
+            S::HostLoaded,
+            S::OptIn,
+            S::TestSupport,
+            S::DeferredOptional,
+            S::Optional,
+            S::Deferred,
+            S::Exposed,
+        ]
+        .map(|strength| strength.detail().expect("a detail"))
+        .into();
+        assert_eq!(details.len(), 7);
+        assert!(
+            details
+                .iter()
+                .all(|detail| detail.starts_with("imported only"))
+        );
+    }
+
     /// The §10 CHK005 table, one row per sentence.
     #[test]
     fn import_strength_follows_the_spec_table() {
