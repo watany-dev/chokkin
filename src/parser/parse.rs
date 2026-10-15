@@ -117,10 +117,8 @@ fn parse_notebook_file(
     let extracted = match notebook_python_source(&source) {
         Ok(source) => source,
         Err(message) => {
-            let mut parsed = ParsedModule {
-                path: path.to_owned(),
-                ..ParsedModule::default()
-            };
+            // No cell was read, so the notebook's imports are unknown (#893).
+            let mut parsed = skipped_module(path);
             parsed.diagnostics.push(ParseDiagnostic {
                 line: 0,
                 message,
@@ -470,7 +468,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v37".to_owned(),
+        unit_version: "parse-v38".to_owned(),
     }
 }
 

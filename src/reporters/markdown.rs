@@ -8,7 +8,7 @@ use super::format::{
     baseline_suppressed_count, condense_diagnostics, format_issue_subject, format_location_column,
     group_title,
 };
-use super::types::RenderContext;
+use super::types::{Diagnostic, RenderContext};
 
 /// Markdown summary reporter.
 pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
@@ -69,12 +69,12 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
 
 /// The step summary is often the only output a CI reader opens, so the
 /// warnings are listed rather than counted, repeated kinds condensed.
-fn write_diagnostics(out: &mut String, diagnostics: &[String]) {
+fn write_diagnostics(out: &mut String, diagnostics: &[Diagnostic]) {
     if diagnostics.is_empty() {
         return;
     }
     let _ = writeln!(out, "## Warnings  {}\n", diagnostics.len());
     for diagnostic in condense_diagnostics(diagnostics) {
-        let _ = writeln!(out, "- {}", diagnostic.replace(['\r', '\n'], " "));
+        let _ = writeln!(out, "- {}", diagnostic.text.replace(['\r', '\n'], " "));
     }
 }

@@ -18,7 +18,7 @@ use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
     ReachabilityReport, analyze_reachability, apply_member_surfaces, apply_public_surface,
 };
-use crate::reporters::FileCounts;
+use crate::reporters::{Diagnostic, FileCounts};
 use crate::resolver::{
     ResolveWarning, ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
     resolve_imports_for_analysis,
@@ -59,7 +59,7 @@ pub struct AnalysisReport {
 impl AnalysisReport {
     /// Every probe and analysis warning's text, once each.
     #[must_use]
-    pub fn diagnostics(&self) -> Vec<String> {
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
         diagnostic_lines(self.probe.warnings.iter().chain(&self.warnings))
     }
 
@@ -353,6 +353,8 @@ fn run_analysis_core(
     } else {
         None
     };
+    // A test the parser could not read is evidence lost, like a root file.
+    warnings.extend(production_tests.iter().flatten().flat_map(parse_warnings));
     let symbols = crate::rules::symbols::analyze_with_context(
         &context,
         &entry,
@@ -429,15 +431,24 @@ fn parse_warnings(module: &ParsedModule) -> Vec<ProbeWarning> {
 }
 
 /// Why a skipped module was left out: a module the parser stopped on carries
-/// its syntax error as an error diagnostic, an undecodable one carries none.
+/// its syntax error as an error diagnostic, a notebook without readable cells
+/// carries a warning naming why, and an undecodable one carries none.
 fn skip_reason(module: &ParsedModule) -> SkipReason {
-    module
+    if let Some(diagnostic) = module
         .diagnostics
         .iter()
         .find(|diagnostic| diagnostic.severity == ParseSeverity::Error)
+    {
+        return SkipReason::SyntaxError {
+            line: diagnostic.line,
+            message: diagnostic.message.clone(),
+        };
+    }
+    module
+        .diagnostics
+        .first()
         .map_or(SkipReason::Undecodable, |diagnostic| {
-            SkipReason::SyntaxError {
-                line: diagnostic.line,
+            SkipReason::InvalidNotebook {
                 message: diagnostic.message.clone(),
             }
         })
@@ -631,9 +642,44 @@ mod tests {
 
     use super::*;
     use crate::ExitStatus;
+    use crate::parser::ParseDiagnostic;
     use crate::rules::IssueSubject;
     use crate::rules::RuleId;
     use crate::rules::Severity;
+
+    /// A syntax error names the skip even after an earlier warning; a
+    /// warning alone is the notebook's reason, and no diagnostic means the
+    /// bytes did not decode (#893).
+    #[test]
+    fn skip_reason_prefers_the_syntax_error() {
+        let diagnostic = |severity, message: &str| ParseDiagnostic {
+            line: 4,
+            message: message.to_owned(),
+            severity,
+        };
+        let mut module = ParsedModule::default();
+
+        assert_eq!(skip_reason(&module), SkipReason::Undecodable);
+        module
+            .diagnostics
+            .push(diagnostic(ParseSeverity::Warning, "invalid notebook JSON"));
+        assert_eq!(
+            skip_reason(&module),
+            SkipReason::InvalidNotebook {
+                message: "invalid notebook JSON".to_owned()
+            }
+        );
+        module
+            .diagnostics
+            .push(diagnostic(ParseSeverity::Error, "Expected a statement"));
+        assert_eq!(
+            skip_reason(&module),
+            SkipReason::SyntaxError {
+                line: 4,
+                message: "Expected a statement".to_owned()
+            }
+        );
+    }
 
     #[test]
     fn analyze_unused_dependency_fixture() {

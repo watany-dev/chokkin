@@ -1884,6 +1884,81 @@ fn binary_non_utf8_setup_py_does_not_abort_the_run() {
     assert!(keys.iter().all(|(code, _)| code != "CHK003"), "{keys:?}");
 }
 
+/// `--production` still parses a library's tests for CHK006, so what the
+/// parser could not read there is reported like any other file (#894).
+#[test]
+fn binary_production_reports_parse_warnings_in_library_tests() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.chokkin]\nmode = \"library\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("tests/test_api.py", "from acme import api\ndef broken(:\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--production", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let skipped = "parse: skipped `tests/test_api.py`: syntax error at line 2";
+    assert!(stderr.contains(skipped), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    assert!(diagnostics.contains(skipped), "{diagnostics}");
+}
+
+/// A notebook whose JSON cannot be read is skipped like a syntax error: the
+/// imports it hides may use any declared dependency (#893).
+#[test]
+fn binary_invalid_notebook_is_skipped_with_a_diagnostic() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", ""),
+        ("acme/demo.ipynb", "{\"cells\": 1}"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.lines().any(|line| line
+            == "parse: skipped `acme/demo.ipynb`: invalid notebook JSON: missing cells array"),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        issues,
+        [
+            ("CHK001", "acme/helper.py", "likely"),
+            ("CHK002", "requests", "likely"),
+        ],
+        "{parsed}"
+    );
+}
+
 /// A reachable module with a syntax error is skipped like an undecodable one:
 /// its imports are unknown, so what it may use is reported below certain,
 /// `--fix` leaves the declaration alone, and stderr names the error.
@@ -2084,6 +2159,46 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
         diagnostics.contains("packages/dyn/pyproject.toml"),
         "{diagnostics}"
     );
+}
+
+/// A member's source discovery is reported like the root's, under
+/// root-relative paths (#892).
+#[test]
+fn binary_member_sources_warnings_reach_every_reporter() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.chokkin]\nentry = [\"missing.py\"]\n",
+        ),
+        ("packages/tool/other/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let lines = [
+        "sources: missing entry path `packages/tool/missing.py`",
+        "sources: no package directory matches project `tool`; guessed `packages/tool/other` \
+         (declare it in the build backend config or [tool.chokkin] project)",
+    ];
+    for line in lines {
+        assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = parsed["diagnostics"].to_string();
+    for line in lines {
+        assert!(diagnostics.contains(line), "{line}\n{diagnostics}");
+    }
 }
 
 /// An extra requirements file that stops at a missing include still watches
@@ -3517,5 +3632,32 @@ Negative trace for src/acme/legacy.py:
   suggestion: add to [tool.chokkin].entry or verify import chain
 
 "
+    );
+}
+
+/// A warning that names a file is annotated on it, so a workflow run shows
+/// it on the PR diff (#895).
+#[test]
+fn binary_github_annotates_warnings_on_their_file() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/broken.py", "import os\ndef broken(:\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "github"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        stdout.lines().any(|line| line.starts_with(
+            "::warning file=acme/broken.py,line=2,title=chokkin::parse: skipped `acme/broken.py`: syntax error at line 2"
+        )),
+        "{stdout}"
     );
 }

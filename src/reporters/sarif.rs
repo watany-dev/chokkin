@@ -13,7 +13,7 @@ use crate::rules::{
 };
 
 use super::format::severity_label;
-use super::types::RenderContext;
+use super::types::{Diagnostic, RenderContext};
 
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 
@@ -97,17 +97,33 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     serde_json::to_string_pretty(&log).unwrap_or_default()
 }
 
-fn sarif_invocations(diagnostics: &[String]) -> Vec<SarifInvocation> {
+fn sarif_invocations(diagnostics: &[Diagnostic]) -> Vec<SarifInvocation> {
     if diagnostics.is_empty() {
         return Vec::new();
     }
     vec![SarifInvocation {
         execution_successful: true,
-        tool_execution_notifications: diagnostics
-            .iter()
-            .map(|text| json!({ "level": "warning", "message": { "text": text } }))
-            .collect(),
+        tool_execution_notifications: diagnostics.iter().map(sarif_notification).collect(),
     }]
+}
+
+/// A warning naming no line gets no region: unlike an issue, nothing in it
+/// stands for a first line.
+fn sarif_notification(diagnostic: &Diagnostic) -> Value {
+    let mut notification = json!({
+        "level": "warning",
+        "message": { "text": diagnostic.text },
+    });
+    if let Some(file) = &diagnostic.file {
+        let mut location = json!({
+            "artifactLocation": { "uri": normalize_rel_path(Path::new(file)) }
+        });
+        if let Some(line) = diagnostic.line {
+            location["region"] = json!({ "startLine": line });
+        }
+        notification["locations"] = json!([{ "physicalLocation": location }]);
+    }
+    notification
 }
 
 fn sarif_rule(rule: RuleId) -> SarifRule {

@@ -426,7 +426,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
 }
 
 #[test]
-fn parse_project_sources_reports_invalid_notebook_as_warning() {
+fn parse_project_sources_skips_invalid_notebook() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root_path = temp.path();
     std::fs::write(root_path.join("broken.ipynb"), "not json").expect("write notebook");
@@ -457,6 +457,7 @@ fn parse_project_sources_reports_invalid_notebook_as_warning() {
             .iter()
             .all(|diagnostic| diagnostic.severity != ParseSeverity::Error)
     );
+    assert!(module.skipped, "{module:?}");
     assert_eq!(module.imports, []);
     assert!(module.diagnostics.iter().any(|diagnostic| {
         diagnostic.severity == ParseSeverity::Warning

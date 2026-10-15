@@ -4,7 +4,8 @@
 
 use chokkin::internals::{
     Confidence, DependencyOrigin, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
-    ProjectMode, ReporterId, RuleId, Severity, SuppressReason, SuppressedIssue,
+    ManifestWarning, ProbeWarning, ProjectMode, ReporterId, ResolveWarning, RuleId, Severity,
+    SkipReason, SuppressReason, SuppressedIssue, diagnostic_lines,
 };
 use chokkin::{ExitStatus, RenderContext, render_issues};
 
@@ -418,10 +419,17 @@ fn markdown_reporter_renders_rule_tables_and_escapes_pipes_exactly() {
 
 fn context_with_diagnostics() -> RenderContext {
     RenderContext {
-        diagnostics: vec![
-            "parse: `acme/app.py:3`: relative import without a package".to_owned(),
-            "resolve: could not read virtualenv `.venv`: site-packages not found".to_owned(),
-        ],
+        diagnostics: diagnostic_lines(&[
+            ProbeWarning::ParseDiagnostic {
+                path: "acme/app.py".to_owned(),
+                line: 3,
+                message: "relative import without a package".to_owned(),
+            },
+            ProbeWarning::Resolve(ResolveWarning::VenvUnreadable {
+                path: ".venv".to_owned(),
+                reason: "site-packages not found".to_owned(),
+            }),
+        ]),
         ..context()
     }
 }
@@ -485,28 +493,47 @@ fn markdown_reporter_lists_diagnostics_even_without_issues() {
     );
 }
 
+/// A warning that points into a file is annotated on it, so it shows on the
+/// PR diff; one that points nowhere stays a bare annotation (#895).
 #[test]
 fn github_reporter_annotates_each_diagnostic_as_a_warning() {
     let mut context = context_with_diagnostics();
-    context
-        .diagnostics
-        .push("manifest: stopped reading `a.txt`: 100% bad\nnext".to_owned());
+    context.diagnostics.extend(diagnostic_lines(&[
+        ProbeWarning::Manifest(ManifestWarning::RequirementsUnreadable {
+            file: "req,s.txt".to_owned(),
+            reason: "100% bad\nnext".to_owned(),
+        }),
+        ProbeWarning::SkippedSource {
+            path: "acme/broken.py".to_owned(),
+            reason: SkipReason::SyntaxError {
+                line: 9,
+                message: "unexpected indent".to_owned(),
+            },
+        },
+    ]));
     let rendered = render_issues(ReporterId::Github, &empty_report(), &context);
     assert_eq!(
         rendered,
         concat!(
-            "::warning title=chokkin::parse: `acme/app.py:3`: relative import without a package\n",
+            "::warning file=acme/app.py,line=3,title=chokkin::parse: `acme/app.py:3`: relative import without a package\n",
             "::warning title=chokkin::resolve: could not read virtualenv `.venv`: site-packages not found\n",
-            "::warning title=chokkin::manifest: stopped reading `a.txt`: 100%25 bad%0Anext\n",
+            "::warning file=req%2Cs.txt,title=chokkin::manifest: stopped reading `req,s.txt`: 100%25 bad%0Anext\n",
+            "::warning file=acme/broken.py,line=9,title=chokkin::parse: skipped `acme/broken.py`: syntax error at line 9: unexpected indent\n",
         )
     );
 }
 
 fn context_with_repeated_diagnostics() -> RenderContext {
     RenderContext {
-        diagnostics: (1..=7)
-            .map(|n| format!("parse: `tests/t{n}.py:1`: relative import without a package"))
-            .collect(),
+        diagnostics: diagnostic_lines(
+            &(1..=7)
+                .map(|n| ProbeWarning::ParseDiagnostic {
+                    path: format!("tests/t{n}.py"),
+                    line: 1,
+                    message: "relative import without a package".to_owned(),
+                })
+                .collect::<Vec<_>>(),
+        ),
         ..context()
     }
 }
@@ -579,6 +606,16 @@ fn sarif_reporter_writes_diagnostics_as_tool_execution_notifications() {
         notifications[1]["message"]["text"],
         "resolve: could not read virtualenv `.venv`: site-packages not found"
     );
+    assert_eq!(
+        notifications[0]["locations"],
+        serde_json::json!([{
+            "physicalLocation": {
+                "artifactLocation": { "uri": "acme/app.py" },
+                "region": { "startLine": 3 }
+            }
+        }])
+    );
+    assert!(notifications[1].get("locations").is_none(), "{rendered}");
 }
 
 #[test]

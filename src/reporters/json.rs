@@ -103,7 +103,9 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         diagnostics: context
             .diagnostics
             .iter()
-            .map(|message| JsonDiagnostic { message })
+            .map(|diagnostic| JsonDiagnostic {
+                message: &diagnostic.text,
+            })
             .collect(),
     };
     serde_json::to_string_pretty(&json).unwrap_or_default()
