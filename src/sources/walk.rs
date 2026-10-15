@@ -536,10 +536,10 @@ mod tests {
                 .to_string_lossy()
                 .into_owned()
         };
-        let denied = |depth| ignore::Error::WithDepth {
+        let denied = |depth, path| ignore::Error::WithDepth {
             depth,
             err: Box::new(ignore::Error::WithPath {
-                path: PathBuf::from("/repo/packages/core/secret"),
+                path,
                 err: Box::new(ignore::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
                     "denied",
@@ -551,9 +551,18 @@ mod tests {
             reason: "denied".to_owned(),
         };
 
-        assert_eq!(walk_error_warning(Path::new("/repo"), &denied(3)), expected);
+        let root_walk = Path::new("/repo")
+            .join("packages")
+            .join("core")
+            .join("secret");
+        let member_walk = Path::new("/repo").join("packages/core").join("secret");
+
         assert_eq!(
-            walk_error_warning(Path::new("/repo/packages/core"), &denied(1)),
+            walk_error_warning(Path::new("/repo"), &denied(3, root_walk)),
+            expected
+        );
+        assert_eq!(
+            walk_error_warning(Path::new("/repo/packages/core"), &denied(1, member_walk)),
             expected
         );
         let pathless = ignore::Error::Io(std::io::Error::other("gone"));
