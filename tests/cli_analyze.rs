@@ -2688,6 +2688,110 @@ fn binary_unread_django_star_imports_are_a_gap() {
     );
 }
 
+/// [`django_settings_package`] with `manage.py` discovered, so the entry it
+/// skips is not what lowers the findings.
+fn discovered_manage_django_project() -> tempfile::TempDir {
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("pyproject.toml"),
+        "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nproject = [\"manage.py\", \"mysite/**/*.py\"]\n",
+    )
+    .expect("write pyproject");
+    project
+}
+
+/// `include()` (django-split-settings) and `exec()` run settings files the
+/// plugin does not read, so a field the read files do not set may come from
+/// them (#925).
+#[test]
+fn binary_django_settings_include_and_exec_are_a_gap() {
+    let level = |code: &str, target: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    // Only unused files and distributions depend on what the settings load.
+    let levels = |path: &std::path::Path| -> Vec<_> {
+        issue_levels(path)
+            .into_iter()
+            .filter(|(code, ..)| code == "CHK001" || code == "CHK002")
+            .collect()
+    };
+    let cases = [
+        (
+            "from split_settings.tools import include\n\ninclude(\"components/*.py\")\n",
+            "include()",
+            3,
+        ),
+        (
+            "import split_settings.tools\n\nif True:\n    split_settings.tools.include(\"local.py\")\n",
+            "include()",
+            4,
+        ),
+        (
+            "import os\n\nexec(open(os.path.join(os.path.dirname(__file__), \"local.py\")).read())\n",
+            "exec()",
+            3,
+        ),
+    ];
+    for (settings, call, line) in cases {
+        let project = discovered_manage_django_project();
+        fs::write(project.path().join("mysite/settings/dev.py"), settings).expect("write settings");
+        assert_eq!(
+            levels(project.path()),
+            [
+                level("CHK001", "mysite/settings/base.py", "likely"),
+                level("CHK001", "mysite/urls.py", "likely"),
+                level("CHK002", "django", "likely"),
+            ],
+            "{settings}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK002:django"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(
+            stderr.contains(&format!("plugin: django: settings `mysite/settings/dev.py:{line}` calls `{call}`, which was not read; unused files and dependencies are reported below certain")),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("the Django settings could not be found or read: `{call}` in `mysite/settings/dev.py:{line}`")),
+            "{stderr}"
+        );
+    }
+
+    // Settings that set every field they explain need nothing it includes,
+    // and a call in a function, class or lambda body does not run when they
+    // are imported.
+    let project = discovered_manage_django_project();
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from split_settings.tools import include\n\nROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\"]\nMIDDLEWARE = []\ninclude(\"local.py\")\n",
+    )
+    .expect("write settings");
+    assert_eq!(
+        levels(project.path()),
+        [level("CHK001", "mysite/settings/base.py", "certain")]
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\n",
+    )
+    .expect("write settings");
+    fs::write(project.path().join("mysite/orphan.py"), "").expect("write orphan");
+    assert_eq!(
+        levels(project.path()),
+        [level("CHK001", "mysite/orphan.py", "certain")]
+    );
+}
+
 /// A `manage.py` that names no settings still marks a Django project, whose
 /// missing settings are a gap; a reusable app that only depends on Django has
 /// no settings of its own, so it gets none (#914).

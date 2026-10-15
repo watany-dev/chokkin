@@ -86,4 +86,13 @@ pub enum SettingsUnread {
         /// Where, as `path:line`.
         site: String,
     },
+    /// The settings call `include()` or `exec()`, which runs a file the
+    /// plugin does not read and may set a field it reads (#925).
+    #[error("settings `{site}` calls `{call}`, which was not read")]
+    UnreadCall {
+        /// The call, as `include()`.
+        call: String,
+        /// Where, as `path:line`.
+        site: String,
+    },
 }
