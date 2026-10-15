@@ -198,6 +198,39 @@ fn dir_warning(
     })
 }
 
+/// A walk error as a warning on the path that failed, so the root walk and a
+/// member walk that meet the same directory say the same thing (#900). A
+/// member root joins `packages/core` onto the root, so the path is rebuilt
+/// from its components to spell it with the platform's separator either way.
+/// Anything else names the walk's root, as all of them did before: an error
+/// without a path, and an ignore file that does not parse, whose text already
+/// names the file (only the reference walker, which reads ignore files through
+/// `ignore`, meets that one).
+pub(super) fn walk_error_warning(root: &Path, error: &ignore::Error) -> SourcesWarning {
+    let (path, reason) = failed_path(error).unwrap_or((root, error));
+    SourcesWarning::PathUnreadable {
+        path: path
+            .components()
+            .collect::<PathBuf>()
+            .to_string_lossy()
+            .into_owned(),
+        reason: reason.to_string(),
+    }
+}
+
+/// The path an `ignore` walk error could not read and the I/O error under
+/// it, whose text leaves the path out. The depth wrapper differs between
+/// walks and is dropped.
+fn failed_path(error: &ignore::Error) -> Option<(&Path, &ignore::Error)> {
+    match error {
+        ignore::Error::WithPath { path, err } if matches!(**err, ignore::Error::Io(_)) => {
+            Some((path, err))
+        },
+        ignore::Error::WithDepth { err, .. } => failed_path(err),
+        _ => None,
+    }
+}
+
 /// Collect Python-related files under `root`.
 pub(super) fn collect_files(
     options: &CollectOptions<'_>,
@@ -230,10 +263,7 @@ pub(super) fn collect_files(
         let entry = match result {
             Ok(entry) => entry,
             Err(error) => {
-                warnings.push(SourcesWarning::PathUnreadable {
-                    path: root.to_string_lossy().into_owned(),
-                    reason: error.to_string(),
-                });
+                warnings.push(walk_error_warning(&root, &error));
                 continue;
             },
         };
@@ -491,6 +521,72 @@ mod tests {
             warnings[0],
             SourcesWarning::MissingEntryPath { .. }
         ));
+    }
+
+    /// The root walk and a member walk meet the same directory at different
+    /// depths and roots, and name it the same way, so the reporter keeps one
+    /// line (#900). An error without a path, or an ignore file that does not
+    /// parse, still names the walk's root.
+    #[test]
+    fn walk_error_warning_names_the_path_that_failed() {
+        let native = |p: &str| {
+            Path::new(p)
+                .components()
+                .collect::<PathBuf>()
+                .to_string_lossy()
+                .into_owned()
+        };
+        let denied = |depth, path| ignore::Error::WithDepth {
+            depth,
+            err: Box::new(ignore::Error::WithPath {
+                path,
+                err: Box::new(ignore::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "denied",
+                ))),
+            }),
+        };
+        let expected = SourcesWarning::PathUnreadable {
+            path: native("/repo/packages/core/secret"),
+            reason: "denied".to_owned(),
+        };
+
+        let root_walk = Path::new("/repo")
+            .join("packages")
+            .join("core")
+            .join("secret");
+        let member_walk = Path::new("/repo").join("packages/core").join("secret");
+
+        assert_eq!(
+            walk_error_warning(Path::new("/repo"), &denied(3, root_walk)),
+            expected
+        );
+        assert_eq!(
+            walk_error_warning(Path::new("/repo/packages/core"), &denied(1, member_walk)),
+            expected
+        );
+        let pathless = ignore::Error::Io(std::io::Error::other("gone"));
+        assert_eq!(
+            walk_error_warning(Path::new("/repo"), &pathless),
+            SourcesWarning::PathUnreadable {
+                path: native("/repo"),
+                reason: "gone".to_owned(),
+            }
+        );
+        let unparsable = ignore::Error::WithPath {
+            path: PathBuf::from("/.gitignore"),
+            err: Box::new(ignore::Error::WithLineNumber {
+                line: 1,
+                err: Box::new(ignore::Error::Io(std::io::Error::other("bad glob"))),
+            }),
+        };
+        assert_eq!(
+            walk_error_warning(Path::new("/repo"), &unparsable),
+            SourcesWarning::PathUnreadable {
+                path: native("/repo"),
+                reason: "/.gitignore: line 1: bad glob".to_owned(),
+            }
+        );
     }
 
     mod props {

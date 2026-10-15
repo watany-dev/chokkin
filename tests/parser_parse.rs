@@ -465,6 +465,118 @@ fn parse_project_sources_skips_invalid_notebook() {
     }));
 }
 
+fn parse_notebook(json: &str) -> chokkin::internals::ParsedModule {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(temp.path().join("nb.ipynb"), json).expect("write notebook");
+    let root = ProjectRoot {
+        path: temp.path().to_path_buf(),
+        marker: RootMarker::PyProjectToml,
+    };
+    let sources = chokkin::internals::DiscoveredSources {
+        root: root.clone(),
+        layout: LayoutInfo::default(),
+        effective_globs: Vec::new(),
+        files: vec![chokkin::internals::DiscoveredFile {
+            path: "nb.ipynb".to_owned(),
+            kind: chokkin::internals::FileKind::Notebook,
+            context: FileContext::Runtime,
+        }],
+        warnings: Vec::new(),
+    };
+    let summary =
+        parse_project_sources_with_cache(&root, &sources, &TargetVersion::default_py311(), None)
+            .expect("parse");
+    summary.modules.into_iter().next().expect("module")
+}
+
+/// A code cell whose `source` is not text is dropped with one warning for the
+/// notebook, and the cells around it are still read (#898).
+#[test]
+fn parse_project_sources_warns_about_unreadable_notebook_cells() {
+    let module = parse_notebook(
+        r#"{"cells": [
+            {"cell_type": "code", "source": "import pandas\n"},
+            {"cell_type": "code", "source": 42},
+            {"cell_type": "code"},
+            {"source": "import hidden\n"},
+            {"cell_type": "code", "source": ["import os\n", 7, "import json\n"]},
+            {"cell_type": "code", "source": ["if True:\n", 5]},
+            {"cell_type": "markdown", "source": 1}
+        ]}"#,
+    );
+
+    assert!(!module.skipped, "{module:?}");
+    let imports: Vec<&str> = module
+        .imports
+        .iter()
+        .map(|import| import.module.as_str())
+        .collect();
+    // A list is read whole or not at all: `os` and `json` go with the 7, and
+    // a dangling `if True:` is not read into a syntax error.
+    assert_eq!(imports, ["pandas"]);
+    let warnings: Vec<(u32, &str)> = module
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.line, diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        warnings,
+        [(
+            0,
+            "some code cells were not read: their `cell_type` or `source` is not text"
+        )]
+    );
+}
+
+/// A notebook none of whose code cells can be read is as unknown
+/// as one without cells, so it is skipped (#898, #893).
+#[test]
+fn parse_project_sources_skips_notebook_without_readable_code_cells() {
+    let module = parse_notebook(
+        r#"{"cells": [
+            {"cell_type": "code", "source": null},
+            {"cell_type": "code", "source": ["import os\n", 2]},
+            {"cell_type": null, "source": "import json\n"}
+        ]}"#,
+    );
+
+    assert!(module.skipped, "{module:?}");
+    let warnings: Vec<&str> = module
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(
+        warnings,
+        ["invalid notebook JSON: no code cell could be read"]
+    );
+}
+
+/// Each string of a list `source` is read as its own line, even without a
+/// trailing newline.
+#[test]
+fn parse_project_sources_reads_notebook_source_strings_as_lines() {
+    let module = parse_notebook(
+        r#"{"cells": [{"cell_type": "code", "source": ["import os", "import json"]}]}"#,
+    );
+
+    let imports: Vec<&str> = module
+        .imports
+        .iter()
+        .map(|import| import.module.as_str())
+        .collect();
+    assert_eq!(imports, ["os", "json"], "{module:?}");
+}
+
+/// A notebook with no code cells at all reads as empty, not unknown.
+#[test]
+fn parse_project_sources_reads_notebook_without_code_cells_as_empty() {
+    let module = parse_notebook(r#"{"cells": [{"cell_type": "markdown", "source": "text"}]}"#);
+
+    assert!(!module.skipped, "{module:?}");
+    assert_eq!(module.diagnostics, []);
+}
+
 fn collect_py_files(
     dir: &std::path::Path,
     base: &std::path::Path,
