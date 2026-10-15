@@ -374,7 +374,7 @@ enum MarkerToken<'a> {
     Word(&'a str),
 }
 
-fn is_valid_marker(input: &str) -> bool {
+pub(crate) fn is_valid_marker(input: &str) -> bool {
     let Some(tokens) = tokenize_marker(input) else {
         return false;
     };

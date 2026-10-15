@@ -1,7 +1,9 @@
 //! Map issues to concrete manifest edit operations.
 
 use crate::config::Confidence;
-use crate::manifest::{DeclaredDependency, LoadedManifest, canonical_version_specifiers};
+use crate::manifest::{
+    DeclaredDependency, LoadedManifest, canonical_version_specifiers, is_valid_marker,
+};
 use crate::rules::{Issue, IssueReport, IssueSubject, RuleId};
 
 use super::types::{FixOptions, SkippedFix, SkippedReason, WorkspaceFixManifest};
@@ -366,6 +368,19 @@ fn plan_move_to_runtime(
     {
         dep.specifier = None;
     }
+    // A Poetry `python` constraint outside the recognized forms is kept as a
+    // non-PEP 508 marker; writing it would break `[project].dependencies`.
+    if dep
+        .marker
+        .as_deref()
+        .is_some_and(|marker| !is_valid_marker(marker))
+    {
+        return Err(skipped(
+            issue,
+            SkippedReason::Ambiguous,
+            "environment marker has no PEP 508 form",
+        ));
+    }
     let raw = rebuild_requirement_string(&dep);
 
     Ok(Some(FixAction::MoveToRuntime {
@@ -663,46 +678,61 @@ mod tests {
         assert_eq!(label, "project.dependencies[0]");
     }
 
+    fn plan_poetry_dev_move(
+        specifier: &str,
+        marker: Option<&str>,
+    ) -> (Vec<FixAction>, Vec<SkippedFix>) {
+        let manifest = manifest_with(vec![DeclaredDependency {
+            name: "dulwich".to_owned(),
+            extras: Vec::new(),
+            marker: marker.map(str::to_owned),
+            specifier: Some(specifier.to_owned()),
+            context: DependencyContext::Group("dev".to_owned()),
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "tool.poetry.group.dev.dependencies.dulwich".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        }]);
+        let issue = Issue {
+            rule: RuleId::Chk005,
+            severity: Severity::Error,
+            confidence: Confidence::Certain,
+            message: "dev only".to_owned(),
+            workspace_member: None,
+            location: IssueLocation {
+                file: None,
+                line: None,
+                manifest: None,
+            },
+            subject: IssueSubject::Distribution {
+                name: "dulwich".to_owned(),
+            },
+            explain: None,
+        };
+        let report = IssueReport {
+            issues: vec![issue],
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        };
+        plan_fixes(&report, &manifest, &[], FixOptions::default())
+    }
+
     #[test]
     fn chk005_move_drops_only_a_poetry_only_constraint() {
-        for (specifier, raw) in [("^1.2", "dulwich"), (">=1.2.1", "dulwich>=1.2.1")] {
-            let manifest = manifest_with(vec![DeclaredDependency {
-                name: "dulwich".to_owned(),
-                extras: Vec::new(),
-                marker: None,
-                specifier: Some(specifier.to_owned()),
-                context: DependencyContext::Group("dev".to_owned()),
-                origin: DependencyOrigin {
-                    file: "pyproject.toml".to_owned(),
-                    line: None,
-                    label: "tool.poetry.group.dev.dependencies.dulwich".to_owned(),
-                },
-                opaque: false,
-                included_via: Vec::new(),
-            }]);
-            let issue = Issue {
-                rule: RuleId::Chk005,
-                severity: Severity::Error,
-                confidence: Confidence::Certain,
-                message: "dev only".to_owned(),
-                workspace_member: None,
-                location: IssueLocation {
-                    file: None,
-                    line: None,
-                    manifest: None,
-                },
-                subject: IssueSubject::Distribution {
-                    name: "dulwich".to_owned(),
-                },
-                explain: None,
-            };
-            let report = IssueReport {
-                issues: vec![issue],
-                suppressed: Vec::new(),
-                summary: IssueSummary::default(),
-                exit_status: crate::ExitStatus::IssuesFound,
-            };
-            let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        for (specifier, marker, raw) in [
+            ("^1.2", None, "dulwich"),
+            (">=1.2.1", None, "dulwich>=1.2.1"),
+            (
+                "^1.2",
+                Some("python_version < \"3.11\""),
+                "dulwich ; python_version < \"3.11\"",
+            ),
+        ] {
+            let (actions, _) = plan_poetry_dev_move(specifier, marker);
             assert_eq!(
                 actions,
                 vec![FixAction::MoveToRuntime {
@@ -713,6 +743,15 @@ mod tests {
                 }]
             );
         }
+    }
+
+    #[test]
+    fn chk005_move_skips_a_marker_with_no_pep508_form() {
+        let (actions, skipped) = plan_poetry_dev_move("^1.2", Some("python ^3.x"));
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
+        assert!(skipped[0].detail.contains("PEP 508"));
     }
 
     #[test]

@@ -9,7 +9,9 @@ use crate::path_util::rel_to_root;
 use super::dependency_groups::extract_dependency_groups;
 use super::error::ManifestError;
 use super::pep508::canonical_version_specifiers;
-use super::pep508_util::parse_pep508_requirement;
+use super::pep508_util::{
+    normalize_distribution_name, parse_pep508_requirement, pep508_distribution_name,
+};
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ExtrasState,
     ProjectMetadata, UvToolSettings,
@@ -341,13 +343,21 @@ fn extract_poetry_dependencies(
     };
 
     if let Some(runtime) = poetry.get("dependencies").and_then(Value::as_table) {
+        let extras = poetry.get("extras").and_then(Value::as_table);
         for (name, dep_value) in runtime {
+            // Poetry installs an `optional = true` dependency only through an
+            // extra; it is the PEP 621 optional-dependencies equivalent.
+            let context = if poetry_is_optional(dep_value) {
+                DependencyContext::OptionalExtra(poetry_extra_listing(extras, name))
+            } else {
+                DependencyContext::Runtime
+            };
             push_poetry_dependency(
                 dependencies,
                 warnings,
                 name,
                 dep_value,
-                DependencyContext::Runtime,
+                context,
                 rel,
                 format!("tool.poetry.dependencies.{name}"),
             );
@@ -417,7 +427,209 @@ fn push_poetry_dependency(
     });
     if let Some(dep) = dependencies.get_mut(pushed) {
         dep.specifier = poetry_version_constraint(value);
+        dep.marker = poetry_marker(value);
     }
+}
+
+/// Whether every form of the dependency is `optional = true`.
+fn poetry_is_optional(value: &Value) -> bool {
+    let optional = |value: &Value| {
+        value
+            .as_table()
+            .and_then(|table| table.get("optional"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    match value {
+        Value::Array(forms) => !forms.is_empty() && forms.iter().all(optional),
+        _ => optional(value),
+    }
+}
+
+/// The first `[tool.poetry.extras]` entry that lists `name`, else the name
+/// itself: an optional dependency no extra lists is still not installed by
+/// default.
+fn poetry_extra_listing(extras: Option<&toml::Table>, name: &str) -> String {
+    let normalized = normalize_distribution_name(name);
+    extras
+        .into_iter()
+        .flatten()
+        .find(|(_, members)| {
+            members.as_array().is_some_and(|members| {
+                members.iter().filter_map(Value::as_str).any(|member| {
+                    pep508_distribution_name(member).is_some_and(|member| member == normalized)
+                })
+            })
+        })
+        .map_or_else(|| normalized.clone(), |(extra, _)| extra.clone())
+}
+
+/// When Poetry installs the dependency, as a PEP 508 marker: `markers` as
+/// written, `platform` as `sys_platform`, `python` converted from a Poetry
+/// constraint. Other keys (`source`, `develop`, `allow-prereleases`, `git`,
+/// `path`, ...) pick where it comes from, not whether it is installed. A
+/// multiple-constraints array is conditional only when every form is.
+fn poetry_marker(value: &Value) -> Option<String> {
+    let single = |value: &Value| -> Option<String> {
+        let table = value.as_table()?;
+        let mut parts = Vec::new();
+        if let Some(markers) = table.get("markers").and_then(Value::as_str) {
+            parts.push(markers.trim().to_owned());
+        }
+        if let Some(platform) = table.get("platform").and_then(Value::as_str) {
+            parts.extend(poetry_platform_marker(platform));
+        }
+        if let Some(python) = table
+            .get("python")
+            .and_then(Value::as_str)
+            .and_then(poetry_python_marker)
+        {
+            parts.push(python);
+        }
+        parts.retain(|part| !part.is_empty());
+        match parts.as_slice() {
+            [] => None,
+            [part] => Some(part.clone()),
+            // An `or` inside a part would otherwise bind looser than `and`.
+            parts => Some(
+                parts
+                    .iter()
+                    .map(|part| format!("({part})"))
+                    .collect::<Vec<_>>()
+                    .join(" and "),
+            ),
+        }
+    };
+    match value {
+        Value::Array(forms) => any_of(&forms.iter().map(single).collect::<Option<Vec<_>>>()?),
+        _ => single(value),
+    }
+}
+
+/// The markers joined with `or`; `None` for none.
+fn any_of(markers: &[String]) -> Option<String> {
+    match markers {
+        [] => None,
+        [marker] => Some(marker.clone()),
+        markers => Some(
+            markers
+                .iter()
+                .map(|marker| format!("({marker})"))
+                .collect::<Vec<_>>()
+                .join(" or "),
+        ),
+    }
+}
+
+/// A Poetry `platform` as a PEP 508 marker; `None` for `*`. A constraint
+/// (`linux || darwin`, `!=win32`) is kept as `platform <constraint>` like an
+/// unrecognized `python` one: conditional, but not written by `--fix`.
+fn poetry_platform_marker(platform: &str) -> Option<String> {
+    let platform = platform.trim();
+    if platform.is_empty() || platform == "*" {
+        None
+    } else if platform
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        Some(format!("sys_platform == \"{platform}\""))
+    } else {
+        Some(format!("platform {platform}"))
+    }
+}
+
+/// A Poetry `python` constraint as a PEP 508 marker; `None` when it allows
+/// every version. A constraint outside the recognized forms is kept as
+/// `python <constraint>`: still conditional, so CHK002 does not report the
+/// dependency, but not PEP 508, so `--fix` will not write it.
+fn poetry_python_marker(constraint: &str) -> Option<String> {
+    let constraint = constraint.trim();
+    if constraint.is_empty() {
+        return None;
+    }
+    let mut alternatives = Vec::new();
+    // Poetry accepts `|` as well as `||` between alternatives.
+    for alternative in constraint.split('|').filter(|part| !part.is_empty()) {
+        let Some(terms) = poetry_python_terms(alternative) else {
+            return Some(format!("python {constraint}"));
+        };
+        if terms.is_empty() {
+            return None;
+        }
+        alternatives.push(terms.join(" and "));
+    }
+    any_of(&alternatives)
+}
+
+/// The marker terms one `||` alternative of a Poetry constraint ANDs
+/// together (empty for `*`), or `None` for a form not recognized.
+fn poetry_python_terms(alternative: &str) -> Option<Vec<String>> {
+    // Poetry separates AND terms with commas or spaces; an operator may be
+    // spaced from its version (`>= 3.8`).
+    let mut constraints: Vec<String> = Vec::new();
+    for token in alternative
+        .split([',', ' '])
+        .filter(|token| !token.is_empty())
+    {
+        match constraints.last_mut() {
+            Some(last) if last.chars().all(|c| "<>=!~^".contains(c)) => last.push_str(token),
+            _ => constraints.push(token.to_owned()),
+        }
+    }
+    if constraints.is_empty() {
+        return None;
+    }
+    let mut terms = Vec::new();
+    for constraint in constraints {
+        if constraint == "*" {
+            continue;
+        }
+        let (op, version) = constraint.split_at(constraint.find(|c: char| c.is_ascii_digit())?);
+        let numeric = version.strip_suffix(".*").unwrap_or(version);
+        let components: Vec<u64> = numeric
+            .split('.')
+            .map(|part| part.parse().ok())
+            .collect::<Option<_>>()?;
+        if numeric != version && !matches!(op, "" | "==" | "!=") {
+            return None;
+        }
+        let wildcard = if numeric == version { "" } else { ".*" };
+        let term = |op: &str, components: &[u64]| {
+            let version = components
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(".");
+            let variable = if components.len() >= 3 {
+                "python_full_version"
+            } else {
+                "python_version"
+            };
+            format!("{variable} {op} \"{version}{wildcard}\"")
+        };
+        match op {
+            "" => terms.push(term("==", &components)),
+            "==" | "!=" | ">=" | "<=" | ">" | "<" | "~=" => terms.push(term(op, &components)),
+            "^" | "~" => {
+                // `^1.2.3` allows up to the next change of the first nonzero
+                // component; `~1.2.3` allows patch changes, `~1` minor ones.
+                let bump = if op == "~" {
+                    usize::from(components.len() > 1)
+                } else {
+                    components
+                        .iter()
+                        .position(|&part| part != 0)
+                        .unwrap_or(components.len() - 1)
+                };
+                let mut upper = components[..=bump].to_vec();
+                upper[bump] = upper[bump].checked_add(1)?;
+                terms.push(term(">=", &components));
+                terms.push(term("<", &upper));
+            },
+            _ => return None,
+        }
+    }
+    Some(terms)
 }
 
 /// The Poetry constraint (#682): PEP 440 ones in canonical form so CHK009
@@ -862,6 +1074,160 @@ mod tests {
                 ("split", Some("^1 || ^2")),
             ]
         );
+    }
+
+    #[test]
+    fn reads_when_poetry_installs_a_dependency() {
+        let result = extract(
+            r#"[tool.poetry]
+name = "x"
+[tool.poetry.dependencies]
+python = "^3.9"
+uvloop = { version = "*", optional = true }
+orjson = { version = "*", optional = true }
+tomli = { version = "*", python = "<3.11" }
+colorama = { version = "*", markers = "sys_platform == 'win32'" }
+pywin32 = { version = "*", platform = "win32", python = "^3.8" }
+legacy = { version = "*", python = ">=2.7,<2.8 || ~3.4.1" }
+odd = { version = "*", python = "3.9-dev" }
+split = [{ version = "^1", python = "<3.9" }, { version = "^2", python = ">=3.9" }]
+mixed = [{ version = "^1", python = "<3.9" }, { version = "^2" }]
+plain = { version = "*", python = "*", source = "internal", develop = true }
+[tool.poetry.extras]
+fast = ["UVLoop"]
+[tool.poetry.group.dev.dependencies]
+tomli-w = { version = "*", optional = true }
+"#,
+        )
+        .expect("valid pyproject");
+        let mut deps: Vec<_> = result
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.as_str(), &dep.context, dep.marker.as_deref()))
+            .collect();
+        deps.sort_unstable_by_key(|dep| dep.0);
+        let runtime = DependencyContext::Runtime;
+        let dev = DependencyContext::Group("dev".to_owned());
+        assert_eq!(
+            deps,
+            vec![
+                ("colorama", &runtime, Some("sys_platform == 'win32'")),
+                (
+                    "legacy",
+                    &runtime,
+                    Some(
+                        "(python_version >= \"2.7\" and python_version < \"2.8\") or (python_full_version >= \"3.4.1\" and python_version < \"3.5\")"
+                    )
+                ),
+                ("mixed", &runtime, None),
+                ("odd", &runtime, Some("python 3.9-dev")),
+                (
+                    "orjson",
+                    &DependencyContext::OptionalExtra("orjson".to_owned()),
+                    None
+                ),
+                ("plain", &runtime, None),
+                (
+                    "pywin32",
+                    &runtime,
+                    Some(
+                        "(sys_platform == \"win32\") and (python_version >= \"3.8\" and python_version < \"4\")"
+                    )
+                ),
+                (
+                    "split",
+                    &runtime,
+                    Some("(python_version < \"3.9\") or (python_version >= \"3.9\")")
+                ),
+                ("tomli", &runtime, Some("python_version < \"3.11\"")),
+                ("tomli-w", &dev, None),
+                (
+                    "uvloop",
+                    &DependencyContext::OptionalExtra("fast".to_owned()),
+                    None
+                ),
+            ]
+        );
+    }
+
+    /// A `platform` constraint stays conditional without becoming PEP 508,
+    /// and an `or` in `markers` keeps its grouping next to `python`.
+    #[test]
+    fn poetry_platform_and_markers_keep_their_meaning() {
+        let result = extract(
+            r#"[tool.poetry.dependencies]
+unix = { version = "*", platform = "linux || darwin" }
+anywhere = { version = "*", platform = "*" }
+wrapped = { version = "*", markers = "os_name == 'nt' or\nos_name == 'java'", python = "<3.9" }
+"#,
+        )
+        .expect("valid pyproject");
+        let markers: Vec<_> = result
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.as_str(), dep.marker.as_deref()))
+            .collect();
+        assert_eq!(
+            markers,
+            vec![
+                ("anywhere", None),
+                ("unix", Some("platform linux || darwin")),
+                (
+                    "wrapped",
+                    Some("(os_name == 'nt' or\nos_name == 'java') and (python_version < \"3.9\")")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn converts_poetry_python_constraints_to_markers() {
+        let cases = [
+            ("3.8", Some("python_version == \"3.8\"")),
+            ("==3.8.*", Some("python_version == \"3.8.*\"")),
+            (
+                ">= 3.8, != 3.9.1",
+                Some("python_version >= \"3.8\" and python_full_version != \"3.9.1\""),
+            ),
+            (
+                ">=3.8 <4",
+                Some("python_version >= \"3.8\" and python_version < \"4\""),
+            ),
+            (
+                "^0.2.1",
+                Some("python_full_version >= \"0.2.1\" and python_version < \"0.3\""),
+            ),
+            (
+                "^0.0",
+                Some("python_version >= \"0.0\" and python_version < \"0.1\""),
+            ),
+            (
+                "~3",
+                Some("python_version >= \"3\" and python_version < \"4\""),
+            ),
+            ("~=3.8", Some("python_version ~= \"3.8\"")),
+            ("*", None),
+            ("<3.9 || *", None),
+            (
+                "3.8 | 3.9",
+                Some("(python_version == \"3.8\") or (python_version == \"3.9\")"),
+            ),
+            ("^3.*", Some("python ^3.*")),
+            (">=3.8, >=", Some("python >=3.8, >=")),
+            (
+                "^18446744073709551615",
+                Some("python ^18446744073709551615"),
+            ),
+            ("^3.x", Some("python ^3.x")),
+            (" ", None),
+        ];
+        for (constraint, expected) in cases {
+            assert_eq!(
+                poetry_python_marker(constraint).as_deref(),
+                expected,
+                "{constraint}"
+            );
+        }
     }
 
     #[test]

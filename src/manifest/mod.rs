@@ -27,7 +27,7 @@ pub use error::ManifestError;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub(crate) use extract::{infer_target_version_from_requires_python, requires_python_max_minor};
 pub(crate) use lockfile::lockfile_candidates;
-pub(crate) use pep508::canonical_version_specifiers;
+pub(crate) use pep508::{canonical_version_specifiers, is_valid_marker};
 pub(crate) use pep508_util::normalize_distribution_name;
 pub(crate) use pep508_util::pep508_distribution_name;
 pub(crate) use requirements::{extra_requirements_candidates, requirements_line_distribution};
