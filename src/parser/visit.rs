@@ -2245,4 +2245,59 @@ value = t\"{utils.C}\"
             .collect();
         assert_eq!(modules, vec!["json", "acme"]);
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A `sys.path` edit or a plain assignment holding a path literal.
+        fn statement() -> impl Strategy<Value = (String, String)> {
+            (
+                prop::collection::vec(prop::sample::select(&["lib", "utils", "a"][..]), 1..3),
+                prop::sample::select(&["", "./", "../"][..]),
+                any::<bool>(),
+                0usize..4,
+            )
+                .prop_map(|(parts, prefix, trailing, form)| {
+                    let hint = parts.join("/");
+                    let literal = format!("\"{prefix}{hint}{}\"", if trailing { "/" } else { "" });
+                    let statement = match form {
+                        0 => format!("sys.path.insert(0, {literal})"),
+                        1 => format!("sys.path.append({literal})"),
+                        2 => format!("site.addsitedir({literal})"),
+                        _ => format!("EXT = {literal}"),
+                    };
+                    (statement, hint)
+                })
+        }
+
+        proptest! {
+            /// The hints of a file are its path literals sorted and once, so
+            /// their order in the file decides nothing (#719, #861).
+            #[test]
+            fn sys_path_hints_ignore_statement_order(
+                statements in prop::collection::vec(statement(), 1..6),
+                shift in any::<prop::sample::Index>(),
+            ) {
+                let render = |statements: &[(String, String)]| {
+                    let body: String = statements
+                        .iter()
+                        .flat_map(|(statement, _)| [statement.as_str(), "\n"])
+                        .collect();
+                    visit_source(&format!("import site, sys\nsys.path.append(ROOT)\n{body}"))
+                        .sys_path_hints
+                };
+                let mut expected: Vec<String> =
+                    statements.iter().map(|(_, hint)| hint.clone()).collect();
+                expected.sort_unstable();
+                expected.dedup();
+                let mut moved = statements.clone();
+                let len = moved.len();
+                moved.rotate_left(shift.index(len));
+                moved.reverse();
+                prop_assert_eq!(render(&statements), expected.clone());
+                prop_assert_eq!(render(&moved), expected);
+            }
+        }
+    }
 }
