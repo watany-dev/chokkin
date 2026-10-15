@@ -592,8 +592,6 @@ mod tests {
 
     const FILE: &str = "pkg/app.py";
 
-    /// Every non-empty list of up to three `(line, guarded)` sites, with the
-    /// line 1, 2 or none.
     fn site_lists() -> Vec<Vec<(Option<u32>, bool)>> {
         let sites = [None, Some(1), Some(2)]
             .into_iter()
@@ -613,7 +611,6 @@ mod tests {
         lists
     }
 
-    /// The matcher for `# chokkin: ignore[CHK010]` on `lines` of `FILE`.
     fn ignored_inline(lines: &[u32]) -> crate::rules::ignore::IgnoreMatcher {
         let parse = ParseSummary {
             modules: vec![ParsedModule {

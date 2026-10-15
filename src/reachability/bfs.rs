@@ -1261,8 +1261,6 @@ mod tests {
                 )
         }
 
-        /// The files one site importing `module` reaches: the module and
-        /// each enclosing package.
         fn targets(module: usize) -> Vec<usize> {
             module_and_parents(MODULES[module])
                 .map(|name| MODULES.iter().position(|m| *m == name).expect("module"))

@@ -619,7 +619,6 @@ mod tests {
         })
     }
 
-    /// Every requirement line the model writes for one distribution.
     fn requirements(
         contexts: &[DependencyContext],
         specifiers: &[Option<&str>],

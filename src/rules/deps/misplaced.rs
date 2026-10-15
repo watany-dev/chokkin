@@ -339,7 +339,6 @@ impl Weight {
         stronger
     }
 
-    /// The strength to report once every import has been weighed.
     fn settle(self) -> ImportStrength {
         if self.strength == ImportStrength::Deferred && self.optional_elsewhere {
             ImportStrength::DeferredOptional
@@ -647,7 +646,6 @@ mod tests {
         }
     }
 
-    /// A top-level import in a file the package loads at startup, edited.
     fn import(edit: impl FnOnce(&mut ImportSignals)) -> ImportSignals {
         let mut signals = ImportSignals {
             site: ImportStrength::TopLevel,

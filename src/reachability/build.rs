@@ -696,7 +696,6 @@ mod tests {
             }
         }
 
-        /// The CHK001 finding and the exit status the pipeline gives.
         fn run(&self) -> (Option<(Severity, Confidence)>, ExitStatus) {
             let orphan = self.orphan();
             let mut orphan_module = parsed(orphan, &[], false);
