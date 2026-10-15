@@ -379,7 +379,7 @@ fn run_analysis_core(
         &probe.manifest,
         &members,
         &probe.scripts,
-        &plugins.config_command_targets,
+        &plugins,
     );
     warnings.extend(opaque_import_warning(&gaps));
     warnings.extend(command_target_warnings(&gaps));

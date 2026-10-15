@@ -12,7 +12,7 @@ use crate::graph::ProjectGraph;
 use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
-use crate::plugins::{CommandTarget, CommandTargetRef};
+use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolveWarning, is_first_party_import};
 use crate::rules::RuleContext;
@@ -73,6 +73,10 @@ pub enum GapKind {
     /// computed or unread target, or a file or module it names that nothing
     /// else reaches (#913). What that code imports is unknown.
     UnreadCommandTarget,
+    /// A Django project's settings could not be found or read, or star-import
+    /// a module that is not a project file (#914): the apps, middleware and
+    /// URL configuration they name are unknown.
+    UnreadDjangoSettings,
 }
 
 /// How a gap changes a finding in its scope.
@@ -97,12 +101,13 @@ impl GapKind {
                 Self::UnreadModule
                 | Self::UnreadNotebookCells
                 | Self::OpaqueDynamicImport
-                | Self::UnreadCommandTarget,
+                | Self::UnreadCommandTarget
+                | Self::UnreadDjangoSettings,
                 RuleId::Chk001,
                 _,
             )
             | (
-                Self::UnreadModule | Self::UnreadNotebookCells,
+                Self::UnreadModule | Self::UnreadNotebookCells | Self::UnreadDjangoSettings,
                 RuleId::Chk002,
                 IssueSubject::Distribution { .. },
             )
@@ -136,6 +141,7 @@ impl GapKind {
                 "an import in the script could not be resolved to a distribution"
             },
             Self::UnreadCommandTarget => "a command runs Python code no entry reaches",
+            Self::UnreadDjangoSettings => "the Django settings could not be found or read",
         }
     }
 }
@@ -171,11 +177,15 @@ pub fn collect_gaps(
     manifest: &LoadedManifest,
     members: &[MemberManifest<'_>],
     scripts: &[InlineScript],
-    commands: &[CommandTargetRef],
+    plugins: &PluginHints,
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
     gaps.extend(unresolved_import_gaps(context, manifest, scripts));
-    gaps.extend(command_target_gaps(context, commands));
+    gaps.extend(command_target_gaps(
+        context,
+        &plugins.config_command_targets,
+    ));
+    gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(manifest_gap(manifest));
     gaps.extend(members.iter().filter_map(|member| {
         let mut gap = manifest_gap(member.manifest)?;
@@ -348,6 +358,17 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
         .collect()
 }
 
+/// Settings decide what Django runs in every member, so the gap lowers the
+/// whole project's findings.
+fn settings_gap(unread: &UnreadSettings) -> Gap {
+    Gap {
+        file: unread.file.clone(),
+        kind: GapKind::UnreadDjangoSettings,
+        member: None,
+        site: unread.site.clone(),
+    }
+}
+
 /// The manifest's warning names the file (`pyproject.toml` for
 /// `dynamic = ["dependencies"]`); the fallback keeps the gap if one is missing.
 fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
@@ -476,25 +497,30 @@ mod tests {
     }
 
     #[test]
-    fn unread_module_caps_absence_findings_but_not_script_ones() {
-        let found = lowered(
-            &[gap("acme/latin.py", GapKind::UnreadModule)],
-            vec![
-                candidate(RuleId::Chk001, file("acme/orphan.py")),
-                candidate(RuleId::Chk002, distribution("requests")),
-                candidate(RuleId::Chk002, script_distribution("rich")),
-                candidate(RuleId::Chk003, import("yaml")),
-            ],
-        );
-        assert_eq!(
-            found,
-            [
-                (Severity::Error, Confidence::Likely),
-                (Severity::Error, Confidence::Likely),
-                (Severity::Error, Confidence::Certain),
-                (Severity::Error, Confidence::Certain),
-            ]
-        );
+    fn unread_module_and_django_settings_cap_absence_findings_but_not_script_ones() {
+        for gap in [
+            gap("acme/latin.py", GapKind::UnreadModule),
+            gap("manage.py", GapKind::UnreadDjangoSettings),
+        ] {
+            let found = lowered(
+                &[gap],
+                vec![
+                    candidate(RuleId::Chk001, file("acme/orphan.py")),
+                    candidate(RuleId::Chk002, distribution("requests")),
+                    candidate(RuleId::Chk002, script_distribution("rich")),
+                    candidate(RuleId::Chk003, import("yaml")),
+                ],
+            );
+            assert_eq!(
+                found,
+                [
+                    (Severity::Error, Confidence::Likely),
+                    (Severity::Error, Confidence::Likely),
+                    (Severity::Error, Confidence::Certain),
+                    (Severity::Error, Confidence::Certain),
+                ]
+            );
+        }
     }
 
     #[test]

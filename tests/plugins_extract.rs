@@ -278,6 +278,99 @@ fn django_module_refs_carry_their_string_line() {
     }));
 }
 
+/// Plugin hints for a project depending on Django with `files` written.
+fn django_project(files: &[(&str, &str)]) -> chokkin::internals::PluginHints {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"site\"\nversion = \"0\"\ndependencies = [\"django\"]\n",
+    )
+    .expect("write pyproject");
+    for (path, text) in files {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, text).expect("write file");
+    }
+    extract_at(root)
+}
+
+/// A project depending on Django has its settings read without `manage.py`.
+#[test]
+fn django_reads_settings_found_without_a_setter() {
+    let hints = django_project(&[("mysite/settings.py", "INSTALLED_APPS = [\"myapp\"]\n")]);
+    assert_eq!(entry_paths(django_contrib(&hints)), ["mysite/settings.py"]);
+}
+
+#[test]
+fn django_ambiguous_settings_names_the_other_candidates() {
+    let settings = "INSTALLED_APPS = []\n";
+    let hints = django_project(&[
+        ("alpha/settings.py", settings),
+        ("beta/settings.py", settings),
+    ]);
+    assert_eq!(
+        hints.warnings,
+        [PluginsWarning::AmbiguousSettings {
+            chosen: "alpha/settings.py".to_owned(),
+            candidates: vec!["beta/settings.py".to_owned()],
+        }]
+    );
+}
+
+/// A nested `wsgi.py` names the settings module when no root `manage.py` does.
+#[test]
+fn django_settings_module_from_a_nested_wsgi() {
+    let hints = django_project(&[
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/wsgi.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.conf\")\n",
+        ),
+        ("mysite/conf.py", "INSTALLED_APPS = [\"myapp\"]\n"),
+    ]);
+    assert_eq!(entry_paths(django_contrib(&hints)), ["mysite/conf.py"]);
+}
+
+/// A runtime `wsgi.py` outranks a test one.
+#[test]
+fn django_settings_module_prefers_a_runtime_setter() {
+    let hints = django_project(&[
+        (
+            "tests/wsgi.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"tests.settings\")\n",
+        ),
+        ("tests/settings.py", "INSTALLED_APPS = []\n"),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/wsgi.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.conf\")\n",
+        ),
+        ("mysite/conf.py", "INSTALLED_APPS = [\"myapp\"]\n"),
+    ]);
+    assert_eq!(entry_paths(django_contrib(&hints)), ["mysite/conf.py"]);
+}
+
+/// A settings module star-imported twice is read once.
+#[test]
+fn django_reads_a_twice_star_imported_settings_module_once() {
+    let hints = django_project(&[
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "from mysite.base import *\nfrom mysite.local import *\n",
+        ),
+        ("mysite/local.py", "from mysite.base import *\n"),
+        ("mysite/base.py", "INSTALLED_APPS = [\"myapp\"]\n"),
+    ]);
+    let apps = django_contrib(&hints)
+        .module_refs
+        .iter()
+        .filter(|reference| reference.module == "myapp")
+        .count();
+    assert_eq!(apps, 1);
+}
+
 #[test]
 fn django_migrations_framework_used() {
     let hints = extract_fixture("django_migrations");

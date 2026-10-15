@@ -23,7 +23,6 @@ pub use ignores::extract_ignores;
 pub(crate) use lines::LineIndex;
 pub(crate) use module_guard::{guarded_roots, predicate_name_module};
 pub use parse::{parse_file, parse_project_sources_with_cache};
-#[cfg(test)]
 pub(crate) use relative::resolve_relative_import;
 #[cfg(test)]
 pub(crate) use types::ParseDiagnostic;

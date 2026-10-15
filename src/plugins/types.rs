@@ -123,6 +123,20 @@ pub struct FrameworkUsedGlob {
     pub origin: ReferenceOrigin,
 }
 
+/// Configuration a framework reads that the plugin could not find or read,
+/// such as the Django settings (#914): what it would have explained is
+/// unknown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadSettings {
+    /// Root-relative file the gap is in: the settings module, or the file
+    /// that names it.
+    pub file: String,
+    /// What in `file` could not be found or read and its line, which
+    /// `--explain` shows in place of the file: a settings module or star
+    /// import, or `DJANGO_SETTINGS_MODULE` set in a form not read.
+    pub site: Option<(String, Option<u32>)>,
+}
+
 /// Output from one enabled plugin extractor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginContribution {
@@ -144,6 +158,9 @@ pub struct PluginContribution {
     pub framework_used_globs: Vec<FrameworkUsedGlob>,
     /// Imports whose `sys.path` edits the importer's imports see.
     pub sys_path_imports: Vec<SysPathImport>,
+    /// Settings the framework reads that could not be found or read; the
+    /// gap stage reads it (#914).
+    pub unread_settings: Vec<UnreadSettings>,
 }
 
 impl PluginContribution {
@@ -159,12 +176,13 @@ impl PluginContribution {
             binary_usages: Vec::new(),
             framework_used_globs: Vec::new(),
             sys_path_imports: Vec::new(),
+            unread_settings: Vec::new(),
         }
     }
 }
 
 /// Aggregated plugin hints from all enabled extractors.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PluginHints {
     /// One record per enabled plugin that ran.
     pub contributions: Vec<PluginContribution>,
@@ -231,6 +249,13 @@ impl PluginHints {
         self.contributions
             .iter()
             .flat_map(|contrib| contrib.sys_path_imports.iter())
+    }
+
+    /// Iterate all settings plugins could not find or read.
+    pub fn unread_settings(&self) -> impl Iterator<Item = &UnreadSettings> {
+        self.contributions
+            .iter()
+            .flat_map(|contrib| contrib.unread_settings.iter())
     }
 
     /// Iterate all framework-used globs.

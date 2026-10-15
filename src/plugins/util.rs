@@ -401,14 +401,25 @@ pub(super) fn module_to_py_path(module: &str) -> String {
     format!("{}.py", module.replace('.', "/"))
 }
 
-/// `DJANGO_SETTINGS_MODULE` set in `manage.py`, with the 1-based line of its value.
+/// `DJANGO_SETTINGS_MODULE` set to a string literal, by `setdefault` or by
+/// assigning `os.environ[...]`, with the 1-based line of its value.
 pub(super) fn extract_django_settings_module(contents: &str) -> Option<(String, u32)> {
-    let value = DJANGO_SETTINGS_RE.captures(contents)?.get(1)?;
+    let caps = DJANGO_SETTINGS_RE.captures(contents)?;
+    let value = caps.get(1).or_else(|| caps.get(2))?;
     let start = TextSize::try_from(value.start()).ok()?;
     Some((
         value.as_str().to_owned(),
         LineIndex::new(contents).line(start),
     ))
+}
+
+/// The 1-based line where `DJANGO_SETTINGS_MODULE` is set, by `setdefault` or
+/// by assigning `os.environ[...]`, whatever the value: a caller that read no
+/// literal with [`extract_django_settings_module`] knows the value is not one.
+pub(super) fn django_settings_module_set_line(contents: &str) -> Option<u32> {
+    let found = DJANGO_SETTINGS_SET_RE.find(contents)?;
+    let start = TextSize::try_from(found.start()).ok()?;
+    Some(LineIndex::new(contents).line(start))
 }
 
 /// Parse `module:symbol` from a uvicorn-style target string.
@@ -432,8 +443,20 @@ pub(crate) fn parse_uvicorn_script_target(value: &str) -> Option<(String, String
 
 #[allow(clippy::expect_used)]
 static DJANGO_SETTINGS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"setdefault\s*\(\s*["']DJANGO_SETTINGS_MODULE["']\s*,\s*["']([^"']+)["']"#)
-        .expect("valid django settings regex")
+    Regex::new(concat!(
+        r#"setdefault\s*\(\s*["']DJANGO_SETTINGS_MODULE["']\s*,\s*["']([^"']+)["']"#,
+        r#"|environ\s*\[\s*["']DJANGO_SETTINGS_MODULE["']\s*\]\s*=\s*["']([^"']+)["']"#,
+    ))
+    .expect("valid django settings regex")
+});
+
+#[allow(clippy::expect_used)]
+static DJANGO_SETTINGS_SET_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r#"setdefault\s*\(\s*["']DJANGO_SETTINGS_MODULE["']"#,
+        r#"|environ\s*\[\s*["']DJANGO_SETTINGS_MODULE["']\s*\]\s*=[^=]"#,
+    ))
+    .expect("valid django settings set regex")
 });
 
 #[allow(clippy::expect_used)]

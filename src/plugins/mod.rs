@@ -34,6 +34,7 @@ pub(crate) use pytest::{PytestImportSettings, import_settings as pytest_import_s
 pub(crate) use types::FrameworkUsedGlob;
 pub(crate) use types::{
     BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin, SysPathImport,
+    UnreadSettings,
 };
 pub use types::{PluginContribution, PluginHints};
 pub(crate) use util::{parse_module_symbol, parse_uvicorn_script_target};

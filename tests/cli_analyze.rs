@@ -2471,6 +2471,251 @@ fn binary_unresolved_command_target_keeps_unused_files_certain() {
     );
 }
 
+/// Acceptance fixture 3 of #888: a settings package chosen by assigning
+/// `DJANGO_SETTINGS_MODULE` in `manage.py`, whose module star-imports the
+/// fields the plugin reads (#914).
+fn django_settings_package(manage: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n",
+        ),
+        ("manage.py", manage),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings/__init__.py", ""),
+        (
+            "mysite/settings/base.py",
+            "ROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\"]\n",
+        ),
+        ("mysite/settings/dev.py", "from .base import *\n"),
+        // No public name: Django reading `urlpatterns` is not what this checks.
+        ("mysite/urls.py", "# URLconf\n"),
+    ])
+}
+
+/// A settings module named by `DJANGO_SETTINGS_MODULE` is read wherever it
+/// lives, assigned or `setdefault`, and its star imports supply the fields
+/// (#914).
+#[test]
+fn binary_django_settings_module_reads_a_settings_package() {
+    for manage in [
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+        "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings.dev\")\n",
+    ] {
+        let project = django_settings_package(manage);
+        assert_eq!(issue_levels(project.path()), [], "{manage}");
+    }
+}
+
+/// Django puts the directory of `manage.py` on `sys.path`, and a `wsgi.py`
+/// sits in the package beside it, so a nested setter's settings module and
+/// URL configuration are looked up from there before any other `settings.py`
+/// is guessed (#914).
+#[test]
+fn binary_django_settings_module_resolves_beside_a_nested_setter() {
+    for (setter, contents) in [
+        (
+            "demo/site/manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"site.settings\")\n",
+        ),
+        (
+            "demo/site/site/wsgi.py",
+            "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"site.settings\"\n",
+        ),
+    ] {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+            ),
+            (setter, contents),
+            ("demo/site/__init__.py", ""),
+            ("demo/site/site/__init__.py", ""),
+            (
+                "demo/site/site/settings.py",
+                "ROOT_URLCONF = \"site.urls\"\n",
+            ),
+            ("demo/site/site/urls.py", "# URL configuration\n"),
+            ("other/settings.py", ""),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!stderr.contains("ambiguous Django settings"), "{stderr}");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let unused: Vec<_> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter(|issue| issue["code"] == "CHK001")
+            .filter_map(|issue| issue["target"].as_str())
+            .collect();
+        assert!(
+            !unused.contains(&"demo/site/site/settings.py")
+                && !unused.contains(&"demo/site/site/urls.py")
+                && unused.contains(&"other/settings.py"),
+            "{setter}: {unused:?}"
+        );
+    }
+}
+
+/// Settings that cannot be found leave the Django project's files and
+/// distributions unexplained: they fall to likely, `--fix` keeps them, and a
+/// warning says why (#914).
+#[test]
+fn binary_unread_django_settings_lower_unused_files_and_distributions() {
+    let level = |code: &str, target: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            "likely".to_owned(),
+        )
+    };
+    let cases = [
+        (
+            "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = settings_module()\n",
+            "plugin: django: `manage.py:3` sets DJANGO_SETTINGS_MODULE in a form that could not be read, and no settings.py was found; unused files and dependencies are reported below certain",
+            "the Django settings could not be found or read: `DJANGO_SETTINGS_MODULE` in `manage.py:3`",
+        ),
+        (
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings.prod\")\n",
+            "plugin: django: settings module `mysite.settings.prod` set in `manage.py:3` is not a project file; unused files and dependencies are reported below certain",
+            "the Django settings could not be found or read: `mysite.settings.prod` in `manage.py:3`",
+        ),
+    ];
+    for (manage, warning, explain) in cases {
+        let project = django_settings_package(manage);
+        assert_eq!(
+            issue_levels(project.path()),
+            [
+                level("CHK001", "mysite/settings/base.py"),
+                level("CHK001", "mysite/settings/dev.py"),
+                level("CHK001", "mysite/urls.py"),
+                level("CHK002", "django"),
+            ],
+            "{manage}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK002:django"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains(warning), "{stderr}");
+        assert!(stderr.contains(explain), "{stderr}");
+    }
+
+    // A star import the plugin cannot follow may set what it reads.
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from configurations_pkg import *\n",
+    )
+    .expect("write settings");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: settings `mysite/settings/dev.py:1` star-imports `configurations_pkg`, which was not read; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+}
+
+/// Settings files the plugin does not read are a gap too: one past the files
+/// it follows, and one chokkin never discovers that does not parse (#914).
+#[test]
+fn binary_unread_django_star_imports_are_a_gap() {
+    // Past the files the plugin follows, a star import is not read either.
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from .s1 import *\n",
+    )
+    .expect("write settings");
+    for index in 1..20 {
+        fs::write(
+            project.path().join(format!("mysite/settings/s{index}.py")),
+            format!("from .s{} import *\n", index + 1),
+        )
+        .expect("write settings");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: settings `mysite/settings/s15.py:1` star-imports `mysite.settings.s16`, which was not read;"),
+        "{stderr}"
+    );
+
+    // A star-imported file chokkin never discovers is the plugin's to read.
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from .base import *\nfrom .local import *\n",
+    )
+    .expect("write settings");
+    fs::write(project.path().join(".gitignore"), "local.py\n").expect("write gitignore");
+    fs::write(
+        project.path().join("mysite/settings/local.py"),
+        "DEBUG = (\n",
+    )
+    .expect("write settings");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: settings `mysite/settings/local.py` could not be read;"),
+        "{stderr}"
+    );
+}
+
+/// A `manage.py` that names no settings still marks a Django project, whose
+/// missing settings are a gap; a reusable app that only depends on Django has
+/// no settings of its own, so it gets none (#914).
+#[test]
+fn binary_django_gap_needs_a_django_project() {
+    let stderr = |project: &tempfile::TempDir| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        String::from_utf8(output.stderr).expect("utf8")
+    };
+    let project = django_settings_package("import django\n");
+    for path in ["mysite/settings/base.py", "mysite/settings/dev.py"] {
+        fs::remove_file(project.path().join(path)).expect("remove settings");
+    }
+    let warnings = stderr(&project);
+    assert!(
+        warnings.contains("plugin: django: `manage.py` sets no DJANGO_SETTINGS_MODULE and no settings.py was found; unused files and dependencies are reported below certain"),
+        "{warnings}"
+    );
+
+    fs::remove_file(project.path().join("manage.py")).expect("remove manage.py");
+    let warnings = stderr(&project);
+    assert!(!warnings.contains("plugin: django:"), "{warnings}");
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]

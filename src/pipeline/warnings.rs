@@ -153,6 +153,7 @@ impl ProbeWarning {
             Self::Plugin(warning) => match warning {
                 PluginsWarning::PartialSettingsParse { path, .. }
                 | PluginsWarning::PytestConfigUnreadable { path } => (Some(path), None),
+                PluginsWarning::DjangoSettingsUnread { path, line, .. } => (Some(path), *line),
                 PluginsWarning::AmbiguousSettings { .. }
                 | PluginsWarning::PluginExtractFailed { .. } => (None, None),
             },

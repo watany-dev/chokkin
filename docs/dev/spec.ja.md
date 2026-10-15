@@ -523,13 +523,17 @@ Django pluginの例。
 
 ```text
 manage.py をentryにする
-settings.py をentryにする
+DJANGO_SETTINGS_MODULE が指す settings module (なければ settings.py) をentryにする
 INSTALLED_APPS の文字列をmodule referenceにする
 MIDDLEWARE の文字列をsymbol/module referenceにする
 ROOT_URLCONF をmodule referenceにする
 WSGI_APPLICATION / ASGI_APPLICATION を module:symbol reference にする
 migrations/**/*.py はframework-used扱いにする
 ```
+
+`DJANGO_SETTINGS_MODULE` は root の `manage.py`、続けて発見した `manage.py` / `wsgi.py` / `asgi.py` (runtime context を先に) から、`os.environ.setdefault("DJANGO_SETTINGS_MODULE", "...")` と `os.environ["DJANGO_SETTINGS_MODULE"] = "..."` の文字列 literal を読む (#914)。読めた値はどれも module reference にし、最初の値を settings module とする。settings module は発見した source、なければ disk 上の `pkg/mod.py` / `pkg/mod/__init__.py` (`src/` の下も)、最後に値を設定した file の import 元 (root にない `manage.py` ならその directory、`wsgi.py` / `asgi.py` なら一つ上の directory。Django が `sys.path` に置く場所) の下に解決し、`config/settings/dev.py` のような package の中の module もそのまま entry にする。解決できないときだけ、従来どおり深さ 4 までの `settings.py` を候補から選ぶ (複数あれば ambiguous 警告)。settings は top-level の `from m import *` を、相対 import も含めて project の file に解決できるかぎり辿り (最大 16 file)、各 field を辿った file すべてから読む。`ROOT_URLCONF` と `WSGI_APPLICATION` / `ASGI_APPLICATION` は最初に読めた file のものを使い、`ROOT_URLCONF` の URLconf は同じ順で発見した source に解決できたときだけ entry にする。`django-split-settings` の `include()` や `exec()` など他の取り込み方は読まず、gap にもしない。
+
+settings を読めないことは gap にする (§11、#914)。Django project であること、つまり root に `manage.py` があるか、`DJANGO_SETTINGS_MODULE` を設定する file があることを条件にする。django を依存に持つだけの reusable app は自分の settings を持たないので、settings が見つからなくても gap にしない。gap になるのは、settings module も `settings.py` も見つからないとき (`DJANGO_SETTINGS_MODULE` の literal が project の file でない、literal でない形で設定している、`manage.py` が何も設定していない、の順に理由を選ぶ)、settings module と辿った star import 先の file を読めないか、発見していない file で parse できないとき (発見した file の構文エラーは parse の skip が報告する)、そして `ROOT_URLCONF` / `INSTALLED_APPS` / `MIDDLEWARE` のどれかが辿った file のどこにもなく、project の file に解決できないか、16 file の上限で辿らなかった star import があるとき (`django-configurations` の基底 class のように、そこで設定しているかもしれない)。literal でない `DJANGO_SETTINGS_MODULE` でも `settings.py` の候補が見つかればそれを読むので gap にしない。literal が project の file でなくても候補があれば同じにする。理由は `` plugin: django: … ; unused files and dependencies are reported below certain `` の warning で出す。
 
 文字列 list として読む設定は `src/plugins/django.rs` の `LIST_FIELDS` (`INSTALLED_APPS` / `MIDDLEWARE`) に限る。literal list でなければ partial parse 警告を出すため、dict の list である `TEMPLATES` は入れない。`AUTHENTICATION_BACKENDS` などを足すのは、その参照先 module が unused と誤検知される fixture ができてからにする。
 
@@ -854,7 +858,7 @@ module top-level（関数の外）で `warnings.warn` を呼び、第2位置引�
 
 confidenceとseverityは独立した2軸として扱う。severityはissue種別の重み(error / warning / info)、confidenceは解析の確からしさ(certain / likely / maybe)。表示filterは `confidence >= 設定値`、exit code 1の対象はdefaultで `severity >= error` かつ `confidence >= likely` にする。`--strict` ではwarning以上かつmaybe以上まで広げる。
 
-読めなかった入力による降格は 1 か所 (`src/rules/gaps.rs`、ADR 0005 の降格段) にまとめる。gap は「どの file の何が読めなかったか」を表す値 (`Gap { file, kind, member, site }`) で、pipeline が parse・reachability・manifest から集め (`collect_gaps`)、emit が ignore・severity・confidence filter の前に finding へ当てる。gap の種類ごとに、どの finding を下げるかを 1 つの表で決める。
+読めなかった入力による降格は 1 か所 (`src/rules/gaps.rs`、ADR 0005 の降格段) にまとめる。gap は「どの file の何が読めなかったか」を表す値 (`Gap { file, kind, member, site }`) で、pipeline が parse・reachability・manifest・plugin から集め (`collect_gaps`)、emit が ignore・severity・confidence filter の前に finding へ当てる。gap の種類ごとに、どの finding を下げるかを 1 つの表で決める。
 
 ```text
 到達可能な file を skip した (UnreadModule)            -> CHK001 と distribution の CHK002 を likely 以下に
@@ -864,15 +868,18 @@ runtime 依存が読めない (RuntimeDependenciesUnknown)        -> import の 
 到達可能な file の import を distribution に解決できない (UnresolvedImport) -> distribution の CHK002 を likely 以下に
 PEP 723 script の import を distribution に解決できない (UnresolvedScriptImport) -> その script の CHK002 を likely 以下に
 task file / tool config の command が、どの entry も届かない Python code を実行する (UnreadCommandTarget) -> CHK001 を likely 以下に
+Django project の settings を見つけられないか読めない (UnreadDjangoSettings) -> CHK001 と distribution の CHK002 を likely 以下に
 ```
 
 解決できない import の gap は、CHK010 が warning で出す site と同じ条件で集める (#911)。到達可能な file にあり、`TYPE_CHECKING` の下でも optional import でもなく、file context が docs / dev でなく、first-party でもない import root が、どの distribution にも解決できないとき 1 件にする。import map で解決できない module は、宣言済みのどれかの distribution が提供しているかもしれない。その distribution の CHK002 (unused) は「使っていない」と言い切れないので certain から外す。どの distribution かは分からないので、root manifest の CHK002 をすべて下げる (CHK002 は root manifest だけで判定するため member では絞らない)。PEP 723 script の import は、script の block が環境を決めるので、その script の block の CHK002 だけを下げ、file context を問わず数える。script が import する同じ project の helper module の解決できない import は project 側の gap になり、script の block は下げない。`site` は `--explain` が file の代わりに出す module と行で (`` `zz_widgets_core` in `acme/main.py:1` ``)、同じ file の同じ module は最初の行の 1 件にまとめる。CHK010 自体は変えず、この gap を利用者に届ける warning として使う。
 
 task file と tool config の command (Makefile・justfile・Dockerfile・Procfile・GitLab CI・PDM scripts・pre-commit の local hook・tox の commands・`scripts/` と `bin/` の shell script) が実行する Python code は、entry にしていない (#912)。そこから届く file の CHK001 は「どこからも使われていない」と言い切れないので、その command を gap にする (#913)。command から読む形は `python X.py` (`uv run` と `$(PYTHON)` などの変数を含む)、`python -m pkg.mod`、`python -c '...'` の `import` / `from`、`gunicorn` / `uvicorn` / `hypercorn` / `daphne` / `waitress-serve` の `module:app` と `celery -A app`。path や module に `$` `{` `}` `%` `*` を含む computed な形、`-c` の code が `__import__` / `importlib` / `runpy` / `exec(` を使うか変数で渡される形、`python -` (stdin)、app を読めない runner は opaque として必ず gap にする。読めた script と module は、project の file に解決できて、どの entry からも届かないときだけ gap にする。module は `pkg.mod.__main__`、`pkg.mod` の順で解決する。解決できないもの (typo、`python -m json.tool` のような third-party や stdlib) は project の file を実行しないので gap にしない。script の path は command の `cd` と file の場所から組み、絶対 path (Dockerfile の `/app/x.py`) は末尾の component 列が project の file に一致するものを探し、root より上に出る `..` は捨てる。範囲は OpaqueDynamicImport と同じ project 全体の CHK001 にする。command がどの file に届くかは entry にするまで分からないため。#912 が command を entry にすれば、読めた target は gap でなくなる。workflow の `run:` は対象外。`site` は command の text と行で、同じ file の同じ text は最初の行の 1 件にまとめる。
 
+Django の settings は、`INSTALLED_APPS` の app、`MIDDLEWARE`、`ROOT_URLCONF` の URLconf を通じて、project の file と distribution を読み込む。settings を読めない project では、その file の CHK001 も、app を提供する distribution の CHK002 も言い切れないので、Django plugin が記録した読めなかった settings を gap にする (#914、条件は §9)。範囲は project 全体の CHK001 と distribution の CHK002 で、member では絞らない。settings はどの member の app も読み込みうるため。`site` は見つからない settings module (`` `mysite.settings.prod` in `manage.py:3` ``)、辿れない star import (`` `configurations` in `mysite/settings/dev.py:1` ``)、literal でない設定 (`` `DJANGO_SETTINGS_MODULE` in `manage.py:3` ``) で、settings が何も無いときと読めないときは file だけを出す。
+
 `member` は gap が下げる finding を 1 つの workspace member に絞る。root manifest と module の gap は `None` で、表の範囲の finding をすべて下げる。member manifest の `RuntimeDependenciesUnknown` は、その member の id を持ち、`workspace_member` がその member の finding だけを下げる (#910)。member の宣言が読めなくても、宣言できるのはその member の import だけで、root や他の member の宣言の欠落は変わらないため。root の gap は member の finding も下げる。member の import は root の宣言でも満たされうるので、root の宣言が読めなければ member の欠落も確かではない。`--explain` が数えるのは、その finding に届く gap だけにする。
 
-不在を言う finding (CHK001 / CHK002) は certain から外し、宣言の欠落を言う finding (CHK003 / CHK004) は hint にする。上限として当てるので confidence を上げることはない。exit code は下がった後の severity / confidence で決まり、gap 自体は exit code を変えない (§7)。下げた finding の `--explain` には、gap の種類ごとに理由と最初の file を 1 行出す (`` a reachable module could not be read: `acme/a.py` (and 1 more) ``)。gap はどれも warning として利用者に届く (ADR 0005 §3)。skip した file と読めなかった cell は parse の warning、読めない runtime 依存は manifest の warning が名指しする。opaque dynamic import には記録した段の warning がないので、gap を集めた後に 1 run 1 回だけ、最初の file と残りの数を出す (`` parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain ``、#909)。command の target には記録した段の warning がないので、gap を集めた後に command を書いた file ごとに 1 回、最初の target と残りの数を出す (`` plugin: `Makefile:3` runs `scripts/gen.py` as Python code no entry reaches; unused files are reported below certain ``、#913)。
+不在を言う finding (CHK001 / CHK002) は certain から外し、宣言の欠落を言う finding (CHK003 / CHK004) は hint にする。上限として当てるので confidence を上げることはない。exit code は下がった後の severity / confidence で決まり、gap 自体は exit code を変えない (§7)。下げた finding の `--explain` には、gap の種類ごとに理由と最初の file を 1 行出す (`` a reachable module could not be read: `acme/a.py` (and 1 more) ``)。gap はどれも warning として利用者に届く (ADR 0005 §3)。skip した file と読めなかった cell は parse の warning、読めない runtime 依存は manifest の warning、読めない Django の settings は plugin の warning が名指しする。opaque dynamic import には記録した段の warning がないので、gap を集めた後に 1 run 1 回だけ、最初の file と残りの数を出す (`` parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain ``、#909)。command の target には記録した段の warning がないので、gap を集めた後に command を書いた file ごとに 1 回、最初の target と残りの数を出す (`` plugin: `Makefile:3` runs `scripts/gen.py` as Python code no entry reaches; unused files are reported below certain ``、#913)。
 
 ## 12. unused exports判定
 
