@@ -3,8 +3,8 @@
 //! The reference model mirrors `docs/dev/formal/deps_rules_z3.py` (S1/S2,
 //! W1–W3) extended with the post-v0.6.0 decisions in
 //! `src/rules/deps/missing.rs`: a lock edge from a declared distribution makes
-//! even an optional import CHK004 (#504, as a warning per #582), and a locked-only distribution is a
-//! Likely CHK004.
+//! even an optional import CHK004 (#504, as a warning per #582), a locked-only distribution is a
+//! Likely CHK004, and an unguarded import nothing resolves caps CHK002 at Likely (#911).
 
 #![allow(
     clippy::expect_used,
@@ -310,9 +310,23 @@ fn expected_for(name: &str, dep: Dep, has_lock: bool, strict: bool) -> Vec<Key> 
 }
 
 fn expected(spec: &Spec, strict: bool) -> Vec<Key> {
+    // An import nothing resolves, unguarded, may come from any declared
+    // distribution, so none is certainly unused (#911).
+    let unresolved = spec.named().any(|(_, dep)| {
+        let declared = dep.runtime.is_some() || dep.dev || dep.extra;
+        let locked = spec.has_lock && (dep.locked || dep.hub_edge);
+        !declared && !locked && (dep.plain || dep.test)
+    });
     let mut out: Vec<Key> = spec
         .named()
         .flat_map(|(name, dep)| expected_for(name, *dep, spec.has_lock, strict))
+        .map(|(code, target, severity, confidence)| {
+            if unresolved && code == "CHK002" {
+                (code, target, severity, "likely".to_owned())
+            } else {
+                (code, target, severity, confidence)
+            }
+        })
         .collect();
     out.sort();
     out

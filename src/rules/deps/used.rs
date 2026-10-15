@@ -446,6 +446,7 @@ mod tests {
                 config_provided_binaries: Vec::new(),
                 config_module_refs: Vec::new(),
                 config_script_entries: Vec::new(),
+                config_command_targets: Vec::new(),
                 warnings: Vec::new(),
             },
             &reachable_paths(&graph, &reachable),

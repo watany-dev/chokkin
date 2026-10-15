@@ -50,7 +50,8 @@ pub(super) struct DirIgnore {
     has_git: bool,
     /// Errors `ignore` attaches to the directory entry.
     errors: Vec<ignore::Error>,
-    /// `.gitignore` as [`super::walk::load_gitignore`] sees it.
+    /// `.gitignore` as [`super::walk::load_gitignore`] sees it, and as the
+    /// walk sees each directory below the root (#915).
     root_load: RootLoad,
 }
 
@@ -63,7 +64,8 @@ pub(super) enum RootLoad {
     /// Some line does not parse: the walk reports it with the directory's
     /// errors (#903).
     Unparsable,
-    /// Reading failed, which `ignore` drops without an error.
+    /// Reading failed, which `ignore` drops without an error. A symlink
+    /// whose target is missing counts: `ignore` skips it as if absent.
     Unreadable,
     Loaded,
 }
@@ -174,7 +176,9 @@ impl DirIgnore {
 
         let gitignore_path = dir.join(".gitignore");
         let (gitignore, clean) = Rules::load(dir, &gitignore_path, shared, &mut errors);
-        let root_load = if !gitignore_path.is_file() {
+        let root_load = if dangling(&gitignore_path) {
+            RootLoad::Unreadable
+        } else if !gitignore_path.is_file() {
             RootLoad::Missing
         } else if clean {
             RootLoad::Loaded
@@ -345,6 +349,13 @@ fn is_file_name(path: &Path) -> bool {
         path.parent()
             .is_some_and(|parent| parent.as_os_str().is_empty())
     }
+}
+
+/// A symlink at `path` that does not lead to anything readable.
+fn dangling(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|meta| meta.file_type().is_symlink())
+        && path.metadata().is_err()
 }
 
 /// `ignore`'s `create_gitignore` for a single file, pushing its errors onto

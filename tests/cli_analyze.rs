@@ -2203,6 +2203,519 @@ fn binary_syntax_error_source_is_skipped_with_a_diagnostic() {
     );
 }
 
+/// `(code, target, severity, confidence)` of each issue in `root`.
+fn issue_levels(root: &std::path::Path) -> Vec<(String, String, String, String)> {
+    json_issues(root, &["--no-cache"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            (
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect()
+}
+
+/// An import no source resolves may come from any declared distribution, so
+/// those reported unused fall to likely and `--fix` keeps them; CHK010 is
+/// unchanged, and an import that never fails lowers nothing (#911).
+#[test]
+fn binary_unresolved_import_lowers_unused_distributions() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"acme-widgets-sdk\"]\n\n[project.scripts]\nacme = \"acme.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "import zz_widgets_core\n\ndef main():\n    zz_widgets_core.run()\n",
+        ),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK002", "acme-widgets-sdk", "error", "likely"),
+            level(
+                "CHK010",
+                "acme/main.py:zz_widgets_core",
+                "warning",
+                "likely"
+            ),
+        ]
+    );
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:acme-widgets-sdk"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "a reachable import could not be resolved to a distribution: `zz_widgets_core` in `acme/main.py:1`"
+        ),
+        "{stderr}"
+    );
+
+    let status = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--fix"])
+        .arg(project.path())
+        .status()
+        .expect("run chokkin --fix");
+    assert!(status.code().is_some(), "{status:?}");
+    assert_eq!(
+        fs::read_to_string(project.path().join("pyproject.toml")).expect("read pyproject"),
+        pyproject
+    );
+
+    // An optional import falls back when missing, so it names no dependency.
+    let optional = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "try:\n    import zz_widgets_core\nexcept ImportError:\n    pass\n\ndef main():\n    pass\n",
+        ),
+    ]);
+    assert_eq!(
+        issue_levels(optional.path()),
+        [
+            level("CHK002", "acme-widgets-sdk", "error", "certain"),
+            level("CHK010", "acme/main.py:zz_widgets_core", "info", "likely"),
+        ]
+    );
+}
+
+/// A PEP 723 script installs its own block, so an import it cannot resolve
+/// lowers that block's unused entries and leaves the project's alone (#911).
+#[test]
+fn binary_unresolved_script_import_lowers_only_its_block() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"acme.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/main.py", "def main():\n    pass\n"),
+        (
+            "scripts/report.py",
+            "# /// script\n# dependencies = [\"rich\"]\n# ///\nimport zz_render_core\n",
+        ),
+    ]);
+    let found: Vec<_> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK002")
+        .map(|(_, target, _, confidence)| (target, confidence))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("requests".to_owned(), "certain".to_owned()),
+            (
+                "script:scripts/report.py:rich".to_owned(),
+                "likely".to_owned()
+            ),
+        ]
+    );
+}
+
+const COMMAND_PYPROJECT: &str = "[project]\nname = \"mypkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmypkg = \"mypkg.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+
+/// A command may be the only thing that runs a file, and commands add no
+/// entries yet (#912): one that runs Python no entry reaches lowers unused
+/// files to likely and is warned once per file (#913).
+#[test]
+fn binary_unread_command_target_lowers_unused_files() {
+    let file = |path: &str| (path.to_owned(), "likely".to_owned());
+    let mut files = vec![
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        (
+            "Makefile",
+            "gen:\n\tpython mypkg/gen.py\n\nmod:\n\tpython -m mypkg.modrun\n",
+        ),
+        (
+            "tox.ini",
+            "[testenv:gen]\ncommands = python mypkg/toxgen.py\n",
+        ),
+        (
+            ".pre-commit-config.yaml",
+            "repos:\n  - repo: local\n    hooks:\n      - id: ghgen\n        name: ghgen\n        entry: python -m mypkg.ghgen\n        language: system\n",
+        ),
+        ("Procfile", "web: gunicorn mypkg.server:app\n"),
+    ];
+    for path in [
+        "mypkg/gen.py",
+        "mypkg/modrun.py",
+        "mypkg/toxgen.py",
+        "mypkg/ghgen.py",
+        "mypkg/server.py",
+    ] {
+        files.push((path, "app = None\n"));
+    }
+    let project = write_project(&files);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let unused: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        unused,
+        [
+            file("mypkg/gen.py"),
+            file("mypkg/ghgen.py"),
+            file("mypkg/modrun.py"),
+            file("mypkg/server.py"),
+            file("mypkg/toxgen.py"),
+        ],
+        "{parsed}"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "plugin: `.pre-commit-config.yaml:6` runs `mypkg.ghgen` as Python code no entry reaches; unused files are reported below certain",
+        "plugin: `Makefile:2` runs `mypkg/gen.py` and 1 more target as Python code no entry reaches; unused files are reported below certain",
+        "plugin: `Procfile:1` runs `mypkg.server` as Python code no entry reaches; unused files are reported below certain",
+        "plugin: `tox.ini:2` runs `mypkg/toxgen.py` as Python code no entry reaches; unused files are reported below certain",
+    ] {
+        assert!(stderr.contains(warning), "{stderr}");
+    }
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK001:mypkg/gen.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 4 more)"
+        ),
+        "{stderr}"
+    );
+}
+
+/// A computed target may run any file, so it lowers unused files (#913).
+#[test]
+fn binary_computed_command_target_lowers_unused_files() {
+    let computed = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/orphan.py", ""),
+        ("Makefile", "gen:\n\t$(PYTHON) $(SCRIPT)\n"),
+    ]);
+    assert_eq!(
+        issue_levels(computed.path()),
+        [(
+            "CHK001".to_owned(),
+            "mypkg/orphan.py".to_owned(),
+            "error".to_owned(),
+            "likely".to_owned()
+        )]
+    );
+}
+
+/// A typo names no file, and third-party and reached targets hide nothing
+/// (#913).
+#[test]
+fn binary_unresolved_command_target_keeps_unused_files_certain() {
+    let typo = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/orphan.py", ""),
+        (
+            "Makefile",
+            "gen:\n\tpython mypkg/gne.py\n\tpython -m json.tool a.json\n\tpython -m mypkg.main\n\tpython mypkg/main.py\n",
+        ),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(typo.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("no entry reaches"), "{stderr}");
+    assert_eq!(
+        issue_levels(typo.path()),
+        [(
+            "CHK001".to_owned(),
+            "mypkg/orphan.py".to_owned(),
+            "error".to_owned(),
+            "certain".to_owned()
+        )]
+    );
+}
+
+/// Acceptance fixture 3 of #888: a settings package chosen by assigning
+/// `DJANGO_SETTINGS_MODULE` in `manage.py`, whose module star-imports the
+/// fields the plugin reads (#914).
+fn django_settings_package(manage: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n",
+        ),
+        ("manage.py", manage),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings/__init__.py", ""),
+        (
+            "mysite/settings/base.py",
+            "ROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\"]\n",
+        ),
+        ("mysite/settings/dev.py", "from .base import *\n"),
+        // No public name: Django reading `urlpatterns` is not what this checks.
+        ("mysite/urls.py", "# URLconf\n"),
+    ])
+}
+
+/// A settings module named by `DJANGO_SETTINGS_MODULE` is read wherever it
+/// lives, assigned or `setdefault`, and its star imports supply the fields
+/// (#914).
+#[test]
+fn binary_django_settings_module_reads_a_settings_package() {
+    for manage in [
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+        "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings.dev\")\n",
+    ] {
+        let project = django_settings_package(manage);
+        assert_eq!(issue_levels(project.path()), [], "{manage}");
+    }
+}
+
+/// Django puts the directory of `manage.py` on `sys.path`, and a `wsgi.py`
+/// sits in the package beside it, so a nested setter's settings module and
+/// URL configuration are looked up from there before any other `settings.py`
+/// is guessed (#914).
+#[test]
+fn binary_django_settings_module_resolves_beside_a_nested_setter() {
+    for (setter, contents) in [
+        (
+            "demo/site/manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"site.settings\")\n",
+        ),
+        (
+            "demo/site/site/wsgi.py",
+            "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"site.settings\"\n",
+        ),
+    ] {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+            ),
+            (setter, contents),
+            ("demo/site/__init__.py", ""),
+            ("demo/site/site/__init__.py", ""),
+            (
+                "demo/site/site/settings.py",
+                "ROOT_URLCONF = \"site.urls\"\n",
+            ),
+            ("demo/site/site/urls.py", "# URL configuration\n"),
+            ("other/settings.py", ""),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!stderr.contains("ambiguous Django settings"), "{stderr}");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let unused: Vec<_> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter(|issue| issue["code"] == "CHK001")
+            .filter_map(|issue| issue["target"].as_str())
+            .collect();
+        assert!(
+            !unused.contains(&"demo/site/site/settings.py")
+                && !unused.contains(&"demo/site/site/urls.py")
+                && unused.contains(&"other/settings.py"),
+            "{setter}: {unused:?}"
+        );
+    }
+}
+
+/// Settings that cannot be found leave the Django project's files and
+/// distributions unexplained: they fall to likely, `--fix` keeps them, and a
+/// warning says why (#914).
+#[test]
+fn binary_unread_django_settings_lower_unused_files_and_distributions() {
+    let level = |code: &str, target: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            "likely".to_owned(),
+        )
+    };
+    let cases = [
+        (
+            "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = settings_module()\n",
+            "plugin: django: `manage.py:3` sets DJANGO_SETTINGS_MODULE in a form that could not be read, and no settings.py was found; unused files and dependencies are reported below certain",
+            "the Django settings could not be found or read: `DJANGO_SETTINGS_MODULE` in `manage.py:3`",
+        ),
+        (
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings.prod\")\n",
+            "plugin: django: settings module `mysite.settings.prod` set in `manage.py:3` is not a project file; unused files and dependencies are reported below certain",
+            "the Django settings could not be found or read: `mysite.settings.prod` in `manage.py:3`",
+        ),
+    ];
+    for (manage, warning, explain) in cases {
+        let project = django_settings_package(manage);
+        assert_eq!(
+            issue_levels(project.path()),
+            [
+                level("CHK001", "mysite/settings/base.py"),
+                level("CHK001", "mysite/settings/dev.py"),
+                level("CHK001", "mysite/urls.py"),
+                level("CHK002", "django"),
+            ],
+            "{manage}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK002:django"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains(warning), "{stderr}");
+        assert!(stderr.contains(explain), "{stderr}");
+    }
+
+    // A star import the plugin cannot follow may set what it reads.
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from configurations_pkg import *\n",
+    )
+    .expect("write settings");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: settings `mysite/settings/dev.py:1` star-imports `configurations_pkg`, which was not read; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+}
+
+/// Settings files the plugin does not read are a gap too: one past the files
+/// it follows, and one chokkin never discovers that does not parse (#914).
+#[test]
+fn binary_unread_django_star_imports_are_a_gap() {
+    // Past the files the plugin follows, a star import is not read either.
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from .s1 import *\n",
+    )
+    .expect("write settings");
+    for index in 1..20 {
+        fs::write(
+            project.path().join(format!("mysite/settings/s{index}.py")),
+            format!("from .s{} import *\n", index + 1),
+        )
+        .expect("write settings");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: settings `mysite/settings/s15.py:1` star-imports `mysite.settings.s16`, which was not read;"),
+        "{stderr}"
+    );
+
+    // A star-imported file chokkin never discovers is the plugin's to read.
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from .base import *\nfrom .local import *\n",
+    )
+    .expect("write settings");
+    fs::write(project.path().join(".gitignore"), "local.py\n").expect("write gitignore");
+    fs::write(
+        project.path().join("mysite/settings/local.py"),
+        "DEBUG = (\n",
+    )
+    .expect("write settings");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: settings `mysite/settings/local.py` could not be read;"),
+        "{stderr}"
+    );
+}
+
+/// A `manage.py` that names no settings still marks a Django project, whose
+/// missing settings are a gap; a reusable app that only depends on Django has
+/// no settings of its own, so it gets none (#914).
+#[test]
+fn binary_django_gap_needs_a_django_project() {
+    let stderr = |project: &tempfile::TempDir| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        String::from_utf8(output.stderr).expect("utf8")
+    };
+    let project = django_settings_package("import django\n");
+    for path in ["mysite/settings/base.py", "mysite/settings/dev.py"] {
+        fs::remove_file(project.path().join(path)).expect("remove settings");
+    }
+    let warnings = stderr(&project);
+    assert!(
+        warnings.contains("plugin: django: `manage.py` sets no DJANGO_SETTINGS_MODULE and no settings.py was found; unused files and dependencies are reported below certain"),
+        "{warnings}"
+    );
+
+    fs::remove_file(project.path().join("manage.py")).expect("remove manage.py");
+    let warnings = stderr(&project);
+    assert!(!warnings.contains("plugin: django:"), "{warnings}");
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]
@@ -3955,4 +4468,104 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
     );
     assert_eq!(sources.len(), 1, "{stderr}");
     assert!(sources[0].starts_with(&expected), "{expected}\n{stderr}");
+}
+
+/// A `.gitignore` below the root that cannot be read is one warning naming
+/// it, though the root walk and the member walk both meet it, and the text
+/// reporter prints it as JSON does (#915).
+#[test]
+fn binary_unreadable_nested_gitignore_warns_once_in_a_workspace() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "packages/core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("packages/core/core/__init__.py", ""),
+        ("packages/core/core/gen/out.py", ""),
+    ]);
+    fs::write(
+        project.path().join("packages/core/core/gen/.gitignore"),
+        b"out.py\n\xff\n",
+    )
+    .expect("write gitignore");
+
+    for reporter in ["json", "default"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", reporter])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let sources: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.contains("sources:"))
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                "sources: could not read `packages/core/core/gen/.gitignore`; \
+              its ignore rules may be missing"
+            ],
+            "{reporter}: {stderr}"
+        );
+    }
+}
+
+/// #917: a `requires-python` that is not a specifier set falls back to py311,
+/// and says so; an explicit `target_version` makes it moot.
+#[test]
+fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\nversion = \"0\"\nrequires-python = \">=3.12,bogus\"\n",
+        ),
+        ("src/pkg/__init__.py", "type Alias = int\n"),
+        (
+            "scripts/tool.py",
+            "# /// script\n# requires-python = \",\"\n# dependencies = []\n# ///\nimport os\n",
+        ),
+    ]);
+    let manifest_lines = |root: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(root)
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        stderr
+            .lines()
+            .filter(|line| line.contains("requires-python"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        manifest_lines(project.path()),
+        [
+            "manifest: could not read `requires-python` \">=3.12,bogus\" in `pyproject.toml`; \
+             assuming target version py311",
+            "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
+             `scripts/tool.py`; using the project's target version",
+        ]
+    );
+
+    fs::write(
+        project.path().join("pyproject.toml"),
+        "[project]\nname = \"pkg\"\nversion = \"0\"\nrequires-python = \">=3.12,bogus\"\n\n\
+         [tool.chokkin]\ntarget_version = \"py312\"\n",
+    )
+    .expect("write pyproject");
+    assert_eq!(
+        manifest_lines(project.path()),
+        [
+            "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
+          `scripts/tool.py`; using the project's target version"
+        ]
+    );
 }

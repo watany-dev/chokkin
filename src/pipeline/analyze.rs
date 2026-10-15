@@ -374,8 +374,15 @@ fn run_analysis_core(
             manifest: &input.manifest,
         })
         .collect();
-    let gaps = collect_gaps(&parse, &graph, &reachability, &probe.manifest, &members);
+    let gaps = collect_gaps(
+        &context,
+        &probe.manifest,
+        &members,
+        &probe.scripts,
+        &plugins,
+    );
     warnings.extend(opaque_import_warning(&gaps));
+    warnings.extend(command_target_warnings(&gaps));
     let issues = emit_issues(
         &reachability,
         &deps,
@@ -435,6 +442,29 @@ fn opaque_import_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
         path,
         more: files.count(),
     })
+}
+
+/// One warning per command file, at its first target (#913).
+fn command_target_warnings(gaps: &[Gap]) -> Vec<ProbeWarning> {
+    let mut by_file: BTreeMap<&str, Vec<&(String, Option<u32>)>> = BTreeMap::new();
+    for gap in gaps {
+        if let (GapKind::UnreadCommandTarget, Some(site)) = (gap.kind, &gap.site) {
+            by_file.entry(&gap.file).or_default().push(site);
+        }
+    }
+    by_file
+        .into_iter()
+        .filter_map(|(path, mut sites)| {
+            sites.sort_by_key(|(_, line)| (line.is_none(), *line));
+            let (target, line) = sites.first()?;
+            Some(ProbeWarning::UnreadCommandTarget {
+                path: path.to_owned(),
+                line: *line,
+                target: target.clone(),
+                more: sites.len() - 1,
+            })
+        })
+        .collect()
 }
 
 /// What the user needs to know about one parsed module: a skipped module is

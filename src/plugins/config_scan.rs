@@ -12,12 +12,14 @@ use crate::manifest::{DependencyContext, normalize_distribution_name};
 use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
 
-use super::commands::{KnownBinary, SourceHits, command_binaries};
+use super::commands::{KnownBinary, SourceHits, command_binaries, command_target_refs};
 use super::config_text::{
     PyprojectDoc, leading_spaces, logical_lines, origin_at, read_root_file, toml_key_line,
 };
 use super::context::PluginContext;
-use super::types::{BinaryUsage, ModuleReference, ReferenceOrigin, ScriptReference};
+use super::types::{
+    BinaryUsage, CommandTargetRef, ModuleReference, ReferenceOrigin, ScriptReference,
+};
 use super::{ci_installs, script_entries, task_files, tool_plugins};
 
 /// Output from config scanning.
@@ -43,6 +45,9 @@ pub(super) struct ConfigScanResult {
     /// Scripts commands run by path (#797).
     #[serde(default)]
     pub script_entries: Vec<ScriptReference>,
+    /// Python code task files and tool configs run (#913).
+    #[serde(default)]
+    pub command_targets: Vec<CommandTargetRef>,
 }
 
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
@@ -158,6 +163,7 @@ fn merge_hits(
         push_distribution(result, distribution);
     }
     result.module_refs.extend(hits.module_refs);
+    result.command_targets.extend(hits.command_targets);
 }
 
 fn scan_mkdocs_config(
@@ -894,6 +900,9 @@ fn push_command(
         }
         push_binary(result, seen, &binary, origin.clone());
     }
+    result
+        .command_targets
+        .extend(command_target_refs(command, origin));
 }
 
 fn push_binary(
