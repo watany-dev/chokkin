@@ -18,7 +18,7 @@ pub(crate) use context::{
     apply_member_context, assign_file_context, assign_layout_file_context, is_test_data_path,
 };
 pub use discover::discover_sources;
-pub(crate) use discover::{Discovery, discover_sources_cached};
+pub(crate) use discover::{Discovery, WalkMode, discover_sources_cached};
 pub use error::SourcesError;
 pub(crate) use glob::build_glob_set;
 pub(crate) use layout::infer_layout;
@@ -29,4 +29,5 @@ pub(crate) use types::MemberLayout;
 pub use types::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
 };
+pub(crate) use walk::WalkRecord;
 pub use warnings::SourcesWarning;

@@ -1,6 +1,6 @@
 //! Directory walking with glob, exclude, and gitignore filters.
 
-use std::fs::FileType;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -147,15 +147,48 @@ impl GitignoreFilter {
     }
 }
 
-fn configure_walker(
-    root: &Path,
+/// The filters a walk applies to each entry below its root, the checks
+/// `filter_entry` makes, so a replay can make them on recorded entries.
+struct EntryFilter {
+    root: PathBuf,
     overrides: Arc<Override>,
     exclude_matcher: Arc<GlobSet>,
     gitignore: Option<GitignoreFilter>,
-) -> WalkBuilder {
-    let root_for_filter = root.to_path_buf();
+}
 
-    let mut builder = WalkBuilder::new(root);
+impl EntryFilter {
+    /// Whether a walk from `root` would yield `path`, given that it yields
+    /// the parent. A path outside the root is not this filter's to judge.
+    fn admits(&self, path: &Path, is_dir: bool) -> bool {
+        let Ok(rel) = path.strip_prefix(&self.root) else {
+            return true;
+        };
+        if self.overrides.matched(rel, is_dir).is_ignore() {
+            return false;
+        }
+        if self
+            .gitignore
+            .as_ref()
+            .is_some_and(|filter| filter.skips(path, is_dir))
+        {
+            return false;
+        }
+        if is_dir {
+            let rel_str = normalize_rel_path(rel);
+            return !should_prune_dir(&rel_str, &self.exclude_matcher);
+        }
+        true
+    }
+}
+
+/// A walker from `start` that yields what `filter` admits and tells
+/// `recorder` about each entry it turns away.
+fn configure_walker(
+    start: &Path,
+    filter: Arc<EntryFilter>,
+    recorder: Option<Recorder>,
+) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(start);
     // The walker reads no ignore files itself: `filter_entry` answers from
     // the shared cache what `git_ignore`/`git_exclude` would (#757).
     builder
@@ -167,43 +200,43 @@ fn configure_walker(
         .follow_links(false)
         .hidden(false)
         .filter_entry(move |entry| {
-            let path = entry.path();
-            let Ok(rel) = path.strip_prefix(&root_for_filter) else {
+            let kind = entry_kind(entry);
+            if filter.admits(entry.path(), kind == Some(EntryKind::Dir)) {
                 return true;
-            };
-            let is_dir = entry
-                .file_type()
-                .is_some_and(|file_type| file_type.is_dir());
-            if overrides.matched(rel, is_dir).is_ignore() {
-                return false;
             }
-            if gitignore
-                .as_ref()
-                .is_some_and(|filter| filter.skips(entry.path(), is_dir))
-            {
-                return false;
+            if let (Some(recorder), Some(kind)) = (&recorder, kind) {
+                recorder.entry(entry.path(), kind, false);
             }
-            if is_dir {
-                let rel_str = normalize_rel_path(rel);
-                return !should_prune_dir(&rel_str, &exclude_matcher);
-            }
-            true
+            false
         });
     builder
 }
 
+/// What a walked entry is to the collector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntryKind {
+    Dir,
+    File,
+    Other,
+}
+
+fn entry_kind(entry: &DirEntry) -> Option<EntryKind> {
+    let file_type = entry.file_type()?;
+    // A symlinked root keeps its link type but is walked as a directory.
+    Some(
+        if file_type.is_dir() || (entry.depth() == 0 && entry.path().is_dir()) {
+            EntryKind::Dir
+        } else if file_type.is_file() {
+            EntryKind::File
+        } else {
+            EntryKind::Other
+        },
+    )
+}
+
 /// Ignore file errors of a walked directory, as `ignore` attaches them to
 /// its entry.
-fn dir_warning(
-    cache: &SourcesCache,
-    entry: &DirEntry,
-    file_type: FileType,
-) -> Option<SourcesWarning> {
-    let path = entry.path();
-    // A symlinked root keeps its link type but is walked as a directory.
-    if !(file_type.is_dir() || (entry.depth() == 0 && path.is_dir())) {
-        return None;
-    }
+fn dir_warning(cache: &SourcesCache, path: &Path) -> Option<SourcesWarning> {
     let reason = cache.dir(path).error()?;
     Some(SourcesWarning::PathUnreadable {
         path: path.to_string_lossy().into_owned(),
@@ -255,71 +288,75 @@ fn source_kind(path: &Path) -> Option<FileKind> {
     }
 }
 
-/// Collect Python-related files under `root`.
-pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, SourcesError> {
-    let root = options.root.to_path_buf();
-    let project_matcher = options.project_matcher;
-    let exclude_matcher = options.exclude_matcher;
-    let test_matcher = options.test_matcher;
-    let production = options.production;
-    let gitignore = options.gitignore;
-    let cache = options.cache;
+/// Gathers what one walk yields into a [`Collected`].
+struct Collector<'o, 'a> {
+    options: &'o CollectOptions<'a>,
+    collected: Collected,
+}
 
-    let mut files = Vec::new();
-    let mut held_tests = Vec::new();
-    let mut warnings = Vec::new();
-
-    let overrides = cache.exclude_overrides(options.exclude_patterns)?;
-    let filter = options.respect_gitignore.then(|| {
-        let ancestors = cache.ancestors(&root).map(Arc::new);
-        if let Some(reason) = ancestors.as_deref().and_then(Ancestors::error) {
-            warnings.push(SourcesWarning::PathUnreadable {
-                path: root.to_string_lossy().into_owned(),
-                reason,
-            });
+impl<'o, 'a> Collector<'o, 'a> {
+    fn new(options: &'o CollectOptions<'a>) -> Self {
+        Self {
+            options,
+            collected: Collected::default(),
         }
-        GitignoreFilter::new(&root, cache, ancestors)
-    });
-    let builder = configure_walker(&root, overrides, Arc::clone(exclude_matcher), filter);
+    }
 
-    for result in builder.build() {
-        let entry = match result {
-            Ok(entry) => entry,
-            Err(error) => {
-                warnings.push(walk_error_warning(&root, &error));
-                continue;
+    /// The filter a walk from the root applies; reading the root's
+    /// ancestors may warn first.
+    fn filter(&mut self) -> Result<Arc<EntryFilter>, SourcesError> {
+        let options = self.options;
+        let gitignore = options.respect_gitignore.then(|| {
+            let ancestors = options.cache.ancestors(options.root).map(Arc::new);
+            if let Some(reason) = ancestors.as_deref().and_then(Ancestors::error) {
+                self.collected
+                    .warnings
+                    .push(SourcesWarning::PathUnreadable {
+                        path: options.root.to_string_lossy().into_owned(),
+                        reason,
+                    });
+            }
+            GitignoreFilter::new(options.root, options.cache, ancestors)
+        });
+        Ok(Arc::new(EntryFilter {
+            root: options.root.to_path_buf(),
+            overrides: options.cache.exclude_overrides(options.exclude_patterns)?,
+            exclude_matcher: Arc::clone(options.exclude_matcher),
+            gitignore,
+        }))
+    }
+
+    fn visit(&mut self, path: &Path, kind: EntryKind) {
+        match kind {
+            EntryKind::Dir if self.options.respect_gitignore => {
+                let warning = dir_warning(self.options.cache, path);
+                self.collected.warnings.extend(warning);
             },
-        };
-
-        let path = entry.path();
-        let Some(file_type) = entry.file_type() else {
-            continue;
-        };
-        if options.respect_gitignore {
-            warnings.extend(dir_warning(cache, &entry, file_type));
+            EntryKind::File => self.visit_file(path),
+            EntryKind::Dir | EntryKind::Other => {},
         }
-        if !file_type.is_file() {
-            continue;
-        }
+    }
 
+    fn visit_file(&mut self, path: &Path) {
+        let options = self.options;
         let Some(kind) = source_kind(path) else {
-            continue;
+            return;
         };
-
-        let Ok(rel) = path.strip_prefix(&root) else {
-            continue;
+        let Ok(rel) = path.strip_prefix(options.root) else {
+            return;
         };
         let rel_str = normalize_rel_path(rel);
-
-        if !project_matcher.is_match(&rel_str) || exclude_matcher.is_match(&rel_str) {
-            continue;
+        if !options.project_matcher.is_match(&rel_str) || options.exclude_matcher.is_match(&rel_str)
+        {
+            return;
         }
-
-        if gitignore.is_some_and(|gitignore| gitignore.gitignore_ignores_file(rel)) {
-            continue;
+        if options
+            .gitignore
+            .is_some_and(|gitignore| gitignore.gitignore_ignores_file(rel))
+        {
+            return;
         }
-
-        let context = if test_matcher.is_match(&rel_str) {
+        let context = if options.test_matcher.is_match(&rel_str) {
             FileContext::Test
         } else {
             assign_file_context(&rel_str)
@@ -329,22 +366,272 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             kind,
             context,
         };
-        if production && !context.is_included_in_production() {
+        if options.production && !context.is_included_in_production() {
             if context == FileContext::Test {
-                held_tests.push(file);
+                self.collected.held_tests.push(file);
             }
-            continue;
+            return;
         }
-        files.push(file);
+        self.collected.files.push(file);
     }
 
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    held_tests.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(Collected {
-        files,
-        held_tests,
-        warnings,
-    })
+    fn finish(mut self) -> Collected {
+        let collected = &mut self.collected;
+        collected
+            .files
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        collected
+            .held_tests
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        self.collected
+    }
+}
+
+/// Walk from `start` into `collector`, telling `recorder` what the walk met.
+fn walk_into(
+    start: &Path,
+    filter: &Arc<EntryFilter>,
+    collector: &mut Collector<'_, '_>,
+    recorder: Option<&Recorder>,
+) {
+    for result in configure_walker(start, Arc::clone(filter), recorder.cloned()).build() {
+        match result {
+            Ok(entry) => {
+                let Some(kind) = entry_kind(&entry) else {
+                    continue;
+                };
+                if let Some(recorder) = recorder {
+                    recorder.entry(entry.path(), kind, true);
+                }
+                collector.visit(entry.path(), kind);
+            },
+            Err(error) => {
+                let warning = walk_error_warning(collector.options.root, &error);
+                if let Some(recorder) = recorder {
+                    recorder.push(Event::Failed {
+                        path: failed_path(&error).map(|(path, _)| path.to_path_buf()),
+                        warning: warning.clone(),
+                    });
+                }
+                collector.collected.warnings.push(warning);
+            },
+        }
+    }
+}
+
+/// Collect Python-related files under `root`.
+pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, SourcesError> {
+    let mut collector = Collector::new(options);
+    let filter = collector.filter()?;
+    walk_into(options.root, &filter, &mut collector, None);
+    Ok(collector.finish())
+}
+
+/// [`collect_files`], keeping what the walk met so that walks from
+/// directories below the root can be replayed from it (#843).
+pub(super) fn record_files(
+    options: &CollectOptions<'_>,
+) -> Result<(Collected, WalkRecord), SourcesError> {
+    let recorder = Recorder::default();
+    let mut collector = Collector::new(options);
+    let filter = collector.filter()?;
+    walk_into(options.root, &filter, &mut collector, Some(&recorder));
+    let events = std::mem::take(&mut *recorder.0.lock().unwrap_or_else(PoisonError::into_inner));
+    Ok((collector.finish(), WalkRecord::new(options.root, events)))
+}
+
+/// [`collect_files`] for a root below `record`'s, answered from the record
+/// instead of reading the tree again (#843).
+///
+/// The record holds every directory and source file the earlier walk met,
+/// including the ones its filters turned away, in walk order. Each is put
+/// to this walk's filters in that order: an entry counts when its parent
+/// did and the filters admit it. A directory the earlier walk did not
+/// enter is walked here. A root the record cannot answer for — one the
+/// earlier walk did not enter, a symlink, a path spelled with `..`, or a
+/// record holding an error without a path — is walked as
+/// [`collect_files`] would.
+pub(super) fn replay_files(
+    options: &CollectOptions<'_>,
+    record: &WalkRecord,
+) -> Result<Collected, SourcesError> {
+    let Some((top, events)) = record.subtree(options.root) else {
+        return collect_files(options);
+    };
+    let mut collector = Collector::new(options);
+    let filter = collector.filter()?;
+    collector.visit(options.root, EntryKind::Dir);
+    // Paths stay in the record's spelling here and are respelled from this
+    // root for the filters and the inventory, as a walk from it spells them.
+    let respell = |path: &Path| match path.strip_prefix(top) {
+        Ok(rest) => options.root.join(rest),
+        Err(_) => path.to_path_buf(),
+    };
+    let mut entered: HashSet<&Path> = HashSet::from([top]);
+    let parent_entered = |entered: &HashSet<&Path>, path: &Path| {
+        path.parent().is_some_and(|parent| entered.contains(parent))
+    };
+    for event in events {
+        match event {
+            Event::Entry {
+                path,
+                is_dir,
+                walked,
+            } => {
+                if !parent_entered(&entered, path) {
+                    continue;
+                }
+                let here = respell(path);
+                if !filter.admits(&here, *is_dir) {
+                    continue;
+                }
+                if !is_dir {
+                    collector.visit(&here, EntryKind::File);
+                } else if *walked {
+                    entered.insert(path);
+                    collector.visit(&here, EntryKind::Dir);
+                } else {
+                    walk_into(&here, &filter, &mut collector, None);
+                }
+            },
+            // A directory that could not be read reports right after its
+            // own entry; anything else, under its parent.
+            Event::Failed {
+                path: Some(path),
+                warning,
+            } => {
+                let shown = if record.entered(path) {
+                    entered.contains(path.as_path())
+                } else {
+                    parent_entered(&entered, path)
+                };
+                if shown {
+                    collector.collected.warnings.push(warning.clone());
+                }
+            },
+            Event::Failed { path: None, .. } => {},
+        }
+    }
+    Ok(collector.finish())
+}
+
+/// What a recorded walk met, in walk order.
+#[derive(Debug, Clone)]
+enum Event {
+    /// A directory or source file, `walked` unless the filters turned it
+    /// away.
+    Entry {
+        path: PathBuf,
+        is_dir: bool,
+        walked: bool,
+    },
+    /// A walk error and the path it names, if any.
+    Failed {
+        path: Option<PathBuf>,
+        warning: SourcesWarning,
+    },
+}
+
+impl Event {
+    fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Entry { path, .. } => Some(path),
+            Self::Failed { path, .. } => path.as_deref(),
+        }
+    }
+}
+
+/// Collects [`Event`]s from a walk and its `filter_entry`.
+#[derive(Debug, Clone, Default)]
+struct Recorder(Arc<Mutex<Vec<Event>>>);
+
+impl Recorder {
+    fn push(&self, event: Event) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event);
+    }
+
+    /// Records directories and source files: nothing else reaches the
+    /// inventory or a warning.
+    fn entry(&self, path: &Path, kind: EntryKind, walked: bool) {
+        let is_dir = match kind {
+            EntryKind::Dir => true,
+            EntryKind::File if source_kind(path).is_some() => false,
+            EntryKind::File | EntryKind::Other => return,
+        };
+        self.push(Event::Entry {
+            path: path.to_path_buf(),
+            is_dir,
+            walked,
+        });
+    }
+}
+
+/// A walk kept by [`record_files`] for [`replay_files`].
+#[derive(Debug)]
+pub(crate) struct WalkRecord {
+    root: PathBuf,
+    events: Vec<Event>,
+    /// Each directory the walk entered, relative to `root`, and its event.
+    dirs: HashMap<PathBuf, usize>,
+    /// Whether an error named no path, so no replay can tell where it
+    /// belongs.
+    pathless: bool,
+}
+
+impl WalkRecord {
+    fn new(root: &Path, events: Vec<Event>) -> Self {
+        let mut dirs = HashMap::new();
+        let mut pathless = false;
+        for (index, event) in events.iter().enumerate() {
+            match event {
+                Event::Entry {
+                    path,
+                    is_dir: true,
+                    walked: true,
+                } => {
+                    if let Ok(rel) = path.strip_prefix(root) {
+                        dirs.insert(rel.to_path_buf(), index);
+                    }
+                },
+                Event::Failed { path: None, .. } => pathless = true,
+                Event::Entry { .. } | Event::Failed { .. } => {},
+            }
+        }
+        Self {
+            root: root.to_path_buf(),
+            events,
+            dirs,
+            pathless,
+        }
+    }
+
+    fn entered(&self, path: &Path) -> bool {
+        path.strip_prefix(&self.root)
+            .is_ok_and(|rel| self.dirs.contains_key(rel))
+    }
+
+    /// The recorded spelling of `root` and the events below it, or `None`
+    /// when the record cannot stand in for a walk from it.
+    fn subtree(&self, root: &Path) -> Option<(&Path, &[Event])> {
+        if self.pathless {
+            return None;
+        }
+        let rel = root.strip_prefix(&self.root).ok()?;
+        if rel.as_os_str().is_empty() {
+            return None;
+        }
+        let &index = self.dirs.get(rel)?;
+        let top = self.events[index].path()?;
+        let below = &self.events[index + 1..];
+        let end = below
+            .iter()
+            .position(|event| !event.path().is_some_and(|path| path.starts_with(top)))
+            .unwrap_or(below.len());
+        Some((top, &below[..end]))
+    }
 }
 
 /// Validate configured entry paths.
@@ -405,7 +692,13 @@ mod tests {
         let patterns = effective_exclude(&["custom/**".to_owned()]);
         let exclude = cache.glob_set(&patterns).expect("excludes");
         let overrides = cache.exclude_overrides(&patterns).expect("overrides");
-        let entries: Vec<_> = configure_walker(root, overrides, exclude, None)
+        let filter = Arc::new(EntryFilter {
+            root: root.to_path_buf(),
+            overrides,
+            exclude_matcher: exclude,
+            gitignore: None,
+        });
+        let entries: Vec<_> = configure_walker(root, filter, None)
             .build()
             .map(|entry| entry.expect("entry").into_path())
             .collect();
@@ -545,6 +838,138 @@ mod tests {
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
         assert!(paths.contains(&"src/acme/module.py"));
         assert!(!paths.contains(&".venv/lib/site.py"));
+    }
+
+    static NO_GLOBS: GlobSet = GlobSet::empty();
+
+    fn plain_options<'a>(
+        root: &'a Path,
+        project: &'a GlobSet,
+        exclude: &'a Arc<GlobSet>,
+        exclude_patterns: &'a [String],
+        cache: &'a SourcesCache,
+    ) -> CollectOptions<'a> {
+        CollectOptions {
+            root,
+            project_matcher: project,
+            exclude_matcher: exclude,
+            test_matcher: &NO_GLOBS,
+            exclude_patterns,
+            respect_gitignore: false,
+            gitignore: None,
+            production: false,
+            cache,
+        }
+    }
+
+    fn file_paths(collected: &Collected) -> Vec<&str> {
+        collected
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect()
+    }
+
+    /// A replay answers from the record: what changed on disk since shows
+    /// only under a directory the root walk did not enter (#843).
+    #[test]
+    fn replay_reads_only_the_directories_the_record_lacks() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        write_file(&root.join("pkg/kept.py"), "");
+        write_file(&root.join("pkg/removed.py"), "");
+        write_file(&root.join("pkg/skipped/old.py"), "");
+        let project = build_glob_set(&["**/*.py".to_owned()]).expect("project globs");
+        let cache = SourcesCache::default();
+        let root_patterns = effective_exclude(&["pkg/skipped/**".to_owned()]);
+        let root_exclude = cache.glob_set(&root_patterns).expect("excludes");
+        let options = plain_options(root, &project, &root_exclude, &root_patterns, &cache);
+        let (collected, record) = record_files(&options).expect("record");
+        assert_eq!(file_paths(&collected), ["pkg/kept.py", "pkg/removed.py"]);
+
+        fs::remove_file(root.join("pkg/removed.py")).expect("remove");
+        write_file(&root.join("pkg/added.py"), "");
+        write_file(&root.join("pkg/skipped/new.py"), "");
+        let member = root.join("pkg");
+        let patterns = effective_exclude(&[]);
+        let exclude = cache.glob_set(&patterns).expect("excludes");
+        let options = plain_options(&member, &project, &exclude, &patterns, &cache);
+        let replayed = replay_files(&options, &record).expect("replay");
+        assert_eq!(
+            file_paths(&replayed),
+            ["kept.py", "removed.py", "skipped/new.py", "skipped/old.py"]
+        );
+    }
+
+    /// A recorded error shows in a replay when the replay would have met
+    /// it: a directory that could not be read under its own entry, any
+    /// other path under its parent. An error without a path sends the
+    /// replay back to a walk (#843).
+    #[test]
+    fn replayed_errors_follow_what_the_member_enters() {
+        let root = Path::new("/repo");
+        let failed = |path: &str| Event::Failed {
+            path: Some(root.join(path)),
+            warning: SourcesWarning::PathUnreadable {
+                path: path.to_owned(),
+                reason: "denied".to_owned(),
+            },
+        };
+        let dir = |path: &str| Event::Entry {
+            path: root.join(path),
+            is_dir: true,
+            walked: true,
+        };
+        let record = WalkRecord::new(
+            root,
+            vec![
+                dir(""),
+                dir("m"),
+                dir("m/secret"),
+                failed("m/secret"),
+                dir("m/dropped"),
+                failed("m/dropped"),
+                failed("m/dropped/child"),
+                failed("m/odd"),
+                dir("other"),
+                failed("other/secret"),
+            ],
+        );
+        let project = build_glob_set(&["**/*.py".to_owned()]).expect("project globs");
+        let cache = SourcesCache::default();
+        let patterns = effective_exclude(&["dropped/**".to_owned()]);
+        let exclude = cache.glob_set(&patterns).expect("excludes");
+        let member = root.join("m");
+        let options = plain_options(&member, &project, &exclude, &patterns, &cache);
+        let replayed = replay_files(&options, &record).expect("replay");
+        let reported: Vec<_> = replayed
+            .warnings
+            .iter()
+            .map(|warning| match warning {
+                SourcesWarning::PathUnreadable { path, .. } => path.as_str(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(reported, ["m/secret", "m/odd"]);
+
+        let pathless = WalkRecord::new(
+            root,
+            vec![
+                dir(""),
+                dir("m"),
+                Event::Failed {
+                    path: None,
+                    warning: SourcesWarning::PathUnreadable {
+                        path: "/repo".to_owned(),
+                        reason: "gone".to_owned(),
+                    },
+                },
+            ],
+        );
+        assert!(pathless.subtree(&member).is_none());
+        assert!(record.subtree(&member).is_some());
+        assert!(record.subtree(root).is_none());
+        assert!(record.subtree(&root.join("m/../m")).is_none());
     }
 
     #[test]

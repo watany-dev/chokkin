@@ -10,7 +10,8 @@ use super::glob::effective_exclude;
 use super::layout::{infer_layout, pytest_testpaths};
 use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{
-    CollectOptions, collect_files, large_project_warning, load_gitignore, validate_entries,
+    CollectOptions, WalkRecord, collect_files, large_project_warning, load_gitignore, record_files,
+    replay_files, validate_entries,
 };
 
 /// Discover Python source files under `root` using config and manifest hints.
@@ -19,8 +20,14 @@ pub fn discover_sources(
     config: &LoadedConfig,
     manifest: &LoadedManifest,
 ) -> Result<DiscoveredSources, SourcesError> {
-    discover_sources_cached(root, config, manifest, &SourcesCache::default())
-        .map(|discovery| discovery.sources)
+    discover_sources_cached(
+        root,
+        config,
+        manifest,
+        &SourcesCache::default(),
+        WalkMode::Walk,
+    )
+    .map(|discovery| discovery.sources)
 }
 
 /// What [`discover_sources_cached`] found besides the inventory.
@@ -30,6 +37,19 @@ pub(crate) struct Discovery {
     /// Under `production`, the test files left out of `sources`, sorted by
     /// path (#844).
     pub held_tests: Vec<DiscoveredFile>,
+    /// The walk, under [`WalkMode::Record`].
+    pub record: Option<WalkRecord>,
+}
+
+/// How [`discover_sources_cached`] reads the tree.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WalkMode<'a> {
+    /// Walk it.
+    Walk,
+    /// Walk it and keep the walk, for the member roots below (#843).
+    Record,
+    /// Answer from an earlier walk of a root above, where it can (#843).
+    Replay(&'a WalkRecord),
 }
 
 /// [`discover_sources`] reusing the ignore files and globs that earlier calls
@@ -40,6 +60,7 @@ pub(crate) fn discover_sources_cached(
     config: &LoadedConfig,
     manifest: &LoadedManifest,
     cache: &SourcesCache,
+    mode: WalkMode<'_>,
 ) -> Result<Discovery, SourcesError> {
     let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
     // Only inferred globs take testpaths: the parse cache keys on the globs,
@@ -82,7 +103,14 @@ pub(crate) fn discover_sources_cached(
         production: config.effective.production,
         cache,
     };
-    let collected = collect_files(&collect_options)?;
+    let (collected, record) = match mode {
+        WalkMode::Walk => (collect_files(&collect_options)?, None),
+        WalkMode::Record => {
+            let (collected, record) = record_files(&collect_options)?;
+            (collected, Some(record))
+        },
+        WalkMode::Replay(record) => (replay_files(&collect_options, record)?, None),
+    };
     let files = collected.files;
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
@@ -104,5 +132,6 @@ pub(crate) fn discover_sources_cached(
             warnings,
         },
         held_tests: collected.held_tests,
+        record,
     })
 }

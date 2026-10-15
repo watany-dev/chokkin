@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::VERSION;
@@ -24,7 +25,8 @@ use crate::plugins::{
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, MemberLayout,
-    SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
+    SourcesCache, SourcesWarning, WalkMode, WalkRecord, apply_member_context,
+    discover_sources_cached,
 };
 
 use super::error::ProbeError;
@@ -380,8 +382,9 @@ fn activate_plugins(
 
 /// The root's sources and every member's inputs. Member trees sit inside the
 /// root tree: one cache parses each ignore file once across every walk, and
-/// the root walk overlaps the members' manifests and walks instead of
-/// preceding them (#757).
+/// the root walk overlaps the members' config and manifests (#757). Member
+/// walks replay the root's record instead of reading their trees again
+/// (#843).
 fn discover_root_and_members(
     root: &ProjectRoot,
     loaded: &LoadedConfig,
@@ -393,36 +396,81 @@ fn discover_root_and_members(
     // The manifest cache lives under each member root; an undeclared monorepo
     // would gain hundreds of untracked `.chokkin/` directories.
     let member_cache = if loaded.auto_workspace { None } else { cache };
-    let (sources, workspace_inputs) = std::thread::scope(|scope| {
-        let root_walk =
-            scope.spawn(|| discover_sources_cached(root, loaded, manifest, &sources_cache));
-        let workspace_inputs = collect_workspace_inputs(
-            root,
-            &loaded.workspace_members,
-            overrides,
-            member_cache,
+    let members = &loaded.workspace_members;
+    let mode = if members.is_empty() {
+        WalkMode::Walk
+    } else {
+        WalkMode::Record
+    };
+    // `None` once the root walk failed: members then walk on their own.
+    let record = OnceLock::<Option<WalkRecord>>::new();
+    let walk_member = |prepared: &PreparedMember, record: Option<&WalkRecord>| {
+        let mode = record.map_or(WalkMode::Walk, WalkMode::Replay);
+        discover_sources_cached(
+            &prepared.root,
+            &prepared.loaded,
+            &prepared.manifest,
             &sources_cache,
-        );
-        let sources = root_walk
+            mode,
+        )
+    };
+    // A member prepared after the root walk ends replays right away; one
+    // prepared before waits for the record instead of walking its tree.
+    let (discovery, prepared) = std::thread::scope(|scope| {
+        let root_walk = scope.spawn(|| {
+            let mut discovery =
+                discover_sources_cached(root, loaded, manifest, &sources_cache, mode);
+            let taken = discovery
+                .as_mut()
+                .ok()
+                .and_then(|found| found.record.take());
+            let _ = record.set(taken);
+            discovery
+        });
+        let prepared = par_map(members, |member| {
+            let prepared = prepare_member(root, member, overrides, member_cache)?;
+            let walked = match (&prepared, record.get()) {
+                (Some(prepared), Some(record)) => Some(walk_member(prepared, record.as_ref())),
+                _ => None,
+            };
+            Ok::<_, ProbeError>(prepared.map(|prepared| (prepared, walked)))
+        });
+        let discovery = root_walk
             .join()
             .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
-        (sources, workspace_inputs)
+        (discovery, prepared)
     });
-    Ok((sources?, workspace_inputs?))
+    let discovery = discovery?;
+    let record = record.get().and_then(Option::as_ref);
+    let walked = par_map(&prepared, |prepared| match prepared {
+        Ok(Some((prepared, None))) => Some(walk_member(prepared, record)),
+        _ => None,
+    });
+    // The first member that fails, in member order, as when one step
+    // followed the other per member.
+    let mut workspace_inputs = Vec::new();
+    for (prepared, late) in prepared.into_iter().zip(walked) {
+        if let Some((prepared, early)) = prepared? {
+            let Some(walked) = early.or(late) else {
+                continue;
+            };
+            workspace_inputs.push(WorkspaceMemberInputs {
+                member: prepared.member,
+                manifest: prepared.manifest,
+                sources: walked?.sources,
+            });
+        }
+    }
+    Ok((discovery, workspace_inputs))
 }
 
-fn collect_workspace_inputs(
-    root: &ProjectRoot,
-    members: &[ResolvedWorkspaceMember],
-    overrides: &RuntimeOverrides,
-    cache: Option<&CacheOptions>,
-    sources_cache: &SourcesCache,
-) -> Result<Vec<WorkspaceMemberInputs>, ProbeError> {
+/// `f` over `items` on a worker per core, in `items`' order.
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
     // Members are independent, and an undeclared monorepo's hundreds of member
     // lockfiles dominate the probe when read one after another (#488).
     let workers = std::thread::available_parallelism()
         .map_or(1, usize::from)
-        .min(members.len())
+        .min(items.len())
         .max(1);
     let cursor = AtomicUsize::new(0);
     let mut results = std::thread::scope(|scope| {
@@ -432,13 +480,10 @@ fn collect_workspace_inputs(
                     let mut done = Vec::new();
                     loop {
                         let index = cursor.fetch_add(1, Ordering::Relaxed);
-                        let Some(member) = members.get(index) else {
+                        let Some(item) = items.get(index) else {
                             return done;
                         };
-                        done.push((
-                            index,
-                            member_inputs(root, member, overrides, cache, sources_cache),
-                        ));
+                        done.push((index, f(item)));
                     }
                 })
             })
@@ -453,19 +498,23 @@ fn collect_workspace_inputs(
             .collect::<Vec<_>>()
     });
     results.sort_by_key(|(index, _)| *index);
-    results
-        .into_iter()
-        .filter_map(|(_, inputs)| inputs.transpose())
-        .collect()
+    results.into_iter().map(|(_, result)| result).collect()
 }
 
-fn member_inputs(
+/// A member's config and manifest, ready for its walk.
+struct PreparedMember {
+    member: ResolvedWorkspaceMember,
+    root: ProjectRoot,
+    loaded: LoadedConfig,
+    manifest: LoadedManifest,
+}
+
+fn prepare_member(
     root: &ProjectRoot,
     member: &ResolvedWorkspaceMember,
     overrides: &RuntimeOverrides,
     cache: Option<&CacheOptions>,
-    sources_cache: &SourcesCache,
-) -> Result<Option<WorkspaceMemberInputs>, ProbeError> {
+) -> Result<Option<PreparedMember>, ProbeError> {
     let member_root = member_project_root(root, member);
     if !member_root.path.is_dir() {
         return Ok(None);
@@ -475,11 +524,11 @@ fn member_inputs(
     let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
-    let sources = discover_sources_cached(&member_root, &loaded, &manifest, sources_cache)?.sources;
-    Ok(Some(WorkspaceMemberInputs {
+    Ok(Some(PreparedMember {
         member: member.clone(),
+        root: member_root,
+        loaded,
         manifest,
-        sources,
     }))
 }
 

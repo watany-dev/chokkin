@@ -217,7 +217,10 @@ mod tests {
     use super::*;
     use crate::sources::cache::SourcesCache;
     use crate::sources::glob::{build_glob_set, effective_exclude};
-    use crate::sources::walk::{CollectOptions, collect_files, load_gitignore};
+    use crate::sources::walk::{
+        CollectOptions, Collected, WalkRecord, collect_files, load_gitignore, record_files,
+        replay_files,
+    };
 
     type Outcome = (Vec<DiscoveredFile>, Vec<SourcesWarning>);
 
@@ -234,7 +237,13 @@ mod tests {
 
     /// `discover_sources`' warnings order: the walk's, then the root
     /// `.gitignore`'s.
-    fn cached(cache: &SourcesCache, root: &Path, custom: &[String], respect: bool) -> Outcome {
+    fn run(
+        cache: &SourcesCache,
+        root: &Path,
+        custom: &[String],
+        respect: bool,
+        collect: impl FnOnce(&CollectOptions<'_>) -> Collected,
+    ) -> Outcome {
         let exclude_patterns = effective_exclude(custom);
         let exclude = cache.glob_set(&exclude_patterns).expect("exclude globs");
         let project = project_globs();
@@ -254,10 +263,43 @@ mod tests {
             production: false,
             cache,
         };
-        let collected = collect_files(&options).expect("collect");
+        let collected = collect(&options);
         let mut warnings = collected.warnings;
         warnings.extend(gitignore_warning);
         (collected.files, warnings)
+    }
+
+    fn cached(cache: &SourcesCache, root: &Path, custom: &[String], respect: bool) -> Outcome {
+        run(cache, root, custom, respect, |options| {
+            collect_files(options).expect("collect")
+        })
+    }
+
+    fn recorded(
+        cache: &SourcesCache,
+        root: &Path,
+        custom: &[String],
+        respect: bool,
+    ) -> (Outcome, WalkRecord) {
+        let mut record = None;
+        let outcome = run(cache, root, custom, respect, |options| {
+            let (collected, kept) = record_files(options).expect("record");
+            record = Some(kept);
+            collected
+        });
+        (outcome, record.expect("recorded"))
+    }
+
+    fn replayed(
+        cache: &SourcesCache,
+        record: &WalkRecord,
+        root: &Path,
+        custom: &[String],
+        respect: bool,
+    ) -> Outcome {
+        run(cache, root, custom, respect, |options| {
+            replay_files(options, record).expect("replay")
+        })
     }
 
     fn reference(root: &Path, custom: &[String], respect: bool) -> Outcome {
@@ -302,7 +344,38 @@ mod tests {
                 outcomes.push(actual);
             }
         }
+        assert_replays(roots, custom, custom);
         outcomes
+    }
+
+    /// Records a walk from `roots[0]`, as a workspace probe walks its root,
+    /// and replays a walk from each other root out of it (#843): every
+    /// pairing of `respect_gitignore` agrees with a fresh reference walk.
+    fn assert_replays(roots: &[PathBuf], root_custom: &[String], member_custom: &[String]) {
+        let Some((first, members)) = roots.split_first() else {
+            return;
+        };
+        for root_respect in [true, false] {
+            for member_respect in [true, false] {
+                let cache = SourcesCache::default();
+                let (outcome, record) = recorded(&cache, first, root_custom, root_respect);
+                assert_eq!(
+                    outcome,
+                    reference(first, root_custom, root_respect),
+                    "recorded root {}, respect {root_respect}",
+                    first.display()
+                );
+                for member in members {
+                    assert_eq!(
+                        replayed(&cache, &record, member, member_custom, member_respect),
+                        reference(member, member_custom, member_respect),
+                        "member {} of {}, respect {member_respect} under {root_respect}",
+                        member.display(),
+                        first.display()
+                    );
+                }
+            }
+        }
     }
 
     fn paths(outcome: &Outcome) -> Vec<&str> {
@@ -599,6 +672,73 @@ mod tests {
         assert_eq!(cache.compiled_rules(), 2);
     }
 
+    /// A member walk replayed from the root walk enters what the root's
+    /// excludes and `.gitignore` kept the root walk out of (#843).
+    #[test]
+    fn replays_enter_directories_the_root_walk_skipped() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        write_file(&root.join(".git/HEAD"), "");
+        write_file(&root.join(".gitignore"), "cache/\nskip_*.py\n");
+        for file in [
+            "app.py",
+            "packages/a/app.py",
+            "packages/a/skip_me.py",
+            "packages/a/vendor/lib.py",
+            "packages/a/cache/x.py",
+            "packages/a/cache/deep/y.py",
+            "packages/b/build/out.py",
+        ] {
+            write_file(&root.join(file), "");
+        }
+        let members = [root.join("packages/a"), root.join("packages/b")];
+        let roots: Vec<PathBuf> = std::iter::once(root.clone()).chain(members).collect();
+        assert_replays(
+            &roots,
+            &["packages/a/vendor/**".to_owned(), "**/build/**".to_owned()],
+            &[],
+        );
+
+        let cache = SourcesCache::default();
+        let (_, record) = recorded(&cache, &root, &["**/build/**".to_owned()], true);
+        let replay = replayed(&cache, &record, &roots[1], &[], false);
+        assert_eq!(
+            paths(&replay),
+            [
+                "app.py",
+                "cache/deep/y.py",
+                "cache/x.py",
+                "skip_me.py",
+                "vendor/lib.py"
+            ]
+        );
+    }
+
+    /// A member the root walk did not enter as a directory is walked on
+    /// its own (#843).
+    #[cfg(unix)]
+    #[test]
+    fn replays_walk_symlinked_and_unentered_members() {
+        let temp = tempdir().expect("tempdir");
+        let elsewhere = temp.path().join("elsewhere");
+        write_file(&elsewhere.join("lib.py"), "");
+        let root = temp.path().join("repo");
+        write_file(&root.join("app.py"), "");
+        write_file(&root.join(".venv/pkg/site.py"), "");
+        fs::create_dir_all(root.join("packages")).expect("packages");
+        std::os::unix::fs::symlink(&elsewhere, root.join("packages/linked")).expect("symlink");
+        let roots = [
+            root.clone(),
+            root.join("packages/linked"),
+            root.join(".venv/pkg"),
+            root.join("packages/../app_dir"),
+            elsewhere,
+        ];
+        fs::create_dir_all(root.join("app_dir")).expect("app_dir");
+        write_file(&root.join("app_dir/m.py"), "");
+        assert_replays(&roots, &[], &[]);
+    }
+
     const DIRS: [&str; 4] = ["a", "b", "a/c", "b/gen"];
     const FILES: [&str; 4] = ["x.py", "y.pyi", "gen.py", "keep.py"];
     const PATTERNS: [&str; 10] = [
@@ -614,6 +754,15 @@ mod tests {
         "*",
     ];
 
+    const EXCLUDES: [&str; 6] = [
+        "a/c/**",
+        "**/c/**",
+        "c/**",
+        "*.pyi",
+        "**/gen.py",
+        "b/gen/**",
+    ];
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(48))]
 
@@ -626,6 +775,8 @@ mod tests {
             ),
             excludes in proptest::collection::vec(0..PATTERNS.len(), 0..2),
             roots in proptest::collection::vec(0..=DIRS.len(), 1..4),
+            root_excludes in proptest::collection::vec(0..EXCLUDES.len(), 0..2),
+            member_excludes in proptest::collection::vec(0..EXCLUDES.len(), 0..2),
         ) {
             let temp = tempdir().expect("tempdir");
             let base = temp.path().join("t");
@@ -648,6 +799,12 @@ mod tests {
             }
             let roots: Vec<PathBuf> = roots.into_iter().map(dir).collect();
             assert_equivalent(&roots, &[]);
+            // Replays from the base, under excludes of their own (#843).
+            let custom = |picks: Vec<usize>| -> Vec<String> {
+                picks.into_iter().map(|pick| EXCLUDES[pick].to_owned()).collect()
+            };
+            let from_base: Vec<PathBuf> = std::iter::once(base.clone()).chain(roots).collect();
+            assert_replays(&from_base, &custom(root_excludes), &custom(member_excludes));
         }
     }
 }
