@@ -28,6 +28,9 @@ pub struct Gap {
 pub enum GapKind {
     /// A reachable module that was skipped: none of its imports are known.
     UnreadModule,
+    /// A reachable notebook was read, but some cells that may be code were
+    /// not (#902): what those cells import is unknown.
+    UnreadNotebookCells,
     /// A reachable module loads a module whose name is computed at runtime.
     OpaqueDynamicImport,
     /// The root manifest declares its runtime dependencies in a form that
@@ -52,10 +55,16 @@ impl GapKind {
     /// is read separately, so no project gap reaches its findings.
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
         match (self, candidate.rule, &candidate.subject) {
-            (Self::UnreadModule | Self::OpaqueDynamicImport, RuleId::Chk001, _)
-            | (Self::UnreadModule, RuleId::Chk002, IssueSubject::Distribution { .. }) => {
-                Some(Lowering::Cap(Confidence::Likely))
-            },
+            (
+                Self::UnreadModule | Self::UnreadNotebookCells | Self::OpaqueDynamicImport,
+                RuleId::Chk001,
+                _,
+            )
+            | (
+                Self::UnreadModule | Self::UnreadNotebookCells,
+                RuleId::Chk002,
+                IssueSubject::Distribution { .. },
+            ) => Some(Lowering::Cap(Confidence::Likely)),
             (
                 Self::RuntimeDependenciesUnknown,
                 RuleId::Chk003 | RuleId::Chk004,
@@ -68,6 +77,9 @@ impl GapKind {
     const fn reason(self) -> &'static str {
         match self {
             Self::UnreadModule => "a reachable module could not be read",
+            Self::UnreadNotebookCells => {
+                "some code cells of a reachable notebook could not be read"
+            },
             Self::OpaqueDynamicImport => {
                 "a reachable module imports a module by a name computed at runtime"
             },
@@ -112,6 +124,9 @@ fn module_gaps(
         };
         if module.skipped {
             push(GapKind::UnreadModule);
+        }
+        if module.has_unread_cells {
+            push(GapKind::UnreadNotebookCells);
         }
         if module.has_opaque_dynamic_import {
             push(GapKind::OpaqueDynamicImport);
@@ -304,6 +319,30 @@ mod tests {
         maybe.confidence = Confidence::Maybe;
         let found = lowered(&[gap("acme/latin.py", GapKind::UnreadModule)], vec![maybe]);
         assert_eq!(found, [(Severity::Error, Confidence::Maybe)]);
+    }
+
+    /// The cells that were read still count, so only absence findings fall;
+    /// a missing declaration seen in a read cell is still certain (#902).
+    #[test]
+    fn unread_notebook_cells_cap_absence_findings_like_an_unread_module() {
+        let found = lowered(
+            &[gap("acme/demo.ipynb", GapKind::UnreadNotebookCells)],
+            vec![
+                candidate(RuleId::Chk001, file("acme/orphan.py")),
+                candidate(RuleId::Chk002, distribution("requests")),
+                candidate(RuleId::Chk002, script_distribution("rich")),
+                candidate(RuleId::Chk003, import("yaml")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
     }
 
     /// Module gaps of `modules` (path, skipped, opaque) when `reached` run.

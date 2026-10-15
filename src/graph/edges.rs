@@ -116,6 +116,7 @@ mod tests {
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
             skipped: false,
+            has_unread_cells: false,
         };
         add_parsed_imports(&mut graph, file_id, &parsed).expect("edges");
 
