@@ -42,6 +42,19 @@ pub(super) struct CollectOptions<'a> {
     pub cache: &'a SourcesCache,
 }
 
+/// What [`collect_files`] found under its root.
+#[derive(Debug, Default)]
+pub(super) struct Collected {
+    /// The inventory, sorted by path.
+    pub files: Vec<DiscoveredFile>,
+    /// Under `production`, the test files left out of `files`, sorted by
+    /// path: a library's tests still show which public names are called
+    /// (#588), and keeping them spares a second walk (#844).
+    pub held_tests: Vec<DiscoveredFile>,
+    /// What the walk could not read.
+    pub warnings: Vec<SourcesWarning>,
+}
+
 /// Load `.gitignore` from the project root when present.
 pub(super) fn load_gitignore(
     root: &Path,
@@ -231,10 +244,19 @@ fn failed_path(error: &ignore::Error) -> Option<(&Path, &ignore::Error)> {
     }
 }
 
+/// The source kind `path`'s extension names, or `None` for a file the
+/// walk does not collect.
+fn source_kind(path: &Path) -> Option<FileKind> {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("py") => Some(FileKind::Python),
+        Some(ext) if ext.eq_ignore_ascii_case("pyi") => Some(FileKind::Stub),
+        Some(ext) if ext.eq_ignore_ascii_case("ipynb") => Some(FileKind::Notebook),
+        _ => None,
+    }
+}
+
 /// Collect Python-related files under `root`.
-pub(super) fn collect_files(
-    options: &CollectOptions<'_>,
-) -> Result<(Vec<DiscoveredFile>, Vec<SourcesWarning>), SourcesError> {
+pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, SourcesError> {
     let root = options.root.to_path_buf();
     let project_matcher = options.project_matcher;
     let exclude_matcher = options.exclude_matcher;
@@ -244,6 +266,7 @@ pub(super) fn collect_files(
     let cache = options.cache;
 
     let mut files = Vec::new();
+    let mut held_tests = Vec::new();
     let mut warnings = Vec::new();
 
     let overrides = cache.exclude_overrides(options.exclude_patterns)?;
@@ -279,11 +302,8 @@ pub(super) fn collect_files(
             continue;
         }
 
-        let kind = match path.extension().and_then(|ext| ext.to_str()) {
-            Some(ext) if ext.eq_ignore_ascii_case("py") => FileKind::Python,
-            Some(ext) if ext.eq_ignore_ascii_case("pyi") => FileKind::Stub,
-            Some(ext) if ext.eq_ignore_ascii_case("ipynb") => FileKind::Notebook,
-            _ => continue,
+        let Some(kind) = source_kind(path) else {
+            continue;
         };
 
         let Ok(rel) = path.strip_prefix(&root) else {
@@ -304,19 +324,27 @@ pub(super) fn collect_files(
         } else {
             assign_file_context(&rel_str)
         };
-        if production && !context.is_included_in_production() {
-            continue;
-        }
-
-        files.push(DiscoveredFile {
+        let file = DiscoveredFile {
             path: rel_str,
             kind,
             context,
-        });
+        };
+        if production && !context.is_included_in_production() {
+            if context == FileContext::Test {
+                held_tests.push(file);
+            }
+            continue;
+        }
+        files.push(file);
     }
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok((files, warnings))
+    held_tests.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(Collected {
+        files,
+        held_tests,
+        warnings,
+    })
 }
 
 /// Validate configured entry paths.
@@ -425,7 +453,7 @@ mod tests {
             production: false,
             cache: &cache,
         };
-        let (files, _) = collect_files(&options).expect("collect");
+        let files = collect_files(&options).expect("collect").files;
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
         assert!(paths.contains(&"src/acme/module.py"));
         assert!(paths.contains(&"tests/test_module.py"));
@@ -467,10 +495,23 @@ mod tests {
             production: true,
             cache: &cache,
         };
-        let (files, _) = collect_files(&options).expect("collect");
-        let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
+        let collected = collect_files(&options).expect("collect");
+        let paths: Vec<_> = collected
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
         assert!(paths.contains(&"src/acme/module.py"));
         assert!(!paths.contains(&"tests/test_module.py"));
+        // The dropped tests stay at hand for CHK006 (#844).
+        assert_eq!(
+            collected.held_tests,
+            [DiscoveredFile {
+                path: "tests/test_module.py".to_owned(),
+                kind: FileKind::Python,
+                context: FileContext::Test,
+            }]
+        );
     }
 
     #[test]
@@ -500,7 +541,7 @@ mod tests {
             production: false,
             cache: &cache,
         };
-        let (files, _) = collect_files(&options).expect("collect");
+        let files = collect_files(&options).expect("collect").files;
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
         assert!(paths.contains(&"src/acme/module.py"));
         assert!(!paths.contains(&".venv/lib/site.py"));

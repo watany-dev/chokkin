@@ -254,9 +254,10 @@ mod tests {
             production: false,
             cache,
         };
-        let (files, mut warnings) = collect_files(&options).expect("collect");
+        let collected = collect_files(&options).expect("collect");
+        let mut warnings = collected.warnings;
         warnings.extend(gitignore_warning);
-        (files, warnings)
+        (collected.files, warnings)
     }
 
     fn reference(root: &Path, custom: &[String], respect: bool) -> Outcome {

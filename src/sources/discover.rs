@@ -8,7 +8,7 @@ use super::cache::SourcesCache;
 use super::error::SourcesError;
 use super::glob::effective_exclude;
 use super::layout::{infer_layout, pytest_testpaths};
-use super::types::DiscoveredSources;
+use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{
     CollectOptions, collect_files, large_project_warning, load_gitignore, validate_entries,
 };
@@ -20,6 +20,16 @@ pub fn discover_sources(
     manifest: &LoadedManifest,
 ) -> Result<DiscoveredSources, SourcesError> {
     discover_sources_cached(root, config, manifest, &SourcesCache::default())
+        .map(|discovery| discovery.sources)
+}
+
+/// What [`discover_sources_cached`] found besides the inventory.
+#[derive(Debug)]
+pub(crate) struct Discovery {
+    pub sources: DiscoveredSources,
+    /// Under `production`, the test files left out of `sources`, sorted by
+    /// path (#844).
+    pub held_tests: Vec<DiscoveredFile>,
 }
 
 /// [`discover_sources`] reusing the ignore files and globs that earlier calls
@@ -30,7 +40,7 @@ pub(crate) fn discover_sources_cached(
     config: &LoadedConfig,
     manifest: &LoadedManifest,
     cache: &SourcesCache,
-) -> Result<DiscoveredSources, SourcesError> {
+) -> Result<Discovery, SourcesError> {
     let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
     // Only inferred globs take testpaths: the parse cache keys on the globs,
     // so testpaths outside them would change file contexts unnoticed.
@@ -72,11 +82,12 @@ pub(crate) fn discover_sources_cached(
         production: config.effective.production,
         cache,
     };
-    let (files, walk_warnings) = collect_files(&collect_options)?;
+    let collected = collect_files(&collect_options)?;
+    let files = collected.files;
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
     warnings.extend(layout_warning);
-    warnings.extend(walk_warnings);
+    warnings.extend(collected.warnings);
     if let Some(warning) = gitignore_warning {
         warnings.push(warning);
     }
@@ -84,11 +95,14 @@ pub(crate) fn discover_sources_cached(
         warnings.push(warning);
     }
 
-    Ok(DiscoveredSources {
-        root: root.clone(),
-        layout,
-        effective_globs,
-        files,
-        warnings,
+    Ok(Discovery {
+        sources: DiscoveredSources {
+            root: root.clone(),
+            layout,
+            effective_globs,
+            files,
+            warnings,
+        },
+        held_tests: collected.held_tests,
     })
 }
