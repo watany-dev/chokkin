@@ -843,9 +843,8 @@ mod tests {
     }
 
     /// A library caller may import a public module no root reaches, so an
-    /// unread one may use any declared distribution; it reaches no other
-    /// project file the wheel ships unread, so orphans stay as they are
-    /// (#550).
+    /// unread one may use any declared distribution; what it imports ships in
+    /// the wheel and is public too, so orphans stay as they are (#550).
     #[test]
     fn an_unread_public_module_leaves_a_gap_that_caps_only_unused_distributions() {
         use crate::config::ProjectMode;
