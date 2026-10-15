@@ -114,8 +114,8 @@ fn parse_notebook_file(
     let Some(source) = read_source(root, path)? else {
         return Ok(skipped_module(path));
     };
-    let extracted = match notebook_python_source(&source) {
-        Ok(source) => source,
+    let notebook = match notebook_python_source(&source) {
+        Ok(notebook) => notebook,
         Err(message) => {
             // No cell was read, so the notebook's imports are unknown (#893).
             let mut parsed = skipped_module(path);
@@ -127,53 +127,82 @@ fn parse_notebook_file(
             return Ok(parsed);
         },
     };
-    Ok(parse_python_source(
-        path,
-        &extracted,
-        layout,
-        file_context,
-        target,
-    ))
+    let mut parsed = parse_python_source(path, &notebook.source, layout, file_context, target);
+    // A skipped notebook is unknown as a whole, so a dropped cell adds nothing.
+    if notebook.has_unreadable_cells && !parsed.skipped {
+        parsed.diagnostics.push(ParseDiagnostic {
+            line: 0,
+            message: "some code cells were not read: their `cell_type` or `source` is not text"
+                .to_owned(),
+            severity: ParseSeverity::Warning,
+        });
+    }
+    Ok(parsed)
 }
 
-fn notebook_python_source(source: &str) -> Result<String, String> {
+struct NotebookSource {
+    source: String,
+    /// A cell that may be code was not text (#898).
+    has_unreadable_cells: bool,
+}
+
+/// Join the code cells' `source`. A cell without a string `cell_type` may be
+/// code, so it counts as unreadable like a code cell whose `source` is not
+/// text; markdown and raw cells hold no imports. A notebook whose code cells
+/// are all unreadable is as unknown as one without cells.
+fn notebook_python_source(source: &str) -> Result<NotebookSource, String> {
     let value: Value =
         serde_json::from_str(source).map_err(|error| format!("invalid notebook JSON: {error}"))?;
     let Some(cells) = value.get("cells").and_then(Value::as_array) else {
         return Err("invalid notebook JSON: missing cells array".to_owned());
     };
-    let mut extracted = String::new();
+    let mut notebook = NotebookSource {
+        source: String::new(),
+        has_unreadable_cells: false,
+    };
+    let mut read_any = false;
     for cell in cells {
-        if cell.get("cell_type").and_then(Value::as_str) != Some("code") {
-            continue;
-        }
-        let Some(source) = cell.get("source") else {
-            continue;
+        let read = match cell.get("cell_type").map(Value::as_str) {
+            Some(Some("code")) => cell
+                .get("source")
+                .is_some_and(|source| push_notebook_cell_source(source, &mut notebook.source)),
+            Some(Some(_)) => continue,
+            Some(None) | None => false,
         };
-        push_notebook_cell_source(source, &mut extracted);
-        extracted.push('\n');
+        read_any |= read;
+        notebook.has_unreadable_cells |= !read;
+        notebook.source.push('\n');
     }
-    Ok(extracted)
+    if notebook.has_unreadable_cells && !read_any {
+        return Err("invalid notebook JSON: no code cell could be read".to_owned());
+    }
+    Ok(notebook)
 }
 
-fn push_notebook_cell_source(source: &Value, extracted: &mut String) {
+/// Append the text of a cell's `source`, or nothing when it is not a string
+/// or a list of strings. A list is all or nothing: the strings around a
+/// dropped line would join into code the notebook does not have.
+fn push_notebook_cell_source(source: &Value, extracted: &mut String) -> bool {
     if let Some(text) = source.as_str() {
-        extracted.push_str(text);
-        if !text.ends_with('\n') {
-            extracted.push('\n');
-        }
-        return;
+        push_notebook_line(text, extracted);
+        return true;
     }
-    let Some(lines) = source.as_array() else {
-        return;
+    let Some(lines) = source
+        .as_array()
+        .and_then(|lines| lines.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+    else {
+        return false;
     };
-    for line in lines {
-        if let Some(text) = line.as_str() {
-            extracted.push_str(text);
-            if !text.ends_with('\n') {
-                extracted.push('\n');
-            }
-        }
+    for text in lines {
+        push_notebook_line(text, extracted);
+    }
+    true
+}
+
+fn push_notebook_line(text: &str, extracted: &mut String) {
+    extracted.push_str(text);
+    if !text.ends_with('\n') {
+        extracted.push('\n');
     }
 }
 

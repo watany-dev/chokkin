@@ -1959,6 +1959,40 @@ fn binary_invalid_notebook_is_skipped_with_a_diagnostic() {
     );
 }
 
+/// A notebook code cell whose `source` is not text is dropped with a warning
+/// that points at the notebook, and the other cells are still read (#898).
+#[test]
+fn binary_unreadable_notebook_cell_is_reported() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/demo.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": "import requests\n"}, {"cell_type": "code", "source": 1}]}"#,
+        ),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "github"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let warning = "parse: `acme/demo.ipynb`: some code cells were not read: their `cell_type` or `source` is not text";
+    assert!(stderr.lines().any(|line| line == warning), "{stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == format!("::warning file=acme/demo.ipynb,title=chokkin::{warning}")),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("CHK002"), "{stdout}");
+}
+
 /// A reachable module with a syntax error is skipped like an undecodable one:
 /// its imports are unknown, so what it may use is reported below certain,
 /// `--fix` leaves the declaration alone, and stderr names the error.
