@@ -17,6 +17,7 @@ use super::chk001::chk001_candidates;
 use super::filter::{
     counts_toward_exit, effective_confidence_floor, passes_confidence_filter, passes_rule_filter,
 };
+use super::gaps::{Gap, apply_gaps};
 use super::ignore::IgnoreMatcher;
 use super::severity::apply_severity_override;
 use super::types::RuleId;
@@ -24,7 +25,9 @@ use super::types::RuleId;
 /// Merge candidates, apply ignore/confidence filters, and compute exit status.
 ///
 /// Dependency-rule ignore patterns are matched against distribution names
-/// taken from `resolution` (§18).
+/// taken from `resolution` (§18). `gaps` lower the findings they may hide
+/// before overrides, ignores, and filters read severity or confidence
+/// (ADR 0005).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn emit_issues(
@@ -32,6 +35,7 @@ pub fn emit_issues(
     deps: &DependencyReport,
     symbols: &[IssueCandidate],
     parse: &ParseSummary,
+    gaps: &[Gap],
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
     resolution: &ResolutionIndex,
@@ -43,6 +47,7 @@ pub fn emit_issues(
     let mut candidates = chk001_candidates(&unreachable.unreachable, strict);
     candidates.extend(deps.candidates.clone());
     candidates.extend_from_slice(symbols);
+    apply_gaps(&mut candidates, gaps);
     downgrade_deprecated_shims(&mut candidates, parse);
 
     sort_candidates(&mut candidates);
@@ -396,6 +401,7 @@ mod tests {
             &deps,
             &[],
             &parse,
+            &[],
             &config,
             &RuntimeOverrides::default(),
             &ResolutionIndex::default(),
@@ -501,6 +507,7 @@ mod tests {
             &DependencyReport::default(),
             &[],
             &ParseSummary::default(),
+            &[],
             &default_config(),
             &RuntimeOverrides {
                 no_exit_code: Some(true),
@@ -542,6 +549,7 @@ mod tests {
             &deps,
             &[],
             &ParseSummary::default(),
+            &[],
             &config,
             &RuntimeOverrides::default(),
             &ResolutionIndex::default(),
@@ -579,6 +587,7 @@ mod tests {
             &deps,
             &[],
             &ParseSummary::default(),
+            &[],
             &default_config(),
             &RuntimeOverrides::default(),
             &ResolutionIndex::default(),

@@ -494,6 +494,7 @@ mod tests {
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
             skipped: false,
+            has_unread_cells: false,
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -548,6 +549,7 @@ mod tests {
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
             skipped: false,
+            has_unread_cells: false,
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -693,6 +695,7 @@ mod tests {
             decorator_sites: Vec::new(),
             diagnostics: Vec::new(),
             skipped: false,
+            has_unread_cells: false,
         });
         IgnoreMatcher::build(&default_config(), &parse, &ResolutionIndex::default())
     }

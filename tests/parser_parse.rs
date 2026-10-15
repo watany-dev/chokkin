@@ -509,6 +509,8 @@ fn parse_project_sources_warns_about_unreadable_notebook_cells() {
     );
 
     assert!(!module.skipped, "{module:?}");
+    // The dropped cells leave a gap that lowers absence findings (#902).
+    assert!(module.has_unread_cells, "{module:?}");
     let imports: Vec<&str> = module
         .imports
         .iter()
@@ -544,6 +546,8 @@ fn parse_project_sources_skips_notebook_without_readable_code_cells() {
     );
 
     assert!(module.skipped, "{module:?}");
+    // Skipping already covers the whole notebook, so no second gap.
+    assert!(!module.has_unread_cells, "{module:?}");
     let warnings: Vec<&str> = module
         .diagnostics
         .iter()

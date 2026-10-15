@@ -334,6 +334,10 @@ pub struct ParsedModule {
     /// without readable cells, so nothing was extracted from it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub skipped: bool,
+    /// A notebook was read, but some cells that may be code were not (#898),
+    /// so what the module imports is partly unknown (#902).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_unread_cells: bool,
 }
 
 /// Aggregate result of parsing all project `.py` sources.

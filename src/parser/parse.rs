@@ -130,6 +130,7 @@ fn parse_notebook_file(
     let mut parsed = parse_python_source(path, &notebook.source, layout, file_context, target);
     // A skipped notebook is unknown as a whole, so a dropped cell adds nothing.
     if notebook.has_unreadable_cells && !parsed.skipped {
+        parsed.has_unread_cells = true;
         parsed.diagnostics.push(ParseDiagnostic {
             line: 0,
             message: "some code cells were not read: their `cell_type` or `source` is not text"
@@ -497,7 +498,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v39".to_owned(),
+        unit_version: "parse-v40".to_owned(),
     }
 }
 

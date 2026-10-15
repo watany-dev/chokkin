@@ -6,6 +6,7 @@ pub use context::{DependencyRuleContext, RuleContext};
 pub(crate) mod deps;
 pub(crate) mod emit;
 mod filter;
+mod gaps;
 mod ignore;
 pub(crate) mod metadata;
 mod severity;
@@ -13,6 +14,7 @@ pub(crate) mod symbols;
 mod types;
 
 pub use emit::{emit_issues, explain_issue};
+pub use gaps::{Gap, collect_gaps};
 #[cfg(test)]
 pub(crate) use metadata::default_rule_severity;
 pub(crate) use metadata::{rule_help_text, rule_help_uri, rule_title};

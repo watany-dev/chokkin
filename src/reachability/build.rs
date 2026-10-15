@@ -51,13 +51,6 @@ pub fn analyze_reachability(
         framework.predecessors,
     );
     let reachable = bfs.reachable;
-    // A reachable skipped file's imports are as unknown as an opaque one's.
-    let reached_opaque_dynamic_import = parse.modules.iter().any(|module| {
-        (module.has_opaque_dynamic_import || module.skipped)
-            && graph
-                .file_id(&module.path)
-                .is_some_and(|file_id| reachable.contains(&file_id))
-    });
 
     // Nothing was read from a skipped file, so it is neither known unused nor
     // a reliable source of edges; reporting it would only be a guess.
@@ -89,7 +82,7 @@ pub fn analyze_reachability(
         unreachable.push(UnreachableFile {
             file: file_id,
             path: file.path.clone(),
-            max_confidence: confidence_for_unreachable(mode, reached_opaque_dynamic_import),
+            max_confidence: confidence_for_unreachable(mode),
             mode,
         });
     }
@@ -105,7 +98,6 @@ pub fn analyze_reachability(
         used_modules: bfs.used_modules,
         framework_used: framework.files,
         predecessors: bfs.predecessors,
-        reached_opaque_dynamic_import,
         plugin_ref_files,
     })
 }
@@ -124,8 +116,7 @@ pub fn apply_public_surface(
     if entry.mode != ProjectMode::Library {
         return;
     }
-    let confidence =
-        confidence_for_unreachable(ProjectMode::App, report.reached_opaque_dynamic_import);
+    let confidence = confidence_for_unreachable(ProjectMode::App);
     for file in &mut report.unreachable {
         if !surface.contains(&file.path) && !entry.in_library_member(&file.path) {
             file.max_confidence = confidence;
@@ -142,8 +133,7 @@ pub(crate) fn apply_member_surfaces(
     report: &mut ReachabilityReport,
     surfaces: &[&(String, PublicSurface)],
 ) {
-    let confidence =
-        confidence_for_unreachable(ProjectMode::App, report.reached_opaque_dynamic_import);
+    let confidence = confidence_for_unreachable(ProjectMode::App);
     for file in &mut report.unreachable {
         if member_ships(surfaces.iter().copied(), &file.path) == Some(false) {
             file.max_confidence = confidence;
@@ -229,14 +219,11 @@ fn is_excluded(file: &crate::sources::DiscoveredFile, mode: ProjectMode) -> bool
         || (file.context == FileContext::Test && mode == ProjectMode::Library)
 }
 
-/// An opaque `import_module(name)` in code that runs may load any orphan, so
-/// it lowers every orphan; one inside an orphan never runs and changes nothing.
-const fn confidence_for_unreachable(mode: ProjectMode, reached_opaque: bool) -> Confidence {
+/// A library orphan may still be imported by an outside caller. Unread input
+/// in reachable code lowers orphans later, in the gap stage (ADR 0005).
+const fn confidence_for_unreachable(mode: ProjectMode) -> Confidence {
     if matches!(mode, ProjectMode::Library) {
         return Confidence::Maybe;
-    }
-    if reached_opaque {
-        return Confidence::Likely;
     }
     Confidence::Certain
 }
@@ -443,27 +430,6 @@ mod tests {
         );
     }
 
-    fn orphan_confidence(opaque_in: &str) -> Confidence {
-        let parse = ParseSummary {
-            modules: ["acme/main.py", "acme/orphan.py"]
-                .map(|path| parsed(path, &[], path == opaque_in))
-                .into(),
-        };
-        let (_, report) = analyze(&parse, &[], &[], &["acme/main.py"], &no_plugins());
-        assert_eq!(report.unreachable.len(), 1);
-        report.unreachable[0].max_confidence
-    }
-
-    #[test]
-    fn opaque_import_in_reachable_code_lowers_orphans_to_likely() {
-        assert_eq!(orphan_confidence("acme/main.py"), Confidence::Likely);
-    }
-
-    #[test]
-    fn opaque_import_inside_the_orphan_itself_keeps_it_certain() {
-        assert_eq!(orphan_confidence("acme/orphan.py"), Confidence::Certain);
-    }
-
     #[test]
     fn library_member_orphans_are_maybe_while_app_orphans_stay_certain() {
         let parse = ParseSummary {
@@ -600,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn skipped_reachable_file_lowers_orphans_and_is_not_reported() {
+    fn skipped_file_is_not_reported_and_leaves_orphans_to_the_gap_stage() {
         let parse = ParseSummary {
             modules: vec![
                 parsed("acme/main.py", &["acme.latin"], false),
@@ -624,6 +590,6 @@ mod tests {
             .iter()
             .map(|file| (file.path.as_str(), file.max_confidence))
             .collect();
-        assert_eq!(unreachable, [("acme/orphan.py", Confidence::Likely)]);
+        assert_eq!(unreachable, [("acme/orphan.py", Confidence::Certain)]);
     }
 }

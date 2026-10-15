@@ -272,6 +272,7 @@ mod tests {
                 decorator_sites: Vec::new(),
                 diagnostics: Vec::new(),
                 skipped: false,
+                has_unread_cells: false,
             },
         )
         .expect("imports");
