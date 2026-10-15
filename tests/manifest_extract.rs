@@ -520,6 +520,86 @@ fn undecodable_setup_cfg_is_covered_by_static_setup_py() {
     );
 }
 
+/// `file:` in setup.cfg reads the named requirements files the way
+/// setuptools does; a file read as `install_requires` is not read again as
+/// the root `requirements.txt`.
+#[test]
+fn setup_cfg_file_directives_read_requirements_files() {
+    let manifest = extract_files(&[
+        (
+            "setup.cfg",
+            b"[options]\ninstall_requires = file: reqs.in, requirements.txt\n\
+              [options.extras_require]\ndev = file: missing/../dev.txt\n",
+        ),
+        ("reqs.in", b"requests\n"),
+        ("requirements.txt", b"click\n"),
+        ("dev.txt", b"pytest\n"),
+    ]);
+    let declared = manifest
+        .dependencies
+        .iter()
+        .map(|dep| (dep.name.as_str(), dep.context.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        declared,
+        [
+            ("requests", DependencyContext::Runtime),
+            ("click", DependencyContext::Runtime),
+            ("pytest", DependencyContext::SetupExtra("dev".to_owned())),
+        ]
+    );
+    assert_eq!(
+        manifest.sources.requirements_files,
+        ["reqs.in", "requirements.txt", "dev.txt"]
+    );
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(manifest.sources.extras, ExtrasState::Known);
+    assert_eq!(manifest.warnings, []);
+}
+
+/// A `file:` that cannot be read leaves what it declares unknown: the
+/// runtime set for `install_requires`, the extra for `extras_require`.
+#[test]
+fn setup_cfg_unread_file_directives_leave_their_declarations_unknown() {
+    let manifest = extract_files(&[
+        (
+            "setup.cfg",
+            b"[options]\ninstall_requires = file: missing.txt\n\
+              [options.extras_require]\ndev = file: ../outside.txt\ns3 = boto3\n",
+        ),
+        (
+            "pyproject.toml",
+            b"[build-system]\nrequires = [\"setuptools\"]\n",
+        ),
+    ]);
+    assert_eq!(dependency_names(&manifest), ["boto3"]);
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), Some("setup.cfg"));
+    assert_eq!(manifest.sources.requirements_missing, ["missing.txt"]);
+    assert_eq!(
+        manifest.sources.extras,
+        ExtrasState::Partial(["dev".to_owned()].into())
+    );
+    assert_eq!(
+        manifest.warnings,
+        [
+            ManifestWarning::RequirementsUnreadable {
+                file: "missing.txt".to_owned(),
+                reason: "not found (named by `setup.cfg` options.install_requires)".to_owned(),
+            },
+            ManifestWarning::RequirementsUnreadable {
+                file: "../outside.txt".to_owned(),
+                reason:
+                    "outside the project root (named by `setup.cfg` options.extras_require.dev)"
+                        .to_owned(),
+            },
+            ManifestWarning::RuntimeDependenciesUnknown {
+                file: "setup.cfg".to_owned()
+            },
+        ]
+    );
+}
+
 /// With no other runtime declaration, a skipped root `requirements.txt`
 /// leaves the runtime set unknown.
 #[test]

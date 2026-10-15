@@ -1,12 +1,15 @@
 //! `setup.cfg` manifest extraction.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Component, Path, PathBuf};
 
 use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
+use super::extract::unreadable_reason;
+use super::requirements::extract_requirements_path;
 use super::types::{DeclaredDependency, DependencyContext, ExtrasState, ProjectMetadata};
-use super::util::{DependencyPush, push_dependency, read_text};
+use super::util::{DependencyPush, path_is_within_root, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
 /// Partial extraction result from `setup.cfg`.
@@ -20,9 +23,15 @@ pub(super) struct SetupCfgExtraction {
     pub warnings: Vec<ManifestWarning>,
     /// The file could not be decoded and was left out.
     pub skipped: bool,
+    /// `install_requires` names a `file:` that could not be read.
+    pub runtime_unknown: bool,
     /// How much of `[options.extras_require]` could be read; `None` when
     /// the file has no such section.
     pub extras: Option<ExtrasState>,
+    /// Root-relative requirements files read through `file:`.
+    pub files_read: Vec<String>,
+    /// Root-relative requirements files `file:` names that do not exist.
+    pub files_missing: Vec<String>,
 }
 
 /// Extract manifest data from `setup.cfg`.
@@ -50,40 +59,128 @@ pub(super) fn extract_setup_cfg(
     let options = sections.get("options");
     result.metadata.requires_python = options.and_then(|o| o.get("python_requires")).cloned();
     if let Some(requires) = options.and_then(|o| o.get("install_requires")) {
-        for (index, raw) in split_requirement_lines(requires).enumerate() {
-            push_dependency(DependencyPush {
-                dependencies: &mut result.dependencies,
-                warnings: &mut result.warnings,
-                raw,
-                context: DependencyContext::Runtime,
-                file: &rel,
-                label: format!("options.install_requires[{index}]"),
-                line: None,
-            });
-        }
+        let option = Requirements {
+            root,
+            rel: &rel,
+            option: "options.install_requires".to_owned(),
+            context: DependencyContext::Runtime,
+        };
+        result.runtime_unknown = !option.push(&mut result, requires);
     }
 
     if let Some(extras) = sections.get("options.extras_require") {
-        result.extras = Some(ExtrasState::Known);
+        let mut lost = BTreeSet::new();
         for (extra, requires) in extras {
             if extra.is_empty() {
                 continue;
             }
-            for (index, raw) in split_requirement_lines(requires).enumerate() {
+            let option = Requirements {
+                root,
+                rel: &rel,
+                option: format!("options.extras_require.{extra}"),
+                context: DependencyContext::SetupExtra(extra.clone()),
+            };
+            if !option.push(&mut result, requires) {
+                lost.insert(extra.clone());
+            }
+        }
+        result.extras = Some(if lost.is_empty() {
+            ExtrasState::Known
+        } else {
+            ExtrasState::Partial(lost)
+        });
+    }
+
+    Ok(result)
+}
+
+/// One requirements option: `install_requires` or an extra.
+struct Requirements<'a> {
+    root: &'a Path,
+    rel: &'a str,
+    /// Dotted option name, e.g. `options.install_requires`.
+    option: String,
+    context: DependencyContext,
+}
+
+impl Requirements<'_> {
+    /// Push the declarations in `value`; `false` when part of them could
+    /// not be read.
+    ///
+    /// `file: a.txt, b.txt` reads each file as setuptools does, with the
+    /// requirements parser (which also follows `-r`, which setuptools
+    /// rejects). A file that does not exist, leaves the root, or stops
+    /// parsing is reported and makes the option unread: setuptools skips a
+    /// missing file, but it may be generated before the build.
+    fn push(&self, result: &mut SetupCfgExtraction, value: &str) -> bool {
+        let Some(spec) = value.strip_prefix("file:") else {
+            for (index, raw) in split_requirement_lines(value).enumerate() {
                 push_dependency(DependencyPush {
                     dependencies: &mut result.dependencies,
                     warnings: &mut result.warnings,
                     raw,
-                    context: DependencyContext::SetupExtra(extra.clone()),
-                    file: &rel,
-                    label: format!("options.extras_require.{extra}[{index}]"),
+                    context: self.context.clone(),
+                    file: self.rel,
+                    label: format!("{}[{index}]", self.option),
                     line: None,
                 });
             }
+            return true;
+        };
+        let mut complete = true;
+        for written in spec
+            .split(',')
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            complete &= self.read_file(result, written);
         }
+        complete
     }
 
-    Ok(result)
+    /// Read one `file:` path; `false` when it could not be read in full.
+    fn read_file(&self, result: &mut SetupCfgExtraction, written: &str) -> bool {
+        // setuptools normalizes the path before checking it stays inside.
+        let mut relative = PathBuf::new();
+        let mut stays_inside = true;
+        for part in Path::new(written).components() {
+            match part {
+                Component::Normal(name) => relative.push(name),
+                Component::CurDir => {},
+                Component::ParentDir => stays_inside &= relative.pop(),
+                Component::RootDir | Component::Prefix(_) => stays_inside = false,
+            }
+        }
+        let path = self.root.join(&relative);
+        let (file, reason) = if !stays_inside {
+            (written.to_owned(), "outside the project root".to_owned())
+        } else if !path.is_file() {
+            let missing = rel_to_root(self.root, &path);
+            result.files_missing.push(missing.clone());
+            (missing, "not found".to_owned())
+        } else if !path_is_within_root(self.root, &path) {
+            (written.to_owned(), "outside the project root".to_owned())
+        } else {
+            let (extracted, outcome) = extract_requirements_path(self.root, &path, &self.context);
+            let skipped = extracted.skipped;
+            result.dependencies.extend(extracted.dependencies);
+            result.warnings.extend(extracted.warnings);
+            result.files_read.extend(extracted.files_read);
+            result.files_missing.extend(extracted.files_missing);
+            match outcome {
+                // An undecodable file already carries its own warning.
+                Ok(()) => return !skipped,
+                Err(error) => (rel_to_root(self.root, &path), unreadable_reason(&error)),
+            }
+        };
+        result
+            .warnings
+            .push(ManifestWarning::RequirementsUnreadable {
+                file,
+                reason: format!("{reason} (named by `{}` {})", self.rel, self.option),
+            });
+        false
+    }
 }
 
 fn split_requirement_lines(value: &str) -> impl Iterator<Item = &str> {
