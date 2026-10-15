@@ -36,6 +36,15 @@ pub struct UnreachableFile {
     pub mode: ProjectMode,
 }
 
+impl UnreachableFile {
+    /// Whether a caller of the library may import the file: an orphan still
+    /// capped at `Maybe` after the wheel surfaces re-scored the rest (R-05).
+    #[must_use]
+    pub(crate) fn callers_may_import(&self) -> bool {
+        self.mode == ProjectMode::Library && self.max_confidence == Confidence::Maybe
+    }
+}
+
 /// One step in a reachability trace path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceStep {
@@ -106,6 +115,9 @@ pub struct ReachabilityReport {
     pub certain: IndexSet<FileId>,
     /// Candidate unused files with confidence metadata.
     pub unreachable: Vec<UnreachableFile>,
+    /// Skipped files no root reaches, scored like [`Self::unreachable`] but
+    /// never reported: nothing was read from them (#550).
+    pub unread: Vec<UnreachableFile>,
     /// Stdlib and third-party modules seen during traversal (Step 10 input).
     pub used_modules: Vec<UsedModule>,
     /// Files matched by framework-used globs.

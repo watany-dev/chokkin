@@ -2,7 +2,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use crate::config::Confidence;
+use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{DeclaredDependency, LockfileGraph};
 use crate::parser::ParseSummary;
@@ -13,7 +13,7 @@ use crate::rules::types::{
 };
 use crate::rules::{DependencyRuleContext, RuleContext};
 
-use super::context::{is_directly_declared, usage_context_for_import};
+use super::context::{UsageContext, is_directly_declared, usage_context_for_import};
 use super::used::DeclaredIndex;
 
 /// Precomputed declaration index for a workspace member manifest.
@@ -68,29 +68,26 @@ pub(super) fn detect_missing_dependencies(
 
         let usage = usage_context_for_import(&import.file, import.context, sources);
         let workspace_member = import.workspace_member.as_deref();
-        let boundary = workspace_declared
-            .iter()
-            .find(|boundary| Some(boundary.member_id) == workspace_member);
-        let member_entry = boundary
-            .and_then(|boundary| boundary.declared.get(distribution))
-            .map(Vec::as_slice);
-        let root_entry = declared.get(distribution).map(Vec::as_slice);
-        let member_declared =
-            member_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
-        let root_declared =
-            root_entry.is_some_and(|deps| is_directly_declared(deps, usage, config));
+        let declarations = ImportDeclarations::lookup(
+            declared,
+            workspace_declared,
+            workspace_member,
+            distribution,
+        );
 
-        if member_declared {
+        if declarations.member_satisfies(usage, config) {
             continue;
         }
 
-        if !strict && usage != super::context::UsageContext::Runtime {
+        if !strict && usage != UsageContext::Runtime {
             continue;
         }
 
         if strict
-            && root_declared
-            && member_entry.is_none()
+            && declarations.member.is_none()
+            && declarations
+                .root
+                .is_some_and(|deps| is_directly_declared(deps, usage, config))
             && let Some(member_id) = workspace_member
         {
             candidates.push(workspace_missing_candidate(import, distribution, member_id));
@@ -100,20 +97,13 @@ pub(super) fn detect_missing_dependencies(
         // Declared in any bucket, including the root declaration a non-strict
         // or non-member import relies on. A bucket that does not match this
         // usage context is CHK005's alone (§10), not CHK003 or CHK004.
-        if governing_declarations(
-            declared,
-            workspace_declared,
-            workspace_member,
-            distribution,
-            strict,
-        )
-        .is_some()
-        {
+        if declarations.governing(strict).is_some() {
             continue;
         }
 
         // Lock edges are walked from the importing member's declarations: a
         // package only the root's reach (a root extra) may be absent (#649).
+        let boundary = declarations.boundary;
         let seeds = boundary.map_or(declared, |boundary| &boundary.declared);
         let scopes = [
             boundary.and_then(|boundary| Some((seeds, boundary.lockfile?))),
@@ -178,33 +168,52 @@ fn lock_evidence(distribution: &str, scopes: &[Option<LockScope<'_, '_>>]) -> Op
         .then_some(LockEvidence::LockedOnly)
 }
 
-/// Declarations that decide between CHK003/CHK004/CHK005 for one import.
-/// Under `--strict` a workspace member's own entry wins and the root is the
-/// fallback; otherwise only the root counts. Missing and misplaced detection
-/// share this lookup so that at most one of them fires per import.
-pub(super) fn governing_declarations<'i, 'a>(
-    declared: &'i DeclaredIndex<'a>,
-    workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
-    workspace_member: Option<&str>,
-    distribution: &str,
-    strict: bool,
-) -> Option<&'i [&'a DeclaredDependency]> {
-    workspace_member
-        .filter(|_| strict)
-        .and_then(|member_id| member_declarations(workspace_declared, member_id, distribution))
-        .or_else(|| declared.get(distribution).map(Vec::as_slice))
+/// The declarations one import is checked against: its workspace member's
+/// and the root's. Missing and misplaced detection share this lookup so that
+/// at most one of them fires per import.
+pub(super) struct ImportDeclarations<'i, 'a> {
+    /// The importing member's declarations, when the import is in a member.
+    boundary: Option<&'i WorkspaceDeclaredIndex<'a>>,
+    /// The member's entries for the distribution.
+    member: Option<&'i [&'a DeclaredDependency]>,
+    /// The root's entries for the distribution.
+    root: Option<&'i [&'a DeclaredDependency]>,
 }
 
-pub(super) fn member_declarations<'i, 'a>(
-    workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
-    member_id: &str,
-    distribution: &str,
-) -> Option<&'i [&'a DeclaredDependency]> {
-    workspace_declared
-        .iter()
-        .find(|boundary| boundary.member_id == member_id)
-        .and_then(|boundary| boundary.declared.get(distribution))
-        .map(Vec::as_slice)
+impl<'i, 'a> ImportDeclarations<'i, 'a> {
+    pub(super) fn lookup(
+        declared: &'i DeclaredIndex<'a>,
+        workspace_declared: &'i [WorkspaceDeclaredIndex<'a>],
+        workspace_member: Option<&str>,
+        distribution: &str,
+    ) -> Self {
+        let boundary = workspace_member.and_then(|member_id| {
+            workspace_declared
+                .iter()
+                .find(|boundary| boundary.member_id == member_id)
+        });
+        Self {
+            boundary,
+            member: boundary
+                .and_then(|boundary| boundary.declared.get(distribution))
+                .map(Vec::as_slice),
+            root: declared.get(distribution).map(Vec::as_slice),
+        }
+    }
+
+    /// A member that declares it directly for this usage is satisfied, even
+    /// when the root lists it only in a dev group.
+    pub(super) fn member_satisfies(&self, usage: UsageContext, config: &ChokkinConfig) -> bool {
+        self.member
+            .is_some_and(|deps| is_directly_declared(deps, usage, config))
+    }
+
+    /// Declarations that decide between CHK003/CHK004/CHK005. Under
+    /// `--strict` a workspace member's own entry wins and the root is the
+    /// fallback; otherwise only the root counts.
+    pub(super) fn governing(&self, strict: bool) -> Option<&'i [&'a DeclaredDependency]> {
+        self.member.filter(|_| strict).or(self.root)
+    }
 }
 
 fn workspace_missing_candidate(
@@ -799,6 +808,35 @@ mod tests {
             &no_member,
         );
         assert!(root_only.is_empty(), "{root_only:?}");
+    }
+
+    /// CHK003-CHK005 read one lookup: the member's runtime declaration
+    /// satisfies the import, and `--strict` lets the member's entry govern
+    /// over the root's.
+    #[test]
+    fn import_declarations_prefer_the_member_under_strict() {
+        let config = default_config();
+        let root_dev = declared_dep_in("requests", DependencyContext::Group("dev".to_owned()));
+        let member_runtime = declared_dep("requests");
+        let root = BTreeMap::from([("requests".to_owned(), vec![&root_dev])]);
+        let members = [WorkspaceDeclaredIndex {
+            member_id: "api",
+            declared: BTreeMap::from([("requests".to_owned(), vec![&member_runtime])]),
+            lockfile: None,
+        }];
+        let lookup =
+            |member: Option<&str>| ImportDeclarations::lookup(&root, &members, member, "requests");
+        let runtime = UsageContext::Runtime;
+
+        let in_member = lookup(Some("api"));
+        assert!(in_member.member_satisfies(runtime, &config));
+        assert_eq!(in_member.governing(true), Some(&[&member_runtime][..]));
+        assert_eq!(in_member.governing(false), Some(&[&root_dev][..]));
+
+        let at_root = lookup(None);
+        assert!(!at_root.member_satisfies(runtime, &config));
+        assert_eq!(at_root.governing(true), Some(&[&root_dev][..]));
+        assert!(lookup(Some("web")).governing(true).is_some());
     }
 
     /// #653: a member's own lockfile decides CHK004 for its imports when the
