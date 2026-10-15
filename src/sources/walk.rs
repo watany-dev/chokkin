@@ -395,6 +395,16 @@ mod tests {
     }
 
     #[test]
+    fn source_kind_collects_python_extensions_only() {
+        let kind = |path: &str| source_kind(Path::new(path));
+        assert_eq!(kind("a.PY"), Some(FileKind::Python));
+        assert_eq!(kind("a.pyi"), Some(FileKind::Stub));
+        assert_eq!(kind("a.ipynb"), Some(FileKind::Notebook));
+        assert_eq!(kind("setup.cfg"), None);
+        assert_eq!(kind("Makefile"), None);
+    }
+
+    #[test]
     fn own_cache_is_pruned_even_with_custom_excludes() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path();
