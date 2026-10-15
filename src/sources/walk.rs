@@ -529,6 +529,13 @@ mod tests {
     /// parse, still names the walk's root.
     #[test]
     fn walk_error_warning_names_the_path_that_failed() {
+        let native = |p: &str| {
+            Path::new(p)
+                .components()
+                .collect::<PathBuf>()
+                .to_string_lossy()
+                .into_owned()
+        };
         let denied = |depth| ignore::Error::WithDepth {
             depth,
             err: Box::new(ignore::Error::WithPath {
@@ -540,7 +547,7 @@ mod tests {
             }),
         };
         let expected = SourcesWarning::PathUnreadable {
-            path: "/repo/packages/core/secret".to_owned(),
+            path: native("/repo/packages/core/secret"),
             reason: "denied".to_owned(),
         };
 
@@ -553,7 +560,7 @@ mod tests {
         assert_eq!(
             walk_error_warning(Path::new("/repo"), &pathless),
             SourcesWarning::PathUnreadable {
-                path: "/repo".to_owned(),
+                path: native("/repo"),
                 reason: "gone".to_owned(),
             }
         );
@@ -567,7 +574,7 @@ mod tests {
         assert_eq!(
             walk_error_warning(Path::new("/repo"), &unparsable),
             SourcesWarning::PathUnreadable {
-                path: "/repo".to_owned(),
+                path: native("/repo"),
                 reason: "/.gitignore: line 1: bad glob".to_owned(),
             }
         );
