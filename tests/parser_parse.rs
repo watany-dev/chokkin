@@ -552,6 +552,22 @@ fn parse_project_sources_skips_notebook_without_readable_code_cells() {
     );
 }
 
+/// Each string of a list `source` is read as its own line, even without a
+/// trailing newline.
+#[test]
+fn parse_project_sources_reads_notebook_source_strings_as_lines() {
+    let module = parse_notebook(
+        r#"{"cells": [{"cell_type": "code", "source": ["import os", "import json"]}]}"#,
+    );
+
+    let imports: Vec<&str> = module
+        .imports
+        .iter()
+        .map(|import| import.module.as_str())
+        .collect();
+    assert_eq!(imports, ["os", "json"], "{module:?}");
+}
+
 /// A notebook with no code cells at all reads as empty, not unknown.
 #[test]
 fn parse_project_sources_reads_notebook_without_code_cells_as_empty() {
