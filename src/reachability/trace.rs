@@ -50,7 +50,6 @@ mod tests {
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),
             predecessors: indexmap::IndexMap::new(),
-            reached_opaque_dynamic_import: false,
             plugin_ref_files: HashMap::new(),
         };
         assert!(trace_to_file(&report, file_id).is_none());
@@ -117,7 +116,6 @@ mod tests {
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),
             predecessors,
-            reached_opaque_dynamic_import: false,
             plugin_ref_files: HashMap::new(),
         };
 

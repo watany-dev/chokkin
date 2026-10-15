@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use indexmap::IndexSet;
 
-use crate::config::Confidence;
 use crate::manifest::{
     DeclaredDependency, DependencyContext, InlineScript, LoadedManifest,
     normalize_distribution_name,
@@ -12,8 +11,7 @@ use crate::manifest::{
 use crate::plugins::PluginHints;
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{
-    DependencyReport, IssueCandidate, RuleId, Severity, WorkspaceDependencyBoundary,
-    sort_candidates,
+    DependencyReport, IssueCandidate, WorkspaceDependencyBoundary, sort_candidates,
 };
 use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::{DiscoveredSources, PublicSurface};
@@ -70,40 +68,6 @@ pub fn reconcile_with_context(
     ));
     sort_candidates(&mut report.candidates);
     report
-}
-
-/// A reachable file that could not be decoded may import any declared
-/// dependency, so none is certainly unused (and `--fix` must not remove it).
-fn lower_unused_when_a_skipped_file_is_reached(
-    unused: &mut [IssueCandidate],
-    context: &RuleContext<'_>,
-    reachable: &HashSet<&str>,
-) {
-    if context
-        .parse
-        .modules
-        .iter()
-        .any(|module| module.skipped && reachable.contains(module.path.as_str()))
-    {
-        for candidate in unused {
-            candidate.confidence = candidate.confidence.min(Confidence::Likely);
-        }
-    }
-}
-
-/// An unreadable `install_requires` may declare any import, so CHK003/CHK004
-/// become hints rather than errors (#491).
-fn lower_missing_when_runtime_dependencies_unknown(missing: &mut [IssueCandidate]) {
-    for candidate in missing {
-        if matches!(candidate.rule, RuleId::Chk003 | RuleId::Chk004) {
-            candidate.severity = Severity::Info;
-            candidate.confidence = Confidence::Maybe;
-            candidate
-                .explain
-                .details
-                .push("runtime dependencies could not be read statically".to_owned());
-        }
-    }
 }
 
 fn reconcile_project(
@@ -164,7 +128,6 @@ fn reconcile_project(
             Some(&evidence),
         ));
     }
-    lower_unused_when_a_skipped_file_is_reached(&mut candidates, context, &reachable);
 
     candidates.extend(detect_undeclared_imports(
         dependency,
@@ -217,9 +180,6 @@ fn detect_undeclared_imports(
         has_lockfile(manifest, resolution),
         &workspace_declared,
     );
-    if manifest.sources.runtime_dependencies_unknown {
-        lower_missing_when_runtime_dependencies_unknown(&mut candidates);
-    }
     candidates.extend(detect_misplaced_dependencies(
         &import_declared,
         &dependency,

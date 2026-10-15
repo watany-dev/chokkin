@@ -10,9 +10,10 @@ use chokkin::internals::reconcile_with_context;
 use chokkin::internals::{
     Confidence, ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolutionIndex, RootMarker,
     RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports, analyze_reachability,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
-    discover_sources, emit_issues, extract_manifest, extract_plugin_hints_with_parse, load_config,
-    parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
+    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, collect_gaps,
+    discover_project_root, discover_sources, emit_issues, extract_manifest,
+    extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
+    resolve_imports_for_analysis, resolve_target_version,
 };
 use chokkin::internals::{DependencyRuleContext, RuleContext};
 use chokkin::{ExitStatus, RuntimeOverrides};
@@ -29,6 +30,7 @@ struct EmitInputs {
     reachability: chokkin::internals::ReachabilityReport,
     deps: chokkin::internals::DependencyReport,
     symbols: Vec<chokkin::internals::IssueCandidate>,
+    gaps: Vec<chokkin::internals::Gap>,
 }
 
 fn load_emit(path: &Path) -> EmitInputs {
@@ -102,6 +104,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &[],
     );
     let symbols = analyze_with_context(&rules, &entry, &plugins, &manifest, &[], None);
+    let gaps = collect_gaps(&parse, &graph, &reachability, &manifest);
 
     EmitInputs {
         config: loaded.effective,
@@ -109,6 +112,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         reachability,
         deps,
         symbols,
+        gaps,
     }
 }
 
@@ -120,6 +124,7 @@ fn emit_reports_unused_dependency() {
         &inputs.deps,
         &inputs.symbols,
         &inputs.parse,
+        &inputs.gaps,
         &inputs.config,
         &RuntimeOverrides::default(),
         &ResolutionIndex::default(),
@@ -145,6 +150,7 @@ fn config_ignore_suppresses_matching_issue() {
         &inputs.deps,
         &inputs.symbols,
         &inputs.parse,
+        &inputs.gaps,
         &config,
         &RuntimeOverrides::default(),
         &ResolutionIndex::default(),
@@ -156,6 +162,30 @@ fn config_ignore_suppresses_matching_issue() {
             .all(|issue| issue.rule != RuleId::Chk002)
     );
     assert_ne!(report.suppressed, []);
+}
+
+/// An unreadable `install_requires` may declare any import, so CHK003 is an
+/// info hint that names the gap (#491, ADR 0005).
+#[test]
+fn missing_is_a_hint_naming_the_gap_when_runtime_dependencies_are_unknown() {
+    let inputs = load_emit(&fixture("setup_py_unknown_runtime"));
+    let mut config = inputs.config.clone();
+    config.confidence = Confidence::Maybe;
+    let report = emit_with_config(&inputs, &config);
+    let yaml = report
+        .issues
+        .iter()
+        .find(|issue| issue.rule == RuleId::Chk003 && issue.message.contains("pyyaml"))
+        .expect("pyyaml missing");
+    assert_eq!(yaml.severity, chokkin::internals::Severity::Info);
+    assert_eq!(yaml.confidence, Confidence::Maybe);
+    let details = &yaml.explain.as_ref().expect("explain").details;
+    assert!(
+        details
+            .iter()
+            .any(|line| line == "runtime dependencies could not be read statically: `setup.py`"),
+        "{details:?}"
+    );
 }
 
 #[test]
@@ -188,6 +218,7 @@ fn emit_with_config(
         &inputs.deps,
         &inputs.symbols,
         &inputs.parse,
+        &inputs.gaps,
         config,
         &RuntimeOverrides::default(),
         &ResolutionIndex::default(),
@@ -204,6 +235,7 @@ fn emit_with_config_and_overrides(
         &inputs.deps,
         &inputs.symbols,
         &inputs.parse,
+        &inputs.gaps,
         config,
         overrides,
         &ResolutionIndex::default(),
