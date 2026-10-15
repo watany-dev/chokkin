@@ -26,7 +26,8 @@ use super::types::RuleId;
 ///
 /// Dependency-rule ignore patterns are matched against distribution names
 /// taken from `resolution` (§18). `gaps` lower the findings they may hide
-/// before anything else reads severity or confidence (ADR 0005).
+/// before overrides, ignores, and filters read severity or confidence
+/// (ADR 0005).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn emit_issues(

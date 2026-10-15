@@ -135,8 +135,8 @@ fn module_gaps(
     gaps
 }
 
-/// The manifest's warning names the file; `dynamic = ["dependencies"]` is the
-/// only flag without one, and it lives in `pyproject.toml`.
+/// The manifest's warning names the file (`pyproject.toml` for
+/// `dynamic = ["dependencies"]`); the fallback keeps the gap if one is missing.
 fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
     if !manifest.sources.runtime_dependencies_unknown {
         return None;
@@ -156,7 +156,9 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
 }
 
 /// Lower each finding a gap's scope covers and name the gap in `--explain`
-/// (ADR 0005 §5). Exit codes still follow severity alone (§7).
+/// (ADR 0005 §4). Exit codes still follow severity alone (§7). A cap never
+/// reaches `Maybe`, so a severity a rule derived from confidence (a library
+/// orphan's) still matches the lowered confidence.
 pub(super) fn apply_gaps(candidates: &mut [IssueCandidate], gaps: &[Gap]) {
     let kinds: BTreeSet<GapKind> = gaps.iter().map(|gap| gap.kind).collect();
     for candidate in candidates {
