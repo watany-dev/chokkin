@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that cannot be read (#917) now warn instead of being silently ignored.
 
 ### Fixed
+- Python code after a backslash continuation (`python \` then `-c '...'` on the
+  next line) and a script run through a variable interpreter after `uv run`
+  (`uv run $(PYTHON) gen.py`) are now read from commands (#861).
 - A source with a syntax error is skipped like an undecodable one, with a
   `parse: skipped …: syntax error at line N: …` warning, instead of being read
   as a module without imports. Its imports are unknown, so CHK001 and CHK002
