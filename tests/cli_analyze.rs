@@ -3956,3 +3956,50 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
     assert_eq!(sources.len(), 1, "{stderr}");
     assert!(sources[0].starts_with(&expected), "{expected}\n{stderr}");
 }
+
+/// A `.gitignore` below the root that cannot be read is one warning naming
+/// it, though the root walk and the member walk both meet it, and the text
+/// reporter prints it as JSON does (#915).
+#[test]
+fn binary_unreadable_nested_gitignore_warns_once_in_a_workspace() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "packages/core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("packages/core/core/__init__.py", ""),
+        ("packages/core/core/gen/out.py", ""),
+    ]);
+    fs::write(
+        project.path().join("packages/core/core/gen/.gitignore"),
+        b"out.py\n\xff\n",
+    )
+    .expect("write gitignore");
+
+    for reporter in ["json", "default"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", reporter])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let sources: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.contains("sources:"))
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                "sources: could not read `packages/core/core/gen/.gitignore`; \
+              its ignore rules may be missing"
+            ],
+            "{reporter}: {stderr}"
+        );
+    }
+}

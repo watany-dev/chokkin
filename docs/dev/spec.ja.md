@@ -286,6 +286,8 @@ CHK002 = "error"
 
 `vendored` は `exclude` と違い走査から外さない。vendored code 経由の import や symbol 参照は到達性と参照元に数え、そこで見つかった issue だけを報告しない（`SuppressReason::Vendored`。baseline 件数には含めない）。layer をまたいでは置き換えで、`vendored = []` で無効にできる。
 
+`respect_gitignore = true` のとき、走査が出会った `.gitignore` を読めなかった場合（root でも配下の directory でも、UTF-8 でない・読み取り権限がない・リンク先のない symlink）は、そのファイルごとに `sources: could not read <path>; its ignore rules may be missing` を 1 回出す。workspace member の走査が同じファイルに出会っても重ねて出さない (#915)。読めなかった ignore 規則は除外を減らす方向にしか働かず、finding を誤って消さないので gap にはしない。
+
 ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
 
 workspace設定。

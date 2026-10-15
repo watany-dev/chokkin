@@ -195,8 +195,10 @@ fn configure_walker(
 }
 
 /// Ignore file errors of a walked directory, as `ignore` attaches them to
-/// its entry.
+/// its entry, and a `.gitignore` below the walk root that `ignore` could not
+/// read and dropped (#915). The root's own is [`load_gitignore`]'s.
 fn dir_warnings(
+    root: &Path,
     cache: &SourcesCache,
     entry: &DirEntry,
     file_type: FileType,
@@ -207,9 +209,25 @@ fn dir_warnings(
     if !(file_type.is_dir() || (entry.depth() == 0 && path.is_dir())) {
         return;
     }
-    for error in cache.dir(path).errors() {
+    let dir = cache.dir(path);
+    for error in dir.errors() {
         push_walk_error(path, error, warnings);
     }
+    if entry.depth() > 0
+        && dir.root_load() == RootLoad::Unreadable
+        && let Some(warning) = nested_gitignore_unreadable(root, path)
+    {
+        warnings.push(warning);
+    }
+}
+
+/// [`SourcesWarning::GitignoreUnreadable`] for the `.gitignore` of `dir`,
+/// named relative to the walk root like the root's own.
+pub(super) fn nested_gitignore_unreadable(root: &Path, dir: &Path) -> Option<SourcesWarning> {
+    let rel = dir.strip_prefix(root).ok()?;
+    Some(SourcesWarning::GitignoreUnreadable {
+        path: normalize_rel_path(&rel.join(GITIGNORE_PATH)),
+    })
 }
 
 /// A walk error as warnings on the paths that failed, so the root walk and a
@@ -299,7 +317,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         };
         if options.respect_gitignore {
-            dir_warnings(cache, &entry, file_type, &mut warnings);
+            dir_warnings(&root, cache, &entry, file_type, &mut warnings);
         }
         if !file_type.is_file() {
             continue;
