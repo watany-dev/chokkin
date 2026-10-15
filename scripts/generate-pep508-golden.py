@@ -126,6 +126,16 @@ CASES = [
     "foo>=1\n,<2",
     "foo\t>=1",
     "foo>=1 ;\tpython_version>'3'",
+    # Issue #890: Python's `\s` also matches U+001C..U+001F (none at the
+    # ends: callers strip the whole requirement like `str.strip`)
+    "foo>=\x1f1",
+    "foo>=\x1c1",
+    "foo===\x1f1.0",
+    "foo===1.0\x1f,>=1",
+    "foo\x1f>=1",
+    "foo>=1\x1f,<2",
+    "foo;\x1fpython_version>'3'",
+    "foo @\x1fhttps://h/x.whl",
 ]
 
 

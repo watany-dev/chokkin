@@ -53,9 +53,21 @@ pub(super) struct VersionSpecifier {
 /// requirement, as pip and setuptools do with `str.strip`.
 const WS: [char; 2] = [' ', '\t'];
 
+/// Python's `str.isspace` and `\s`: Rust's `char::is_whitespace` plus the
+/// information separators U+001C..U+001F, which pip, setuptools and
+/// `packaging` also treat as whitespace (#890).
+pub(super) fn is_python_whitespace(ch: char) -> bool {
+    ch.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&ch)
+}
+
+/// Python's `str.strip()`.
+pub(super) fn strip_python(input: &str) -> &str {
+    input.trim_matches(is_python_whitespace)
+}
+
 /// Parse a PEP 508 requirement; `None` when it does not match the grammar.
 pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
-    let input = input.trim();
+    let input = strip_python(input);
     let name = leading_name_token(input);
     if !is_strict_pep508_name(name) {
         return None;
@@ -76,7 +88,7 @@ pub(super) fn parse_requirement(input: &str) -> Option<Requirement> {
             .map_or((after, ""), |(url, _)| (url, &after[url.len()..]));
         // `packaging` keeps a leading NBSP in the URL; skip it so the scheme
         // check accepts what `packaging` accepts.
-        let url = url.trim_start();
+        let url = url.trim_start_matches(is_python_whitespace);
         if !has_url_scheme(url) {
             return None;
         }
@@ -180,13 +192,13 @@ fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
     loop {
         rest = rest.trim_start_matches(WS);
         if let Some(after) = rest.strip_prefix("===") {
-            let value = after.trim_start();
+            let value = after.trim_start_matches(is_python_whitespace);
             let end = value
-                .find(|ch: char| ch.is_whitespace() || ch == ')')
+                .find(|ch: char| is_python_whitespace(ch) || ch == ')')
                 .unwrap_or(value.len());
             let tail = &value[end..];
             for item in rest[..rest.len() - tail.len()].split(',') {
-                if !item.trim().is_empty() {
+                if !strip_python(item).is_empty() {
                     specifiers.push(parse_version_specifier(item)?);
                 }
             }
@@ -215,7 +227,7 @@ fn parse_specifier_list(spec: &str) -> Option<Vec<VersionSpecifier>> {
 pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifier>> {
     let specifiers = input
         .split(',')
-        .map(str::trim)
+        .map(strip_python)
         .filter(|item| !item.is_empty())
         .map(parse_version_specifier)
         .collect::<Option<Vec<_>>>()?;
@@ -226,7 +238,7 @@ pub(super) fn parse_version_specifiers(input: &str) -> Option<Vec<VersionSpecifi
 /// stores (`>=3.10, <4`); `None` when it is not one, or has an empty item:
 /// a Poetry constraint is not a `SpecifierSet` (poetry-core rejects `>=1,,<2`).
 pub(crate) fn canonical_version_specifiers(input: &str) -> Option<String> {
-    if input.split(',').any(|item| item.trim().is_empty()) {
+    if input.split(',').any(|item| strip_python(item).is_empty()) {
         return None;
     }
     Some(join_specifiers(parse_version_specifiers(input)?))
@@ -269,8 +281,8 @@ fn parse_version_specifier(input: &str) -> Option<VersionSpecifier> {
     ]
     .into_iter()
     .find(|(op, _)| input.starts_with(op))?;
-    let version = input[op_text.len()..].trim_start();
-    if version.contains(char::is_whitespace) {
+    let version = input[op_text.len()..].trim_start_matches(is_python_whitespace);
+    if version.contains(is_python_whitespace) {
         return None;
     }
     // `===` compares strings, so it accepts versions PEP 440 cannot parse.
@@ -807,6 +819,36 @@ mod tests {
         assert_eq!(requirement.version_or_url.as_deref(), Some(">=1"));
         // `SpecifierSet` strips each item with `str.strip`.
         assert!(parse_version_specifiers(">=3.10\u{a0},\u{3000}<4").is_some());
+    }
+
+    #[test]
+    fn python_whitespace_includes_information_separators() {
+        // Python's `\s` and `str.isspace` match U+001C..U+001F; Rust's
+        // `char::is_whitespace` does not (#890).
+        let requirement = parse("foo>=\u{1f}1").expect("valid");
+        assert_eq!(requirement.version_or_url.as_deref(), Some(">=1"));
+        let requirement = parse("foo===\u{1c}1.0").expect("valid");
+        assert_eq!(requirement.version_or_url.as_deref(), Some("===1.0"));
+        let requirement = parse("foo @\u{1f}https://h/x.whl").expect("valid");
+        assert_eq!(
+            requirement.version_or_url.as_deref(),
+            Some("https://h/x.whl")
+        );
+        let requirement = parse("\u{1f}foo>=1\u{1d}").expect("valid");
+        assert_eq!(requirement.version_or_url.as_deref(), Some(">=1"));
+        // The whole requirement is stripped like pip's and setuptools'
+        // `str.strip`, so a trailing separator ends `===` too.
+        let requirement = parse("foo===1.0\u{1f}").expect("valid");
+        assert_eq!(requirement.version_or_url.as_deref(), Some("===1.0"));
+        for input in ["foo===1.0\u{1e},>=1", "foo\u{1f}>=1"] {
+            assert_eq!(parse(input), None, "{input:?}");
+        }
+        assert!(parse_version_specifiers("\u{1f}>=3.10\u{1c},\u{1d}<4").is_some());
+        assert_eq!(
+            canonical_version_specifiers(">=3.10,\u{1f}"),
+            None,
+            "an item that strips to nothing is empty"
+        );
     }
 
     mod props {

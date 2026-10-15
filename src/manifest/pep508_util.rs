@@ -1,6 +1,6 @@
 //! PEP 508 parsing helpers.
 
-use super::pep508::{Requirement, looks_like_archive};
+use super::pep508::{Requirement, looks_like_archive, strip_python};
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::warnings::ManifestWarning;
 
@@ -33,7 +33,7 @@ pub(super) fn extract_egg_name(spec: &str) -> Option<String> {
     let fragment = spec.split('#').nth(1)?;
     for part in fragment.split('&') {
         if let Some(egg) = part.strip_prefix("egg=") {
-            let trimmed = egg.trim();
+            let trimmed = strip_python(egg);
             if !trimmed.is_empty() {
                 return Some(normalize_distribution_name(trimmed));
             }
@@ -70,7 +70,7 @@ fn parse_with(
     origin: DependencyOrigin,
     parse: fn(&str) -> Option<Requirement>,
 ) -> Result<DeclaredDependency, ManifestWarning> {
-    let trimmed = raw.trim();
+    let trimmed = strip_python(raw);
     let (name, extras, marker, specifier, opaque) = if let Some(requirement) = parse(trimmed) {
         (
             normalize_distribution_name(&requirement.name),
@@ -145,7 +145,7 @@ fn parse_pip_requirement(trimmed: &str) -> Option<Requirement> {
 /// [`parse_pep508_requirement`] reads it; `None` for opaque or invalid entries.
 #[must_use]
 pub(crate) fn pep508_distribution_name(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
+    let trimmed = strip_python(raw);
     super::pep508::parse_requirement(trimmed)
         .map(|requirement| normalize_distribution_name(&requirement.name))
         .or_else(|| egg_name_fallback(trimmed))
@@ -242,6 +242,32 @@ mod tests {
             );
             assert!(result.is_err(), "raw={raw:?} must be rejected");
         }
+    }
+
+    #[test]
+    fn strips_information_separators_like_str_strip() {
+        // pip and setuptools strip with `str.strip`, which drops U+001C..U+001F
+        // (#890); the opaque path keeps the stripped text.
+        let origin = DependencyOrigin {
+            file: "requirements.txt".to_owned(),
+            line: Some(1),
+            label: "requirements.txt".to_owned(),
+        };
+        let dep = parse_requirement(
+            "\u{1c}git+https://h/r.git#egg=acme\u{1f}",
+            DependencyContext::Runtime,
+            origin,
+        )
+        .expect("valid");
+        assert_eq!(dep.name, "acme");
+        assert_eq!(
+            dep.specifier.as_deref(),
+            Some("git+https://h/r.git#egg=acme")
+        );
+        assert_eq!(
+            pep508_distribution_name("git+https://h/r.git#egg=acme\u{1f}").as_deref(),
+            Some("acme")
+        );
     }
 
     #[test]

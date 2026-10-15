@@ -673,6 +673,56 @@
       "specifiers": [
         ">=1"
       ]
+    },
+    {
+      "input": "foo>=\u001f1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo>=\u001c1",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        ">=1"
+      ]
+    },
+    {
+      "input": "foo===\u001f1.0",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": [
+        "===1.0"
+      ]
+    },
+    {
+      "input": "foo===1.0\u001f,>=1",
+      "valid": false
+    },
+    {
+      "input": "foo\u001f>=1",
+      "valid": false
+    },
+    {
+      "input": "foo>=1\u001f,<2",
+      "valid": false
+    },
+    {
+      "input": "foo;\u001fpython_version>'3'",
+      "valid": false
+    },
+    {
+      "input": "foo @\u001fhttps://h/x.whl",
+      "valid": true,
+      "name": "foo",
+      "extras": [],
+      "specifiers": []
     }
   ]
 }

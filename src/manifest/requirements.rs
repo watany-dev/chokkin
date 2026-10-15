@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
+use super::pep508::{is_python_whitespace, strip_python};
 use super::pep508_util::{
     extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement, requirement_name,
 };
@@ -174,7 +175,7 @@ fn parse_requirements_line(
     line_number: usize,
 ) -> Result<(), ManifestError> {
     let line_no = u32::try_from(line_number + 1).unwrap_or(u32::MAX);
-    let trimmed = strip_comment(line).trim();
+    let trimmed = strip_python(strip_comment(line));
     if trimmed.is_empty() {
         return Ok(());
     }
@@ -321,7 +322,7 @@ fn push_editable_dependency(
 /// Distribution a requirements-file line declares, read the way [`extract_requirements_file`]
 /// reads it; `None` for blank, option, and opaque (nameless) lines.
 pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
-    let trimmed = strip_comment(line).trim();
+    let trimmed = strip_python(strip_comment(line));
     if let Some(editable) = editable_flag_value(trimmed) {
         return extract_egg_name(editable);
     }
@@ -339,7 +340,7 @@ fn strip_comment(line: &str) -> &str {
         if ch == '#' && prev_is_space {
             return &line[..idx];
         }
-        prev_is_space = ch.is_whitespace();
+        prev_is_space = is_python_whitespace(ch);
     }
     line
 }
@@ -505,6 +506,21 @@ mod tests {
     #[test]
     fn strip_comment_removes_whitespace_prefixed_hash() {
         assert_eq!(strip_comment("requests  # runtime").trim(), "requests");
+    }
+
+    #[test]
+    fn information_separators_are_whitespace_like_pip() {
+        // pip's `str.strip` and its comment regex `\s+#` match U+001C..U+001F
+        // too (#890).
+        assert_eq!(strip_comment("requests\u{1f}# runtime"), "requests\u{1f}");
+        assert_eq!(
+            requirements_line_distribution("\u{1c}acme===1.0\u{1f}").as_deref(),
+            Some("acme")
+        );
+        assert_eq!(
+            requirements_line_distribution("git+https://h/r.git#egg=acme\u{1f}").as_deref(),
+            Some("acme")
+        );
     }
 
     #[test]
