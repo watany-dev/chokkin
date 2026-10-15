@@ -100,6 +100,14 @@ pub enum ManifestWarning {
         /// Root-relative path to the skipped file.
         file: String,
     },
+    /// `dynamic` lists `optional-dependencies`, and these extras could not
+    /// be read statically (#905). Empty when no source names any extra.
+    DynamicExtrasUnread {
+        /// Root-relative path to `pyproject.toml`.
+        file: String,
+        /// Extras named but filled from a source chokkin does not read.
+        extras: Vec<String>,
+    },
     /// A PEP 723 script block was ignored; the file stays a plain source.
     InlineScriptInvalid {
         /// Root-relative script path.
@@ -123,6 +131,7 @@ impl ManifestWarning {
             | Self::DependencyGroupIncludeUndefined { file, .. }
             | Self::DependencyGroupIncludeCycle { file, .. }
             | Self::FileUndecodable { file }
+            | Self::DynamicExtrasUnread { file, .. }
             | Self::InlineScriptInvalid { file, .. } => *file = join_rel(base, file),
             Self::MetadataConflict {
                 kept_source,

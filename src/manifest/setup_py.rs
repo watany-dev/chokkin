@@ -31,8 +31,9 @@ pub(super) struct SetupPyExtraction {
     /// `install_requires` could not be fully read (no static `setup()` call,
     /// or a value the evaluator cannot follow).
     pub runtime_unknown: bool,
-    /// How much of `extras_require` could be read.
-    pub extras: ExtrasState,
+    /// How much of `extras_require` could be read; `None` when `setup()`
+    /// passes none, not even through `**kwargs`.
+    pub extras: Option<ExtrasState>,
     /// Root-relative requirements files that `setup.py` reads.
     pub files_read: Vec<String>,
     /// Root-relative requirements file candidates probed but absent.
@@ -50,22 +51,12 @@ pub(super) fn extract_setup_py(
     let rel = rel_to_root(root, path);
     let mut result = SetupPyExtraction::default();
     let Some(contents) = read_text(path)? else {
-        result.runtime_unknown = true;
-        result.extras = ExtrasState::Unknown;
-        result
-            .warnings
-            .push(ManifestWarning::FileUndecodable { file: rel });
-        return Ok(result);
+        return Ok(unreadable(ManifestWarning::FileUndecodable { file: rel }));
     };
 
     let call = parse_module(&contents).and_then(|stmts| evaluate_setup_call(root, &stmts));
     let Some(call) = call else {
-        result.runtime_unknown = true;
-        result.extras = ExtrasState::Unknown;
-        result
-            .warnings
-            .push(ManifestWarning::SetupPyNotStatic { file: rel });
-        return Ok(result);
+        return Ok(unreadable(ManifestWarning::SetupPyNotStatic { file: rel }));
     };
     result
         .files_missing
@@ -91,9 +82,11 @@ pub(super) fn extract_setup_py(
             Some(_) => (&[], true),
             None => (&[], call.unpacked),
         };
-    if extras_hidden {
-        result.extras = ExtrasState::Unknown;
-    }
+    result.extras = if extras_hidden {
+        Some(ExtrasState::Unknown)
+    } else {
+        call.keyword("extras_require").map(|_| ExtrasState::Known)
+    };
     let nothing_read = install_requires
         .as_ref()
         .is_none_or(|items| items.items.is_empty() && !items.complete);
@@ -134,10 +127,20 @@ pub(super) fn extract_setup_py(
     }
     // Extras we cannot name dominate the ones we named but could not read.
     if !lost.is_empty() && !extras_hidden {
-        result.extras = ExtrasState::Partial(lost);
+        result.extras = Some(ExtrasState::Partial(lost));
     }
 
     Ok(result)
+}
+
+/// Neither dependencies nor extras could be read.
+fn unreadable(warning: ManifestWarning) -> SetupPyExtraction {
+    SetupPyExtraction {
+        runtime_unknown: true,
+        extras: Some(ExtrasState::Unknown),
+        warnings: vec![warning],
+        ..SetupPyExtraction::default()
+    }
 }
 
 fn string_keyword(call: &SetupCall, name: &str) -> Option<String> {
@@ -491,9 +494,9 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
             "setup(install_requires=['requests'], extras_require={'test': ['pytest']})\n",
             &[],
         );
-        assert_eq!(result.extras, ExtrasState::Known);
+        assert_eq!(result.extras, Some(ExtrasState::Known));
         let shim = extract("from setuptools import setup\nsetup()\n", &[]);
-        assert_eq!(shim.extras, ExtrasState::Known);
+        assert_eq!(shim.extras, None);
     }
 
     #[test]
@@ -504,7 +507,9 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
         );
         assert_eq!(
             result.extras,
-            ExtrasState::Partial(["doc", "yaml"].map(str::to_owned).into())
+            Some(ExtrasState::Partial(
+                ["doc", "yaml"].map(str::to_owned).into()
+            ))
         );
         assert_eq!(names_in(&result, &extra("test")), vec!["pytest"]);
     }
@@ -528,7 +533,7 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
             let result = extract(script, &[]);
             assert!(result.parsed, "{script}");
             assert_eq!(names_in(&result, &extra("s3")), vec!["boto3"], "{script}");
-            assert_eq!(result.extras, ExtrasState::Unknown, "{script}");
+            assert_eq!(result.extras, Some(ExtrasState::Unknown), "{script}");
             assert!(
                 result.warnings.iter().any(|warning| matches!(
                     warning,
@@ -548,7 +553,7 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
             &[],
         );
         assert!(result.parsed);
-        assert_eq!(result.extras, ExtrasState::Unknown);
+        assert_eq!(result.extras, Some(ExtrasState::Unknown));
         assert!(result.warnings.iter().any(|warning| matches!(
             warning,
             ManifestWarning::SetupPyPartiallyStatic { argument, .. } if argument == "extras_require"
@@ -561,7 +566,7 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
             "kw = load()\nsetup(install_requires=['requests'], **kw)\n",
             &[],
         );
-        assert_eq!(hidden.extras, ExtrasState::Unknown);
+        assert_eq!(hidden.extras, Some(ExtrasState::Unknown));
         assert!(hidden.warnings.iter().any(|warning| matches!(
             warning,
             ManifestWarning::SetupPyPartiallyStatic { argument, .. } if argument == "extras_require"
@@ -571,7 +576,7 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
             "kw = load()\nsetup(extras_require={'test': ['pytest']}, **kw)\n",
             &[],
         );
-        assert_eq!(explicit.extras, ExtrasState::Known);
+        assert_eq!(explicit.extras, Some(ExtrasState::Known));
     }
 
     #[test]
@@ -581,7 +586,7 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
             "setup(extras_require={'test': [\n",
         ] {
             let result = extract(script, &[]);
-            assert_eq!(result.extras, ExtrasState::Unknown, "{script}");
+            assert_eq!(result.extras, Some(ExtrasState::Unknown), "{script}");
         }
     }
 
@@ -732,7 +737,7 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
         );
         assert!(!result.parsed);
         assert!(result.runtime_unknown);
-        assert_eq!(result.extras, ExtrasState::Unknown);
+        assert_eq!(result.extras, Some(ExtrasState::Unknown));
         assert_eq!(result.dependencies, []);
         assert_eq!(
             result.warnings,

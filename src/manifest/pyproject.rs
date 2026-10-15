@@ -11,8 +11,8 @@ use super::error::ManifestError;
 use super::pep508::canonical_version_specifiers;
 use super::pep508_util::parse_pep508_requirement;
 use super::types::{
-    DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ProjectMetadata,
-    UvToolSettings,
+    DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ExtrasState,
+    ProjectMetadata, UvToolSettings,
 };
 use super::util::{DependencyPush, push_dependency, read_to_string};
 use super::uv_tool::extract_uv_tool;
@@ -40,6 +40,10 @@ pub(super) struct PyprojectExtraction {
     pub uv: UvToolSettings,
     /// A `[project]` table is present.
     pub has_project_table: bool,
+    /// `dynamic` lists `optional-dependencies`: how much of them this file
+    /// lets chokkin read. `Unknown` when nothing here fills them, so
+    /// `setup.cfg` or `setup.py` may (#905).
+    pub dynamic_extras: Option<ExtrasState>,
 }
 
 /// Extract manifest data from `pyproject.toml`.
@@ -102,6 +106,14 @@ pub(super) fn extract_pyproject(
         }
 
         extract_uv_dynamic_versioning_hook(&table, &rel, &mut result);
+        if result
+            .metadata
+            .dynamic
+            .iter()
+            .any(|field| field == "optional-dependencies")
+        {
+            result.dynamic_extras = Some(dynamic_extras_state(&table));
+        }
 
         if let Some(scripts) = project.get("scripts").and_then(Value::as_table) {
             push_entry_point_table(
@@ -563,6 +575,46 @@ fn extract_uv_dynamic_versioning_hook(
                 );
             }
         }
+    }
+}
+
+/// What fills `dynamic = ["optional-dependencies"]` in this file. The
+/// uv-dynamic-versioning hook is read, except an extra whose value is not an
+/// array of strings; `[tool.setuptools.dynamic]` names its extras but keeps
+/// them in `file =` lists chokkin does not read. A table of another shape, or
+/// any other backend, leaves them unknown (#905).
+fn dynamic_extras_state(table: &toml::Table) -> ExtrasState {
+    let tool = table.get("tool");
+    let hook = tool
+        .and_then(|tool| tool.get("hatch"))
+        .and_then(|hatch| hatch.get("metadata"))
+        .and_then(|metadata| metadata.get("hooks"))
+        .and_then(|hooks| hooks.get("uv-dynamic-versioning"))
+        .and_then(|hook| hook.get("optional-dependencies"));
+    let setuptools = tool
+        .and_then(|tool| tool.get("setuptools"))
+        .and_then(|setuptools| setuptools.get("dynamic"))
+        .and_then(|dynamic| dynamic.get("optional-dependencies"));
+    let (extras, unread): (_, fn(&Value) -> bool) = match (hook, setuptools) {
+        (Some(hook), _) => (hook, |deps| {
+            deps.as_array()
+                .is_none_or(|deps| !deps.iter().all(Value::is_str))
+        }),
+        (None, Some(setuptools)) => (setuptools, |_| true),
+        (None, None) => return ExtrasState::Unknown,
+    };
+    let Some(extras) = extras.as_table() else {
+        return ExtrasState::Unknown;
+    };
+    let unread: std::collections::BTreeSet<String> = extras
+        .iter()
+        .filter(|(_, deps)| unread(deps))
+        .map(|(extra, _)| extra.clone())
+        .collect();
+    if unread.is_empty() {
+        ExtrasState::Known
+    } else {
+        ExtrasState::Partial(unread)
     }
 }
 

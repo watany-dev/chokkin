@@ -385,6 +385,94 @@ fn setup_py_extras_state_reaches_the_sources() {
     assert_eq!(known.sources.extras, ExtrasState::Known);
 }
 
+/// `dynamic = ["optional-dependencies"]` is Unknown unless a source chokkin
+/// reads fills it, and Partial for the extras a source names but does not
+/// let chokkin read (#905).
+#[test]
+fn dynamic_optional_dependencies_record_the_extras_state() {
+    const DYNAMIC: &str = "[project]\nname = \"acme\"\ndynamic = [\"optional-dependencies\"]\n";
+    let extras_unread = |manifest: &chokkin::internals::LoadedManifest| {
+        manifest
+            .warnings
+            .iter()
+            .filter_map(|warning| match warning {
+                ManifestWarning::DynamicExtrasUnread { file, extras } => {
+                    Some((file.clone(), extras.clone()))
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let unfilled = extract_files(&[("pyproject.toml", DYNAMIC.as_bytes())]);
+    assert_eq!(unfilled.sources.extras, ExtrasState::Unknown);
+    assert_eq!(
+        extras_unread(&unfilled),
+        vec![("pyproject.toml".to_owned(), Vec::new())]
+    );
+
+    let setuptools_files = format!(
+        "{DYNAMIC}[tool.setuptools.dynamic.optional-dependencies]\n\
+         s3 = {{ file = [\"requirements-s3.txt\"] }}\n\
+         gcs = {{ file = [\"requirements-gcs.txt\"] }}\n"
+    );
+    let partial = extract_files(&[("pyproject.toml", setuptools_files.as_bytes())]);
+    assert_eq!(
+        partial.sources.extras,
+        ExtrasState::Partial(["gcs".to_owned(), "s3".to_owned()].into())
+    );
+    assert_eq!(
+        extras_unread(&partial),
+        vec![(
+            "pyproject.toml".to_owned(),
+            vec!["gcs".to_owned(), "s3".to_owned()]
+        )]
+    );
+
+    let hook = format!(
+        "{DYNAMIC}[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]\n\
+         s3 = [\"boto3\"]\nbad = \"boto3\"\n"
+    );
+    let hook = extract_files(&[("pyproject.toml", hook.as_bytes())]);
+    assert_eq!(
+        hook.sources.extras,
+        ExtrasState::Partial(["bad".to_owned()].into())
+    );
+
+    for (name, contents) in [
+        ("setup.cfg", "[options.extras_require]\ns3 = boto3\n"),
+        ("setup.py", "setup(extras_require={'s3': ['boto3']})\n"),
+    ] {
+        let filled = extract_files(&[
+            ("pyproject.toml", DYNAMIC.as_bytes()),
+            (name, contents.as_bytes()),
+        ]);
+        assert_eq!(filled.sources.extras, ExtrasState::Known, "{name}");
+        assert_eq!(extras_unread(&filled), Vec::new(), "{name}");
+    }
+
+    // A setup.py that passes no extras does not fill them.
+    let silent = extract_files(&[
+        ("pyproject.toml", DYNAMIC.as_bytes()),
+        ("setup.py", b"setup(install_requires=['requests'])\n"),
+    ]);
+    assert_eq!(silent.sources.extras, ExtrasState::Unknown);
+
+    // Static extras are Known whatever the backend does with them.
+    let static_extras = extract_files(&[(
+        "pyproject.toml",
+        b"[project]\nname = \"acme\"\n[project.optional-dependencies]\ns3 = [\"boto3\"]\n",
+    )]);
+    assert_eq!(static_extras.sources.extras, ExtrasState::Known);
+}
+
+/// An undecodable `setup.cfg` may declare any extra.
+#[test]
+fn undecodable_setup_cfg_leaves_the_extras_unknown() {
+    let manifest = extract_files(&[("setup.cfg", b"[options.extras_require]\ns3 = b\xf6to3\n")]);
+    assert_eq!(manifest.sources.extras, ExtrasState::Unknown);
+}
+
 /// A `setup.py` that is neither UTF-8 nor declares its coding no longer
 /// aborts extraction; its runtime dependencies count as unknown (#552).
 #[test]

@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
-use super::types::{DeclaredDependency, DependencyContext, ProjectMetadata};
+use super::types::{DeclaredDependency, DependencyContext, ExtrasState, ProjectMetadata};
 use super::util::{DependencyPush, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
@@ -20,6 +20,9 @@ pub(super) struct SetupCfgExtraction {
     pub warnings: Vec<ManifestWarning>,
     /// The file could not be decoded and was left out.
     pub skipped: bool,
+    /// How much of `[options.extras_require]` could be read; `None` when
+    /// the file has no such section.
+    pub extras: Option<ExtrasState>,
 }
 
 /// Extract manifest data from `setup.cfg`.
@@ -31,6 +34,7 @@ pub(super) fn extract_setup_cfg(
     let mut result = SetupCfgExtraction::default();
     let Some(contents) = read_text(path)? else {
         result.skipped = true;
+        result.extras = Some(ExtrasState::Unknown);
         result
             .warnings
             .push(ManifestWarning::FileUndecodable { file: rel });
@@ -60,6 +64,7 @@ pub(super) fn extract_setup_cfg(
     }
 
     if let Some(extras) = sections.get("options.extras_require") {
+        result.extras = Some(ExtrasState::Known);
         for (extra, requires) in extras {
             if extra.is_empty() {
                 continue;

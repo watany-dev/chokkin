@@ -301,6 +301,21 @@ pub enum ExtrasState {
     Unknown,
 }
 
+impl ExtrasState {
+    /// The state of extras two sources declare together: an unknown set
+    /// dominates, and the extras either source only partly read stay partial.
+    pub(crate) fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
+            (Self::Partial(mut left), Self::Partial(right)) => {
+                left.extend(right);
+                Self::Partial(left)
+            },
+            (state, Self::Known) | (Self::Known, state) => state,
+        }
+    }
+}
+
 /// Fully extracted manifest for a project root.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

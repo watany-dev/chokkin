@@ -179,6 +179,7 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::DependencyGroupIncludeUndefined { file, .. }
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
         | ManifestWarning::FileUndecodable { file }
+        | ManifestWarning::DynamicExtrasUnread { file, .. }
         | ManifestWarning::InlineScriptInvalid { file, .. } => (Some(file), None),
         // The sections are named, not the file; a conflict spans two files;
         // a missing constraints file does not exist.
@@ -290,6 +291,8 @@ fn write_member_manifest_warning(
     }
 }
 
+// One arm per variant; splitting the match would only scatter the texts.
+#[allow(clippy::too_many_lines)]
 fn write_manifest_warning(
     formatter: &mut fmt::Formatter<'_>,
     warning: &ManifestWarning,
@@ -355,6 +358,9 @@ fn write_manifest_warning(
             formatter,
             "manifest: skipped `{file}`: not UTF-8 and no supported PEP 263 coding declaration"
         ),
+        ManifestWarning::DynamicExtrasUnread { file, extras } => {
+            write_dynamic_extras_unread(formatter, file, extras)
+        },
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
             "manifest: ignored PEP 723 script block in `{file}`: {reason}"
@@ -373,6 +379,25 @@ fn write_manifest_warning(
             groups.join(" -> ")
         ),
     }
+}
+
+fn write_dynamic_extras_unread(
+    formatter: &mut fmt::Formatter<'_>,
+    file: &str,
+    extras: &[String],
+) -> fmt::Result {
+    if extras.is_empty() {
+        return write!(
+            formatter,
+            "manifest: `{file}` lists `optional-dependencies` in `dynamic`, but no source chokkin reads fills them"
+        );
+    }
+    let names: Vec<String> = extras.iter().map(|extra| format!("`{extra}`")).collect();
+    write!(
+        formatter,
+        "manifest: extras {} in `{file}` are filled at build time and could not be read statically",
+        names.join(", ")
+    )
 }
 
 /// Each warning once, in order, told apart by its text. Two stages can
