@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::Confidence;
+use crate::config::{Confidence, TargetVersion};
 use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
 use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning};
@@ -14,7 +14,7 @@ use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
-use crate::resolver::{ResolveWarning, is_first_party_import};
+use crate::resolver::{ResolveWarning, StdlibRange, import_root, is_first_party_import};
 use crate::rules::RuleContext;
 use crate::rules::deps::file_context;
 use crate::rules::types::{IssueCandidate, IssueSubject, RuleId, Severity, import_site};
@@ -80,6 +80,10 @@ pub enum GapKind {
     /// a module that is not a project file (#914): the apps, middleware and
     /// URL configuration they name are unknown.
     UnreadDjangoSettings,
+    /// The root `requires-python` could not be read, so the assumed py311
+    /// decided that a module only other minors ship is not stdlib (#924):
+    /// the import's findings may be wrong.
+    AssumedTargetVersion,
 }
 
 /// How a gap changes a finding in its scope.
@@ -128,6 +132,11 @@ impl GapKind {
                 Self::RuntimeDependenciesUnknown,
                 RuleId::Chk003 | RuleId::Chk004,
                 IssueSubject::Import { .. },
+            )
+            | (
+                Self::AssumedTargetVersion,
+                RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
+                IssueSubject::Import { .. },
             ) => Some(Lowering::Hint),
             _ => None,
         }
@@ -150,22 +159,33 @@ impl GapKind {
             },
             Self::UnreadCommandTarget => "a command runs Python code no entry reaches",
             Self::UnreadDjangoSettings => "the Django settings could not be found or read",
+            Self::AssumedTargetVersion => {
+                "`requires-python` could not be read, so py311 decided the module is not stdlib"
+            },
         }
     }
 }
 
 impl Gap {
     /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
-    /// member's findings, a script's import that script's alone.
+    /// member's findings, a script's import that script's alone, and an
+    /// assumed stdlib status the imports of that root in that file.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
-        let in_script = match (self.kind, &candidate.subject) {
+        let in_site = match (self.kind, &candidate.subject) {
             (GapKind::UnresolvedScriptImport, IssueSubject::ScriptDistribution { script, .. }) => {
                 *script == self.file
             },
+            (GapKind::AssumedTargetVersion, IssueSubject::Import { module, file, .. }) => {
+                *file == self.file
+                    && self
+                        .site
+                        .as_ref()
+                        .is_some_and(|(root, _)| root == import_root(module))
+            },
             _ => true,
         };
-        in_member && in_script
+        in_member && in_site
     }
 
     /// What `--explain` names: the import or target and its line, or else the file.
@@ -207,6 +227,7 @@ pub fn collect_gaps(
     ));
     gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(manifest_gap(manifest));
+    gaps.extend(assumed_target_gaps(context.parse, manifest, scripts));
     gaps.extend(members.iter().filter_map(|member| {
         let mut gap = manifest_gap(member.manifest)?;
         gap.file = join_rel(member.path, &gap.file);
@@ -385,6 +406,53 @@ fn settings_gap(unread: &UnreadSettings) -> Gap {
         member: None,
         site: unread.site.clone(),
     }
+}
+
+/// Each file's imports of a root that only minors py311 does not reach ship
+/// as stdlib, when the root `requires-python` could not be read (#924): one
+/// gap per root at its first line. A PEP 723 script with its own target, and
+/// a member, whose `requires-python` the resolver does not use, assume nothing.
+fn assumed_target_gaps(
+    parse: &ParseSummary,
+    manifest: &LoadedManifest,
+    scripts: &[InlineScript],
+) -> Vec<Gap> {
+    let unreadable = manifest
+        .warnings
+        .iter()
+        .any(|warning| matches!(warning, ManifestWarning::RequiresPythonUnreadable { .. }));
+    if !unreadable {
+        return Vec::new();
+    }
+    let assumed = StdlibRange::new(
+        &TargetVersion::default_py311(),
+        manifest.metadata.requires_python.as_deref(),
+    );
+    let mut first: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    for module in &parse.modules {
+        let own_target = scripts
+            .iter()
+            .any(|script| script.path == module.path && script.target_version.is_some());
+        if own_target {
+            continue;
+        }
+        for import in &module.imports {
+            let root = import_root(&import.module);
+            if import.relative_level == 0 && !root.is_empty() && assumed.ships_only_outside(root) {
+                let line = first.entry((&module.path, root)).or_insert(import.line);
+                *line = (*line).min(import.line);
+            }
+        }
+    }
+    first
+        .into_iter()
+        .map(|((file, root), line)| Gap {
+            file: file.to_owned(),
+            kind: GapKind::AssumedTargetVersion,
+            member: None,
+            site: Some((root.to_owned(), Some(line))),
+        })
+        .collect()
 }
 
 /// The manifest's warning names the file (`pyproject.toml` for
@@ -734,6 +802,41 @@ mod tests {
             found,
             [
                 (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+    }
+
+    /// Only the assumed py311 decided that `binhex` is not stdlib, so that
+    /// import in that file is a hint; other imports and files keep their level.
+    #[test]
+    fn assumed_target_version_hints_only_the_version_dependent_import() {
+        let mut elsewhere = candidate(RuleId::Chk010, import("binhex"));
+        if let IssueSubject::Import { file, .. } = &mut elsewhere.subject {
+            "acme/cli.py".clone_into(file);
+        }
+        let found = lowered(
+            &[unresolved(
+                "acme/main.py",
+                GapKind::AssumedTargetVersion,
+                "binhex",
+                1,
+            )],
+            vec![
+                candidate(RuleId::Chk010, import("binhex")),
+                candidate(RuleId::Chk003, import("binhex.sub")),
+                candidate(RuleId::Chk010, import("yaml")),
+                elsewhere,
+                candidate(RuleId::Chk002, distribution("binhex")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
             ]

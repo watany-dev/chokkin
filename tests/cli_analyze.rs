@@ -2783,6 +2783,91 @@ fn binary_skipped_entry_lowers_unused_files_and_distributions() {
     );
 }
 
+/// An unreadable `requires-python` leaves py311 to decide which modules are
+/// stdlib, so an import of one that only other versions ship becomes a hint;
+/// other imports keep their level, and an explicit `target_version` assumes
+/// nothing (#924).
+#[test]
+fn binary_unreadable_requires_python_turns_version_dependent_imports_into_hints() {
+    let levels = |root: &std::path::Path| -> Vec<(String, String, String, String)> {
+        json_issues(root, &["--no-cache", "--confidence", "maybe"])
+            .iter()
+            .map(|issue| {
+                let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+                (
+                    field("code"),
+                    field("target"),
+                    field("severity"),
+                    field("confidence"),
+                )
+            })
+            .collect()
+    };
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\nrequires-python = \"3.10+\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\n";
+    let files = |pyproject: &'static str| {
+        write_project(&[
+            ("pyproject.toml", pyproject),
+            ("acme/__init__.py", ""),
+            // `binhex` is stdlib in 3.10 only; `yaml` in none.
+            ("acme/main.py", "import binhex\nimport yaml\n"),
+            // A script with its own target assumes nothing.
+            (
+                "acme/tool.py",
+                "# /// script\n# requires-python = \">=3.11\"\n# dependencies = []\n# ///\nimport binhex\n",
+            ),
+        ])
+    };
+    let project = files(pyproject);
+    assert_eq!(
+        levels(project.path()),
+        [
+            level("CHK003", "acme/main.py:yaml", "error", "certain"),
+            level("CHK010", "acme/main.py:binhex", "info", "maybe"),
+            level("CHK010", "acme/tool.py:binhex", "warning", "likely"),
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--confidence",
+            "maybe",
+            "--explain",
+            "CHK010:binhex",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("manifest: could not read `requires-python` \"3.10+\" in `pyproject.toml`; assuming target version py311; imports of modules only other versions ship as stdlib are reported as hints"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`requires-python` could not be read, so py311 decided the module is not stdlib: `binhex` in `acme/main.py:1`"),
+        "{stderr}"
+    );
+
+    let project = files(
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\nrequires-python = \"3.10+\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\ntarget_version = \"py311\"\n",
+    );
+    assert_eq!(
+        levels(project.path()),
+        [
+            level("CHK003", "acme/main.py:yaml", "error", "certain"),
+            level("CHK010", "acme/main.py:binhex", "warning", "likely"),
+            level("CHK010", "acme/tool.py:binhex", "warning", "likely"),
+        ]
+    );
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]
@@ -4616,7 +4701,8 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
         manifest_lines(project.path()),
         [
             "manifest: could not read `requires-python` \">=3.12,bogus\" in `pyproject.toml`; \
-             assuming target version py311",
+             assuming target version py311; imports of modules only other versions ship as \
+             stdlib are reported as hints",
             "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
              `scripts/tool.py`; using the project's target version",
         ]

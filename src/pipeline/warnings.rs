@@ -333,6 +333,12 @@ fn write_member_manifest_warning(
             formatter,
             "manifest: runtime dependencies in `{file}` could not be read statically; missing-dependency findings in `{member}` are reported as low-confidence info"
         ),
+        // The resolver reads the root's `requires-python` alone, so a
+        // member's assumes nothing that a finding depends on.
+        ManifestWarning::RequiresPythonUnreadable { file, value } => write!(
+            formatter,
+            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311"
+        ),
         ManifestWarning::PoetryDetected
         | ManifestWarning::PdmDetected
         | ManifestWarning::HatchDetected
@@ -417,7 +423,7 @@ fn write_manifest_warning(
         },
         ManifestWarning::RequiresPythonUnreadable { file, value } => write!(
             formatter,
-            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311"
+            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311; imports of modules only other versions ship as stdlib are reported as hints"
         ),
         ManifestWarning::InlineScriptRequiresPythonUnreadable { file, value } => write!(
             formatter,
