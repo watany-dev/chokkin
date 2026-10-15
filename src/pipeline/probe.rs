@@ -23,8 +23,8 @@ use crate::plugins::{
 };
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
-    DiscoveredSources, FileContext, FileKind, MemberLayout, SourcesCache, SourcesWarning,
-    apply_member_context, discover_sources_cached,
+    DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, MemberLayout,
+    SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
 };
 
 use super::error::ProbeError;
@@ -45,6 +45,11 @@ pub struct ProbeReport {
     pub manifest: LoadedManifest,
     /// Discovered source files and layout.
     pub sources: DiscoveredSources,
+    /// Under `--production`, the test files the root walk left out of
+    /// `sources`: a library's tests are still the evidence that a public
+    /// name is called from outside (#588). Kept from the one walk rather
+    /// than walking again (#844).
+    pub production_tests: Vec<DiscoveredFile>,
     /// Resolved workspace members below the project root.
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
     /// Member-scoped manifest and source inventories.
@@ -88,6 +93,23 @@ pub fn probe_project(
     probe_project_with_cache(start, project_root_override, overrides, None)
 }
 
+/// Drop the files inside a nested project the root does not analyze.
+///
+/// A PEP 723 script declares its own dependencies, so it stays checked
+/// inside a skipped project (#714).
+fn drop_nested_projects(root: &Path, sources: &mut DiscoveredSources, nested: &BTreeSet<String>) {
+    sources.files.retain(|file| {
+        !nested.iter().any(|dir| {
+            file.path
+                .strip_prefix(dir.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        }) || (file.kind == FileKind::Python
+            && !discover_inline_scripts(root, [file.path.as_str()])
+                .0
+                .is_empty())
+    });
+}
+
 /// Run pipeline steps 1–4 with optional manifest cache support.
 ///
 /// # Errors
@@ -110,8 +132,9 @@ pub(super) fn probe_project_with_cache(
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
 
-    let (mut sources, mut workspace_inputs) =
+    let (discovery, mut workspace_inputs) =
         discover_root_and_members(&root, &loaded, &manifest, overrides, cache)?;
+    let mut sources = discovery.sources;
     let nested = if overrides.no_auto_workspace == Some(true) {
         BTreeSet::new()
     } else {
@@ -121,18 +144,7 @@ pub(super) fn probe_project_with_cache(
             &loaded.workspace_members,
         )
     };
-    // A PEP 723 script declares its own dependencies, so it stays checked
-    // inside a skipped project (#714).
-    sources.files.retain(|file| {
-        !nested.iter().any(|dir| {
-            file.path
-                .strip_prefix(dir.as_str())
-                .is_some_and(|rest| rest.starts_with('/'))
-        }) || (file.kind == FileKind::Python
-            && !discover_inline_scripts(&root.path, [file.path.as_str()])
-                .0
-                .is_empty())
-    });
+    drop_nested_projects(&root.path, &mut sources, &nested);
     let member_count = loaded.workspace_members.len();
     if loaded.effective.production {
         drop_dev_only_members(
@@ -178,6 +190,7 @@ pub(super) fn probe_project_with_cache(
         effective_config: loaded.effective,
         manifest,
         sources,
+        production_tests: discovery.held_tests,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
         auto_workspace: loaded.auto_workspace,
@@ -375,7 +388,7 @@ fn discover_root_and_members(
     manifest: &LoadedManifest,
     overrides: &RuntimeOverrides,
     cache: Option<&CacheOptions>,
-) -> Result<(DiscoveredSources, Vec<WorkspaceMemberInputs>), ProbeError> {
+) -> Result<(Discovery, Vec<WorkspaceMemberInputs>), ProbeError> {
     let sources_cache = SourcesCache::default();
     // The manifest cache lives under each member root; an undeclared monorepo
     // would gain hundreds of untracked `.chokkin/` directories.
@@ -462,7 +475,7 @@ fn member_inputs(
     let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
-    let sources = discover_sources_cached(&member_root, &loaded, &manifest, sources_cache)?;
+    let sources = discover_sources_cached(&member_root, &loaded, &manifest, sources_cache)?.sources;
     Ok(Some(WorkspaceMemberInputs {
         member: member.clone(),
         manifest,
@@ -712,6 +725,40 @@ mod tests {
         let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
         assert_eq!(report.manifest.dependencies.len(), 0);
         assert_eq!(report.sources.python_files().count(), 0);
+    }
+
+    /// `--production` keeps the tests the root walk dropped, so the analysis
+    /// reads them without walking the tree again (#844).
+    #[test]
+    fn production_probe_keeps_the_dropped_tests() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+        for file in ["src/acme/__init__.py", "tests/test_acme.py", "docs/conf.py"] {
+            let path = temp.path().join(file);
+            fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            fs::write(path, "").expect("write");
+        }
+        let overrides = RuntimeOverrides {
+            production: Some(true),
+            ..RuntimeOverrides::default()
+        };
+
+        let report = probe_project(temp.path(), None, &overrides).expect("probe");
+        let paths = |files: &[DiscoveredFile]| {
+            files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(&report.sources.files), ["src/acme/__init__.py"]);
+        assert_eq!(paths(&report.production_tests), ["tests/test_acme.py"]);
+
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        assert_eq!(report.production_tests, []);
     }
 
     #[test]

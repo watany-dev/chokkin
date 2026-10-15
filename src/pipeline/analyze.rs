@@ -29,7 +29,7 @@ use crate::rules::{
     emit_issues,
 };
 use crate::sources::{
-    DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning, discover_sources,
+    DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning,
 };
 
 use super::error::AnalyzeError;
@@ -350,9 +350,7 @@ fn run_analysis_core(
     let production_tests = if production
         && (entry.mode == ProjectMode::Library || !entry.library_members.is_empty())
     {
-        let (tests, walk_warnings) = parse_production_tests(probe, &loaded, &target)?;
-        warnings.extend(production_test_warnings(walk_warnings));
-        Some(tests)
+        Some(parse_production_tests(probe, &target)?)
     } else {
         None
     };
@@ -564,38 +562,17 @@ fn shipped_surface(input: &WorkspaceMemberInputs) -> PublicSurface {
 
 /// `--production` drops tests from discovery, but a library's tests are still
 /// the evidence that a public module's name is called from outside (#588).
-/// What the walk for them could not read comes back with them (#899).
+/// The root walk kept them aside, and what it could not read is already among
+/// the probe's warnings (#899, #844).
 fn parse_production_tests(
     probe: &ProbeReport,
-    loaded: &crate::config::LoadedConfig,
     target: &crate::config::TargetVersion,
-) -> Result<(Vec<ParsedModule>, Vec<SourcesWarning>), AnalyzeError> {
-    let mut config = loaded.clone();
-    config.effective.production = false;
-    let discovered = discover_sources(&probe.root, &config, &probe.manifest)
-        .map_err(super::error::ProbeError::from)?;
+) -> Result<Vec<ParsedModule>, AnalyzeError> {
     let tests = DiscoveredSources {
-        files: discovered
-            .files
-            .into_iter()
-            .filter(|file| file.context == FileContext::Test)
-            .collect(),
+        files: probe.production_tests.clone(),
         ..probe.sources.clone()
     };
-    let modules = parse_project_sources_with_cache(&probe.root, &tests, target, None)?.modules;
-    Ok((modules, discovered.warnings))
-}
-
-/// The warnings of the `--production` tests walk (#899). The two walks prune
-/// the same directories today, so the rest repeats the root walk's warnings
-/// and the reporters keep each text once. Its `LargeProject` is left out: it
-/// counts a different file set, so it would be a second, conflicting count.
-fn production_test_warnings(tests: Vec<SourcesWarning>) -> Vec<ProbeWarning> {
-    tests
-        .into_iter()
-        .filter(|warning| !matches!(warning, SourcesWarning::LargeProject { .. }))
-        .map(ProbeWarning::Sources)
-        .collect()
+    Ok(parse_project_sources_with_cache(&probe.root, &tests, target, None)?.modules)
 }
 
 fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
@@ -665,25 +642,6 @@ mod tests {
     use crate::rules::IssueSubject;
     use crate::rules::RuleId;
     use crate::rules::Severity;
-
-    /// The tests walk under `--production` reports what it could not read,
-    /// but never its own file count (#899).
-    #[test]
-    fn production_test_warnings_leave_out_the_file_count() {
-        let unreadable = SourcesWarning::PathUnreadable {
-            path: "/repo/tests/fixtures".to_owned(),
-            reason: "denied".to_owned(),
-        };
-        let tests = vec![
-            unreadable.clone(),
-            SourcesWarning::LargeProject { file_count: 12_000 },
-        ];
-
-        assert_eq!(
-            production_test_warnings(tests),
-            [ProbeWarning::Sources(unreadable)]
-        );
-    }
 
     /// A syntax error names the skip even after an earlier warning; a
     /// warning alone is the notebook's reason, and no diagnostic means the
