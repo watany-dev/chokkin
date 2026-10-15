@@ -2203,6 +2203,132 @@ fn binary_syntax_error_source_is_skipped_with_a_diagnostic() {
     );
 }
 
+/// `(code, target, severity, confidence)` of each issue in `root`.
+fn issue_levels(root: &std::path::Path) -> Vec<(String, String, String, String)> {
+    json_issues(root, &["--no-cache"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            (
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect()
+}
+
+/// An import no source resolves may come from any declared distribution, so
+/// those reported unused fall to likely and `--fix` keeps them; CHK010 is
+/// unchanged, and an import that never fails lowers nothing (#911).
+#[test]
+fn binary_unresolved_import_lowers_unused_distributions() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"acme-widgets-sdk\"]\n\n[project.scripts]\nacme = \"acme.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "import zz_widgets_core\n\ndef main():\n    zz_widgets_core.run()\n",
+        ),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK002", "acme-widgets-sdk", "error", "likely"),
+            level(
+                "CHK010",
+                "acme/main.py:zz_widgets_core",
+                "warning",
+                "likely"
+            ),
+        ]
+    );
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:acme-widgets-sdk"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "a reachable import could not be resolved to a distribution: `zz_widgets_core` in `acme/main.py:1`"
+        ),
+        "{stderr}"
+    );
+
+    let status = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--fix"])
+        .arg(project.path())
+        .status()
+        .expect("run chokkin --fix");
+    assert!(status.code().is_some(), "{status:?}");
+    assert_eq!(
+        fs::read_to_string(project.path().join("pyproject.toml")).expect("read pyproject"),
+        pyproject
+    );
+
+    // An optional import falls back when missing, so it names no dependency.
+    let optional = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "try:\n    import zz_widgets_core\nexcept ImportError:\n    pass\n\ndef main():\n    pass\n",
+        ),
+    ]);
+    assert_eq!(
+        issue_levels(optional.path()),
+        [
+            level("CHK002", "acme-widgets-sdk", "error", "certain"),
+            level("CHK010", "acme/main.py:zz_widgets_core", "info", "likely"),
+        ]
+    );
+}
+
+/// A PEP 723 script installs its own block, so an import it cannot resolve
+/// lowers that block's unused entries and leaves the project's alone (#911).
+#[test]
+fn binary_unresolved_script_import_lowers_only_its_block() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"acme.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/main.py", "def main():\n    pass\n"),
+        (
+            "scripts/report.py",
+            "# /// script\n# dependencies = [\"rich\"]\n# ///\nimport zz_render_core\n",
+        ),
+    ]);
+    let found: Vec<_> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK002")
+        .map(|(_, target, _, confidence)| (target, confidence))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("requests".to_owned(), "certain".to_owned()),
+            (
+                "script:scripts/report.py:rich".to_owned(),
+                "likely".to_owned()
+            ),
+        ]
+    );
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]

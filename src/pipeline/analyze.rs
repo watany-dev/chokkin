@@ -374,7 +374,7 @@ fn run_analysis_core(
             manifest: &input.manifest,
         })
         .collect();
-    let gaps = collect_gaps(&parse, &graph, &reachability, &probe.manifest, &members);
+    let gaps = collect_gaps(&context, &probe.manifest, &members, &probe.scripts);
     warnings.extend(opaque_import_warning(&gaps));
     let issues = emit_issues(
         &reachability,

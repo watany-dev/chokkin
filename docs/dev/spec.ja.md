@@ -854,14 +854,18 @@ module top-level（関数の外）で `warnings.warn` を呼び、第2位置引�
 
 confidenceとseverityは独立した2軸として扱う。severityはissue種別の重み(error / warning / info)、confidenceは解析の確からしさ(certain / likely / maybe)。表示filterは `confidence >= 設定値`、exit code 1の対象はdefaultで `severity >= error` かつ `confidence >= likely` にする。`--strict` ではwarning以上かつmaybe以上まで広げる。
 
-読めなかった入力による降格は 1 か所 (`src/rules/gaps.rs`、ADR 0005 の降格段) にまとめる。gap は「どの file の何が読めなかったか」を表す値 (`Gap { file, kind, member }`) で、pipeline が parse・reachability・manifest から集め (`collect_gaps`)、emit が ignore・severity・confidence filter の前に finding へ当てる。gap の種類ごとに、どの finding を下げるかを 1 つの表で決める。
+読めなかった入力による降格は 1 か所 (`src/rules/gaps.rs`、ADR 0005 の降格段) にまとめる。gap は「どの file の何が読めなかったか」を表す値 (`Gap { file, kind, member, import }`) で、pipeline が parse・reachability・manifest から集め (`collect_gaps`)、emit が ignore・severity・confidence filter の前に finding へ当てる。gap の種類ごとに、どの finding を下げるかを 1 つの表で決める。
 
 ```text
 到達可能な file を skip した (UnreadModule)            -> CHK001 と distribution の CHK002 を likely 以下に
 到達可能な notebook の一部の cell を読めなかった (UnreadNotebookCells) -> CHK001 と distribution の CHK002 を likely 以下に
 到達可能な file に opaque dynamic import (OpaqueDynamicImport) -> CHK001 を likely 以下に
 runtime 依存が読めない (RuntimeDependenciesUnknown)        -> import の CHK003 / CHK004 を info / maybe に
+到達可能な file の import を distribution に解決できない (UnresolvedImport) -> distribution の CHK002 を likely 以下に
+PEP 723 script の import を distribution に解決できない (UnresolvedScriptImport) -> その script の CHK002 を likely 以下に
 ```
+
+解決できない import の gap は、CHK010 が warning で出す site と同じ条件で集める (#911)。到達可能な file にあり、`TYPE_CHECKING` の下でも optional import でもなく、file context が docs / dev でなく、first-party でもない import root が、どの distribution にも解決できないとき 1 件にする。import map で解決できない module は、宣言済みのどれかの distribution が提供しているかもしれない。その distribution の CHK002 (unused) は「使っていない」と言い切れないので certain から外す。どの distribution かは分からないので、root manifest の CHK002 をすべて下げる (CHK002 は root manifest だけで判定するため member では絞らない)。PEP 723 script の import は、script の block が環境を決めるので、その script の block の CHK002 だけを下げ、file context を問わず数える。script が import する同じ project の helper module の解決できない import は project 側の gap になり、script の block は下げない。`import` は `--explain` が file の代わりに出す module と行で (`` `zz_widgets_core` in `acme/main.py:1` ``)、同じ file の同じ module は最初の行の 1 件にまとめる。CHK010 自体は変えず、この gap を利用者に届ける warning として使う。
 
 `member` は gap が下げる finding を 1 つの workspace member に絞る。root manifest と module の gap は `None` で、表の範囲の finding をすべて下げる。member manifest の `RuntimeDependenciesUnknown` は、その member の id を持ち、`workspace_member` がその member の finding だけを下げる (#910)。member の宣言が読めなくても、宣言できるのはその member の import だけで、root や他の member の宣言の欠落は変わらないため。root の gap は member の finding も下げる。member の import は root の宣言でも満たされうるので、root の宣言が読めなければ member の欠落も確かではない。`--explain` が数えるのは、その finding に届く gap だけにする。
 
