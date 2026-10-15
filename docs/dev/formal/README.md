@@ -21,6 +21,7 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 |---|---|---|
 | `exit_status_z3.py` E1 / E2 | kani (`compute_exit_status`、issue 2 件の任意の kept 部分集合・3 通りの `no_exit_code`) | `src/rules/emit.rs` `mod verification` |
 | `deps_rules_z3.py` の `matches_usage` 表 (S1/S2/W1 の前提) | kani (`bucket_matches_usage` の全組合せ、`declaration_matches_usage` の自 group + include 元 group) | `src/rules/deps/context.rs` `mod verification` |
+| §10 CHK005 の confidence 表 (#860) | kani (同じ distribution の import 2 件の全組合せで `ImportSignals::weigh` / `Weight::absorb` / `settle` を §10 の表から書いた参照モデルと比べる、集約が順序に依らない、origin が finding と同じ強さ、Certain ⇔ certain な file のトップレベル import が opt-in でも host-loaded でもない) | `src/rules/deps/misplaced.rs` `mod verification` |
 | `relative_import_model.py` P1 / P2 | proptest (CPython `_resolve_name` を参照モデルとする差分テスト、src / flat layout) | `src/parser/relative.rs` `mod props` |
 
 Z3 / 全数探索モデルは workspace member や baseline の組合せなど kani では重い性質のために残す。

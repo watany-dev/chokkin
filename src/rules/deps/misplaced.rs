@@ -46,7 +46,7 @@ pub(super) fn detect_misplaced_dependencies(
     let eager = file_paths(graph, &reachability.eager);
     let exposed = file_paths(graph, &reachability.exposed);
     let certain = file_paths(graph, &reachability.certain);
-    let mut candidates: Vec<(IssueCandidate, ImportStrength, bool)> = Vec::new();
+    let mut candidates: Vec<(IssueCandidate, Weight)> = Vec::new();
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
 
     for import in &resolution.imports {
@@ -100,60 +100,35 @@ pub(super) fn detect_misplaced_dependencies(
             continue;
         }
 
-        let mut strength = import
-            .statement_line()
-            .and_then(|line| strengths.get(&(import.file.clone(), line)))
-            .copied()
-            .unwrap_or(ImportStrength::TopLevel);
-        // The package copes without it somewhere, so its function-local
-        // imports are likely the same optional feature (#808). A platform
-        // guard says it is required on that platform instead.
-        let mut optional_elsewhere =
-            strength == ImportStrength::Optional && (import.optional || !import.platform_guarded);
-        // A file loaded only from inside functions (or never, past
-        // `TYPE_CHECKING`) runs its top-level imports no earlier than a
-        // function-local import would (#610).
-        if !eager.contains(import.file.as_str()) {
-            strength = strength.min(ImportStrength::Deferred);
-        } else if !exposed.contains(import.file.as_str()) {
-            // Likewise a file loaded only past an optional import may be
-            // missing at runtime without breaking the package (#614).
-            strength = ImportStrength::Optional;
-        } else if !certain.contains(import.file.as_str()) {
-            // A library's public module nothing in the package loads needs
-            // it only when a caller imports that module (#802).
-            strength = strength.min(ImportStrength::Exposed);
+        let member = sources
+            .layout
+            .member_for(&import.file)
+            .map(|(member, _)| member.path.as_str());
+        let weight = ImportSignals {
+            site: import
+                .statement_line()
+                .and_then(|line| strengths.get(&(import.file.clone(), line)))
+                .copied()
+                .unwrap_or(ImportStrength::TopLevel),
+            platform_guard_only: import.platform_guarded && !import.optional,
+            eager: eager.contains(import.file.as_str()),
+            exposed: exposed.contains(import.file.as_str()),
+            certain: certain.contains(import.file.as_str()),
+            opt_in: is_opt_in_import(&import.file, &import.import_root, &sources.layout),
+            test_support: is_test_support(&import.file, &sources.layout),
+            predicate: predicates.contains(&(member, import.import_root.as_str())),
+            host_loaded: host_loaded.contains(&(import.file.as_str(), distribution.as_str())),
         }
-        if is_opt_in_import(&import.file, &import.import_root, &sources.layout) {
-            strength = strength.min(ImportStrength::OptIn);
-        }
-        // Test support the package loads itself is runtime code all the same.
-        if strength < ImportStrength::TopLevel && is_test_support(&import.file, &sources.layout) {
-            strength = strength.min(ImportStrength::TestSupport);
-        }
-        if strength == ImportStrength::Deferred {
-            let member = sources
-                .layout
-                .member_for(&import.file)
-                .map(|(member, _)| member.path.as_str());
-            optional_elsewhere |= predicates.contains(&(member, import.import_root.as_str()));
-        }
-        if host_loaded.contains(&(import.file.as_str(), distribution.as_str())) {
-            strength = ImportStrength::HostLoaded;
-        }
+        .weigh();
         let report_key = (
             workspace_member.unwrap_or_default().to_owned(),
             distribution.clone(),
         );
-        // Every import of the distribution counts: one top-level import is
-        // enough for Certain, whichever import came first (#583).
         if let Some(&index) = reported.get(&report_key) {
-            if let Some((candidate, current, optional)) = candidates.get_mut(index) {
-                *optional |= optional_elsewhere;
-                if strength > *current {
-                    *current = strength;
-                    candidate.origins = vec![import_origin(import)];
-                }
+            if let Some((candidate, current)) = candidates.get_mut(index)
+                && current.absorb(weight)
+            {
+                candidate.origins = vec![import_origin(import)];
             }
             continue;
         }
@@ -188,20 +163,13 @@ pub(super) fn detect_misplaced_dependencies(
                         .collect(),
                 },
             },
-            strength,
-            optional_elsewhere,
+            weight,
         ));
     }
 
     candidates
         .into_iter()
-        .map(|(candidate, strength, optional_elsewhere)| {
-            if strength == ImportStrength::Deferred && optional_elsewhere {
-                ImportStrength::DeferredOptional.apply(candidate)
-            } else {
-                strength.apply(candidate)
-            }
-        })
+        .map(|(candidate, weight)| weight.settle().apply(candidate))
         .collect()
 }
 
@@ -235,27 +203,36 @@ enum ImportStrength {
 }
 
 impl ImportStrength {
-    fn apply(self, mut candidate: IssueCandidate) -> IssueCandidate {
-        let detail = match self {
-            Self::TopLevel => return candidate,
+    /// Severity and confidence of a finding this strong (§10). Only
+    /// `TopLevel` is Certain, so only it reaches `--fix`'s `MoveToRuntime`.
+    fn verdict(self) -> (Severity, Confidence) {
+        match self {
+            Self::TopLevel => (Severity::Warning, Confidence::Certain),
+            Self::Deferred | Self::Exposed => (Severity::Warning, Confidence::Likely),
+            Self::HostLoaded
+            | Self::OptIn
+            | Self::TestSupport
+            | Self::Optional
+            | Self::DeferredOptional => (Severity::Info, Confidence::Likely),
+        }
+    }
+
+    fn detail(self) -> Option<&'static str> {
+        Some(match self {
+            Self::TopLevel => return None,
             Self::HostLoaded => {
-                candidate.severity = Severity::Info;
                 "imported only by modules it loads itself: a pytest plugin or an IPython extension"
             },
             Self::OptIn => {
-                candidate.severity = Severity::Info;
                 "imported only by example DAGs or by a subpackage named after it, which load only when opted into"
             },
             Self::TestSupport => {
-                candidate.severity = Severity::Info;
                 "imported only by test support the package ships, which only a test suite loads"
             },
             Self::DeferredOptional => {
-                candidate.severity = Severity::Info;
                 "imported only inside functions, and runtime code elsewhere guards it as optional or checks its types by name"
             },
             Self::Optional => {
-                candidate.severity = Severity::Info;
                 "imported only under try/except ImportError, a platform guard or a check that it is already imported, or by modules loaded only that way"
             },
             Self::Deferred => {
@@ -264,10 +241,111 @@ impl ImportStrength {
             Self::Exposed => {
                 "imported only by public modules that the package itself does not load: callers need it only when they import them"
             },
-        };
-        candidate.confidence = Confidence::Likely;
-        candidate.explain.details.push(detail.to_owned());
+        })
+    }
+
+    fn apply(self, mut candidate: IssueCandidate) -> IssueCandidate {
+        (candidate.severity, candidate.confidence) = self.verdict();
+        if let Some(detail) = self.detail() {
+            candidate.explain.details.push(detail.to_owned());
+        }
         candidate
+    }
+}
+
+/// What CHK005 knows about one runtime import of a dev-only distribution:
+/// the import site, and where the file importing it sits.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy)]
+struct ImportSignals {
+    /// From the site alone: `Optional`, `Deferred` or `TopLevel`.
+    site: ImportStrength,
+    /// Guarded only by a platform check, which says the import is required
+    /// on that platform rather than optional.
+    platform_guard_only: bool,
+    /// The file is in `ReachabilityReport::eager` / `exposed` / `certain`.
+    eager: bool,
+    exposed: bool,
+    certain: bool,
+    opt_in: bool,
+    test_support: bool,
+    /// The file's workspace member defines an `is_x…` predicate naming the
+    /// import root (#808).
+    predicate: bool,
+    host_loaded: bool,
+}
+
+/// How firmly one import, or every import of a distribution so far, needs
+/// it, and whether any of them shows the member treats it as optional.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Weight {
+    strength: ImportStrength,
+    optional_elsewhere: bool,
+}
+
+impl ImportSignals {
+    fn weigh(self) -> Weight {
+        let mut strength = self.site;
+        // The package copes without it somewhere, so its function-local
+        // imports are likely the same optional feature (#808). A platform
+        // guard says it is required on that platform instead.
+        let mut optional_elsewhere =
+            strength == ImportStrength::Optional && !self.platform_guard_only;
+        if !self.eager {
+            // A file loaded only from inside functions (or never, past
+            // `TYPE_CHECKING`) runs its top-level imports no earlier than a
+            // function-local import would (#610).
+            strength = strength.min(ImportStrength::Deferred);
+        } else if !self.exposed {
+            // Likewise a file loaded only past an optional import may be
+            // missing at runtime without breaking the package (#614).
+            strength = strength.min(ImportStrength::Optional);
+        } else if !self.certain {
+            // A library's public module nothing in the package loads needs
+            // it only when a caller imports that module (#802).
+            strength = strength.min(ImportStrength::Exposed);
+        }
+        if self.opt_in {
+            strength = strength.min(ImportStrength::OptIn);
+        }
+        // Test support the package loads itself is runtime code all the same.
+        if strength < ImportStrength::TopLevel && self.test_support {
+            strength = strength.min(ImportStrength::TestSupport);
+        }
+        if strength == ImportStrength::Deferred {
+            optional_elsewhere |= self.predicate;
+        }
+        if self.host_loaded {
+            strength = ImportStrength::HostLoaded;
+        }
+        Weight {
+            strength,
+            optional_elsewhere,
+        }
+    }
+}
+
+impl Weight {
+    /// Fold in another import of the same distribution. Every import counts:
+    /// one top-level import is enough for Certain, whichever came first
+    /// (#583). Returns whether `other` is now the strongest, so its origin is
+    /// the one to report.
+    fn absorb(&mut self, other: Self) -> bool {
+        self.optional_elsewhere |= other.optional_elsewhere;
+        let stronger = other.strength > self.strength;
+        if stronger {
+            self.strength = other.strength;
+        }
+        stronger
+    }
+
+    /// The strength to report once every import has been weighed.
+    fn settle(self) -> ImportStrength {
+        if self.strength == ImportStrength::Deferred && self.optional_elsewhere {
+            ImportStrength::DeferredOptional
+        } else {
+            self.strength
+        }
     }
 }
 
@@ -442,6 +520,108 @@ fn misplaced_message(
     )
 }
 
+/// kani proofs of the §10 CHK005 table over every pair of imports of one
+/// distribution, run against `weigh` / `absorb` / `settle` (`make kani`).
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// A member-wide fact, so both imports share `predicate`. Reachability
+    /// nests `certain ⊆ exposed ⊆ eager` (`Reachability.tla`).
+    fn any_signals(predicate: bool) -> ImportSignals {
+        let certain = kani::any();
+        let exposed = certain || kani::any();
+        let eager = exposed || kani::any();
+        ImportSignals {
+            site: match kani::any::<u8>() % 3 {
+                0 => ImportStrength::Optional,
+                1 => ImportStrength::Deferred,
+                _ => ImportStrength::TopLevel,
+            },
+            platform_guard_only: kani::any(),
+            eager,
+            exposed,
+            certain,
+            opt_in: kani::any(),
+            test_support: kani::any(),
+            predicate,
+            host_loaded: kani::any(),
+        }
+    }
+
+    /// One import's row of the table, read off §10 sentence by sentence.
+    fn spec_strength(signals: ImportSignals) -> ImportStrength {
+        use ImportStrength as S;
+        if signals.host_loaded {
+            return S::HostLoaded;
+        }
+        if signals.opt_in {
+            return S::OptIn;
+        }
+        let position = match (
+            signals.site,
+            signals.eager,
+            signals.exposed,
+            signals.certain,
+        ) {
+            (S::Optional, ..) => S::Optional,
+            (_, false, ..) => S::Deferred,
+            (_, true, false, _) => S::Optional,
+            (S::TopLevel, true, true, false) => S::Exposed,
+            (site, ..) => site,
+        };
+        if signals.test_support && position != S::TopLevel {
+            S::TestSupport
+        } else {
+            position
+        }
+    }
+
+    /// The strongest import decides, except that only function-local
+    /// imports plus optional evidence in the member are Info (#808).
+    fn spec_settle(a: ImportSignals, b: ImportSignals) -> ImportStrength {
+        let strongest = spec_strength(a).max(spec_strength(b));
+        let optional =
+            |s: ImportSignals| s.site == ImportStrength::Optional && !s.platform_guard_only;
+        if strongest == ImportStrength::Deferred && (optional(a) || optional(b) || a.predicate) {
+            ImportStrength::DeferredOptional
+        } else {
+            strongest
+        }
+    }
+
+    #[kani::proof]
+    fn chk005_strength_follows_spec_table() {
+        let predicate = kani::any();
+        let (a, b) = (any_signals(predicate), any_signals(predicate));
+        let mut weight = a.weigh();
+        let b_is_origin = weight.absorb(b.weigh());
+        let strength = weight.settle();
+        assert_eq!(strength, spec_settle(a, b));
+
+        // Order does not matter: the first import found decides nothing (#583).
+        let mut reversed = b.weigh();
+        reversed.absorb(a.weigh());
+        assert_eq!(reversed.settle(), strength);
+
+        // The reported origin is an import as strong as the finding.
+        let origin = if b_is_origin { b } else { a };
+        assert_eq!(origin.weigh().strength, weight.strength);
+
+        // Certain, and so `--fix`'s MoveToRuntime, needs a top-level import
+        // in a file the package loads itself, outside opt-in and host-loaded
+        // modules.
+        let certain_site = |s: ImportSignals| {
+            s.site == ImportStrength::TopLevel && s.certain && !s.opt_in && !s.host_loaded
+        };
+        let (_, confidence) = strength.verdict();
+        assert_eq!(
+            confidence == Confidence::Certain,
+            certain_site(a) || certain_site(b)
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +644,104 @@ mod tests {
                 })
                 .collect(),
             ..ParsedModule::default()
+        }
+    }
+
+    /// A top-level import in a file the package loads at startup, edited.
+    fn import(edit: impl FnOnce(&mut ImportSignals)) -> ImportSignals {
+        let mut signals = ImportSignals {
+            site: ImportStrength::TopLevel,
+            platform_guard_only: false,
+            eager: true,
+            exposed: true,
+            certain: true,
+            opt_in: false,
+            test_support: false,
+            predicate: false,
+            host_loaded: false,
+        };
+        edit(&mut signals);
+        signals
+    }
+
+    fn settle(imports: &[ImportSignals]) -> ImportStrength {
+        let mut weights = imports.iter().map(|signals| signals.weigh());
+        let mut weight = weights.next().expect("at least one import");
+        for other in weights {
+            weight.absorb(other);
+        }
+        weight.settle()
+    }
+
+    /// The §10 CHK005 table, one row per sentence.
+    #[test]
+    fn import_strength_follows_the_spec_table() {
+        use ImportStrength as S;
+        let top = import(|_| ());
+        let deferred = import(|s| s.site = S::Deferred);
+        let optional = import(|s| s.site = S::Optional);
+        let platform = import(|s| (s.site, s.platform_guard_only) = (S::Optional, true));
+        let support = |certain| import(|s| (s.test_support, s.certain) = (true, certain));
+        let cases = [
+            ("top level", vec![top], S::TopLevel),
+            (
+                "one top level is enough (#583)",
+                vec![deferred, top, optional],
+                S::TopLevel,
+            ),
+            ("all deferred", vec![deferred, deferred], S::Deferred),
+            ("all optional", vec![optional, platform], S::Optional),
+            (
+                "not eager (#610)",
+                vec![import(|s| {
+                    (s.eager, s.exposed, s.certain) = (false, false, false);
+                })],
+                S::Deferred,
+            ),
+            (
+                "eager, not exposed (#614)",
+                vec![import(|s| (s.exposed, s.certain) = (false, false))],
+                S::Optional,
+            ),
+            (
+                "exposed, not certain (#802)",
+                vec![import(|s| s.certain = false)],
+                S::Exposed,
+            ),
+            (
+                "deferred, optional elsewhere (#808)",
+                vec![deferred, optional],
+                S::DeferredOptional,
+            ),
+            (
+                "a platform guard is no such evidence (#808)",
+                vec![deferred, platform],
+                S::Deferred,
+            ),
+            (
+                "deferred, is_x predicate (#808)",
+                vec![import(|s| (s.site, s.predicate) = (S::Deferred, true))],
+                S::DeferredOptional,
+            ),
+            (
+                "host loaded, even top level (#731)",
+                vec![import(|s| s.host_loaded = true)],
+                S::HostLoaded,
+            ),
+            (
+                "opt-in, even top level (#781)",
+                vec![import(|s| s.opt_in = true)],
+                S::OptIn,
+            ),
+            ("test support (#808)", vec![support(false)], S::TestSupport),
+            (
+                "test support the package loads itself",
+                vec![support(true), support(false)],
+                S::TopLevel,
+            ),
+        ];
+        for (name, imports, expected) in cases {
+            assert_eq!(settle(&imports), expected, "{name}");
         }
     }
 
