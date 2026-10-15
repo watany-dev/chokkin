@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing indent; the last entry's `# comment` stays on that entry's line
   instead of moving to the new one, and `[\n]` no longer becomes `["x"\n]`
   (#861).
+- Import guards are read through `not` / `and` / `or` and along an `if` /
+  `elif` / `else` chain: a branch that runs only when an earlier
+  `sys.platform`, `TYPE_CHECKING`, `__main__` or package-availability test
+  failed is classified like that test's own body, and a condition chokkin
+  cannot read keeps its imports runtime. The `else:` after
+  `if sys.platform == "darwin":` is platform-guarded, so Airflow's undeclared
+  `setproctitle` is a CHK004 warning instead of an error (#861).
 - A source with a syntax error is skipped like an undecodable one, with a
   `parse: skipped …: syntax error at line N: …` warning, instead of being read
   as a module without imports. Its imports are unknown, so CHK001 and CHK002

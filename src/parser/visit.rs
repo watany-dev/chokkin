@@ -4,14 +4,15 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, BoolOp, CmpOp, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt,
-    StmtIf, StmtImport, StmtImportFrom,
+    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt, StmtIf,
+    StmtImport, StmtImportFrom,
 };
 use ruff_text_size::{Ranged, TextSize};
 
 use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::attribute_receiver;
+use super::condition::{self, Leaf};
 use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
@@ -163,44 +164,99 @@ impl<'a> ModuleVisitor<'a> {
         self.parsed.deprecated_shim = warns_deprecated_on_import(stmts, &self.parsed.imports);
     }
 
-    /// Visit one `if`/`elif`/`else` branch; `test` is `None` for `else`.
-    /// `optional` marks a branch that only runs when a package is installed.
-    fn visit_branch<'ast>(&mut self, test: Option<&'ast Expr>, body: &'ast [Stmt], optional: bool) {
+    /// Visit one `if`/`elif`/`else` branch; `test` is `None` for `else`, and
+    /// `earlier` holds the tests of the chain's branches before it.
+    fn visit_branch<'ast>(
+        &mut self,
+        earlier: &[&'ast Expr],
+        test: Option<&'ast Expr>,
+        body: &'ast [Stmt],
+    ) {
         let was_type_checking = self.in_type_checking;
         let was_platform_guard = self.platform_guard_depth;
         let was_try_depth = self.try_depth;
         let was_main_block = self.in_main_block;
         let guard_count = self.imported_guards.len();
+        let excluded = |leaf: &dyn Fn(&Expr) -> Leaf| condition::excluded(earlier, test, leaf);
+        let type_checking = excluded(&|expr| self.type_checking_leaf(expr));
+        let platform_guard = excluded(&|expr| {
+            if is_platform_guard_test(expr) {
+                Leaf::Free
+            } else {
+                Leaf::Opaque
+            }
+        });
+        // `python -m pkg` runs `pkg/__main__.py` as `__main__`, and Jupyter
+        // runs every cell as `__main__`, so there the block is the normal
+        // path.
+        let main_block = !runs_as_main(self.path)
+            && excluded(&|expr| {
+                if is_main_guard_test(expr) {
+                    Leaf::Fixed(false)
+                } else {
+                    self.type_checking_leaf(expr)
+                }
+            });
+        let optional = excluded(&|expr| self.installed_leaf(expr));
+        let mut guards: Vec<String> = condition::leaves(earlier.iter().copied().chain(test))
+            .into_iter()
+            .filter_map(|expr| imported_module_guard(expr, &self.async_library_names))
+            .collect();
+        guards.sort();
+        guards.dedup();
+        guards.retain(|guard| {
+            excluded(&|expr| {
+                if imported_module_guard(expr, &self.async_library_names).as_ref() == Some(guard) {
+                    Leaf::Fixed(false)
+                } else {
+                    self.installed_leaf(expr)
+                }
+            })
+        });
+        // The test runs only when the chain reaches it, and `and` stops at a
+        // missing package, so an import in it shares the branch's optionality.
+        // An import placed before the check in the same `and` is read as
+        // optional too: real code checks first.
         if optional {
             self.try_depth = self.try_depth.saturating_add(1);
         }
         if let Some(test) = test {
             self.visit_expr(test);
-            if is_type_checking_test(test, &self.typing_aliases, &self.type_checking_names) {
-                self.in_type_checking = true;
-            }
-            if is_platform_guard_test(test) {
-                self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
-            }
-            self.imported_guards
-                .extend(imported_module_guard(test, &self.async_library_names));
-            // `python -m pkg` runs `pkg/__main__.py` as `__main__`, and Jupyter
-            // runs every cell as `__main__`, so there the block is the normal
-            // path.
-            if is_main_guard_test(test) && !runs_as_main(self.path) {
-                self.in_main_block = true;
-            }
-            // `if has_x:` only runs when the guarded `try` import succeeded.
-            if self.module_level && tests_flag(test, &self.try_flags) {
-                self.try_depth = self.try_depth.saturating_add(1);
-            }
         }
+        self.in_type_checking |= type_checking;
+        if platform_guard {
+            self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
+        }
+        self.in_main_block |= main_block;
+        self.imported_guards.extend(guards);
         self.visit_body(body);
         self.in_type_checking = was_type_checking;
         self.platform_guard_depth = was_platform_guard;
         self.try_depth = was_try_depth;
         self.in_main_block = was_main_block;
         self.imported_guards.truncate(guard_count);
+    }
+
+    /// `TYPE_CHECKING` is false whenever the code runs.
+    fn type_checking_leaf(&self, expr: &Expr) -> Leaf {
+        if is_type_checking_test(expr, &self.typing_aliases, &self.type_checking_names) {
+            Leaf::Fixed(false)
+        } else {
+            Leaf::Opaque
+        }
+    }
+
+    /// What `expr` is when some package is missing: `find_spec("x")` and
+    /// `is_x_available()` are false (#695), `find_spec("x") is None` true,
+    /// and so is a module-level flag a failed `try` import leaves falsy.
+    fn installed_leaf(&self, expr: &Expr) -> Leaf {
+        if let Some(installed) = availability_test(expr) {
+            Leaf::Fixed(!installed)
+        } else if self.module_level && tests_flag(expr, &self.try_flags) {
+            Leaf::Fixed(false)
+        } else {
+            Leaf::Opaque
+        }
     }
 
     /// Whether an import at `node` runs only when some package is installed.
@@ -673,14 +729,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
             },
             Stmt::Expr(expr_stmt) => self.visit_expr(&expr_stmt.value),
             Stmt::If(if_stmt) => {
-                // `if find_spec("x"):` / `if is_x_available():` runs only with
-                // `x` installed, and so does every branch after
-                // `if not is_x_available():` (#695).
-                let mut after_missing = false;
+                let mut earlier = Vec::new();
                 for (test, body) in if_branches(if_stmt) {
-                    let installed = test.and_then(availability_test);
-                    self.visit_branch(test, body, after_missing || installed == Some(true));
-                    after_missing |= installed == Some(false);
+                    self.visit_branch(&earlier, test, body);
+                    earlier.extend(test);
                 }
             },
             Stmt::Try(try_stmt) => {
@@ -973,9 +1025,7 @@ fn assigned_flags(body: &[Stmt], is_flag: fn(&Expr) -> bool) -> impl Iterator<It
     })
 }
 
-/// Whether `test` passes only when a flag is truthy: `if x:`,
-/// `if x is not None:`, or an `and` chain with either. `or`, `not x` and
-/// `x is None` also pass without the package.
+/// Whether `test` is false when a flag is: `x` or `x is not None`.
 fn tests_flag(test: &Expr, flags: &HashSet<String>) -> bool {
     let is_flag =
         |expr: &Expr| matches!(expr, Expr::Name(name) if flags.contains(name.id.as_str()));
@@ -984,9 +1034,6 @@ fn tests_flag(test: &Expr, flags: &HashSet<String>) -> bool {
             (&*compare.ops, &*compare.operands),
             ([CmpOp::IsNot], [flag, Expr::NoneLiteral(_)]) if is_flag(flag)
         ),
-        Expr::BoolOp(bool_op) => {
-            bool_op.op == BoolOp::And && bool_op.values.iter().any(|value| tests_flag(value, flags))
-        },
         _ => is_flag(test),
     }
 }
@@ -1873,6 +1920,30 @@ import x
         );
     }
 
+    /// A branch's test runs only when the chain reaches it, so an import in
+    /// the test of a branch that needs a package is optional too (#861).
+    #[test]
+    fn imports_in_a_guarded_test_are_optional() {
+        let parsed = visit_source(
+            "import importlib
+if not is_yaml_available():
+    pass
+elif importlib.import_module('yaml').__version__ >= '6':
+    pass
+if is_toml_available() and importlib.import_module('toml'):
+    pass
+if importlib.import_module('ujson'):
+    pass
+",
+        );
+        let optional: Vec<(&str, bool)> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.optional))
+            .collect();
+        assert_eq!(optional, [("yaml", true), ("toml", true), ("ujson", false)]);
+    }
+
     /// #713: only a package check before the import makes it optional; a
     /// method or a finder's `find_spec` is not a package check.
     #[test]
@@ -2069,8 +2140,10 @@ def f(name):
         };
         assert!(find("winreg").platform_guarded);
         assert_eq!(find("typed_lib").context, ImportContext::Type);
-        assert!(!find("typed_lib").platform_guarded);
         assert_eq!(find("plain_lib").context, ImportContext::Runtime);
+        // Both run only off Windows (#861).
+        assert!(find("typed_lib").platform_guarded);
+        assert!(find("plain_lib").platform_guarded);
     }
 
     /// #681: only imports of the module the branch checked are optional.
