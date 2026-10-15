@@ -129,7 +129,7 @@ fn egg_name_fallback(trimmed: &str) -> Option<String> {
 /// than an opaque URL.
 fn is_direct_reference(trimmed: &str) -> bool {
     trimmed.split_once('@').is_some_and(|(head, _)| {
-        let name = head.split('[').next().unwrap_or(head).trim();
+        let name = strip_python(head.split('[').next().unwrap_or(head));
         !name.is_empty() && leading_name_token(name) == name
     })
 }
@@ -268,6 +268,22 @@ mod tests {
             pep508_distribution_name("git+https://h/r.git#egg=acme\u{1f}").as_deref(),
             Some("acme")
         );
+    }
+
+    #[test]
+    fn direct_reference_name_ends_at_python_whitespace() {
+        // `qux\x1f@ url` is a malformed `name @ url`, not an opaque URL line.
+        let origin = DependencyOrigin {
+            file: "requirements.txt".to_owned(),
+            line: Some(1),
+            label: "requirements.txt".to_owned(),
+        };
+        for raw in ["qux\u{1f}@ https://h/x.whl", "qux\u{a0}@ https://h/x.whl"] {
+            assert!(
+                parse_requirement(raw, DependencyContext::Runtime, origin.clone()).is_err(),
+                "{raw:?}"
+            );
+        }
     }
 
     #[test]
