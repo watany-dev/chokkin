@@ -155,6 +155,29 @@ if is_psycopg3 and settings.DEBUG:
         );
     }
 
+    /// `-x`, `~x` and `+x` are opaque operands, not a negation of `x`.
+    #[test]
+    fn other_unary_operators_are_leaves() {
+        use ruff_python_ast::Expr;
+
+        use super::{Leaf, excluded, leaves};
+
+        let known = |expr: &Expr| {
+            if expr.is_name_expr() {
+                Leaf::Fixed(true)
+            } else {
+                Leaf::Opaque
+            }
+        };
+        for source in ["-x", "~x", "+x"] {
+            let parsed = ruff_python_parser::parse_expression(source).expect("parse");
+            let test = parsed.expr();
+            assert!(!excluded(&[], Some(test), &known), "{source}");
+            assert!(!excluded(&[test], None, &known), "{source}");
+            assert_eq!(leaves([test]), [test], "{source}");
+        }
+    }
+
     /// Guards built from `not`, `and`, `or` and `elif` / `else` against a
     /// reference model that tries every value of the facts the code cannot
     /// know (#861).
