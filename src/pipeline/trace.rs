@@ -173,18 +173,11 @@ mod tests {
     use crate::graph::{FileNode, ModuleOrigin, add_parsed_imports};
     use crate::parser::ParsedModule;
     use crate::reachability::UnreachableFile;
-    use crate::sources::{
-        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
-    };
+    use crate::sources::{DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo};
     use std::collections::BTreeSet;
 
     fn src_layout() -> LayoutInfo {
-        LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        }
+        LayoutInfo::new("src", vec!["acme".to_owned()])
     }
 
     fn sources_with(paths: &[&str]) -> DiscoveredSources {

@@ -2,6 +2,7 @@
 
 mod cache;
 mod context;
+mod dirs;
 mod discover;
 mod error;
 mod glob;

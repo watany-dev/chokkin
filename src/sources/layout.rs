@@ -12,25 +12,9 @@ use crate::manifest::{
 use crate::path_util::join_rel;
 use crate::plugins::pytest_import_settings;
 
+use super::dirs::{default_scanned_dirs, is_non_package_dir, local_package_dirs};
 use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
-
-const NON_PACKAGE_DIRS: &[&str] = &[
-    "tests",
-    "test",
-    "scripts",
-    "docs",
-    "build",
-    "dist",
-    ".venv",
-    "examples",
-    "benchmarks",
-];
-
-/// `NON_PACKAGE_DIRS` that hold project source rather than build or
-/// environment output, so an `__init__.py` makes them importable by name
-/// (pytest puts the rootdir on `sys.path`).
-const LOCAL_PACKAGE_DIRS: &[&str] = &["tests", "test", "scripts", "docs"];
 
 /// Source directory tried after `src/` and the repository root (#487).
 const LIB_DIR: &str = "lib";
@@ -60,26 +44,30 @@ pub(crate) fn infer_layout(
         },
         |layout| (layout, None),
     );
-    layout.local_packages = LOCAL_PACKAGE_DIRS
-        .iter()
+    layout.local_packages = local_package_dirs()
         .filter(|name| root.join(name).join("__init__.py").is_file())
-        .map(|name| (*name).to_owned())
+        .map(str::to_owned)
         .collect();
     (layout, warning)
 }
 
-fn layout_info(package_root: &str, packages: Vec<String>) -> LayoutInfo {
-    let layout = if package_root.is_empty() {
-        ProjectLayout::Flat
-    } else {
-        ProjectLayout::Src
-    };
-    LayoutInfo {
-        layout,
-        package_root: package_root.to_owned(),
-        inferred_globs: default_globs(layout, package_root, &packages),
-        packages,
-        ..Default::default()
+impl LayoutInfo {
+    /// Layout of `packages` under `package_root`, with the layout kind and
+    /// default globs derived from it so the three never disagree.
+    #[must_use]
+    pub fn new(package_root: &str, packages: Vec<String>) -> Self {
+        let layout = match package_root {
+            "" => ProjectLayout::Flat,
+            "src" => ProjectLayout::Src,
+            _ => ProjectLayout::PackageRoot,
+        };
+        Self {
+            layout,
+            package_root: package_root.to_owned(),
+            inferred_globs: default_globs(layout, package_root, &packages),
+            packages,
+            ..Default::default()
+        }
     }
 }
 
@@ -105,7 +93,7 @@ fn declared_layout(root: &Path, targets: Option<&WheelTargets>) -> Option<Layout
     }
     let package_root = package_root.clone();
     let packages = dirs.into_iter().map(|(_, package)| package).collect();
-    Some(layout_info(&package_root, packages))
+    Some(LayoutInfo::new(&package_root, packages))
 }
 
 /// Split a package directory into `(package_root, top-level package)`,
@@ -176,7 +164,7 @@ fn uv_source_layout(
             } else {
                 join_rel(&path, &inner.package_root)
             };
-            (layout_info(&package_root, inner.packages), warning)
+            (LayoutInfo::new(&package_root, inner.packages), warning)
         })
     })
 }
@@ -208,7 +196,7 @@ fn heuristic_layout(
 ) -> (LayoutInfo, Option<SourcesWarning>) {
     let src_packages = packages_with_init(&root.join("src"), false);
     if !src_packages.is_empty() {
-        return (layout_info("src", src_packages), None);
+        return (LayoutInfo::new("src", src_packages), None);
     }
 
     let candidates: Vec<(&str, Vec<String>)> = ["", LIB_DIR]
@@ -218,7 +206,7 @@ fn heuristic_layout(
         .collect();
     for (base, packages) in &candidates {
         if let Some(package) = project_package(packages, metadata) {
-            return (layout_info(base, vec![package]), None);
+            return (LayoutInfo::new(base, vec![package]), None);
         }
     }
     let Some((base, packages)) = candidates.into_iter().next() else {
@@ -229,7 +217,7 @@ fn heuristic_layout(
         return (layout, None);
     };
     let (package, warning) = guess_package(base, packages, metadata);
-    (layout_info(base, vec![package]), warning)
+    (LayoutInfo::new(base, vec![package]), warning)
 }
 
 fn project_package(candidates: &[String], metadata: &ProjectMetadata) -> Option<String> {
@@ -273,10 +261,6 @@ fn entry_is_dir(entry: &fs::DirEntry) -> bool {
         .is_ok_and(|ft| ft.is_dir() || (ft.is_symlink() && entry.path().is_dir()))
 }
 
-fn is_non_package_dir(name: &str) -> bool {
-    NON_PACKAGE_DIRS.contains(&name) || name.starts_with("e2e")
-}
-
 fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
     let Ok(entries) = fs::read_dir(parent) else {
         return Vec::new();
@@ -308,8 +292,8 @@ fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
 /// next to `lib/streamlit` stays out of the runtime set.
 fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String]) -> Vec<String> {
     let mut globs = match layout {
-        ProjectLayout::Src if package_root == "src" => vec!["src/**/*.{py,pyi,ipynb}".to_owned()],
-        ProjectLayout::Src | ProjectLayout::Flat => packages
+        ProjectLayout::Src => vec!["src/**/*.{py,pyi,ipynb}".to_owned()],
+        ProjectLayout::PackageRoot | ProjectLayout::Flat => packages
             .iter()
             .map(|package| format!("{}/**/*.{{py,pyi,ipynb}}", join_rel(package_root, package)))
             .collect(),
@@ -317,9 +301,7 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     };
     // The singular `test/` is where sqlalchemy and CPython-style projects
     // keep their suite; without it the symbols only tests call read as unused.
-    globs.push("tests/**/*.{py,pyi,ipynb}".to_owned());
-    globs.push("test/**/*.{py,pyi,ipynb}".to_owned());
-    globs.push("scripts/**/*.{py,pyi,ipynb}".to_owned());
+    globs.extend(default_scanned_dirs().map(|dir| format!("{dir}/**/*.{{py,pyi,ipynb}}")));
     // pytest always loads the rootdir conftest, wherever the suite lives.
     globs.push("conftest.py".to_owned());
     globs
@@ -384,7 +366,9 @@ pub(crate) fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> 
     let module_path = module_path(path)?;
 
     let distributed = match layout.layout {
-        ProjectLayout::Src => module_under(module_path, &layout.package_root),
+        ProjectLayout::Src | ProjectLayout::PackageRoot => {
+            module_under(module_path, &layout.package_root)
+        },
         ProjectLayout::Flat => package_module_name(module_path, &layout.packages),
         ProjectLayout::Unknown => module_under(module_path, "src")
             .or_else(|| package_module_name(module_path, &layout.packages)),
@@ -397,7 +381,7 @@ pub(crate) fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> 
 fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
     let module_path = module_path(path)?;
     let (top, _) = module_path.split_once('/')?;
-    if layout.layout != ProjectLayout::Unknown || NON_PACKAGE_DIRS.contains(&top) {
+    if layout.layout != ProjectLayout::Unknown || is_non_package_dir(top) {
         return None;
     }
     Some(module_path.replace('/', "."))
@@ -446,12 +430,7 @@ mod tests {
 
     #[test]
     fn path_to_module_src_layout() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
         assert_eq!(
             path_to_module("src/acme/api/routes.py", &layout),
             Some("acme.api.routes".to_owned())
@@ -465,11 +444,7 @@ mod tests {
 
     #[test]
     fn path_to_module_rejects_dotted_components() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            packages: vec!["pkg".to_owned()],
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("", vec!["pkg".to_owned()]);
         assert_eq!(path_to_module("pkg/foo.bar.py", &layout), None);
         assert_eq!(path_to_module("pkg/.hidden/x.py", &layout), None);
         assert_eq!(path_to_module("pkg/.py", &layout), None);
@@ -491,11 +466,7 @@ mod tests {
 
     #[test]
     fn path_to_module_flat_layout_requires_known_package() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("", vec!["acme".to_owned()]);
         assert_eq!(
             path_to_module("acme/core.py", &layout),
             Some("acme.core".to_owned())
@@ -505,25 +476,21 @@ mod tests {
 
     #[test]
     fn path_to_module_resolves_inside_members() {
-        let member = |path: &str, layout, packages: &[&str]| MemberLayout {
+        let member = |path: &str, layout| MemberLayout {
             path: path.to_owned(),
-            layout: LayoutInfo {
-                layout,
-                package_root: if layout == ProjectLayout::Src {
-                    "src"
-                } else {
-                    ""
-                }
-                .to_owned(),
-                packages: packages.iter().map(|&package| package.to_owned()).collect(),
-                ..Default::default()
-            },
+            layout,
         };
         let layout = LayoutInfo {
             members: vec![
-                member("services/api", ProjectLayout::Src, &["api"]),
-                member("llama-dev", ProjectLayout::Flat, &["llama_dev"]),
-                member("llama-index-core", ProjectLayout::Unknown, &[]),
+                member(
+                    "services/api",
+                    LayoutInfo::new("src", vec!["api".to_owned()]),
+                ),
+                member(
+                    "llama-dev",
+                    LayoutInfo::new("", vec!["llama_dev".to_owned()]),
+                ),
+                member("llama-index-core", LayoutInfo::default()),
             ],
             ..Default::default()
         };
@@ -547,24 +514,34 @@ mod tests {
     }
 
     #[test]
+    fn namespace_member_skips_the_dirs_packages_skip() {
+        // `packages_with_init` never takes `e2e_tests/` as a package, so a
+        // namespace member must not name modules after it either.
+        let layout = LayoutInfo {
+            members: vec![MemberLayout {
+                path: "llama-index-core".to_owned(),
+                layout: LayoutInfo::default(),
+            }],
+            ..Default::default()
+        };
+        for path in [
+            "llama-index-core/e2e_tests/test_x.py",
+            "llama-index-core/e2e/flow.py",
+            "llama-index-core/benchmarks/run.py",
+        ] {
+            assert_eq!(path_to_module(path, &layout), None, "{path}");
+        }
+    }
+
+    #[test]
     fn path_to_module_prefers_member_nested_under_root_source_root() {
         // prefect: `src/` is the root's source root and also holds members.
         let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["prefect".to_owned()],
             members: vec![MemberLayout {
                 path: "src/integrations/prefect-aws".to_owned(),
-                layout: LayoutInfo {
-                    layout: ProjectLayout::Flat,
-                    package_root: String::new(),
-                    packages: vec!["prefect_aws".to_owned()],
-                    local_packages: Vec::new(),
-                    inferred_globs: Vec::new(),
-                    members: Vec::new(),
-                },
+                layout: LayoutInfo::new("", vec!["prefect_aws".to_owned()]),
             }],
-            ..Default::default()
+            ..LayoutInfo::new("src", vec!["prefect".to_owned()])
         };
         let init = "src/integrations/prefect-aws/prefect_aws/__init__.py";
         assert_eq!(
@@ -614,6 +591,23 @@ mod tests {
         );
         assert_eq!(path_to_module("build/lib.py", &layout), None);
         assert_eq!(path_to_module("testsuite/x.py", &layout), None);
+    }
+
+    #[test]
+    fn new_derives_the_layout_kind_from_the_package_root() {
+        for (root, kind) in [
+            ("", ProjectLayout::Flat),
+            ("src", ProjectLayout::Src),
+            ("lib", ProjectLayout::PackageRoot),
+            ("python", ProjectLayout::PackageRoot),
+        ] {
+            let layout = LayoutInfo::new(root, vec!["acme".to_owned()]);
+            assert_eq!(layout.layout, kind, "{root:?}");
+            assert_eq!(
+                layout.inferred_globs,
+                default_globs(kind, root, &layout.packages)
+            );
+        }
     }
 
     #[test]
@@ -708,7 +702,7 @@ mod tests {
             ..metadata("SQLAlchemy")
         };
         let (layout, warning) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
-        assert_eq!(layout.layout, ProjectLayout::Src);
+        assert_eq!(layout.layout, ProjectLayout::PackageRoot);
         assert_eq!(layout.package_root, "lib");
         assert_eq!(layout.packages, vec!["sqlalchemy".to_owned()]);
         assert_eq!(warning, None);
@@ -1172,7 +1166,7 @@ mod tests {
             if !src.is_empty() {
                 return Some(("src".to_owned(), src, false));
             }
-            let skip = |name: &&str| NON_PACKAGE_DIRS.contains(name) || name.starts_with("e2e");
+            let skip = |name: &&str| is_non_package_dir(name);
             let root: BTreeSet<&str> = tree.root.iter().copied().filter(|n| !skip(n)).collect();
             let lib: BTreeSet<&str> = tree.lib.iter().copied().filter(|n| !skip(n)).collect();
             let candidates: Vec<(&str, Vec<String>)> = [("", sorted(&root)), ("lib", sorted(&lib))]
@@ -1211,10 +1205,9 @@ mod tests {
                         prop_assert_eq!(warning.is_some(), guessed);
                     },
                 }
-                let local: Vec<String> = LOCAL_PACKAGE_DIRS
-                    .iter()
-                    .filter(|name| tree.root.contains(*name))
-                    .map(|name| (*name).to_owned())
+                let local: Vec<String> = local_package_dirs()
+                    .filter(|name| tree.root.contains(name))
+                    .map(str::to_owned)
                     .collect();
                 prop_assert_eq!(&layout.local_packages, &local);
             }
@@ -1271,29 +1264,23 @@ mod tests {
 
         fn layout_strategy() -> impl Strategy<Value = LayoutInfo> {
             (
-                prop::sample::select(
-                    &[
-                        ProjectLayout::Src,
-                        ProjectLayout::Flat,
-                        ProjectLayout::Unknown,
-                    ][..],
-                ),
-                prop::sample::select(&["", "src", "lib"][..]),
+                // `None` is the unknown layout; a root picks the others.
+                prop::sample::select(&[None, Some(""), Some("src"), Some("lib")][..]),
                 prop::collection::vec(prop::sample::select(&["acme", "pkg", "foo"][..]), 0..3),
                 prop::collection::vec(prop::sample::select(&["tests", "scripts"][..]), 0..2),
             )
-                .prop_map(|(layout, root, packages, local)| {
-                    let package_root = match layout {
-                        ProjectLayout::Src if root.is_empty() => "src",
-                        ProjectLayout::Src => root,
-                        _ => "",
+                .prop_map(|(root, packages, local)| {
+                    let packages = packages.into_iter().map(str::to_owned).collect();
+                    let layout = match root {
+                        Some(root) => LayoutInfo::new(root, packages),
+                        None => LayoutInfo {
+                            packages,
+                            ..LayoutInfo::default()
+                        },
                     };
                     LayoutInfo {
-                        layout,
-                        package_root: package_root.to_owned(),
-                        packages: packages.into_iter().map(str::to_owned).collect(),
                         local_packages: local.into_iter().map(str::to_owned).collect(),
-                        ..Default::default()
+                        ..layout
                     }
                 })
         }
@@ -1340,7 +1327,9 @@ mod tests {
                     if let Some(other) = seen.get(&module) {
                         let other_stem = other.trim_end_matches(".py").trim_end_matches("/__init__");
                         let source_root = match layout.layout {
-                            ProjectLayout::Src => layout.package_root.as_str(),
+                            ProjectLayout::Src | ProjectLayout::PackageRoot => {
+                                layout.package_root.as_str()
+                            }
                             ProjectLayout::Unknown => "src",
                             ProjectLayout::Flat => "",
                         };

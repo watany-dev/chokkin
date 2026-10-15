@@ -130,16 +130,13 @@ mod tests {
     use super::*;
     use crate::config::{ResolvedWorkspaceMember, default_config};
     use crate::manifest::ProjectMetadata;
-    use crate::sources::{LayoutInfo, ProjectLayout};
+    use crate::sources::LayoutInfo;
 
     #[test]
     fn layout_package_is_first_party() {
         let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
             local_packages: vec!["tests".to_owned()],
-            ..Default::default()
+            ..LayoutInfo::new("src", vec!["acme".to_owned()])
         };
         for root in ["acme", "tests"] {
             assert!(is_first_party_import(
@@ -152,10 +149,7 @@ mod tests {
 
     #[test]
     fn metadata_name_matches_normalized_import_root() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("", Vec::new());
         let metadata = ProjectMetadata {
             name: Some("my-package".to_owned()),
             ..ProjectMetadata::default()
@@ -173,11 +167,7 @@ mod tests {
             ],
             ..ProjectMetadata::default()
         };
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "lib".to_owned(),
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("lib", Vec::new());
         for root in ["_black_version", "acme", "_flat_version"] {
             assert!(is_first_party_import(root, &layout, &metadata), "{root}");
         }

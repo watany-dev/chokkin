@@ -10,9 +10,8 @@ use chokkin::internals::{
     Confidence, GraphEdge, ModuleOrigin, PluginExtractRequest, ProjectRoot, RootMarker, RuleId,
     ScopedDeclarations, Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports,
     analyze_reachability, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
-    discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
-    load_config, parse_project_sources_with_cache, resolve_imports_for_analysis,
-    resolve_target_version,
+    discover_project_root, extract_manifest, extract_plugin_hints_with_parse, load_config,
+    parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
 };
 use chokkin::internals::{DependencyRuleContext, RuleContext};
 use chokkin::{RuntimeOverrides, probe_project};
@@ -42,7 +41,8 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     });
     let loaded = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
-    let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
+    let probe = probe_project(path, None, &RuntimeOverrides::default()).expect("probe");
+    let sources = probe.sources;
     let target = resolve_target_version(&loaded.effective, &manifest);
     let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
     let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
@@ -80,9 +80,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     let reachability =
         analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, production)
             .expect("reachability");
-    let workspace_inputs = probe_project(path, None, &RuntimeOverrides::default())
-        .expect("probe")
-        .workspace_inputs;
+    let workspace_inputs = probe.workspace_inputs;
 
     DepsInputs {
         manifest,

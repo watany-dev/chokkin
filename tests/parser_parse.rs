@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use chokkin::internals::{
-    Exports, FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout,
-    ProjectRoot, RootMarker, TargetVersion, parse_file, parse_project_sources_with_cache,
+    Exports, FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectRoot,
+    RootMarker, TargetVersion, parse_file, parse_project_sources_with_cache,
 };
 
 fn spike_fixture(name: &str) -> PathBuf {
@@ -41,12 +41,7 @@ fn parse_fixture_dir(dir: &str, name: &str) -> chokkin::internals::ParsedModule 
         marker: RootMarker::PyProjectToml,
     };
     let layout = match dir {
-        "imports" => LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        },
+        "imports" => LayoutInfo::new("src", vec!["acme".to_owned()]),
         _ => LayoutInfo::default(),
     };
     parse_file(
@@ -194,12 +189,7 @@ fn parse_project_sources_fixture_suite() {
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
-        layout: LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        },
+        layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
         effective_globs: Vec::new(),
         files,
         warnings: Vec::new(),
@@ -271,12 +261,7 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
     };
     let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
-        layout: LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["app".to_owned()],
-            ..Default::default()
-        },
+        layout: LayoutInfo::new("src", vec!["app".to_owned()]),
         effective_globs: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "src/app.py".to_owned(),
@@ -631,11 +616,7 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
     }
     let sources = chokkin::internals::DiscoveredSources {
         root: root.clone(),
-        layout: LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            ..Default::default()
-        },
+        layout: LayoutInfo::new("src", Vec::new()),
         effective_globs: Vec::new(),
         files,
         warnings: Vec::new(),
@@ -693,11 +674,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
         path: temp.path().to_path_buf(),
         marker: RootMarker::PyProjectToml,
     };
-    let layout = LayoutInfo {
-        layout: ProjectLayout::Src,
-        package_root: "src".to_owned(),
-        ..Default::default()
-    };
+    let layout = LayoutInfo::new("src", Vec::new());
     let discovered = |path: &str| chokkin::internals::DiscoveredFile {
         path: path.to_owned(),
         kind: chokkin::internals::FileKind::Python,

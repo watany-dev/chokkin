@@ -1056,7 +1056,6 @@ fn alias_as_name(alias: &Alias) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sources::ProjectLayout;
 
     fn visit_source(source: &str) -> ParsedModule {
         visit_source_at("mod.py", source)
@@ -1385,12 +1384,7 @@ mod tests {
     fn resolves_relative_literal_against_package_argument() {
         let source = "import importlib\nimportlib.import_module(\".sub\", __package__)\nimportlib.import_module(\"..api\", package=\"acme.core\")\n";
         let module = ruff_python_parser::parse_module(source).expect("parse");
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new(
             "src/acme/__init__.py",
@@ -1413,12 +1407,7 @@ mod tests {
     fn resolves_dunder_import_level_against_globals() {
         let source = "__import__(\"sub\", globals(), None, (), 1)\n__import__(\"api\", globals(), level=2)\n__import__(\"\", globals(), None, (), 1)\n__import__(\"plain\", globals(), None, (), 0)\n__import__(\".x\", globals(), None, (), 1)\n__import__(\"x\", globals(), None, (), 4)\n";
         let module = ruff_python_parser::parse_module(source).expect("parse");
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new(
             "src/acme/core/mod.py",

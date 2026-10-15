@@ -353,11 +353,7 @@ mod tests {
         (
             DiscoveredSources {
                 root: manifest.root.clone(),
-                layout: crate::sources::LayoutInfo {
-                    layout: crate::sources::ProjectLayout::Src,
-                    package_root: "src".to_owned(),
-                    ..Default::default()
-                },
+                layout: crate::sources::LayoutInfo::new("src", Vec::new()),
                 effective_globs: Vec::new(),
                 files: Vec::new(),
                 warnings: Vec::new(),

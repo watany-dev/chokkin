@@ -446,7 +446,6 @@ fn misplaced_message(
 mod tests {
     use super::*;
     use crate::parser::{ParsedModule, SymbolDef};
-    use crate::sources::ProjectLayout;
 
     fn module(path: &str, symbols: &[(&str, SymbolKind)]) -> ParsedModule {
         ParsedModule {
@@ -469,15 +468,14 @@ mod tests {
 
     #[test]
     fn opt_in_imports_sit_under_example_dags_or_a_subpackage_named_after_them() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            packages: vec![
+        let layout = LayoutInfo::new(
+            "",
+            vec![
                 "airflow".to_owned(),
                 "dagster".to_owned(),
                 "mlflow".to_owned(),
             ],
-            ..LayoutInfo::default()
-        };
+        );
         let opt_in = |file: &str, root: &str| is_opt_in_import(file, root, &layout);
         assert!(opt_in("airflow/example_dags/tutorial.py", "duckdb"));
         assert!(opt_in("mlflow/pyspark/ml/_autolog.py", "pyspark"));
@@ -496,11 +494,7 @@ mod tests {
     /// a top-level package of that name is not.
     #[test]
     fn test_support_sits_below_the_top_level_package() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            packages: vec!["django".to_owned(), "testing".to_owned()],
-            ..LayoutInfo::default()
-        };
+        let layout = LayoutInfo::new("", vec!["django".to_owned(), "testing".to_owned()]);
         let support = |file: &str| is_test_support(file, &layout);
         assert!(support("django/test/selenium.py"));
         assert!(support("django/contrib/admin/tests.py"));
@@ -540,12 +534,7 @@ mod tests {
                 ),
             ],
         };
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..LayoutInfo::default()
-        };
+        let layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
         let mut loaded: Vec<_> = host_loaded_files(&parse, &layout, &pytest11)
             .into_iter()
             .collect();

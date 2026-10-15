@@ -529,9 +529,7 @@ mod tests {
     use crate::graph::{FileNode, add_parsed_imports};
     use crate::parser::{DynamicImport, ImportContext, ImportKind, ImportRef, ParsedModule};
     use crate::plugins::{ModuleReference, PluginContribution, ReferenceOrigin};
-    use crate::sources::{
-        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
-    };
+    use crate::sources::{DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo};
     use std::collections::BTreeSet;
 
     const PATHS: [&str; 4] = [
@@ -573,12 +571,7 @@ mod tests {
     }
 
     fn layout() -> LayoutInfo {
-        LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        }
+        LayoutInfo::new("src", vec!["acme".to_owned()])
     }
 
     fn sources(root: &ProjectRoot) -> DiscoveredSources {
