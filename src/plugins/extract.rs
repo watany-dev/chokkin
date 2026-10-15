@@ -103,6 +103,7 @@ pub fn extract_plugin_hints_with_parse(
         config_provided_binaries: scan.provided_binaries,
         config_module_refs: scan.module_refs,
         config_script_entries: scan.script_entries,
+        config_command_targets: scan.command_targets,
         warnings,
     })
 }

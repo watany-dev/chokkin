@@ -67,8 +67,18 @@ pub(super) fn scan(
     hits
 }
 
+/// The first of `names` present under its own spelling: on a case-insensitive
+/// file system `makefile` would open `Makefile` and label it with the wrong name.
 fn read_first(root: &Path, names: &[&str]) -> Option<(String, String)> {
-    names.iter().find_map(|name| read_root_file(root, name))
+    let present: Vec<_> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.file_name())
+        .collect();
+    names
+        .iter()
+        .filter(|name| present.iter().any(|entry| entry.as_os_str() == **name))
+        .find_map(|name| read_root_file(root, name))
 }
 
 /// Root-level Dockerfiles, sorted so first-seen origins are stable.
@@ -451,5 +461,15 @@ mod tests {
         }
         assert!(!is_dockerfile_name("Dockerfile.dockerignore"));
         assert!(!is_dockerfile_name("docker-compose.yml"));
+    }
+
+    #[test]
+    fn read_first_reads_the_name_spelled_on_disk() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("Makefile"), "all:\n").expect("write");
+        assert_eq!(
+            read_first(temp.path(), &MAKEFILE_NAMES),
+            Some(("Makefile".to_owned(), "all:\n".to_owned()))
+        );
     }
 }

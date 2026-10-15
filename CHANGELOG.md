@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top-level import already makes them certain. Django's `pillow` and
   `selenium`, werkzeug's `cryptography`, streamlit's `polars` and `xarray`
   and mlflow's `pyspark` drop to info (#808).
+- What chokkin could not read now lowers the findings it could hide, with a
+  warning naming it (#888):
+  - a reachable import that resolves to no distribution (CHK010) lowers
+    CHK002 to likely (#911);
+  - a command in a task file or tool config (`Makefile`, `justfile`,
+    `Dockerfile`, `Procfile`, GitLab CI, PDM scripts, pre-commit local hooks,
+    tox, `scripts/` and `bin/` shell scripts) that runs Python code no entry
+    reaches, or code chokkin cannot read, lowers CHK001 to likely (#913);
+  - Django settings that cannot be found or read lower CHK001 and Django's
+    CHK002 to likely. `DJANGO_SETTINGS_MODULE` set beside a nested
+    `manage.py`, `wsgi.py` or `asgi.py` now resolves from that directory (#914);
+  - a nested `.gitignore` that cannot be read (#915) and a `requires-python`
+    that cannot be read (#917) now warn instead of being silently ignored.
 
 ### Fixed
 - A source with a syntax error is skipped like an undecodable one, with a

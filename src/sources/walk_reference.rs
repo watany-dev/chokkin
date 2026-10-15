@@ -13,7 +13,7 @@ use crate::path_util::normalize_rel_path;
 use super::context::assign_file_context;
 use super::error::SourcesError;
 use super::types::{DiscoveredFile, FileContext, FileKind};
-use super::walk::{push_walk_error, should_prune_dir};
+use super::walk::{nested_gitignore_unreadable, push_walk_error, should_prune_dir};
 use super::warnings::SourcesWarning;
 
 const GITIGNORE_PATH: &str = ".gitignore";
@@ -34,7 +34,11 @@ pub(super) struct ReferenceOptions<'a> {
 pub(super) fn load_gitignore_reference(root: &Path) -> (Option<Gitignore>, Option<SourcesWarning>) {
     let gitignore_path = root.join(".gitignore");
     if !gitignore_path.is_file() {
-        return (None, None);
+        let warning =
+            gitignore_unreadable(&gitignore_path).then(|| SourcesWarning::GitignoreUnreadable {
+                path: GITIGNORE_PATH.to_owned(),
+            });
+        return (None, warning);
     }
 
     // The walk reports lines that do not parse; `ignore` drops a read error.
@@ -46,6 +50,15 @@ pub(super) fn load_gitignore_reference(root: &Path) -> (Option<Gitignore>, Optio
         return (None, warning);
     }
     (builder.build().ok(), None)
+}
+
+/// A `.gitignore` that exists but whose lines `ignore` cannot read, or a
+/// symlink that leads nowhere.
+fn gitignore_unreadable(path: &Path) -> bool {
+    if path.is_file() {
+        return std::fs::read_to_string(path).is_err();
+    }
+    path.symlink_metadata().is_ok() && path.metadata().is_err()
 }
 
 fn build_exclude_overrides(
@@ -136,6 +149,15 @@ pub(super) fn collect_files_reference(
 
         if let Some(error) = entry.error() {
             push_walk_error(entry.path(), error, &mut warnings);
+        }
+        if options.respect_gitignore
+            && entry.depth() > 0
+            && entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_dir())
+            && gitignore_unreadable(&entry.path().join(GITIGNORE_PATH))
+        {
+            warnings.extend(nested_gitignore_unreadable(&root, entry.path()));
         }
 
         let path = entry.path();
@@ -433,6 +455,55 @@ mod tests {
         let root = temp.path().join("repo");
         write_file(&root.join("app.py"), "");
         fs::write(root.join(".gitignore"), b"app.py\n\xff\n").expect("write");
+
+        let outcomes = assert_equivalent(&[root], &[]);
+        assert_eq!(
+            outcomes[0].1,
+            [SourcesWarning::GitignoreUnreadable {
+                path: GITIGNORE_PATH.to_owned(),
+            }]
+        );
+    }
+
+    /// A `.gitignore` below the root that `ignore` cannot read is named
+    /// once, by its path from the walk root; a dangling symlink counts too
+    /// (#915). A member walk spells the same file from its own root.
+    #[test]
+    fn unreadable_nested_gitignore_warns_once_per_file() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        write_file(&root.join("pkg/sub/gen.py"), "");
+        write_file(&root.join("pkg/sub/.gitignore"), "");
+        fs::write(root.join("pkg/sub/.gitignore"), b"gen.py\n\xff\n").expect("write");
+        write_file(&root.join("lib/x.py"), "");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("missing"), root.join("lib/.gitignore"))
+            .expect("symlink");
+
+        let outcomes = assert_equivalent(&[root.clone(), root.join("pkg")], &[]);
+        let gitignore = |path: &str| SourcesWarning::GitignoreUnreadable {
+            path: path.to_owned(),
+        };
+        let mut expected = Vec::new();
+        if cfg!(unix) {
+            expected.push(gitignore("lib/.gitignore"));
+        }
+        expected.push(gitignore("pkg/sub/.gitignore"));
+        assert_eq!(outcomes[0].1, expected);
+        assert_eq!(outcomes[1].1, [gitignore("sub/.gitignore")]);
+        assert!(paths(&outcomes[0]).contains(&"pkg/sub/gen.py"));
+        // Without `respect_gitignore` no ignore file is read.
+        assert!(outcomes[2].1.is_empty(), "{:?}", outcomes[2].1);
+    }
+
+    /// A dangling root `.gitignore` symlink is as unread as a broken file.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_root_gitignore_warns_like_an_unreadable_one() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        write_file(&root.join("app.py"), "");
+        std::os::unix::fs::symlink(root.join("missing"), root.join(".gitignore")).expect("symlink");
 
         let outcomes = assert_equivalent(&[root], &[]);
         assert_eq!(

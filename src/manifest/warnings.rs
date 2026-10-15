@@ -108,6 +108,22 @@ pub enum ManifestWarning {
         /// Extras named but filled from a source chokkin does not read.
         extras: Vec<String>,
     },
+    /// `requires-python` is not a specifier set, so the target version fell
+    /// back to py311 (#917). Not emitted when `target_version` is explicit.
+    RequiresPythonUnreadable {
+        /// Root-relative manifest the value came from.
+        file: String,
+        /// `requires-python` as written.
+        value: String,
+    },
+    /// A PEP 723 script's `requires-python` is not a specifier set, so the
+    /// script is parsed and resolved with the project's target version (#917).
+    InlineScriptRequiresPythonUnreadable {
+        /// Root-relative script path.
+        file: String,
+        /// `requires-python` as written.
+        value: String,
+    },
     /// A PEP 723 script block was ignored; the file stays a plain source.
     InlineScriptInvalid {
         /// Root-relative script path.
@@ -132,6 +148,8 @@ impl ManifestWarning {
             | Self::DependencyGroupIncludeCycle { file, .. }
             | Self::FileUndecodable { file }
             | Self::DynamicExtrasUnread { file, .. }
+            | Self::RequiresPythonUnreadable { file, .. }
+            | Self::InlineScriptRequiresPythonUnreadable { file, .. }
             | Self::InlineScriptInvalid { file, .. } => *file = join_rel(base, file),
             Self::MetadataConflict {
                 kept_source,

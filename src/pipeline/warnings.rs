@@ -65,6 +65,18 @@ pub enum ProbeWarning {
         /// How many other reachable modules do the same.
         more: usize,
     },
+    /// A task file or tool config runs Python code no entry reaches, which
+    /// caps unused-file findings below certain (#913). One per file.
+    UnreadCommandTarget {
+        /// Root-relative path of the command file.
+        path: String,
+        /// Line of the first such command, when known.
+        line: Option<u32>,
+        /// The first target as written.
+        target: String,
+        /// How many other targets in the file do the same.
+        more: usize,
+    },
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -115,7 +127,8 @@ impl ProbeWarning {
             Self::ParseDiagnostic { message, .. } => message.hash(&mut hasher),
             Self::AutoWorkspace { .. }
             | Self::NestedProjectsSkipped { .. }
-            | Self::OpaqueDynamicImport { .. } => {},
+            | Self::OpaqueDynamicImport { .. }
+            | Self::UnreadCommandTarget { .. } => {},
         }
         hasher.finish()
     }
@@ -140,6 +153,7 @@ impl ProbeWarning {
             Self::Plugin(warning) => match warning {
                 PluginsWarning::PartialSettingsParse { path, .. }
                 | PluginsWarning::PytestConfigUnreadable { path } => (Some(path), None),
+                PluginsWarning::DjangoSettingsUnread { path, line, .. } => (Some(path), *line),
                 PluginsWarning::AmbiguousSettings { .. }
                 | PluginsWarning::PluginExtractFailed { .. } => (None, None),
             },
@@ -162,6 +176,7 @@ impl ProbeWarning {
                 (Some(path), source_line(path, line))
             },
             Self::OpaqueDynamicImport { path, .. } => (Some(path), None),
+            Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
             Self::ParseDiagnostic { path, line, .. } => (
                 Some(path),
                 source_line(path, Some(*line).filter(|line| *line > 0)),
@@ -191,6 +206,8 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
         | ManifestWarning::FileUndecodable { file }
         | ManifestWarning::DynamicExtrasUnread { file, .. }
+        | ManifestWarning::RequiresPythonUnreadable { file, .. }
+        | ManifestWarning::InlineScriptRequiresPythonUnreadable { file, .. }
         | ManifestWarning::InlineScriptInvalid { file, .. } => (Some(file), None),
         // The sections are named, not the file; a conflict spans two files;
         // a missing constraints file does not exist.
@@ -261,6 +278,23 @@ impl fmt::Display for ProbeWarning {
                 "parse: `{path}` and {more} more reachable module{} import a module by a name computed at runtime; unused files are reported below certain",
                 if *more == 1 { "" } else { "s" }
             ),
+            Self::UnreadCommandTarget {
+                path,
+                line,
+                target,
+                more,
+            } => {
+                let site = crate::rules::import_site(path, *line);
+                let others = match more {
+                    0 => String::new(),
+                    1 => " and 1 more target".to_owned(),
+                    more => format!(" and {more} more targets"),
+                };
+                write!(
+                    formatter,
+                    "plugin: `{site}` runs `{target}`{others} as Python code no entry reaches; unused files are reported below certain"
+                )
+            },
         }
     }
 }
@@ -381,6 +415,14 @@ fn write_manifest_warning(
         ManifestWarning::DynamicExtrasUnread { file, extras } => {
             write_dynamic_extras_unread(formatter, file, extras)
         },
+        ManifestWarning::RequiresPythonUnreadable { file, value } => write!(
+            formatter,
+            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311"
+        ),
+        ManifestWarning::InlineScriptRequiresPythonUnreadable { file, value } => write!(
+            formatter,
+            "manifest: could not read `requires-python` \"{value}\" in the PEP 723 block of `{file}`; using the project's target version"
+        ),
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
             "manifest: ignored PEP 723 script block in `{file}`: {reason}"

@@ -4,15 +4,21 @@
 //! A gap is recorded where it is found; each kind declares which findings it
 //! weakens, so no rule has to know about unread input itself.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::Confidence;
+use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
-use crate::manifest::{LoadedManifest, ManifestWarning};
-use crate::parser::ParseSummary;
+use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning};
+use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
+use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
-use crate::rules::types::{IssueCandidate, IssueSubject, RuleId, Severity};
+use crate::resolver::{ResolveWarning, is_first_party_import};
+use crate::rules::RuleContext;
+use crate::rules::deps::file_context;
+use crate::rules::types::{IssueCandidate, IssueSubject, RuleId, Severity, import_site};
+use crate::sources::FileContext;
 
 /// One piece of input the analysis could not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +30,10 @@ pub struct Gap {
     /// The workspace member whose findings alone the gap lowers; `None`
     /// lowers every finding in its kind's scope (#910).
     pub member: Option<String>,
+    /// What in the file could not be read and its line, which `--explain`
+    /// shows in place of the file: an unresolved import's module (#911), a
+    /// command's target (#913).
+    pub site: Option<(String, Option<u32>)>,
 }
 
 /// A workspace member's manifest: what it could not read lowers only the
@@ -53,6 +63,20 @@ pub enum GapKind {
     /// be read statically (#491): the root's for every finding, a member's
     /// for that member's (#910).
     RuntimeDependenciesUnknown,
+    /// A reachable import no source resolved to a module (§7): any declared
+    /// distribution may provide it (#911).
+    UnresolvedImport,
+    /// The same in a PEP 723 script, whose own block installs what it
+    /// imports: it lowers that script's findings alone (#911).
+    UnresolvedScriptImport,
+    /// A task file or tool config runs Python code no entry reaches: a
+    /// computed or unread target, or a file or module it names that nothing
+    /// else reaches (#913). What that code imports is unknown.
+    UnreadCommandTarget,
+    /// A Django project's settings could not be found or read, or star-import
+    /// a module that is not a project file (#914): the apps, middleware and
+    /// URL configuration they name are unknown.
+    UnreadDjangoSettings,
 }
 
 /// How a gap changes a finding in its scope.
@@ -68,19 +92,30 @@ impl GapKind {
     ///
     /// Unread code may import any file or distribution, so it lowers the
     /// absence findings; an unknown declaration list may declare any import,
-    /// so it lowers the missing-declaration findings. A script's own block
-    /// is read separately, so no project gap reaches its findings.
+    /// so it lowers the missing-declaration findings; an unresolved import may
+    /// name what an unused declaration provides. A script's own block is read
+    /// separately, so no project gap reaches its findings.
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
         match (self, candidate.rule, &candidate.subject) {
             (
-                Self::UnreadModule | Self::UnreadNotebookCells | Self::OpaqueDynamicImport,
+                Self::UnreadModule
+                | Self::UnreadNotebookCells
+                | Self::OpaqueDynamicImport
+                | Self::UnreadCommandTarget
+                | Self::UnreadDjangoSettings,
                 RuleId::Chk001,
                 _,
             )
             | (
-                Self::UnreadModule | Self::UnreadNotebookCells,
+                Self::UnreadModule | Self::UnreadNotebookCells | Self::UnreadDjangoSettings,
                 RuleId::Chk002,
                 IssueSubject::Distribution { .. },
+            )
+            | (Self::UnresolvedImport, RuleId::Chk002, IssueSubject::Distribution { .. })
+            | (
+                Self::UnresolvedScriptImport,
+                RuleId::Chk002,
+                IssueSubject::ScriptDistribution { .. },
             ) => Some(Lowering::Cap(Confidence::Likely)),
             (
                 Self::RuntimeDependenciesUnknown,
@@ -101,21 +136,56 @@ impl GapKind {
                 "a reachable module imports a module by a name computed at runtime"
             },
             Self::RuntimeDependenciesUnknown => "runtime dependencies could not be read statically",
+            Self::UnresolvedImport => "a reachable import could not be resolved to a distribution",
+            Self::UnresolvedScriptImport => {
+                "an import in the script could not be resolved to a distribution"
+            },
+            Self::UnreadCommandTarget => "a command runs Python code no entry reaches",
+            Self::UnreadDjangoSettings => "the Django settings could not be found or read",
+        }
+    }
+}
+
+impl Gap {
+    /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
+    /// member's findings, a script's import that script's alone.
+    fn reaches(&self, candidate: &IssueCandidate) -> bool {
+        let in_member = self.member.is_none() || self.member == candidate.workspace_member;
+        let in_script = match (self.kind, &candidate.subject) {
+            (GapKind::UnresolvedScriptImport, IssueSubject::ScriptDistribution { script, .. }) => {
+                *script == self.file
+            },
+            _ => true,
+        };
+        in_member && in_script
+    }
+
+    /// What `--explain` names: the import or target and its line, or else the file.
+    fn label(&self) -> String {
+        match &self.site {
+            Some((what, line)) => format!("`{what}` in `{}`", import_site(&self.file, *line)),
+            None => format!("`{}`", self.file),
         }
     }
 }
 
 /// Gaps that can affect a finding: one in a module that never runs hides
-/// nothing, so module gaps count only where the module is reached.
+/// nothing, so module and import gaps count only where the module is reached.
 #[must_use]
 pub fn collect_gaps(
-    parse: &ParseSummary,
-    graph: &ProjectGraph,
-    reachability: &ReachabilityReport,
+    context: &RuleContext<'_>,
     manifest: &LoadedManifest,
     members: &[MemberManifest<'_>],
+    scripts: &[InlineScript],
+    plugins: &PluginHints,
 ) -> Vec<Gap> {
-    let mut gaps = module_gaps(parse, graph, reachability);
+    let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
+    gaps.extend(unresolved_import_gaps(context, manifest, scripts));
+    gaps.extend(command_target_gaps(
+        context,
+        &plugins.config_command_targets,
+    ));
+    gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(manifest_gap(manifest));
     gaps.extend(members.iter().filter_map(|member| {
         let mut gap = manifest_gap(member.manifest)?;
@@ -125,13 +195,20 @@ pub fn collect_gaps(
     }));
     // The root's gap sorts before its members', so it is the one `--explain` names first.
     gaps.sort_by(|left, right| {
-        (left.kind, left.member.is_some(), &left.file).cmp(&(
+        (left.kind, left.member.is_some(), &left.file, &left.site).cmp(&(
             right.kind,
             right.member.is_some(),
             &right.file,
+            &right.site,
         ))
     });
     gaps
+}
+
+fn is_reached(file: &str, graph: &ProjectGraph, reachability: &ReachabilityReport) -> bool {
+    graph
+        .file_id(file)
+        .is_some_and(|file_id| reachability.reachable.contains(&file_id))
 }
 
 fn module_gaps(
@@ -141,10 +218,7 @@ fn module_gaps(
 ) -> Vec<Gap> {
     let mut gaps = Vec::new();
     for module in &parse.modules {
-        let reached = graph
-            .file_id(&module.path)
-            .is_some_and(|file_id| reachability.reachable.contains(&file_id));
-        if !reached {
+        if !is_reached(&module.path, graph, reachability) {
             continue;
         }
         let mut push = |kind| {
@@ -152,6 +226,7 @@ fn module_gaps(
                 file: module.path.clone(),
                 kind,
                 member: None,
+                site: None,
             });
         };
         if module.skipped {
@@ -165,6 +240,131 @@ fn module_gaps(
         }
     }
     gaps
+}
+
+/// One gap per file and module, at the import sites CHK010 warns about: a
+/// `TYPE_CHECKING` or optional import never fails, a docs or dev file runs
+/// outside the installed package, and a first-party miss is a typo rather
+/// than a distribution (§12). A script's block installs what the script runs
+/// with, so its imports count in any context.
+fn unresolved_import_gaps(
+    context: &RuleContext<'_>,
+    manifest: &LoadedManifest,
+    scripts: &[InlineScript],
+) -> Vec<Gap> {
+    let is_script = |file: &str| scripts.iter().any(|script| script.path == file);
+    let mut sites: BTreeMap<(&str, &str), Option<u32>> = BTreeMap::new();
+    for warning in &context.resolution.warnings {
+        let ResolveWarning::UnresolvedImport {
+            import,
+            file,
+            line,
+            context: import_context,
+            optional,
+            ..
+        } = warning
+        else {
+            continue;
+        };
+        let counts = *import_context != ImportContext::Type
+            && !*optional
+            && is_reached(file, context.graph, context.reachability)
+            && (is_script(file)
+                || !matches!(
+                    file_context(file, context.sources),
+                    FileContext::Docs | FileContext::Dev
+                ))
+            && !is_first_party_import(import, &context.sources.layout, &manifest.metadata);
+        if !counts {
+            continue;
+        }
+        keep_first_line(&mut sites, (file.as_str(), import.as_str()), *line);
+    }
+    sites
+        .into_iter()
+        .map(|((file, import), line)| Gap {
+            file: file.to_owned(),
+            kind: if is_script(file) {
+                GapKind::UnresolvedScriptImport
+            } else {
+                GapKind::UnresolvedImport
+            },
+            member: None,
+            site: Some((import.to_owned(), line)),
+        })
+        .collect()
+}
+
+/// Keep the first line of a site, as CHK010 anchors at it; a site without
+/// one sorts last.
+fn keep_first_line<K: Ord>(sites: &mut BTreeMap<K, Option<u32>>, key: K, line: Option<u32>) {
+    let kept = sites.entry(key).or_insert(line);
+    *kept = match (*kept, line) {
+        (Some(kept), Some(line)) => Some(kept.min(line)),
+        (kept, line) => kept.or(line),
+    };
+}
+
+/// One gap per command file and target. A computed or unread target may run
+/// any file; a file or module it names that no entry reaches runs code whose
+/// imports are not followed, since commands add no entries yet (#912). A
+/// target that names nothing discovered (a typo, a deleted file, a
+/// third-party module such as `pytest`) hides no project file, so it is no gap.
+fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef]) -> Vec<Gap> {
+    let known_paths: BTreeSet<String> = context
+        .sources
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    let unreached = |path: &String| !is_reached(path, context.graph, context.reachability);
+    let mut sites: BTreeMap<(&str, String), Option<u32>> = BTreeMap::new();
+    for command in commands {
+        let text = match &command.target {
+            CommandTarget::Opaque { text } => text.clone(),
+            CommandTarget::Script { paths } => {
+                match paths.iter().find(|path| known_paths.contains(*path)) {
+                    Some(path) if unreached(path) => path.clone(),
+                    _ => continue,
+                }
+            },
+            CommandTarget::Module { module } => {
+                let layout = &context.sources.layout;
+                let path =
+                    resolve_module_to_path(&format!("{module}.__main__"), layout, &known_paths)
+                        .or_else(|| resolve_module_to_path(module, layout, &known_paths));
+                match path {
+                    Some(path) if unreached(&path) => module.clone(),
+                    _ => continue,
+                }
+            },
+        };
+        keep_first_line(
+            &mut sites,
+            (command.origin.file.as_str(), text),
+            command.origin.line,
+        );
+    }
+    sites
+        .into_iter()
+        .map(|((file, text), line)| Gap {
+            file: file.to_owned(),
+            kind: GapKind::UnreadCommandTarget,
+            member: None,
+            site: Some((text, line)),
+        })
+        .collect()
+}
+
+/// Settings decide what Django runs in every member, so the gap lowers the
+/// whole project's findings.
+fn settings_gap(unread: &UnreadSettings) -> Gap {
+    Gap {
+        file: unread.file.clone(),
+        kind: GapKind::UnreadDjangoSettings,
+        member: None,
+        site: unread.site.clone(),
+    }
 }
 
 /// The manifest's warning names the file (`pyproject.toml` for
@@ -185,6 +385,7 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
         file,
         kind: GapKind::RuntimeDependenciesUnknown,
         member: None,
+        site: None,
     })
 }
 
@@ -194,10 +395,7 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
 /// orphan's) still matches the lowered confidence.
 pub(super) fn apply_gaps(candidates: &mut [IssueCandidate], gaps: &[Gap]) {
     for candidate in candidates {
-        let in_scope: Vec<&Gap> = gaps
-            .iter()
-            .filter(|gap| gap.member.is_none() || gap.member == candidate.workspace_member)
-            .collect();
+        let in_scope: Vec<&Gap> = gaps.iter().filter(|gap| gap.reaches(candidate)).collect();
         let kinds: BTreeSet<GapKind> = in_scope.iter().map(|gap| gap.kind).collect();
         for &kind in &kinds {
             let Some(lowering) = kind.lowering(candidate) else {
@@ -215,16 +413,16 @@ pub(super) fn apply_gaps(candidates: &mut [IssueCandidate], gaps: &[Gap]) {
     }
 }
 
-/// The gap reason, the first file in backticks, and how many more files share the kind.
+/// The gap reason, the first gap's label, and how many more gaps share the kind.
 fn gap_detail(kind: GapKind, gaps: &[&Gap]) -> String {
-    let mut files = gaps
+    let mut labels = gaps
         .iter()
         .filter(|gap| gap.kind == kind)
-        .map(|gap| &gap.file);
-    let first = files.next().map_or("", String::as_str);
-    match files.count() {
-        0 => format!("{}: `{first}`", kind.reason()),
-        more => format!("{}: `{first}` (and {more} more)", kind.reason()),
+        .map(|gap| gap.label());
+    let first = labels.next().unwrap_or_default();
+    match labels.count() {
+        0 => format!("{}: {first}", kind.reason()),
+        more => format!("{}: {first} (and {more} more)", kind.reason()),
     }
 }
 
@@ -279,6 +477,7 @@ mod tests {
             file: file.to_owned(),
             kind,
             member: None,
+            site: None,
         }
     }
 
@@ -296,43 +495,53 @@ mod tests {
     }
 
     #[test]
-    fn unread_module_caps_absence_findings_but_not_script_ones() {
-        let found = lowered(
-            &[gap("acme/latin.py", GapKind::UnreadModule)],
-            vec![
-                candidate(RuleId::Chk001, file("acme/orphan.py")),
-                candidate(RuleId::Chk002, distribution("requests")),
-                candidate(RuleId::Chk002, script_distribution("rich")),
-                candidate(RuleId::Chk003, import("yaml")),
-            ],
-        );
-        assert_eq!(
-            found,
-            [
-                (Severity::Error, Confidence::Likely),
-                (Severity::Error, Confidence::Likely),
-                (Severity::Error, Confidence::Certain),
-                (Severity::Error, Confidence::Certain),
-            ]
-        );
+    fn unread_module_and_django_settings_cap_absence_findings_but_not_script_ones() {
+        for gap in [
+            gap("acme/latin.py", GapKind::UnreadModule),
+            gap("manage.py", GapKind::UnreadDjangoSettings),
+        ] {
+            let found = lowered(
+                &[gap],
+                vec![
+                    candidate(RuleId::Chk001, file("acme/orphan.py")),
+                    candidate(RuleId::Chk002, distribution("requests")),
+                    candidate(RuleId::Chk002, script_distribution("rich")),
+                    candidate(RuleId::Chk003, import("yaml")),
+                ],
+            );
+            assert_eq!(
+                found,
+                [
+                    (Severity::Error, Confidence::Likely),
+                    (Severity::Error, Confidence::Likely),
+                    (Severity::Error, Confidence::Certain),
+                    (Severity::Error, Confidence::Certain),
+                ]
+            );
+        }
     }
 
     #[test]
-    fn opaque_dynamic_import_caps_only_unused_files() {
-        let found = lowered(
-            &[gap("acme/main.py", GapKind::OpaqueDynamicImport)],
-            vec![
-                candidate(RuleId::Chk001, file("acme/orphan.py")),
-                candidate(RuleId::Chk002, distribution("requests")),
-            ],
-        );
-        assert_eq!(
-            found,
-            [
-                (Severity::Error, Confidence::Likely),
-                (Severity::Error, Confidence::Certain),
-            ]
-        );
+    fn opaque_dynamic_import_and_command_targets_cap_only_unused_files() {
+        for gap in [
+            gap("acme/main.py", GapKind::OpaqueDynamicImport),
+            gap("Makefile", GapKind::UnreadCommandTarget),
+        ] {
+            let found = lowered(
+                &[gap],
+                vec![
+                    candidate(RuleId::Chk001, file("acme/orphan.py")),
+                    candidate(RuleId::Chk002, distribution("requests")),
+                ],
+            );
+            assert_eq!(
+                found,
+                [
+                    (Severity::Error, Confidence::Likely),
+                    (Severity::Error, Confidence::Certain),
+                ]
+            );
+        }
     }
 
     #[test]
@@ -428,6 +637,86 @@ mod tests {
             ["runtime dependencies could not be read statically: `pyproject.toml`"]
         );
         assert_eq!(candidates[1].severity, Severity::Info);
+    }
+
+    fn unresolved(file: &str, kind: GapKind, module: &str, line: u32) -> Gap {
+        let mut gap = gap(file, kind);
+        gap.site = Some((module.to_owned(), Some(line)));
+        gap
+    }
+
+    /// An unresolved import may name what an unused distribution provides;
+    /// files and missing declarations are read from imports that did resolve.
+    #[test]
+    fn unresolved_import_caps_only_unused_project_distributions() {
+        let mut candidates = vec![
+            candidate(RuleId::Chk002, distribution("acme-widgets-sdk")),
+            candidate(RuleId::Chk002, script_distribution("rich")),
+            candidate(RuleId::Chk001, file("acme/orphan.py")),
+            candidate(RuleId::Chk003, import("yaml")),
+        ];
+        apply_gaps(
+            &mut candidates,
+            &[
+                unresolved(
+                    "acme/main.py",
+                    GapKind::UnresolvedImport,
+                    "zz_widgets_core",
+                    1,
+                ),
+                unresolved("acme/cli.py", GapKind::UnresolvedImport, "zz_cli", 3),
+            ],
+        );
+        let found: Vec<_> = candidates
+            .iter()
+            .map(|candidate| (candidate.confidence, candidate.explain.details.len()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (Confidence::Likely, 1),
+                (Confidence::Certain, 0),
+                (Confidence::Certain, 0),
+                (Confidence::Certain, 0),
+            ]
+        );
+        assert_eq!(
+            candidates[0].explain.details,
+            [
+                "a reachable import could not be resolved to a distribution: `zz_widgets_core` in `acme/main.py:1` (and 1 more)"
+            ]
+        );
+    }
+
+    /// A script's block installs what the script imports, so its unresolved
+    /// import lowers that block's entries and no other script's or the project's.
+    #[test]
+    fn unresolved_script_import_caps_only_its_own_block() {
+        let mut other = script_distribution("httpx");
+        if let IssueSubject::ScriptDistribution { script, .. } = &mut other {
+            "other.py".clone_into(script);
+        }
+        let found = lowered(
+            &[unresolved(
+                "tool.py",
+                GapKind::UnresolvedScriptImport,
+                "zz_render",
+                4,
+            )],
+            vec![
+                candidate(RuleId::Chk002, script_distribution("rich")),
+                candidate(RuleId::Chk002, other),
+                candidate(RuleId::Chk002, distribution("requests")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
     }
 
     #[test]
@@ -539,6 +828,34 @@ mod tests {
             [
                 "a reachable module could not be read: `acme/a.py` (and 1 more)",
                 "a reachable module imports a module by a name computed at runtime: `acme/main.py`",
+            ]
+        );
+    }
+
+    #[test]
+    fn keep_first_line_keeps_the_earliest_line_and_prefers_one_to_none() {
+        let mut sites = BTreeMap::new();
+        for (key, line) in [
+            ("later", Some(5)),
+            ("later", Some(3)),
+            ("earlier", Some(3)),
+            ("earlier", Some(5)),
+            ("none_first", None),
+            ("none_first", Some(4)),
+            ("none_last", Some(4)),
+            ("none_last", None),
+            ("only_none", None),
+        ] {
+            keep_first_line(&mut sites, key, line);
+        }
+        assert_eq!(
+            sites.into_iter().collect::<Vec<_>>(),
+            [
+                ("earlier", Some(3)),
+                ("later", Some(3)),
+                ("none_first", Some(4)),
+                ("none_last", Some(4)),
+                ("only_none", None),
             ]
         );
     }
