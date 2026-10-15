@@ -47,8 +47,9 @@ pub(super) fn remove_dependency(
                     break;
                 }
                 removed = true;
-                if !continuation {
-                    let delimiter = raw.find(['=', ':']).unwrap_or(raw.len() - 1);
+                // `ini_lines` splits an option line at this delimiter, so it
+                // is always found.
+                if !continuation && let Some(delimiter) = raw.find(['=', ':']) {
                     output.push_str(&raw[..=delimiter]);
                     output.push_str(line_ending(raw));
                 }

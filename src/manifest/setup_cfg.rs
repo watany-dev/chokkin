@@ -365,6 +365,22 @@ install_requires =
         );
     }
 
+    /// An indented comment is not part of the value, and an extra's `]` at
+    /// the end of a continuation does not open a section.
+    #[test]
+    fn continuations_skip_comments_and_keep_extras() {
+        let contents = "[options]\ninstall_requires =\n    requests[security]\n    # pinned: see #12\n    flask\n";
+        let sections = parse_ini_sections(contents);
+        let requires = sections
+            .get("options")
+            .and_then(|options| options.get("install_requires"))
+            .expect("install_requires");
+        assert_eq!(
+            split_requirement_lines(requires).collect::<Vec<_>>(),
+            ["requests[security]", "flask"]
+        );
+    }
+
     #[test]
     fn merges_repeated_sections_and_keeps_empty_ones() {
         let contents =
