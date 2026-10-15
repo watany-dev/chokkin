@@ -2132,6 +2132,15 @@ fn binary_opaque_dynamic_import_lowers_orphans_only() {
         ],
         "{parsed}"
     );
+    // The gap reaches the user without `--explain` (ADR 0005 §3, #909).
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(stderr.matches("computed at runtime").count(), 1, "{stderr}");
+    assert!(
+        stderr.contains(
+            "parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain"
+        ),
+        "{stderr}"
+    );
 }
 
 /// A reachable module with a syntax error is skipped like an undecodable one:
@@ -2324,7 +2333,7 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
         "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
         "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;",
         "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
-        "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically",
+        "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically; missing-dependency findings in `packages/dyn` are reported as low-confidence info",
     ] {
         assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
     }
@@ -2334,6 +2343,75 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
         diagnostics.contains("packages/dyn/pyproject.toml"),
         "{diagnostics}"
     );
+}
+
+/// A member whose runtime dependencies could not be read may declare what
+/// its own code imports, so only its missing declarations fall to hints
+/// (shown under `--confidence maybe`); a member whose declarations were read
+/// keeps its findings certain (#910).
+#[test]
+fn binary_member_unread_dependencies_lower_only_its_own_findings() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        (
+            "packages/x/pyproject.toml",
+            "[project]\nname = \"x\"\nversion = \"0.1.0\"\ndynamic = [\"dependencies\"]\n\n\
+             [project.scripts]\nx = \"x.main:main\"\n",
+        ),
+        ("packages/x/x/__init__.py", ""),
+        (
+            "packages/x/x/main.py",
+            "import requests\n\ndef main():\n    pass\n",
+        ),
+        (
+            "packages/y/pyproject.toml",
+            "[project]\nname = \"y\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\ny = \"y.main:main\"\n",
+        ),
+        ("packages/y/y/__init__.py", ""),
+        (
+            "packages/y/y/main.py",
+            "import requests\n\ndef main():\n    pass\n",
+        ),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json", "--confidence", "maybe"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let mut issues: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default().to_owned(),
+                issue["path"].as_str().unwrap_or_default().to_owned(),
+                issue["severity"].as_str().unwrap_or_default().to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    issues.sort();
+    let expected = [
+        ("CHK003", "packages/x/x/main.py", "info", "maybe"),
+        ("CHK003", "packages/y/y/main.py", "error", "certain"),
+    ]
+    .map(|(code, path, severity, confidence)| {
+        (
+            code.to_owned(),
+            path.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    });
+    assert_eq!(issues, expected, "{parsed}");
 }
 
 /// A member's source discovery is reported like the root's, under
@@ -3835,4 +3913,46 @@ fn binary_github_annotates_warnings_on_their_file() {
         )),
         "{stdout}"
     );
+}
+
+/// A root `.gitignore` line that does not parse is one warning naming the
+/// file, though the root walk and every member walk meet it (#903).
+#[test]
+fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        (".gitignore", "bad{glob\n"),
+        ("acme/__init__.py", ""),
+        (
+            "packages/core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("packages/core/core/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let sources: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("sources:"))
+        .collect();
+    let gitignore = project
+        .path()
+        .canonicalize()
+        .expect("canonical root")
+        .join(".gitignore");
+    let expected = format!(
+        "sources: could not read `{}`: line 1: error parsing glob 'bad{{glob'",
+        gitignore.display()
+    );
+    assert_eq!(sources.len(), 1, "{stderr}");
+    assert!(sources[0].starts_with(&expected), "{expected}\n{stderr}");
 }

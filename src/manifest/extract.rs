@@ -23,8 +23,8 @@ use super::requirements::{
 use super::setup_cfg::extract_setup_cfg;
 use super::setup_py::extract_setup_py;
 use super::types::{
-    DeclaredDependency, DependencyContext, LoadedManifest, LockfileGraph, LockfileKind,
-    ManifestSources, ProjectMetadata, UvToolSettings,
+    DeclaredDependency, DependencyContext, ExtrasState, LoadedManifest, LockfileGraph,
+    LockfileKind, ManifestSources, ProjectMetadata, UvToolSettings,
 };
 use super::warnings::ManifestWarning;
 
@@ -49,6 +49,7 @@ pub fn extract_manifest(
     let mut sources = ManifestSources::default();
     let mut lockfile = LockfileGraph::default();
     let mut uv = UvToolSettings::default();
+    let mut pyproject_dynamic_extras: Option<ExtrasState> = None;
     let pyproject_path = root_path.join("pyproject.toml");
     if pyproject_path.is_file() {
         let extracted = extract_pyproject(root_path, &pyproject_path)?;
@@ -61,17 +62,34 @@ pub fn extract_manifest(
         warnings.extend(extracted.warnings);
         sources.pyproject_toml = true;
         sources.pyproject_project_table = extracted.has_project_table;
+        pyproject_dynamic_extras = extracted.dynamic_extras;
     }
     let pyproject_requires_python = metadata.requires_python.clone();
 
     // Manifest whose runtime dependencies could not be read, if any.
     let mut runtime_unknown_in: Option<&str> = None;
+    // Extras state setup.cfg / setup.py pass, if either passes extras.
+    let mut extras: Option<ExtrasState> = None;
+    let has_runtime = |dependencies: &[DeclaredDependency]| {
+        dependencies
+            .iter()
+            .any(|dep| dep.context == DependencyContext::Runtime)
+    };
+    let mut static_runtime_declared = has_runtime(&dependencies);
+    // Requirements files setup.* reads as its declarations.
+    let mut setup_files_read: Vec<String> = Vec::new();
     let setup_cfg_path = root_path.join("setup.cfg");
     if setup_cfg_path.is_file() {
         let extracted = extract_setup_cfg(root_path, &setup_cfg_path)?;
-        if extracted.skipped {
+        if extracted.skipped || extracted.runtime_unknown {
             runtime_unknown_in = Some("setup.cfg");
+        } else {
+            // A partly read `install_requires` may hide the rest.
+            static_runtime_declared |= has_runtime(&extracted.dependencies);
         }
+        setup_files_read.extend(extracted.files_read.iter().cloned());
+        sources.requirements_files.extend(extracted.files_read);
+        sources.requirements_missing.extend(extracted.files_missing);
         let kept_source = if sources.pyproject_toml {
             "pyproject.toml"
         } else {
@@ -87,12 +105,9 @@ pub fn extract_manifest(
         dependencies.extend(extracted.dependencies);
         warnings.extend(extracted.warnings);
         sources.setup_cfg = true;
+        extras = extracted.extras;
     }
 
-    let static_runtime_declared = dependencies
-        .iter()
-        .any(|dep| dep.context == DependencyContext::Runtime);
-    let mut setup_py_files_read: Vec<String> = Vec::new();
     let setup_py_path = root_path.join("setup.py");
     if setup_py_path.is_file() {
         let extracted = extract_setup_py(root_path, &setup_py_path)?;
@@ -121,7 +136,9 @@ pub fn extract_manifest(
             "setup.py",
         );
         sources.setup_py_dynamic_name = extracted.dynamic_name;
-        sources.extras = extracted.extras;
+        if let Some(state) = extracted.extras {
+            extras = Some(extras.unwrap_or_default().merge(state));
+        }
         if extracted.parsed {
             dependencies.extend(extracted.dependencies);
             sources.setup_py = true;
@@ -132,11 +149,30 @@ pub fn extract_manifest(
                 .iter()
                 .map(|name| normalize_distribution_name(name)),
         );
-        setup_py_files_read.clone_from(&extracted.files_read);
+        setup_files_read.extend(extracted.files_read.iter().cloned());
         sources.requirements_files.extend(extracted.files_read);
         sources.requirements_missing.extend(extracted.files_missing);
         warnings.extend(extracted.warnings);
     }
+    // setuptools fills dynamic extras from setup.cfg or setup.py, so only
+    // extras no source passes are unknown (#905).
+    if let Some(dynamic) = pyproject_dynamic_extras {
+        let dynamic = match dynamic {
+            ExtrasState::Unknown if extras.is_some() => ExtrasState::Known,
+            dynamic => dynamic,
+        };
+        let unread = match &dynamic {
+            ExtrasState::Known => None,
+            ExtrasState::Partial(names) => Some(names.iter().cloned().collect()),
+            ExtrasState::Unknown => Some(Vec::new()),
+        };
+        warnings.extend(unread.map(|extras| ManifestWarning::DynamicExtrasUnread {
+            file: "pyproject.toml".to_owned(),
+            extras,
+        }));
+        extras = Some(extras.unwrap_or_default().merge(dynamic));
+    }
+    sources.extras = extras.unwrap_or_default();
     // PEP 621: under a `[project]` table setuptools ignores setup.*
     // `python_requires` unless `requires-python` is listed in `dynamic`.
     if sources.pyproject_project_table
@@ -165,7 +201,7 @@ pub fn extract_manifest(
     for (filename, context) in requirements_specs {
         // Already read as `install_requires`; reading it again would report
         // every entry as a duplicate.
-        if setup_py_files_read.iter().any(|read| read == filename) {
+        if setup_files_read.iter().any(|read| read == filename) {
             continue;
         }
         let extracted = extract_requirements_file(root_path, filename, context)?;
@@ -381,7 +417,7 @@ fn read_extra_requirements(
 
 /// Why an extra requirements file stopped parsing, without the absolute path
 /// an I/O error names.
-fn unreadable_reason(error: &ManifestError) -> String {
+pub(super) fn unreadable_reason(error: &ManifestError) -> String {
     match error {
         ManifestError::Io { .. } => "could not be read".to_owned(),
         _ => error.to_string(),

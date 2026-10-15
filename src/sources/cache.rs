@@ -48,17 +48,22 @@ pub(super) struct DirIgnore {
     exclude: Rules,
     /// `.git` or `.jj` exists here.
     has_git: bool,
-    /// Errors `ignore` attaches to the directory entry, already rendered.
-    errors: Vec<String>,
+    /// Errors `ignore` attaches to the directory entry.
+    errors: Vec<ignore::Error>,
     /// `.gitignore` as [`super::walk::load_gitignore`] sees it.
     root_load: RootLoad,
 }
 
 /// Whether [`super::walk::load_gitignore`] finds the `.gitignore`, finds
-/// none, or warns that it is unreadable.
+/// none, finds one with lines that do not parse, or warns that it is
+/// unreadable.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum RootLoad {
     Missing,
+    /// Some line does not parse: the walk reports it with the directory's
+    /// errors (#903).
+    Unparsable,
+    /// Reading failed, which `ignore` drops without an error.
     Unreadable,
     Loaded,
 }
@@ -148,14 +153,8 @@ impl SourcesCache {
 
 impl Ancestors {
     /// Errors `ignore` reports before the walk root, outermost first.
-    pub(super) fn error(&self) -> Option<String> {
-        let errors: Vec<&str> = self
-            .dirs
-            .iter()
-            .rev()
-            .flat_map(|dir| dir.errors.iter().map(String::as_str))
-            .collect();
-        (!errors.is_empty()).then(|| errors.join("\n"))
+    pub(super) fn errors(&self) -> impl Iterator<Item = &ignore::Error> {
+        self.dirs.iter().rev().flat_map(|dir| dir.errors.iter())
     }
 }
 
@@ -179,8 +178,10 @@ impl DirIgnore {
             RootLoad::Missing
         } else if clean {
             RootLoad::Loaded
-        } else {
+        } else if errors.is_empty() {
             RootLoad::Unreadable
+        } else {
+            RootLoad::Unparsable
         };
 
         let exclude = match resolve_git_commondir(dir, git_type) {
@@ -200,9 +201,9 @@ impl DirIgnore {
         }
     }
 
-    /// Rendered errors for the directory entry, `None` when it had none.
-    pub(super) fn error(&self) -> Option<String> {
-        (!self.errors.is_empty()).then(|| self.errors.join("\n"))
+    /// Errors `ignore` attaches to the directory entry.
+    pub(super) fn errors(&self) -> &[ignore::Error] {
+        &self.errors
     }
 
     pub(super) const fn root_load(&self) -> RootLoad {
@@ -234,12 +235,12 @@ enum Rules {
 
 impl Rules {
     /// `ignore`'s `create_gitignore` for the single file `path` of `dir`,
-    /// rendering its errors into `errors`; `false` as [`create_gitignore`].
+    /// pushing its errors onto `errors`; `false` as [`create_gitignore`].
     fn load(
         dir: &Path,
         path: &Path,
         shared: &Mutex<HashMap<Vec<u8>, Arc<Gitignore>>>,
-        errors: &mut Vec<String>,
+        errors: &mut Vec<ignore::Error>,
     ) -> (Self, bool) {
         if !(cfg!(windows) || path.exists()) {
             return (Self::None, true);
@@ -346,9 +347,9 @@ fn is_file_name(path: &Path) -> bool {
     }
 }
 
-/// `ignore`'s `create_gitignore` for a single file, rendering its errors
-/// into `errors`; `false` when the file failed to add or the set to build.
-fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<String>) -> (Gitignore, bool) {
+/// `ignore`'s `create_gitignore` for a single file, pushing its errors onto
+/// `errors`; `false` when the file failed to add or the set to build.
+fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<ignore::Error>) -> (Gitignore, bool) {
     let mut builder = GitignoreBuilder::new(dir);
     let mut added_cleanly = true;
     if (cfg!(windows) || path.exists())
@@ -356,13 +357,13 @@ fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<String>) -> (Gitig
     {
         added_cleanly = false;
         if !error.is_io() {
-            errors.push(error.to_string());
+            errors.push(error);
         }
     }
     match builder.build() {
         Ok(gitignore) => (gitignore, added_cleanly),
         Err(error) => {
-            errors.push(error.to_string());
+            errors.push(error);
             let empty = GitignoreBuilder::new(dir).build();
             (empty.unwrap_or_else(|_| Gitignore::empty()), false)
         },
@@ -373,17 +374,16 @@ fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<String>) -> (Gitig
 fn resolve_git_commondir(
     dir: &Path,
     git_type: Option<FileType>,
-) -> Result<PathBuf, Option<String>> {
+) -> Result<PathBuf, Option<ignore::Error>> {
     let git_dir = dir.join(".git");
     if !git_type.is_some_and(|file_type| file_type.is_file()) {
         return Ok(git_dir);
     }
     let io_error = |error: std::io::Error, path: &Path| {
-        let error = ignore::Error::WithPath {
+        Some(ignore::Error::WithPath {
             path: path.to_path_buf(),
             err: Box::new(ignore::Error::Io(error)),
-        };
-        Some(error.to_string())
+        })
     };
     let dot_git_line = match File::open(&git_dir).map(|file| BufReader::new(file).lines().next()) {
         Err(error) | Ok(Some(Err(error))) => return Err(io_error(error, &git_dir)),

@@ -172,7 +172,10 @@ mod tests {
             ("name", Value::Str("torch>=2.2".to_owned())),
             (
                 "extras",
-                Value::Dict(vec![("dev".to_owned(), list(&["torch>=2.2"]))]),
+                Value::Dict {
+                    items: vec![("dev".to_owned(), list(&["torch>=2.2"]))],
+                    partial: false,
+                },
             ),
             ("nested", Value::List(vec![list(&["torch>=2.2"])])),
         ]);

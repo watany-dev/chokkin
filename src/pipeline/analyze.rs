@@ -25,8 +25,8 @@ use crate::resolver::{
 };
 use crate::rules::deps::local_source_member;
 use crate::rules::{
-    DependencyRuleContext, IssueReport, RuleContext, WorkspaceDependencyBoundary, collect_gaps,
-    emit_issues,
+    DependencyRuleContext, Gap, GapKind, IssueReport, MemberManifest, RuleContext,
+    WorkspaceDependencyBoundary, collect_gaps, emit_issues,
 };
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning,
@@ -365,7 +365,17 @@ fn run_analysis_core(
         production_tests.as_deref(),
     );
 
-    let gaps = collect_gaps(&parse, &graph, &reachability, &probe.manifest);
+    let members: Vec<MemberManifest<'_>> = probe
+        .workspace_inputs
+        .iter()
+        .map(|input| MemberManifest {
+            id: &input.member.id,
+            path: &input.member.path,
+            manifest: &input.manifest,
+        })
+        .collect();
+    let gaps = collect_gaps(&parse, &graph, &reachability, &probe.manifest, &members);
+    warnings.extend(opaque_import_warning(&gaps));
     let issues = emit_issues(
         &reachability,
         &deps,
@@ -411,6 +421,20 @@ fn entry_warnings(entry: &EntryPlan, sources: &DiscoveredSources) -> Vec<ProbeWa
         }
     }
     warnings
+}
+
+/// The other gaps reach the user through the parse or manifest warning that
+/// recorded them; an opaque import has none (ADR 0005 §3, #909).
+fn opaque_import_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
+    let mut files = gaps
+        .iter()
+        .filter(|gap| gap.kind == GapKind::OpaqueDynamicImport)
+        .map(|gap| gap.file.clone());
+    let path = files.next()?;
+    Some(ProbeWarning::OpaqueDynamicImport {
+        path,
+        more: files.count(),
+    })
 }
 
 /// What the user needs to know about one parsed module: a skipped module is

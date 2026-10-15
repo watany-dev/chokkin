@@ -57,6 +57,14 @@ pub enum ProbeWarning {
         /// The parser's message.
         message: String,
     },
+    /// Reachable modules load a module by a name computed at runtime, which
+    /// caps unused-file findings below certain (#909). One per run.
+    OpaqueDynamicImport {
+        /// Root-relative path of the first such module.
+        path: String,
+        /// How many other reachable modules do the same.
+        more: usize,
+    },
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -105,7 +113,9 @@ impl ProbeWarning {
             Self::Resolve(warning) => discriminant(warning).hash(&mut hasher),
             Self::SkippedSource { reason, .. } => discriminant(reason).hash(&mut hasher),
             Self::ParseDiagnostic { message, .. } => message.hash(&mut hasher),
-            Self::AutoWorkspace { .. } | Self::NestedProjectsSkipped { .. } => {},
+            Self::AutoWorkspace { .. }
+            | Self::NestedProjectsSkipped { .. }
+            | Self::OpaqueDynamicImport { .. } => {},
         }
         hasher.finish()
     }
@@ -151,6 +161,7 @@ impl ProbeWarning {
                 };
                 (Some(path), source_line(path, line))
             },
+            Self::OpaqueDynamicImport { path, .. } => (Some(path), None),
             Self::ParseDiagnostic { path, line, .. } => (
                 Some(path),
                 source_line(path, Some(*line).filter(|line| *line > 0)),
@@ -179,6 +190,7 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::DependencyGroupIncludeUndefined { file, .. }
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
         | ManifestWarning::FileUndecodable { file }
+        | ManifestWarning::DynamicExtrasUnread { file, .. }
         | ManifestWarning::InlineScriptInvalid { file, .. } => (Some(file), None),
         // The sections are named, not the file; a conflict spans two files;
         // a missing constraints file does not exist.
@@ -240,6 +252,15 @@ impl fmt::Display for ProbeWarning {
                 line,
                 message,
             } => write!(formatter, "parse: `{path}:{line}`: {message}"),
+            Self::OpaqueDynamicImport { path, more: 0 } => write!(
+                formatter,
+                "parse: `{path}` imports a module by a name computed at runtime; unused files are reported below certain"
+            ),
+            Self::OpaqueDynamicImport { path, more } => write!(
+                formatter,
+                "parse: `{path}` and {more} more reachable module{} import a module by a name computed at runtime; unused files are reported below certain",
+                if *more == 1 { "" } else { "s" }
+            ),
         }
     }
 }
@@ -266,8 +287,8 @@ fn write_resolve_warning(
 }
 
 /// A member's warning reads like the root's, except that a warning naming no
-/// file names the member, and runtime dependencies it could not read do not
-/// lower any finding: only the root's do (#888 step 4).
+/// file names the member, and runtime dependencies it could not read lower
+/// only that member's findings (#910).
 fn write_member_manifest_warning(
     formatter: &mut fmt::Formatter<'_>,
     member: &str,
@@ -276,7 +297,7 @@ fn write_member_manifest_warning(
     match warning {
         ManifestWarning::RuntimeDependenciesUnknown { file } => write!(
             formatter,
-            "manifest: runtime dependencies in `{file}` could not be read statically"
+            "manifest: runtime dependencies in `{file}` could not be read statically; missing-dependency findings in `{member}` are reported as low-confidence info"
         ),
         ManifestWarning::PoetryDetected
         | ManifestWarning::PdmDetected
@@ -290,6 +311,8 @@ fn write_member_manifest_warning(
     }
 }
 
+// One arm per variant; splitting the match would only scatter the texts.
+#[allow(clippy::too_many_lines)]
 fn write_manifest_warning(
     formatter: &mut fmt::Formatter<'_>,
     warning: &ManifestWarning,
@@ -355,6 +378,9 @@ fn write_manifest_warning(
             formatter,
             "manifest: skipped `{file}`: not UTF-8 and no supported PEP 263 coding declaration"
         ),
+        ManifestWarning::DynamicExtrasUnread { file, extras } => {
+            write_dynamic_extras_unread(formatter, file, extras)
+        },
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
             "manifest: ignored PEP 723 script block in `{file}`: {reason}"
@@ -373,6 +399,25 @@ fn write_manifest_warning(
             groups.join(" -> ")
         ),
     }
+}
+
+fn write_dynamic_extras_unread(
+    formatter: &mut fmt::Formatter<'_>,
+    file: &str,
+    extras: &[String],
+) -> fmt::Result {
+    if extras.is_empty() {
+        return write!(
+            formatter,
+            "manifest: `{file}` lists `optional-dependencies` in `dynamic`, but no source chokkin reads fills them"
+        );
+    }
+    let names: Vec<String> = extras.iter().map(|extra| format!("`{extra}`")).collect();
+    write!(
+        formatter,
+        "manifest: extras {} in `{file}` are filled at build time and could not be read statically",
+        names.join(", ")
+    )
 }
 
 /// Each warning once, in order, told apart by its text. Two stages can
@@ -431,6 +476,56 @@ mod tests {
     fn located(warning: &ProbeWarning) -> (Option<String>, Option<u32>) {
         let diagnostic = warning.diagnostic();
         (diagnostic.file, diagnostic.line)
+    }
+
+    /// One opaque-import warning names the first module and counts the rest (#909).
+    #[test]
+    fn opaque_import_warning_names_the_first_module() {
+        let one = ProbeWarning::OpaqueDynamicImport {
+            path: "acme/main.py".to_owned(),
+            more: 0,
+        };
+        let three = ProbeWarning::OpaqueDynamicImport {
+            path: "acme/main.py".to_owned(),
+            more: 2,
+        };
+        assert_eq!(
+            one.to_string(),
+            "parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain"
+        );
+        assert_eq!(
+            three.to_string(),
+            "parse: `acme/main.py` and 2 more reachable modules import a module by a name computed at runtime; unused files are reported below certain"
+        );
+        let two = ProbeWarning::OpaqueDynamicImport {
+            path: "acme/main.py".to_owned(),
+            more: 1,
+        };
+        assert_eq!(
+            two.to_string(),
+            "parse: `acme/main.py` and 1 more reachable module import a module by a name computed at runtime; unused files are reported below certain"
+        );
+        assert_eq!(located(&three), (Some("acme/main.py".to_owned()), None));
+    }
+
+    /// The unread-extras warning names the extras, or says none were named (#905).
+    #[test]
+    fn dynamic_extras_warning_names_the_unread_extras() {
+        let unread = |extras: &[&str]| {
+            ProbeWarning::Manifest(ManifestWarning::DynamicExtrasUnread {
+                file: "pyproject.toml".to_owned(),
+                extras: extras.iter().map(|extra| (*extra).to_owned()).collect(),
+            })
+            .to_string()
+        };
+        assert_eq!(
+            unread(&[]),
+            "manifest: `pyproject.toml` lists `optional-dependencies` in `dynamic`, but no source chokkin reads fills them"
+        );
+        assert_eq!(
+            unread(&["s3", "gcs"]),
+            "manifest: extras `s3`, `gcs` in `pyproject.toml` are filled at build time and could not be read statically"
+        );
     }
 
     /// A warning lands on the file and line it names (#895).
@@ -591,7 +686,7 @@ mod tests {
                 ProbeWarning::Sources(SourcesWarning::GitignoreUnreadable {
                     path: ".gitignore".to_owned(),
                 }),
-                "sources: could not read `.gitignore` at `.gitignore`",
+                "sources: could not read `.gitignore`; its ignore rules may be missing",
             ),
             (
                 ProbeWarning::Sources(SourcesWarning::LargeProject { file_count: 12 }),
@@ -707,7 +802,7 @@ mod tests {
                 member(ManifestWarning::RuntimeDependenciesUnknown {
                     file: "setup.py".to_owned(),
                 }),
-                "manifest: runtime dependencies in `packages/x/setup.py` could not be read statically",
+                "manifest: runtime dependencies in `packages/x/setup.py` could not be read statically; missing-dependency findings in `packages/x` are reported as low-confidence info",
             ),
             (
                 ProbeWarning::Manifest(ManifestWarning::RequirementsUnreadable {

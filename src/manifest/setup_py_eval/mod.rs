@@ -30,7 +30,11 @@ const MAX_STEPS: usize = 5_000_000;
 pub(super) enum Value {
     Str(String),
     List(Vec<Self>),
-    Dict(Vec<(String, Self)>),
+    Dict {
+        items: Vec<(String, Self)>,
+        /// Entries we could not key or follow may also be there (#869).
+        partial: bool,
+    },
     /// A requirements file that a helper function reads at install time.
     RequirementsFile(PathBuf),
     Unknown,
@@ -40,15 +44,21 @@ impl Value {
     fn nodes(&self) -> usize {
         match self {
             Self::List(items) => 1 + items.iter().map(Self::nodes).sum::<usize>(),
-            Self::Dict(items) => 1 + items.iter().map(|(_, value)| value.nodes()).sum::<usize>(),
+            Self::Dict { items, .. } => {
+                1 + items.iter().map(|(_, value)| value.nodes()).sum::<usize>()
+            },
             Self::Str(_) | Self::RequirementsFile(_) | Self::Unknown => 1,
         }
     }
 
-    /// Mark a value that code we cannot follow may have changed.
+    /// Mark a value that code we cannot follow may have changed. A
+    /// container keeps what it read, as a dict literal keeps its string
+    /// keys: code we cannot follow may add to it, and dropping what we read
+    /// would undeclare it (#869).
     fn taint(&mut self) {
         match self {
             Self::List(items) => items.push(Self::Unknown),
+            Self::Dict { partial, .. } => *partial = true,
             _ => *self = Self::Unknown,
         }
     }
@@ -147,7 +157,7 @@ fn flatten_into(value: &Value, result: &mut DependencyItems) {
         Value::RequirementsFile(path) => result
             .items
             .push(DependencyItem::RequirementsFile(path.clone())),
-        Value::Dict(_) | Value::Unknown => result.complete = false,
+        Value::Dict { .. } | Value::Unknown => result.complete = false,
     }
 }
 
@@ -286,7 +296,7 @@ impl<'a> Evaluator<'a> {
                 },
                 Expr::Subscript(subscript) => {
                     if let Value::Str(key) = self.eval(&subscript.slice)
-                        && let Some(Value::Dict(items)) = self.place_mut(&subscript.value)
+                        && let Some(Value::Dict { items, .. }) = self.place_mut(&subscript.value)
                     {
                         items.retain(|(existing, _)| *existing != key);
                     } else {
@@ -309,7 +319,7 @@ impl<'a> Evaluator<'a> {
                     return None;
                 };
                 match self.place_mut(&subscript.value)? {
-                    Value::Dict(items) => items
+                    Value::Dict { items, .. } => items
                         .iter_mut()
                         .find(|(existing, _)| *existing == key)
                         .map(|(_, value)| value),
@@ -431,16 +441,15 @@ impl<'a> Evaluator<'a> {
             Expr::Name(name) => {
                 self.env.insert(name.id.to_string(), value);
             },
-            // A key that is not a string is dropped as in a dict literal: an
-            // added entry cannot undeclare the known ones, and tainting the
-            // dict would lose them all (#827). Any other base leaves it partial.
+            // A key that is not a string leaves the dict partial as in a dict
+            // literal: an added entry cannot undeclare the known ones (#827,
+            // #869). Any other base leaves it partial.
             Expr::Subscript(subscript) => {
                 let key = self.eval(&subscript.slice);
                 match self.place_mut(&subscript.value) {
-                    Some(Value::Dict(items)) => {
-                        if let Value::Str(key) = key {
-                            insert_entry(items, key, value);
-                        }
+                    Some(Value::Dict { items, partial }) => match key {
+                        Value::Str(key) => insert_entry(items, key, value),
+                        _ => *partial = true,
                     },
                     _ => self.taint_place(&subscript.value),
                 }
@@ -484,25 +493,33 @@ impl<'a> Evaluator<'a> {
             | Expr::Set(ruff_python_ast::ExprSet { elts, .. }) => {
                 Value::List(self.eval_elements(elts))
             },
+            // An entry we cannot key, or a `**` spread we cannot read, leaves
+            // the dict partial and keeps the rest (#869).
             Expr::Dict(dict) => {
                 let mut items: Vec<(String, Value)> = Vec::new();
+                let mut partial = false;
                 for item in &dict.items {
                     match item.key.as_ref().map(|key| self.eval(key)) {
                         Some(Value::Str(key)) => {
                             let value = self.eval(&item.value);
                             insert_entry(&mut items, key, value);
                         },
-                        None => {
-                            if let Value::Dict(spread) = self.eval(&item.value) {
+                        None => match self.eval(&item.value) {
+                            Value::Dict {
+                                items: spread,
+                                partial: spread_partial,
+                            } => {
+                                partial |= spread_partial;
                                 for (key, value) in spread {
                                     insert_entry(&mut items, key, value);
                                 }
-                            }
+                            },
+                            _ => partial = true,
                         },
-                        Some(_) => {},
+                        Some(_) => partial = true,
                     }
                 }
-                Value::Dict(items)
+                Value::Dict { items, partial }
             },
             Expr::Name(name) => self
                 .env
@@ -527,13 +544,14 @@ impl<'a> Evaluator<'a> {
                     return Value::Unknown;
                 };
                 let mut items = Vec::with_capacity(pairs.len());
+                let mut partial = false;
                 for (key, value) in pairs {
-                    let Value::Str(key) = key else {
-                        return Value::Unknown;
-                    };
-                    insert_entry(&mut items, key, value);
+                    match key {
+                        Value::Str(key) => insert_entry(&mut items, key, value),
+                        _ => partial = true,
+                    }
                 }
-                Value::Dict(items)
+                Value::Dict { items, partial }
             },
             _ => Value::Unknown,
         }
@@ -544,11 +562,17 @@ impl<'a> Evaluator<'a> {
         let Value::Str(key) = self.eval(&subscript.slice) else {
             return Value::Unknown;
         };
+        let base = match base {
+            Value::Dict { items, partial } => {
+                match items.into_iter().find(|(existing, _)| *existing == key) {
+                    Some((_, value)) => return value,
+                    None if partial => Value::Unknown,
+                    None => return Value::Unknown,
+                }
+            },
+            other => other,
+        };
         match base {
-            Value::Dict(items) => items
-                .into_iter()
-                .find(|(existing, _)| *existing == key)
-                .map_or(Value::Unknown, |(_, value)| value),
             // Only a table this file assigned, not `os.environ[...]`.
             Value::Unknown if matches!(&*subscript.value, Expr::Name(name) if self.env.contains_key(name.id.as_str())) => {
                 idioms::requirement_table_lookup(&self.env, &key).map_or(Value::Unknown, |entry| {
@@ -776,7 +800,16 @@ fn merge(left: Value, right: Value) -> Value {
             }
             Value::List(left)
         },
-        (Value::Dict(mut left), Value::Dict(right)) => {
+        (
+            Value::Dict {
+                items: mut left,
+                partial: left_partial,
+            },
+            Value::Dict {
+                items: right,
+                partial: right_partial,
+            },
+        ) => {
             for (key, value) in right {
                 match left.iter().position(|(existing, _)| *existing == key) {
                     Some(index) => {
@@ -786,7 +819,10 @@ fn merge(left: Value, right: Value) -> Value {
                     None => left.push((key, value)),
                 }
             }
-            Value::Dict(left)
+            Value::Dict {
+                items: left,
+                partial: left_partial || right_partial,
+            }
         },
         _ => Value::Unknown,
     }
@@ -1314,12 +1350,12 @@ mod props {
                 .map(|item| known(Some(item)))
                 .collect::<Option<_>>()
                 .map(Py::List),
-            Value::Dict(items) => items
+            Value::Dict { partial: true, .. } | Value::RequirementsFile(_) | Value::Unknown => None,
+            Value::Dict { items, .. } => items
                 .iter()
                 .map(|(key, value)| Some((key.clone(), known(Some(value))?)))
                 .collect::<Option<_>>()
                 .map(Py::Dict),
-            Value::RequirementsFile(_) | Value::Unknown => None,
         }
     }
 
@@ -1476,7 +1512,7 @@ mod props {
             let got_install = requirement_texts(call.keyword("install_requires"));
             prop_assert!(got_install.is_some(), "install_requires partial:\n{}", source);
             let got_install = got_install.unwrap_or_default();
-            let Some(Value::Dict(got_extras)) = call.keyword("extras_require") else {
+            let Some(Value::Dict { items: got_extras, .. }) = call.keyword("extras_require") else {
                 prop_assert!(false, "extras_require unreadable:\n{}", source);
                 return Ok(());
             };
@@ -1557,6 +1593,65 @@ mod props {
     }
 
     #[test]
+    fn nodes_counts_every_container_and_leaf() {
+        let leaf = || Value::Str("a".to_owned());
+        assert_eq!(Value::List(vec![leaf(), leaf()]).nodes(), 3);
+        let dict = Value::Dict {
+            items: vec![("k".to_owned(), leaf())],
+            partial: false,
+        };
+        assert_eq!(dict.nodes(), 2);
+    }
+
+    #[test]
+    fn spreading_a_partial_dict_keeps_it_partial() {
+        let call = evaluate(
+            "base = {'a': ['x'], **opaque()}
+setup(extras_require={**base, 'b': ['y']})
+",
+        )
+        .expect("setup() call");
+        let Some(Value::Dict { items, partial }) = call.keyword("extras_require") else {
+            panic!("extras_require is not a dict");
+        };
+        assert!(partial);
+        let keys: Vec<&str> = items.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(keys, ["a", "b"]);
+    }
+
+    #[test]
+    fn missing_key_of_a_known_dict_is_not_looked_up_in_the_tables() {
+        let call = evaluate(
+            "reqs = ['requests>=2']
+table = {'other': 'y'}
+\
+             setup(install_requires=[table['requests']])
+",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            call.keyword("install_requires"),
+            Some(&Value::List(vec![Value::Unknown]))
+        );
+    }
+
+    #[test]
+    fn missing_key_of_a_partial_dict_is_looked_up_in_the_tables() {
+        let call = evaluate(
+            "reqs = ['requests>=2']
+table = {'other': 'y', **opaque()}
+\
+             setup(install_requires=[table['requests']])
+",
+        )
+        .expect("setup() call");
+        assert_eq!(
+            call.keyword("install_requires"),
+            Some(&Value::List(vec![Value::Str("requests>=2".to_owned())]))
+        );
+    }
+
+    #[test]
     fn del_name_forgets_the_value() {
         let call = evaluate("reqs = ['a']\ndel reqs\nsetup(install_requires=reqs)\n")
             .expect("setup() call");
@@ -1589,10 +1684,13 @@ mod props {
         .expect("setup() call");
         assert_eq!(
             call.keyword("extras_require"),
-            Some(&Value::Dict(vec![(
-                "s3".to_owned(),
-                Value::List(vec![Value::Str("boto3".to_owned())])
-            )]))
+            Some(&Value::Dict {
+                items: vec![(
+                    "s3".to_owned(),
+                    Value::List(vec![Value::Str("boto3".to_owned())])
+                )],
+                partial: true,
+            })
         );
     }
 
@@ -1613,7 +1711,7 @@ mod props {
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
-        let Some(Value::Dict(items)) = call.keyword("extras_require") else {
+        let Some(Value::Dict { items, .. }) = call.keyword("extras_require") else {
             panic!("extras_require is not a dict");
         };
         let list = |texts: &[&str]| {
@@ -1629,10 +1727,13 @@ mod props {
             &vec![
                 (
                     "dev".to_owned(),
-                    Value::Dict(vec![
-                        ("lint".to_owned(), list(&["ruff"])),
-                        ("type".to_owned(), list(&["mypy"])),
-                    ])
+                    Value::Dict {
+                        items: vec![
+                            ("lint".to_owned(), list(&["ruff"])),
+                            ("type".to_owned(), list(&["mypy"])),
+                        ],
+                        partial: false,
+                    }
                 ),
                 (
                     "test".to_owned(),
@@ -1649,7 +1750,7 @@ mod props {
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
-        let Some(Value::Dict(items)) = call.keyword("extras_require") else {
+        let Some(Value::Dict { items, .. }) = call.keyword("extras_require") else {
             panic!("extras_require is not a dict");
         };
         assert_eq!(

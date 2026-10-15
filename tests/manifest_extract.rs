@@ -385,6 +385,94 @@ fn setup_py_extras_state_reaches_the_sources() {
     assert_eq!(known.sources.extras, ExtrasState::Known);
 }
 
+/// `dynamic = ["optional-dependencies"]` is Unknown unless a source chokkin
+/// reads fills it, and Partial for the extras a source names but does not
+/// let chokkin read (#905).
+#[test]
+fn dynamic_optional_dependencies_record_the_extras_state() {
+    const DYNAMIC: &str = "[project]\nname = \"acme\"\ndynamic = [\"optional-dependencies\"]\n";
+    let extras_unread = |manifest: &chokkin::internals::LoadedManifest| {
+        manifest
+            .warnings
+            .iter()
+            .filter_map(|warning| match warning {
+                ManifestWarning::DynamicExtrasUnread { file, extras } => {
+                    Some((file.clone(), extras.clone()))
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let unfilled = extract_files(&[("pyproject.toml", DYNAMIC.as_bytes())]);
+    assert_eq!(unfilled.sources.extras, ExtrasState::Unknown);
+    assert_eq!(
+        extras_unread(&unfilled),
+        vec![("pyproject.toml".to_owned(), Vec::new())]
+    );
+
+    let setuptools_files = format!(
+        "{DYNAMIC}[tool.setuptools.dynamic.optional-dependencies]\n\
+         s3 = {{ file = [\"requirements-s3.txt\"] }}\n\
+         gcs = {{ file = [\"requirements-gcs.txt\"] }}\n"
+    );
+    let partial = extract_files(&[("pyproject.toml", setuptools_files.as_bytes())]);
+    assert_eq!(
+        partial.sources.extras,
+        ExtrasState::Partial(["gcs".to_owned(), "s3".to_owned()].into())
+    );
+    assert_eq!(
+        extras_unread(&partial),
+        vec![(
+            "pyproject.toml".to_owned(),
+            vec!["gcs".to_owned(), "s3".to_owned()]
+        )]
+    );
+
+    let hook = format!(
+        "{DYNAMIC}[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]\n\
+         s3 = [\"boto3\"]\nbad = \"boto3\"\n"
+    );
+    let hook = extract_files(&[("pyproject.toml", hook.as_bytes())]);
+    assert_eq!(
+        hook.sources.extras,
+        ExtrasState::Partial(["bad".to_owned()].into())
+    );
+
+    for (name, contents) in [
+        ("setup.cfg", "[options.extras_require]\ns3 = boto3\n"),
+        ("setup.py", "setup(extras_require={'s3': ['boto3']})\n"),
+    ] {
+        let filled = extract_files(&[
+            ("pyproject.toml", DYNAMIC.as_bytes()),
+            (name, contents.as_bytes()),
+        ]);
+        assert_eq!(filled.sources.extras, ExtrasState::Known, "{name}");
+        assert_eq!(extras_unread(&filled), Vec::new(), "{name}");
+    }
+
+    // A setup.py that passes no extras does not fill them.
+    let silent = extract_files(&[
+        ("pyproject.toml", DYNAMIC.as_bytes()),
+        ("setup.py", b"setup(install_requires=['requests'])\n"),
+    ]);
+    assert_eq!(silent.sources.extras, ExtrasState::Unknown);
+
+    // Static extras are Known whatever the backend does with them.
+    let static_extras = extract_files(&[(
+        "pyproject.toml",
+        b"[project]\nname = \"acme\"\n[project.optional-dependencies]\ns3 = [\"boto3\"]\n",
+    )]);
+    assert_eq!(static_extras.sources.extras, ExtrasState::Known);
+}
+
+/// An undecodable `setup.cfg` may declare any extra.
+#[test]
+fn undecodable_setup_cfg_leaves_the_extras_unknown() {
+    let manifest = extract_files(&[("setup.cfg", b"[options.extras_require]\ns3 = b\xf6to3\n")]);
+    assert_eq!(manifest.sources.extras, ExtrasState::Unknown);
+}
+
 /// A `setup.py` that is neither UTF-8 nor declares its coding no longer
 /// aborts extraction; its runtime dependencies count as unknown (#552).
 #[test]
@@ -432,6 +520,86 @@ fn undecodable_setup_cfg_is_covered_by_static_setup_py() {
     );
 }
 
+/// `file:` in setup.cfg reads the named requirements files the way
+/// setuptools does; a file read as `install_requires` is not read again as
+/// the root `requirements.txt`.
+#[test]
+fn setup_cfg_file_directives_read_requirements_files() {
+    let manifest = extract_files(&[
+        (
+            "setup.cfg",
+            b"[options]\ninstall_requires = file: reqs.in, requirements.txt\n\
+              [options.extras_require]\ndev = file: missing/../dev.txt\n",
+        ),
+        ("reqs.in", b"requests\n"),
+        ("requirements.txt", b"click\n"),
+        ("dev.txt", b"pytest\n"),
+    ]);
+    let declared = manifest
+        .dependencies
+        .iter()
+        .map(|dep| (dep.name.as_str(), dep.context.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        declared,
+        [
+            ("requests", DependencyContext::Runtime),
+            ("click", DependencyContext::Runtime),
+            ("pytest", DependencyContext::SetupExtra("dev".to_owned())),
+        ]
+    );
+    assert_eq!(
+        manifest.sources.requirements_files,
+        ["reqs.in", "requirements.txt", "dev.txt"]
+    );
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(manifest.sources.extras, ExtrasState::Known);
+    assert_eq!(manifest.warnings, []);
+}
+
+/// A `file:` that cannot be read leaves what it declares unknown: the
+/// runtime set for `install_requires`, the extra for `extras_require`.
+#[test]
+fn setup_cfg_unread_file_directives_leave_their_declarations_unknown() {
+    let manifest = extract_files(&[
+        (
+            "setup.cfg",
+            b"[options]\ninstall_requires = file: missing.txt\n\
+              [options.extras_require]\ndev = file: ../outside.txt\ns3 = boto3\n",
+        ),
+        (
+            "pyproject.toml",
+            b"[build-system]\nrequires = [\"setuptools\"]\n",
+        ),
+    ]);
+    assert_eq!(dependency_names(&manifest), ["boto3"]);
+    assert!(manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), Some("setup.cfg"));
+    assert_eq!(manifest.sources.requirements_missing, ["missing.txt"]);
+    assert_eq!(
+        manifest.sources.extras,
+        ExtrasState::Partial(["dev".to_owned()].into())
+    );
+    assert_eq!(
+        manifest.warnings,
+        [
+            ManifestWarning::RequirementsUnreadable {
+                file: "missing.txt".to_owned(),
+                reason: "not found (named by `setup.cfg` options.install_requires)".to_owned(),
+            },
+            ManifestWarning::RequirementsUnreadable {
+                file: "../outside.txt".to_owned(),
+                reason:
+                    "outside the project root (named by `setup.cfg` options.extras_require.dev)"
+                        .to_owned(),
+            },
+            ManifestWarning::RuntimeDependenciesUnknown {
+                file: "setup.cfg".to_owned()
+            },
+        ]
+    );
+}
+
 /// With no other runtime declaration, a skipped root `requirements.txt`
 /// leaves the runtime set unknown.
 #[test]
@@ -451,6 +619,22 @@ fn undecodable_setup_py_is_covered_by_pyproject_dependencies() {
         (
             "pyproject.toml",
             b"[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        ),
+        ("setup.py", UNDECODABLE_SETUP_PY),
+    ]);
+    assert_eq!(dependency_names(&manifest), ["requests"]);
+    assert!(!manifest.sources.runtime_dependencies_unknown);
+    assert_eq!(runtime_unknown_file(&manifest), None);
+}
+
+/// A fully read setup.cfg `install_requires` vouches for a skipped
+/// `setup.py`.
+#[test]
+fn undecodable_setup_py_is_covered_by_setup_cfg_dependencies() {
+    let manifest = extract_files(&[
+        (
+            "setup.cfg",
+            b"[metadata]\nname = acme\n[options]\ninstall_requires =\n    requests\n",
         ),
         ("setup.py", UNDECODABLE_SETUP_PY),
     ]);

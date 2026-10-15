@@ -10,6 +10,7 @@ use crate::config::Confidence;
 use crate::graph::ProjectGraph;
 use crate::manifest::{LoadedManifest, ManifestWarning};
 use crate::parser::ParseSummary;
+use crate::path_util::join_rel;
 use crate::reachability::ReachabilityReport;
 use crate::rules::types::{IssueCandidate, IssueSubject, RuleId, Severity};
 
@@ -20,6 +21,21 @@ pub struct Gap {
     pub file: String,
     /// What could not be read.
     pub kind: GapKind,
+    /// The workspace member whose findings alone the gap lowers; `None`
+    /// lowers every finding in its kind's scope (#910).
+    pub member: Option<String>,
+}
+
+/// A workspace member's manifest: what it could not read lowers only the
+/// findings in that member.
+#[derive(Debug, Clone, Copy)]
+pub struct MemberManifest<'a> {
+    /// The member id findings carry in `workspace_member`.
+    pub id: &'a str,
+    /// Root-relative member directory, which the manifest's files are under.
+    pub path: &'a str,
+    /// The member's own manifest.
+    pub manifest: &'a LoadedManifest,
 }
 
 /// What could not be read, which decides the findings a gap lowers.
@@ -33,8 +49,9 @@ pub enum GapKind {
     UnreadNotebookCells,
     /// A reachable module loads a module whose name is computed at runtime.
     OpaqueDynamicImport,
-    /// The root manifest declares its runtime dependencies in a form that
-    /// could not be read statically (#491).
+    /// A manifest declares its runtime dependencies in a form that could not
+    /// be read statically (#491): the root's for every finding, a member's
+    /// for that member's (#910).
     RuntimeDependenciesUnknown,
 }
 
@@ -96,10 +113,24 @@ pub fn collect_gaps(
     graph: &ProjectGraph,
     reachability: &ReachabilityReport,
     manifest: &LoadedManifest,
+    members: &[MemberManifest<'_>],
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(parse, graph, reachability);
     gaps.extend(manifest_gap(manifest));
-    gaps.sort_by(|left, right| (left.kind, &left.file).cmp(&(right.kind, &right.file)));
+    gaps.extend(members.iter().filter_map(|member| {
+        let mut gap = manifest_gap(member.manifest)?;
+        gap.file = join_rel(member.path, &gap.file);
+        gap.member = Some(member.id.to_owned());
+        Some(gap)
+    }));
+    // The root's gap sorts before its members', so it is the one `--explain` names first.
+    gaps.sort_by(|left, right| {
+        (left.kind, left.member.is_some(), &left.file).cmp(&(
+            right.kind,
+            right.member.is_some(),
+            &right.file,
+        ))
+    });
     gaps
 }
 
@@ -120,6 +151,7 @@ fn module_gaps(
             gaps.push(Gap {
                 file: module.path.clone(),
                 kind,
+                member: None,
             });
         };
         if module.skipped {
@@ -152,6 +184,7 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
     Some(Gap {
         file,
         kind: GapKind::RuntimeDependenciesUnknown,
+        member: None,
     })
 }
 
@@ -160,8 +193,12 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
 /// reaches `Maybe`, so a severity a rule derived from confidence (a library
 /// orphan's) still matches the lowered confidence.
 pub(super) fn apply_gaps(candidates: &mut [IssueCandidate], gaps: &[Gap]) {
-    let kinds: BTreeSet<GapKind> = gaps.iter().map(|gap| gap.kind).collect();
     for candidate in candidates {
+        let in_scope: Vec<&Gap> = gaps
+            .iter()
+            .filter(|gap| gap.member.is_none() || gap.member == candidate.workspace_member)
+            .collect();
+        let kinds: BTreeSet<GapKind> = in_scope.iter().map(|gap| gap.kind).collect();
         for &kind in &kinds {
             let Some(lowering) = kind.lowering(candidate) else {
                 continue;
@@ -173,13 +210,13 @@ pub(super) fn apply_gaps(candidates: &mut [IssueCandidate], gaps: &[Gap]) {
                     candidate.confidence = Confidence::Maybe;
                 },
             }
-            candidate.explain.details.push(gap_detail(kind, gaps));
+            candidate.explain.details.push(gap_detail(kind, &in_scope));
         }
     }
 }
 
 /// The gap reason, the first file in backticks, and how many more files share the kind.
-fn gap_detail(kind: GapKind, gaps: &[Gap]) -> String {
+fn gap_detail(kind: GapKind, gaps: &[&Gap]) -> String {
     let mut files = gaps
         .iter()
         .filter(|gap| gap.kind == kind)
@@ -241,7 +278,13 @@ mod tests {
         Gap {
             file: file.to_owned(),
             kind,
+            member: None,
         }
+    }
+
+    fn in_member(mut candidate: IssueCandidate, member: &str) -> IssueCandidate {
+        candidate.workspace_member = Some(member.to_owned());
+        candidate
     }
 
     fn lowered(gaps: &[Gap], mut candidates: Vec<IssueCandidate>) -> Vec<(Severity, Confidence)> {
@@ -312,6 +355,79 @@ mod tests {
                 (Severity::Error, Confidence::Certain),
             ]
         );
+    }
+
+    /// A member's unread declarations may declare its own imports only, so
+    /// they lower that member's findings and leave the root's and other
+    /// members' alone (#910).
+    #[test]
+    fn a_member_gap_lowers_only_that_members_missing_declarations() {
+        let mut member_gap = gap(
+            "packages/x/pyproject.toml",
+            GapKind::RuntimeDependenciesUnknown,
+        );
+        member_gap.member = Some("x".to_owned());
+        let mut candidates = vec![
+            in_member(candidate(RuleId::Chk003, import("yaml")), "x"),
+            in_member(candidate(RuleId::Chk004, import("idna")), "x"),
+            in_member(candidate(RuleId::Chk003, import("yaml")), "y"),
+            candidate(RuleId::Chk003, import("yaml")),
+        ];
+        apply_gaps(&mut candidates, &[member_gap]);
+        let found: Vec<_> = candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.severity,
+                    candidate.confidence,
+                    candidate.explain.details.clone(),
+                )
+            })
+            .collect();
+        let detail = vec![
+            "runtime dependencies could not be read statically: `packages/x/pyproject.toml`"
+                .to_owned(),
+        ];
+        assert_eq!(
+            found,
+            [
+                (Severity::Info, Confidence::Maybe, detail.clone()),
+                (Severity::Info, Confidence::Maybe, detail),
+                (Severity::Error, Confidence::Certain, Vec::new()),
+                (Severity::Error, Confidence::Certain, Vec::new()),
+            ]
+        );
+    }
+
+    /// The root's unread declarations still lower every finding, a member's
+    /// included, and `--explain` counts only the gaps in a finding's scope.
+    #[test]
+    fn the_root_gap_reaches_members_and_explain_counts_gaps_in_scope() {
+        let mut member_x = gap("packages/x/setup.py", GapKind::RuntimeDependenciesUnknown);
+        member_x.member = Some("x".to_owned());
+        let mut member_y = gap("packages/y/setup.py", GapKind::RuntimeDependenciesUnknown);
+        member_y.member = Some("y".to_owned());
+        let mut candidates = vec![
+            in_member(candidate(RuleId::Chk003, import("yaml")), "x"),
+            candidate(RuleId::Chk003, import("yaml")),
+        ];
+        apply_gaps(
+            &mut candidates,
+            &[
+                gap("pyproject.toml", GapKind::RuntimeDependenciesUnknown),
+                member_x,
+                member_y,
+            ],
+        );
+        assert_eq!(
+            candidates[0].explain.details,
+            ["runtime dependencies could not be read statically: `pyproject.toml` (and 1 more)"]
+        );
+        assert_eq!(
+            candidates[1].explain.details,
+            ["runtime dependencies could not be read statically: `pyproject.toml`"]
+        );
+        assert_eq!(candidates[1].severity, Severity::Info);
     }
 
     #[test]

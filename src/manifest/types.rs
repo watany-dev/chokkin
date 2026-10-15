@@ -291,8 +291,7 @@ pub struct ManifestSources {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", content = "extras", rename_all = "snake_case")]
 pub enum ExtrasState {
-    /// Every extra and its requirement list were read, except the dict
-    /// entries the `setup.py` evaluator drops without a signal (#869).
+    /// Every extra and its requirement list were read.
     #[default]
     Known,
     /// The requirement lists of these extras were only partly read; the
@@ -300,6 +299,21 @@ pub enum ExtrasState {
     Partial(BTreeSet<String>),
     /// Which extras exist, or what they hold, could not be read.
     Unknown,
+}
+
+impl ExtrasState {
+    /// The state of extras two sources declare together: an unknown set
+    /// dominates, and the extras either source only partly read stay partial.
+    pub(crate) fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
+            (Self::Partial(mut left), Self::Partial(right)) => {
+                left.extend(right);
+                Self::Partial(left)
+            },
+            (state, Self::Known) | (Self::Known, state) => state,
+        }
+    }
 }
 
 /// Fully extracted manifest for a project root.
