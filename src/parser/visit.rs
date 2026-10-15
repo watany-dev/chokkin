@@ -501,8 +501,7 @@ impl<'a> ModuleVisitor<'a> {
         line: u32,
         decorators: &[Decorator],
     ) {
-        let is_public =
-            !name.starts_with('_') || self.parsed.exports.iter().any(|export| export == &name);
+        let is_public = !name.starts_with('_') || self.parsed.exports.contains(&name);
         let normalized = decorators
             .iter()
             .filter_map(|decorator| normalize_decorator(&decorator.expression))

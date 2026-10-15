@@ -103,24 +103,22 @@ pub(crate) fn add_member_manifest_roots<'a>(
             if !root_paths.contains(&path) {
                 continue;
             }
-            if let Some(root) = plan.roots.iter_mut().find(|root| root.spec.path == path) {
+            if let Some(root) = plan.roots.iter_mut().find(|root| root.path == path) {
+                root.symbols.extend(candidate.spec.symbol);
                 if !root.origins.contains(&candidate.origin) {
                     root.origins.push(candidate.origin);
                 }
                 continue;
             }
             plan.roots.push(EntryRoot {
-                spec: EntrySpec {
-                    path,
-                    symbol: candidate.spec.symbol,
-                },
+                path,
+                symbols: candidate.spec.symbol.into_iter().collect(),
                 context: candidate.context,
                 origins: vec![candidate.origin],
             });
         }
     }
-    plan.roots
-        .sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
+    plan.roots.sort_by(|left, right| left.path.cmp(&right.path));
 }
 
 fn known_file_paths(sources: &DiscoveredSources) -> BTreeSet<String> {
@@ -377,11 +375,11 @@ fn retain_existing_root(
     known_paths: &BTreeSet<String>,
     warnings: &mut Vec<EntryWarning>,
 ) -> bool {
-    if known_paths.contains(&root.spec.path) {
+    if known_paths.contains(&root.path) {
         return true;
     }
     warnings.push(EntryWarning::MissingEntryPath {
-        path: root.spec.path.clone(),
+        path: root.path.clone(),
     });
     false
 }

@@ -121,6 +121,7 @@ pub fn extract_manifest(
             "setup.py",
         );
         sources.setup_py_dynamic_name = extracted.dynamic_name;
+        sources.extras = extracted.extras;
         if extracted.parsed {
             dependencies.extend(extracted.dependencies);
             sources.setup_py = true;
@@ -291,7 +292,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v18".to_owned(),
+            unit_version: "manifest-extract-v19".to_owned(),
         },
         inputs,
     })

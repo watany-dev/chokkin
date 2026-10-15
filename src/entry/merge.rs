@@ -3,12 +3,12 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-use crate::config::EntrySpec;
 use crate::sources::FileContext;
 
 use super::types::{EntryCandidate, EntryRoot};
 
-/// Merge candidates with the same `EntrySpec.path`, combining origins and symbols.
+/// Merge candidates with the same `EntrySpec.path`, combining origins and the
+/// union of their symbols.
 /// The result is sorted by path.
 #[must_use]
 pub(super) fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<EntryRoot> {
@@ -18,7 +18,7 @@ pub(super) fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<Ent
         match merged.entry(candidate.spec.path.clone()) {
             Entry::Occupied(mut slot) => {
                 let root = slot.get_mut();
-                merge_symbol(&mut root.spec, &candidate.spec);
+                root.symbols.extend(candidate.spec.symbol);
                 if !root.origins.contains(&candidate.origin) {
                     root.origins.push(candidate.origin);
                 }
@@ -26,7 +26,8 @@ pub(super) fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<Ent
             },
             Entry::Vacant(slot) => {
                 slot.insert(EntryRoot {
-                    spec: candidate.spec,
+                    path: candidate.spec.path,
+                    symbols: candidate.spec.symbol.into_iter().collect(),
                     context: candidate.context,
                     origins: vec![candidate.origin],
                 });
@@ -35,12 +36,6 @@ pub(super) fn merge_entry_candidates(candidates: Vec<EntryCandidate>) -> Vec<Ent
     }
 
     merged.into_values().collect()
-}
-
-fn merge_symbol(target: &mut EntrySpec, incoming: &EntrySpec) {
-    if incoming.symbol.is_some() {
-        target.symbol.clone_from(&incoming.symbol);
-    }
 }
 
 fn prefer_context(existing: FileContext, incoming: FileContext) -> FileContext {
@@ -85,6 +80,35 @@ mod tests {
         ]);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].origins.len(), 2);
+    }
+
+    #[test]
+    fn merges_every_symbol_named_for_one_path() {
+        let script = |name: &str, symbol: &str| EntryCandidate {
+            spec: EntrySpec {
+                path: "tool/cli.py".to_owned(),
+                symbol: Some(symbol.to_owned()),
+            },
+            context: FileContext::Runtime,
+            origin: EntryOrigin::Manifest {
+                name: name.to_owned(),
+                group: "console".to_owned(),
+            },
+        };
+        let merged = merge_entry_candidates(vec![
+            script("a", "main_a"),
+            script("b", "main_b"),
+            script("c", "main_a"),
+        ]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0]
+                .symbols
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["main_a", "main_b"]
+        );
     }
 
     #[test]

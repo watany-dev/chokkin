@@ -70,10 +70,7 @@ fn load_pipeline(path: &Path) -> PipelineInputs {
 }
 
 fn entry_paths(plan: &chokkin::internals::EntryPlan) -> Vec<&str> {
-    plan.roots
-        .iter()
-        .map(|root| root.spec.path.as_str())
-        .collect()
+    plan.roots.iter().map(|root| root.path.as_str()).collect()
 }
 
 #[test]
@@ -91,7 +88,7 @@ fn django_manage_is_entry_with_plugin_origins() {
     let manage = plan
         .roots
         .iter()
-        .find(|root| root.spec.path == "manage.py")
+        .find(|root| root.path == "manage.py")
         .expect("manage.py entry");
     assert!(
         manage
@@ -162,7 +159,7 @@ fn explicit_config_entry_merges_with_auto() {
     let manage = plan
         .roots
         .iter()
-        .find(|root| root.spec.path == "manage.py")
+        .find(|root| root.path == "manage.py")
         .expect("manage.py");
     assert!(manage.origins.contains(&EntryOrigin::Config));
     assert!(
@@ -189,7 +186,7 @@ fn missing_config_entry_emits_warning() {
             .iter()
             .any(|warning| matches!(warning, EntryWarning::MissingEntryPath { .. }))
     );
-    assert!(!plan.roots.iter().any(|root| root.spec.path == "missing.py"));
+    assert!(!plan.roots.iter().any(|root| root.path == "missing.py"));
 }
 
 #[test]
@@ -234,8 +231,11 @@ fn manifest_script_resolves_to_module_file() {
     });
     assert!(script_entry.is_some());
     let entry = script_entry.expect("uvicorn script entry");
-    assert_eq!(entry.spec.path, "src/pkg/main.py");
-    assert_eq!(entry.spec.symbol.as_deref(), Some("app"));
+    assert_eq!(entry.path, "src/pkg/main.py");
+    assert_eq!(
+        entry.symbols.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["app"]
+    );
 }
 
 /// #802: only the package's own `__init__.py` makes a subpackage, not a
@@ -256,7 +256,7 @@ fn library_roots_mark_subpackages_below_the_package_init() {
         let root = plan
             .roots
             .iter()
-            .find(|root| root.spec.path == path)
+            .find(|root| root.path == path)
             .unwrap_or_else(|| panic!("{path} root"));
         root.origins.clone()
     };
@@ -320,7 +320,7 @@ fn commands_running_scripts_by_path_are_dev_entries() {
                 .iter()
                 .any(|origin| matches!(origin, EntryOrigin::Command { .. }))
         })
-        .map(|root| (root.spec.path.as_str(), root.context))
+        .map(|root| (root.path.as_str(), root.context))
         .collect();
     assert_eq!(
         command_roots,

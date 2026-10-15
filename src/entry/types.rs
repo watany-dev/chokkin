@@ -1,5 +1,6 @@
 //! Entry root construction types (pipeline step 8).
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::config::{EntrySpec, PluginId, ProjectMode};
@@ -53,8 +54,11 @@ pub enum EntryOrigin {
 /// One merged entry root after deduplication.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryRoot {
-    /// File path and optional symbol.
-    pub spec: EntrySpec,
+    /// Root-relative file path.
+    pub path: String,
+    /// Every object an entry names in this file; candidates for one path
+    /// merge their symbols here, so no entry's target is lost (#884).
+    pub symbols: BTreeSet<String>,
     /// Assigned file context.
     pub context: FileContext,
     /// Discovery sources merged for this path.

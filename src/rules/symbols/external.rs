@@ -48,15 +48,14 @@ pub(super) fn collect_external_symbols(
     let mut external = IndexSet::new();
 
     for entry in &entry.roots {
-        let Some(symbol) = entry.spec.symbol.as_ref() else {
-            continue;
-        };
         if let Some(module) = module_names
-            .get(entry.spec.path.as_str())
+            .get(entry.path.as_str())
             .cloned()
-            .or_else(|| path_to_module(&entry.spec.path, layout))
+            .or_else(|| path_to_module(&entry.path, layout))
         {
-            external.insert(SymbolId::new(module, target_object(symbol)));
+            for symbol in &entry.symbols {
+                external.insert(SymbolId::new(module.clone(), target_object(symbol)));
+            }
         }
     }
 

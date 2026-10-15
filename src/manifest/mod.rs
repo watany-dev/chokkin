@@ -37,7 +37,7 @@ pub(crate) use types::{
     DeclaredDependency, LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, UvSourceKind,
     UvToolSettings, WheelTargets,
 };
-pub use types::{DependencyContext, DependencyOrigin, LoadedManifest, LockfileKind};
+pub use types::{DependencyContext, DependencyOrigin, ExtrasState, LoadedManifest, LockfileKind};
 #[cfg(test)]
 pub(crate) use types::{EntryPointDecl, LockfileSource, UvSource};
 pub use warnings::ManifestWarning;

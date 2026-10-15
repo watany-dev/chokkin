@@ -252,6 +252,7 @@ mod tests {
     use crate::plugins::{FrameworkUsedGlob, PluginContribution, ReferenceOrigin};
     use crate::reachability::trace_to_file;
     use crate::sources::{DiscoveredFile, LayoutInfo, ProjectLayout};
+    use std::collections::BTreeSet;
 
     const MIGRATION: &str = "acme/migrations/0001_initial.py";
 
@@ -315,10 +316,8 @@ mod tests {
             roots: roots
                 .iter()
                 .map(|path| EntryRoot {
-                    spec: crate::config::EntrySpec {
-                        path: (*path).to_owned(),
-                        symbol: None,
-                    },
+                    path: (*path).to_owned(),
+                    symbols: BTreeSet::new(),
                     context: FileContext::Runtime,
                     origins: Vec::new(),
                 })

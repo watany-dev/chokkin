@@ -28,7 +28,7 @@ impl PublicApi {
             let Some(name) = module_names.get(module.path.as_str()) else {
                 continue;
             };
-            if !module.exports.is_empty() {
+            if !module.exports.names().is_empty() {
                 declares_all.insert(name.clone());
             }
             star_targets

@@ -1,6 +1,7 @@
 //! PEP 517 build backends as entry roots (#782).
 
-use crate::config::EntrySpec;
+use std::collections::BTreeSet;
+
 use crate::parser::{ParseSummary, ParsedModule};
 use crate::sources::{DiscoveredFile, FileContext};
 
@@ -28,34 +29,26 @@ pub(crate) fn add_build_backend_roots(
         if file.context != FileContext::Runtime {
             continue;
         }
-        if let Some(root) = plan
-            .roots
-            .iter_mut()
-            .find(|root| root.spec.path == module.path)
-        {
+        if let Some(root) = plan.roots.iter_mut().find(|root| root.path == module.path) {
             if !root.origins.contains(&EntryOrigin::BuildBackend) {
                 root.origins.push(EntryOrigin::BuildBackend);
             }
             continue;
         }
         plan.roots.push(EntryRoot {
-            spec: EntrySpec {
-                path: module.path.clone(),
-                symbol: None,
-            },
+            path: module.path.clone(),
+            symbols: BTreeSet::new(),
             context: file.context,
             origins: vec![EntryOrigin::BuildBackend],
         });
     }
-    plan.roots
-        .sort_by(|left, right| left.spec.path.cmp(&right.spec.path));
+    plan.roots.sort_by(|left, right| left.path.cmp(&right.path));
 }
 
 /// Whether `module` defines or re-exports (`__all__`) every required hook.
 fn provides_hooks(module: &ParsedModule) -> bool {
     REQUIRED_HOOKS.iter().all(|hook| {
-        module.symbols.iter().any(|symbol| symbol.name == *hook)
-            || module.exports.iter().any(|name| name == hook)
+        module.symbols.iter().any(|symbol| symbol.name == *hook) || module.exports.contains(hook)
     })
 }
 
@@ -81,7 +74,9 @@ mod tests {
                     used_in_module: false,
                 })
                 .collect(),
-            exports: exports.iter().map(|name| (*name).to_owned()).collect(),
+            exports: crate::parser::Exports::Known(
+                exports.iter().map(|name| (*name).to_owned()).collect(),
+            ),
             ..ParsedModule::default()
         }
     }
@@ -134,10 +129,8 @@ mod tests {
     #[test]
     fn an_existing_root_gains_the_origin_once() {
         let existing = EntryRoot {
-            spec: EntrySpec {
-                path: "src/poetry/masonry/api.py".to_owned(),
-                symbol: None,
-            },
+            path: "src/poetry/masonry/api.py".to_owned(),
+            symbols: BTreeSet::new(),
             context: FileContext::Runtime,
             origins: vec![EntryOrigin::Config],
         };
@@ -157,7 +150,7 @@ mod tests {
         ];
         let once = roots_for(vec![existing], modules(), &files);
         let roots = roots_for(once, modules(), &files);
-        let paths: Vec<_> = roots.iter().map(|root| root.spec.path.as_str()).collect();
+        let paths: Vec<_> = roots.iter().map(|root| root.path.as_str()).collect();
         assert_eq!(paths, ["src/acme/backend.py", "src/poetry/masonry/api.py"]);
         assert_eq!(roots[0].origins, [EntryOrigin::BuildBackend]);
         assert_eq!(

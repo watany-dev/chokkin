@@ -412,7 +412,7 @@ mod golden {
             .roots
             .iter()
             .map(|root| EntryRootSnapshot {
-                path: root.spec.path.clone(),
+                path: root.path.clone(),
                 origins: root.origins.iter().map(format_origin).collect(),
             })
             .collect::<Vec<_>>();
@@ -507,7 +507,7 @@ mod golden {
         inputs
             .entry
             .roots
-            .retain(|root| root.spec.path != "src/acme/cli.py");
+            .retain(|root| root.path != "src/acme/cli.py");
         let reduced_report = analyze_reachability(
             &mut inputs.graph,
             &inputs.sources,

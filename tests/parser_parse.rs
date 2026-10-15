@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use chokkin::internals::{
-    FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout, ProjectRoot,
-    RootMarker, TargetVersion, parse_file, parse_project_sources_with_cache,
+    Exports, FileContext, ImportContext, ImportKind, LayoutInfo, ParseSeverity, ProjectLayout,
+    ProjectRoot, RootMarker, TargetVersion, parse_file, parse_project_sources_with_cache,
 };
 
 fn spike_fixture(name: &str) -> PathBuf {
@@ -151,7 +151,10 @@ fn resolves_relative_import_in_src_layout() {
 #[test]
 fn extracts_all_exports() {
     let parsed = parse_fixture_dir("exports", "all_list.py");
-    assert_eq!(parsed.exports, vec!["foo".to_owned(), "bar".to_owned()]);
+    assert_eq!(
+        parsed.exports,
+        Exports::Known(vec!["foo".to_owned(), "bar".to_owned()])
+    );
 }
 
 #[test]

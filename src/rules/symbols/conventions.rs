@@ -146,7 +146,7 @@ pub(super) fn config_star_symbols(
                 .entry(name.as_str())
                 .or_default()
                 .extend(star_imports(module));
-            if !module.exports.is_empty() {
+            if !module.exports.names().is_empty() {
                 declares_all.insert(name.as_str());
             }
         }
@@ -190,7 +190,7 @@ pub(super) fn host_hook_symbols(
                 |origin| matches!(origin, EntryOrigin::Manifest { group, .. } if group == "pytest11"),
             )
         })
-        .map(|root| root.spec.path.as_str())
+        .map(|root| root.path.as_str())
         .chain(
             modules
                 .iter()
@@ -221,7 +221,7 @@ pub(super) fn host_hook_symbols(
                 _ => false,
             })
         })
-        .map(|root| root.spec.path.as_str())
+        .map(|root| root.path.as_str())
         .collect();
     let is_hook = |name: &str, module: &str, path: &str| match name {
         name if name.starts_with("pytest_") => {

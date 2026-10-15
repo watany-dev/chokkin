@@ -93,7 +93,7 @@ fn format_negative_trace(
                 .origins
                 .first()
                 .map_or_else(|| "entry".to_owned(), format_entry_origin);
-            let _ = writeln!(out, "    {prefix}{} ({origin})", root.spec.path);
+            let _ = writeln!(out, "    {prefix}{} ({origin})", root.path);
         }
     }
 
@@ -167,7 +167,6 @@ fn collect_incoming_imports(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::EntrySpec;
     use crate::config::{Confidence, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::entry::{EntryPlan, EntryRoot};
@@ -177,6 +176,7 @@ mod tests {
     use crate::sources::{
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
     };
+    use std::collections::BTreeSet;
 
     fn src_layout() -> LayoutInfo {
         LayoutInfo {
@@ -261,7 +261,7 @@ mod tests {
                 pytest_plugins: Vec::new(),
                 attribute_accesses: Vec::new(),
                 symbols: Vec::new(),
-                exports: Vec::new(),
+                exports: crate::parser::Exports::Absent,
                 used_import_bindings: Vec::new(),
                 ignores: Vec::new(),
                 has_opaque_dynamic_import: false,
@@ -297,10 +297,8 @@ mod tests {
             mode: ProjectMode::App,
             library_members: Vec::new(),
             roots: vec![EntryRoot {
-                spec: EntrySpec {
-                    path: "src/acme/cli.py".to_owned(),
-                    symbol: None,
-                },
+                path: "src/acme/cli.py".to_owned(),
+                symbols: BTreeSet::new(),
                 context: FileContext::Runtime,
                 origins: vec![EntryOrigin::Manifest {
                     name: "cli".to_owned(),

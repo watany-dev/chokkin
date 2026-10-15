@@ -240,7 +240,7 @@ pub(super) fn run_reachability_bfs(
     };
 
     for root in &entry.roots {
-        let Some(file_id) = state.graph.file_id(&root.spec.path) else {
+        let Some(file_id) = state.graph.file_id(&root.path) else {
             continue;
         };
         let class = if root.only_public() {
@@ -250,7 +250,7 @@ pub(super) fn run_reachability_bfs(
         };
         state.enqueue_file(file_id, None, class, || TraceStep::File {
             file: file_id,
-            path: root.spec.path.clone(),
+            path: root.path.clone(),
         });
     }
     for reference in plugins.module_refs() {
@@ -523,7 +523,7 @@ fn conditional_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EntrySpec, PluginId, ProjectMode};
+    use crate::config::{PluginId, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::entry::{EntryOrigin, EntryRoot, LIBRARY_SUBPACKAGE_RULE};
     use crate::graph::{FileNode, add_parsed_imports};
@@ -532,6 +532,7 @@ mod tests {
     use crate::sources::{
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
     };
+    use std::collections::BTreeSet;
 
     const PATHS: [&str; 4] = [
         "src/acme/main.py",
@@ -602,10 +603,8 @@ mod tests {
             mode: ProjectMode::App,
             library_members: Vec::new(),
             roots: vec![EntryRoot {
-                spec: EntrySpec {
-                    path: "src/acme/main.py".to_owned(),
-                    symbol: None,
-                },
+                path: "src/acme/main.py".to_owned(),
+                symbols: BTreeSet::new(),
                 context: FileContext::Runtime,
                 origins: Vec::new(),
             }],
@@ -1114,10 +1113,8 @@ mod tests {
         let module_index = ModuleIndex::build(&graph, &sources(&root));
         let [main_id, a_id, b_id, c_id] = PATHS.map(|path| graph.file_id(path).expect(path));
         let root_at = |path: &str, rule: &str| EntryRoot {
-            spec: EntrySpec {
-                path: path.to_owned(),
-                symbol: None,
-            },
+            path: path.to_owned(),
+            symbols: BTreeSet::new(),
             context: FileContext::Runtime,
             origins: vec![EntryOrigin::Auto {
                 rule: rule.to_owned(),

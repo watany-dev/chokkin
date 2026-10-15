@@ -30,5 +30,5 @@ pub(crate) use types::ParseDiagnostic;
 pub(crate) use types::import_context_for_file;
 #[cfg(test)]
 pub(crate) use types::{DynamicImport, ImportRef};
+pub use types::{Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule};
 pub(crate) use types::{IgnoreDirective, SymbolDef, SymbolKind};
-pub use types::{ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule};
