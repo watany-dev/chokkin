@@ -13,7 +13,7 @@ use crate::path_util::normalize_rel_path;
 use super::context::assign_file_context;
 use super::error::SourcesError;
 use super::types::{DiscoveredFile, FileContext, FileKind};
-use super::walk::should_prune_dir;
+use super::walk::{should_prune_dir, walk_error_warning};
 use super::warnings::SourcesWarning;
 
 const GITIGNORE_PATH: &str = ".gitignore";
@@ -146,10 +146,7 @@ pub(super) fn collect_files_reference(
         let entry = match result {
             Ok(entry) => entry,
             Err(error) => {
-                warnings.push(SourcesWarning::PathUnreadable {
-                    path: root.to_string_lossy().into_owned(),
-                    reason: error.to_string(),
-                });
+                warnings.push(walk_error_warning(&root, &error));
                 continue;
             },
         };
