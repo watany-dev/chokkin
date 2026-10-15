@@ -381,11 +381,11 @@ fn fix_rewrites_setup_cfg_install_requires_one_entry_per_line() {
     );
 }
 
-/// Removing every `install_requires` entry drops the key, even when the next
-/// section header ends the list; an extra (strict) is removed from its own
+/// Removing every `install_requires` entry keeps the emptied key, as an
+/// emptied extra keeps its own; an extra (strict) is removed from its own
 /// section by line.
 #[test]
-fn fix_drops_emptied_setup_cfg_install_requires_and_extra_entries() {
+fn fix_keeps_emptied_setup_cfg_install_requires_and_extra_keys() {
     let (after, applied) = fix_setup_cfg_project(
         "[metadata]\nname = acme\nversion = 0.1\n\n[options]\npackages = find:\ninstall_requires =\n    boto3\n    click>=8\n[options.extras_require]\nyaml =\n    pyyaml\n    requests\n",
         "import requests\n",
@@ -394,6 +394,35 @@ fn fix_drops_emptied_setup_cfg_install_requires_and_extra_entries() {
     assert_eq!(applied, 3);
     assert_eq!(
         after,
-        "[metadata]\nname = acme\nversion = 0.1\n\n[options]\npackages = find:\n[options.extras_require]\nyaml =\n    requests\n"
+        "[metadata]\nname = acme\nversion = 0.1\n\n[options]\npackages = find:\ninstall_requires =\n[options.extras_require]\nyaml =\n    requests\n"
+    );
+}
+
+/// An inline value goes with its entry; the key and every CRLF stay.
+#[test]
+fn fix_keeps_setup_cfg_crlf_and_inline_keys() {
+    let (after, applied) = fix_setup_cfg_project(
+        "[metadata]\r\nname = acme\r\n\r\n[options]\r\ninstall_requires = boto3\r\n    click>=8\r\n    rich\r\npython_requires = >=3.9\r\n",
+        "import click\n",
+        false,
+    );
+    assert_eq!(applied, 2);
+    assert_eq!(
+        after,
+        "[metadata]\r\nname = acme\r\n\r\n[options]\r\ninstall_requires =\r\n    click>=8\r\npython_requires = >=3.9\r\n"
+    );
+}
+
+/// Removing an extra's entry touches only that extra: the same name in
+/// another extra and a same-named word in an unrelated section stay (one
+/// declaration per run; ADR 0003 leaves the next to a fresh analysis).
+#[test]
+fn fix_removes_setup_cfg_extra_entry_from_its_own_extra_only() {
+    let setup_cfg = "[metadata]\nname = acme\n\n[options]\ninstall_requires =\n    click\n\n[options.extras_require]\nyaml =\n    pyyaml\nfull =\n    pyyaml\n    click\n\n[flake8]\nexclude =\n    pyyaml\n";
+    let (after, applied) = fix_setup_cfg_project(setup_cfg, "import click\n", true);
+    assert_eq!(applied, 1);
+    assert_eq!(
+        after,
+        "[metadata]\nname = acme\n\n[options]\ninstall_requires =\n    click\n\n[options.extras_require]\nyaml =\n    pyyaml\nfull =\n    click\n\n[flake8]\nexclude =\n    pyyaml\n"
     );
 }

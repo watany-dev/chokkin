@@ -33,6 +33,7 @@ pub(crate) use pep508_util::pep508_distribution_name;
 pub(crate) use requirements::{extra_requirements_candidates, requirements_line_distribution};
 pub use script::discover_inline_scripts;
 pub(crate) use script::{InlineScript, inline_script_target};
+pub(crate) use setup_cfg::{IniLine, ini_lines, split_requirement_lines};
 pub(crate) use types::{
     DeclaredDependency, LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, UvSourceKind,
     UvToolSettings, WheelTargets,
