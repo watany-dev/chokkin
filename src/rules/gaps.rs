@@ -278,15 +278,7 @@ fn unresolved_import_gaps(
         if !counts {
             continue;
         }
-        // The first line, as CHK010 anchors at it; a site without one last.
-        sites
-            .entry((file.as_str(), import.as_str()))
-            .and_modify(|kept| {
-                if (line.is_none(), *line) < (kept.is_none(), *kept) {
-                    *kept = *line;
-                }
-            })
-            .or_insert(*line);
+        keep_first_line(&mut sites, (file.as_str(), import.as_str()), *line);
     }
     sites
         .into_iter()
@@ -301,6 +293,16 @@ fn unresolved_import_gaps(
             site: Some((import.to_owned(), line)),
         })
         .collect()
+}
+
+/// Keep the first line of a site, as CHK010 anchors at it; a site without
+/// one sorts last.
+fn keep_first_line<K: Ord>(sites: &mut BTreeMap<K, Option<u32>>, key: K, line: Option<u32>) {
+    let kept = sites.entry(key).or_insert(line);
+    *kept = match (*kept, line) {
+        (Some(kept), Some(line)) => Some(kept.min(line)),
+        (kept, line) => kept.or(line),
+    };
 }
 
 /// One gap per command file and target. A computed or unread target may run
@@ -337,15 +339,11 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
                 }
             },
         };
-        let line = command.origin.line;
-        sites
-            .entry((command.origin.file.as_str(), text))
-            .and_modify(|kept| {
-                if (line.is_none(), line) < (kept.is_none(), *kept) {
-                    *kept = line;
-                }
-            })
-            .or_insert(line);
+        keep_first_line(
+            &mut sites,
+            (command.origin.file.as_str(), text),
+            command.origin.line,
+        );
     }
     sites
         .into_iter()
@@ -830,6 +828,34 @@ mod tests {
             [
                 "a reachable module could not be read: `acme/a.py` (and 1 more)",
                 "a reachable module imports a module by a name computed at runtime: `acme/main.py`",
+            ]
+        );
+    }
+
+    #[test]
+    fn keep_first_line_keeps_the_earliest_line_and_prefers_one_to_none() {
+        let mut sites = BTreeMap::new();
+        for (key, line) in [
+            ("later", Some(5)),
+            ("later", Some(3)),
+            ("earlier", Some(3)),
+            ("earlier", Some(5)),
+            ("none_first", None),
+            ("none_first", Some(4)),
+            ("none_last", Some(4)),
+            ("none_last", None),
+            ("only_none", None),
+        ] {
+            keep_first_line(&mut sites, key, line);
+        }
+        assert_eq!(
+            sites.into_iter().collect::<Vec<_>>(),
+            [
+                ("earlier", Some(3)),
+                ("later", Some(3)),
+                ("none_first", Some(4)),
+                ("none_last", Some(4)),
+                ("only_none", None),
             ]
         );
     }
