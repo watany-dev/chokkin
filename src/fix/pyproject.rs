@@ -111,8 +111,84 @@ fn push_runtime_dependency(doc: &mut DocumentMut, raw: &str) -> Result<bool, Fix
     }) {
         return Ok(false);
     }
-    deps.push(raw);
+    push_entry(deps, raw);
     Ok(true)
+}
+
+/// Appends `raw` laid out like the array. In a multi-line array it goes on
+/// its own line at the last entry's indent, and the rest of the last entry's
+/// line (its `# why` comment) stays on that entry's line instead of moving to
+/// the new one; `toml_edit`'s `push` keeps it before `]`.
+fn push_entry(array: &mut toml_edit::Array, raw: &str) {
+    let decor_text = |raw: Option<&toml_edit::RawString>| {
+        raw.and_then(toml_edit::RawString::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let trailing = decor_text(Some(array.trailing()));
+    let last_suffix = array
+        .iter()
+        .last()
+        .map(|value| decor_text(value.decor().suffix()))
+        .unwrap_or_default();
+    let multi_line = trailing.contains('\n')
+        || last_suffix.contains('\n')
+        || array
+            .iter()
+            .any(|value| decor_text(value.decor().prefix()).contains('\n'));
+    if !multi_line {
+        array.push(raw);
+        return;
+    }
+    let indent = array
+        .iter()
+        .last()
+        .map(|value| decor_text(value.decor().prefix()))
+        .and_then(|prefix| {
+            prefix
+                .rsplit_once('\n')
+                .map(|(_, indent)| indent.to_owned())
+        })
+        .unwrap_or_else(|| "    ".to_owned());
+    // Without a trailing comma the text up to `]` is the last entry's suffix.
+    let comma_after_last = array.trailing_comma() || array.is_empty();
+    let after_last = if comma_after_last {
+        trailing
+    } else {
+        last_suffix
+    };
+    let (line_rest, before_close) = match after_last.split_once('\n') {
+        Some((line_rest, before_close)) => (format!("{line_rest}\n"), before_close.to_owned()),
+        None => (String::new(), after_last),
+    };
+    let (prefix, close) = if line_rest.is_empty() {
+        // `]` on the last entry's line: the new entry opens a line of its own.
+        (format!("\n{indent}"), before_close)
+    } else {
+        let line_end = if line_rest.ends_with("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        (
+            format!("{line_rest}{indent}"),
+            format!("{line_end}{before_close}"),
+        )
+    };
+    let mut value = Value::from(raw);
+    value.decor_mut().set_prefix(prefix);
+    if comma_after_last {
+        value.decor_mut().set_suffix("");
+        array.set_trailing(close);
+        array.set_trailing_comma(true);
+    } else {
+        let last = array.len().checked_sub(1);
+        if let Some(last) = last.and_then(|last| array.get_mut(last)) {
+            last.decor_mut().set_suffix("");
+        }
+        value.decor_mut().set_suffix(close);
+    }
+    array.push_formatted(value);
 }
 
 fn project_dependencies_array(doc: &mut DocumentMut) -> Result<&mut toml_edit::Array, FixError> {
@@ -707,6 +783,43 @@ dev = ["pyyaml"]
         add_runtime_dependency(&path, "pyyaml").expect("add");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(updated.contains("dependencies = [\"pyyaml\"]"));
+    }
+
+    #[test]
+    fn added_entry_takes_its_own_line_in_a_multi_line_array() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        for (before, after) in [
+            (
+                "dependencies = [\n    \"click\",  # why click\n]\n",
+                "dependencies = [\n    \"click\",  # why click\n    \"pyyaml\",\n]\n",
+            ),
+            (
+                "dependencies = [\n    \"click\"  # why click\n]\n",
+                "dependencies = [\n    \"click\",  # why click\n    \"pyyaml\"\n]\n",
+            ),
+            (
+                "dependencies = [\n]\n",
+                "dependencies = [\n    \"pyyaml\",\n]\n",
+            ),
+            (
+                "dependencies = [\n  \"click\"]\n",
+                "dependencies = [\n  \"click\",\n  \"pyyaml\"]\n",
+            ),
+            (
+                "dependencies = [\"click\"]\n",
+                "dependencies = [\"click\", \"pyyaml\"]\n",
+            ),
+        ] {
+            std::fs::write(&path, format!("[project]\nname = \"demo\"\n{before}")).expect("write");
+            add_runtime_dependency(&path, "pyyaml").expect("add");
+            let updated = std::fs::read_to_string(&path).expect("read");
+            assert_eq!(
+                updated,
+                format!("[project]\nname = \"demo\"\n{after}"),
+                "{before}"
+            );
+        }
     }
 
     #[test]

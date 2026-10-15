@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`[flake8] exclude`), line endings (CRLF) and the rest of the file stay as
   written, and an emptied `install_requires` keeps its key like an emptied
   extra (#861).
+- `--fix` appending to a multi-line `project.dependencies` (CHK003
+  `--add-missing`, a CHK005 move) puts the new entry on its own line at the
+  existing indent; the last entry's `# comment` stays on that entry's line
+  instead of moving to the new one, and `[\n]` no longer becomes `["x"\n]`
+  (#861).
 - A source with a syntax error is skipped like an undecodable one, with a
   `parse: skipped …: syntax error at line N: …` warning, instead of being read
   as a module without imports. Its imports are unknown, so CHK001 and CHK002

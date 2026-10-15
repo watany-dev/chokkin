@@ -1036,7 +1036,7 @@ skipped fix として報告し、suggestion/手動修正に留める。`[project
 (依存を setup.py / setup.cfg で宣言し、pyproject には `[tool.*]` だけを置く構成)に `[project]` を
 作ると setuptools がそちらを正とみなしてビルドが壊れるため、UnsupportedTarget で skip する (#581)。
 
-manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、commentsと順序を極力維持する。requirements系はline-based編集で、hash付きrequirementsやconstraintsは原則自動編集しない。`setup.cfg` もline-based編集だが、対象は宣言のラベル（`options.install_requires[i]` / `options.extras_require.<extra>[i]`）が指すsection・option・itemに限る。itemの数え方はmanifest抽出と同じ行分類器による（重複sectionは合流、コメント・空行はitemではない）。継続行のitemは行末ごと消し、インライン値のitemは `key =` と行末を残すので、空になったoptionも宣言として残る。他の行のバイト列と行末（CRLF）は変えない。そのindexのitemがもう対象のdistributionを指さなければ編集しない。
+manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、commentsと順序を極力維持する。requirements系はline-based編集で、hash付きrequirementsやconstraintsは原則自動編集しない。`setup.cfg` もline-based編集だが、対象は宣言のラベル（`options.install_requires[i]` / `options.extras_require.<extra>[i]`）が指すsection・option・itemに限る。itemの数え方はmanifest抽出と同じ行分類器による（重複sectionは合流、コメント・空行はitemではない）。継続行のitemは行末ごと消し、インライン値のitemは `key =` と行末を残すので、空になったoptionも宣言として残る。他の行のバイト列と行末（CRLF）は変えない。そのindexのitemがもう対象のdistributionを指さなければ編集しない。複数行の `project.dependencies` に追加するentry（CHK003 `--add-missing`、CHK005 の移動）は既存のindentで独立した行に置き、直前のentryの行コメントはそのentryの行に残す。
 
 書き込み安全性: manifest編集は同一ディレクトリへの一時ファイル作成→`rename` でアトミックに置換する(`fix/write.rs`)。既存ファイルのpermissionsは可能な範囲で引き継ぐ。fix対象パスはproject root内に収まることを検証し、ルート外への書き込みはskipする。requirementsの `-r`/`-c` インクルードとDjango `settings.py` 探索も同様にルート封じ込めする。
 
