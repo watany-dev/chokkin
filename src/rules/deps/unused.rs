@@ -18,7 +18,9 @@ use super::context::{DeclarationBucket, declaration_buckets, include_path_detail
 /// Context for building CHK002 reachability evidence in `--explain` output.
 pub(super) struct UnusedEvidenceContext<'a> {
     pub rules: &'a RuleContext<'a>,
-    pub reachable: &'a HashSet<&'a str>,
+    /// The files CHK002 counts imports in (`usage_paths`), so the evidence
+    /// names the same files the verdict read (#550).
+    pub usage: &'a HashSet<&'a str>,
     /// `[build-system].requires`, so a build plugin that is also declared as
     /// a dependency is explained as build tooling.
     pub build_requires: &'a [DeclaredDependency],
@@ -140,11 +142,11 @@ fn build_reachability_evidence(
 
     let reachable_imports = distribution_imports
         .iter()
-        .filter(|import| context.reachable.contains(import.file.as_str()))
+        .filter(|import| context.usage.contains(import.file.as_str()))
         .collect::<Vec<_>>();
     let unreachable_imports = distribution_imports
         .iter()
-        .filter(|import| !context.reachable.contains(import.file.as_str()))
+        .filter(|import| !context.usage.contains(import.file.as_str()))
         .collect::<Vec<_>>();
 
     if reachable_imports.is_empty() {
@@ -449,7 +451,7 @@ mod tests {
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,
-            reachable: &reachable,
+            usage: &reachable,
             build_requires,
         };
 
@@ -571,7 +573,7 @@ mod tests {
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,
-            reachable: &reachable,
+            usage: &reachable,
             build_requires: &[],
         };
 

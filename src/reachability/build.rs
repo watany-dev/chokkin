@@ -53,7 +53,8 @@ pub fn analyze_reachability(
     let reachable = bfs.reachable;
 
     // Nothing was read from a skipped file, so it is neither known unused nor
-    // a reliable source of edges; reporting it would only be a guess.
+    // a reliable source of edges; reporting it would only be a guess. It is
+    // kept apart, scored all the same, for the gap stage (#550).
     let skipped: std::collections::HashSet<&str> = parse
         .modules
         .iter()
@@ -61,6 +62,7 @@ pub fn analyze_reachability(
         .map(|module| module.path.as_str())
         .collect();
     let mut unreachable = Vec::new();
+    let mut unread = Vec::new();
     for file in &sources.files {
         if !matches!(file.kind, FileKind::Python | FileKind::Notebook) {
             continue;
@@ -69,7 +71,7 @@ pub fn analyze_reachability(
             continue;
         }
         let mode = entry.mode_for(&file.path);
-        if is_excluded(file, mode) || skipped.contains(file.path.as_str()) {
+        if is_excluded(file, mode) {
             continue;
         }
         let Some(file_id) = graph.file_id(&file.path) else {
@@ -79,15 +81,21 @@ pub fn analyze_reachability(
             continue;
         }
 
-        unreachable.push(UnreachableFile {
+        let orphan = UnreachableFile {
             file: file_id,
             path: file.path.clone(),
             max_confidence: confidence_for_unreachable(mode),
             mode,
-        });
+        };
+        if skipped.contains(file.path.as_str()) {
+            unread.push(orphan);
+        } else {
+            unreachable.push(orphan);
+        }
     }
 
     unreachable.sort_by(|left, right| left.path.cmp(&right.path));
+    unread.sort_by(|left, right| left.path.cmp(&right.path));
 
     Ok(ReachabilityReport {
         reachable,
@@ -95,6 +103,7 @@ pub fn analyze_reachability(
         exposed: bfs.exposed,
         certain: bfs.certain,
         unreachable,
+        unread,
         used_modules: bfs.used_modules,
         framework_used: framework.files,
         predecessors: bfs.predecessors,
@@ -117,7 +126,7 @@ pub fn apply_public_surface(
         return;
     }
     let confidence = confidence_for_unreachable(ProjectMode::App);
-    for file in &mut report.unreachable {
+    for file in report.unreachable.iter_mut().chain(&mut report.unread) {
         if !surface.contains(&file.path) && !entry.in_library_member(&file.path) {
             file.max_confidence = confidence;
         }
@@ -134,7 +143,7 @@ pub(crate) fn apply_member_surfaces(
     surfaces: &[&(String, PublicSurface)],
 ) {
     let confidence = confidence_for_unreachable(ProjectMode::App);
-    for file in &mut report.unreachable {
+    for file in report.unreachable.iter_mut().chain(&mut report.unread) {
         if member_ships(surfaces.iter().copied(), &file.path) == Some(false) {
             file.max_confidence = confidence;
         }
@@ -513,6 +522,52 @@ mod tests {
                 ("acme/orphan.py", Confidence::Certain),
                 ("libs/core/pkg/orphan.py", Confidence::Maybe),
             ]
+        );
+    }
+
+    /// A skipped orphan is no CHK001 finding, but it is scored like one: a
+    /// public one may still be imported by a caller of the library, which
+    /// the gap stage needs to know (#550).
+    #[test]
+    fn skipped_orphans_are_scored_apart_from_reported_ones() {
+        let skipped = |path: &str| ParsedModule {
+            path: path.to_owned(),
+            skipped: true,
+            ..ParsedModule::default()
+        };
+        let parse = ParseSummary {
+            modules: vec![
+                parsed("acme/__init__.py", &[], false),
+                skipped("acme/client.py"),
+                skipped("tools/release.py"),
+            ],
+        };
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let paths: Vec<&str> = parse.modules.iter().map(|m| m.path.as_str()).collect();
+        let sources = flat_sources(root, &paths);
+        let mut graph = graph_for(&sources, &parse, &[]);
+        let mut entry = app_entry(&["acme/__init__.py"]);
+        entry.mode = ProjectMode::Library;
+        let mut report =
+            analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
+                .expect("reachability");
+        let surface = PublicSurface {
+            files: ["acme/client.py".to_owned()].into(),
+        };
+        apply_public_surface(&mut report, &surface, &entry);
+
+        assert_eq!(report.unreachable, []);
+        let unread: Vec<_> = report
+            .unread
+            .iter()
+            .map(|file| (file.path.as_str(), file.callers_may_import()))
+            .collect();
+        assert_eq!(
+            unread,
+            [("acme/client.py", true), ("tools/release.py", false)]
         );
     }
 
