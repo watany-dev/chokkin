@@ -16,6 +16,8 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 
 上表のモデルは移植に対する検証のため、移植と実装の乖離は検出できない。#418 で一部の
 性質を Rust 実装そのものに対して検証するようにした (`make kani`、`make check` には含めない)。
+kani は `verification.yml` が週次と、`#[cfg(kani)]` の harness を持つ file を変えた PR で走らせる。
+全数列挙と proptest は `make check` の `cargo test` で走る。
 
 | 性質 | 検証 | 場所 |
 |---|---|---|

@@ -3,7 +3,8 @@ name: Verification
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
 # PR only the mutants on lines the PR changes, weekly all of `make mutants`.
 # Both split into shards of about 100 mutants so a large diff still finishes
-# within a job timeout. kani runs on demand or weekly. On PRs the benchmark
+# within a job timeout. kani runs on demand, weekly, and on PRs that change a
+# file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
 # regression gate (#836) also runs, but only reports: it never fails the PR.
 
 on:
@@ -206,19 +207,43 @@ jobs:
 
   kani:
     name: Kani proofs
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # HEAD is the PR merge commit; HEAD^1 is the base it was merged onto.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '2' || '1' }}
+      - name: Check for changes to a file with harnesses
+        id: changes
+        # A harness checks the code in its own file, so a PR that changes the
+        # file without running the harness could break the proof unseen until
+        # the weekly run. Changes elsewhere wait for that run.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mapfile -t changed < <(git diff --name-only HEAD^1 HEAD -- src)
+          if ! git diff --quiet HEAD^1 HEAD -- .github/workflows/verification.yml ||
+            { [ "${#changed[@]}" -gt 0 ] &&
+              { git grep -qF 'cfg(kani)' HEAD -- "${changed[@]}" ||
+                git grep -qF 'cfg(kani)' HEAD^1 -- "${changed[@]}"; }; }; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "No change to a file with kani harnesses; skipped." >>"$GITHUB_STEP_SUMMARY"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          fi
       - name: Install toolchain
+        if: steps.changes.outputs.run == 'true'
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
       - name: Install kani
+        if: steps.changes.outputs.run == 'true'
         run: |
           cargo install --locked kani-verifier@0.68.0
           cargo kani setup
-      - run: make kani
+      - if: steps.changes.outputs.run == 'true'
+        run: make kani
