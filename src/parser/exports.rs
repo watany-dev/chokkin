@@ -165,15 +165,16 @@ enum AllUpdate {
 fn all_update(stmt: &Stmt) -> Option<AllUpdate> {
     match stmt {
         Stmt::Assign(assign) if assign.targets.iter().any(is_all) => {
-            Some(assignment(&assign.value))
+            Some(AllUpdate::Replace(literal_names(&assign.value)))
         },
         // `__all__[:] = names`, `__all__[0] = name`.
         Stmt::Assign(assign) if assign.targets.iter().any(is_all_subscript) => {
             Some(AllUpdate::Add(None))
         },
-        Stmt::AnnAssign(assign) if is_all(&assign.target) => {
-            assign.value.as_deref().map(assignment)
-        },
+        Stmt::AnnAssign(assign) if is_all(&assign.target) => assign
+            .value
+            .as_deref()
+            .map(|value| AllUpdate::Replace(literal_names(value))),
         Stmt::AugAssign(assign) if is_all(&assign.target) && assign.op == Operator::Add => {
             Some(AllUpdate::Add(literal_names(&assign.value)))
         },
@@ -205,17 +206,6 @@ fn all_update(stmt: &Stmt) -> Option<AllUpdate> {
             }
         },
         _ => None,
-    }
-}
-
-/// `__all__ = <value>`: a literal list replaces it, and `__all__ + x` keeps
-/// the current names and adds ones that are not read (#876).
-fn assignment(value: &Expr) -> AllUpdate {
-    match value {
-        Expr::BinOp(op) if op.op == Operator::Add && (is_all(&op.left) || is_all(&op.right)) => {
-            AllUpdate::Add(None)
-        },
-        _ => AllUpdate::Replace(literal_names(value)),
     }
 }
 

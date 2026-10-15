@@ -432,4 +432,28 @@ mod tests {
             assert_eq!(import.bound_name(), expected, "{import:?}");
         }
     }
+
+    #[test]
+    fn exports_survive_the_cache_and_absent_is_left_out() {
+        let names = vec!["f".to_owned()];
+        for exports in [
+            Exports::Absent,
+            Exports::Known(names.clone()),
+            Exports::Partial(names),
+            Exports::Unknown,
+        ] {
+            let module = ParsedModule {
+                exports,
+                ..ParsedModule::default()
+            };
+            let json = serde_json::to_string(&module).expect("serialize");
+            assert_eq!(
+                json.contains("\"exports\""),
+                module.exports != Exports::Absent,
+                "{json}"
+            );
+            let back: ParsedModule = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, module);
+        }
+    }
 }
