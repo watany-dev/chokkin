@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use indexmap::IndexSet;
 
-use crate::config::{Confidence, ProjectMode};
 use crate::graph::{FileId, ModuleOrigin, ProjectGraph};
 use crate::manifest::{LoadedManifest, LockfileGraph, normalize_distribution_name};
 use crate::plugins::PluginHints;
@@ -91,9 +90,7 @@ pub(super) fn usage_paths<'a>(
     let public_orphans = reachability
         .unreachable
         .iter()
-        .filter(|file| {
-            file.mode == ProjectMode::Library && file.max_confidence == Confidence::Maybe
-        })
+        .filter(|file| file.callers_may_import())
         .map(|file| file.path.as_str());
     reachable.iter().copied().chain(public_orphans).collect()
 }
@@ -347,6 +344,7 @@ pub(super) fn mark_self_referential_distribution(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Confidence, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::graph::{FileNode, ProjectGraph};
     use crate::manifest::{LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata};

@@ -2088,6 +2088,63 @@ fn binary_unreadable_notebook_cell_lowers_absence_findings() {
     );
 }
 
+/// A library caller may import a public module nothing in the package loads,
+/// so the imports of one that could not be read are unknown: a dependency only
+/// it may use is not certainly unused and `--fix` keeps it (#550, ADR 0005).
+#[test]
+fn binary_unread_public_module_of_a_library_lowers_unused_dependencies() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\", \"httpx\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[tool.chokkin]\nmode = \"library\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/client.py", "import requests\n\ndef get(:\n"),
+        ("src/acme/other.py", "import httpx\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(issues, [("requests", "likely")], "{parsed}");
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:requests"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains("a public module of the library could not be read: `src/acme/client.py`"),
+        "{stderr}"
+    );
+
+    let fix = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--fix"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin --fix");
+    assert!(fix.status.code().is_some(), "{fix:?}");
+    let manifest =
+        std::fs::read_to_string(project.path().join("pyproject.toml")).expect("read manifest");
+    assert!(manifest.contains("\"requests\""), "{manifest}");
+}
+
 /// A name computed at runtime may load any module, so an orphan is not
 /// certainly unused; distributions stay certain, since the name still has to
 /// be importable from a declared one (ADR 0005 §6).
