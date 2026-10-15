@@ -9,8 +9,6 @@ const TEST_DIRS: &[&str] = &["tests", "test"];
 /// The test directory that is test code at any depth (`pandas/tests/`).
 pub(super) const NESTED_TEST_DIR: &str = "tests";
 
-/// Root directories scanned by default beside the package: the test suites
-/// and `scripts/`.
 pub(super) fn default_scanned_dirs() -> impl Iterator<Item = &'static str> {
     TEST_DIRS.iter().copied().chain(["scripts"])
 }
@@ -30,7 +28,6 @@ pub(super) fn is_non_package_dir(name: &str) -> bool {
         || name.starts_with("e2e")
 }
 
-/// Whether root-relative `path` lies under a root test directory.
 pub(super) fn in_root_test_dir(path: &str) -> bool {
     path.split_once('/')
         .is_some_and(|(top, _)| TEST_DIRS.contains(&top))
