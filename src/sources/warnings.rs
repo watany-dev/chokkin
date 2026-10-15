@@ -26,8 +26,10 @@ pub enum SourcesWarning {
         /// Selected root-relative package directory.
         chosen: String,
     },
-    /// `.gitignore` could not be read or parsed.
-    #[error("sources: could not read `.gitignore` at `{path}`")]
+    /// The walk root's `.gitignore` could not be read. `ignore` drops read
+    /// errors, so this is the only report of them; a line that does not
+    /// parse is a [`Self::PathUnreadable`] on the file instead (#903).
+    #[error("sources: could not read `{path}`; its ignore rules may be missing")]
     GitignoreUnreadable {
         /// Path to the unreadable file.
         path: String,

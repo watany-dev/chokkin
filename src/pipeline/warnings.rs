@@ -591,7 +591,7 @@ mod tests {
                 ProbeWarning::Sources(SourcesWarning::GitignoreUnreadable {
                     path: ".gitignore".to_owned(),
                 }),
-                "sources: could not read `.gitignore` at `.gitignore`",
+                "sources: could not read `.gitignore`; its ignore rules may be missing",
             ),
             (
                 ProbeWarning::Sources(SourcesWarning::LargeProject { file_count: 12 }),

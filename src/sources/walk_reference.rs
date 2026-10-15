@@ -4,16 +4,16 @@
 use std::path::Path;
 
 use globset::GlobSet;
+use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::overrides::OverrideBuilder;
-use ignore::{DirEntry, WalkBuilder};
 
 use crate::path_util::normalize_rel_path;
 
 use super::context::assign_file_context;
 use super::error::SourcesError;
 use super::types::{DiscoveredFile, FileContext, FileKind};
-use super::walk::{should_prune_dir, walk_error_warning};
+use super::walk::{push_walk_error, should_prune_dir};
 use super::warnings::SourcesWarning;
 
 const GITIGNORE_PATH: &str = ".gitignore";
@@ -37,25 +37,15 @@ pub(super) fn load_gitignore_reference(root: &Path) -> (Option<Gitignore>, Optio
         return (None, None);
     }
 
+    // The walk reports lines that do not parse; `ignore` drops a read error.
     let mut builder = GitignoreBuilder::new(root);
-    if builder.add(&gitignore_path).is_some() {
-        return (
-            None,
-            Some(SourcesWarning::GitignoreUnreadable {
-                path: GITIGNORE_PATH.to_owned(),
-            }),
-        );
+    if let Some(error) = builder.add(&gitignore_path) {
+        let warning = error.is_io().then(|| SourcesWarning::GitignoreUnreadable {
+            path: GITIGNORE_PATH.to_owned(),
+        });
+        return (None, warning);
     }
-
-    match builder.build() {
-        Ok(gitignore) => (Some(gitignore), None),
-        Err(_error) => (
-            None,
-            Some(SourcesWarning::GitignoreUnreadable {
-                path: GITIGNORE_PATH.to_owned(),
-            }),
-        ),
-    }
+    (builder.build().ok(), None)
 }
 
 fn build_exclude_overrides(
@@ -74,13 +64,6 @@ fn build_exclude_overrides(
     }
     builder.build().map_err(|error| SourcesError::InvalidGlob {
         pattern: String::new(),
-        reason: error.to_string(),
-    })
-}
-
-fn walk_entry_warning(entry: &DirEntry) -> Option<SourcesWarning> {
-    entry.error().map(|error| SourcesWarning::PathUnreadable {
-        path: entry.path().to_string_lossy().into_owned(),
         reason: error.to_string(),
     })
 }
@@ -146,13 +129,13 @@ pub(super) fn collect_files_reference(
         let entry = match result {
             Ok(entry) => entry,
             Err(error) => {
-                warnings.push(walk_error_warning(&root, &error));
+                push_walk_error(&root, &error, &mut warnings);
                 continue;
             },
         };
 
-        if let Some(warning) = walk_entry_warning(&entry) {
-            warnings.push(warning);
+        if let Some(error) = entry.error() {
+            push_walk_error(entry.path(), error, &mut warnings);
         }
 
         let path = entry.path();
@@ -426,6 +409,37 @@ mod tests {
         let outcomes = assert_equivalent(&[root.clone(), root.join("pkg"), root.join("dirs")], &[]);
         assert_ne!(outcomes[0].1, []);
         assert!(!paths(&outcomes[0]).contains(&"pkg/types.pyi"));
+        // Each warning names the ignore file whose line failed, once (#903).
+        for warning in &outcomes[0].1 {
+            let SourcesWarning::PathUnreadable { path, reason } = warning else {
+                panic!("{warning}");
+            };
+            let file = Path::new(path).file_name().and_then(|name| name.to_str());
+            assert!(matches!(file, Some(".gitignore" | "exclude")), "{warning}");
+            assert!(
+                reason.starts_with("line 1: error parsing glob"),
+                "{warning}"
+            );
+        }
+        assert_eq!(outcomes[0].1.len(), 4, "{:?}", outcomes[0].1);
+    }
+
+    /// `ignore` drops a `.gitignore` it cannot read, so only the root's
+    /// warning reports it.
+    #[test]
+    fn unreadable_root_gitignore_warns_like_the_ignore_walker() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        write_file(&root.join("app.py"), "");
+        fs::write(root.join(".gitignore"), b"app.py\n\xff\n").expect("write");
+
+        let outcomes = assert_equivalent(&[root], &[]);
+        assert_eq!(
+            outcomes[0].1,
+            [SourcesWarning::GitignoreUnreadable {
+                path: GITIGNORE_PATH.to_owned(),
+            }]
+        );
     }
 
     #[test]

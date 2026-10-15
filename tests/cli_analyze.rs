@@ -3836,3 +3836,45 @@ fn binary_github_annotates_warnings_on_their_file() {
         "{stdout}"
     );
 }
+
+/// A root `.gitignore` line that does not parse is one warning naming the
+/// file, though the root walk and every member walk meet it (#903).
+#[test]
+fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
+        ),
+        (".gitignore", "bad{glob\n"),
+        ("acme/__init__.py", ""),
+        (
+            "packages/core/pyproject.toml",
+            "[project]\nname = \"core\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("packages/core/core/__init__.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let sources: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("sources:"))
+        .collect();
+    let gitignore = project
+        .path()
+        .canonicalize()
+        .expect("canonical root")
+        .join(".gitignore");
+    let expected = format!(
+        "sources: could not read `{}`: line 1: error parsing glob 'bad{{glob'",
+        gitignore.display()
+    );
+    assert_eq!(sources.len(), 1, "{stderr}");
+    assert!(sources[0].starts_with(&expected), "{expected}\n{stderr}");
+}
