@@ -57,6 +57,14 @@ pub enum ProbeWarning {
         /// The parser's message.
         message: String,
     },
+    /// Reachable modules load a module by a name computed at runtime, which
+    /// caps unused-file findings below certain (#909). One per run.
+    OpaqueDynamicImport {
+        /// Root-relative path of the first such module.
+        path: String,
+        /// How many other reachable modules do the same.
+        more: usize,
+    },
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -105,7 +113,9 @@ impl ProbeWarning {
             Self::Resolve(warning) => discriminant(warning).hash(&mut hasher),
             Self::SkippedSource { reason, .. } => discriminant(reason).hash(&mut hasher),
             Self::ParseDiagnostic { message, .. } => message.hash(&mut hasher),
-            Self::AutoWorkspace { .. } | Self::NestedProjectsSkipped { .. } => {},
+            Self::AutoWorkspace { .. }
+            | Self::NestedProjectsSkipped { .. }
+            | Self::OpaqueDynamicImport { .. } => {},
         }
         hasher.finish()
     }
@@ -151,6 +161,7 @@ impl ProbeWarning {
                 };
                 (Some(path), source_line(path, line))
             },
+            Self::OpaqueDynamicImport { path, .. } => (Some(path), None),
             Self::ParseDiagnostic { path, line, .. } => (
                 Some(path),
                 source_line(path, Some(*line).filter(|line| *line > 0)),
@@ -241,6 +252,15 @@ impl fmt::Display for ProbeWarning {
                 line,
                 message,
             } => write!(formatter, "parse: `{path}:{line}`: {message}"),
+            Self::OpaqueDynamicImport { path, more: 0 } => write!(
+                formatter,
+                "parse: `{path}` imports a module by a name computed at runtime; unused files are reported below certain"
+            ),
+            Self::OpaqueDynamicImport { path, more } => write!(
+                formatter,
+                "parse: `{path}` and {more} more reachable module{} import a module by a name computed at runtime; unused files are reported below certain",
+                if *more == 1 { "" } else { "s" }
+            ),
         }
     }
 }
@@ -456,6 +476,36 @@ mod tests {
     fn located(warning: &ProbeWarning) -> (Option<String>, Option<u32>) {
         let diagnostic = warning.diagnostic();
         (diagnostic.file, diagnostic.line)
+    }
+
+    /// One opaque-import warning names the first module and counts the rest (#909).
+    #[test]
+    fn opaque_import_warning_names_the_first_module() {
+        let one = ProbeWarning::OpaqueDynamicImport {
+            path: "acme/main.py".to_owned(),
+            more: 0,
+        };
+        let three = ProbeWarning::OpaqueDynamicImport {
+            path: "acme/main.py".to_owned(),
+            more: 2,
+        };
+        assert_eq!(
+            one.to_string(),
+            "parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain"
+        );
+        assert_eq!(
+            three.to_string(),
+            "parse: `acme/main.py` and 2 more reachable modules import a module by a name computed at runtime; unused files are reported below certain"
+        );
+        let two = ProbeWarning::OpaqueDynamicImport {
+            path: "acme/main.py".to_owned(),
+            more: 1,
+        };
+        assert_eq!(
+            two.to_string(),
+            "parse: `acme/main.py` and 1 more reachable module import a module by a name computed at runtime; unused files are reported below certain"
+        );
+        assert_eq!(located(&three), (Some("acme/main.py".to_owned()), None));
     }
 
     /// A warning lands on the file and line it names (#895).

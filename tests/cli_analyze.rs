@@ -2132,6 +2132,15 @@ fn binary_opaque_dynamic_import_lowers_orphans_only() {
         ],
         "{parsed}"
     );
+    // The gap reaches the user without `--explain` (ADR 0005 §3, #909).
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(stderr.matches("computed at runtime").count(), 1, "{stderr}");
+    assert!(
+        stderr.contains(
+            "parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain"
+        ),
+        "{stderr}"
+    );
 }
 
 /// A reachable module with a syntax error is skipped like an undecodable one:

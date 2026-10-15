@@ -856,7 +856,7 @@ confidenceとseverityは独立した2軸として扱う。severityはissue種別
 root の runtime 依存が読めない (RuntimeDependenciesUnknown) -> import の CHK003 / CHK004 を info / maybe に
 ```
 
-不在を言う finding (CHK001 / CHK002) は certain から外し、宣言の欠落を言う finding (CHK003 / CHK004) は hint にする。上限として当てるので confidence を上げることはない。exit code は下がった後の severity / confidence で決まり、gap 自体は exit code を変えない (§7)。下げた finding の `--explain` には、gap の種類ごとに理由と最初の file を 1 行出す (`` a reachable module could not be read: `acme/a.py` (and 1 more) ``)。
+不在を言う finding (CHK001 / CHK002) は certain から外し、宣言の欠落を言う finding (CHK003 / CHK004) は hint にする。上限として当てるので confidence を上げることはない。exit code は下がった後の severity / confidence で決まり、gap 自体は exit code を変えない (§7)。下げた finding の `--explain` には、gap の種類ごとに理由と最初の file を 1 行出す (`` a reachable module could not be read: `acme/a.py` (and 1 more) ``)。gap はどれも warning として利用者に届く (ADR 0005 §3)。skip した file と読めなかった cell は parse の warning、読めない runtime 依存は manifest の warning が名指しする。opaque dynamic import には記録した段の warning がないので、gap を集めた後に 1 run 1 回だけ、最初の file と残りの数を出す (`` parse: `acme/main.py` imports a module by a name computed at runtime; unused files are reported below certain ``、#909)。
 
 ## 12. unused exports判定
 
