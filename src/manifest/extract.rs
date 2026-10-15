@@ -581,6 +581,19 @@ mod tests {
     }
 
     #[test]
+    fn empty_specifier_items_do_not_hide_the_bounds() {
+        for specifier in [">=3.9,", ">=3.9,,<4", " , >=3.9"] {
+            let inferred = infer_target_version_from_requires_python(specifier);
+            assert_eq!(
+                inferred.map(|v| v.as_str().to_owned()).as_deref(),
+                Some("py309"),
+                "{specifier:?}"
+            );
+        }
+        assert_eq!(requires_python_max_minor(">=3.9,,<3.13,"), Some(12));
+    }
+
+    #[test]
     fn ignores_upper_bounds_and_rejects_invalid_specifier() {
         assert!(infer_target_version_from_requires_python("<3.13,!=3.9.*").is_none());
         assert!(infer_target_version_from_requires_python("not a specifier").is_none());

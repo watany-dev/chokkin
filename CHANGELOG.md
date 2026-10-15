@@ -103,6 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `packaging`: `foo\u00a0>=1` and `foo>=1\u00a0,<2` are invalid requirements.
   Any whitespace is still allowed between an operator and its version and
   around the whole requirement (#879).
+- `requires-python` with empty items (`>=3.9,`, `>=3.9,,<4`, ` , >=3.9`) sets
+  the target version from its bounds, as `packaging`'s `SpecifierSet` reads
+  it, instead of falling back to py311 (#880).
 
 ## [0.7.5] - 2026-10-12
 
