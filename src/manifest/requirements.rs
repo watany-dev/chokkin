@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 use crate::path_util::rel_to_root;
 
 use super::error::ManifestError;
-use super::pep508::{is_python_whitespace, strip_python};
+use super::pep508::{is_python_whitespace, is_valid_marker, strip_python};
 use super::pep508_util::{
-    extract_egg_name, is_url_like, normalize_distribution_name, parse_requirement, requirement_name,
+    extract_egg_name, is_url_like, normalize_distribution_name, parse_pep508_requirement,
+    parse_requirement, requirement_name,
 };
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
-use super::util::{DependencyPush, path_is_within_root, push_dependency, read_text};
+use super::util::{path_is_within_root, read_text};
 use super::warnings::ManifestWarning;
 
 /// Result of parsing one or more requirements files.
@@ -255,25 +256,122 @@ fn parse_requirements_line(
                 line: Some(line_no),
                 label: rel.to_owned(),
             };
-            match parse_requirement(trimmed, ctx.default_context.clone(), origin) {
+            match parse_pip_line(
+                trimmed,
+                ctx.default_context.clone(),
+                origin,
+                parse_requirement,
+            ) {
                 Ok(dep) => ctx.result.dependencies.push(dep),
                 Err(warning) => ctx.result.warnings.push(warning),
             }
         },
         RequirementsParseMode::Constraints => {
-            push_dependency(DependencyPush {
-                dependencies: &mut ctx.result.constraints,
-                warnings: &mut ctx.result.warnings,
-                raw: trimmed,
-                context: ctx.default_context.clone(),
-                file: rel,
-                label: rel.to_owned(),
+            let origin = DependencyOrigin {
+                file: rel.to_owned(),
                 line: Some(line_no),
-            });
+                label: rel.to_owned(),
+            };
+            match parse_pip_line(
+                trimmed,
+                ctx.default_context.clone(),
+                origin,
+                parse_pep508_requirement,
+            ) {
+                Ok(dep) => ctx.result.constraints.push(dep),
+                Err(warning) => ctx.result.warnings.push(warning),
+            }
         },
     }
 
     Ok(())
+}
+
+/// Read a requirements line the way pip's `parse_req_from_line` does: the
+/// marker is split off first (see [`split_pip_marker`]) and checked against the
+/// marker grammar, and only the rest goes to `parse`. A line pip rejects,
+/// whether for its marker or its requirement, is an invalid requirement.
+fn parse_pip_line(
+    line: &str,
+    context: DependencyContext,
+    origin: DependencyOrigin,
+    parse: fn(
+        &str,
+        DependencyContext,
+        DependencyOrigin,
+    ) -> Result<DeclaredDependency, ManifestWarning>,
+) -> Result<DeclaredDependency, ManifestWarning> {
+    let invalid = |origin: DependencyOrigin| ManifestWarning::InvalidRequirementLine {
+        file: origin.file,
+        line: origin.line,
+        label: origin.label,
+        raw: line.to_owned(),
+    };
+    let (requirement, marker) = split_pip_marker(line);
+    if marker.is_some_and(|marker| !is_valid_marker(marker)) {
+        return Err(invalid(origin));
+    }
+    let mut dep = parse(requirement, context, origin.clone()).map_err(|_| invalid(origin))?;
+    if let Some(marker) = marker {
+        dep.marker = Some(marker.to_owned());
+    }
+    Ok(dep)
+}
+
+/// pip splits a line at its first `;` (`"; "` when the line starts with a URL,
+/// so a `;` inside the URL stays) and strips both sides with `str.strip`, so
+/// any Unicode whitespace may surround the `;`. An empty marker is no marker
+/// (`foo ;`), as in pip (#889).
+fn split_pip_marker(line: &str) -> (&str, Option<&str>) {
+    let separator = if is_pip_url(line) { "; " } else { ";" };
+    let Some((requirement, marker)) = line.split_once(separator) else {
+        return (line, None);
+    };
+    let marker = strip_python(marker);
+    (
+        strip_python(requirement),
+        (!marker.is_empty()).then_some(marker),
+    )
+}
+
+/// pip's `is_url`: the text before the first `:` is a URL or VCS scheme pip
+/// knows. `name @ url` is not a URL line.
+fn is_pip_url(line: &str) -> bool {
+    const SCHEMES: &[&str] = &[
+        "http",
+        "https",
+        "file",
+        "ftp",
+        "bzr+http",
+        "bzr+https",
+        "bzr+ssh",
+        "bzr+sftp",
+        "bzr+ftp",
+        "bzr+lp",
+        "bzr+file",
+        "git",
+        "git+http",
+        "git+https",
+        "git+ssh",
+        "git+git",
+        "git+file",
+        "hg+file",
+        "hg+http",
+        "hg+https",
+        "hg+ssh",
+        "hg+static-http",
+        "svn",
+        "svn+ssh",
+        "svn+http",
+        "svn+https",
+        "svn+svn",
+        "svn+file",
+    ];
+    line.split_once(':').is_some_and(|(scheme, _)| {
+        SCHEMES
+            .iter()
+            .any(|known| scheme.eq_ignore_ascii_case(known))
+    })
 }
 
 fn push_editable_dependency(
@@ -329,7 +427,11 @@ pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed.starts_with('-') {
         return None;
     }
-    requirement_name(trimmed)
+    let (requirement, marker) = split_pip_marker(trimmed);
+    if marker.is_some_and(|marker| !is_valid_marker(marker)) {
+        return None;
+    }
+    requirement_name(requirement)
 }
 
 /// pip-compatible: only `#` preceded by whitespace (or at line start) starts a comment.
@@ -628,6 +730,41 @@ mod tests {
         }
         // A bare flag is not an attached value, so the path check is skipped.
         assert_eq!(editable_flag_value("-e"), Some(""));
+    }
+
+    #[test]
+    fn line_distribution_splits_the_marker_like_pip() {
+        // #889: pip strips both sides of the first `;` with `str.strip`.
+        for (line, expected) in [
+            ("bar\u{a0}; os_name == \"nt\"", Some("bar")),
+            ("foo;\u{a0}os_name == \"nt\"", Some("foo")),
+            ("baz ;", Some("baz")),
+            (
+                "git+https://h/r.git#egg=acme ; python_version < \"3\"",
+                Some("acme"),
+            ),
+            ("bad ; not a marker", None),
+        ] {
+            assert_eq!(
+                requirements_line_distribution(line).as_deref(),
+                expected,
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn url_lines_split_only_at_semicolon_space() {
+        assert_eq!(split_pip_marker("https://h/a;b"), ("https://h/a;b", None));
+        assert_eq!(
+            split_pip_marker("Git+HTTPS://h/r.git#egg=a; os_name == \"nt\""),
+            ("Git+HTTPS://h/r.git#egg=a", Some("os_name == \"nt\""))
+        );
+        // `name @ url` is not a URL line for pip: any `;` splits it.
+        assert_eq!(
+            split_pip_marker("a @ https://h/a;b"),
+            ("a @ https://h/a", Some("b"))
+        );
     }
 
     #[test]

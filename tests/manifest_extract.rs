@@ -611,6 +611,71 @@ fn undecodable_runtime_requirements_marks_runtime_unknown() {
     assert_eq!(runtime_unknown_file(&manifest), Some("requirements.txt"));
 }
 
+/// pip splits a requirements line on `;` (`"; "` on a URL line) and strips
+/// each side with `str.strip`, so Unicode whitespace around `;` is fine there
+/// (#889).
+#[test]
+fn requirements_marker_split_follows_pip() {
+    let manifest = extract_files(&[
+        (
+            "requirements.txt",
+            "foo;\u{a0}os_name == \"nt\"\n\
+             bar\u{a0}; os_name == \"nt\"\n\
+             baz ;\n\
+             qux>=1\u{a0}; python_version >= \"3.8\"\n\
+             git+https://h/r.git#egg=egg-pkg ; python_version < \"3\"\n\
+             bad ; not a marker\n\
+             url-pkg @ https://h/a;b\n\
+             -c constraints.txt\n"
+                .as_bytes(),
+        ),
+        (
+            "constraints.txt",
+            "pinned==1;\u{a0}os_name == \"nt\"\n".as_bytes(),
+        ),
+    ]);
+    let read: Vec<_> = manifest
+        .dependencies
+        .iter()
+        .map(|dep| {
+            (
+                dep.name.as_str(),
+                dep.specifier.as_deref(),
+                dep.marker.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("foo", None, Some("os_name == \"nt\"")),
+            ("bar", None, Some("os_name == \"nt\"")),
+            ("baz", None, None),
+            ("qux", Some(">=1"), Some("python_version >= \"3.8\"")),
+            (
+                "egg-pkg",
+                Some("git+https://h/r.git#egg=egg-pkg"),
+                Some("python_version < \"3\"")
+            ),
+        ]
+    );
+    let invalid: Vec<_> = manifest
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            ManifestWarning::InvalidRequirementLine { raw, .. } => Some(raw.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(invalid, ["bad ; not a marker", "url-pkg @ https://h/a;b"]);
+    let constraints: Vec<_> = manifest
+        .constraints
+        .iter()
+        .map(|dep| (dep.name.as_str(), dep.marker.as_deref()))
+        .collect();
+    assert_eq!(constraints, [("pinned", Some("os_name == \"nt\""))]);
+}
+
 /// Runtime dependencies declared in `pyproject.toml` vouch for a skipped
 /// `setup.py`.
 #[test]
