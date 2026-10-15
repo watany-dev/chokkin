@@ -924,7 +924,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(256))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
             #[test]
             fn grammar_valid_requirements_parse_to_their_parts((text, expected) in requirement()) {

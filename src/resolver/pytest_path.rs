@@ -1339,7 +1339,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(64))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(64)))]
 
             /// The name indexes, directory listings and per-directory roots
             /// that #763 added change no answer of the linear lookup.

@@ -91,6 +91,24 @@ pub mod internals {
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
         PublicSurface, SourcesError, SourcesWarning, discover_sources,
     };
+
+    /// Case count for a proptest block tuned to `tuned` cases.
+    ///
+    /// `ProptestConfig::with_cases` ignores `PROPTEST_CASES`, so a tuned block
+    /// scales by `PROPTEST_CASES / 256` (proptest's default) instead: the
+    /// nightly `make pbt-deep` run deepens every block, tuned or not (#861).
+    pub fn proptest_cases(tuned: u32) -> u32 {
+        crate::scale_cases(tuned, std::env::var("PROPTEST_CASES").ok().as_deref())
+    }
+}
+
+/// `tuned` scaled by `cases / 256`, at least 1; unset or unparsable `cases`
+/// leaves it as is.
+fn scale_cases(tuned: u32, cases: Option<&str>) -> u32 {
+    let cases = cases
+        .and_then(|cases| cases.parse::<u64>().ok())
+        .unwrap_or(256);
+    u32::try_from(u64::from(tuned) * cases / 256).map_or(u32::MAX, |scaled| scaled.max(1))
 }
 
 /// The version of chokkin, taken from `Cargo.toml`.
@@ -134,5 +152,21 @@ mod tests {
         assert_eq!(ExitStatus::IssuesFound.code(), 1);
         assert_eq!(ExitStatus::UsageError.code(), 2);
         assert_eq!(ExitStatus::InternalError.code(), 3);
+    }
+
+    #[test]
+    fn tuned_proptest_cases_scale_with_proptest_cases() {
+        assert_eq!(scale_cases(40, None), 40);
+        assert_eq!(scale_cases(40, Some("256")), 40);
+        assert_eq!(scale_cases(40, Some("4096")), 640);
+        assert_eq!(scale_cases(40, Some("64")), 10);
+        assert_eq!(scale_cases(40, Some("1")), 1);
+        assert_eq!(scale_cases(40, Some("deep")), 40);
+        assert_eq!(scale_cases(u32::MAX, Some("4096")), u32::MAX);
+        let env = std::env::var("PROPTEST_CASES").ok();
+        assert_eq!(
+            internals::proptest_cases(40),
+            scale_cases(40, env.as_deref())
+        );
     }
 }

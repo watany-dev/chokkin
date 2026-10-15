@@ -68,7 +68,7 @@ fn remaining_deps(root: &std::path::Path) -> Vec<String> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(24)))]
 
     /// `--fix` removes exactly the unused dependencies from
     /// `[project].dependencies`, however many are unused in the same array,
@@ -244,7 +244,7 @@ fn run_fix_reported(root: &std::path::Path) -> (Vec<String>, Vec<String>) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(32)))]
 
     /// Whatever the array's layout (single or multi-line, trailing comma,
     /// inline and standalone comments, CRLF, version and extra specifiers),

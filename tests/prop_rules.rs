@@ -345,7 +345,7 @@ fn rule_count(keys: &[Key], code: &str, name: &str) -> usize {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(40))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(40)))]
 
     /// CHK002/CHK003/CHK004/CHK005/CHK009 agree with the reference decision
     /// table for every generated distribution.
@@ -358,7 +358,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(24)))]
 
     /// Declaration and import order never changes which issues are reported.
     #[test]
@@ -683,7 +683,7 @@ fn confidence_rank(found: &[(String, String, String)], name: &str) -> u8 {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(32)))]
 
     /// CHK005's severity and confidence follow the strength lattice: the
     /// strongest runtime site of a dev-only distribution decides, so one

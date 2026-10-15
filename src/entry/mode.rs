@@ -556,7 +556,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(256))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
             /// An explicit `mode` wins over every other input.
             #[test]

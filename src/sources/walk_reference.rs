@@ -700,7 +700,7 @@ mod tests {
     ];
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(48))]
+        #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(48)))]
 
         #[test]
         fn random_trees_match_the_ignore_walker(

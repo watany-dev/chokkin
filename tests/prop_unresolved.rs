@@ -218,7 +218,7 @@ fn reference(sites: &[Site], at: &[u32]) -> Found {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(32)))]
 
     /// However many times and however guarded a file imports an unresolved
     /// module, CHK010 reports it at most once, anchored and graded per the

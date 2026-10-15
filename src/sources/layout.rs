@@ -1191,7 +1191,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(96))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(96)))]
 
             /// Without wheel targets or uv sources the layout is exactly the
             /// directory-name heuristic of spec §10 step 3.
@@ -1304,7 +1304,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(256))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
             #[test]
             fn module_names_have_no_empty_or_dotted_parts(

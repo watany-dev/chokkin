@@ -360,7 +360,7 @@ mod source_bytes_props {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(128))]
+        #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(128)))]
 
         /// Any bytes come back `Ok`; valid UTF-8 is skipped only for a syntax
         /// error, and a skipped file yields nothing.

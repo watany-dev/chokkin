@@ -218,7 +218,7 @@ impl Workspace {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(24)))]
 
     /// Analyzing a member alone never raises its CHK006 severity, and keeps
     /// every CHK006 the whole workspace reported in it. A file the other
@@ -406,7 +406,7 @@ fn path_of(fingerprint: &str) -> &str {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(24)))]
 
     /// `--strict` keeps every finding of the default run.
     #[test]

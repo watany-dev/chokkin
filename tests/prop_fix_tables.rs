@@ -465,7 +465,7 @@ fn shared_name_strategy() -> impl Strategy<Value = (Manifest, String)> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(48))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(48)))]
 
     /// In every table `--fix` edits, it removes exactly the unused entries,
     /// leaves every other byte (comments, line endings, unrelated sections
@@ -615,7 +615,7 @@ fn issues(json: &str) -> Vec<(String, Option<String>, String, String)> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(32)))]
 
     /// `--fix --add-missing` applies every certain CHK002, CHK003 and
     /// CHK005 and nothing else, and a fresh analysis afterwards finds

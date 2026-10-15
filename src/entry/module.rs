@@ -207,7 +207,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(256))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
             /// Every package file's module name resolves back to that file,
             /// so entry targets and the module index agree on which file a

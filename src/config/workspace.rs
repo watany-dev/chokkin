@@ -935,7 +935,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(64))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(64)))]
 
             #[test]
             fn detect_nested_members_matches_reference_model(
