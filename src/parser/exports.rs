@@ -158,9 +158,7 @@ fn apply(update: AllUpdate, scope: Scope, exports: &mut Exports) -> Result<(), (
 /// One statement's effect on `__all__`; `None` in a payload means the names
 /// could not be read.
 enum AllUpdate {
-    /// Binds `__all__` anew.
     Replace(Option<Vec<String>>),
-    /// Adds names to the current list.
     Add(Option<Vec<String>>),
 }
 
