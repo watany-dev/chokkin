@@ -54,6 +54,11 @@ pub struct MemberManifest<'a> {
 pub enum GapKind {
     /// A reachable module that was skipped: none of its imports are known.
     UnreadModule,
+    /// A skipped public module of a library that no root reaches: a caller
+    /// may import it, so it may use any declared distribution (#550). It
+    /// leaves orphans alone, since what it imports must ship in the wheel
+    /// and so is public too.
+    UnreadPublicModule,
     /// A reachable notebook was read, but some cells that may be code were
     /// not (#902): what those cells import is unknown.
     UnreadNotebookCells,
@@ -107,7 +112,10 @@ impl GapKind {
                 _,
             )
             | (
-                Self::UnreadModule | Self::UnreadNotebookCells | Self::UnreadDjangoSettings,
+                Self::UnreadModule
+                | Self::UnreadPublicModule
+                | Self::UnreadNotebookCells
+                | Self::UnreadDjangoSettings,
                 RuleId::Chk002,
                 IssueSubject::Distribution { .. },
             )
@@ -129,6 +137,7 @@ impl GapKind {
     const fn reason(self) -> &'static str {
         match self {
             Self::UnreadModule => "a reachable module could not be read",
+            Self::UnreadPublicModule => "a public module of the library could not be read",
             Self::UnreadNotebookCells => {
                 "some code cells of a reachable notebook could not be read"
             },
@@ -169,8 +178,11 @@ impl Gap {
     }
 }
 
-/// Gaps that can affect a finding: one in a module that never runs hides
-/// nothing, so module and import gaps count only where the module is reached.
+/// Gaps that can affect a finding.
+///
+/// One in a module that never runs hides nothing, so module and import gaps
+/// count only where the module is reached or, for an unread module, where a
+/// caller of the library may import it.
 #[must_use]
 pub fn collect_gaps(
     context: &RuleContext<'_>,
@@ -180,6 +192,7 @@ pub fn collect_gaps(
     plugins: &PluginHints,
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
+    gaps.extend(unread_public_module_gaps(context.reachability));
     gaps.extend(unresolved_import_gaps(context, manifest, scripts));
     gaps.extend(command_target_gaps(
         context,
@@ -240,6 +253,23 @@ fn module_gaps(
         }
     }
     gaps
+}
+
+/// Skipped modules no root reaches that a caller of the library may import:
+/// CHK002 counts the imports of the public orphans it could read (#501), so
+/// it must allow for the ones it could not.
+fn unread_public_module_gaps(reachability: &ReachabilityReport) -> Vec<Gap> {
+    reachability
+        .unread
+        .iter()
+        .filter(|file| file.callers_may_import())
+        .map(|file| Gap {
+            file: file.path.clone(),
+            kind: GapKind::UnreadPublicModule,
+            member: None,
+            site: None,
+        })
+        .collect()
 }
 
 /// One gap per file and module, at the import sites CHK010 warns about: a
@@ -808,6 +838,50 @@ mod tests {
             [
                 ("acme/main.py".to_owned(), GapKind::OpaqueDynamicImport),
                 ("acme/latin.py".to_owned(), GapKind::UnreadModule),
+            ]
+        );
+    }
+
+    /// A library caller may import a public module no root reaches, so an
+    /// unread one may use any declared distribution; it reaches no other
+    /// project file the wheel ships unread, so orphans stay as they are
+    /// (#550).
+    #[test]
+    fn an_unread_public_module_leaves_a_gap_that_caps_only_unused_distributions() {
+        use crate::config::ProjectMode;
+        use crate::graph::FileId;
+        use crate::reachability::UnreachableFile;
+
+        let unread = |path: &str, max_confidence| UnreachableFile {
+            file: FileId(0),
+            path: path.to_owned(),
+            max_confidence,
+            mode: ProjectMode::Library,
+        };
+        let mut reachability = ReachabilityReport::default();
+        reachability.unread = vec![
+            unread("acme/client.py", Confidence::Maybe),
+            unread("tools/release.py", Confidence::Certain),
+        ];
+        let gaps = unread_public_module_gaps(&reachability);
+        assert_eq!(gaps, [gap("acme/client.py", GapKind::UnreadPublicModule)]);
+
+        let found = lowered(
+            &gaps,
+            vec![
+                candidate(RuleId::Chk001, file("acme/orphan.py")),
+                candidate(RuleId::Chk002, distribution("requests")),
+                candidate(RuleId::Chk002, script_distribution("rich")),
+                candidate(RuleId::Chk003, import("yaml")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
             ]
         );
     }

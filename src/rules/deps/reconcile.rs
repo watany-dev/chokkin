@@ -107,7 +107,7 @@ fn reconcile_project(
     let mut candidates = Vec::new();
     let evidence = UnusedEvidenceContext {
         rules: context,
-        reachable: &reachable,
+        usage: &usage,
         build_requires: &manifest.metadata.build_requires,
     };
 
