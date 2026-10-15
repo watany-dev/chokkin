@@ -7,7 +7,7 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 | モデル | 対象 | 手法 | 性質 |
 |---|---|---|---|
 | `relative_import_model.py` | `parser/relative.rs`, `sources/layout.rs` | 有限領域の全数探索 vs CPython `_resolve_name` | P1 相対 import 解決の健全性、P2 index に無いファイルからの相対 import を解決しない |
-| `Reachability.tla` + `MCReachability.{tla,cfg}` | `reachability/bfs.rs`, `reachability/build.rs`, `graph/edges.rs`, `reachability/trace.rs` (module→file 解決、親 package、dynamic import、plugin `module_refs`、framework glob seed を含む) | TLA+ / TLC | ReachSound, ParentReached, FrameworkFollowed, EntryTraceKept, NoDuplicateEdge, ViaFaithful, TraceNonEmpty, Terminates |
+| `Reachability.tla` + `MCReachability.{tla,cfg}` | `reachability/bfs.rs`, `reachability/build.rs`, `graph/edges.rs`, `reachability/trace.rs` (module→file 解決、親 package、dynamic import、plugin `module_refs`、framework glob seed、§6 の eager / exposed / certain: lazy・optional・test context の import、`library subpackage` だけが名指す root、自 module を登録する plugin 参照を含む) | TLA+ / TLC | ReachSound, ClassSound (各 class 以上の集合が 1 本ずつの BFS と一致), SetsNested, ParentReached, ClassPassedOn, FrameworkFollowed, FollowedAtMostFour, EntryTraceKept, ViaFaithful, TraceNonEmpty, Terminates |
 | `deps_rules_z3.py` | `rules/deps/{missing,misplaced,context}.rs` (§10、workspace member と `--strict` を含む) | Z3 (SMT) | S1 CHK004 は governing な宣言に無いときのみ、S2 dev/type-only の runtime 使用は CHK005 のみ、W1 CHK003/004/005 は排他、W2 strict で member 未宣言なら root に fallback して CHK005、W3 strict で member が runtime 宣言なら何も出ない |
 | `exit_status_z3.py` | `rules/emit.rs`, `baseline/store.rs`, `rules/filter.rs` | Z3 (SMT) | E1 baseline 適用後の exit status が emit と同じ意味論 / E2 baseline が exit 0 を exit 1 に変えない |
 | `ignore_model.py` | `rules/ignore.rs` (§18) | 有限領域の全数探索 | I1 dependency 系 rule の config ignore は distribution 名 glob（CHK008 は binary 名も可）、I1b distribution 未解決なら ignore しない |
@@ -23,6 +23,7 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 | `deps_rules_z3.py` の `matches_usage` 表 (S1/S2/W1 の前提) | kani (`bucket_matches_usage` の全組合せ、`declaration_matches_usage` の自 group + include 元 group) | `src/rules/deps/context.rs` `mod verification` |
 | §10 CHK005 の confidence 表 (#860) | kani (同じ distribution の import 2 件の全組合せで `ImportSignals::weigh` / `Weight::absorb` / `settle` を §10 の表から書いた参照モデルと比べる、集約が順序に依らない、origin が finding と同じ強さ、Certain ⇔ certain な file のトップレベル import が opt-in でも host-loaded でもない) | `src/rules/deps/misplaced.rs` `mod verification` |
 | §10 CHK009 の重複判定 (#860) | 全数列挙 (`#[test]`、3 context × marker 有無 × specifier × extras の宣言 3 件と、`-r` で 2 context から読まれる行を install の参照モデルと比べる: 判定が対称、context 間の重複を消しても runtime を含む install は変わらない、`removable_duplicates` の行を消してもどの install も変わらない) | `src/rules/deps/duplicate.rs` `duplicates_follow_the_install_model` |
+| `Reachability.tla` ClassSound (§6 の 4 集合) | proptest (5 module・test file 1 件の任意の import site (static / dynamic、lazy・`TYPE_CHECKING`、`try`・platform guard)、root、library mode / member、plugin 参照、framework seed で、`run_reachability_bfs` の reachable / eager / exposed / certain を class ごとに 1 本ずつ回す BFS の参照モデルと比べる) | `src/reachability/bfs.rs` `derived_sets_match_one_bfs_each` |
 | `relative_import_model.py` P1 / P2 | proptest (CPython `_resolve_name` を参照モデルとする差分テスト、src / flat layout) | `src/parser/relative.rs` `mod props` |
 
 Z3 / 全数探索モデルは workspace member や baseline の組合せなど kani では重い性質のために残す。

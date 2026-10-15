@@ -1184,4 +1184,309 @@ mod tests {
         assert_eq!(outcome.eager.len(), 4);
         assert_eq!(outcome.certain, IndexSet::from([main_id, c_id]));
     }
+
+    /// The single walk against §6 of the spec read as one BFS per set, the
+    /// same reference `Reachability.tla` checks (#860): `eager`, `exposed`
+    /// and `certain` are what a plain BFS reaches when it drops the edges
+    /// that set may not follow.
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Files of the model, each the module of the same index but the
+        /// last, a test file no module names.
+        const FILES: [&str; 6] = [
+            "src/acme/__init__.py",
+            "src/acme/a.py",
+            "src/acme/b.py",
+            "src/acme/sub/__init__.py",
+            "src/acme/sub/c.py",
+            "tests/test_x.py",
+        ];
+        const MODULES: [&str; 5] = ["acme", "acme.a", "acme.b", "acme.sub", "acme.sub.c"];
+        const TEST: usize = 5;
+        /// Files under a runtime `__init__.py` of the package.
+        const SUBMODULE: [bool; 6] = [false, true, true, true, true, false];
+
+        /// One import site: importing file, module, `importlib`, lazy
+        /// (0 no, 1 function-local, 2 `TYPE_CHECKING`), optional (0 no,
+        /// 1 `try`, 2 platform guard).
+        type Site = (usize, usize, bool, u8, u8);
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum RootKind {
+            None,
+            Package,
+            Public,
+        }
+
+        #[derive(Debug, Clone)]
+        struct Project {
+            sites: Vec<Site>,
+            roots: [RootKind; 5],
+            test_root: bool,
+            library: bool,
+            library_member: bool,
+            plugin_ref: Option<(usize, usize)>,
+            framework: [bool; 6],
+        }
+
+        fn project() -> impl Strategy<Value = Project> {
+            let root = prop_oneof![
+                Just(RootKind::None),
+                Just(RootKind::Package),
+                Just(RootKind::Public)
+            ];
+            (
+                prop::collection::vec((0..6usize, 0..5usize, any::<bool>(), 0..3u8, 0..3u8), 0..12),
+                prop::array::uniform5(root),
+                any::<bool>(),
+                any::<bool>(),
+                any::<bool>(),
+                prop::option::of((0..5usize, 0..5usize)),
+                prop::array::uniform6(any::<bool>()),
+            )
+                .prop_map(
+                    |(sites, roots, test_root, library, library_member, plugin_ref, framework)| {
+                        Project {
+                            sites,
+                            roots,
+                            test_root,
+                            library,
+                            library_member,
+                            plugin_ref,
+                            framework,
+                        }
+                    },
+                )
+        }
+
+        /// The files one site importing `module` reaches: the module and
+        /// each enclosing package.
+        fn targets(module: usize) -> Vec<usize> {
+            module_and_parents(MODULES[module])
+                .map(|name| MODULES.iter().position(|m| *m == name).expect("module"))
+                .collect()
+        }
+
+        fn parse(project: &Project) -> Vec<ParsedModule> {
+            let mut modules: Vec<ParsedModule> =
+                FILES.iter().map(|path| parsed(path, &[], &[])).collect();
+            for (line, &(from, module, dynamic, lazy, optional)) in (1u32..).zip(&project.sites) {
+                let module = MODULES[module].to_owned();
+                let parsed = &mut modules[from];
+                if dynamic {
+                    parsed.dynamic_imports.push(DynamicImport {
+                        module,
+                        line,
+                        deferred: lazy != 0,
+                        optional: optional == 1,
+                        platform_guarded: optional == 2,
+                        ..DynamicImport::default()
+                    });
+                } else {
+                    let mut import = self::parsed("", &[(module.as_str(), line)], &[])
+                        .imports
+                        .remove(0);
+                    import.deferred = lazy == 1;
+                    if lazy == 2 {
+                        import.context = ImportContext::Type;
+                    }
+                    import.optional = optional == 1;
+                    import.platform_guarded = optional == 2;
+                    parsed.imports.push(import);
+                }
+            }
+            modules
+        }
+
+        fn context(index: usize) -> FileContext {
+            if index == TEST {
+                FileContext::Test
+            } else {
+                FileContext::Runtime
+            }
+        }
+
+        fn entry_plan(project: &Project) -> EntryPlan {
+            let root_at = |index: usize, public: bool| EntryRoot {
+                path: FILES[index].to_owned(),
+                symbols: BTreeSet::new(),
+                context: context(index),
+                origins: if public {
+                    vec![EntryOrigin::Auto {
+                        rule: LIBRARY_SUBPACKAGE_RULE.to_owned(),
+                    }]
+                } else {
+                    Vec::new()
+                },
+            };
+            let roots = project
+                .roots
+                .iter()
+                .enumerate()
+                .filter(|(_, kind)| **kind != RootKind::None)
+                .map(|(index, kind)| root_at(index, *kind == RootKind::Public))
+                .chain(project.test_root.then(|| root_at(TEST, false)))
+                .collect();
+            EntryPlan {
+                mode: if project.library {
+                    ProjectMode::Library
+                } else {
+                    ProjectMode::App
+                },
+                library_members: if project.library_member {
+                    vec!["src/acme/sub".to_owned()]
+                } else {
+                    Vec::new()
+                },
+                roots,
+                warnings: Vec::new(),
+            }
+        }
+
+        fn plugins(project: &Project) -> PluginHints {
+            let mut plugins = no_plugins();
+            if let Some((origin, module)) = project.plugin_ref {
+                let mut contribution = PluginContribution::empty(PluginId::Flask);
+                contribution.module_refs.push(ModuleReference {
+                    module: MODULES[module].to_owned(),
+                    origin: ReferenceOrigin {
+                        file: FILES[origin].to_owned(),
+                        line: Some(1),
+                        label: "flask route decorator".to_owned(),
+                    },
+                });
+                plugins.contributions.push(contribution);
+            }
+            plugins
+        }
+
+        fn run(project: &Project, modules: Vec<ParsedModule>) -> (BfsOutcome, Vec<FileId>) {
+            let root = test_root();
+            let mut graph = ProjectGraph::new(root.clone());
+            for (index, path) in FILES.iter().enumerate() {
+                graph
+                    .intern_file(FileNode {
+                        path: (*path).to_owned(),
+                        context: context(index),
+                        kind: FileKind::Python,
+                    })
+                    .expect("file");
+            }
+            for module in MODULES {
+                graph.intern_module(module.to_owned(), ModuleOrigin::FirstParty);
+            }
+            for parsed in &modules {
+                let file_id = graph.file_id(&parsed.path).expect("parsed file");
+                add_parsed_imports(&mut graph, file_id, parsed).expect("import edges");
+            }
+            let ids: Vec<FileId> = FILES
+                .iter()
+                .map(|path| graph.file_id(path).expect(path))
+                .collect();
+            let sources = DiscoveredSources {
+                files: FILES
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| DiscoveredFile {
+                        path: (*path).to_owned(),
+                        kind: FileKind::Python,
+                        context: context(index),
+                    })
+                    .collect(),
+                ..sources(&root)
+            };
+            let module_index = ModuleIndex::build(&graph, &sources);
+            let entry = entry_plan(project);
+            let plugins = plugins(project);
+            let framework = (0..FILES.len())
+                .filter(|index| project.framework[*index])
+                .map(|index| {
+                    let step = TraceStep::PluginRef {
+                        module: "glob".to_owned(),
+                        label: "django".to_owned(),
+                    };
+                    (ids[index], ReachPredecessor { from: None, step })
+                })
+                .collect();
+            let parse = ParseSummary { modules };
+            let outcome =
+                run_reachability_bfs(&graph, &entry, &plugins, &parse, &module_index, framework);
+            (outcome, ids)
+        }
+
+        fn is_library(project: &Project, index: usize) -> bool {
+            project.library || (project.library_member && FILES[index].starts_with("src/acme/sub/"))
+        }
+
+        /// `Follows` in `Reachability.tla`: whether the BFS for the set at
+        /// `level` (0 reachable, 1 eager, 2 exposed, 3 certain) follows
+        /// `site` into `target`.
+        fn follows(project: &Project, level: u8, site: &Site, target: usize) -> bool {
+            let &(from, _, _, lazy, optional) = site;
+            let test = from == TEST;
+            (level < 1 || (lazy == 0 && (!test || is_library(project, target))))
+                && (level < 2 || optional == 0)
+                && (level < 3 || !test || !SUBMODULE[target])
+        }
+
+        fn closure(project: &Project, level: u8, seeds: BTreeSet<usize>) -> BTreeSet<usize> {
+            let mut reached = seeds;
+            loop {
+                let next: BTreeSet<usize> = project
+                    .sites
+                    .iter()
+                    .filter(|site| reached.contains(&site.0))
+                    .flat_map(|site| {
+                        targets(site.1)
+                            .into_iter()
+                            .filter(move |target| follows(project, level, site, *target))
+                    })
+                    .collect();
+                if next.is_subset(&reached) {
+                    return reached;
+                }
+                reached.extend(next);
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn derived_sets_match_one_bfs_each(project in project()) {
+                let (outcome, ids) = run(&project, parse(&project));
+                let roots = |wanted: RootKind| {
+                    project.roots.iter().enumerate().filter(move |(_, kind)| **kind == wanted)
+                        .map(|(index, _)| index)
+                };
+                // A plugin ref naming the module it sits in, in library mode,
+                // is exposed only (#802).
+                let (refs, self_registered) = project.plugin_ref.map_or((Vec::new(), false), |(origin, module)| {
+                    (targets(module), module == origin && is_library(&project, origin))
+                });
+                let framework = (0..FILES.len()).filter(|index| project.framework[*index]);
+                let seeds: BTreeSet<usize> = roots(RootKind::Package)
+                    .chain(roots(RootKind::Public))
+                    .chain(project.test_root.then_some(TEST))
+                    .chain(refs.iter().copied())
+                    .chain(framework.clone())
+                    .collect();
+                // Roots only `library subpackage` names are exposed only.
+                let certain_seeds: BTreeSet<usize> = roots(RootKind::Package)
+                    .chain(project.test_root.then_some(TEST))
+                    .chain(refs.iter().copied().filter(|_| !self_registered))
+                    .chain(framework)
+                    .collect();
+                let as_ids = |set: BTreeSet<usize>| set.into_iter().map(|index| ids[index].0).collect::<BTreeSet<_>>();
+                let sorted = |set: &IndexSet<FileId>| set.iter().map(|id| id.0).collect::<BTreeSet<_>>();
+                prop_assert_eq!(sorted(&outcome.reachable), as_ids(closure(&project, 0, seeds.clone())));
+                prop_assert_eq!(sorted(&outcome.eager), as_ids(closure(&project, 1, seeds.clone())));
+                prop_assert_eq!(sorted(&outcome.exposed), as_ids(closure(&project, 2, seeds)));
+                prop_assert_eq!(sorted(&outcome.certain), as_ids(closure(&project, 3, certain_seeds)));
+                for file_id in &outcome.reachable {
+                    prop_assert!(outcome.predecessors.contains_key(file_id));
+                }
+            }
+        }
+    }
 }
