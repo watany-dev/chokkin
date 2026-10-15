@@ -25,8 +25,8 @@ use crate::resolver::{
 };
 use crate::rules::deps::local_source_member;
 use crate::rules::{
-    DependencyRuleContext, Gap, GapKind, IssueReport, RuleContext, WorkspaceDependencyBoundary,
-    collect_gaps, emit_issues,
+    DependencyRuleContext, Gap, GapKind, IssueReport, MemberManifest, RuleContext,
+    WorkspaceDependencyBoundary, collect_gaps, emit_issues,
 };
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning, discover_sources,
@@ -367,7 +367,16 @@ fn run_analysis_core(
         production_tests.as_deref(),
     );
 
-    let gaps = collect_gaps(&parse, &graph, &reachability, &probe.manifest);
+    let members: Vec<MemberManifest<'_>> = probe
+        .workspace_inputs
+        .iter()
+        .map(|input| MemberManifest {
+            id: &input.member.id,
+            path: &input.member.path,
+            manifest: &input.manifest,
+        })
+        .collect();
+    let gaps = collect_gaps(&parse, &graph, &reachability, &probe.manifest, &members);
     warnings.extend(opaque_import_warning(&gaps));
     let issues = emit_issues(
         &reachability,

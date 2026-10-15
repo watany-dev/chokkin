@@ -287,8 +287,8 @@ fn write_resolve_warning(
 }
 
 /// A member's warning reads like the root's, except that a warning naming no
-/// file names the member, and runtime dependencies it could not read do not
-/// lower any finding: only the root's do (#888 step 4).
+/// file names the member, and runtime dependencies it could not read lower
+/// only that member's findings (#910).
 fn write_member_manifest_warning(
     formatter: &mut fmt::Formatter<'_>,
     member: &str,
@@ -297,7 +297,7 @@ fn write_member_manifest_warning(
     match warning {
         ManifestWarning::RuntimeDependenciesUnknown { file } => write!(
             formatter,
-            "manifest: runtime dependencies in `{file}` could not be read statically"
+            "manifest: runtime dependencies in `{file}` could not be read statically; missing-dependency findings in `{member}` are reported as low-confidence info"
         ),
         ManifestWarning::PoetryDetected
         | ManifestWarning::PdmDetected
@@ -782,7 +782,7 @@ mod tests {
                 member(ManifestWarning::RuntimeDependenciesUnknown {
                     file: "setup.py".to_owned(),
                 }),
-                "manifest: runtime dependencies in `packages/x/setup.py` could not be read statically",
+                "manifest: runtime dependencies in `packages/x/setup.py` could not be read statically; missing-dependency findings in `packages/x` are reported as low-confidence info",
             ),
             (
                 ProbeWarning::Manifest(ManifestWarning::RequirementsUnreadable {
