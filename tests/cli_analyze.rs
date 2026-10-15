@@ -2088,6 +2088,52 @@ fn binary_unreadable_notebook_cell_lowers_absence_findings() {
     );
 }
 
+/// A name computed at runtime may load any module, so an orphan is not
+/// certainly unused; distributions stay certain, since the name still has to
+/// be importable from a declared one (ADR 0005 §6).
+#[test]
+fn binary_opaque_dynamic_import_lowers_orphans_only() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"acme.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", ""),
+        (
+            "acme/main.py",
+            "import importlib\nimport sys\n\ndef main():\n    importlib.import_module(sys.argv[1])\n",
+        ),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        issues,
+        [
+            ("CHK001", "acme/helper.py", "likely"),
+            ("CHK002", "requests", "certain"),
+        ],
+        "{parsed}"
+    );
+}
+
 /// A reachable module with a syntax error is skipped like an undecodable one:
 /// its imports are unknown, so what it may use is reported below certain,
 /// `--fix` leaves the declaration alone, and stderr names the error.
