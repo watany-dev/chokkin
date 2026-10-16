@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::{Confidence, TargetVersion};
 use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
-use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning, invalid_requirement_name};
+use crate::manifest::{
+    ExtrasState, InlineScript, LoadedManifest, ManifestWarning, invalid_requirement_name,
+};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
@@ -71,6 +73,11 @@ pub enum GapKind {
     /// be read statically (#491): the root's for every finding, a member's
     /// for that member's (#910).
     RuntimeDependenciesUnknown,
+    /// A manifest's extras could not all be read (#975): an unread extra may
+    /// declare any import as optional. Partial extras lower the same way as
+    /// unknown ones, since the lost entries may name anything (§6 rejects
+    /// narrowing by what did parse).
+    UnknownExtras,
     /// A manifest line that may declare the distribution its leading name
     /// names could not be parsed (#928): an import of that distribution may
     /// be declared.
@@ -108,7 +115,9 @@ impl GapKind {
     ///
     /// Unread code may import any file or distribution, so it lowers the
     /// absence findings; an unknown declaration list may declare any import,
-    /// so it lowers the missing-declaration findings; an unresolved import may
+    /// so it lowers the missing-declaration findings to hints; an unread extra
+    /// may declare one only as optional, beside a runtime list that was read,
+    /// so it caps them and the misplaced ones (#975); an unresolved import may
     /// name what an unused declaration provides. A script's own block is read
     /// separately, so no project gap reaches its findings.
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
@@ -137,7 +146,11 @@ impl GapKind {
                 Self::UnresolvedScriptImport,
                 RuleId::Chk002,
                 IssueSubject::ScriptDistribution { .. },
-            ) => Some(Lowering::Cap(Confidence::Likely)),
+            )
+            | (Self::UnknownExtras, RuleId::Chk003 | RuleId::Chk004, IssueSubject::Import { .. })
+            | (Self::UnknownExtras, RuleId::Chk005, IssueSubject::Distribution { .. }) => {
+                Some(Lowering::Cap(Confidence::Likely))
+            },
             (
                 Self::RuntimeDependenciesUnknown,
                 RuleId::Chk003 | RuleId::Chk004,
@@ -169,6 +182,7 @@ impl GapKind {
                 "a reachable module imports a module by a name computed at runtime"
             },
             Self::RuntimeDependenciesUnknown => "runtime dependencies could not be read statically",
+            Self::UnknownExtras => "extras could not be read statically",
             Self::InvalidRequirement => {
                 "a requirement line naming the distribution could not be read"
             },
@@ -253,12 +267,14 @@ pub fn collect_gaps(
     ));
     gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(manifest_gap(manifest));
+    gaps.extend(extras_gap(manifest));
     gaps.extend(invalid_requirement_gaps(manifest));
     gaps.extend(assumed_target_gaps(context.parse, manifest, scripts));
     gaps.extend(members.iter().flat_map(|member| {
         let manifest = member.manifest;
         manifest_gap(manifest)
             .into_iter()
+            .chain(extras_gap(manifest))
             .chain(invalid_requirement_gaps(manifest))
             .map(|mut gap| {
                 gap.file = join_rel(member.path, &gap.file);
@@ -526,6 +542,38 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
     })
 }
 
+/// The warning that reported the unread extras names the file and, for
+/// setup.py, the argument; the fallback keeps the gap if none does.
+fn extras_gap(manifest: &LoadedManifest) -> Option<Gap> {
+    if manifest.sources.extras == ExtrasState::Known {
+        return None;
+    }
+    let reported = manifest.warnings.iter().find_map(|warning| match warning {
+        ManifestWarning::SetupPyPartiallyStatic { file, argument }
+            if argument.starts_with("extras_require") =>
+        {
+            Some((file.clone(), Some((argument.clone(), None))))
+        },
+        ManifestWarning::DynamicExtrasUnread { file, .. }
+        | ManifestWarning::SetupPyNotStatic { file } => Some((file.clone(), None)),
+        _ => None,
+    });
+    let (file, site) = reported.unwrap_or_else(|| {
+        let file = if manifest.sources.setup_cfg && !manifest.sources.setup_py {
+            "setup.cfg"
+        } else {
+            "setup.py"
+        };
+        (file.to_owned(), None)
+    });
+    Some(Gap {
+        file,
+        kind: GapKind::UnknownExtras,
+        member: None,
+        site,
+    })
+}
+
 /// One gap per invalid requirement line that names a distribution (#928).
 /// A line with no name (`>=1.0`, `{{ name }}>=1`) lowers nothing: it names
 /// no distribution, and reading it as an unread manifest would turn every
@@ -721,6 +769,50 @@ mod tests {
             [
                 (Severity::Info, Confidence::Maybe),
                 (Severity::Info, Confidence::Maybe),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+    }
+
+    /// An unread extra may declare any import as optional, so it caps the
+    /// missing and misplaced declarations of its manifest's scope (#975).
+    #[test]
+    fn unknown_extras_cap_missing_and_misplaced_declarations() {
+        let mut member_gap = gap("packages/x/setup.py", GapKind::UnknownExtras);
+        member_gap.member = Some("x".to_owned());
+        let found = lowered(
+            &[gap("setup.py", GapKind::UnknownExtras)],
+            vec![
+                candidate(RuleId::Chk003, import("yaml")),
+                candidate(RuleId::Chk004, import("idna")),
+                candidate(RuleId::Chk005, distribution("pytest")),
+                candidate(RuleId::Chk002, distribution("requests")),
+                candidate(RuleId::Chk003, script_distribution("rich")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+        let found = lowered(
+            &[member_gap],
+            vec![
+                in_member(candidate(RuleId::Chk005, distribution("pytest")), "x"),
+                in_member(candidate(RuleId::Chk005, distribution("pytest")), "y"),
+                candidate(RuleId::Chk003, import("yaml")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Error, Confidence::Likely),
                 (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
             ]

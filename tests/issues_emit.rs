@@ -188,6 +188,32 @@ fn missing_is_a_hint_naming_the_gap_when_runtime_dependencies_are_unknown() {
     );
 }
 
+/// An `extras_require` the evaluator cannot read may declare any import as
+/// optional, so CHK003 drops below certain and names the gap (#975, ADR
+/// 0005 §6). Runtime dependencies were read, so it stays an error.
+#[test]
+fn missing_is_likely_naming_the_gap_when_extras_are_unknown() {
+    let inputs = load_emit(&fixture("setup_py_unknown_extras"));
+    let mut config = inputs.config.clone();
+    config.confidence = Confidence::Maybe;
+    let report = emit_with_config(&inputs, &config);
+    let yaml = report
+        .issues
+        .iter()
+        .find(|issue| issue.rule == RuleId::Chk003 && issue.message.contains("pyyaml"))
+        .expect("pyyaml missing");
+    assert_eq!(yaml.severity, chokkin::internals::Severity::Error);
+    assert_eq!(yaml.confidence, Confidence::Likely);
+    let details = &yaml.explain.as_ref().expect("explain").details;
+    assert!(
+        details
+            .iter()
+            .any(|line| line
+                == "extras could not be read statically: `extras_require` in `setup.py`"),
+        "{details:?}"
+    );
+}
+
 #[test]
 fn likely_unused_dependency_hidden_when_confidence_is_certain() {
     let inputs = load_emit_with_strict_deps(&fixture("marker_pywin32"), true);

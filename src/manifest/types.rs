@@ -280,8 +280,8 @@ pub struct ManifestSources {
     /// statically, so CHK003/CHK004 findings are downgraded (#491).
     #[serde(default)]
     pub runtime_dependencies_unknown: bool,
-    /// How much of the `setup.py` extras could be read (ADR 0005 step 2).
-    /// No rule reads it yet.
+    /// How much of the extras could be read (ADR 0005 step 2); anything but
+    /// Known is a gap that lowers missing and misplaced declarations (#975).
     #[serde(default)]
     pub extras: ExtrasState,
 }
