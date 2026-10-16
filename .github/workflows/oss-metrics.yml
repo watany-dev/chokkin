@@ -55,7 +55,7 @@ jobs:
           fetch-depth: 0
       - name: Install toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -63,12 +63,10 @@ jobs:
           python-version: "3.12"
       - name: Install jsonschema
         run: python -m pip install jsonschema==4.26.0
+      # Lint and tests of the same commit are the CI workflow's job; this one
+      # only needs the release binary.
       - name: Build HEAD
         run: cargo build --release --locked --bin chokkin
-      - name: Test HEAD
-        run: |
-          cargo clippy --all-targets --locked -- -D warnings
-          cargo test --locked
       - name: Build baseline
         run: |
           git worktree add "$RUNNER_TEMP/chokkin-baseline" "$BASELINE_REV"

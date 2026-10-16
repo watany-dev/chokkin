@@ -18,6 +18,11 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Lint runs on the toolchain the wheels are built with, not on whatever
+  # stable shipped that day: a new clippy lint otherwise breaks every open PR
+  # the morning it lands (1.99's `assert_is_empty` did). Keep in sync with
+  # RUST_TOOLCHAIN in release.yml; bump both in one `ci:` PR.
+  RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
   # Short checks share one job to save runner slots and setup time.
@@ -33,8 +38,8 @@ jobs:
           persist-credentials: false
       - name: Install toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          rustup default "$RUST_TOOLCHAIN"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
@@ -84,7 +89,10 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "TMP=$testTmp"
           Add-Content -Path $env:GITHUB_ENV -Value "TEMP=$testTmp"
           Add-Content -Path $env:GITHUB_ENV -Value "TMPDIR=$testTmp"
-      - run: cargo nextest run --locked --all-targets
+      # No --all-targets: it adds --benches, which runs every criterion bench
+      # once as a test (8-15 s each on Windows). The lint job's clippy
+      # --all-targets keeps the benches compiling.
+      - run: cargo nextest run --locked
       - run: cargo test --locked --doc
 
   msrv:
@@ -190,11 +198,11 @@ jobs:
           tool: cargo-llvm-cov@0.9.1
       # Source-based coverage runs the tests in parallel; tarpaulin's ptrace
       # engine needed --test-threads=1 and took ~4 min.
-      # NOTE: --fail-under-lines omitted until analyzer implementation reaches coverage targets.
-      # Re-enable at --fail-under-lines 95 for Phase 1 (v0.1 MVP). See docs/dev/ci-porting-notes.md.
+      # The line gate (95%, lines sit at ~98%) is on the summary step so the
+      # HTML report is still produced and uploaded when it fails.
       - run: cargo llvm-cov --locked --no-report
-      - run: cargo llvm-cov report --summary-only
       - run: cargo llvm-cov report --html
+      - run: cargo llvm-cov report --summary-only --fail-under-lines 95
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

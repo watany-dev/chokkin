@@ -103,19 +103,11 @@ The package name `chokkin` is reserved by the published v0.1.0 release.
 
 ## Coverage threshold
 
-`cargo llvm-cov --fail-under-lines 95` is intentionally omitted from both the
-Makefile and `ci.yml` until the Phase 1 (v0.1 MVP) analyzer implementation
-provides meaningful coverage. Re-enable when Phase 1 is merged:
-
-```yaml
-# ci.yml coverage job — uncomment when Phase 1 lands:
-# --fail-under-lines 95
-```
-
-```makefile
-# Makefile coverage target — uncomment when Phase 1 lands:
-# --fail-under-lines 95
-```
+`cargo llvm-cov --fail-under-lines 95` gates both the `make coverage` target
+and the `ci.yml` coverage job (lines sit around 98%). It was omitted until the
+Phase 1 analyzer provided meaningful coverage. In CI the gate is on the
+`--summary-only` step, after the HTML report, so the report artifact is still
+uploaded when the gate fails.
 
 ## Windows test temp directory
 
