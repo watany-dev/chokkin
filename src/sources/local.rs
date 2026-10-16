@@ -25,8 +25,6 @@ pub struct LocalTrees {
 }
 
 impl LocalTrees {
-    /// Collect the root manifest's local trees.
-    ///
     /// A `path` source's tree is read here, never cached, so it cannot go
     /// stale; a tree without packages falls back to the distribution name.
     #[must_use]
@@ -106,7 +104,6 @@ impl LocalTrees {
         &self.members
     }
 
-    /// Whether `import_root` names a workspace member.
     #[must_use]
     pub(crate) fn names_member(&self, import_root: &str) -> bool {
         self.member_roots.contains(import_root)
@@ -119,7 +116,6 @@ impl LocalTrees {
         self.local_sources.contains(name)
     }
 
-    /// Import roots provided by `path` sources, with their source names.
     #[must_use]
     pub(crate) fn path_imports(&self) -> &BTreeMap<String, Vec<String>> {
         &self.path_imports
