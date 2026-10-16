@@ -154,6 +154,8 @@ mod tests {
         for contents in [
             "rich==13.7.0 --hash sha256:abc\nboto3\n",
             "rich==13.7.0 \\\n    --hash=sha256:abc\nboto3\n",
+            // A line pip rejects for another option still pins a hash.
+            "rich==13.7.0 --hash=sha256:abc --no-deps\nboto3\n",
         ] {
             let dir = TempDir::new().expect("tempdir");
             let path = dir.path().join("requirements.txt");

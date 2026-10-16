@@ -485,11 +485,13 @@ pub(crate) fn join_continued_lines<'a>(
     joined
 }
 
-/// Whether a requirements line (comment included) carries `--hash`.
+/// Whether a requirements line (comment included) carries `--hash`. A line
+/// pip rejects counts when it names `--hash` anywhere: the `--fix` guard errs
+/// toward leaving a hash-pinned file alone.
 pub(crate) fn requirements_line_hashed(line: &str) -> bool {
     let trimmed = strip_python(strip_comment(line));
     let (_, options) = break_args_options(trimmed);
-    pip_line_options(options).is_some_and(|names| names.contains(&"hash"))
+    pip_line_options(options).unwrap_or_else(|| trimmed.contains("--hash"))
 }
 
 /// The requirement of a requirements line whose options pip accepts, with the
@@ -523,6 +525,7 @@ fn break_args_options(line: &str) -> (&str, &str) {
 /// `--config-settings` and `--global-option` there.
 const PIP_LINE_OPTIONS: &[(&str, Option<char>, bool)] = &[
     ("index-url", Some('i'), true),
+    ("pypi-url", None, true),
     ("extra-index-url", None, true),
     ("no-index", None, false),
     ("constraint", Some('c'), true),
@@ -541,16 +544,16 @@ const PIP_LINE_OPTIONS: &[(&str, Option<char>, bool)] = &[
     ("config-settings", Some('C'), true),
 ];
 
-/// The long names of the options in `options`, read as pip reads them
+/// Whether `options` carries `--hash`, read as pip reads them
 /// (`shlex.split`, then `optparse`: `--name=value` or `--name value`, a
 /// unique prefix of a long name, `-xvalue` or `-x value`; positional tokens
 /// are ignored). `None` where pip fails the line: an unclosed quote, an
 /// unknown or ambiguous option, a missing or unexpected value, and a `--hash`
 /// or `--config-settings` value its callback rejects.
-fn pip_line_options(options: &str) -> Option<Vec<&'static str>> {
+fn pip_line_options(options: &str) -> Option<bool> {
     let tokens = shlex_split(options)?;
     let mut tokens = tokens.iter();
-    let mut names = Vec::new();
+    let mut hashed = false;
     while let Some(token) = tokens.next() {
         if token == "--" {
             break;
@@ -598,9 +601,9 @@ fn pip_line_options(options: &str) -> Option<Vec<&'static str>> {
         if !valid {
             return None;
         }
-        names.push(name);
+        hashed |= name == "hash";
     }
-    Some(names)
+    Some(hashed)
 }
 
 /// Python's `shlex.split` (POSIX mode, no comments); `None` on an unclosed
@@ -1100,7 +1103,8 @@ mod tests {
              c -C key=value --config-settings=k=v --global-option=x\n\
              d --index-url https://host/simple --pre\n\
              e --hash=sha256:abc stray\n\
-             f --hash='sha384:abc'\n",
+             f --hash='sha384:abc'\n\
+             g --pypi-url https://host/simple\n",
         );
         assert_eq!(result.warnings, []);
         assert_eq!(
@@ -1109,7 +1113,7 @@ mod tests {
                 .iter()
                 .map(|dep| dep.name.as_str())
                 .collect::<Vec<_>>(),
-            ["a", "b", "c", "d", "e", "f"]
+            ["a", "b", "c", "d", "e", "f", "g"]
         );
     }
 
