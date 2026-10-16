@@ -269,8 +269,10 @@ mod tests {
             over_limit(MAX_LOCKFILE_BYTES, Some(MAX_LOCKFILE_PACKAGES)),
             None
         );
+        // airflow's 3.2 MB `uv.lock` is read with room to spare.
+        assert_eq!(over_limit(10_000_000, Some(960)), None);
         let bytes = over_limit(MAX_LOCKFILE_BYTES + 1, None).expect("over bytes");
-        assert!(bytes.contains("byte limit"), "{bytes}");
+        assert!(bytes.contains("33554433 bytes"), "{bytes}");
         let packages = over_limit(1, Some(MAX_LOCKFILE_PACKAGES + 1)).expect("over packages");
         assert!(packages.contains("20001 packages"), "{packages}");
     }

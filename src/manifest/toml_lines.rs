@@ -66,6 +66,7 @@ fn line_of(lines: &LineIndex, offset: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::{DependencyContext, DependencyOrigin};
     use super::*;
 
     fn offset_line(contents: &str, label: &str) -> Option<u32> {
@@ -100,6 +101,39 @@ mod tests {
         assert_eq!(offset_line(contents, "project.dependencies[3]"), None);
         assert_eq!(offset_line(contents, "project.missing[0]"), None);
         assert_eq!(offset_line(contents, "project.dependencies.x"), None);
+    }
+
+    #[test]
+    fn only_lineless_declarations_of_the_file_are_filled() {
+        let contents = "[project]\ndependencies = [\"a\"]\n";
+        let document = DeTable::parse(contents).expect("valid toml");
+        let declaration = |file: &str, line: Option<u32>| DeclaredDependency {
+            name: "a".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: DependencyOrigin {
+                file: file.to_owned(),
+                line,
+                label: "project.dependencies[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        };
+        let mut declarations = [
+            declaration("pyproject.toml", None),
+            declaration("pyproject.toml", Some(7)),
+            declaration("requirements.txt", None),
+        ];
+        fill_declaration_lines(
+            document.get_ref(),
+            contents,
+            "pyproject.toml",
+            &mut declarations,
+        );
+        let lines: Vec<_> = declarations.iter().map(|d| d.origin.line).collect();
+        assert_eq!(lines, [Some(2), Some(7), None]);
     }
 
     #[test]

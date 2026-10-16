@@ -356,6 +356,44 @@ fn binary_skipped_symlinks_are_reported_with_their_reason() {
     assert_eq!(skipped.len(), 5, "{stderr}");
 }
 
+/// A link that is neither dangling nor a loop is named with the OS error,
+/// and one in an excluded directory is pruned before it is judged.
+#[cfg(unix)]
+#[test]
+fn binary_symlink_errors_name_the_os_reason() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path().join("proj");
+    let other = temp.path().join("other");
+    fs::create_dir_all(root.join("demo")).expect("mkdir");
+    fs::create_dir_all(&other).expect("mkdir");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("demo/__init__.py"), "").expect("write package");
+    symlink("demo/__init__.py/x", root.join("odd.py")).expect("symlink");
+    symlink("../other", root.join("build")).expect("symlink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let skipped: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("did not follow symlink"))
+        .collect();
+    assert_eq!(skipped.len(), 1, "{stderr}");
+    assert!(
+        skipped[0].contains("did not follow symlink `odd.py`: Not a directory"),
+        "{stderr}"
+    );
+}
+
 /// A symlinked virtualenv answers to a directory pattern (`venv/`) in
 /// `.gitignore`, as the directory it points to would.
 #[cfg(unix)]

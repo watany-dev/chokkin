@@ -841,6 +841,36 @@ mod tests {
         assert!(text.contains("build backend    : none"));
     }
 
+    /// A module directory without `__init__.py` is named, and the line is
+    /// left out when there is none (#977).
+    #[test]
+    fn write_probe_report_names_unpackaged_module_dirs() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+        fs::create_dir_all(temp.path().join("demo")).expect("mkdir");
+        fs::write(temp.path().join("demo/__init__.py"), "").expect("write");
+        let text = || {
+            let report =
+                probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+            let mut output = Vec::new();
+            write_probe_report(&report, &mut output).expect("write");
+            String::from_utf8(output).expect("utf8")
+        };
+        assert!(!text().contains("Unpackaged"), "{}", text());
+
+        fs::create_dir_all(temp.path().join("pytest_demo")).expect("mkdir");
+        fs::write(temp.path().join("pytest_demo/plugin.py"), "").expect("write");
+        let text = text();
+        assert!(
+            text.contains("Unpackaged: pytest_demo (modules without `__init__.py`"),
+            "{text}"
+        );
+    }
+
     #[test]
     fn write_probe_report_shows_build_system() {
         let temp = TempDir::new().expect("tempdir");

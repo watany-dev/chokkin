@@ -672,4 +672,20 @@ mod tests {
         let parsed = parse_uvicorn_script_target("uvicorn pkg.main:app").expect("parsed");
         assert_eq!(parsed, ("pkg.main".to_owned(), "app".to_owned()));
     }
+
+    /// The search descends four directories below the root and skips the
+    /// directories it is told to.
+    #[test]
+    fn settings_candidates_stop_at_depth_four_and_skip_dirs() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        for dir in ["a/b/c/d", "a/b/c/d/e", "examples/proj"] {
+            let dir = temp.path().join(dir);
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(dir.join("settings.py"), "INSTALLED_APPS = []\n").expect("write");
+        }
+        assert_eq!(
+            find_settings_candidates(temp.path(), &["examples"]),
+            ["a/b/c/d/settings.py"]
+        );
+    }
 }

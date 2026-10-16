@@ -382,6 +382,35 @@ fn django_settings_module_from_runtests_past_a_template_placeholder() {
     assert_eq!(hints.warnings, []);
 }
 
+/// Each setter is read once: the root `manage.py`, then the root setters the
+/// walk did not take (#979).
+#[test]
+fn django_settings_module_reads_each_root_setter_once() {
+    let setter = |module: &str| {
+        format!("import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"{module}\")\n")
+    };
+    let hints = django_project(&[
+        ("manage.py", &setter("mysite.settings")),
+        ("runtests.py", &setter("mysite.test_settings")),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings.py", "INSTALLED_APPS = []\n"),
+        ("mysite/test_settings.py", "INSTALLED_APPS = []\n"),
+    ]);
+    let refs: Vec<(&str, &str)> = django_contrib(&hints)
+        .module_refs
+        .iter()
+        .filter(|reference| reference.origin.label == "DJANGO_SETTINGS_MODULE")
+        .map(|reference| (reference.module.as_str(), reference.origin.file.as_str()))
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("mysite.settings", "manage.py"),
+            ("mysite.test_settings", "runtests.py"),
+        ]
+    );
+}
+
 /// pytest-django's ini option names the settings module (#979).
 #[test]
 fn django_settings_module_from_the_pytest_config() {
@@ -412,6 +441,12 @@ fn django_skips_example_and_non_settings_candidates() {
             "acme/views/settings.py",
             "def index(request):\n    return None\n",
         ),
+        // In the scanned package, an example's setter is skipped all the same.
+        (
+            "acme/example/wsgi.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"acme.example.settings\")\n",
+        ),
+        ("acme/example/settings.py", "INSTALLED_APPS = []\n"),
     ]);
     assert_eq!(entry_paths(django_contrib(&hints)), Vec::<String>::new());
     assert_eq!(hints.warnings, []);

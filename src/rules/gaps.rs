@@ -1254,4 +1254,80 @@ mod tests {
             ]
         );
     }
+
+    /// The unread extras' gap names the warning's file and setup.py argument,
+    /// else the manifest the extras came from.
+    #[test]
+    fn extras_gap_names_where_the_extras_went_unread() {
+        use crate::discovery::{ProjectRoot, RootMarker};
+        use crate::manifest::{LockfileGraph, ManifestSources, ProjectMetadata, UvToolSettings};
+
+        let manifest =
+            |warnings: Vec<ManifestWarning>, setup_cfg: bool, setup_py: bool| LoadedManifest {
+                root: ProjectRoot {
+                    path: std::env::temp_dir(),
+                    marker: RootMarker::PyProjectToml,
+                },
+                metadata: ProjectMetadata::default(),
+                dependencies: Vec::new(),
+                constraints: Vec::new(),
+                uv: UvToolSettings::default(),
+                uv_workspace: None,
+                entry_points: Vec::new(),
+                lockfile: LockfileGraph::default(),
+                sources: ManifestSources {
+                    setup_cfg,
+                    setup_py,
+                    extras: ExtrasState::Unknown,
+                    ..ManifestSources::default()
+                },
+                warnings,
+            };
+        let found = |manifest: LoadedManifest| {
+            extras_gap(&manifest).map(|gap| {
+                assert_eq!(gap.kind, GapKind::UnknownExtras);
+                (gap.file, gap.site.map(|(argument, _)| argument))
+            })
+        };
+        let partly = |argument: &str| ManifestWarning::SetupPyPartiallyStatic {
+            file: "setup.py".to_owned(),
+            argument: argument.to_owned(),
+        };
+        assert_eq!(
+            found(manifest(
+                vec![
+                    partly("install_requires"),
+                    partly("extras_require[\"dev\"]")
+                ],
+                false,
+                true
+            )),
+            Some((
+                "setup.py".to_owned(),
+                Some("extras_require[\"dev\"]".to_owned())
+            ))
+        );
+        assert_eq!(
+            found(manifest(
+                vec![ManifestWarning::DynamicExtrasUnread {
+                    file: "pyproject.toml".to_owned(),
+                    extras: vec!["dev".to_owned()],
+                }],
+                false,
+                false
+            )),
+            Some(("pyproject.toml".to_owned(), None))
+        );
+        assert_eq!(
+            found(manifest(vec![partly("install_requires")], true, false)),
+            Some(("setup.cfg".to_owned(), None))
+        );
+        assert_eq!(
+            found(manifest(Vec::new(), true, true)),
+            Some(("setup.py".to_owned(), None))
+        );
+        let mut known = manifest(Vec::new(), true, true);
+        known.sources.extras = ExtrasState::Known;
+        assert_eq!(found(known), None);
+    }
 }

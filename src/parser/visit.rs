@@ -511,7 +511,6 @@ impl<'a> ModuleVisitor<'a> {
                         line,
                         self.path,
                         self.layout,
-                        level,
                     ));
                     String::new()
                 });

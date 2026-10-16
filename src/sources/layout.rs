@@ -738,6 +738,25 @@ mod tests {
         );
     }
 
+    /// Only a top-level package suite joins the local packages, once; an
+    /// entry widens no higher than its `__init__.py` chain goes.
+    #[test]
+    fn testpaths_index_only_new_top_level_packages() {
+        let temp = tree(&["acme", "tests", "docs/t", "docs/t/unit"]);
+        fs::create_dir_all(temp.path().join("suite")).expect("create dir");
+        fs::write(
+            temp.path().join("pytest.ini"),
+            "[pytest]\ntestpaths = tests suite docs/t/unit\n",
+        )
+        .expect("write");
+        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        assert_eq!(
+            pytest_testpaths(temp.path(), &layout),
+            ["tests", "suite", "docs/t"]
+        );
+        assert_eq!(layout.local_packages, ["tests"]);
+    }
+
     #[test]
     fn testpaths_suite_is_not_a_guessed_package() {
         let temp = tree(&["t", "t/unit", "worker"]);
