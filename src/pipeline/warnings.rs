@@ -450,9 +450,14 @@ fn write_manifest_warning(
             write!(formatter, "manifest: invalid requirement at {at}: {raw}")?;
             // A group's bucket is config's to decide, which the text does not
             // see; only the fixed runtime contexts name misplaced findings. A
-            // PEP 723 block has no misplaced findings (#936).
+            // PEP 723 block has no misplaced findings (#936), and a build
+            // requirement lowers like a dev one.
             let script = label.starts_with("script.");
-            let findings = if script || matches!(context, DependencyContext::Group(_)) {
+            let findings = if script
+                || matches!(
+                    context,
+                    DependencyContext::Group(_) | DependencyContext::Build
+                ) {
                 "undeclared imports"
             } else {
                 "undeclared or misplaced imports"
@@ -1014,6 +1019,17 @@ mod tests {
         assert_eq!(
             script.to_string(),
             "manifest: invalid requirement at `tool.py:4`: rich>=; undeclared imports of `rich` are reported as hints"
+        );
+        let build = ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
+            file: "pyproject.toml".to_owned(),
+            line: Some(2),
+            label: "build-system.requires[0]".to_owned(),
+            raw: "hatchling>=".to_owned(),
+            context: DependencyContext::Build,
+        });
+        assert_eq!(
+            build.to_string(),
+            "manifest: invalid requirement at `pyproject.toml:2`: hatchling>=; undeclared imports of `hatchling` are reported as hints"
         );
     }
 
