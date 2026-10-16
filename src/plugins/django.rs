@@ -65,6 +65,9 @@ const MAX_SETTINGS_FILES: usize = 16;
 /// tell the settings entry from `manage.py` and `ROOT_URLCONF` (#729).
 pub(crate) const SETTINGS_LABEL: &str = "settings.py";
 
+/// Label of the migrations glob's origin.
+const MIGRATIONS_LABEL: &str = "Django migrations";
+
 /// How `DJANGO_SETTINGS_MODULE` was set across the files that set it.
 #[derive(Default)]
 struct SettingsModule {
@@ -155,10 +158,23 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     });
 
     let Some(settings_rel) = settings_path else {
-        if is_project {
+        let origin = if is_project {
             let (file, line, reason) = missing_settings(&settings_module);
+            let origin = ReferenceOrigin {
+                file: file.clone(),
+                line,
+                label: MIGRATIONS_LABEL.to_owned(),
+            };
             push_unread(&mut contrib, &mut warnings, file, line, reason);
-        }
+            Some(origin)
+        } else {
+            django_declaration(ctx.manifest)
+        };
+        // Django runs the migrations of every installed app, so a reusable
+        // app's own are used without settings of its own (DRF, #979).
+        contrib
+            .framework_used_globs
+            .extend(origin.map(migrations_glob));
         return (contrib, warnings);
     };
 
@@ -178,12 +194,36 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
 
     read_settings(ctx, &settings_rel, &lookup, &mut contrib, &mut warnings);
 
-    contrib.framework_used_globs.push(FrameworkUsedGlob {
-        pattern: "**/migrations/**/*.py".to_owned(),
-        origin: origin_for_file(root, &settings_path_abs, "Django migrations"),
-    });
+    contrib
+        .framework_used_globs
+        .push(migrations_glob(origin_for_file(
+            root,
+            &settings_path_abs,
+            MIGRATIONS_LABEL,
+        )));
 
     (contrib, warnings)
+}
+
+/// The glob Django's migration loader reads in every installed app.
+fn migrations_glob(origin: ReferenceOrigin) -> FrameworkUsedGlob {
+    FrameworkUsedGlob {
+        pattern: "**/migrations/**/*.py".to_owned(),
+        origin,
+    }
+}
+
+/// Where the manifest declares Django, for a reusable app's migrations.
+fn django_declaration(manifest: &crate::manifest::LoadedManifest) -> Option<ReferenceOrigin> {
+    manifest
+        .dependencies
+        .iter()
+        .find(|dep| dep.name == "django")
+        .map(|dep| ReferenceOrigin {
+            file: dep.origin.file.clone(),
+            line: dep.origin.line,
+            label: MIGRATIONS_LABEL.to_owned(),
+        })
 }
 
 /// Read `DJANGO_SETTINGS_MODULE` from the root `manage.py`, then from the

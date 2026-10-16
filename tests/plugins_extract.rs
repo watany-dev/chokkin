@@ -449,6 +449,26 @@ fn django_migrations_framework_used() {
     );
 }
 
+/// A reusable app has no settings of its own, yet every project that installs
+/// it runs its migrations (DRF's `authtoken/migrations/`, #979).
+#[test]
+fn django_reusable_app_migrations_framework_used() {
+    let hints = django_project(&[
+        ("app/__init__.py", ""),
+        ("app/settings.py", "API_DEFAULTS = {}\n"),
+        ("app/migrations/__init__.py", ""),
+        ("app/migrations/0001_initial.py", ""),
+    ]);
+    let contrib = django_contrib(&hints);
+    assert!(entry_paths(contrib).is_empty());
+    assert!(
+        contrib
+            .framework_used_globs
+            .iter()
+            .any(|glob| glob.pattern == "**/migrations/**/*.py")
+    );
+}
+
 #[test]
 fn django_manage_entry() {
     let hints = extract_fixture("django_manage");
