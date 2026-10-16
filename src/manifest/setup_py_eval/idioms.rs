@@ -64,7 +64,7 @@ pub(super) fn requirement_table_lookup(
 
 fn lists(env: &HashMap<String, Value>) -> impl Iterator<Item = &Vec<Value>> {
     env.values().filter_map(|value| match value {
-        Value::List(items) => Some(items),
+        Value::List(items, _) => Some(items),
         _ => None,
     })
 }
@@ -80,6 +80,7 @@ fn requirement_table_key(raw: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::setup_py_eval::Identity;
 
     fn list(texts: &[&str]) -> Value {
         Value::List(
@@ -87,6 +88,7 @@ mod tests {
                 .iter()
                 .map(|text| Value::Str((*text).to_owned()))
                 .collect(),
+            Identity(None),
         )
     }
 
@@ -126,11 +128,14 @@ mod tests {
         let env = env(&[
             (
                 "_deps",
-                Value::List(vec![
-                    Value::Str("torch>=2.2".to_owned()),
-                    Value::Unknown,
-                    Value::Str("peft>=0.20".to_owned()),
-                ]),
+                Value::List(
+                    vec![
+                        Value::Str("torch>=2.2".to_owned()),
+                        Value::Unknown,
+                        Value::Str("peft>=0.20".to_owned()),
+                    ],
+                    Identity(None),
+                ),
             ),
             ("other", list(&["ruff"])),
         ]);
@@ -175,9 +180,13 @@ mod tests {
                 Value::Dict {
                     items: vec![("dev".to_owned(), list(&["torch>=2.2"]))],
                     partial: false,
+                    id: Identity(None),
                 },
             ),
-            ("nested", Value::List(vec![list(&["torch>=2.2"])])),
+            (
+                "nested",
+                Value::List(vec![list(&["torch>=2.2"])], Identity(None)),
+            ),
         ]);
         assert_eq!(lookup(&env, "torch"), None);
     }
