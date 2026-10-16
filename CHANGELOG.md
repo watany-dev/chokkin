@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-10-16
+
+v0.7.6 ships the first version of the unknown-input contract (ADR 0005).
+The JSON / baseline `schema_version` stays `"1"`, and fingerprints are
+unchanged, so baselines keep matching. What chokkin could not read — an
+import it cannot resolve, a skipped entry, an unreadable module, notebook or
+Django settings, an invalid requirement line, an assumed target version —
+now lowers the findings it could hide instead of being dropped, so a
+dependency such a gap might use is reported as Likely and `--fix` leaves it.
+The same signals reach every reporter as warnings, not only `json`: expect
+new `Warnings: N` lines, `::warning` annotations and SARIF notifications on
+projects that chokkin cannot fully read. Requirements files are read more
+like pip (line continuations, inline options, whitespace and markers), and
+transformers, llama_index and airflow analyze markedly faster.
+
 ### Added
 - The GitHub Action's `version` input also takes the path of a chokkin wheel
   (`*.whl`, relative to `working-directory`), which it runs with
