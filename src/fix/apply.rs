@@ -71,28 +71,34 @@ fn bottom_up_positional_removals(actions: Vec<FixAction>) -> Vec<(usize, FixActi
     indexed
 }
 
-/// `(file, array, Reverse(position))` for removals addressed by requirements line or
-/// `label[index]`.
+/// `(file, array, Reverse(position))` for removals addressed by `label[index]`
+/// or, for requirements files, by line. A TOML label wins over its line: one
+/// line can hold a whole array (`dependencies = ["a", "b"]`, #983).
 fn removal_position(action: &FixAction) -> Option<(&str, &str, Reverse<usize>)> {
-    let (file, label) = match action {
+    let (file, label, line) = match action {
         FixAction::RemoveDependency {
-            file,
-            line: Some(line),
-            ..
-        } => {
-            let line = usize::try_from(*line).unwrap_or(usize::MAX);
-            return Some((file.as_str(), "", Reverse(line)));
-        },
-        FixAction::RemoveDependency { file, label, .. }
-        | FixAction::MoveToRuntime {
+            file, label, line, ..
+        } => (file, label, *line),
+        FixAction::MoveToRuntime {
             file,
             from_label: label,
             ..
-        } => (file, label),
+        } => (file, label, None),
         FixAction::AddMissingDependency { .. } | FixAction::RemoveFile { .. } => return None,
     };
-    let (array, index) = label.strip_suffix(']')?.rsplit_once('[')?;
-    Some((file.as_str(), array, Reverse(index.parse().ok()?)))
+    let indexed = label
+        .strip_suffix(']')
+        .and_then(|label| label.rsplit_once('['))
+        .and_then(|(array, index)| Some((array, index.parse().ok()?)));
+    match (indexed, line) {
+        (Some((array, index)), _) => Some((file.as_str(), array, Reverse(index))),
+        (None, Some(line)) => Some((
+            file.as_str(),
+            "",
+            Reverse(usize::try_from(line).unwrap_or(usize::MAX)),
+        )),
+        (None, None) => None,
+    }
 }
 
 /// chokkin never edits lockfiles (§13), so point at the tool that owns it.

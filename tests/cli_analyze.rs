@@ -4598,7 +4598,7 @@ fn binary_build_environment_pins_in_a_build_group_are_used() {
         (
             name.to_owned(),
             format!(
-                "declared in dependency-groups.{label}, no reachable import, config, or binary usage found"
+                "{name} is declared in dependency-groups.{label}, but no reachable import, config, or binary usage was found"
             ),
         )
     };
@@ -5255,4 +5255,75 @@ fn pytest_testpaths_suite_package_resolves_by_absolute_name() {
         .map(ToString::to_string)
         .collect();
     assert_eq!(issues, Vec::<String>::new());
+}
+
+#[test]
+fn unused_dependency_names_the_distribution_and_its_pyproject_line() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\n  \"requests>=2\",\n  \"rich\",\n]\n\n\
+             [project.optional-dependencies]\ncli = [\"click\"]\n\n\
+             [dependency-groups]\ndev = [\n  \"attrs\",\n]\n\n\
+             [tool.uv]\ndev-dependencies = [\"ruff\"]\n",
+        ),
+        ("acme/__init__.py", "import rich\n"),
+    ]);
+    let issues = json_issues(project.path(), &["--strict"]);
+    let unused: Vec<_> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            (
+                issue["message"].as_str().unwrap_or_default().to_owned(),
+                issue["manifest"]["line"].as_u64(),
+            )
+        })
+        .collect();
+    let expected = |name: &str, label: &str, line: u64| {
+        (
+            format!(
+                "{name} is declared in {label}, but no reachable import, config, or binary usage was found"
+            ),
+            Some(line),
+        )
+    };
+    assert_eq!(
+        unused,
+        [
+            expected("attrs", "dependency-groups.dev[0]", 14),
+            expected("click", "project.optional-dependencies.cli[0]", 10),
+            expected("requests", "project.dependencies[0]", 5),
+            expected("ruff", "tool.uv.dev-dependencies[0]", 18),
+        ],
+        "{issues:#?}"
+    );
+}
+
+#[test]
+fn poetry_dependency_lines_come_from_their_key() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[tool.poetry]\nname = \"acme\"\nversion = \"0.1.0\"\n\n\
+             [tool.poetry.dependencies]\npython = \"^3.10\"\n\"zope.interface\" = \"*\"\nrich = { version = \"*\" }\n",
+        ),
+        ("acme/__init__.py", "import rich\n"),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    let lines: Vec<_> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["manifest"]["line"].as_u64(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [("zope-interface".to_owned(), Some(7))],
+        "{issues:#?}"
+    );
 }

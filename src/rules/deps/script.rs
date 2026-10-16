@@ -235,7 +235,7 @@ fn unused_in_script(
             severity,
             confidence,
             message: format!(
-                "declared in the PEP 723 block of {}, no import in the script uses it",
+                "{name} is declared in the PEP 723 block of {}, but no import in the script uses it",
                 script.path
             ),
             workspace_member: None,

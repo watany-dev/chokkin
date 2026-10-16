@@ -74,8 +74,8 @@ pub(super) fn detect_unused_dependencies(
             severity,
             confidence,
             message: format!(
-                "declared in {}, no reachable import, config, or binary usage found",
-                dep.origin.label
+                "{} is declared in {}, but no reachable import, config, or binary usage was found",
+                dep.name, dep.origin.label
             ),
             workspace_member: None,
             origins: vec![Origin::Manifest(dep.origin.clone())],
