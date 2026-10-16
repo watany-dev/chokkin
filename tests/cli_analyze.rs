@@ -2504,10 +2504,12 @@ fn binary_gaps_in_a_public_orphan_lower_unused_dependencies() {
         let project = write_project(&[
             (
                 "pyproject.toml",
-                "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[tool.chokkin]\nmode = \"library\"\n",
+                "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\n[tool.chokkin]\nmode = \"library\"\n",
             ),
             ("src/acme/__init__.py", ""),
             ("src/acme/client.py", client),
+            // Outside the wheel, so not public: its import lowers nothing.
+            ("src/other/extra.py", "import reqests\n"),
         ]);
 
         let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -3723,12 +3725,12 @@ fn binary_archive_requirement_turns_imports_of_its_name_into_hints() {
         ),
         (
             "requirements.txt",
-            "./vendor/foo\nwheels/bar-1.0-py3-none-any.whl\nhttps://example.com/baz-2.0.tar.gz#sha256=0\n./dist/qux-1.0.zip\nwheels/rich-13.0-py3-none-any.whl\n",
+            "./vendor/foo\nwheels/bar-1.0-py3-none-any.whl\nhttps://example.com/baz-2.0.tar.gz#sha256=0\n./dist/qux-1.0.zip\nwheels/rich-13.0-py3-none-any.whl\n-e wheels/quux-1.0.tar.gz\n",
         ),
         ("acme/__init__.py", ""),
         (
             "acme/main.py",
-            "import foo\nimport bar\nimport baz.core\nimport qux\nimport rich\nimport idna\n",
+            "import foo\nimport bar\nimport baz.core\nimport qux\nimport rich\nimport idna\nimport quux\n",
         ),
     ]);
     let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
@@ -3753,6 +3755,8 @@ fn binary_archive_requirement_turns_imports_of_its_name_into_hints() {
             "CHK010 acme/main.py:foo warning likely",
             "CHK010 acme/main.py:bar info maybe",
             "CHK010 acme/main.py:baz info maybe",
+            // An editable line names a directory, never an archive.
+            "CHK010 acme/main.py:quux warning likely",
         ]
     );
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -3840,6 +3844,8 @@ fn binary_unread_script_block_turns_that_scripts_findings_into_hints() {
             "tools/b.py",
             "# /// script\n# dependencies = []\n# ///\nimport binhex\nimport rich\n",
         ),
+        // A module that is not the script reads no imports for it.
+        ("tools/__init__.py", ""),
     ]);
     let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
         .iter()
