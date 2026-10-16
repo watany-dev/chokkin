@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`-r "my reqs.txt"`) are unquoted, and a flag line pip rejects (`-r` with no
   value, an unknown option) is reported as an invalid requirement line instead
   of stopping the file (#964).
+- A requirements line pip installs from a directory or an archive without
+  `-e` (`../../../llama-index-core`, `./pkg`, `pkg/sub`, `wheels/foo.whl`,
+  `foo-1.0-py3-none-any.whl`) is recorded as an opaque dependency, as
+  `-e ./path` is, instead of being reported as an invalid requirement line;
+  PEP 508 manifest fields and constraints files still reject it (#963).
 
 ## [0.7.6] - 2026-10-16
 

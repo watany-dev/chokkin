@@ -1218,6 +1218,88 @@ mod tests {
     }
 
     #[test]
+    fn path_and_archive_lines_are_opaque_like_editable_paths() {
+        // #963: pip installs these from a directory or an archive, and spec §4
+        // records a local path as an opaque dependency, as it does `-e ./path`.
+        let result = parse_requirements_text(
+            "../../../llama-index-core\n\
+             ./pkg ; os_name == \"nt\"\n\
+             .\n\
+             pkg/sub\n\
+             wheels/foo-1.0-py3-none-any.whl\n\
+             foo-1.0-py3-none-any.whl\n\
+             foo.whl[tests]\n\
+             C:\\pkg\n\
+             requests>=2\n",
+        );
+        assert_eq!(result.warnings, []);
+        assert_eq!(
+            declared(&result),
+            [
+                ("", Some(1)),
+                ("", Some(2)),
+                ("", Some(3)),
+                ("", Some(4)),
+                ("", Some(5)),
+                ("", Some(6)),
+                ("", Some(7)),
+                ("", Some(8)),
+                ("requests", Some(9)),
+            ]
+        );
+        let (paths, rest) = result.dependencies.split_at(8);
+        for dep in paths {
+            assert!(dep.opaque, "{dep:?}");
+        }
+        assert!(!rest[0].opaque);
+        assert_eq!(
+            paths[0].specifier.as_deref(),
+            Some("../../../llama-index-core")
+        );
+        assert_eq!(paths[1].specifier.as_deref(), Some("./pkg"));
+        assert_eq!(paths[1].marker.as_deref(), Some("os_name == \"nt\""));
+        assert_eq!(paths[7].specifier.as_deref(), Some("C:\\pkg"));
+        assert_eq!(requirements_line_distribution("./pkg"), None);
+    }
+
+    #[test]
+    fn constraints_keep_path_lines_invalid() {
+        // pip rejects a path in a constraints file ("Links are not allowed as
+        // constraints"), so the opaque reading applies to requirements only.
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            temp.path().join("requirements.txt"),
+            "-c pins.txt\nrequests\n",
+        )
+        .expect("write");
+        std::fs::write(temp.path().join("pins.txt"), "./pkg\nd==1\n").expect("write");
+        let (result, outcome) = extract_requirements_path(
+            temp.path(),
+            &temp.path().join("requirements.txt"),
+            &DependencyContext::Runtime,
+        );
+        outcome.expect("constraints resolve");
+        assert_eq!(declared(&result), [("requests", Some(2))]);
+        assert_eq!(
+            result
+                .constraints
+                .iter()
+                .map(|dep| dep.name.as_str())
+                .collect::<Vec<_>>(),
+            ["d"]
+        );
+        assert_eq!(
+            result.warnings,
+            [ManifestWarning::InvalidRequirementLine {
+                file: "pins.txt".to_owned(),
+                line: Some(1),
+                label: "pins.txt".to_owned(),
+                raw: "./pkg".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
     fn line_distribution_takes_only_the_editable_value() {
         assert_eq!(
             requirements_line_distribution(
