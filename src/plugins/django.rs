@@ -19,7 +19,9 @@ use crate::parser::{LineIndex, resolve_relative_import};
 use crate::rules::import_site;
 use crate::sources::FileContext;
 
+use super::commands::is_dotted_identifier;
 use super::context::PluginContext;
+use super::pytest::import_settings as pytest_import_settings;
 use super::types::{
     FrameworkUsedGlob, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
     SymbolReference, UnreadSettings,
@@ -41,8 +43,20 @@ const LIST_FIELDS: &[&str] = &["INSTALLED_APPS", "MIDDLEWARE"];
 /// distributions unexplained, so an unfollowed star import may hide them.
 const EXPLAINING_FIELDS: &[&str] = &["ROOT_URLCONF", "INSTALLED_APPS", "MIDDLEWARE"];
 
-/// Files that set `DJANGO_SETTINGS_MODULE` before Django starts.
-const SETTER_NAMES: &[&str] = &["manage.py", "wsgi.py", "asgi.py"];
+/// Files that set `DJANGO_SETTINGS_MODULE` before Django starts: the
+/// management and server entry points, and the test runners that set it for
+/// a reusable app's suite (wagtail's `runtests.py`, a `conftest.py`, #979).
+const SETTER_NAMES: &[&str] = &[
+    "manage.py",
+    "wsgi.py",
+    "asgi.py",
+    "runtests.py",
+    "conftest.py",
+];
+
+/// Directories whose setters and `settings.py` configure a sample project,
+/// not this one (celery's `examples/django/`, #979).
+pub(super) const EXAMPLE_DIRS: &[&str] = &["examples", "example"];
 
 /// Settings modules followed through star imports, the chosen one included.
 const MAX_SETTINGS_FILES: usize = 16;
@@ -54,8 +68,9 @@ pub(crate) const SETTINGS_LABEL: &str = "settings.py";
 /// How `DJANGO_SETTINGS_MODULE` was set across the files that set it.
 #[derive(Default)]
 struct SettingsModule {
-    /// The first literal value, its file and line.
-    literal: Option<(String, String, u32)>,
+    /// The literal values in reading order, each with its file and line
+    /// (none for a pytest config option).
+    literals: Vec<(String, String, Option<u32>)>,
     /// The first place it is set in a form that is not a literal, or a
     /// setter that could not be read.
     unread: Option<(String, Option<u32>)>,
@@ -95,30 +110,34 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     // A Django project, not a reusable app that only depends on Django: its
     // settings decide what runs, so failing to find them is a gap (#914).
     let is_project =
-        has_manage || settings_module.literal.is_some() || settings_module.unread.is_some();
+        has_manage || !settings_module.literals.is_empty() || settings_module.unread.is_some();
     if !is_project && !manifest_has_dependency(ctx.manifest, "django") {
         return (contrib, warnings);
     }
 
-    let lookup = Lookup {
+    // The first value that names a project file wins: a template's
+    // placeholder or another app's settings earlier on must not hide it.
+    let first = settings_module.literals.first();
+    let mut lookup = Lookup {
         known,
-        dir: settings_module
-            .literal
-            .as_ref()
-            .and_then(|(_, setter, _)| setter_dir(setter)),
+        dir: first.and_then(|(_, setter, _)| setter_dir(setter)),
     };
-    let resolved = settings_module
-        .literal
-        .as_ref()
-        .and_then(|(module, _, _)| module_path(root, module, ctx, &lookup));
+    let mut resolved = None;
+    for (module, setter, _) in &settings_module.literals {
+        lookup.dir = setter_dir(setter);
+        resolved = module_path(root, module, ctx, &lookup);
+        if resolved.is_some() {
+            break;
+        }
+    }
+    if resolved.is_none() {
+        lookup.dir = first.and_then(|(_, setter, _)| setter_dir(setter));
+    }
     let settings_path = resolved.or_else(|| {
-        let candidates = find_settings_candidates(root);
+        let candidates = find_settings_candidates(root, EXAMPLE_DIRS);
         let (chosen, ambiguous) = choose_settings_path(
             &candidates,
-            settings_module
-                .literal
-                .as_ref()
-                .map(|(module, _, _)| module.as_str()),
+            first.map(|(module, _, _)| module.as_str()),
             ctx.manifest.metadata.name.as_deref(),
         );
         if ambiguous && let Some(chosen) = &chosen {
@@ -168,34 +187,60 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
 }
 
 /// Read `DJANGO_SETTINGS_MODULE` from the root `manage.py`, then from the
-/// discovered `manage.py`, `wsgi.py` and `asgi.py`, runtime ones first; each
-/// literal value is a module reference.
+/// discovered setters (runtime ones first), the root setters discovery did
+/// not take (`runtests.py`), and last pytest-django's ini option; each
+/// literal value is a module reference. Setters under [`EXAMPLE_DIRS`] are
+/// skipped, and a value that is not a dotted module name (a project
+/// template's `{{ project_name }}.settings`) counts as set in a form not read.
 fn read_settings_module(
     ctx: &PluginContext<'_>,
     has_manage: bool,
     contrib: &mut PluginContribution,
 ) -> SettingsModule {
     let root = ctx.root.path.as_path();
+    let is_setter = |path: &str| {
+        Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| SETTER_NAMES.contains(&name))
+            && !path.split('/').any(|part| EXAMPLE_DIRS.contains(&part))
+    };
     let mut setters: Vec<(bool, &str)> = ctx
         .sources
         .files
         .iter()
-        .filter(|file| file.path != "manage.py")
-        .filter(|file| {
-            Path::new(&file.path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| SETTER_NAMES.contains(&name))
-        })
+        .filter(|file| file.path != "manage.py" && is_setter(&file.path))
         .map(|file| (file.context != FileContext::Runtime, file.path.as_str()))
         .collect();
     setters.sort_unstable();
+    let discovered: BTreeSet<&str> = setters.iter().map(|(_, path)| *path).collect();
+    let undiscovered_root = SETTER_NAMES
+        .iter()
+        .copied()
+        .filter(|name| *name != "manage.py" && !discovered.contains(name))
+        .filter(|name| root.join(name).is_file());
     let setters = has_manage
         .then_some("manage.py")
         .into_iter()
-        .chain(setters.into_iter().map(|(_, path)| path));
+        .chain(setters.into_iter().map(|(_, path)| path))
+        .chain(undiscovered_root);
 
     let mut found = SettingsModule::default();
+    let mut literal = |found: &mut SettingsModule, module: String, file: &str, line| {
+        if !is_dotted_identifier(&module) {
+            found.unread.get_or_insert_with(|| (file.to_owned(), line));
+            return;
+        }
+        contrib.module_refs.push(ModuleReference {
+            module: module.clone(),
+            origin: ReferenceOrigin {
+                file: file.to_owned(),
+                line,
+                label: "DJANGO_SETTINGS_MODULE".to_owned(),
+            },
+        });
+        found.literals.push((module, file.to_owned(), line));
+    };
     for setter in setters {
         let Ok(contents) = read_to_string(&abs_path(root, setter)) else {
             found
@@ -204,33 +249,28 @@ fn read_settings_module(
             continue;
         };
         if let Some((module, line)) = extract_django_settings_module(&contents) {
-            contrib.module_refs.push(ModuleReference {
-                module: module.clone(),
-                origin: ReferenceOrigin {
-                    file: setter.to_owned(),
-                    line: Some(line),
-                    label: "DJANGO_SETTINGS_MODULE".to_owned(),
-                },
-            });
-            found
-                .literal
-                .get_or_insert_with(|| (module, setter.to_owned(), line));
+            literal(&mut found, module, setter, Some(line));
         } else if let Some(line) = django_settings_module_set_line(&contents) {
             found
                 .unread
                 .get_or_insert_with(|| (setter.to_owned(), Some(line)));
         }
     }
+    if let Some((file, module)) =
+        pytest_import_settings(root).and_then(|settings| settings.django_settings_module)
+    {
+        literal(&mut found, module, &file, None);
+    }
     found
 }
 
 /// Why no settings module was found, and the file and line it points to.
 fn missing_settings(found: &SettingsModule) -> (String, Option<u32>, SettingsUnread) {
-    if let Some((module, file, line)) = &found.literal {
-        let site = import_site(file, Some(*line));
+    if let Some((module, file, line)) = found.literals.first() {
+        let site = import_site(file, *line);
         return (
             file.clone(),
-            Some(*line),
+            *line,
             SettingsUnread::MissingModule {
                 module: module.clone(),
                 site,

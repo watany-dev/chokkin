@@ -190,6 +190,9 @@ pub(crate) struct PytestImportSettings {
     pub importlib: bool,
     /// `testpaths` entries, relative to the config file's directory.
     pub testpaths: Vec<String>,
+    /// pytest-django's `DJANGO_SETTINGS_MODULE` option, with the name of the
+    /// config file that sets it (#979).
+    pub django_settings_module: Option<(String, String)>,
 }
 
 /// Read [`PytestImportSettings`] from the config file pytest itself picks in
@@ -205,7 +208,7 @@ pub(crate) fn import_settings(root: &Path) -> Option<PytestImportSettings> {
         if path.is_file() {
             return Some(
                 read_ini_section(&path, "pytest")
-                    .map(|section| ini_import_settings(&section))
+                    .map(|section| ini_import_settings(&section, file))
                     .unwrap_or_default(),
             );
         }
@@ -221,7 +224,7 @@ pub(crate) fn import_settings(root: &Path) -> Option<PytestImportSettings> {
         if let Ok(section) = read_ini_section(&path, section_name)
             && !section.is_empty()
         {
-            return Some(ini_import_settings(&section));
+            return Some(ini_import_settings(&section, file));
         }
     }
     None
@@ -251,15 +254,25 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
         pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&addopts),
         testpaths: words("testpaths"),
+        django_settings_module: options
+            .get(DJANGO_SETTINGS_KEY)
+            .and_then(toml::Value::as_str)
+            .map(|value| ("pyproject.toml".to_owned(), value.trim().to_owned())),
     })
 }
 
-fn ini_import_settings(section: &IniSection) -> PytestImportSettings {
+/// The ini option pytest-django reads the settings module from.
+const DJANGO_SETTINGS_KEY: &str = "DJANGO_SETTINGS_MODULE";
+
+fn ini_import_settings(section: &IniSection, file: &str) -> PytestImportSettings {
     let words = |key: &str| section.get(key).map_or_else(Vec::new, |v| split_words(v));
     PytestImportSettings {
         pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&words("addopts")),
         testpaths: words("testpaths"),
+        django_settings_module: section
+            .get(DJANGO_SETTINGS_KEY)
+            .map(|value| (file.to_owned(), value.trim().to_owned())),
     }
 }
 
@@ -354,6 +367,7 @@ mod tests {
                 pythonpath: Vec::new(),
                 importlib: true,
                 testpaths: Vec::new(),
+                django_settings_module: None,
             })
         );
     }
@@ -373,6 +387,7 @@ mod tests {
                 pythonpath: vec!["src".to_owned()],
                 importlib: true,
                 testpaths: vec!["tests".to_owned()],
+                django_settings_module: None,
             })
         );
     }

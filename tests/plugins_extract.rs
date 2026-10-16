@@ -351,6 +351,72 @@ fn django_settings_module_prefers_a_runtime_setter() {
     assert_eq!(entry_paths(django_contrib(&hints)), ["mysite/conf.py"]);
 }
 
+/// A template's placeholder and a view module named `settings.py` do not
+/// hide the settings a root `runtests.py` names (wagtail, #979).
+#[test]
+fn django_settings_module_from_runtests_past_a_template_placeholder() {
+    let hints = django_project(&[
+        ("wagtail/__init__.py", ""),
+        (
+            "wagtail/project_template/project_name/wsgi.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"{{ project_name }}.settings.dev\")\n",
+        ),
+        (
+            "wagtail/contrib/views/settings.py",
+            "from django.shortcuts import redirect\n\n\ndef index(request):\n    return redirect(\"/\")\n",
+        ),
+        ("wagtail/test/__init__.py", ""),
+        (
+            "wagtail/test/settings.py",
+            "ROOT_URLCONF = \"wagtail.test.urls\"\nINSTALLED_APPS = []\n",
+        ),
+        (
+            "runtests.py",
+            "import os\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"wagtail.test.settings\"\n",
+        ),
+    ]);
+    assert_eq!(
+        entry_paths(django_contrib(&hints)),
+        ["wagtail/test/settings.py"]
+    );
+    assert_eq!(hints.warnings, []);
+}
+
+/// pytest-django's ini option names the settings module (#979).
+#[test]
+fn django_settings_module_from_the_pytest_config() {
+    let hints = django_project(&[
+        (
+            "pytest.ini",
+            "[pytest]\nDJANGO_SETTINGS_MODULE = acme.conf\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/conf.py", "INSTALLED_APPS = [\"acme\"]\n"),
+    ]);
+    assert_eq!(entry_paths(django_contrib(&hints)), ["acme/conf.py"]);
+}
+
+/// A sample project under `examples/` and a `settings.py` that sets no
+/// Django field are not this project's settings (celery, #979).
+#[test]
+fn django_skips_example_and_non_settings_candidates() {
+    let hints = django_project(&[
+        (
+            "examples/django/manage.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"proj.settings\")\n",
+        ),
+        ("examples/django/proj/settings.py", "INSTALLED_APPS = []\n"),
+        ("examples/gateway/settings.py", "ROOT_URLCONF = \"urls\"\n"),
+        ("acme/__init__.py", ""),
+        (
+            "acme/views/settings.py",
+            "def index(request):\n    return None\n",
+        ),
+    ]);
+    assert_eq!(entry_paths(django_contrib(&hints)), Vec::<String>::new());
+    assert_eq!(hints.warnings, []);
+}
+
 /// A settings module star-imported twice is read once.
 #[test]
 fn django_reads_a_twice_star_imported_settings_module_once() {
