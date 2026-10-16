@@ -426,7 +426,6 @@ pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
 pub(crate) struct LogicalLine<'a> {
     /// 0-based index of its first physical line, which names it in warnings.
     pub first: usize,
-    /// Number of physical lines it spans.
     pub span: usize,
     pub text: Cow<'a, str>,
 }
