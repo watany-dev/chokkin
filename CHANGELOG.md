@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `__all__ = __all__ + [...]`, `__all__ = [...] + __all__` and
+  `__all__.insert(i, "name")` add their literal names to `__all__` like `+=`
+  and `.append` do, instead of leaving the list partial with an
+  `unsupported __all__ assignment form` warning (#876).
 - `Migration` in a module of a Django app's `migrations` package is no longer
   CHK006: Django's migration loader reads it by name (#926).
 - Relative imports in packages the layout names no module for (Django's

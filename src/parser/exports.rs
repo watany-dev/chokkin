@@ -9,8 +9,8 @@ use super::types::{Exports, ParseDiagnostic, ParseSeverity};
 
 /// Read `__all__` and warn about each update that could not be read.
 ///
-/// A literal assignment replaces the list; a later literal `+=`, `.extend`
-/// or `.append` adds to it, also from inside `if` / `try` / `with` blocks
+/// A literal assignment replaces the list; a later literal `+=`, `.extend`,
+/// `.append`, `.insert` or `__all__ + [...]` adds to it, also from inside `if` / `try` / `with` blocks
 /// (#567). Any other update leaves the result [`Exports::Partial`] or
 /// [`Exports::Unknown`] (ADR 0005).
 pub(super) fn extract_exports(
@@ -164,17 +164,12 @@ enum AllUpdate {
 
 fn all_update(stmt: &Stmt) -> Option<AllUpdate> {
     match stmt {
-        Stmt::Assign(assign) if assign.targets.iter().any(is_all) => {
-            Some(AllUpdate::Replace(literal_names(&assign.value)))
-        },
+        Stmt::Assign(assign) if assign.targets.iter().any(is_all) => Some(rebinding(&assign.value)),
         // `__all__[:] = names`, `__all__[0] = name`.
         Stmt::Assign(assign) if assign.targets.iter().any(is_all_subscript) => {
             Some(AllUpdate::Add(None))
         },
-        Stmt::AnnAssign(assign) if is_all(&assign.target) => assign
-            .value
-            .as_deref()
-            .map(|value| AllUpdate::Replace(literal_names(value))),
+        Stmt::AnnAssign(assign) if is_all(&assign.target) => assign.value.as_deref().map(rebinding),
         Stmt::AugAssign(assign) if is_all(&assign.target) && assign.op == Operator::Add => {
             Some(AllUpdate::Add(literal_names(&assign.value)))
         },
@@ -189,24 +184,45 @@ fn all_update(stmt: &Stmt) -> Option<AllUpdate> {
             if !is_all(&method.value) {
                 return None;
             }
-            let read: fn(&Expr) -> Option<Vec<String>> = match method.attr.as_str() {
-                "extend" => literal_names,
-                "append" => |value| string_literal(value).map(|name| vec![name.to_owned()]),
+            let name = |value: &Expr| string_literal(value).map(|name| vec![name.to_owned()]);
+            let names = match (method.attr.as_str(), &*call.arguments.args) {
                 // Removes, reorders or only reads names. A list wider than the
                 // runtime one only keeps names public, so these need not be
                 // followed.
-                "remove" | "pop" | "clear" | "sort" | "reverse" | "copy" | "index" | "count" => {
+                (
+                    "remove" | "pop" | "clear" | "sort" | "reverse" | "copy" | "index" | "count",
+                    _,
+                ) => {
                     return None;
                 },
-                _ => return Some(AllUpdate::Add(None)),
+                _ if !call.arguments.keywords.is_empty() => None,
+                ("extend", [names]) => literal_names(names),
+                ("append", [value]) | ("insert", [_, value]) => name(value),
+                _ => None,
             };
-            match (&*call.arguments.args, &*call.arguments.keywords) {
-                ([argument], []) => Some(AllUpdate::Add(read(argument))),
-                _ => Some(AllUpdate::Add(None)),
-            }
+            Some(AllUpdate::Add(names))
         },
         _ => None,
     }
+}
+
+/// The update of `__all__ = value`: concatenating `__all__` with another
+/// list adds that list (#876), anything else replaces it.
+fn rebinding(value: &Expr) -> AllUpdate {
+    if let Expr::BinOp(ast::ExprBinOp {
+        left,
+        op: Operator::Add,
+        right,
+        ..
+    }) = value
+    {
+        match (is_all(left), is_all(right)) {
+            (true, false) => return AllUpdate::Add(literal_names(right)),
+            (false, true) => return AllUpdate::Add(literal_names(left)),
+            _ => {},
+        }
+    }
+    AllUpdate::Replace(literal_names(value))
 }
 
 /// Whether `stmt` binds the name `__all__`, which in a class or function
@@ -356,9 +372,11 @@ mod tests {
             "__all__.append([\"x\"])\n",
             "__all__.append()\n",
             "__all__.extend([\"y\"], key=1)\n",
-            "__all__.insert(0, \"b\")\n",
-            "__all__ = __all__ + [\"c\"]\n",
+            "__all__.insert(0, name)\n",
+            "__all__.insert(\"b\")\n",
+            "__all__ = __all__ + names\n",
             "__all__ = other + __all__\n",
+            "__all__ = __all__ + __all__\n",
             "__all__[:] = names\n",
         ] {
             let source = format!("__all__ = [\"foo\"]\n{source}");
@@ -373,6 +391,19 @@ mod tests {
                 "{source}"
             );
         }
+    }
+
+    /// Concatenating a literal to `__all__` and inserting a literal name add
+    /// to the list like `+=` and `.append` (#876).
+    #[test]
+    fn reads_concatenation_and_insert() {
+        let source = "__all__ = [\"foo\"]\n__all__ = __all__ + [\"a\"]\n__all__ = (\"b\",) + __all__\n\
+                      __all__: list[str] = __all__ + [\"c\"]\n__all__.insert(0, \"d\")\n\
+                      if X:\n    __all__ = __all__ + [\"e\"]\n";
+        assert_eq!(
+            read(source),
+            (known(&["foo", "a", "b", "c", "d", "e"]), vec![])
+        );
     }
 
     /// Literal additions after an unread one still add to the partial list.
