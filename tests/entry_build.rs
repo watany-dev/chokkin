@@ -145,6 +145,22 @@ fn setup_py_without_static_name_resolves_library_mode() {
     assert_eq!(plan.mode, ProjectMode::Library);
 }
 
+/// textual names its distribution only under `[tool.poetry]` (#974).
+#[test]
+fn poetry_only_name_resolves_library_mode() {
+    let inputs = load_pipeline(&fixture("poetry_only_library"));
+    assert_eq!(inputs.manifest.metadata.name.as_deref(), Some("acme"));
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &inputs.plugins,
+        false,
+    );
+
+    assert_eq!(plan.mode, ProjectMode::Library);
+}
+
 #[test]
 fn explicit_config_entry_merges_with_auto() {
     let inputs = load_pipeline(&fixture("explicit_entry"));

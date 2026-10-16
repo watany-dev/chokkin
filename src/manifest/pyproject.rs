@@ -152,6 +152,7 @@ pub(super) fn extract_pyproject(
         }
     }
 
+    poetry_metadata_fallback(&table, &mut result.metadata);
     extract_build_system(&table, &rel, &mut result);
 
     if let Some(groups) = table.get("dependency-groups").and_then(Value::as_table) {
@@ -266,6 +267,28 @@ fn parse_project_metadata(project: &toml::Table) -> ProjectMetadata {
         dynamic: string_array("dynamic"),
         classifiers: string_array("classifiers"),
         ..ProjectMetadata::default()
+    }
+}
+
+/// Poetry 1.x declares the distribution under `[tool.poetry]` instead of
+/// `[project]` (#974); `[project]` wins when it names one. Other
+/// `[tool.poetry]` keys stay unread: `python` is a dependency constraint, not
+/// `requires-python`, and nothing downstream reads the rest.
+fn poetry_metadata_fallback(table: &toml::Table, metadata: &mut ProjectMetadata) {
+    let Some(poetry) = table
+        .get("tool")
+        .and_then(Value::as_table)
+        .and_then(|tool| tool.get("poetry"))
+        .and_then(Value::as_table)
+    else {
+        return;
+    };
+    let string = |key: &str| poetry.get(key).and_then(Value::as_str).map(str::to_owned);
+    if metadata.name.is_none() {
+        metadata.name = string("name");
+    }
+    if metadata.version.is_none() {
+        metadata.version = string("version");
     }
 }
 
@@ -1017,6 +1040,26 @@ mod tests {
             dep.name == "coverage"
                 && matches!(&dep.context, DependencyContext::Group(group) if group == "test")
         }));
+    }
+
+    #[test]
+    fn poetry_name_fills_metadata_without_a_project_table() {
+        let result = extract("[tool.poetry]\nname = \"textual\"\nversion = \"8.2.8\"\n")
+            .expect("valid pyproject");
+        assert_eq!(result.metadata.name.as_deref(), Some("textual"));
+        assert_eq!(result.metadata.version.as_deref(), Some("8.2.8"));
+        assert!(!result.has_project_table);
+    }
+
+    #[test]
+    fn project_name_wins_over_poetry_name() {
+        let result = extract(
+            "[project]\nname = \"real\"\n[tool.poetry]\nname = \"legacy\"\nversion = \"1\"\n",
+        )
+        .expect("valid pyproject");
+        assert_eq!(result.metadata.name.as_deref(), Some("real"));
+        // Poetry 2 reads `[tool.poetry].version` when `[project]` has none.
+        assert_eq!(result.metadata.version.as_deref(), Some("1"));
     }
 
     #[test]
