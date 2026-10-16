@@ -112,7 +112,6 @@ const FOREIGN_CELL_MAGICS: &[&str] = &[
     "system",
 ];
 
-/// Cell magics that run their body as Python.
 const PYTHON_CELL_MAGICS: &[&str] = &[
     "capture", "prun", "pypy", "python", "python2", "python3", "time", "timeit",
 ];

@@ -84,7 +84,6 @@ pub(crate) fn discover_sources_cached(
     };
     let collected = collect_files(&collect_options)?;
     let files = collected.files;
-    // Directories holding a discovered `__init__.py`.
     layout.package_dirs = files
         .iter()
         .chain(&collected.held_tests)
