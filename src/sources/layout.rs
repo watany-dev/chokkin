@@ -515,7 +515,7 @@ fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
 
 /// `None` when a path component holds a `.` (`foo.bar.py`, `.hidden/`): no
 /// import can name it, and as `foo.bar` it would shadow `foo/bar.py`.
-fn module_path(path: &str) -> Option<&str> {
+pub(crate) fn module_path(path: &str) -> Option<&str> {
     let stem = path.strip_suffix(".py")?;
     let stem = stem.strip_suffix("/__init__").unwrap_or(stem);
     stem.split('/')

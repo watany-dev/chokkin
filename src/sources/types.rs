@@ -1,5 +1,7 @@
 //! Source file discovery types.
 
+use std::collections::BTreeSet;
+
 use crate::cache::CacheKeyHasher;
 use crate::discovery::ProjectRoot;
 
@@ -94,6 +96,11 @@ pub struct LayoutInfo {
     /// Workspace members' own layouts. The root layout cannot name a module
     /// inside a member, so without them no import within a member resolves.
     pub members: Vec<MemberLayout>,
+    /// Root-relative directories holding a discovered `__init__.py`. A file
+    /// the layout names no module for takes its relative imports' package
+    /// context from this chain, as the directory above it would on
+    /// `sys.path` (#896).
+    pub package_dirs: BTreeSet<String>,
 }
 
 /// Layout of one workspace member.
@@ -156,11 +163,16 @@ impl LayoutInfo {
             hasher.field_str(&member.path);
             hasher.field_str(&member.layout.cache_key_hash());
         }
+        hash_str_list(&mut hasher, &self.package_dirs);
         hasher.finish()
     }
 }
 
-fn hash_str_list(hasher: &mut CacheKeyHasher, values: &[String]) {
+fn hash_str_list<'a>(
+    hasher: &mut CacheKeyHasher,
+    values: impl IntoIterator<Item = &'a String, IntoIter: ExactSizeIterator>,
+) {
+    let values = values.into_iter();
     hasher.field_u64(u64::try_from(values.len()).unwrap_or(u64::MAX));
     for value in values {
         hasher.field_str(value);
@@ -188,5 +200,20 @@ impl DiscoveredSources {
         self.files
             .iter()
             .filter(|file| file.kind == FileKind::Python)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_key_hash_tells_package_dirs_apart() {
+        let base = LayoutInfo::default();
+        let with_dirs = LayoutInfo {
+            package_dirs: BTreeSet::from(["tests/app".to_owned()]),
+            ..LayoutInfo::default()
+        };
+        assert_ne!(base.cache_key_hash(), with_dirs.cache_key_hash());
     }
 }

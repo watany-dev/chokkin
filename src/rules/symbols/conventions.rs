@@ -69,9 +69,21 @@ pub(super) fn alembic_script_files(plugins: &PluginHints) -> HashSet<&str> {
         .collect()
 }
 
+/// Names a framework reads by convention from the modules it loads by path:
+/// alembic's revisions and Django's migrations.
+pub(super) fn convention_symbols(
+    plugins: &PluginHints,
+    modules: &[&ParsedModule],
+    module_names: &HashMap<&str, String>,
+) -> Vec<SymbolId> {
+    let mut symbols = alembic_symbols(plugins, modules, module_names);
+    symbols.extend(django_migration_symbols(plugins, modules, module_names));
+    symbols
+}
+
 /// alembic's revision attributes and hooks in a module under `versions/`
 /// that defines both `revision` and `down_revision`, when alembic is in use.
-pub(super) fn alembic_symbols(
+fn alembic_symbols(
     plugins: &PluginHints,
     modules: &[&ParsedModule],
     module_names: &HashMap<&str, String>,
@@ -101,6 +113,44 @@ fn is_alembic_revision(module: &ParsedModule) -> bool {
         .any(|part| part.as_os_str() == "versions");
     let defines = |name: &str| module.symbols.iter().any(|symbol| symbol.name == name);
     in_versions && defines("revision") && defines("down_revision")
+}
+
+/// `Migration` in a module directly under a `migrations` directory, when
+/// Django is in use (#926): Django's migration loader reads it by name from
+/// each module of an app's `migrations` package. A package that
+/// `MIGRATION_MODULES` renames is not read, so its `Migration` stays CHK006.
+fn django_migration_symbols(
+    plugins: &PluginHints,
+    modules: &[&ParsedModule],
+    module_names: &HashMap<&str, String>,
+) -> Vec<SymbolId> {
+    let enabled = plugins
+        .contributions
+        .iter()
+        .any(|contrib| contrib.plugin == PluginId::Django);
+    if !enabled {
+        return Vec::new();
+    }
+    modules
+        .iter()
+        .filter(|module| is_django_migration(module))
+        .filter_map(|module| module_names.get(module.path.as_str()))
+        .map(|owner| SymbolId::new(owner.clone(), "Migration"))
+        .collect()
+}
+
+fn is_django_migration(module: &ParsedModule) -> bool {
+    let path = Path::new(&module.path);
+    let in_migrations = path
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|dir| dir == "migrations");
+    in_migrations
+        && path.file_stem().is_some_and(|stem| stem != "__init__")
+        && module
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "Migration")
 }
 
 /// Entries whose module namespace the host reads as settings: Sphinx's
@@ -330,6 +380,28 @@ mod tests {
         assert!(!is_alembic_revision(&module(
             "db/versions/a1.py",
             &["down_revision", "upgrade"]
+        )));
+    }
+
+    #[test]
+    fn django_migration_is_a_module_directly_under_migrations() {
+        let defines = ["Migration"];
+        assert!(is_django_migration(&module(
+            "polls/migrations/0001_initial.py",
+            &defines
+        )));
+        assert!(!is_django_migration(&module(
+            "polls/migrations/__init__.py",
+            &defines
+        )));
+        assert!(!is_django_migration(&module(
+            "polls/migrations/sub/0001_initial.py",
+            &defines
+        )));
+        assert!(!is_django_migration(&module("polls/models.py", &defines)));
+        assert!(!is_django_migration(&module(
+            "polls/migrations/0001_initial.py",
+            &["operations"]
         )));
     }
 }
