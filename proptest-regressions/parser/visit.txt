@@ -1,0 +1,15 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 81c94dc65ecb810dff08afaa060a49add61f6fc95f3f7cfad40ca42e93f434ab # shrinks to blocks = [Check], path = "pkg/mod.py", file_context = Runtime
+cc d0c8c26e440b43ccb26d3bda35130ebf1a021462e72c616c4e577366ebc7d376 # shrinks to blocks = [Try { body: [], handler: ImportError, handled: [], orelse: [Import], finalbody: [] }], path = "pkg/mod.py", file_context = Runtime
+cc 78a17051c895e08c6fb7503e51eed306c2e0355df8d4b3bd58f6a0fd80267549 # shrinks to blocks = [Def([Check])], path = "pkg/mod.py", file_context = Runtime
+cc f538e140a5e7f7ee672e44676f71efb30821b9671cf12be18f983dc5be33f420 # shrinks to blocks = [Try { body: [], handler: ImportError, handled: [], orelse: [], finalbody: [If(Main, [Import])] }], path = "pkg/__main__.py", file_context = Runtime
+cc e0fdf638e40e062ce130cfcac17771baddef1f48f72f2cd1185db3595e69f305 # shrinks to blocks = [Class([Def([Try { body: [Import], handler: Other, handled: [Import], orelse: [], finalbody: [] }])])], path = "pkg/mod.py", file_context = Runtime
+cc 0f449444c068aa3e47b7d26d268fe10f0405e8e95da4d3937b489349e6b3b7df # shrinks to blocks = [If(Platform, [])], path = "pkg/mod.py", file_context = Runtime
+cc b0a96e39f9c0a6950efd94c2b988bfd84617919380d9019e545fa72c4cb07d0d # shrinks to blocks = [If(TypeChecking, [])], path = "pkg/mod.py", file_context = Docs
+cc 67a813713d19ed38585ee18def5b0bb9ad185a6ae99ce10014be5eb098f26c7a # shrinks to blocks = [With { suppress: false, body: [Class([Import])] }], path = "pkg/mod.py", file_context = Runtime
+cc 137dfbab9adf45fad75fb124ad5789aac6577968bdb27f9eed4943dd141ed3f7 # shrinks to blocks = [Def([Try { body: [], handler: ImportError, handled: [], orelse: [], finalbody: [Check] }, Def([Import])])], path = "pkg/mod.py", file_context = Runtime

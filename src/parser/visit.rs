@@ -1109,10 +1109,14 @@ mod tests {
     }
 
     fn visit_source_at(path: &str, source: &str) -> ParsedModule {
+        visit_source_in(path, FileContext::Runtime, source)
+    }
+
+    fn visit_source_in(path: &str, file_context: FileContext, source: &str) -> ParsedModule {
         let module = ruff_python_parser::parse_module(source).expect("parse");
         let layout = LayoutInfo::default();
         let lines = LineIndex::new(source);
-        let mut visitor = ModuleVisitor::new(path, &layout, FileContext::Runtime, &lines);
+        let mut visitor = ModuleVisitor::new(path, &layout, file_context, &lines);
         visitor.visit_module(module.suite());
         visitor.into_parsed()
     }
@@ -2359,6 +2363,422 @@ value = t\"{utils.C}\"
                 moved.reverse();
                 prop_assert_eq!(render(&statements), expected.clone());
                 prop_assert_eq!(render(&moved), expected);
+            }
+        }
+
+        /// What a generated `try` catches.
+        #[derive(Clone, Copy, Debug)]
+        enum Handler {
+            /// `except ImportError:`.
+            ImportError,
+            /// `except (ValueError, ModuleNotFoundError):`.
+            Tuple,
+            /// `except ValueError:`, which a missing module does not raise.
+            Other,
+            /// A bare `except:`, which names no import error.
+            Bare,
+        }
+
+        /// The test of a generated `if`; `condition::tests` covers how
+        /// these combine in conditions and `elif` / `else` chains (#861).
+        #[derive(Clone, Copy, Debug)]
+        enum Guard {
+            TypeChecking,
+            Platform,
+            Main,
+            Opaque,
+        }
+
+        /// A statement around imports.
+        #[derive(Clone, Debug)]
+        enum Block {
+            /// `import zzm<n>`, or `from zzm<n> import x` when `from`; `n`
+            /// unique in the file.
+            Import {
+                from: bool,
+            },
+            /// `if importlib.util.find_spec("zzc") is None: raise ImportError`.
+            Check,
+            Try(Try),
+            /// `with suppress(ImportError):`, or `with nullcontext():` when
+            /// not `suppress`.
+            With {
+                suppress: bool,
+                body: Vec<Self>,
+            },
+            If(Guard, Vec<Self>),
+            Def(Vec<Self>),
+            Class(Vec<Self>),
+        }
+
+        /// `try:`, one `except` clause, then `else:` and `finally:` when not
+        /// empty.
+        #[derive(Clone, Debug)]
+        struct Try {
+            body: Vec<Block>,
+            handler: Handler,
+            handled: Vec<Block>,
+            orelse: Vec<Block>,
+            finalbody: Vec<Block>,
+        }
+
+        const HEADER: &str = "import importlib.util\nimport os\nimport sys\n\
+                              from contextlib import nullcontext, suppress\n\
+                              from typing import TYPE_CHECKING\n";
+
+        fn block() -> impl Strategy<Value = Block> {
+            prop_oneof![
+                3 => any::<bool>().prop_map(|from| Block::Import { from }),
+                1 => Just(Block::Check),
+            ]
+            .prop_recursive(4, 24, 3, |inner| {
+                let body = prop::collection::vec(inner, 0..3);
+                let handler = prop_oneof![
+                    Just(Handler::ImportError),
+                    Just(Handler::Tuple),
+                    Just(Handler::Other),
+                    Just(Handler::Bare),
+                ];
+                let guard = prop_oneof![
+                    Just(Guard::TypeChecking),
+                    Just(Guard::Platform),
+                    Just(Guard::Main),
+                    Just(Guard::Opaque),
+                ];
+                prop_oneof![
+                    (
+                        body.clone(),
+                        handler,
+                        body.clone(),
+                        body.clone(),
+                        body.clone()
+                    )
+                        .prop_map(
+                            |(body, handler, handled, orelse, finalbody)| {
+                                Block::Try(Try {
+                                    body,
+                                    handler,
+                                    handled,
+                                    orelse,
+                                    finalbody,
+                                })
+                            }
+                        ),
+                    (any::<bool>(), body.clone())
+                        .prop_map(|(suppress, body)| Block::With { suppress, body }),
+                    (guard, body.clone()).prop_map(|(guard, body)| Block::If(guard, body)),
+                    body.clone().prop_map(Block::Def),
+                    body.prop_map(Block::Class),
+                ]
+            })
+        }
+
+        /// Whether `blocks` check for a package outside nested scopes, as
+        /// `first_availability_check` looks for one.
+        fn checks(blocks: &[Block]) -> bool {
+            blocks.iter().any(|block| match block {
+                Block::Check => true,
+                Block::Import { .. } | Block::Def(_) | Block::Class(_) => false,
+                Block::Try(Try {
+                    body,
+                    handled,
+                    orelse,
+                    finalbody,
+                    ..
+                }) => checks(body) || checks(handled) || checks(orelse) || checks(finalbody),
+                Block::With { body, .. } | Block::If(_, body) => checks(body),
+            })
+        }
+
+        /// The flags spec §10 gives an import.
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        struct Flags {
+            optional: bool,
+            platform_guarded: bool,
+            deferred: bool,
+            context: ImportContext,
+            fallback_for: Vec<String>,
+        }
+
+        /// What encloses a statement.
+        #[allow(clippy::struct_excessive_bools)]
+        #[derive(Clone, Default)]
+        struct Frame {
+            /// Inside a `try` body or `else:`, a suppressing `with`, or after
+            /// a sibling check that raises `ImportError` (#614, #695).
+            optional: bool,
+            platform: bool,
+            type_checking: bool,
+            main_block: bool,
+            /// The innermost def / class is a function.
+            function_scope: bool,
+            /// Roots of the `try` body an enclosing `except ImportError:`
+            /// falls back for (#721).
+            fallback_for: Vec<String>,
+        }
+
+        /// A function the reference model is inside.
+        struct Function {
+            /// An enclosing function checks for a package, so every import
+            /// here may run after that check (#713).
+            all: bool,
+            /// This function checks for a package outside nested scopes.
+            checks: bool,
+            /// The check comes before the current statement.
+            seen: bool,
+        }
+
+        /// Renders blocks as Python and records the flags each import
+        /// should get, in source order.
+        struct Model {
+            default_context: ImportContext,
+            /// `__name__ == "__main__"` is false when the file is imported.
+            main_is_dev: bool,
+            source: String,
+            names: usize,
+            functions: Vec<Function>,
+            expected: Vec<(String, Flags)>,
+        }
+
+        impl Model {
+            fn line(&mut self, depth: usize, text: &str) {
+                self.source.push_str(&"    ".repeat(depth));
+                self.source.push_str(text);
+                self.source.push('\n');
+            }
+
+            fn fresh(&mut self, prefix: &str) -> String {
+                self.names += 1;
+                format!("{prefix}{}", self.names)
+            }
+
+            fn body(&mut self, blocks: &[Block], depth: usize, frame: &Frame) {
+                if blocks.is_empty() {
+                    self.line(depth, "pass");
+                }
+                let mut frame = frame.clone();
+                for block in blocks {
+                    self.block(block, depth, &frame);
+                    if matches!(block, Block::Check) {
+                        frame.optional = true;
+                    }
+                }
+            }
+
+            fn import(&mut self, from: bool, depth: usize, frame: &Frame) {
+                let module = self.fresh("zzm");
+                let statement = if from {
+                    format!("from {module} import x")
+                } else {
+                    format!("import {module}")
+                };
+                self.line(depth, &statement);
+                let checked = self
+                    .functions
+                    .last()
+                    .is_some_and(|function| function.all || function.seen);
+                let context = if frame.type_checking {
+                    ImportContext::Type
+                } else if frame.main_block && self.main_is_dev {
+                    ImportContext::Dev
+                } else {
+                    self.default_context
+                };
+                let flags = Flags {
+                    optional: frame.optional || checked,
+                    platform_guarded: frame.platform,
+                    deferred: !self.functions.is_empty(),
+                    context,
+                    fallback_for: frame.fallback_for.clone(),
+                };
+                self.expected.push((module, flags));
+            }
+
+            fn try_block(&mut self, block: &Try, depth: usize, frame: &Frame) {
+                let Try {
+                    body,
+                    handler,
+                    handled,
+                    orelse,
+                    finalbody,
+                } = block;
+                let guarded = Frame {
+                    optional: true,
+                    ..frame.clone()
+                };
+                self.line(depth, "try:");
+                let first = self.names + 1;
+                self.body(body, depth + 1, &guarded);
+                let primaries = (!body.is_empty()
+                    && body
+                        .iter()
+                        .all(|block| matches!(block, Block::Import { .. })))
+                .then(|| (first..=self.names).map(|n| format!("zzm{n}")).collect());
+                let (clause, import_failed) = match handler {
+                    Handler::ImportError => ("except ImportError:", true),
+                    Handler::Tuple => ("except (ValueError, ModuleNotFoundError):", true),
+                    Handler::Other => ("except ValueError:", false),
+                    Handler::Bare => ("except:", false),
+                };
+                self.line(depth, clause);
+                let mut handling = frame.clone();
+                if import_failed && let Some(primaries) = primaries {
+                    handling.fallback_for = primaries;
+                }
+                self.body(handled, depth + 1, &handling);
+                if !orelse.is_empty() {
+                    self.line(depth, "else:");
+                    self.body(orelse, depth + 1, &guarded);
+                }
+                if !finalbody.is_empty() {
+                    self.line(depth, "finally:");
+                    self.body(finalbody, depth + 1, frame);
+                }
+            }
+
+            fn block(&mut self, block: &Block, depth: usize, frame: &Frame) {
+                match block {
+                    Block::Import { from } => self.import(*from, depth, frame),
+                    Block::Check => {
+                        self.line(depth, "if importlib.util.find_spec(\"zzc\") is None:");
+                        self.line(depth + 1, "raise ImportError(\"zzc\")");
+                        if frame.function_scope
+                            && let Some(function) = self.functions.last_mut()
+                        {
+                            function.seen = true;
+                        }
+                    },
+                    Block::Try(block) => self.try_block(block, depth, frame),
+                    Block::With { suppress, body } => {
+                        let mut inner = frame.clone();
+                        if *suppress {
+                            self.line(depth, "with suppress(ImportError):");
+                            inner.optional = true;
+                        } else {
+                            self.line(depth, "with nullcontext():");
+                        }
+                        self.body(body, depth + 1, &inner);
+                    },
+                    Block::If(guard, body) => {
+                        let mut inner = frame.clone();
+                        let test = match guard {
+                            Guard::TypeChecking => {
+                                inner.type_checking = true;
+                                "TYPE_CHECKING"
+                            },
+                            Guard::Platform => {
+                                inner.platform = true;
+                                "sys.platform == \"win32\""
+                            },
+                            Guard::Main => {
+                                inner.main_block = true;
+                                "__name__ == \"__main__\""
+                            },
+                            Guard::Opaque => "os.environ.get(\"CHOKKIN\")",
+                        };
+                        self.line(depth, &format!("if {test}:"));
+                        self.body(body, depth + 1, &inner);
+                    },
+                    Block::Def(body) => {
+                        let name = self.fresh("f");
+                        self.line(depth, &format!("def {name}():"));
+                        let all = self
+                            .functions
+                            .last()
+                            .is_some_and(|function| function.all || function.checks);
+                        self.functions.push(Function {
+                            all,
+                            checks: checks(body),
+                            seen: false,
+                        });
+                        let inner = Frame {
+                            function_scope: true,
+                            ..frame.clone()
+                        };
+                        self.body(body, depth + 1, &inner);
+                        self.functions.pop();
+                    },
+                    Block::Class(body) => {
+                        let name = self.fresh("C");
+                        self.line(depth, &format!("class {name}:"));
+                        let inner = Frame {
+                            function_scope: false,
+                            ..frame.clone()
+                        };
+                        self.body(body, depth + 1, &inner);
+                    },
+                }
+            }
+        }
+
+        const PATHS: [&str; 3] = ["pkg/mod.py", "pkg/__main__.py", "notebooks/nb.ipynb"];
+
+        fn file_context() -> impl Strategy<Value = FileContext> {
+            prop_oneof![
+                Just(FileContext::Runtime),
+                Just(FileContext::Test),
+                Just(FileContext::Docs),
+                Just(FileContext::Dev),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
+
+            /// Every import gets the `optional` / `platform_guarded` /
+            /// `deferred` / context flags and the fallback roots spec §10
+            /// gives its enclosing statements, and leaving a statement
+            /// restores them: the import the file ends with is plain (#953).
+            #[test]
+            fn import_flags_follow_the_enclosing_statements(
+                blocks in prop::collection::vec(block(), 1..4),
+                path in prop::sample::select(&PATHS[..]),
+                file_context in file_context(),
+            ) {
+                let default_context = if file_context == FileContext::Test {
+                    ImportContext::Test
+                } else {
+                    ImportContext::Runtime
+                };
+                let mut model = Model {
+                    default_context,
+                    main_is_dev: path == "pkg/mod.py" && default_context == ImportContext::Runtime,
+                    source: HEADER.to_owned(),
+                    names: 0,
+                    functions: Vec::new(),
+                    expected: Vec::new(),
+                };
+                // A module-level check that raises makes the rest of the
+                // module optional; nothing else outlives its statement.
+                let checked = blocks.iter().any(|block| matches!(block, Block::Check));
+                let mut blocks = blocks;
+                blocks.push(Block::Import { from: false });
+                model.body(&blocks, 0, &Frame::default());
+                let plain = Flags {
+                    optional: checked,
+                    platform_guarded: false,
+                    deferred: false,
+                    context: default_context,
+                    fallback_for: Vec::new(),
+                };
+                prop_assert_eq!(&model.expected.last().expect("trailing import").1, &plain);
+                let actual: Vec<(String, Flags)> =
+                    visit_source_in(path, file_context, &model.source)
+                        .imports
+                        .into_iter()
+                        .filter(|import| import.module.starts_with("zzm"))
+                        .map(|import| {
+                            let flags = Flags {
+                                optional: import.optional,
+                                platform_guarded: import.platform_guarded,
+                                deferred: import.deferred,
+                                context: import.context,
+                                fallback_for: import.fallback_for,
+                            };
+                            (import.module, flags)
+                        })
+                        .collect();
+                prop_assert_eq!(actual, model.expected, "{}", model.source);
             }
         }
     }
