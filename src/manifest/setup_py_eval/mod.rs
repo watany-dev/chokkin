@@ -16,6 +16,7 @@ use ruff_python_ast::{
 
 use crate::path_util::rel_to_root;
 
+use super::setuptools_reqs::setuptools_requirement_items;
 use super::util::path_is_within_root;
 
 const MAX_CALL_DEPTH: usize = 16;
@@ -126,39 +127,52 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
 }
 
 /// Flatten a dependency-list value into requirement strings and file references.
+///
+/// setuptools reads a string `install_requires` and the string items of a
+/// list with `parse_strings` (#965): the lines of every string are read
+/// together, so a comment is cut and a `\` continuation joins across list
+/// items too (`["requests \\", ">=2"]` is one requirement). A file
+/// reference or an unreadable item stands for lines chokkin has not read, so
+/// it ends the run.
 pub(super) fn dependency_items(value: &Value) -> DependencyItems {
     let mut result = DependencyItems {
         items: Vec::new(),
         complete: true,
     };
-    match value {
-        // setuptools accepts a newline-separated string for `install_requires`.
-        Value::Str(text) => {
-            result.items.extend(
-                text.lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
-                    .map(|line| DependencyItem::Requirement(line.to_owned())),
-            );
-        },
-        _ => flatten_into(value, &mut result),
-    }
+    let mut run = Vec::new();
+    collect(value, &mut run, &mut result);
+    push_parsed_strings(&mut run, &mut result.items);
     result
 }
 
-fn flatten_into(value: &Value, result: &mut DependencyItems) {
+fn collect<'v>(value: &'v Value, run: &mut Vec<&'v str>, result: &mut DependencyItems) {
     match value {
-        Value::Str(text) => result.items.push(DependencyItem::Requirement(text.clone())),
+        Value::Str(text) => run.push(text),
         Value::List(items) => {
             for item in items {
-                flatten_into(item, result);
+                collect(item, run, result);
             }
         },
-        Value::RequirementsFile(path) => result
-            .items
-            .push(DependencyItem::RequirementsFile(path.clone())),
-        Value::Dict { .. } | Value::Unknown => result.complete = false,
+        Value::RequirementsFile(path) => {
+            push_parsed_strings(run, &mut result.items);
+            result
+                .items
+                .push(DependencyItem::RequirementsFile(path.clone()));
+        },
+        Value::Dict { .. } | Value::Unknown => {
+            push_parsed_strings(run, &mut result.items);
+            result.complete = false;
+        },
     }
+}
+
+fn push_parsed_strings(run: &mut Vec<&str>, items: &mut Vec<DependencyItem>) {
+    items.extend(
+        setuptools_requirement_items(run.iter().flat_map(|text| text.lines()))
+            .into_iter()
+            .map(|item| DependencyItem::Requirement(item.text)),
+    );
+    run.clear();
 }
 
 struct Evaluator<'a> {
@@ -1601,6 +1615,55 @@ mod props {
             partial: false,
         };
         assert_eq!(dict.nodes(), 2);
+    }
+
+    /// setuptools reads a string `install_requires` with `parse_strings`
+    /// (#965): ` #` starts a comment, a `\`-ending line takes the next one
+    /// with no space between, and list items go through the same reader.
+    #[test]
+    fn dependency_items_read_strings_like_setuptools_parse_strings() {
+        let texts = |value: Value| requirement_texts(Some(&value)).expect("complete");
+        assert_eq!(
+            texts(Value::Str(
+                "\nrequests \\\n  >=2\nrich  # pretty output\nrich#x\n# note\n".to_owned()
+            )),
+            ["requests>=2", "rich", "rich#x"]
+        );
+        assert_eq!(
+            texts(Value::List(vec![
+                Value::Str("requests \\".to_owned()),
+                Value::Str(">=2".to_owned()),
+                Value::Str("a\nb".to_owned()),
+            ])),
+            ["requests>=2", "a", "b"]
+        );
+        // setuptools drops an item whose `\` has nothing to join; chokkin
+        // keeps it as written so it is reported instead (ADR 0005).
+        assert_eq!(
+            texts(Value::Str("requests \\\n".to_owned())),
+            ["requests \\"]
+        );
+    }
+
+    /// An item chokkin cannot read stands for text it has not seen, so a
+    /// `\` before it joins nothing across it.
+    #[test]
+    fn unreadable_item_ends_the_continuation_run() {
+        let items = dependency_items(&Value::List(vec![
+            Value::Str("foo \\".to_owned()),
+            Value::Unknown,
+            Value::Str("bar".to_owned()),
+        ]));
+        assert!(!items.complete);
+        let texts: Vec<&str> = items
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                DependencyItem::Requirement(text) => Some(text.as_str()),
+                DependencyItem::RequirementsFile(_) => None,
+            })
+            .collect();
+        assert_eq!(texts, ["foo \\", "bar"]);
     }
 
     #[test]
