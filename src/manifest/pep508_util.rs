@@ -185,9 +185,10 @@ pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
 /// ([`looks_like_pip_file`]: `wheels/foo.whl`, `C:\pkg`,
 /// `foo-1.0-py3-none-any.whl`; a requirements file reads these as opaque, a
 /// manifest field as invalid), or another word follows it
-/// (`not a requirement`), which no requirement has, or it starts with `-`,
-/// which pip reads as an option (`-r` alone, `-example-pkg`) and a PEP 508
-/// name cannot start on: such a line names nothing to lower.
+/// (`not a requirement`), which no requirement has, or a `:` follows it, as
+/// in a URL (`file:../other`), or it starts with `-`, which pip reads as an
+/// option (`-r` alone, `-example-pkg`) and a PEP 508 name cannot start on:
+/// such a line names nothing to lower.
 #[must_use]
 pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
@@ -200,6 +201,7 @@ pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     (!name.is_empty()
         && !token.starts_with('-')
         && !looks_like_pip_file(trimmed)
+        && !after.starts_with(':')
         && !followed_by_word)
         .then(|| normalize_distribution_name(name))
 }
@@ -291,6 +293,8 @@ mod tests {
             ("foo-1.0-py3-none-any.whl", None),
             ("-r", None),
             ("-example-pkg", None),
+            ("file:../other", None),
+            ("foo:bar", None),
             ("", None),
         ] {
             assert_eq!(
