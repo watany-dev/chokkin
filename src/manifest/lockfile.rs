@@ -38,39 +38,72 @@ pub(crate) fn lockfile_candidates(root: &Path) -> Vec<(LockfileKind, PathBuf)> {
     found
 }
 
-/// Read the highest-priority lockfile under `root`, if any. One over the
-/// size limits counts as absent: CHK003 then stands for CHK004 too, both
-/// asking for the same declaration, so nothing is lowered.
+/// Read the highest-priority usable lockfile under `root`, if any. One over
+/// the size limits, or one that lists no package (textual's 52-byte stub
+/// `uv.lock` beside a full `poetry.lock`, #976), is skipped with a warning
+/// for the next candidate. With none left, the lock counts as absent:
+/// CHK003 then stands for CHK004 too, both asking for the same declaration,
+/// so nothing is lowered.
 pub(super) fn extract_lockfile(
     root: &Path,
     warnings: &mut Vec<ManifestWarning>,
 ) -> Result<Option<(LockfileSource, LockfileGraph)>, ManifestError> {
-    let Some((kind, path)) = lockfile_candidates(root).into_iter().next() else {
-        return Ok(None);
-    };
-    let file = rel_to_root(root, &path);
-    let bytes = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());
+    let mut skipped: Vec<(String, String)> = Vec::new();
+    let mut used = None;
+    for (kind, path) in lockfile_candidates(root) {
+        let file = rel_to_root(root, &path);
+        match read_candidate(kind, &path)? {
+            Ok(graph) => {
+                used = Some((LockfileSource { kind, path: file }, graph));
+                break;
+            },
+            Err(cause) => skipped.push((file, cause)),
+        }
+    }
+    let consequence = used.as_ref().map_or_else(
+        || "transitive dependencies (CHK004) are not checked".to_owned(),
+        |(source, _)| format!("using `{}` instead", source.path),
+    );
+    warnings.extend(
+        skipped
+            .into_iter()
+            .map(|(file, cause)| ManifestWarning::LockfileSkipped {
+                file,
+                reason: format!("{cause}; {consequence}"),
+            }),
+    );
+    Ok(used)
+}
+
+/// The lock's graph, or why it is not used.
+fn read_candidate(
+    kind: LockfileKind,
+    path: &Path,
+) -> Result<Result<LockfileGraph, String>, ManifestError> {
+    let bytes = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
     // Counting the table headers first spares parsing a lock already too
     // large; the parsed count still catches packages written another way.
-    let headers = std::fs::read_to_string(&path)
+    let headers = std::fs::read_to_string(path)
         .ok()
         .map(|contents| package_headers(&contents));
-    if let Some(reason) = over_limit(bytes, headers) {
-        warnings.push(ManifestWarning::LockfileSkipped { file, reason });
-        return Ok(None);
+    if let Some(cause) = over_limit(bytes, headers) {
+        return Ok(Err(cause));
     }
     let graph = match kind {
-        LockfileKind::Uv => extract_uv_lock(&path)?,
-        LockfileKind::Pylock => extract_pylock(&path)?,
-        LockfileKind::Poetry => extract_poetry_lock(&path)?,
-        LockfileKind::Pdm => extract_pdm_lock(&path)?,
+        LockfileKind::Uv => extract_uv_lock(path)?,
+        LockfileKind::Pylock => extract_pylock(path)?,
+        LockfileKind::Poetry => extract_poetry_lock(path)?,
+        LockfileKind::Pdm => extract_pdm_lock(path)?,
     };
-    if let Some(reason) = over_limit(bytes, Some(graph.edges.len())) {
-        warnings.push(ManifestWarning::LockfileSkipped { file, reason });
-        return Ok(None);
+    if let Some(cause) = over_limit(bytes, Some(graph.edges.len())) {
+        return Ok(Err(cause));
     }
-    let source = LockfileSource { kind, path: file };
-    Ok(Some((source, graph)))
+    // A lock always lists the project or its dependencies, so an empty one is
+    // a placeholder, not a project without dependencies.
+    if graph.edges.is_empty() {
+        return Ok(Err("it lists no packages".to_owned()));
+    }
+    Ok(Ok(graph))
 }
 
 /// `[[package]]` (uv, Poetry, PDM) and `[[packages]]` (PEP 751) headers.
@@ -83,18 +116,15 @@ fn package_headers(contents: &str) -> usize {
 
 /// Why a lockfile of `bytes` and `packages` is too large.
 fn over_limit(bytes: u64, packages: Option<usize>) -> Option<String> {
-    const CONSEQUENCE: &str = "transitive dependencies (CHK004) are not checked";
     if bytes > MAX_LOCKFILE_BYTES {
         return Some(format!(
-            "{bytes} bytes exceed the {MAX_LOCKFILE_BYTES}-byte limit; {CONSEQUENCE}"
+            "{bytes} bytes exceed the {MAX_LOCKFILE_BYTES}-byte limit"
         ));
     }
     packages
         .filter(|&packages| packages > MAX_LOCKFILE_PACKAGES)
         .map(|packages| {
-            format!(
-                "{packages} packages exceed the {MAX_LOCKFILE_PACKAGES}-package limit; {CONSEQUENCE}"
-            )
+            format!("{packages} packages exceed the {MAX_LOCKFILE_PACKAGES}-package limit")
         })
 }
 
@@ -286,6 +316,58 @@ mod tests {
                     if file == "pdm.lock" && reason.contains("CHK004")
             ),
             "{warnings:?}"
+        );
+    }
+
+    /// textual ships a stub `uv.lock` beside its `poetry.lock` (#976).
+    #[test]
+    fn a_lockfile_without_packages_falls_back_to_the_next_with_a_warning() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("uv.lock"),
+            "version = 1\nrevision = 3\nrequires-python = \">=3.11\"\n",
+        )
+        .expect("write");
+        std::fs::write(
+            temp.path().join("poetry.lock"),
+            "[[package]]\nname = \"rich\"\nversion = \"13.0\"\n\n[package.dependencies]\nmarkdown-it-py = \">=2\"\n",
+        )
+        .expect("write");
+        let mut warnings = Vec::new();
+        let (source, graph) = extract_lockfile(temp.path(), &mut warnings)
+            .expect("ok")
+            .expect("poetry.lock used");
+        assert_eq!(source.kind, LockfileKind::Poetry);
+        assert_eq!(
+            graph.edges.get("rich"),
+            Some(&vec!["markdown-it-py".to_owned()])
+        );
+        assert_eq!(
+            warnings,
+            [ManifestWarning::LockfileSkipped {
+                file: "uv.lock".to_owned(),
+                reason: "it lists no packages; using `poetry.lock` instead".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_lone_empty_lockfile_counts_as_absent_with_a_warning() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("uv.lock"), "version = 1\n").expect("write");
+        let mut warnings = Vec::new();
+        assert!(
+            extract_lockfile(temp.path(), &mut warnings)
+                .expect("ok")
+                .is_none()
+        );
+        assert_eq!(
+            warnings,
+            [ManifestWarning::LockfileSkipped {
+                file: "uv.lock".to_owned(),
+                reason: "it lists no packages; transitive dependencies (CHK004) are not checked"
+                    .to_owned(),
+            }]
         );
     }
 }

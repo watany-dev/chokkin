@@ -1,0 +1,10 @@
+[[package]]
+name = "rich"
+version = "13.7.0"
+
+[package.dependencies]
+markdown-it-py = ">=2.2.0"
+
+[[package]]
+name = "markdown-it-py"
+version = "3.0.0"

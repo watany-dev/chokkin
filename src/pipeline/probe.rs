@@ -15,7 +15,8 @@ use crate::config::{
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
     DeclaredDependency, InlineScript, LoadedManifest, discover_inline_scripts,
-    extract_manifest_with_cache, normalize_distribution_name, resolve_target_version,
+    extract_manifest_with_cache, lockfile_candidates, normalize_distribution_name,
+    resolve_target_version,
 };
 use crate::path_util::join_rel;
 use crate::plugins::{
@@ -636,12 +637,31 @@ fn format_layout(sources: &DiscoveredSources) -> String {
     }
 }
 
+/// The lockfile read, plus any other candidate beside it: with several
+/// present, which one the fixed order picked is otherwise invisible (#976).
 fn format_lockfile(manifest: &LoadedManifest) -> String {
     manifest.sources.lockfile.as_ref().map_or_else(
         || "none".to_owned(),
         |source| {
             let nodes = manifest.lockfile.edges.len();
-            format!("{} ({}, {nodes} nodes)", source.path, source.kind.as_str())
+            let unused: Vec<String> = lockfile_candidates(&manifest.root.path)
+                .into_iter()
+                .filter_map(|(_, path)| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .filter(|name| *name != source.path)
+                .collect();
+            let kind = source.kind.as_str();
+            if unused.is_empty() {
+                format!("{} ({kind}, {nodes} nodes)", source.path)
+            } else {
+                format!(
+                    "{} ({kind}, {nodes} nodes; not used: {})",
+                    source.path,
+                    unused.join(", ")
+                )
+            }
         },
     )
 }
