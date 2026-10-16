@@ -78,7 +78,7 @@ pub(super) fn extract_setup_py(
     // passed twice is a `TypeError`, so an explicit one wins).
     let (extras_require, extras_hidden): (&[(String, Value)], bool) =
         match call.keyword("extras_require") {
-            Some(Value::Dict { items, partial }) => (items, *partial),
+            Some(Value::Dict { items, partial, .. }) => (items, *partial),
             Some(_) => (&[], true),
             None => (&[], call.unpacked),
         };
