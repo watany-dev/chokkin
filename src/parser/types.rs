@@ -256,6 +256,18 @@ impl Exports {
         self.names().iter().any(|export| export == name)
     }
 
+    /// Whether `from m import *` may bind `name` from this module: a list the
+    /// parser could not read whole may hold any name (#951), and an empty
+    /// one counts as none, like a module without `__all__`.
+    #[must_use]
+    pub fn may_hand_on(&self, name: &str) -> bool {
+        match self {
+            Self::Known(names) if !names.is_empty() => names.iter().any(|export| export == name),
+            Self::Partial(_) | Self::Unknown => true,
+            Self::Known(_) | Self::Absent => !name.starts_with('_'),
+        }
+    }
+
     fn is_absent(&self) -> bool {
         matches!(self, Self::Absent)
     }

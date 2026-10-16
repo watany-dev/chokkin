@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::parser::{ImportKind, ParsedModule};
+use crate::parser::{Exports, ImportKind, ParsedModule};
 
 use super::exports::ReExport;
 use super::graph::{ReferenceIndex, RegistryEntry};
@@ -11,7 +11,8 @@ use super::graph::{ReferenceIndex, RegistryEntry};
 #[derive(Debug, Default)]
 pub(super) struct PublicApi {
     star_reached: HashSet<String>,
-    declares_all: HashSet<String>,
+    /// `__all__` of the modules that bind one.
+    exports: HashMap<String, Exports>,
     /// References that `--production` left out of reachability (#588).
     production_references: ReferenceIndex,
 }
@@ -23,13 +24,13 @@ impl PublicApi {
         production_references: ReferenceIndex,
     ) -> Self {
         let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut declares_all = HashSet::new();
+        let mut exports = HashMap::new();
         for module in modules {
             let Some(name) = module_names.get(module.path.as_str()) else {
                 continue;
             };
-            if !module.exports.names().is_empty() {
-                declares_all.insert(name.clone());
+            if module.exports != Exports::Absent {
+                exports.insert(name.clone(), module.exports.clone());
             }
             star_targets
                 .entry(name.as_str())
@@ -45,7 +46,7 @@ impl PublicApi {
 
         Self {
             star_reached: star_closure(&star_targets, seeds),
-            declares_all,
+            exports,
             production_references,
         }
     }
@@ -57,7 +58,12 @@ impl PublicApi {
         let module = entry.id.module.as_str();
         entry.in_all
             || (entry.path.ends_with("__init__.py") && is_public_module(module))
-            || (self.star_reached.contains(module) && !self.declares_all.contains(module))
+            || (self.star_reached.contains(module)
+                && self
+                    .exports
+                    .get(module)
+                    .unwrap_or(&Exports::Absent)
+                    .may_hand_on(&entry.id.name))
             || (is_public_module(module)
                 && self
                     .production_references

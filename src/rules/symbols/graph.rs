@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::parser::{ImportKind, ParsedModule, SymbolDef};
+use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
 
 use super::public::star_imports;
 
@@ -188,8 +188,8 @@ struct StarImports<'a> {
     /// Star-imported modules missing from the parsed ones, such as reachable
     /// modules left out of the `--production` evidence: they may bind any name.
     opaque: Vec<&'a str>,
-    /// `__all__` of the modules that declare one.
-    exports: HashMap<&'a str, HashSet<&'a str>>,
+    /// `__all__` of the modules that bind one.
+    exports: HashMap<&'a str, &'a Exports>,
     cache: HashMap<SymbolId, Vec<&'a str>>,
 }
 
@@ -215,12 +215,7 @@ impl<'a> StarImports<'a> {
                         .map(|symbol| symbol.name.as_str()),
                 );
             }
-            if !module.exports.names().is_empty() {
-                stars.exports.insert(
-                    name.as_str(),
-                    module.exports.names().iter().map(String::as_str).collect(),
-                );
-            }
+            stars.exports.insert(name.as_str(), &module.exports);
         }
         let mut parsed = HashSet::new();
         for module in modules {
@@ -266,10 +261,10 @@ impl<'a> StarImports<'a> {
     }
 
     /// Whether `module` reaches `name` in `binder` through chained star
-    /// imports. Each hop hands on only the names in its `__all__`, or without
-    /// one, the names not starting with `_`, and stops at a module defining
-    /// `name` itself. Walks up from `binder`: a name has few binders, while a
-    /// package can star-import hundreds of modules.
+    /// imports. Each hop hands on the names `Exports::may_hand_on` allows, and
+    /// stops at a module defining `name` itself. Walks up from `binder`: a
+    /// name has few binders, while a package can star-import hundreds of
+    /// modules.
     fn reaches(&self, module: &str, binder: &'a str, name: &str) -> bool {
         if !self.hands_on(binder, name) {
             return false;
@@ -296,10 +291,11 @@ impl<'a> StarImports<'a> {
     }
 
     fn hands_on(&self, module: &str, name: &str) -> bool {
-        match self.exports.get(module) {
-            Some(all) => all.contains(name),
-            None => !name.starts_with('_'),
-        }
+        self.exports
+            .get(module)
+            .copied()
+            .unwrap_or(&Exports::Absent)
+            .may_hand_on(name)
     }
 }
 
@@ -369,13 +365,33 @@ mod tests {
         use proptest::prelude::*;
         use proptest::sample::Index;
 
+        use super::super::super::public::{PublicApi, is_public_module};
         use super::*;
-        use crate::parser::{Exports, SymbolKind};
+        use crate::parser::SymbolKind;
 
         const MODULES: usize = 5;
         const NAMES: [&str; 3] = ["alpha", "beta", "_gamma"];
         /// A star target no generated module is: it may bind any name.
         const OPAQUE: &str = "vendored.blob";
+
+        /// A module's `__all__` as the parser reads it (#951).
+        #[derive(Debug, Clone)]
+        enum All {
+            Absent,
+            Known(Vec<usize>),
+            /// These names and possibly others.
+            Partial(Vec<usize>),
+            Unknown,
+        }
+
+        impl All {
+            fn listed(&self) -> &[usize] {
+                match self {
+                    Self::Known(names) | Self::Partial(names) => names,
+                    Self::Absent | Self::Unknown => &[],
+                }
+            }
+        }
 
         #[derive(Debug, Clone)]
         struct Module {
@@ -385,16 +401,26 @@ mod tests {
             imported: Vec<usize>,
             /// Star targets: a module index, or `MODULES` for [`OPAQUE`].
             stars: Vec<usize>,
-            all: Option<Vec<usize>>,
+            all: All,
+        }
+
+        fn all() -> impl Strategy<Value = All> {
+            let names = || prop::collection::vec(0..NAMES.len(), 0..3);
+            prop_oneof![
+                Just(All::Absent),
+                names().prop_map(All::Known),
+                names().prop_map(All::Partial),
+                Just(All::Unknown),
+            ]
         }
 
         fn module() -> impl Strategy<Value = Module> {
             let name = 0..NAMES.len();
             (
                 prop::collection::vec((name.clone(), any::<bool>()), 0..3),
-                prop::collection::vec(name.clone(), 0..2),
+                prop::collection::vec(name, 0..2),
                 prop::collection::vec(0..=MODULES, 0..3),
-                prop::option::of(prop::collection::vec(name, 0..3)),
+                all(),
             )
                 .prop_map(|(symbols, imported, stars, all)| Module {
                     symbols,
@@ -408,15 +434,18 @@ mod tests {
             prop::collection::vec(module(), MODULES)
         }
 
+        /// Odd modules are private, so a star import from them puts nothing
+        /// in the library's API on its own.
         fn module_name(index: usize) -> String {
-            if index == MODULES {
-                OPAQUE.to_owned()
-            } else {
-                format!("pkg.m{index}")
+            match index {
+                MODULES => OPAQUE.to_owned(),
+                _ if index % 2 == 1 => format!("pkg._m{index}"),
+                _ => format!("pkg.m{index}"),
             }
         }
 
         fn parsed(index: usize, module: &Module) -> ParsedModule {
+            let listed = |name: usize| module.all.listed().contains(&name);
             let symbols = module
                 .symbols
                 .iter()
@@ -424,7 +453,7 @@ mod tests {
                     name: NAMES[name].to_owned(),
                     kind: SymbolKind::Function,
                     line: 1,
-                    is_public: !NAMES[name].starts_with('_'),
+                    is_public: !NAMES[name].starts_with('_') || listed(name),
                     decorators: Vec::new(),
                     in_type_checking,
                     used_in_module: false,
@@ -442,31 +471,43 @@ mod tests {
                     None,
                 )
             });
+            let names =
+                |names: &[usize]| names.iter().map(|&name| NAMES[name].to_owned()).collect();
             ParsedModule {
                 path: format!("pkg/m{index}.py"),
                 symbols,
                 imports: imported.chain(stars).collect(),
-                exports: module.all.as_ref().map_or(Exports::Absent, |all| {
-                    Exports::Known(all.iter().map(|&name| NAMES[name].to_owned()).collect())
-                }),
+                exports: match &module.all {
+                    All::Absent => Exports::Absent,
+                    All::Known(all) => Exports::Known(names(all)),
+                    All::Partial(all) => Exports::Partial(names(all)),
+                    All::Unknown => Exports::Unknown,
+                },
                 ..ParsedModule::default()
             }
         }
 
         type Sources = BTreeMap<(String, &'static str), BTreeSet<String>>;
 
-        /// `StarImports::sources` for every (module, name) pair, with the
-        /// modules handed over in `order`.
-        fn star_sources(modules: &[Module], order: &[usize]) -> Sources {
-            let parsed: Vec<_> = order
+        /// The modules handed over in `order`, and their names.
+        fn project(modules: &[Module], order: &[usize]) -> (Vec<ParsedModule>, Vec<String>) {
+            let parsed = order
                 .iter()
                 .map(|&index| parsed(index, &modules[index]))
                 .collect();
+            let names = order.iter().map(|&index| module_name(index)).collect();
+            (parsed, names)
+        }
+
+        /// `StarImports::sources` for every (module, name) pair, with the
+        /// modules handed over in `order`.
+        fn star_sources(modules: &[Module], order: &[usize]) -> Sources {
+            let (parsed, module_names) = project(modules, order);
             let refs: Vec<&ParsedModule> = parsed.iter().collect();
             let names: HashMap<&str, String> = parsed
                 .iter()
-                .zip(order)
-                .map(|(module, &index)| (module.path.as_str(), module_name(index)))
+                .map(|module| module.path.as_str())
+                .zip(module_names)
                 .collect();
             let mut stars = StarImports::build(&refs, &names);
             let mut sources = Sources::new();
@@ -483,20 +524,22 @@ mod tests {
             sources
         }
 
-        /// The naive reading of the spec (§symbols, #576): iterate to a fixed
-        /// point the (name, binder) pairs each module's namespace gets from
-        /// its star imports. A target hands on its own bindings and what it
-        /// got itself, filtered by its `__all__` (empty counts as none), and
-        /// a module's own definitions shadow what it would get.
-        fn reference(modules: &[Module]) -> Sources {
-            let hands_on = |target: usize, name: &str| match modules
-                .get(target)
-                .and_then(|module| module.all.as_ref())
-                .filter(|all| !all.is_empty())
-            {
-                Some(all) => all.iter().any(|&export| NAMES[export] == name),
-                None => !name.starts_with('_'),
-            };
+        /// The (name, binder) pairs each module's namespace gets from its
+        /// star imports under Python's rules, iterated to a fixed point
+        /// (§symbols, #576). A target hands on its own bindings and what it
+        /// got itself, filtered by its `__all__`: a known list hands on what
+        /// it lists (empty counts as none), a partial or unread one may hand
+        /// on anything (#951), and without one the names not starting with
+        /// `_` go. A module's own definitions shadow what it would get.
+        fn namespaces(modules: &[Module]) -> Vec<BTreeSet<(&'static str, usize)>> {
+            let hands_on =
+                |target: usize, name: &str| match modules.get(target).map(|module| &module.all) {
+                    Some(All::Known(all)) if !all.is_empty() => {
+                        all.iter().any(|&export| NAMES[export] == name)
+                    },
+                    Some(All::Partial(_) | All::Unknown) => true,
+                    _ => !name.starts_with('_'),
+                };
             let bindings = |target: usize| -> BTreeSet<&'static str> {
                 match modules.get(target) {
                     Some(module) => module
@@ -534,8 +577,14 @@ mod tests {
                     break;
                 }
             }
+            got
+        }
+
+        /// `pkg.name` uses the binder of `name` exactly when the star imports
+        /// put `name` from that binder into `pkg`.
+        fn reference(modules: &[Module]) -> Sources {
             let mut sources = Sources::new();
-            for (index, pairs) in got.iter().enumerate() {
+            for (index, pairs) in namespaces(modules).iter().enumerate() {
                 for name in NAMES {
                     let found = pairs
                         .iter()
@@ -546,6 +595,41 @@ mod tests {
                 }
             }
             sources
+        }
+
+        /// The registered symbols the star imports put into a public module
+        /// that `PublicApi` leaves out of the library's API.
+        fn unexported_star_symbols(modules: &[Module]) -> Vec<SymbolId> {
+            let order: Vec<_> = (0..modules.len()).collect();
+            let (parsed, module_names) = project(modules, &order);
+            let refs: Vec<&ParsedModule> = parsed.iter().collect();
+            let names: HashMap<&str, String> = parsed
+                .iter()
+                .map(|module| module.path.as_str())
+                .zip(module_names)
+                .collect();
+            let api = PublicApi::build(&refs, &names, ReferenceIndex::default());
+            let namespaces = namespaces(modules);
+            build_registry(&refs, &names)
+                .into_iter()
+                .filter(|entry| {
+                    let index = order
+                        .iter()
+                        .position(|&index| module_name(index) == entry.id.module)
+                        .expect("registered module");
+                    namespaces.iter().enumerate().any(|(public, pairs)| {
+                        is_public_module(&module_name(public))
+                            && pairs.contains(&(
+                                NAMES
+                                    .into_iter()
+                                    .find(|&known| known == entry.id.name)
+                                    .expect("generated name"),
+                                index,
+                            ))
+                    }) && !api.exports_symbol(entry)
+                })
+                .map(|entry| entry.id)
+                .collect()
         }
 
         fn identity() -> Vec<usize> {
@@ -576,15 +660,99 @@ mod tests {
                 all in prop::collection::btree_set(0..NAMES.len() - 1, 1..NAMES.len()),
             ) {
                 let target = target.index(MODULES);
-                modules[target].all = None;
+                modules[target].all = All::Absent;
                 let before = star_sources(&modules, &identity());
-                modules[target].all = Some(all.iter().copied().collect());
+                modules[target].all = All::Known(all.iter().copied().collect());
                 let after = star_sources(&modules, &identity());
                 for (key, sources) in &after {
                     if all.iter().any(|&export| NAMES[export] == key.1) {
                         prop_assert_eq!(sources, &before[key], "{:?}", key);
                     } else {
                         prop_assert!(sources.is_subset(&before[key]), "{:?}", key);
+                    }
+                }
+            }
+
+            /// Losing part of `__all__` only adds names it may hand on.
+            #[test]
+            fn a_partial_all_hands_on_at_least_what_its_list_does(
+                mut modules in modules(),
+                target in any::<Index>(),
+            ) {
+                let target = target.index(MODULES);
+                let listed = modules[target].all.listed().to_vec();
+                modules[target].all = All::Known(listed.clone());
+                let known = star_sources(&modules, &identity());
+                modules[target].all = All::Partial(listed);
+                let partial = star_sources(&modules, &identity());
+                for (key, sources) in &known {
+                    prop_assert!(sources.is_subset(&partial[key]), "{:?}", key);
+                }
+            }
+
+            #[test]
+            fn star_symbols_in_a_public_module_are_api(modules in modules()) {
+                prop_assert_eq!(unexported_star_symbols(&modules), Vec::<SymbolId>::new());
+            }
+        }
+
+        /// Every `__all__` state and every set of `alpha` / `_gamma`
+        /// definitions on three modules, over star-import shapes covering a
+        /// chain, a fork, a diamond, a cycle, a self import and an unparsed
+        /// target (#951).
+        #[test]
+        fn star_imports_match_cpython_on_every_small_tree() {
+            const SHAPES: [[&[usize]; 3]; 6] = [
+                [&[1], &[2], &[]],
+                [&[1], &[2], &[MODULES]],
+                [&[1, 2], &[], &[]],
+                [&[1, 2], &[2], &[]],
+                [&[1], &[2], &[0]],
+                [&[0, 1], &[MODULES], &[1]],
+            ];
+            let alls = || {
+                [
+                    All::Absent,
+                    All::Known(Vec::new()),
+                    All::Known(vec![0]),
+                    All::Known(vec![2]),
+                    All::Partial(Vec::new()),
+                    All::Partial(vec![0]),
+                    All::Unknown,
+                ]
+            };
+            let symbols: [&[(usize, bool)]; 4] =
+                [&[], &[(0, false)], &[(2, false)], &[(0, false), (2, false)]];
+            let states: Vec<(Vec<(usize, bool)>, All)> = symbols
+                .iter()
+                .flat_map(|symbols| alls().map(|all| (symbols.to_vec(), all)))
+                .collect();
+            for shape in SHAPES {
+                for a in &states {
+                    for b in &states {
+                        for c in &states {
+                            let modules: Vec<_> = [a, b, c]
+                                .into_iter()
+                                .zip(shape)
+                                .map(|((symbols, all), stars)| Module {
+                                    symbols: symbols.clone(),
+                                    imported: Vec::new(),
+                                    stars: stars.to_vec(),
+                                    all: all.clone(),
+                                })
+                                .collect();
+                            let order = [0, 1, 2];
+                            assert_eq!(
+                                star_sources(&modules, &order),
+                                reference(&modules),
+                                "{modules:?}"
+                            );
+                            assert_eq!(
+                                unexported_star_symbols(&modules),
+                                Vec::<SymbolId>::new(),
+                                "{modules:?}"
+                            );
+                        }
                     }
                 }
             }
