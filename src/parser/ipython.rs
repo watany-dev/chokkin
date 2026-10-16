@@ -412,6 +412,13 @@ mod tests {
     }
 
     #[test]
+    fn help_is_only_on_names() {
+        for cell in ["f(x)?\n", "??\n"] {
+            assert_eq!(cell_to_python(cell).as_deref(), Ok(cell));
+        }
+    }
+
+    #[test]
     fn continued_lines_join_before_the_rewrite() {
         assert_eq!(
             cell_to_python("%load_ext \\\n  foo\n").as_deref(),
