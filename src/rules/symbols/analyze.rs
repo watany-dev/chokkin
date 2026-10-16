@@ -28,6 +28,35 @@ use super::external::{collect_external_symbols, dynamically_fetched_classes};
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
 use super::public::{PublicApi, exports_reexport, is_public_module};
 
+/// The reachable modules whose symbols form an API surface.
+fn surface_modules<'m>(
+    reachable_modules: &[&'m ParsedModule],
+    sources: &DiscoveredSources,
+    entry: &EntryPlan,
+    plugins: &PluginHints,
+) -> Vec<&'m ParsedModule> {
+    // Test code and root `tests/`-style packages are importable but not an
+    // API surface: pytest calls their functions, so their symbols would all
+    // read as unused. They still reference the symbols they import.
+    let test_files = test_file_paths(sources, entry);
+    let all_files: HashSet<&str> = sources
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    let alembic_files = alembic_script_files(plugins);
+    reachable_modules
+        .iter()
+        .copied()
+        .filter(|module| {
+            !sources.layout.in_local_package(&module.path)
+                && !test_files.contains(module.path.as_str())
+                && !is_codegen_file(&module.path, &all_files)
+                && !alembic_files.contains(module.path.as_str())
+        })
+        .collect()
+}
+
 /// Analyze public symbol usage and unresolved imports (§12).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
@@ -54,11 +83,20 @@ pub fn analyze_with_context(
         .filter(|module| reachable.contains(module.path.as_str()))
         .collect();
     let module_names = build_module_names(&reachable_modules, sources);
-    let surface_modules = api_modules(&reachable_modules, sources, entry, plugins);
+    let surface_modules = surface_modules(&reachable_modules, sources, entry, plugins);
 
-    let registry = build_registry(&surface_modules, &module_names);
-    let reference_index = ReferenceIndex::build(&reachable_modules, &module_names);
-    let reexports = collect_reexports(&surface_modules, &module_names, &sources.layout);
+    // The reference index is the costly part and reads only the reachable
+    // modules; the registry and re-exports build beside it.
+    let ((registry, reexports), reference_index) = crate::parallel::join(
+        reachable_modules.len(),
+        || {
+            (
+                build_registry(&surface_modules, &module_names),
+                collect_reexports(&surface_modules, &module_names, &sources.layout),
+            )
+        },
+        || ReferenceIndex::build(&reachable_modules, &module_names),
+    );
     let public_api = PublicApi::build(
         &surface_modules,
         &module_names,
@@ -107,36 +145,6 @@ pub fn analyze_with_context(
 
     sort_candidates(&mut candidates);
     candidates
-}
-
-/// The reachable modules whose symbols form an API surface.
-///
-/// Test code and root `tests/`-style packages are importable but not an API
-/// surface: pytest calls their functions, so their symbols would all read as
-/// unused. They still reference the symbols they import.
-fn api_modules<'a>(
-    reachable_modules: &[&'a ParsedModule],
-    sources: &DiscoveredSources,
-    entry: &EntryPlan,
-    plugins: &PluginHints,
-) -> Vec<&'a ParsedModule> {
-    let test_files = test_file_paths(sources, entry);
-    let all_files: HashSet<&str> = sources
-        .files
-        .iter()
-        .map(|file| file.path.as_str())
-        .collect();
-    let alembic_files = alembic_script_files(plugins);
-    reachable_modules
-        .iter()
-        .copied()
-        .filter(|module| {
-            !sources.layout.in_local_package(&module.path)
-                && !test_files.contains(module.path.as_str())
-                && !is_codegen_file(&module.path, &all_files)
-                && !alembic_files.contains(module.path.as_str())
-        })
-        .collect()
 }
 
 struct Wheels<'a> {

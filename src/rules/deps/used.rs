@@ -181,8 +181,8 @@ pub(super) fn mark_workspace_source_distributions(
         }
     }
 
-    let mut modules: HashSet<&str> = first_party.iter().chain(&entry_modules).copied().collect();
-    let mut pending = Vec::new();
+    let paths = sorted_paths(&context.sources.files);
+    let mut members = Vec::new();
     for boundary in workspace_boundaries {
         let Some(name) = local_source_member(manifest, local, boundary.manifest) else {
             continue;
@@ -192,27 +192,106 @@ pub(super) fn mark_workspace_source_distributions(
         };
         // A root that inventories only its own package (`src/**`) misses the
         // member's files, so the member's inventory supplies its tree (#559).
-        let mut provided = member_modules(&member_path, &context.sources.files);
-        provided.extend(member_modules("", boundary.files));
-        pending.push((name, member_path, boundary.imports, provided));
+        let mut provided = member_modules(&member_path, under(&paths, &member_path));
+        provided.extend(member_modules(
+            "",
+            boundary.files.iter().map(|file| file.path.as_str()),
+        ));
+        members.push((name, member_path, boundary.imports, provided));
+    }
+    if members.is_empty() {
+        return;
     }
 
+    let providers = Providers::new(members.iter().map(|(_, _, _, provided)| provided));
+    let member_imports = MemberImports::new(context.resolution);
+
+    let mut provided = vec![false; members.len()];
+    let mut done = vec![false; members.len()];
+    let mut modules: HashSet<&str> = HashSet::new();
+    let mut found: Vec<&str> = first_party.iter().chain(&entry_modules).copied().collect();
+    // Each round marks, in declaration order, the members the modules found
+    // by the end of the previous round use; their trees' imports feed the
+    // next round.
     loop {
-        let (now_used, rest): (Vec<_>, Vec<_>) =
-            pending.into_iter().partition(|(name, _, _, provided)| {
-                used.contains(name) || modules.iter().any(|module| provides(provided, module))
-            });
-        pending = rest;
+        for module in std::mem::take(&mut found) {
+            if !modules.insert(module) {
+                continue;
+            }
+            for index in providers.of(module) {
+                provided[index] = true;
+            }
+        }
+        let now_used: Vec<usize> = (0..members.len())
+            .filter(|&index| !done[index] && (provided[index] || used.contains(&members[index].0)))
+            .collect();
         if now_used.is_empty() {
             break;
         }
-        for (name, member_path, imports, _) in now_used {
+        for index in now_used {
+            done[index] = true;
+            let (name, member_path, imports, _) = &members[index];
             if !member_path.is_empty() {
-                modules.extend(member_imports(context.resolution, &member_path));
-                modules.extend(imports.iter().map(String::as_str));
+                found.extend(member_imports.under(member_path));
+                found.extend(imports.iter().map(String::as_str));
             }
-            used.insert(name);
+            used.insert(name.clone());
         }
+    }
+}
+
+/// Inventory paths in byte order, so the files under a directory form one range.
+pub(super) fn sorted_paths(files: &[DiscoveredFile]) -> Vec<&str> {
+    let mut paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+    paths.sort_unstable();
+    paths
+}
+
+/// The `paths` under `member_path`; all of them for the root itself.
+fn under<'a>(paths: &[&'a str], member_path: &str) -> impl Iterator<Item = &'a str> {
+    if member_path.is_empty() {
+        return paths.iter().copied();
+    }
+    within(paths, |path| path, member_path).iter().copied()
+}
+
+/// The run of `items`, sorted by `path`, whose path is under the non-empty
+/// `member_path`.
+pub(super) fn within<'s, T>(
+    items: &'s [T],
+    path: impl Fn(&T) -> &str,
+    member_path: &str,
+) -> &'s [T] {
+    let prefix = format!("{member_path}/");
+    let start = items.partition_point(|item| path(item) < prefix.as_str());
+    let len = items[start..]
+        .iter()
+        .take_while(|item| path(item).starts_with(&prefix))
+        .count();
+    &items[start..start + len]
+}
+
+/// Non-stdlib imports as `(file, full module)`, sorted by file and otherwise
+/// in resolution order.
+struct MemberImports<'a>(Vec<(&'a str, &'a str)>);
+
+impl<'a> MemberImports<'a> {
+    fn new(resolution: &'a ResolutionIndex) -> Self {
+        let mut imports: Vec<(&str, &str)> = resolution
+            .imports
+            .iter()
+            .filter(|import| import.origin != ModuleOrigin::Stdlib)
+            .map(|import| (import.file.as_str(), import.full_module.as_str()))
+            .collect();
+        imports.sort_by_key(|(file, _)| *file);
+        Self(imports)
+    }
+
+    /// Modules imported by files under a non-root member tree.
+    fn under(&self, member_path: &str) -> impl Iterator<Item = &'a str> + use<'a, '_> {
+        within(&self.0, |(file, _)| file, member_path)
+            .iter()
+            .map(|(_, module)| *module)
     }
 }
 
@@ -231,21 +310,6 @@ pub(crate) fn local_source_member(
     (declared && local.is_local_source(&name)).then_some(name)
 }
 
-/// Non-stdlib modules imported by files under a non-root member tree.
-fn member_imports<'a>(
-    resolution: &'a ResolutionIndex,
-    member_path: &str,
-) -> impl Iterator<Item = &'a str> + use<'a> {
-    let prefix = format!("{member_path}/");
-    resolution
-        .imports
-        .iter()
-        .filter(move |import| {
-            import.origin != ModuleOrigin::Stdlib && import.file.starts_with(&prefix)
-        })
-        .map(|import| import.full_module.as_str())
-}
-
 /// Root-relative `/` path of a workspace member; empty for the root itself.
 fn member_path(root: &LoadedManifest, member: &LoadedManifest) -> Option<String> {
     let relative = member.root.path.strip_prefix(&root.root.path).ok()?;
@@ -256,25 +320,56 @@ fn member_path(root: &LoadedManifest, member: &LoadedManifest) -> Option<String>
     Some(parts.join("/"))
 }
 
-/// Whether `module` is in `provided`, or names something defined in a module
-/// a file of the member holds (`from acme_util import y` is `acme_util.y`).
-/// A namespace package such as `airflow` in a provider does not count as a
-/// parent, since other members provide it as well.
-fn provides(provided: &HashMap<String, bool>, module: &str) -> bool {
-    provided.contains_key(module)
-        || module
-            .rsplit_once('.')
-            .is_some_and(|(parent, _)| provided.get(parent) == Some(&true))
+/// The members that provide each module, from their [`member_modules`].
+struct Providers<'a> {
+    by_module: HashMap<&'a str, Vec<usize>>,
+    /// Keyed by a module a member file holds itself.
+    by_parent: HashMap<&'a str, Vec<usize>>,
+}
+
+impl<'a> Providers<'a> {
+    fn new(members: impl IntoIterator<Item = &'a HashMap<String, bool>>) -> Self {
+        let mut by_module: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_parent: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (index, provided) in members.into_iter().enumerate() {
+            for (module, holds_file) in provided {
+                by_module.entry(module).or_default().push(index);
+                if *holds_file {
+                    by_parent.entry(module).or_default().push(index);
+                }
+            }
+        }
+        Self {
+            by_module,
+            by_parent,
+        }
+    }
+
+    /// Members whose modules include `module`, or that hold the module
+    /// `module` names something in (`from acme_util import y` is
+    /// `acme_util.y`). A namespace package such as `airflow` in a provider
+    /// does not count as a parent, since other members provide it as well.
+    fn of(&self, module: &str) -> impl Iterator<Item = usize> + use<'_> {
+        let parent = module.rsplit_once('.').map(|(parent, _)| parent);
+        self.by_module
+            .get(module)
+            .into_iter()
+            .chain(parent.and_then(|parent| self.by_parent.get(parent)))
+            .flatten()
+            .copied()
+    }
 }
 
 /// Dotted module names the files under `member_path` provide, by
 /// [`importable_modules`] from the member root or from any `src` directory
 /// below it (`dev/breeze/src/airflow_breeze` gives `airflow_breeze`). Wider
 /// than the resolver's roots: a missed module reports a used member unused.
-fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashMap<String, bool> {
-    let paths: Vec<&str> = files
-        .iter()
-        .map(|file| file.path.as_str())
+fn member_modules<'a>(
+    member_path: &str,
+    paths: impl IntoIterator<Item = &'a str>,
+) -> HashMap<String, bool> {
+    let paths: Vec<&str> = paths
+        .into_iter()
         .filter(|path| {
             member_path.is_empty()
                 || path
@@ -511,7 +606,7 @@ mod tests {
             python_file("airflow-core/tests/utils.py"),
             python_file("task-sdk/src/airflow/sdk/__init__.py"),
         ];
-        let modules = member_modules("airflow-core", &files);
+        let modules = member_modules("airflow-core", paths(&files));
         assert_eq!(modules.get("airflow"), Some(&true));
         assert_eq!(modules.get("airflow.models"), Some(&false));
         assert_eq!(modules.get("airflow.models.dag"), Some(&true));
@@ -520,9 +615,11 @@ mod tests {
         assert!(!modules.contains_key("models"));
         assert!(!modules.contains_key("airflow.sdk"));
         assert!(!modules.contains_key(""));
-        assert!(provides(&modules, "airflow.models.dag.DAG"));
-        assert!(provides(&modules, "airflow.DAG"));
-        assert!(!provides(&modules, "airflow.models.DAG"));
+        let providers = Providers::new([&modules]);
+        let provided = |module: &str| providers.of(module).next().is_some();
+        assert!(provided("airflow.models.dag.DAG"));
+        assert!(provided("airflow.DAG"));
+        assert!(!provided("airflow.models.DAG"));
     }
 
     #[test]
@@ -533,19 +630,23 @@ mod tests {
             python_file("dev/breeze/src/airflow_breeze/cli.py"),
             python_file("tools/src/other/__init__.py"),
         ];
-        let modules = member_modules("dev", &files);
+        let modules = member_modules("dev", paths(&files));
         assert_eq!(modules.get("airflow_breeze"), Some(&true));
         assert_eq!(modules.get("airflow_breeze.cli"), Some(&true));
         assert!(modules.contains_key("breeze.src.airflow_breeze"));
         assert!(!modules.contains_key("other"));
-        let root = member_modules("", &files);
+        let root = member_modules("", paths(&files));
         assert_eq!(root.get("airflow_breeze.cli"), Some(&true));
         assert_eq!(root.get("other"), Some(&true));
         // A `src` above the member is not one of its roots.
         let nested = [python_file("src/billing/billing/core.py")];
-        let modules = member_modules("src/billing", &nested);
+        let modules = member_modules("src/billing", paths(&nested));
         assert_eq!(modules.get("billing.core"), Some(&true));
         assert!(!modules.contains_key("billing.billing"));
+    }
+
+    fn paths(files: &[DiscoveredFile]) -> impl Iterator<Item = &str> {
+        files.iter().map(|file| file.path.as_str())
     }
 
     fn python_file(path: &str) -> DiscoveredFile {
@@ -603,8 +704,16 @@ mod tests {
             binary_resolutions: BTreeMap::new(),
             pytest_plugin_distributions: std::collections::BTreeSet::new(),
         };
-        let modules: Vec<&str> = member_imports(&resolution, "airflow-core").collect();
+        let modules: Vec<&str> = MemberImports::new(&resolution)
+            .under("airflow-core")
+            .collect();
         assert_eq!(modules, ["airflow.sdk", "airflow.sdk.definitions.dag"]);
+    }
+
+    #[test]
+    fn within_keeps_every_path_that_starts_with_the_member_directory() {
+        let paths = ["pkg", "pkg-extra/a.py", "pkg/", "pkg/a.py", "pkgx/b.py"];
+        assert_eq!(within(&paths, |path| path, "pkg"), ["pkg/", "pkg/a.py"]);
     }
 
     fn manifest_at(
@@ -744,6 +853,66 @@ mod tests {
         let mut used: Vec<String> = used.into_iter().collect();
         used.sort();
         assert_eq!(used, ["core", "sdk", "util"]);
+    }
+
+    /// Members are marked in rounds: each round adds, in declaration order,
+    /// the members the modules found so far use. `omega` shares `alphapkg`
+    /// only as a namespace parent, so `alphapkg.thing` does not reach it.
+    #[test]
+    fn workspace_sources_are_marked_in_discovery_rounds() {
+        let names = ["omega", "delta", "gamma", "beta", "alpha"];
+        let root = std::env::temp_dir().join("rounds");
+        let manifest = manifest_at(root.clone(), "root", &names, &names);
+        let members = names.map(|name| (name, manifest_at(root.join(name), name, &[], &[])));
+        let boundaries: Vec<WorkspaceDependencyBoundary<'_>> = members
+            .iter()
+            .map(|(name, member)| WorkspaceDependencyBoundary {
+                member_id: name,
+                manifest: member,
+                files: &[],
+                imports: &[],
+            })
+            .collect();
+        let import = |file: &str, module: &str| resolved(file, module, ModuleOrigin::FirstParty);
+        let resolution = ResolutionIndex {
+            imports: vec![
+                import("src/app.py", "alphapkg.thing"),
+                import("alpha/src/alphapkg/__init__.py", "betapkg"),
+                import("alpha/src/alphapkg/__init__.py", "gammapkg"),
+                import("beta/src/betapkg/__init__.py", "deltapkg"),
+            ],
+            ..ResolutionIndex::default()
+        };
+        let sources = crate::sources::DiscoveredSources {
+            root: manifest.root.clone(),
+            layout: crate::sources::LayoutInfo::new("src", Vec::new()),
+            effective_globs: Vec::new(),
+            files: names
+                .iter()
+                .filter(|name| **name != "omega")
+                .map(|name| python_file(&format!("{name}/src/{name}pkg/__init__.py")))
+                .chain([python_file("omega/src/alphapkg/sub/mod.py")])
+                .collect(),
+            warnings: Vec::new(),
+        };
+        let graph = ProjectGraph::new(manifest.root.clone());
+        let used = mark(
+            &manifest,
+            &RuleContext {
+                resolution: &resolution,
+                reachability: &ReachabilityReport::default(),
+                graph: &graph,
+                sources: &sources,
+                parse: &crate::parser::ParseSummary::default(),
+                surface: None,
+            },
+            &HashSet::from(["src/app.py"]),
+            &boundaries,
+        );
+        assert_eq!(
+            used.into_iter().collect::<Vec<_>>(),
+            ["alpha", "gamma", "beta", "delta"]
+        );
     }
 
     /// `streamlit = { path = "lib" }` holds the project's own package, so a

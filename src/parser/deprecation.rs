@@ -66,7 +66,7 @@ mod tests {
         let layout = LayoutInfo::default();
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new("mod.py", &layout, FileContext::Runtime, &lines);
-        visitor.visit_module(module.suite());
+        visitor.visit_module(source, module.suite());
         visitor.into_parsed().deprecated_shim
     }
 

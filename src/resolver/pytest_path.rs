@@ -410,10 +410,16 @@ impl PytestImportPaths {
     }
 
     fn has_module(&self, dir: &str, root: &str) -> bool {
-        let base = join(dir, root);
-        self.dirs.contains(&base)
-            || self.files.contains(&format!("{base}.py"))
-            || self.files.contains(&format!("{base}.pyi"))
+        let mut path = join(dir, root);
+        if self.dirs.contains(&path) {
+            return true;
+        }
+        let base = path.len();
+        [".py", ".pyi"].into_iter().any(|suffix| {
+            path.truncate(base);
+            path.push_str(suffix);
+            self.files.contains(&path)
+        })
     }
 
     fn find_module(&self, dir: &str, module: &str) -> Option<&str> {
@@ -451,8 +457,17 @@ impl PytestImportPaths {
 /// The directory pytest's prepend mode inserts for `path`: its directory, or
 /// the parent of the outermost package that directory belongs to.
 fn basedir(path: &str, files: &HashSet<String>) -> String {
+    // One buffer for every level: this runs for each lookup that misses
+    // from a test or script.
+    let mut init = String::with_capacity(path.len() + "/__init__.py".len());
     let mut dir = parent_dir(path);
-    while !dir.is_empty() && files.contains(&join(dir, "__init__.py")) {
+    while !dir.is_empty() {
+        init.clear();
+        init.push_str(dir);
+        init.push_str("/__init__.py");
+        if !files.contains(&init) {
+            break;
+        }
         dir = parent_dir(dir);
     }
     dir.to_owned()

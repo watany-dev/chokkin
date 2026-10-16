@@ -16,6 +16,7 @@ mod fix;
 mod graph;
 mod init;
 mod manifest;
+mod parallel;
 mod parser;
 mod path_util;
 mod pipeline;
