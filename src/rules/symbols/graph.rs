@@ -88,64 +88,112 @@ impl ReferenceIndex {
     /// still count as importers: their path never equals a module name, so
     /// every reference they make is external.
     pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
-        let mut index = Self::default();
         let known_modules: HashSet<&str> = module_names.values().map(String::as_str).collect();
-        let mut stars = StarImports::build(modules, module_names);
+        let stars = StarImports::build(modules, module_names);
 
-        for module in modules {
-            let importer = module_names
-                .get(module.path.as_str())
-                .map_or(module.path.as_str(), String::as_str);
-            for import in &module.imports {
-                if import.module.is_empty() {
-                    continue;
-                }
-                match import.kind {
-                    ImportKind::ImportFrom => {
-                        let Some((package, name)) = import.import_target() else {
-                            continue;
-                        };
-                        let package =
-                            sibling_module(&module.path, package, &known_modules, module_names)
-                                .unwrap_or(package);
-                        // `from . import x` in the package's own `__init__` defines a re-export, not a use.
-                        if import.name.is_some() || package != importer {
-                            index.record(importer, SymbolId::new(package, name), &mut stars);
-                        }
-                        let submodule = format!("{package}.{name}");
-                        if let Some(binding) = import.bound_name()
-                            && known_modules.contains(submodule.as_str())
-                        {
-                            for target in accesses(module, &submodule, &[binding]) {
-                                index.record(importer, target, &mut stars);
-                            }
-                        }
-                    },
-                    ImportKind::Import => {
-                        let binding = import.alias.as_deref().unwrap_or(&import.module);
-                        let receivers = [import.module.as_str(), binding];
-                        let target_module = sibling_module(
-                            &module.path,
-                            &import.module,
-                            &known_modules,
-                            module_names,
-                        )
-                        .unwrap_or(&import.module);
-                        for target in accesses(module, target_module, &receivers) {
-                            index.record(importer, target, &mut stars);
-                        }
-                    },
-                }
+        // Workers index their modules apart; a mark only ORs into its entry,
+        // so the merge is order-independent.
+        let mut partials = crate::parallel::fold_per_worker(
+            modules,
+            || (Self::default(), StarCache::new()),
+            |(index, cache), _, module| {
+                index.add_module(module, module_names, &known_modules, &stars, cache);
+            },
+        );
+        partials.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(index.entries.len()));
+        let mut partials = partials.into_iter().map(|(index, _)| index);
+        let mut merged = partials.next().unwrap_or_default();
+        for partial in partials {
+            for (target, external) in partial.entries {
+                *merged.entries.entry(target).or_default() |= external;
             }
         }
+        merged
+    }
 
-        index
+    /// The references in one importing module.
+    #[allow(clippy::too_many_arguments)]
+    fn add_module<'m, 'a>(
+        &mut self,
+        module: &'m ParsedModule,
+        module_names: &'m HashMap<&str, String>,
+        known_modules: &HashSet<&'m str>,
+        stars: &StarImports<'a>,
+        cache: &mut StarCache<'a>,
+    ) {
+        let importer = module_names
+            .get(module.path.as_str())
+            .map_or(module.path.as_str(), String::as_str);
+        // A module reads `pkg.name` once or a thousand times, through one
+        // import or one per function body: each reference is recorded once.
+        let mut names_by_receiver: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for access in &module.attribute_accesses {
+            names_by_receiver
+                .entry(access.receiver.as_str())
+                .or_default()
+                .insert(access.name.as_str());
+        }
+        let mut recorded: HashSet<(&str, &str)> = HashSet::new();
+        let mut record = |target_module: &'m str, name: &'m str| {
+            if recorded.insert((target_module, name)) {
+                self.record(importer, SymbolId::new(target_module, name), stars, cache);
+            }
+        };
+        let mut submodule = String::new();
+        for import in &module.imports {
+            if import.module.is_empty() {
+                continue;
+            }
+            match import.kind {
+                ImportKind::ImportFrom => {
+                    let Some((package, name)) = import.import_target() else {
+                        continue;
+                    };
+                    let package =
+                        sibling_module(&module.path, package, known_modules, module_names)
+                            .unwrap_or(package);
+                    // `from . import x` in the package's own `__init__` defines a re-export, not a use.
+                    if import.name.is_some() || package != importer {
+                        record(package, name);
+                    }
+                    let Some(binding) = import.bound_name() else {
+                        continue;
+                    };
+                    submodule.clear();
+                    submodule.push_str(package);
+                    submodule.push('.');
+                    submodule.push_str(name);
+                    if let Some(&submodule) = known_modules.get(submodule.as_str()) {
+                        for &name in names_by_receiver.get(binding).into_iter().flatten() {
+                            record(submodule, name);
+                        }
+                    }
+                },
+                ImportKind::Import => {
+                    let binding = import.alias.as_deref().unwrap_or(&import.module);
+                    let target_module =
+                        sibling_module(&module.path, &import.module, known_modules, module_names)
+                            .unwrap_or(&import.module);
+                    for receiver in [import.module.as_str(), binding] {
+                        for &name in names_by_receiver.get(receiver).into_iter().flatten() {
+                            record(target_module, name);
+                        }
+                    }
+                },
+            }
+        }
     }
 
     /// `pkg.name` also uses `name` in each module `pkg` star-imports it from
     /// (#576); the importer, not `pkg`, decides whether that use is external.
-    fn record(&mut self, importer: &str, target: SymbolId, stars: &mut StarImports<'_>) {
-        for &source in stars.sources(&target) {
+    fn record<'a>(
+        &mut self,
+        importer: &str,
+        target: SymbolId,
+        stars: &StarImports<'a>,
+        cache: &mut StarCache<'a>,
+    ) {
+        for &source in stars.sources(&target, cache) {
             self.mark(importer, SymbolId::new(source, target.name.clone()));
         }
         self.mark(importer, target);
@@ -170,19 +218,6 @@ impl ReferenceIndex {
     }
 }
 
-/// `target_module.name` read through any of `receivers` in `module`.
-fn accesses<'m>(
-    module: &'m ParsedModule,
-    target_module: &'m str,
-    receivers: &'m [&'m str],
-) -> impl Iterator<Item = SymbolId> + 'm {
-    module
-        .attribute_accesses
-        .iter()
-        .filter(|access| receivers.contains(&access.receiver.as_str()))
-        .map(move |access| SymbolId::new(target_module, access.name.clone()))
-}
-
 /// `from m import *` edges between named modules.
 #[derive(Default)]
 struct StarImports<'a> {
@@ -200,8 +235,10 @@ struct StarImports<'a> {
     opaque: Vec<&'a str>,
     /// `__all__` of the modules that bind one.
     exports: HashMap<&'a str, &'a Exports>,
-    cache: HashMap<SymbolId, Vec<&'a str>>,
 }
+
+/// [`StarImports::sources`] per symbol, kept by each indexing worker.
+type StarCache<'a> = HashMap<SymbolId, Vec<&'a str>>;
 
 impl<'a> StarImports<'a> {
     fn build(modules: &[&'a ParsedModule], module_names: &'a HashMap<&str, String>) -> Self {
@@ -251,11 +288,11 @@ impl<'a> StarImports<'a> {
 
     /// Cached per symbol: a module that imports a package in many function
     /// bodies records each `pkg.name` access once per import.
-    fn sources(&mut self, target: &SymbolId) -> &[&'a str] {
+    fn sources<'c>(&self, target: &SymbolId, cache: &'c mut StarCache<'a>) -> &'c [&'a str] {
         if !self.defines.contains_key(target.module.as_str()) {
             return &[];
         }
-        if !self.cache.contains_key(target) {
+        if !cache.contains_key(target) {
             let sources = self
                 .binders
                 .get(target.name.as_str())
@@ -265,9 +302,9 @@ impl<'a> StarImports<'a> {
                 .copied()
                 .filter(|&binder| self.reaches(&target.module, binder, &target.name))
                 .collect();
-            self.cache.insert(target.clone(), sources);
+            cache.insert(target.clone(), sources);
         }
-        &self.cache[target]
+        &cache[target]
     }
 
     /// Whether `module` reaches `name` in `binder` through chained star
@@ -322,15 +359,20 @@ fn sibling_module<'n>(
         return None;
     }
     // Source paths are `/`-separated on every platform.
-    let stem = name.replace('.', "/");
-    let base = match importer_path.rsplit_once('/') {
-        Some((dir, _)) => format!("{dir}/{stem}"),
-        None => stem,
-    };
-    [format!("{base}.py"), format!("{base}/__init__.py")]
-        .iter()
-        .find_map(|file| module_names.get(file.as_str()))
-        .map(String::as_str)
+    let mut file = String::with_capacity(importer_path.len() + name.len() + "/__init__.py".len());
+    if let Some((dir, _)) = importer_path.rsplit_once('/') {
+        file.push_str(dir);
+        file.push('/');
+    }
+    file.extend(name.chars().map(|c| if c == '.' { '/' } else { c }));
+    let stem = file.len();
+    file.push_str(".py");
+    if let Some(module) = module_names.get(file.as_str()) {
+        return Some(module);
+    }
+    file.truncate(stem);
+    file.push_str("/__init__.py");
+    module_names.get(file.as_str()).map(String::as_str)
 }
 
 /// Names `module` binds by definition or `from … import`: every symbol and
@@ -447,6 +489,45 @@ mod tests {
         ]);
         let index = ReferenceIndex::build(&[&helpers, &run], &names);
         assert!(index.is_externally_referenced(&SymbolId::new("tools.helpers", "load")));
+    }
+
+    #[test]
+    fn index_merges_marks_from_every_worker() {
+        // Enough modules to spread over workers. Each `paired` is read by its
+        // own module and by the one half the project away, likely on another
+        // worker: the external mark must survive the merge in either order.
+        const COUNT: usize = 100;
+        let modules: Vec<ParsedModule> = (0..COUNT)
+            .map(|index| {
+                let own = format!("lib.m{index}");
+                let across = format!("lib.m{}", (index + COUNT / 2) % COUNT);
+                ParsedModule {
+                    path: format!("lib/m{index}.py"),
+                    imports: vec![
+                        import(ImportKind::ImportFrom, &own, Some("solo"), None),
+                        import(ImportKind::ImportFrom, &own, Some("paired"), None),
+                        import(ImportKind::ImportFrom, &across, Some("paired"), None),
+                    ],
+                    ..ParsedModule::default()
+                }
+            })
+            .collect();
+        let names: HashMap<&str, String> = modules
+            .iter()
+            .enumerate()
+            .map(|(index, module)| (module.path.as_str(), format!("lib.m{index}")))
+            .collect();
+        let refs: Vec<&ParsedModule> = modules.iter().collect();
+        let index = ReferenceIndex::build(&refs, &names);
+        for module in 0..COUNT {
+            let name = format!("lib.m{module}");
+            let solo = SymbolId::new(&name, "solo");
+            assert!(index.is_referenced(&solo) && !index.is_externally_referenced(&solo));
+            assert!(
+                index.is_externally_referenced(&SymbolId::new(&name, "paired")),
+                "{name}"
+            );
+        }
     }
 
     mod props {
@@ -599,12 +680,13 @@ mod tests {
                 .map(|module| module.path.as_str())
                 .zip(module_names)
                 .collect();
-            let mut stars = StarImports::build(&refs, &names);
+            let stars = StarImports::build(&refs, &names);
+            let mut cache = StarCache::new();
             let mut sources = Sources::new();
             for index in 0..MODULES {
                 for name in NAMES {
                     let found = stars
-                        .sources(&SymbolId::new(module_name(index), name))
+                        .sources(&SymbolId::new(module_name(index), name), &mut cache)
                         .iter()
                         .map(|&source| source.to_owned())
                         .collect();

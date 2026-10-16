@@ -727,3 +727,58 @@ fn dead_stdlib_fallback_only_softens_the_unresolved_warning() {
             if import == "dummy_threading"
     )));
 }
+
+#[test]
+fn warnings_follow_module_order_across_many_files() {
+    // Enough files for resolution to spread over workers: an ambiguous root
+    // first imported mid-way still warns once, at its first importer.
+    let pyproject = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[tool.chokkin.package_module_map]\n\"dual-a\" = [\"dual\"]\n\"dual-b\" = [\"dual\"]\n\"ns-a\" = [\"ns.shared\"]\n\"ns-b\" = [\"ns.shared\"]\n";
+    let mut files = vec![
+        ("pyproject.toml".to_owned(), pyproject.to_owned()),
+        ("app/__init__.py".to_owned(), String::new()),
+    ];
+    for index in 0..80 {
+        let mut source = String::new();
+        if index == 40 || index > 50 {
+            source.push_str("import dual\n");
+        }
+        if index >= 60 {
+            source.push_str("import ns.shared.x\n");
+        }
+        files.push((
+            format!("app/m{index:02}.py"),
+            source + &format!("import missing_{index:02}\n"),
+        ));
+    }
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, source)| (path.as_str(), source.as_str()))
+        .collect();
+    let temp = temp_project(&borrowed);
+    let index = resolve_path(temp.path());
+
+    let mut expected = Vec::new();
+    for module in 0..80 {
+        if module == 40 {
+            expected.push("ambiguous dual".to_owned());
+        }
+        if module == 60 {
+            expected.push("ambiguous ns".to_owned());
+        }
+        expected.push(format!("unresolved missing_{module:02}"));
+    }
+    let actual: Vec<String> = index
+        .warnings
+        .iter()
+        .map(|warning| match warning {
+            chokkin::internals::ResolveWarning::AmbiguousImport { import, .. } => {
+                format!("ambiguous {import}")
+            },
+            chokkin::internals::ResolveWarning::UnresolvedImport { import, .. } => {
+                format!("unresolved {import}")
+            },
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(actual, expected);
+}

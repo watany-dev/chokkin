@@ -1134,7 +1134,7 @@ chokkin/
     plugins/     # 実装済み: pipeline step 5 (config/plugin extraction)
     graph/       # 実装済み: graph skeleton + import 辺 (`build_graph_skeleton`, `add_parsed_imports`)
     parser/      # 実装済み: pipeline step 6 (`parse_file`, `parse_project_sources_with_cache`; cold parse は `std::thread::scope` でファイル単位並列、出力は discovery 順)
-    resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps, venv RECORD/entry_points, versioned stdlib)
+    resolver/    # 実装済み: pipeline step 7 (`resolve_imports`, bundled maps, venv RECORD/entry_points, versioned stdlib; module 単位で worker 並列、warning は module 順に合流)
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
     rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_with_context`, CHK002–CHK009);

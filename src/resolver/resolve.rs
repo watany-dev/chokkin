@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
-use crate::parser::{ImportContext, ParseSummary, import_context_for_file};
+use crate::parser::{ImportContext, ParseSummary, ParsedModule, import_context_for_file};
 use crate::plugins::{ModuleReference, SysPathImport};
 use crate::sources::{DiscoveredFile, DiscoveredSources, path_to_module};
 
@@ -62,170 +62,88 @@ pub fn resolve_imports_for_analysis(
     let import_map = ImportMap::build(config)
         .with_local_sources(path_source_imports(&manifest.root.path, &manifest.uv));
     let mut warnings = Vec::new();
-    let venv_index = load_venv_index(&manifest.root, &mut warnings);
-    let binary_resolutions = build_binary_map(config, &venv_index);
-    let mut imports = Vec::new();
-    let mut root_cache: RootCache = BTreeMap::new();
-    let pytest_paths = PytestImportPaths::build(sources).with_sys_path_hints(
-        &sources.root.path,
-        parse,
-        sys_path_imports,
+    // The pytest search paths read only the sources and the parse; build
+    // them beside the venv index and the local module sets.
+    let (pytest_paths, (venv_index, local_modules, indexed_roots)) = crate::parallel::join(
+        sources.files.len(),
+        || {
+            PytestImportPaths::build(sources).with_sys_path_hints(
+                &sources.root.path,
+                parse,
+                sys_path_imports,
+            )
+        },
+        || {
+            (
+                load_venv_index(&manifest.root, &mut warnings),
+                local_modules(&sources.files, workspace_members),
+                indexed_roots(sources),
+            )
+        },
     );
-    let local_modules = local_modules(&sources.files, workspace_members);
-    let indexed_roots = indexed_roots(sources);
-    let owners = MemberOwners::new(workspace_members);
-    let declared = DeclaredNames::new(manifest);
+    let binary_resolutions = build_binary_map(config, &venv_index);
+    let resolver = Resolver {
+        sources,
+        manifest,
+        declared: DeclaredNames::new(manifest),
+        config,
+        workspace_members,
+        owners: MemberOwners::new(workspace_members),
+        import_map: &import_map,
+        venv_imports: &venv_index.imports,
+        scoped,
+        pytest_paths: &pytest_paths,
+        local_modules: &local_modules,
+        indexed_roots: &indexed_roots,
+    };
 
-    for module in &parse.modules {
-        let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
-        for import in &module.imports {
-            if import.module.is_empty() {
-                continue;
-            }
-            let imported = import.name.as_ref().map_or_else(
-                || import.module.clone(),
-                |name| format!("{}.{name}", import.module),
-            );
-            // A fallback for modules every supported Python ships never runs.
-            let dead_fallback = !import.fallback_for.is_empty()
-                && import
-                    .fallback_for
-                    .iter()
-                    .all(|root| file_stdlib.always_contains(root));
-            imports.push(resolve_import_site(
-                &import.module,
-                &imported,
-                &module.path,
-                Some(import.line),
-                None,
-                import.context,
-                import.optional,
-                dead_fallback,
-                import.platform_guarded,
-                import.relative_level,
-                file_stdlib,
-                sources,
-                manifest,
-                &declared,
-                config,
-                workspace_members,
-                &owners,
-                &import_map,
-                &venv_index.imports,
-                scoped,
-                &pytest_paths,
-                &local_modules,
-                &indexed_roots,
-                &mut warnings,
-                &mut root_cache,
-            ));
-        }
-        for dynamic in &module.dynamic_imports {
-            imports.push(resolve_import_site(
-                &dynamic.module,
-                &dynamic.module,
-                &module.path,
-                Some(dynamic.line),
-                None,
-                ImportContext::Runtime,
-                dynamic.optional,
-                false,
-                dynamic.platform_guarded,
-                0,
-                file_stdlib,
-                sources,
-                manifest,
-                &declared,
-                config,
-                workspace_members,
-                &owners,
-                &import_map,
-                &venv_index.imports,
-                scoped,
-                &pytest_paths,
-                &local_modules,
-                &indexed_roots,
-                &mut warnings,
-                &mut root_cache,
-            ));
-        }
-        if module.pytest_plugins.is_empty() {
-            continue;
-        }
-        // A plugin name nothing resolves is a distribution missing from the
-        // environment, not a broken import in this file.
-        let plugin_context = sources
-            .files
-            .iter()
-            .find(|file| file.path == module.path)
-            .map_or(ImportContext::Test, |file| {
-                import_context_for_file(file.context)
-            });
-        for plugin in &module.pytest_plugins {
+    // Sites resolve per module on workers, each with its own root cache;
+    // warnings then merge in module order, so they read as a sequential run.
+    let per_module =
+        crate::parallel::map_in_order_with(&parse.modules, RootCache::new, |cache, module| {
+            let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
+            resolver.module_sites(module, file_stdlib, cache)
+        });
+    let mut imports = Vec::new();
+    let mut merge = WarningMerge::default();
+    for site in per_module.into_iter().flatten() {
+        if site.pytest_plugin {
+            // A plugin name nothing resolves is a distribution missing from
+            // the environment, not a broken import in this file.
             let mut site_warnings = Vec::new();
-            imports.push(resolve_import_site(
-                &plugin.module,
-                &plugin.module,
-                &module.path,
-                Some(plugin.line),
-                Some("pytest_plugins"),
-                plugin_context,
-                false,
-                false,
-                false,
-                0,
-                file_stdlib,
-                sources,
-                manifest,
-                &declared,
-                config,
-                workspace_members,
-                &owners,
-                &import_map,
-                &venv_index.imports,
-                scoped,
-                &pytest_paths,
-                &local_modules,
-                &indexed_roots,
-                &mut site_warnings,
-                &mut root_cache,
-            ));
+            merge.replay(site.warnings, &mut site_warnings);
             warnings.extend(
                 site_warnings
                     .into_iter()
                     .filter(|warning| !matches!(warning, ResolveWarning::UnresolvedImport { .. })),
             );
+        } else {
+            merge.replay(site.warnings, &mut warnings);
         }
+        imports.push(site.import);
     }
 
+    let mut cache = RootCache::new();
     for reference in plugin_refs {
-        imports.push(resolve_import_site(
-            &reference.module,
-            &reference.module,
-            &reference.origin.file,
-            reference.origin.line,
-            Some(&reference.origin.label),
-            ImportContext::Runtime,
-            false,
-            false,
-            false,
-            0,
-            stdlib,
-            sources,
-            manifest,
-            &declared,
-            config,
-            workspace_members,
-            &owners,
-            &import_map,
-            &venv_index.imports,
-            scoped,
-            &pytest_paths,
-            &local_modules,
-            &indexed_roots,
-            &mut warnings,
-            &mut root_cache,
+        let mut log = Vec::new();
+        imports.push(resolver.site(
+            &Site {
+                full_module: &reference.module,
+                imported: &reference.module,
+                file: &reference.origin.file,
+                line: reference.origin.line,
+                reference: Some(&reference.origin.label),
+                context: ImportContext::Runtime,
+                optional: false,
+                dead_fallback: false,
+                platform_guarded: false,
+                relative_level: 0,
+                stdlib,
+            },
+            &mut cache,
+            &mut log,
         ));
+        merge.replay(log, &mut warnings);
     }
 
     ResolutionIndex {
@@ -235,6 +153,89 @@ pub fn resolve_imports_for_analysis(
         binary_resolutions,
         pytest_plugin_distributions: venv_index.pytest_plugins,
     }
+}
+
+/// Read-only inputs every import site resolves against, shared by the
+/// resolve workers.
+struct Resolver<'a> {
+    sources: &'a DiscoveredSources,
+    manifest: &'a LoadedManifest,
+    declared: DeclaredNames<'a>,
+    config: &'a ChokkinConfig,
+    workspace_members: &'a [ResolvedWorkspaceMember],
+    owners: MemberOwners<'a>,
+    import_map: &'a ImportMap,
+    venv_imports: &'a BTreeMap<String, Vec<String>>,
+    scoped: &'a ScopedDeclarations,
+    pytest_paths: &'a PytestImportPaths,
+    local_modules: &'a BTreeSet<String>,
+    indexed_roots: &'a BTreeSet<String>,
+}
+
+/// One import site: a statement, a dynamic import, a `pytest_plugins` entry,
+/// or a plugin's module reference.
+struct Site<'s> {
+    full_module: &'s str,
+    imported: &'s str,
+    file: &'s str,
+    line: Option<u32>,
+    reference: Option<&'s str>,
+    context: ImportContext,
+    optional: bool,
+    dead_fallback: bool,
+    platform_guarded: bool,
+    relative_level: u8,
+    stdlib: StdlibRange,
+}
+
+/// A resolved site with the warnings it raised, not yet merged.
+struct SiteOutcome {
+    import: ResolvedImport,
+    warnings: Vec<SiteWarning>,
+    pytest_plugin: bool,
+}
+
+/// A warning as one site raised it. Whether it reaches the report depends on
+/// the sites before it in module order, which a worker cannot see.
+#[derive(Debug)]
+enum SiteWarning {
+    /// Raised resolving the root behind this cache key: reported at the key's
+    /// first lookup in module order only, whichever worker computed it.
+    Root((StdlibRange, String), Vec<ResolveWarning>),
+    /// Raised by the site itself.
+    Site(ResolveWarning),
+}
+
+/// Merges site warnings in module order as one sequential pass would have
+/// raised them.
+#[derive(Default)]
+struct WarningMerge {
+    reported_roots: BTreeSet<(StdlibRange, String)>,
+}
+
+impl WarningMerge {
+    fn replay(&mut self, raised: Vec<SiteWarning>, target: &mut Vec<ResolveWarning>) {
+        for warning in raised {
+            match warning {
+                SiteWarning::Root(key, warnings) => {
+                    if self.reported_roots.insert(key) {
+                        for warning in warnings {
+                            report(warning, target);
+                        }
+                    }
+                },
+                SiteWarning::Site(warning) => report(warning, target),
+            }
+        }
+    }
+}
+
+/// An ambiguity is reported once per target; an unresolved import per site.
+fn report(warning: ResolveWarning, target: &mut Vec<ResolveWarning>) {
+    if matches!(warning, ResolveWarning::AmbiguousImport { .. }) && target.contains(&warning) {
+        return;
+    }
+    target.push(warning);
 }
 
 /// Root-manifest names normalized once per resolve: every import site
@@ -282,7 +283,8 @@ impl<'a> DeclaredNames<'a> {
 
 /// Keyed by (stdlib range, import root): stdlib membership depends on the
 /// range, which differs between PEP 723 scripts.
-type RootCache = BTreeMap<(StdlibRange, String), RootResolution>;
+/// Each entry keeps the warnings computing it raised, for [`WarningMerge`].
+type RootCache = BTreeMap<(StdlibRange, String), (RootResolution, Vec<ResolveWarning>)>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RootResolution {
@@ -291,56 +293,166 @@ struct RootResolution {
     confidence: ResolveConfidence,
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-fn resolve_import_site(
-    full_module: &str,
-    imported: &str,
-    file: &str,
-    line: Option<u32>,
-    reference: Option<&str>,
-    context: ImportContext,
-    optional: bool,
-    dead_fallback: bool,
-    platform_guarded: bool,
-    relative_level: u8,
-    stdlib: StdlibRange,
-    sources: &DiscoveredSources,
-    manifest: &LoadedManifest,
-    declared: &DeclaredNames<'_>,
-    config: &ChokkinConfig,
-    workspace_members: &[ResolvedWorkspaceMember],
-    owners: &MemberOwners<'_>,
-    import_map: &ImportMap,
-    venv_imports: &BTreeMap<String, Vec<String>>,
-    scoped: &ScopedDeclarations,
-    pytest_paths: &PytestImportPaths,
-    local_modules: &BTreeSet<String>,
-    indexed_roots: &BTreeSet<String>,
-    warnings: &mut Vec<ResolveWarning>,
-    root_cache: &mut RootCache,
-) -> ResolvedImport {
-    let root_name = import_root(full_module).to_owned();
-    let workspace_member = owners.owner(file);
-    let member = workspace_member.as_deref();
-    let pick = |candidates: &[String]| site_candidate(candidates, file, member, scoped, declared);
-    // A relative import only reaches within the importer's own package,
-    // whatever its root shares a name with (#896).
-    let site = if relative_level > 0 {
-        Some(ModuleOrigin::FirstParty)
-    } else {
-        site_origin(&root_name, file, context, stdlib, pytest_paths)
-    };
-    let core = if let Some(origin) = site {
-        RootResolution {
-            origin,
-            distribution: None,
-            confidence: ResolveConfidence::Certain,
+/// A fallback for modules every supported Python ships never runs.
+fn is_dead_fallback(fallback_for: &[String], stdlib: StdlibRange) -> bool {
+    !fallback_for.is_empty() && fallback_for.iter().all(|root| stdlib.always_contains(root))
+}
+
+impl Resolver<'_> {
+    /// Every import site in `module`, in the order a sequential pass visits
+    /// them.
+    fn module_sites(
+        &self,
+        module: &ParsedModule,
+        stdlib: StdlibRange,
+        cache: &mut RootCache,
+    ) -> Vec<SiteOutcome> {
+        let mut outcomes = Vec::new();
+        let mut resolve = |site: &Site<'_>, pytest_plugin: bool| {
+            let mut warnings = Vec::new();
+            let import = self.site(site, cache, &mut warnings);
+            outcomes.push(SiteOutcome {
+                import,
+                warnings,
+                pytest_plugin,
+            });
+        };
+        for import in &module.imports {
+            if import.module.is_empty() {
+                continue;
+            }
+            let imported = import.name.as_ref().map_or_else(
+                || import.module.clone(),
+                |name| format!("{}.{name}", import.module),
+            );
+            let dead_fallback = is_dead_fallback(&import.fallback_for, stdlib);
+            resolve(
+                &Site {
+                    full_module: &import.module,
+                    imported: &imported,
+                    file: &module.path,
+                    line: Some(import.line),
+                    reference: None,
+                    context: import.context,
+                    optional: import.optional,
+                    dead_fallback,
+                    platform_guarded: import.platform_guarded,
+                    relative_level: import.relative_level,
+                    stdlib,
+                },
+                false,
+            );
         }
-    } else {
-        let core = root_cache
-            .entry((stdlib, root_name.clone()))
-            .or_insert_with(|| {
-                resolve_import_root(
+        for dynamic in &module.dynamic_imports {
+            resolve(
+                &Site {
+                    full_module: &dynamic.module,
+                    imported: &dynamic.module,
+                    file: &module.path,
+                    line: Some(dynamic.line),
+                    reference: None,
+                    context: ImportContext::Runtime,
+                    optional: dynamic.optional,
+                    dead_fallback: false,
+                    platform_guarded: dynamic.platform_guarded,
+                    relative_level: 0,
+                    stdlib,
+                },
+                false,
+            );
+        }
+        if module.pytest_plugins.is_empty() {
+            return outcomes;
+        }
+        let plugin_context = self.plugin_context(module);
+        for plugin in &module.pytest_plugins {
+            resolve(
+                &Site {
+                    full_module: &plugin.module,
+                    imported: &plugin.module,
+                    file: &module.path,
+                    line: Some(plugin.line),
+                    reference: Some("pytest_plugins"),
+                    context: plugin_context,
+                    optional: false,
+                    dead_fallback: false,
+                    platform_guarded: false,
+                    relative_level: 0,
+                    stdlib,
+                },
+                true,
+            );
+        }
+        outcomes
+    }
+
+    fn plugin_context(&self, module: &ParsedModule) -> ImportContext {
+        self.sources
+            .files
+            .iter()
+            .find(|file| file.path == module.path)
+            .map_or(ImportContext::Test, |file| {
+                import_context_for_file(file.context)
+            })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn site(
+        &self,
+        site: &Site<'_>,
+        cache: &mut RootCache,
+        warnings: &mut Vec<SiteWarning>,
+    ) -> ResolvedImport {
+        let &Site {
+            full_module,
+            imported,
+            file,
+            line,
+            reference,
+            context,
+            optional,
+            dead_fallback,
+            platform_guarded,
+            relative_level,
+            stdlib,
+        } = site;
+        let Self {
+            sources,
+            manifest,
+            ref declared,
+            config,
+            workspace_members,
+            ref owners,
+            import_map,
+            venv_imports,
+            scoped,
+            pytest_paths,
+            local_modules,
+            indexed_roots,
+        } = *self;
+
+        let root_name = import_root(full_module).to_owned();
+        let workspace_member = owners.owner(file);
+        let member = workspace_member.as_deref();
+        let pick =
+            |candidates: &[String]| site_candidate(candidates, file, member, scoped, declared);
+        // A relative import only reaches within the importer's own package,
+        // whatever its root shares a name with (#896).
+        let site = if relative_level > 0 {
+            Some(ModuleOrigin::FirstParty)
+        } else {
+            site_origin(&root_name, file, context, stdlib, pytest_paths)
+        };
+        let core = if let Some(origin) = site {
+            RootResolution {
+                origin,
+                distribution: None,
+                confidence: ResolveConfidence::Certain,
+            }
+        } else {
+            let (core, raised) = cache.entry((stdlib, root_name.clone())).or_insert_with(|| {
+                let mut raised = Vec::new();
+                let core = resolve_import_root(
                     &root_name,
                     stdlib,
                     sources,
@@ -350,87 +462,104 @@ fn resolve_import_site(
                     workspace_members,
                     import_map,
                     venv_imports,
-                    warnings,
-                )
-            })
-            .clone();
-        match (core.origin, import_map.namespace_candidates(imported)) {
-            // The cache holds the root's first candidate; the pick is per site.
-            (ModuleOrigin::ThirdParty, None) => RootResolution {
-                distribution: root_candidates(&root_name, venv_imports, import_map)
-                    .map_or(core.distribution, |(candidates, _)| pick(&candidates)),
-                ..core
-            },
-            (ModuleOrigin::Stdlib, _) | (_, None) => core,
-            // A first-party root may share its namespace with a distribution
-            // (`poetry` and `poetry.core`); the local tree wins when it has the
-            // module itself.
-            (ModuleOrigin::FirstParty, Some((module, ..))) if local_modules.contains(module) => {
-                core
-            },
-            (_, Some((_, distributions, confidence))) => RootResolution {
-                distribution: pick(&distributions),
-                ..root_resolution_from_candidates(
-                    &root_name,
-                    &distributions,
-                    Some(confidence),
-                    warnings,
-                )
-            },
-        }
-    };
+                    &mut raised,
+                );
+                (core, raised)
+            });
+            // Logged on every lookup, hit or miss: which site computes the entry
+            // depends on the worker schedule; the first in module order reports.
+            if !raised.is_empty() {
+                warnings.push(SiteWarning::Root(
+                    (stdlib, root_name.clone()),
+                    raised.clone(),
+                ));
+            }
+            let core = core.clone();
+            match (core.origin, import_map.namespace_candidates(imported)) {
+                // The cache holds the root's first candidate; the pick is per site.
+                (ModuleOrigin::ThirdParty, None) => RootResolution {
+                    distribution: root_candidates(&root_name, venv_imports, import_map)
+                        .map_or(core.distribution, |(candidates, _)| pick(&candidates)),
+                    ..core
+                },
+                (ModuleOrigin::Stdlib, _) | (_, None) => core,
+                // A first-party root may share its namespace with a distribution
+                // (`poetry` and `poetry.core`); the local tree wins when it has the
+                // module itself.
+                (ModuleOrigin::FirstParty, Some((module, ..)))
+                    if local_modules.contains(module) =>
+                {
+                    core
+                },
+                (_, Some((_, distributions, confidence))) => {
+                    let mut raised = Vec::new();
+                    let core = root_resolution_from_candidates(
+                        &root_name,
+                        &distributions,
+                        Some(confidence),
+                        &mut raised,
+                    );
+                    warnings.extend(raised.into_iter().map(SiteWarning::Site));
+                    RootResolution {
+                        distribution: pick(&distributions),
+                        ..core
+                    }
+                },
+            }
+        };
 
-    // An exact name in the file's own script block or member manifest beats an
-    // affixed root declaration (`pyfoo` must not take a script's `foo`).
-    let core = if core.origin == ModuleOrigin::Unknown {
-        scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
-            .or_else(|| namespace_declared_match(imported, declared))
-            .or_else(|| root_loose_match(&root_name, declared))
-            .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
-            // A root that reachability maps to a file is local, even beside a
-            // member's declared package (`devel-common/src/docs/`, #612), and so
-            // is a namespace or script-sibling fallback (#589), or a module in a
-            // directory the file's `sys.path` edits add (#719).
-            .or_else(|| {
-                (indexed_roots.contains(&root_name)
-                    || pytest_paths.provides_fallback(file, &root_name))
-                .then_some(RootResolution {
-                    origin: ModuleOrigin::FirstParty,
-                    distribution: None,
-                    confidence: ResolveConfidence::Certain,
+        // An exact name in the file's own script block or member manifest beats an
+        // affixed root declaration (`pyfoo` must not take a script's `foo`).
+        let core = if core.origin == ModuleOrigin::Unknown {
+            scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Exact)
+                .or_else(|| namespace_declared_match(imported, declared))
+                .or_else(|| root_loose_match(&root_name, declared))
+                .or_else(|| scoped_declaration(&root_name, file, member, scoped, ScopedMatch::Loose))
+                // A root that reachability maps to a file is local, even beside a
+                // member's declared package (`devel-common/src/docs/`, #612), and so
+                // is a namespace or script-sibling fallback (#589), or a module in a
+                // directory the file's `sys.path` edits add (#719).
+                .or_else(|| {
+                    (indexed_roots.contains(&root_name)
+                        || pytest_paths.provides_fallback(file, &root_name))
+                    .then_some(RootResolution {
+                        origin: ModuleOrigin::FirstParty,
+                        distribution: None,
+                        confidence: ResolveConfidence::Certain,
+                    })
                 })
-            })
-            .or_else(|| contextless_requirement_match(&root_name, declared))
-            .or_else(|| runtime_provided(&root_name))
-            .unwrap_or(core)
-    } else {
-        core
-    };
+                .or_else(|| contextless_requirement_match(&root_name, declared))
+                .or_else(|| runtime_provided(&root_name))
+                .unwrap_or(core)
+        } else {
+            core
+        };
 
-    if core.origin == ModuleOrigin::Unknown {
-        warnings.push(ResolveWarning::UnresolvedImport {
-            import: root_name.clone(),
+        if core.origin == ModuleOrigin::Unknown {
+            warnings.push(SiteWarning::Site(ResolveWarning::UnresolvedImport {
+                import: root_name.clone(),
+                file: file.to_owned(),
+                line,
+                reference: reference.map(str::to_owned),
+                context,
+                optional: optional || dead_fallback,
+            }));
+        }
+
+        ResolvedImport {
+            import_root: root_name,
+            full_module: full_module.to_owned(),
             file: file.to_owned(),
+            workspace_member,
             line,
             reference: reference.map(str::to_owned),
             context,
-            optional: optional || dead_fallback,
-        });
-    }
-
-    ResolvedImport {
-        import_root: root_name,
-        full_module: full_module.to_owned(),
-        file: file.to_owned(),
-        workspace_member,
-        line,
-        reference: reference.map(str::to_owned),
-        context,
-        optional,
-        platform_guarded,
-        origin: core.origin,
-        distribution: core.distribution,
-        confidence: core.confidence,
+            optional,
+            platform_guarded,
+            origin: core.origin,
+            distribution: core.distribution,
+            confidence: core.confidence,
+        }
     }
 }
 
