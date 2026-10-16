@@ -1149,6 +1149,7 @@
     "nbformat",
     "nest-asyncio",
     "networkx",
+    "ninja",
     "nltk",
     "nodeenv",
     "numba",
