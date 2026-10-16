@@ -1,11 +1,11 @@
 //! CHK002/CHK003 inside PEP 723 scripts, checked against the script block.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
 use crate::manifest::{InlineScript, normalize_distribution_name};
-use crate::parser::ParseSummary;
+use crate::parser::{ParseSummary, ParsedModule};
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_evidence,
@@ -30,11 +30,16 @@ pub(super) fn detect_script_dependency_issues(
     import_map: &ImportMap,
     strict: bool,
 ) -> Vec<IssueCandidate> {
-    let mut candidates = Vec::new();
-    for script in scripts
+    let scripts: Vec<&InlineScript> = scripts
         .iter()
         .filter(|script| reachable.contains(script.path.as_str()))
-    {
+        .collect();
+    if scripts.is_empty() {
+        return Vec::new();
+    }
+    let index = ScriptIndex::new(&scripts, resolution, files, parse);
+    let mut candidates = Vec::new();
+    for script in scripts {
         let declared: BTreeSet<String> = script
             .dependencies
             .iter()
@@ -43,28 +48,23 @@ pub(super) fn detect_script_dependency_issues(
             .collect();
         let mut local_files = HashSet::new();
         let mut imports = Vec::new();
-        for import in resolution
-            .imports
-            .iter()
-            .filter(|import| import.file == script.path)
-        {
-            let local = script_local_files(&script.path, &import.import_root, files);
-            if local.is_empty() {
+        for &import in index.imports_of(&script.path) {
+            let mut found = false;
+            index.local_files(&script.path, &import.import_root, |file| {
+                found = true;
+                local_files.insert(file);
+            });
+            if !found {
                 imports.push(import);
-            } else {
-                local_files.extend(local);
             }
         }
         // The block also installs what the helper modules next to the script
         // import, so their imports count as uses of the script's dependencies.
-        let parsed = parse
-            .modules
+        let parsed = index.modules.get(script.path.as_str()).copied();
+        let mut used: BTreeSet<String> = local_files
             .iter()
-            .find(|module| module.path == script.path);
-        let mut used: BTreeSet<String> = resolution
-            .imports
-            .iter()
-            .filter(|import| local_files.contains(import.file.as_str()))
+            .flat_map(|file| index.imports_of(file))
+            .copied()
             .chain(imports.iter().copied())
             .filter_map(|import| used_distribution(import, &declared, import_map))
             .collect();
@@ -91,29 +91,75 @@ pub(super) fn detect_script_dependency_issues(
     candidates
 }
 
-/// Files of the module or package `import_root` next to `script`: the script
-/// runs with its own directory first on `sys.path`, so they shadow any
-/// distribution of the same name.
-fn script_local_files<'f>(
-    script: &str,
-    import_root: &str,
-    files: &'f [DiscoveredFile],
-) -> Vec<&'f str> {
-    let dir = script.rsplit_once('/').map_or("", |(dir, _)| dir);
-    let prefix = if dir.is_empty() {
-        import_root.to_owned()
-    } else {
-        format!("{dir}/{import_root}")
-    };
-    files
-        .iter()
-        .filter(|file| {
-            file.path
-                .strip_prefix(&prefix)
-                .is_some_and(|rest| matches!(rest, ".py" | ".pyi") || rest.starts_with('/'))
-        })
-        .map(|file| file.path.as_str())
-        .collect()
+/// Lookups the per-script checks share, built once instead of rescanning every
+/// import, file, and module for each script (#945).
+struct ScriptIndex<'a> {
+    /// Imports by importing file, in resolution order.
+    imports: HashMap<&'a str, Vec<&'a ResolvedImport>>,
+    /// Inventory paths, sorted so a package's files form one range.
+    paths: Vec<&'a str>,
+    /// The first parsed module of each script.
+    modules: HashMap<&'a str, &'a ParsedModule>,
+}
+
+impl<'a> ScriptIndex<'a> {
+    fn new(
+        scripts: &[&'a InlineScript],
+        resolution: &'a ResolutionIndex,
+        files: &'a [DiscoveredFile],
+        parse: &'a ParseSummary,
+    ) -> Self {
+        let mut imports: HashMap<&str, Vec<&ResolvedImport>> = HashMap::new();
+        for import in &resolution.imports {
+            imports
+                .entry(import.file.as_str())
+                .or_default()
+                .push(import);
+        }
+        let mut paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        paths.sort_unstable();
+        let script_paths: HashSet<&str> =
+            scripts.iter().map(|script| script.path.as_str()).collect();
+        let mut modules = HashMap::new();
+        for module in &parse.modules {
+            if script_paths.contains(module.path.as_str()) {
+                modules.entry(module.path.as_str()).or_insert(module);
+            }
+        }
+        Self {
+            imports,
+            paths,
+            modules,
+        }
+    }
+
+    fn imports_of(&self, file: &str) -> &[&'a ResolvedImport] {
+        self.imports.get(file).map_or(&[], Vec::as_slice)
+    }
+
+    /// Calls `found` with each file of the module or package `import_root`
+    /// next to `script`: the script runs with its own directory first on
+    /// `sys.path`, so they shadow any distribution of the same name.
+    fn local_files(&self, script: &str, import_root: &str, mut found: impl FnMut(&'a str)) {
+        let dir = script.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let prefix = if dir.is_empty() {
+            import_root.to_owned()
+        } else {
+            format!("{dir}/{import_root}")
+        };
+        for suffix in [".py", ".pyi"] {
+            let module = format!("{prefix}{suffix}");
+            if let Ok(index) = self.paths.binary_search(&module.as_str()) {
+                found(self.paths[index]);
+            }
+        }
+        let package = format!("{prefix}/");
+        let start = self.paths.partition_point(|path| *path < package.as_str());
+        self.paths[start..]
+            .iter()
+            .take_while(|path| path.starts_with(&package))
+            .for_each(|path| found(path));
+    }
 }
 
 /// The declared distribution an import uses. Besides the resolved
@@ -634,6 +680,76 @@ mod tests {
                     name: "httpx".to_owned(),
                 }
             )]
+        );
+    }
+
+    /// Local files are found by exact module path or package prefix, never by a
+    /// longer name sharing the prefix, whatever order the inventory is in.
+    #[test]
+    fn local_files_match_whole_names_in_any_inventory_order() {
+        let script = |path: &str| InlineScript {
+            path: path.to_owned(),
+            dependencies: vec![dependency("rich", 3), dependency("httpx", 4)],
+            requires_python: None,
+            target_version: None,
+        };
+        let at = |file: &str, module: &str, distribution: &str| ResolvedImport {
+            file: file.to_owned(),
+            ..import(module, distribution, 1)
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![
+                at("tool.py", "stubs", "stubs"),
+                at("tool.py", "helpers", "helpers"),
+                at("tool.py", "util", "util"),
+                at("helpers/deep/inner.py", "rich", "rich"),
+                at("helpers_extra.py", "httpx", "httpx"),
+                at("scripts/run.py", "helpers", "helpers"),
+                at("scripts/run.py", "rich", "rich"),
+            ],
+            ..ResolutionIndex::default()
+        };
+        let files: Vec<DiscoveredFile> = [
+            "utility.py",
+            "scripts/run.py",
+            "helpers_extra.py",
+            "stubs.pyi",
+            "tool.py",
+            "helpers/deep/inner.py",
+            "helpersx/__init__.py",
+        ]
+        .into_iter()
+        .map(|path| DiscoveredFile {
+            path: path.to_owned(),
+            kind: FileKind::Python,
+            context: FileContext::Dev,
+        })
+        .collect();
+        let reachable = HashSet::from(["tool.py", "scripts/run.py"]);
+        let found: Vec<_> = detect_script_dependency_issues(
+            &[script("tool.py"), script("scripts/run.py")],
+            &resolution,
+            &reachable,
+            &files,
+            &ParseSummary::default(),
+            &import_map(),
+            false,
+        )
+        .into_iter()
+        .map(|candidate| (candidate.rule, candidate.subject))
+        .collect();
+        let subject = |script: &str, name: &str| IssueSubject::ScriptDistribution {
+            script: script.to_owned(),
+            name: name.to_owned(),
+        };
+        assert_eq!(
+            found,
+            [
+                (RuleId::Chk003, subject("tool.py", "util")),
+                (RuleId::Chk002, subject("tool.py", "httpx")),
+                (RuleId::Chk003, subject("scripts/run.py", "helpers")),
+                (RuleId::Chk002, subject("scripts/run.py", "httpx")),
+            ]
         );
     }
 }
