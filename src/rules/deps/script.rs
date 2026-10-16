@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use super::used::{sorted_paths, within};
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
 use crate::manifest::{InlineScript, normalize_distribution_name};
@@ -116,8 +117,7 @@ impl<'a> ScriptIndex<'a> {
                 .or_default()
                 .push(import);
         }
-        let mut paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
-        paths.sort_unstable();
+        let paths = sorted_paths(files);
         let script_paths: HashSet<&str> =
             scripts.iter().map(|script| script.path.as_str()).collect();
         let mut modules = HashMap::new();
@@ -153,12 +153,9 @@ impl<'a> ScriptIndex<'a> {
                 found(self.paths[index]);
             }
         }
-        let package = format!("{prefix}/");
-        let start = self.paths.partition_point(|path| *path < package.as_str());
-        self.paths[start..]
-            .iter()
-            .take_while(|path| path.starts_with(&package))
-            .for_each(|path| found(path));
+        for path in within(&self.paths, |path| path, &prefix) {
+            found(path);
+        }
     }
 }
 
