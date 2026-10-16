@@ -1860,7 +1860,7 @@ transformers	CHK010	src/transformers/trainer_pt_utils.py:smdistributed	tp	-	opti
 llama_index	CHK010	llama-index-core/llama_index/core/evaluation/benchmarks/beir.py:beir	tp	-	optional import; beir not declared by the member pyproject
 transformers	CHK010	tests/quantization/bnb/test_mixed_int8.py:bitsandbytes	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-predibase/llama_index/llms/predibase/base.py:lorax	tp	-	predibase member declares no lorax-client
-mlflow	CHK010	mlflow/server/handlers.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock
+mlflow	CHK004	mlflow/server/handlers.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock (CHK004 since #971 maps graphql to graphql-core)
 transformers	CHK010	src/transformers/integrations/integration_utils.py:neptune	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_tool_agent.py:langchain_text_splitters	tp	-	example DAG import; common.ai provider declares langchain only, langchain-text-splitters is a separate dist
 mlflow	CHK010	tests/johnsnowlabs/test_johnsnowlabs_model_export.py:johnsnowlabs	tp	-	optional integration; johnsnowlabs not declared in pyproject or requirements/*.txt
@@ -1891,7 +1891,11 @@ transformers	CHK010	tests/quantization/gptq/test_gptq.py:optimum	tp	-	setup.py d
 mlflow	CHK010	mlflow/transformers/peft.py:peft	tp	-	optional integration; peft not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/training_args.py:smdistributed	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 llama_index	CHK010	llama-index-integrations/llms/llama-index-llms-predibase/llama_index/llms/predibase/base.py:predibase	tp	-	optional import; predibase not declared by the member pyproject
-mlflow	CHK010	mlflow/server/graphql/graphql_no_batching.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock
+mlflow	CHK004	mlflow/server/graphql/graphql_no_batching.py:graphql.error	tp	-	graphql-core only transitive via graphene; not declared and no lock (CHK004 since #971 maps graphql to graphql-core)
+mlflow	CHK004	mlflow/server/graphql/graphql_no_batching.py:graphql.execution	tp	-	graphql-core only transitive via graphene; not declared and no lock (CHK004 since #971 maps graphql to graphql-core)
+mlflow	CHK004	mlflow/server/graphql/graphql_no_batching.py:graphql.language.ast	tp	-	graphql-core only transitive via graphene; not declared and no lock (CHK004 since #971 maps graphql to graphql-core)
+mlflow	CHK004	mlflow/server/graphql/graphql_custom_scalars.py:graphql.language.ast	tp	-	graphql-core only transitive via graphene; not declared and no lock (CHK004 since #971 maps graphql to graphql-core)
+mlflow	CHK004	mlflow/server/graphql/graphql_schema_extensions.py:graphql	tp	-	graphql-core only transitive via graphene; not declared and no lock (CHK004 since #971 maps graphql to graphql-core)
 mlflow	CHK010	mlflow/pytorch/_lightning_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
 transformers	CHK010	tests/exporters/test_export.py:openvino	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 mlflow	CHK010	mlflow/openai/_agent_tracer.py:agents	tp	-	openai-agents not declared in pyproject or requirements
