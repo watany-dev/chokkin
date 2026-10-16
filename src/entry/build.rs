@@ -11,7 +11,7 @@ use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 use super::auto::detect_auto_entries;
 use super::merge::merge_entry_candidates;
 use super::mode::resolve_project_mode;
-use super::module::resolve_module_to_path;
+use super::module::{resolve_module_on_disk, resolve_module_to_path};
 use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning};
 
 /// Build the entry root plan for reachability analysis (pipeline step 8).
@@ -92,8 +92,11 @@ pub(crate) fn add_member_manifest_roots<'a>(
             &mut warnings,
         );
         for warning in &mut warnings {
-            if let EntryWarning::UnresolvedModuleTarget { file, .. } = warning {
-                *file = join_rel(member_path, file);
+            match warning {
+                EntryWarning::UnresolvedModuleTarget { file, .. } => {
+                    *file = join_rel(member_path, file);
+                },
+                EntryWarning::MissingEntryPath { path } => *path = join_rel(member_path, path),
             }
         }
         plan.warnings.append(&mut warnings);
@@ -122,6 +125,25 @@ pub(crate) fn add_member_manifest_roots<'a>(
         }
     }
     plan.roots.sort_by(|left, right| left.path.cmp(&right.path));
+}
+
+/// A target that maps to no discovered file: skipped when a file is there
+/// that discovery left out, its imports unread like a skipped path entry's;
+/// unmapped when no file is, since it runs nothing chokkin could read (#933).
+fn unresolved_target(
+    module: &str,
+    file: &str,
+    label: &str,
+    sources: &DiscoveredSources,
+) -> EntryWarning {
+    match resolve_module_on_disk(module, &sources.layout, &sources.root.path) {
+        Some(path) => EntryWarning::MissingEntryPath { path },
+        None => EntryWarning::UnresolvedModuleTarget {
+            module: module.to_owned(),
+            file: file.to_owned(),
+            label: label.to_owned(),
+        },
+    }
 }
 
 fn known_file_paths(sources: &DiscoveredSources) -> BTreeSet<String> {
@@ -163,11 +185,12 @@ fn collect_manifest_entries(
             continue;
         };
         let Some(path) = resolve_module_to_path(&module, &sources.layout, known_paths) else {
-            warnings.push(EntryWarning::UnresolvedModuleTarget {
-                module: module.clone(),
-                file: entry_point.origin.file.clone(),
-                label: entry_point.origin.label.clone(),
-            });
+            warnings.push(unresolved_target(
+                &module,
+                &entry_point.origin.file,
+                &entry_point.origin.label,
+                sources,
+            ));
             continue;
         };
         candidates.push(EntryCandidate {
@@ -329,11 +352,12 @@ fn collect_symbol_ref_entries(
     for symbol_ref in plugins.symbol_refs() {
         let Some(path) = resolve_module_to_path(&symbol_ref.module, &sources.layout, known_paths)
         else {
-            warnings.push(EntryWarning::UnresolvedModuleTarget {
-                module: symbol_ref.module.clone(),
-                file: symbol_ref.origin.file.clone(),
-                label: symbol_ref.origin.label.clone(),
-            });
+            warnings.push(unresolved_target(
+                &symbol_ref.module,
+                &symbol_ref.origin.file,
+                &symbol_ref.origin.label,
+                sources,
+            ));
             continue;
         };
         let context = context_for_path(&path, file_contexts);

@@ -1,6 +1,7 @@
 //! First-party module → file path resolution for entry targets.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use crate::path_util::join_rel;
 use crate::sources::{LayoutInfo, ProjectLayout};
@@ -13,7 +14,24 @@ pub(crate) fn resolve_module_to_path(
     known_paths: &BTreeSet<String>,
 ) -> Option<String> {
     let suffix = normalize_module_target(module).replace('.', "/");
-    resolve_in(&suffix, layout, "", known_paths)
+    resolve_in(&suffix, layout, "", &|path| known_paths.contains(path))
+}
+
+/// Where `module` would resolve if every `.py` file under `root` were
+/// discovered: a target discovery left out (an `exclude`) still names a file
+/// whose imports go unread, unlike one naming no file at all (#933).
+#[must_use]
+pub(crate) fn resolve_module_on_disk(
+    module: &str,
+    layout: &LayoutInfo,
+    root: &Path,
+) -> Option<String> {
+    let suffix = normalize_module_target(module).replace('.', "/");
+    resolve_in(&suffix, layout, "", &|path| {
+        path.split('/')
+            .fold(root.to_path_buf(), |dir, part| dir.join(part))
+            .is_file()
+    })
 }
 
 /// Look where `layout` names modules, then at the root, which `python -m`
@@ -23,7 +41,7 @@ fn resolve_in(
     suffix: &str,
     layout: &LayoutInfo,
     prefix: &str,
-    known_paths: &BTreeSet<String>,
+    exists: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
     let package_root = match layout.layout {
         ProjectLayout::Src | ProjectLayout::PackageRoot => layout.package_root.as_str(),
@@ -36,14 +54,14 @@ fn resolve_in(
             let stem = join_rel(prefix, &join_rel(root, suffix));
             [format!("{stem}.py"), format!("{stem}/__init__.py")]
         })
-        .find(|path| known_paths.contains(path))
+        .find(|path| exists(path))
         .or_else(|| {
             layout.members.iter().find_map(|member| {
                 resolve_in(
                     suffix,
                     &member.layout,
                     &join_rel(prefix, &member.path),
-                    known_paths,
+                    exists,
                 )
             })
         })

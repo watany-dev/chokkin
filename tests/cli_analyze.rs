@@ -3212,6 +3212,64 @@ fn binary_django_gap_needs_a_django_project() {
     assert!(!warnings.contains("plugin: django:"), "{warnings}");
 }
 
+/// A `module:symbol` entry whose file discovery left out is skipped like a
+/// path entry; one naming no file on disk runs nothing chokkin could read
+/// and lowers nothing, as a missing path does (#933).
+#[test]
+fn binary_module_entry_outside_the_inventory_is_a_skipped_entry() {
+    let level = |code: &str, target: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let manifest = |script: &str| {
+        format!(
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"{script}\"\n\n[tool.chokkin]\nmode = \"app\"\nexclude = [\"acme/cli.py\"]\n"
+        )
+    };
+    let files = |manifest: String| {
+        write_project(&[
+            ("pyproject.toml", manifest.as_str()),
+            ("acme/__init__.py", ""),
+            (
+                "acme/cli.py",
+                "import requests\nfrom acme import helper\n\ndef main():\n    pass\n",
+            ),
+            ("acme/helper.py", "# helper\n"),
+        ])
+    };
+    let project = files(manifest("acme.cli:main"));
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "acme/helper.py", "likely"),
+            level("CHK002", "requests", "likely"),
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: skipped entry `acme/cli.py`: not a discovered source file; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+
+    let project = files(manifest("acme.missing:main"));
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "acme/helper.py", "certain"),
+            level("CHK002", "requests", "certain"),
+        ]
+    );
+}
+
 /// A member's manifest entry the root excludes is skipped like a root one:
 /// its imports are unknown, so what it may use falls to likely (#934).
 #[test]
