@@ -78,7 +78,7 @@ fn normalized(name: &str) -> String {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(64)))]
 
     #[test]
     fn requirements_fuzz_never_panics(

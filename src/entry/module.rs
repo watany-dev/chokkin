@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::path_util::join_rel;
 use crate::sources::{LayoutInfo, ProjectLayout};
 
 /// Resolve a dotted module name to a root-relative `.py` path present in `known_paths`.
@@ -11,40 +12,41 @@ pub(crate) fn resolve_module_to_path(
     layout: &LayoutInfo,
     known_paths: &BTreeSet<String>,
 ) -> Option<String> {
-    let normalized = normalize_module_target(module);
-    let suffix = normalized.replace('.', "/");
-    let mut candidates = Vec::new();
+    let suffix = normalize_module_target(module).replace('.', "/");
+    resolve_in(&suffix, layout, "", known_paths)
+}
 
-    if layout.layout != ProjectLayout::Unknown
-        && layout
-            .packages
-            .iter()
-            .any(|package| normalized == package || normalized.starts_with(&format!("{package}.")))
-    {
-        let path = layout.package_dir(&suffix);
-        candidates.push(format!("{path}.py"));
-        candidates.push(format!("{path}/__init__.py"));
-    }
-
-    candidates.push(format!("src/{suffix}.py"));
-    candidates.push(format!("src/{suffix}/__init__.py"));
-    candidates.push(format!("{suffix}.py"));
-    candidates.push(format!("{suffix}/__init__.py"));
-
-    if let Some(path) = candidates
-        .into_iter()
-        .find(|path| known_paths.contains(path))
-    {
-        return Some(path);
-    }
-
-    known_paths
-        .iter()
-        .find(|path| {
-            path.ends_with(&format!("/src/{suffix}.py"))
-                || path.ends_with(&format!("/src/{suffix}/__init__.py"))
+/// Look where `layout` names modules, then at the root, which `python -m`
+/// and app runners put on `sys.path` as the working directory, then inside
+/// each workspace member under `prefix`.
+fn resolve_in(
+    suffix: &str,
+    layout: &LayoutInfo,
+    prefix: &str,
+    known_paths: &BTreeSet<String>,
+) -> Option<String> {
+    let package_root = match layout.layout {
+        ProjectLayout::Src | ProjectLayout::PackageRoot => layout.package_root.as_str(),
+        ProjectLayout::Unknown => "src",
+        ProjectLayout::Flat => "",
+    };
+    std::iter::once(package_root)
+        .chain((!package_root.is_empty()).then_some(""))
+        .flat_map(|root| {
+            let stem = join_rel(prefix, &join_rel(root, suffix));
+            [format!("{stem}.py"), format!("{stem}/__init__.py")]
         })
-        .cloned()
+        .find(|path| known_paths.contains(path))
+        .or_else(|| {
+            layout.members.iter().find_map(|member| {
+                resolve_in(
+                    suffix,
+                    &member.layout,
+                    &join_rel(prefix, &member.path),
+                    known_paths,
+                )
+            })
+        })
 }
 
 /// Normalize Django `AppConfig` targets to their package root when applicable.
@@ -60,15 +62,10 @@ fn normalize_module_target(module: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sources::ProjectLayout;
+    use crate::sources::{MemberLayout, ProjectLayout};
 
     fn src_layout() -> LayoutInfo {
-        LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        }
+        LayoutInfo::new("src", vec!["acme".to_owned()])
     }
 
     fn known(paths: &[&str]) -> BTreeSet<String> {
@@ -97,10 +94,7 @@ mod tests {
 
     #[test]
     fn resolves_module_under_declared_package_root() {
-        let layout = LayoutInfo {
-            package_root: "lib".to_owned(),
-            ..src_layout()
-        };
+        let layout = LayoutInfo::new("lib", vec!["acme".to_owned()]);
         let paths = known(&["lib/acme/web/cli.py", "lib/acme/__init__.py"]);
         assert_eq!(
             resolve_module_to_path("acme.web.cli", &layout, &paths),
@@ -124,11 +118,7 @@ mod tests {
 
     #[test]
     fn flat_layout_resolves_package_module() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("", vec!["acme".to_owned()]);
         let paths = known(&["acme/foo.py"]);
         assert_eq!(
             resolve_module_to_path("acme.foo", &layout, &paths),
@@ -136,13 +126,72 @@ mod tests {
         );
     }
 
+    fn with_members(members: &[(&str, LayoutInfo)]) -> LayoutInfo {
+        LayoutInfo {
+            members: members
+                .iter()
+                .map(|(path, layout)| MemberLayout {
+                    path: (*path).to_owned(),
+                    layout: layout.clone(),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn workspace_member_src_layout_resolves_module_file() {
-        let layout = LayoutInfo::default();
+        let member = LayoutInfo::new("src", vec!["api".to_owned()]);
+        let layout = with_members(&[("services/api", member)]);
         let paths = known(&["services/api/src/api/main.py"]);
         assert_eq!(
             resolve_module_to_path("api.main", &layout, &paths),
             Some("services/api/src/api/main.py".to_owned())
+        );
+    }
+
+    #[test]
+    fn workspace_member_flat_layout_resolves_module_file() {
+        let member = LayoutInfo::new("", vec!["llama_dev".to_owned()]);
+        let layout = with_members(&[("llama-dev", member)]);
+        let paths = known(&["llama-dev/llama_dev/cli.py"]);
+        assert_eq!(
+            resolve_module_to_path("llama_dev.cli", &layout, &paths),
+            Some("llama-dev/llama_dev/cli.py".to_owned())
+        );
+    }
+
+    #[test]
+    fn src_tree_outside_every_member_is_not_searched() {
+        // `vendor/x` is no member, so nothing imports `api` from there.
+        let paths = known(&["vendor/x/src/api/main.py"]);
+        assert_eq!(
+            resolve_module_to_path("api.main", &LayoutInfo::default(), &paths),
+            None
+        );
+    }
+
+    #[test]
+    fn top_level_module_under_declared_package_root_resolves() {
+        let layout = LayoutInfo::new("lib", vec!["acme".to_owned()]);
+        let paths = known(&["lib/acme_tool.py"]);
+        assert_eq!(
+            resolve_module_to_path("acme_tool", &layout, &paths),
+            Some("lib/acme_tool.py".to_owned())
+        );
+    }
+
+    #[test]
+    fn root_module_resolves_beside_a_package_root() {
+        // `python -m cli` runs from the root whatever the layout.
+        let paths = known(&["cli.py", "tests/helpers.py"]);
+        assert_eq!(
+            resolve_module_to_path("cli", &src_layout(), &paths),
+            Some("cli.py".to_owned())
+        );
+        assert_eq!(
+            resolve_module_to_path("tests.helpers", &src_layout(), &paths),
+            Some("tests/helpers.py".to_owned())
         );
     }
 
@@ -159,15 +208,13 @@ mod tests {
                 prop::sample::select(&["src", "lib", "python"][..]),
                 prop::sample::subsequence(PARTS, 1..3),
             )
-                .prop_map(|(layout, root, packages)| LayoutInfo {
-                    layout,
-                    package_root: if layout == ProjectLayout::Src {
-                        root.to_owned()
+                .prop_map(|(layout, root, packages)| {
+                    let root = if layout == ProjectLayout::Flat {
+                        ""
                     } else {
-                        String::new()
-                    },
-                    packages: packages.into_iter().map(str::to_owned).collect(),
-                    ..Default::default()
+                        root
+                    };
+                    LayoutInfo::new(root, packages.into_iter().map(str::to_owned).collect())
                 })
         }
 
@@ -207,7 +254,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(256))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
             /// Every package file's module name resolves back to that file,
             /// so entry targets and the module index agree on which file a

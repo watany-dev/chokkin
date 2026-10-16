@@ -755,4 +755,212 @@ mod tests {
             );
         }
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        const SPECIFIERS: [&str; 3] = [">=7.0", "<9", "!=8.3.0"];
+        const EXTRAS: [&str; 3] = ["auth", "socks", "fast-io"];
+        const MARKER: &str = "python_version < '3.11'";
+
+        /// One declaration of `pkg`, independent of how it is spelled.
+        #[derive(Debug, Clone)]
+        struct Decl {
+            context: usize,
+            marker: bool,
+            specifiers: Vec<usize>,
+            extras: Vec<usize>,
+            file: usize,
+            line: u32,
+        }
+
+        fn decl() -> impl Strategy<Value = Decl> {
+            (
+                0usize..5,
+                any::<bool>(),
+                prop::sample::subsequence((0..SPECIFIERS.len()).collect::<Vec<_>>(), 0..=3),
+                prop::sample::subsequence((0..EXTRAS.len()).collect::<Vec<_>>(), 0..=2),
+            )
+                .prop_map(|(context, marker, specifiers, extras)| Decl {
+                    context,
+                    marker,
+                    specifiers,
+                    extras,
+                    file: 0,
+                    line: 1,
+                })
+        }
+
+        /// Declarations drawn from a few requirements, so most share their
+        /// requirement with another one; each sits on its own line except
+        /// where `reread` repeats an earlier one's origin.
+        fn decls() -> impl Strategy<Value = Vec<Decl>> {
+            (
+                prop::collection::vec(decl(), 1..4),
+                prop::collection::vec((any::<prop::sample::Index>(), any::<bool>()), 1..7),
+                any::<prop::sample::Index>(),
+                any::<bool>(),
+            )
+                .prop_map(|(bases, picks, reread, rereads)| {
+                    let mut out: Vec<Decl> = picks
+                        .iter()
+                        .zip(1u32..)
+                        .map(|((pick, other_context), line)| {
+                            let mut decl = pick.get(&bases).clone();
+                            if *other_context {
+                                decl.context = (decl.context + 1) % 5;
+                            }
+                            decl.file = usize::from(line % 2 == 0);
+                            decl.line = line;
+                            decl
+                        })
+                        .collect();
+                    if rereads {
+                        let source = reread.get(&out).clone();
+                        out.push(source);
+                    }
+                    out
+                })
+        }
+
+        /// Spells `decl` out: `spelling` picks the specifier and extra order,
+        /// the whitespace around commas and the case and separator of extras,
+        /// none of which changes the requirement.
+        fn render(decl: &Decl, spelling: u8) -> DeclaredDependency {
+            let context = match decl.context {
+                0 => DependencyContext::Runtime,
+                1 => group("dev"),
+                2 => group("lint"),
+                3 => extra("x"),
+                _ => extra("y"),
+            };
+            let mut dep = at(
+                "pkg",
+                context,
+                ["pyproject.toml", "setup.cfg"][decl.file],
+                decl.line,
+            );
+            let mut specifiers: Vec<&str> =
+                decl.specifiers.iter().map(|&i| SPECIFIERS[i]).collect();
+            if spelling & 1 != 0 {
+                specifiers.reverse();
+            }
+            let comma = [",", ", ", " ,  ", "\t,"][usize::from((spelling >> 1) & 3)];
+            if !specifiers.is_empty() {
+                dep.specifier = Some(specifiers.join(comma));
+            }
+            let mut extras: Vec<String> = decl
+                .extras
+                .iter()
+                .map(|&i| match (spelling >> 3) & 3 {
+                    0 => EXTRAS[i].to_owned(),
+                    1 => EXTRAS[i].to_uppercase(),
+                    2 => EXTRAS[i].replace('-', "_"),
+                    _ => EXTRAS[i].replace('-', "."),
+                })
+                .collect();
+            if spelling & 32 != 0 {
+                extras.reverse();
+            }
+            dep.extras = extras;
+            if decl.marker {
+                dep.marker = Some(MARKER.to_owned());
+            }
+            dep
+        }
+
+        fn rendered(decls: &[Decl], spellings: &[u8]) -> Vec<DeclaredDependency> {
+            decls
+                .iter()
+                .zip(spellings.iter().cycle())
+                .map(|(decl, &spelling)| render(decl, spelling))
+                .collect()
+        }
+
+        /// What a report says, apart from the origins' order.
+        fn summary(found: &[IssueCandidate]) -> Vec<(String, Severity, Confidence, Vec<String>)> {
+            found
+                .iter()
+                .map(|issue| {
+                    let mut origins: Vec<String> = issue
+                        .origins
+                        .iter()
+                        .map(|origin| format!("{origin:?}"))
+                        .collect();
+                    origins.sort();
+                    (
+                        issue.message.clone(),
+                        issue.severity,
+                        issue.confidence,
+                        origins,
+                    )
+                })
+                .collect()
+        }
+
+        proptest! {
+            /// Whether two declarations duplicate each other does not depend
+            /// on which one is asked about first, so the report never hinges
+            /// on declaration order.
+            #[test]
+            fn duplicates_is_symmetric(
+                decls in decls(),
+                spellings in prop::collection::vec(any::<u8>(), 1..6),
+            ) {
+                let deps = rendered(&decls, &spellings);
+                let refs: Vec<&DeclaredDependency> = deps.iter().collect();
+                for a in &deps {
+                    for b in &deps {
+                        prop_assert_eq!(duplicates(a, b, &refs), duplicates(b, a, &refs));
+                    }
+                }
+            }
+
+            /// Declarations under different markers, or two reads of one
+            /// line, are never duplicates, whatever else they share.
+            #[test]
+            fn different_marker_or_same_origin_never_duplicates(
+                decls in decls(),
+                spellings in prop::collection::vec(any::<u8>(), 1..6),
+            ) {
+                let deps = rendered(&decls, &spellings);
+                let refs: Vec<&DeclaredDependency> = deps.iter().collect();
+                for a in &deps {
+                    for b in &deps {
+                        if a.marker != b.marker || a.origin == b.origin {
+                            prop_assert!(!duplicates(a, b, &refs), "{a:?} {b:?}");
+                        }
+                    }
+                }
+            }
+
+            /// Specifier order and whitespace (`>=7.0,<9` vs `<9, >=7.0`)
+            /// and extra order, case and separators (`pkg[A,b]` vs
+            /// `pkg[b, a]`) never change what CHK009 reports.
+            #[test]
+            fn detection_ignores_requirement_spelling(
+                decls in decls(),
+                first in prop::collection::vec(any::<u8>(), 1..6),
+                second in prop::collection::vec(any::<u8>(), 1..6),
+            ) {
+                prop_assert_eq!(
+                    summary(&detect(&rendered(&decls, &first))),
+                    summary(&detect(&rendered(&decls, &second)))
+                );
+            }
+
+            /// Reordering the declarations never changes the report.
+            #[test]
+            fn detection_ignores_declaration_order(
+                decls in decls().prop_shuffle(),
+                spelling in any::<u8>(),
+            ) {
+                let deps = rendered(&decls, &[spelling]);
+                let mut reversed = deps.clone();
+                reversed.reverse();
+                prop_assert_eq!(summary(&detect(&deps)), summary(&detect(&reversed)));
+            }
+        }
+    }
 }

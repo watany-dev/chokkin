@@ -105,8 +105,7 @@ mod parse_file_props {
     use std::fs;
 
     use chokkin::internals::{
-        FileContext, ImportKind, LayoutInfo, ProjectLayout, ProjectRoot, RootMarker, TargetVersion,
-        parse_file,
+        FileContext, ImportKind, LayoutInfo, ProjectRoot, RootMarker, TargetVersion, parse_file,
     };
     use proptest::prelude::*;
     use tempfile::TempDir;
@@ -228,12 +227,7 @@ mod parse_file_props {
                 path: fs::canonicalize(dir.path()).expect("canon"),
                 marker: RootMarker::PyProjectToml,
             };
-            let layout = LayoutInfo {
-                layout: ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            };
+            let layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
             let parsed = parse_file(
                 &root,
                 "src/acme/sub/mod.py",
@@ -269,10 +263,7 @@ mod parse_file_props {
                 path: fs::canonicalize(dir.path()).expect("canon"),
                 marker: RootMarker::PyProjectToml,
             };
-            let layout = LayoutInfo {
-                layout: ProjectLayout::Flat,
-                ..Default::default()
-            };
+            let layout = LayoutInfo::new("", Vec::new());
             let parsed = parse_file(&root, "m.py", &layout, FileContext::Runtime, &TargetVersion::default_py311())
                 .expect("parse");
             let line_count = u32::try_from(source.lines().count() + 2).unwrap_or(u32::MAX);
@@ -289,8 +280,8 @@ mod source_bytes_props {
     use std::fs;
 
     use chokkin::internals::{
-        Exports, FileContext, LayoutInfo, ParseSeverity, ParsedModule, ProjectLayout, ProjectRoot,
-        RootMarker, TargetVersion, parse_file,
+        Exports, FileContext, LayoutInfo, ParseSeverity, ParsedModule, ProjectRoot, RootMarker,
+        TargetVersion, parse_file,
     };
     use proptest::prelude::*;
     use tempfile::TempDir;
@@ -302,10 +293,7 @@ mod source_bytes_props {
             path: fs::canonicalize(dir.path()).expect("canon"),
             marker: RootMarker::PyProjectToml,
         };
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            ..Default::default()
-        };
+        let layout = LayoutInfo::new("", Vec::new());
         parse_file(
             &root,
             "m.py",
@@ -360,7 +348,7 @@ mod source_bytes_props {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(128))]
+        #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(128)))]
 
         /// Any bytes come back `Ok`; valid UTF-8 is skipped only for a syntax
         /// error, and a skipped file yields nothing.

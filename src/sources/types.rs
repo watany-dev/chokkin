@@ -10,6 +10,9 @@ use super::warnings::SourcesWarning;
 pub enum ProjectLayout {
     /// `src/<package>/` tree.
     Src,
+    /// `<package>/` under a declared directory other than `src`
+    /// (`lib/sqlalchemy/`).
+    PackageRoot,
     /// `<package>/` at repository root.
     Flat,
     /// Could not infer src/flat; broad globs used.
@@ -23,6 +26,7 @@ impl ProjectLayout {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Src => "src",
+            Self::PackageRoot => "package-root",
             Self::Flat => "flat",
             Self::Unknown => "unknown",
         }

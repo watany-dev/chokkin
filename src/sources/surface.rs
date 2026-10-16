@@ -257,11 +257,7 @@ mod tests {
 
     #[test]
     fn layout_ships_its_packages() {
-        let layout = LayoutInfo {
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..LayoutInfo::default()
-        };
+        let layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
         let surface =
             PublicSurface::from_layout(&layout, &files(&["src/acme/a.py", "scripts/run.py"]))
                 .expect("surface");

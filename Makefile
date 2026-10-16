@@ -3,7 +3,7 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist sdist-smoke tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts formal tlc mutants mutants-diff kani help
+.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist sdist-smoke tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts pbt-deep formal tlc mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
 check: fmt-check lint test deny machete
@@ -26,6 +26,17 @@ fmt-check:
 
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+
+## ─── Property-based tests (#861) ─────────────────────────────────────────────
+# pbt-deep: every proptest block at PBT_CASES / 256 times its usual cases
+#           (16x by default; blocks tuned with with_cases scale through
+#           internals::proptest_cases). CI runs it nightly. A failure saves its
+#           seed under proptest-regressions/ or tests/*.proptest-regressions:
+#           commit the seed with the fix, and review it like a test.
+PBT_CASES ?= 4096
+
+pbt-deep:
+	PROPTEST_CASES=$(PBT_CASES) cargo test --locked
 
 ## ─── Benchmarks ───────────────────────────────────────────────────────────────
 # bench-save/bench-cmp: pass BASELINE=<name> (e.g. make bench-save BASELINE=main)

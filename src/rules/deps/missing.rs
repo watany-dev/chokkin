@@ -533,12 +533,7 @@ mod tests {
                 path: std::env::temp_dir(),
                 marker: crate::discovery::RootMarker::PyProjectToml,
             },
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            },
+            layout: crate::sources::LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),

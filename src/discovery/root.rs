@@ -218,7 +218,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(32))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(32)))]
 
             #[test]
             fn probe_markers_returns_highest_priority(indices in marker_subset()) {

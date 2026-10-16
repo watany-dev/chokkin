@@ -249,7 +249,7 @@ mod tests {
     use crate::plugins::{FrameworkUsedGlob, PluginContribution, ReferenceOrigin};
     use crate::reachability::trace_to_file;
     use crate::rules::Severity;
-    use crate::sources::{DiscoveredFile, LayoutInfo, ProjectLayout};
+    use crate::sources::{DiscoveredFile, LayoutInfo};
     use std::collections::BTreeSet;
 
     const MIGRATION: &str = "acme/migrations/0001_initial.py";
@@ -328,11 +328,7 @@ mod tests {
     fn flat_sources(root: ProjectRoot, paths: &[&str]) -> DiscoveredSources {
         DiscoveredSources {
             root,
-            layout: LayoutInfo {
-                layout: ProjectLayout::Flat,
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            },
+            layout: LayoutInfo::new("", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
             files: paths
                 .iter()
