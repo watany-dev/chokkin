@@ -16,6 +16,7 @@ mod script;
 mod setup_cfg;
 mod setup_py;
 mod setup_py_eval;
+mod setuptools_reqs;
 mod types;
 pub(crate) mod util;
 mod uv_lock;
@@ -36,7 +37,8 @@ pub(crate) use requirements::{
 };
 pub use script::discover_inline_scripts;
 pub(crate) use script::{InlineScript, inline_script_target};
-pub(crate) use setup_cfg::{IniLine, ini_lines, split_requirement_lines};
+pub(crate) use setup_cfg::{IniLine, ini_lines};
+pub(crate) use setuptools_reqs::setuptools_requirement_items;
 pub(crate) use types::{
     DeclaredDependency, LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, UvSourceKind,
     UvToolSettings, WheelTargets,

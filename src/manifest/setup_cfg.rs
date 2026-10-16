@@ -8,6 +8,7 @@ use crate::path_util::rel_to_root;
 use super::error::ManifestError;
 use super::extract::unreadable_reason;
 use super::requirements::extract_requirements_path;
+use super::setuptools_reqs::setuptools_requirement_items;
 use super::types::{DeclaredDependency, DependencyContext, ExtrasState, ProjectMetadata};
 use super::util::{DependencyPush, path_is_within_root, push_dependency, read_text};
 use super::warnings::ManifestWarning;
@@ -114,14 +115,15 @@ impl Requirements<'_> {
     /// missing file, but it may be generated before the build.
     fn push(&self, result: &mut SetupCfgExtraction, value: &str) -> bool {
         let Some(spec) = value.strip_prefix("file:") else {
-            for (index, raw) in split_requirement_lines(value).enumerate() {
+            // setuptools reads the value with `parse_strings` (#965).
+            for item in setuptools_requirement_items(value.lines()) {
                 push_dependency(DependencyPush {
                     dependencies: &mut result.dependencies,
                     warnings: &mut result.warnings,
-                    raw,
+                    raw: &item.text,
                     context: self.context.clone(),
                     file: self.rel,
-                    label: format!("{}[{index}]", self.option),
+                    label: format!("{}[{}]", self.option, item.index),
                     line: None,
                 });
             }
@@ -245,12 +247,6 @@ pub(crate) fn ini_lines(contents: &str) -> impl Iterator<Item = (&str, IniLine<'
     })
 }
 
-/// The non-empty items of an option value, in the order their
-/// declarations are indexed.
-pub(crate) fn split_requirement_lines(value: &str) -> impl Iterator<Item = &str> {
-    value.lines().map(str::trim).filter(|line| !line.is_empty())
-}
-
 /// Split `setup.cfg` into sections the way `configparser` does (see
 /// [`ini_lines`]); a repeated section or option appends to the first.
 fn parse_ini_sections(
@@ -308,6 +304,13 @@ mod tests {
 
     use super::*;
 
+    fn item_texts(value: &str) -> Vec<String> {
+        setuptools_requirement_items(value.lines())
+            .into_iter()
+            .map(|item| item.text)
+            .collect()
+    }
+
     #[test]
     fn parses_multiline_install_requires() {
         let contents = r"[options]
@@ -319,10 +322,7 @@ install_requires =
         let options = sections.get("options").expect("options section");
         let requires = options.get("install_requires").expect("install_requires");
         assert_eq!(requires, "requests\nflask>=1.0");
-        assert_eq!(
-            split_requirement_lines(requires).collect::<Vec<_>>(),
-            ["requests", "flask>=1.0"]
-        );
+        assert_eq!(item_texts(requires), ["requests", "flask>=1.0"]);
     }
 
     #[test]
@@ -365,6 +365,60 @@ install_requires =
         );
     }
 
+    /// setuptools reads the value with `parse_strings` (#965): ` #` starts
+    /// a comment, a `\`-ending item takes the next line, and the label index
+    /// is the item's first line so `--fix` finds the line it counts.
+    #[test]
+    fn values_are_read_like_setuptools_parse_strings() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("setup.cfg");
+        std::fs::write(
+            &path,
+            "[options]\ninstall_requires =\n    requests \\\n      >=2\n    rich  # pretty output\n    rich#x\n\
+             [options.extras_require]\ntest =\n    pytest \\\n",
+        )
+        .expect("write setup.cfg");
+
+        let result = extract_setup_cfg(temp.path(), &path).expect("extract");
+        let declared: Vec<(&str, &str, &str)> = result
+            .dependencies
+            .iter()
+            .map(|dep| {
+                (
+                    dep.name.as_str(),
+                    dep.specifier.as_deref().unwrap_or(""),
+                    dep.origin.label.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            declared,
+            [
+                ("requests", ">=2", "options.install_requires[0]"),
+                ("rich", "", "options.install_requires[2]"),
+            ]
+        );
+        // A bare `#` is no comment, and a `\` with nothing to join stays as
+        // written: both are invalid requirements, not silent drops.
+        assert_eq!(
+            result.warnings,
+            [
+                ManifestWarning::InvalidRequirementLine {
+                    file: "setup.cfg".to_owned(),
+                    line: None,
+                    label: "options.install_requires[3]".to_owned(),
+                    raw: "rich#x".to_owned(),
+                },
+                ManifestWarning::InvalidRequirementLine {
+                    file: "setup.cfg".to_owned(),
+                    line: None,
+                    label: "options.extras_require.test[0]".to_owned(),
+                    raw: "pytest \\".to_owned(),
+                },
+            ]
+        );
+    }
+
     /// An indented comment is not part of the value, and an extra's `]` at
     /// the end of a continuation does not open a section.
     #[test]
@@ -375,10 +429,7 @@ install_requires =
             .get("options")
             .and_then(|options| options.get("install_requires"))
             .expect("install_requires");
-        assert_eq!(
-            split_requirement_lines(requires).collect::<Vec<_>>(),
-            ["requests[security]", "flask"]
-        );
+        assert_eq!(item_texts(requires), ["requests[security]", "flask"]);
     }
 
     #[test]
@@ -444,7 +495,7 @@ install_requires =
                     .get("options")
                     .and_then(|options| options.get("install_requires"))
                     .expect("install_requires must exist");
-                prop_assert_eq!(split_requirement_lines(requires).collect::<Vec<_>>(), values);
+                prop_assert_eq!(item_texts(requires), values);
             }
         }
     }
