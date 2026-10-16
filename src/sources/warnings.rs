@@ -49,6 +49,15 @@ pub enum SourcesWarning {
         /// Human-readable error description.
         reason: String,
     },
+    /// The walk did not follow a symlink that leaves the root, loops, or
+    /// leads nowhere (#986).
+    #[error("sources: did not follow symlink `{path}`: {reason}")]
+    SymlinkSkipped {
+        /// Root-relative path of the link.
+        path: String,
+        /// Why it was not followed.
+        reason: String,
+    },
     /// The only undeclared package directory is not named after the project.
     #[error(
         "sources: no package directory matches project `{project}`; guessed `{chosen}` \
@@ -69,7 +78,8 @@ impl SourcesWarning {
         match self {
             Self::MissingEntryPath { path }
             | Self::EntryPathIsDirectory { path }
-            | Self::GitignoreUnreadable { path } => *path = join_rel(base, path),
+            | Self::GitignoreUnreadable { path }
+            | Self::SymlinkSkipped { path, .. } => *path = join_rel(base, path),
             Self::AmbiguousFlatLayout { candidates, chosen } => {
                 for candidate in candidates {
                     *candidate = join_rel(base, candidate);

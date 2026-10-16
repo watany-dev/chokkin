@@ -268,6 +268,111 @@ pub(super) fn push_walk_error(
     }
 }
 
+/// Symlinks the walk did not follow, with why (#986).
+#[derive(Default)]
+pub(super) struct SkippedSymlinks(Vec<SourcesWarning>);
+
+impl SkippedSymlinks {
+    /// Record `entry` if it is a link [`skipped_symlink`] names.
+    pub(super) fn check(
+        &mut self,
+        root: &Path,
+        entry: &DirEntry,
+        exclude_matcher: &GlobSet,
+        gitignored: &dyn Fn(&Path, bool) -> bool,
+    ) {
+        if entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_symlink())
+        {
+            self.0
+                .extend(skipped_symlink(root, entry, exclude_matcher, gitignored));
+        }
+    }
+
+    /// Append the links in path order: the walk meets them in directory
+    /// order, which the file system picks.
+    pub(super) fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
+        self.0.sort_by_cached_key(ToString::to_string);
+        warnings.append(&mut self.0);
+    }
+}
+
+/// Why the walk did not follow the symlink at `entry`, or `None` when the
+/// skip needs no word (#986). The walk follows no link: one inside the root
+/// is read at its target's own path, so it stays silent. One that leaves the
+/// root, loops, or leads nowhere may be code the user meant to analyze, so
+/// it is named when it could have held some: a source file name, a
+/// directory, or a [`bare_name`] that cannot be resolved, so a dangling
+/// `.gitignore` stays the [`SourcesWarning::GitignoreUnreadable`] it is.
+/// The root itself is walked through its link.
+fn skipped_symlink(
+    root: &Path,
+    entry: &DirEntry,
+    exclude_matcher: &GlobSet,
+    gitignored: &dyn Fn(&Path, bool) -> bool,
+) -> Option<SourcesWarning> {
+    let path = entry.path();
+    if entry.depth() == 0 {
+        return None;
+    }
+    let rel = path.strip_prefix(root).ok()?;
+    let rel_str = normalize_rel_path(rel);
+    // A link to a directory (a symlinked `venv`) answers to `venv/` too.
+    if should_prune_dir(&rel_str, exclude_matcher)
+        || gitignored(rel, false)
+        || gitignored(rel, true)
+    {
+        return None;
+    }
+    let named_source = source_kind(path).is_some();
+    let reason = match path.metadata() {
+        Ok(meta) => {
+            let target = std::fs::canonicalize(path).ok()?;
+            let root = std::fs::canonicalize(root).ok()?;
+            if !(named_source || meta.is_dir()) || target.starts_with(&root) {
+                return None;
+            }
+            "it points outside the project root".to_owned()
+        },
+        Err(_) if !named_source && !bare_name(path) => return None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            "it points to nothing".to_owned()
+        },
+        // ELOOP has no stable `ErrorKind`, so the chain is walked instead.
+        Err(_) if forms_loop(path) => "it forms a loop".to_owned(),
+        Err(error) => error.to_string(),
+    };
+    Some(SourcesWarning::SymlinkSkipped {
+        path: rel_str,
+        reason,
+    })
+}
+
+/// A name with neither an extension nor a leading dot, as a directory's
+/// usually is.
+fn bare_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| !name.contains('.'))
+}
+
+/// A chain of links from `path` that is still a link after as many hops as
+/// the OS follows (40 on Linux) before it calls the chain a loop.
+fn forms_loop(path: &Path) -> bool {
+    let mut current = path.to_path_buf();
+    for _ in 0..=40 {
+        let Ok(target) = std::fs::read_link(&current) else {
+            return false;
+        };
+        current = match current.parent() {
+            Some(parent) => parent.join(target),
+            None => target,
+        };
+    }
+    true
+}
+
 /// The source kind `path`'s extension names, or `None` for a file the
 /// walk does not collect.
 fn source_kind(path: &Path) -> Option<FileKind> {
@@ -292,6 +397,9 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let mut files = Vec::new();
     let mut held_tests = Vec::new();
     let mut warnings = Vec::new();
+    let mut symlinks = SkippedSymlinks::default();
+    let gitignored =
+        |rel: &Path, is_dir| gitignore.is_some_and(|ignore| ignore.gitignore_ignores(rel, is_dir));
 
     let overrides = cache.exclude_overrides(options.exclude_patterns)?;
     let filter = options.respect_gitignore.then(|| {
@@ -319,6 +427,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
         if options.respect_gitignore {
             dir_warnings(&root, cache, &entry, file_type, &mut warnings);
         }
+        symlinks.check(&root, &entry, exclude_matcher, &gitignored);
         if !file_type.is_file() {
             continue;
         }
@@ -336,7 +445,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         }
 
-        if gitignore.is_some_and(|gitignore| gitignore.gitignore_ignores_file(rel)) {
+        if gitignored(rel, false) {
             continue;
         }
 
@@ -361,6 +470,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
     held_tests.sort_by(|left, right| left.path.cmp(&right.path));
+    symlinks.finish(&mut warnings);
     Ok(Collected {
         files,
         held_tests,

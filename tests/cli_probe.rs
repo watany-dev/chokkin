@@ -156,3 +156,30 @@ fn binary_broken_pyproject_exits_two() {
         Some(ExitStatus::UsageError.code().into())
     );
 }
+
+#[test]
+fn probe_falls_back_from_a_stub_uv_lock_and_names_it() {
+    // textual's shape (#976): a package-less `uv.lock` beside a real
+    // `poetry.lock`. The poetry graph is read, the stub is named both as a
+    // warning and on the probe's lockfile line.
+    let root = fixture_path("manifest/stub_uv_lock_beside_poetry");
+    let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");
+    let lockfile = report.manifest.sources.lockfile.as_ref().expect("a lock");
+    assert_eq!(lockfile.path, "poetry.lock");
+    assert!(report.manifest.lockfile.edges.contains_key("rich"));
+
+    let mut output = Vec::new();
+    write_probe_report(&report, &mut output).expect("write");
+    let text = String::from_utf8(output).expect("utf8");
+    assert!(
+        text.contains("lockfile         : poetry.lock (poetry, 2 nodes; not used: uv.lock)"),
+        "{text}"
+    );
+    let mut warnings = Vec::new();
+    write_probe_warnings(&report.warnings, &mut warnings).expect("write");
+    let warnings = String::from_utf8(warnings).expect("utf8");
+    assert!(
+        warnings.contains("uv.lock") && warnings.contains("using `poetry.lock` instead"),
+        "{warnings}"
+    );
+}

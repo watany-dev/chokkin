@@ -24,7 +24,7 @@
       "code": "CHK002",
       "severity": "error",
       "confidence": "certain",
-      "message": "declared in project.dependencies[1], no reachable import, config, or binary usage found",
+      "message": "boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found",
       "fingerprint": "CHK002:boto3",
       "target": "boto3",
       "workspace_member": null,
@@ -36,7 +36,7 @@
       "binary": null,
       "manifest": {
         "file": "pyproject.toml",
-        "line": null
+        "line": 4
       }
     },
     {

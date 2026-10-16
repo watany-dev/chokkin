@@ -32,6 +32,13 @@ pub enum ManifestError {
         path: String,
     },
 
+    /// A `-r` include names a file that resolves outside the project root.
+    #[error("requirements file `{path}` resolves outside the project root")]
+    RequirementsIncludeOutsideRoot {
+        /// Include path as written.
+        path: String,
+    },
+
     /// Circular `-r` include chain in requirements files.
     #[error("circular requirements include: {cycle}")]
     RequirementsCircularInclude {

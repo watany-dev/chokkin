@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{DependencyGroupsConfig, RuntimeOverrides, apply_overrides, load_config};
 use crate::discovery::{DiscoveryError, discover_project_root};
 use crate::manifest::{ManifestError, extract_manifest, resolve_target_version};
+use crate::path_util::resolve_under_root;
 use crate::sources::{SourcesError, discover_sources};
 
 /// Result of writing a starter `[tool.chokkin]` table.
@@ -50,6 +51,9 @@ pub enum InitError {
         /// Existing config path.
         path: PathBuf,
     },
+    /// `pyproject.toml` is a symlink (or under one) that leaves the root.
+    #[error("init target `pyproject.toml` resolves outside the project root")]
+    OutsideRoot,
     /// Init writes to pyproject.toml only.
     #[error("pyproject.toml not found in discovered project root {root}")]
     MissingPyproject {
@@ -82,6 +86,12 @@ pub fn init_project(
     let pyproject = root.path.join("pyproject.toml");
     if !pyproject.is_file() {
         return Err(InitError::MissingPyproject { root: root.path });
+    }
+    // Same containment rule as `--fix` (`fix::containment`): never write
+    // through a symlink to a file outside the project root.
+    let canonical_root = fs::canonicalize(&root.path).unwrap_or_else(|_| root.path.clone());
+    if !matches!(resolve_under_root(&canonical_root, &pyproject), Ok(Some(_))) {
+        return Err(InitError::OutsideRoot);
     }
 
     let project_globs = sources.effective_globs;

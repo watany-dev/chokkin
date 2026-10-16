@@ -298,6 +298,10 @@ mod tests {
             ("griffe", "griffelib"),
             ("faiss", "faiss-cpu"),
             ("faiss", "faiss-gpu"),
+            ("phonenumbers", "phonenumbers"),
+            ("phonenumbers", "phonenumberslite"),
+            ("ninja", "ninja"),
+            ("ninja", "django-ninja"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(
@@ -349,6 +353,25 @@ mod tests {
             ("autodoc2", "sphinx-autodoc2"),
             ("pymdownx", "pymdown-extensions"),
             ("mkdocs_macros", "mkdocs-macros-plugin"),
+            ("rest_framework", "djangorestframework"),
+            ("django_filters", "django-filter"),
+            ("taggit", "django-taggit"),
+            ("modelcluster", "django-modelcluster"),
+            ("treebeard", "django-treebeard"),
+            ("mptt", "django-mptt"),
+            ("strawberry_django", "strawberry-graphql-django"),
+            ("graphql", "graphql-core"),
+            ("storages", "django-storages"),
+            ("phonenumber_field", "django-phonenumber-field"),
+            ("i18naddress", "google-i18n-address"),
+            ("corsheaders", "django-cors-headers"),
+            ("debug_toolbar", "django-debug-toolbar"),
+            ("timezone_field", "django-timezone-field"),
+            ("social_core", "social-auth-core"),
+            ("social_django", "social-auth-app-django"),
+            ("channels", "channels"),
+            ("flask_login", "flask-login"),
+            ("permissionedforms", "django-permissionedforms"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),

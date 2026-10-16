@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 use crate::fix::FixReport;
 
-use super::format::format_subject;
+use super::format::{escape_control, format_subject};
 
 /// Render the fix summary, or `None` when no fix was considered.
 #[must_use]
@@ -20,8 +20,8 @@ pub fn render_fix_report(report: &FixReport) -> Option<String> {
             "  {verb} {} {} in {} — {}",
             fix.rule.as_code(),
             format_subject(&fix.subject),
-            fix.file,
-            fix.description
+            escape_control(&fix.file),
+            escape_control(&fix.description)
         );
     }
     for skipped in &report.skipped {
@@ -31,11 +31,11 @@ pub fn render_fix_report(report: &FixReport) -> Option<String> {
             skipped.rule.as_code(),
             format_subject(&skipped.subject),
             skipped.reason,
-            skipped.detail
+            escape_control(&skipped.detail)
         );
     }
     for reminder in &report.reminders {
-        let _ = writeln!(out, "  reminder: {reminder}");
+        let _ = writeln!(out, "  reminder: {}", escape_control(reminder));
     }
     Some(out)
 }

@@ -13,7 +13,9 @@ use crate::path_util::normalize_rel_path;
 use super::context::assign_file_context;
 use super::error::SourcesError;
 use super::types::{DiscoveredFile, FileContext, FileKind};
-use super::walk::{nested_gitignore_unreadable, push_walk_error, should_prune_dir};
+use super::walk::{
+    SkippedSymlinks, nested_gitignore_unreadable, push_walk_error, should_prune_dir,
+};
 use super::warnings::SourcesWarning;
 
 const GITIGNORE_PATH: &str = ".gitignore";
@@ -137,6 +139,10 @@ pub(super) fn collect_files_reference(
 
     let mut files = Vec::new();
     let mut warnings = Vec::new();
+    let mut symlinks = SkippedSymlinks::default();
+    let gitignored = |rel: &Path, is_dir| {
+        gitignore.is_some_and(|ignore| ignore.matched_path_or_any_parents(rel, is_dir).is_ignore())
+    };
 
     for result in builder.build() {
         let entry = match result {
@@ -161,6 +167,7 @@ pub(super) fn collect_files_reference(
         }
 
         let path = entry.path();
+        symlinks.check(&root, &entry, exclude_matcher, &gitignored);
         if !entry
             .file_type()
             .is_some_and(|file_type| file_type.is_file())
@@ -184,11 +191,8 @@ pub(super) fn collect_files_reference(
             continue;
         }
 
-        if let Some(gitignore) = gitignore {
-            let matched = gitignore.matched_path_or_any_parents(rel, false);
-            if matched.is_ignore() {
-                continue;
-            }
+        if gitignored(rel, false) {
+            continue;
         }
 
         let context = if test_matcher.is_match(&rel_str) {
@@ -208,6 +212,7 @@ pub(super) fn collect_files_reference(
     }
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
+    symlinks.finish(&mut warnings);
     Ok((files, warnings))
 }
 
@@ -582,7 +587,13 @@ mod tests {
         std::os::unix::fs::symlink(&other, root.join("vendor")).expect("symlink");
 
         let outcomes = assert_equivalent(std::slice::from_ref(&root), &[]);
-        assert_eq!(outcomes[0].1, []);
+        assert_eq!(
+            outcomes[0].1,
+            [SourcesWarning::SymlinkSkipped {
+                path: "vendor".to_owned(),
+                reason: "it points outside the project root".to_owned(),
+            }]
+        );
         assert_eq!(paths(&outcomes[0]), ["app.py"]);
     }
 

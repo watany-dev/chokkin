@@ -215,9 +215,11 @@ impl DirIgnore {
     }
 
     /// Whether the directory's `.gitignore` ignores `path` or one of its
-    /// parents: `Gitignore::matched_path_or_any_parents` for a file.
-    pub(super) fn gitignore_ignores_file(&self, path: &Path) -> bool {
-        self.gitignore.matched_path_or_any_parents(path).is_ignore()
+    /// parents: `Gitignore::matched_path_or_any_parents`.
+    pub(super) fn gitignore_ignores(&self, path: &Path, is_dir: bool) -> bool {
+        self.gitignore
+            .matched_path_or_any_parents(path, is_dir)
+            .is_ignore()
     }
 }
 
@@ -280,13 +282,13 @@ impl Rules {
         }
     }
 
-    fn matched_path_or_any_parents<'a>(&'a self, path: &Path) -> Match<&'a Glob> {
+    fn matched_path_or_any_parents<'a>(&'a self, path: &Path, is_dir: bool) -> Match<&'a Glob> {
         match self {
             Self::None => Match::None,
             Self::Shared { root, gitignore } => {
-                gitignore.matched_path_or_any_parents(strip(root, path), false)
+                gitignore.matched_path_or_any_parents(strip(root, path), is_dir)
             },
-            Self::Own(gitignore) => gitignore.matched_path_or_any_parents(path, false),
+            Self::Own(gitignore) => gitignore.matched_path_or_any_parents(path, is_dir),
         }
     }
 }

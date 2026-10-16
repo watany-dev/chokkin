@@ -82,6 +82,14 @@ pub enum ResolveWarning {
         /// `true` when a failed import is caught (see `ImportRef::optional`).
         optional: bool,
     },
+    /// A `.venv` dist-info names no PEP 508 distribution, so its imports,
+    /// scripts and plugins are not credited to it (#973).
+    VenvDistributionIgnored {
+        /// Root-relative dist-info directory.
+        path: String,
+        /// The `Name:` field, or the directory name when METADATA has none.
+        name: String,
+    },
     /// Project `.venv` metadata could not be read.
     VenvUnreadable {
         /// Root-relative virtualenv path.

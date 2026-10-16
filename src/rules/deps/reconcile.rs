@@ -287,8 +287,12 @@ fn workspace_declared_indices<'a>(
 
 /// Distributions another library imports lazily at runtime, so the project
 /// declares them without importing them: starlette's `request.form()` imports
-/// `python_multipart` only when called.
-const RUNTIME_PEERS: &[(&str, &[&str])] = &[("python-multipart", &["starlette", "fastapi"])];
+/// `python_multipart` only when called, and transformers imports `accelerate`
+/// for `device_map="auto"`.
+const RUNTIME_PEERS: &[(&str, &[&str])] = &[
+    ("python-multipart", &["starlette", "fastapi"]),
+    ("accelerate", &["transformers"]),
+];
 
 /// Mark `types-*` stubs and [`RUNTIME_PEERS`] used when the package they serve is.
 fn mark_companion_distributions(declared: &DeclaredIndex<'_>, used: &mut IndexSet<String>) {

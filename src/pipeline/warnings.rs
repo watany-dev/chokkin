@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::entry::EntryWarning;
 use crate::manifest::{ManifestWarning, invalid_requirement_name};
 use crate::plugins::PluginsWarning;
-use crate::reporters::{Diagnostic, condense_diagnostics};
+use crate::reporters::{Diagnostic, condense_diagnostics, escape_control};
 use crate::resolver::ResolveWarning;
 use crate::sources::SourcesWarning;
 
@@ -142,7 +142,8 @@ impl ProbeWarning {
                 manifest_location(warning)
             },
             Self::Sources(warning) => match warning {
-                SourcesWarning::GitignoreUnreadable { path } => (Some(path), None),
+                SourcesWarning::GitignoreUnreadable { path }
+                | SourcesWarning::SymlinkSkipped { path, .. } => (Some(path), None),
                 SourcesWarning::MissingEntryPath { .. }
                 | SourcesWarning::EntryPathIsDirectory { .. }
                 | SourcesWarning::AmbiguousFlatLayout { .. }
@@ -163,6 +164,7 @@ impl ProbeWarning {
             },
             Self::Resolve(warning) => match warning {
                 ResolveWarning::UnresolvedImport { file, line, .. } => (Some(file), *line),
+                ResolveWarning::VenvDistributionIgnored { path, .. } => (Some(path), None),
                 ResolveWarning::AmbiguousImport { .. } | ResolveWarning::VenvUnreadable { .. } => {
                     (None, None)
                 },
@@ -202,6 +204,8 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::RuntimeDependenciesUnknown { file }
         | ManifestWarning::SetupPyPartiallyStatic { file, .. }
         | ManifestWarning::RequirementsUnreadable { file, .. }
+        | ManifestWarning::PathOutsideRoot { file, .. }
+        | ManifestWarning::LockfileSkipped { file, .. }
         | ManifestWarning::DependencyGroupIncludeUndefined { file, .. }
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
         | ManifestWarning::FileUndecodable { file }
@@ -313,6 +317,10 @@ fn write_resolve_warning(
             formatter,
             "resolve: could not resolve import `{import}` in `{file}`"
         ),
+        ResolveWarning::VenvDistributionIgnored { path, name } => write!(
+            formatter,
+            "resolve: ignored `{path}`: `{name}` is not a PEP 508 distribution name"
+        ),
         ResolveWarning::VenvUnreadable { path, reason } => write!(
             formatter,
             "resolve: could not read virtualenv `{path}`: {reason}"
@@ -420,8 +428,15 @@ fn write_manifest_warning(
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
         },
+        ManifestWarning::PathOutsideRoot { file, field, path } => write!(
+            formatter,
+            "manifest: `{path}` (`{field}` in `{file}`) resolves outside the project root and was not read"
+        ),
         ManifestWarning::RequirementsUnreadable { file, reason } => {
             write!(formatter, "manifest: stopped reading `{file}`: {reason}")
+        },
+        ManifestWarning::LockfileSkipped { file, reason } => {
+            write!(formatter, "manifest: skipped lockfile `{file}`: {reason}")
         },
         ManifestWarning::FileUndecodable { file } => write!(
             formatter,
@@ -495,7 +510,7 @@ pub fn diagnostic_lines<'a>(
 /// Write warning lines to `err`, repeated kinds condensed.
 pub fn write_diagnostics(diagnostics: &[Diagnostic], err: &mut impl Write) -> io::Result<()> {
     for diagnostic in condense_diagnostics(diagnostics) {
-        writeln!(err, "{}", diagnostic.text)?;
+        writeln!(err, "{}", escape_control(&diagnostic.text))?;
     }
     Ok(())
 }

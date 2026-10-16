@@ -14,10 +14,11 @@ use crate::config::{
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
-    DeclaredDependency, InlineScript, LoadedManifest, discover_inline_scripts,
-    extract_manifest_with_cache, normalize_distribution_name, resolve_target_version,
+    DeclaredDependency, InlineScript, LoadedManifest, ManifestWarning, UvSourceKind,
+    discover_inline_scripts, extract_manifest_with_cache, lockfile_candidates,
+    normalize_distribution_name, resolve_target_version,
 };
-use crate::path_util::join_rel;
+use crate::path_util::{join_rel, resolve_under_root};
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
@@ -25,6 +26,7 @@ use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, MemberLayout,
     ProjectLayout, SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
+    unpackaged_module_dirs,
 };
 
 use super::error::ProbeError;
@@ -110,6 +112,30 @@ fn drop_nested_projects(root: &Path, sources: &mut DiscoveredSources, nested: &B
     });
 }
 
+/// Root `[tool.uv.sources]` paths that resolve outside the root: their
+/// projects are not scanned as members (#499), so say so instead of dropping
+/// them (#981). A member's path sources are not scanned either way, and its
+/// siblings sit outside the member, so only the root's are reported.
+fn outside_path_sources<'a>(
+    root: &'a Path,
+    manifest: &'a LoadedManifest,
+) -> impl Iterator<Item = ManifestWarning> + 'a {
+    manifest.uv.sources.iter().filter_map(move |source| {
+        let UvSourceKind::Path(path) = &source.kind else {
+            return None;
+        };
+        // An `Err` is a path that does not resolve (`..` below a missing
+        // directory); it names no file to warn about yet (#1000).
+        matches!(resolve_under_root(root, &root.join(path)), Ok(None)).then(|| {
+            ManifestWarning::PathOutsideRoot {
+                file: "pyproject.toml".to_owned(),
+                field: format!("tool.uv.sources.{}", source.name),
+                path: path.clone(),
+            }
+        })
+    })
+}
+
 /// Run pipeline steps 1–4 with optional manifest cache support.
 ///
 /// # Errors
@@ -169,6 +195,7 @@ pub(super) fn probe_project_with_cache(
         sources.python_files().map(|file| file.path.as_str()),
     );
     let mut warnings = collect_warnings(&manifest, &sources);
+    warnings.extend(outside_path_sources(&root.path, &manifest).map(ProbeWarning::Manifest));
     // After `drop_dev_only_members`: a dropped member is not analyzed.
     warnings.extend(member_manifest_warnings(&workspace_inputs));
     warnings.extend(member_sources_warnings(&workspace_inputs));
@@ -228,8 +255,14 @@ fn member_sources_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<Pr
                 .warnings
                 .iter()
                 // The root walk covers every member tree, so the root's count
-                // already includes these files.
-                .filter(|warning| !matches!(warning, SourcesWarning::LargeProject { .. }))
+                // already includes these files, and a link from one member
+                // into another is inside the root (#986).
+                .filter(|warning| {
+                    !matches!(
+                        warning,
+                        SourcesWarning::LargeProject { .. } | SourcesWarning::SymlinkSkipped { .. }
+                    )
+                })
                 .map(|warning| {
                     let mut warning = warning.clone();
                     warning.rebase(&input.member.path);
@@ -529,6 +562,14 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         report.effective_config.mode
     )?;
     writeln!(out, "Layout  : {}", format_layout(&report.sources))?;
+    let unpackaged = unpackaged_module_dirs(&report.root.path, &report.sources.layout);
+    if !unpackaged.is_empty() {
+        writeln!(
+            out,
+            "Unpackaged: {} (modules without `__init__.py`, not taken as packages)",
+            unpackaged.join(", ")
+        )?;
+    }
     if !report.workspace_members.is_empty() {
         writeln!(
             out,
@@ -636,12 +677,31 @@ fn format_layout(sources: &DiscoveredSources) -> String {
     }
 }
 
+/// The lockfile read, plus any other candidate beside it: with several
+/// present, which one the fixed order picked is otherwise invisible (#976).
 fn format_lockfile(manifest: &LoadedManifest) -> String {
     manifest.sources.lockfile.as_ref().map_or_else(
         || "none".to_owned(),
         |source| {
             let nodes = manifest.lockfile.edges.len();
-            format!("{} ({}, {nodes} nodes)", source.path, source.kind.as_str())
+            let unused: Vec<String> = lockfile_candidates(&manifest.root.path)
+                .into_iter()
+                .filter_map(|(_, path)| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .filter(|name| *name != source.path)
+                .collect();
+            let kind = source.kind.as_str();
+            if unused.is_empty() {
+                format!("{} ({kind}, {nodes} nodes)", source.path)
+            } else {
+                format!(
+                    "{} ({kind}, {nodes} nodes; not used: {})",
+                    source.path,
+                    unused.join(", ")
+                )
+            }
         },
     )
 }
@@ -779,6 +839,36 @@ mod tests {
         assert!(text.contains("Project : demo"));
         assert!(text.contains("Summary: probe complete"));
         assert!(text.contains("build backend    : none"));
+    }
+
+    /// A module directory without `__init__.py` is named, and the line is
+    /// left out when there is none (#977).
+    #[test]
+    fn write_probe_report_names_unpackaged_module_dirs() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+        fs::create_dir_all(temp.path().join("demo")).expect("mkdir");
+        fs::write(temp.path().join("demo/__init__.py"), "").expect("write");
+        let text = || {
+            let report =
+                probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+            let mut output = Vec::new();
+            write_probe_report(&report, &mut output).expect("write");
+            String::from_utf8(output).expect("utf8")
+        };
+        assert!(!text().contains("Unpackaged"), "{}", text());
+
+        fs::create_dir_all(temp.path().join("pytest_demo")).expect("mkdir");
+        fs::write(temp.path().join("pytest_demo/plugin.py"), "").expect("write");
+        let text = text();
+        assert!(
+            text.contains("Unpackaged: pytest_demo (modules without `__init__.py`"),
+            "{text}"
+        );
     }
 
     #[test]

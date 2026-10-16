@@ -65,6 +65,16 @@ pub enum ManifestWarning {
         /// Raw line content.
         raw: String,
     },
+    /// A path a manifest names resolves outside the project root, so what it
+    /// points at was not read (#981).
+    PathOutsideRoot {
+        /// Root-relative file that names the path.
+        file: String,
+        /// Where in `file` the path is written (`-c`, `tool.uv.sources.<name>`).
+        field: String,
+        /// The path as written.
+        path: String,
+    },
     /// A `-c` constraints file reference could not be resolved.
     RequirementsConstraintMissing {
         /// Missing constraints file path as written.
@@ -124,6 +134,13 @@ pub enum ManifestWarning {
         /// `requires-python` as written.
         value: String,
     },
+    /// A lockfile was not used for the transitive check (#972).
+    LockfileSkipped {
+        /// Root-relative lockfile path.
+        file: String,
+        /// Why it was skipped and what that leaves unchecked.
+        reason: String,
+    },
     /// A PEP 723 script block was ignored; the file stays a plain source.
     InlineScriptInvalid {
         /// Root-relative script path.
@@ -143,6 +160,7 @@ impl ManifestWarning {
             | Self::InvalidRequirementLine { file, .. }
             | Self::SetupPyPartiallyStatic { file, .. }
             | Self::RequirementsOptionIgnored { file, .. }
+            | Self::PathOutsideRoot { file, .. }
             | Self::RequirementsUnreadable { file, .. }
             | Self::DependencyGroupIncludeUndefined { file, .. }
             | Self::DependencyGroupIncludeCycle { file, .. }
@@ -150,7 +168,8 @@ impl ManifestWarning {
             | Self::DynamicExtrasUnread { file, .. }
             | Self::RequiresPythonUnreadable { file, .. }
             | Self::InlineScriptRequiresPythonUnreadable { file, .. }
-            | Self::InlineScriptInvalid { file, .. } => *file = join_rel(base, file),
+            | Self::InlineScriptInvalid { file, .. }
+            | Self::LockfileSkipped { file, .. } => *file = join_rel(base, file),
             Self::MetadataConflict {
                 kept_source,
                 ignored_source,

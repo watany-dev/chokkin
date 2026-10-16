@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 use crate::rules::{IssueReport, RuleId};
 
 use super::format::{
-    baseline_suppressed_count, condense_diagnostics, format_issue_subject, format_location_column,
-    group_title,
+    baseline_suppressed_count, condense_diagnostics, escape_control, format_issue_subject,
+    format_location_column, group_title,
 };
 use super::types::{Diagnostic, RenderContext};
 
@@ -14,7 +14,7 @@ use super::types::{Diagnostic, RenderContext};
 pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     let mut out = String::new();
     let project = context.project_name.as_deref().unwrap_or("(unknown)");
-    let _ = writeln!(out, "# chokkin report — {project}\n");
+    let _ = writeln!(out, "# chokkin report — {}\n", escape_control(project));
     let _ = writeln!(out, "- Version: `{}`", context.version);
     let _ = writeln!(
         out,
@@ -53,7 +53,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
         for issue in issues {
             let subject = format_issue_subject(issue);
             let location = format_location_column(&issue.location);
-            let message = issue.message.replace('|', "\\|");
+            let message = escape_control(&issue.message).replace('|', "\\|");
             let _ = writeln!(
                 out,
                 "| {} | `{subject}` | `{location}` | {message} |",
@@ -75,6 +75,7 @@ fn write_diagnostics(out: &mut String, diagnostics: &[Diagnostic]) {
     }
     let _ = writeln!(out, "## Warnings  {}\n", diagnostics.len());
     for diagnostic in condense_diagnostics(diagnostics) {
-        let _ = writeln!(out, "- {}", diagnostic.text.replace(['\r', '\n'], " "));
+        let text = diagnostic.text.replace(['\r', '\n'], " ");
+        let _ = writeln!(out, "- {}", escape_control(&text));
     }
 }

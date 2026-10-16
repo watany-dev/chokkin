@@ -499,6 +499,50 @@ setup(name="pkg", version="0", packages=["pkg"], extras_require=extras,
         assert_eq!(shim.extras, None);
     }
 
+    /// celery builds its extras with a dict comprehension over a name tuple,
+    /// through helpers that forward `*p` to requirements files (#975): every
+    /// extra is read, so the state is Known.
+    #[test]
+    fn extras_from_helpers_over_requirements_files_are_known() {
+        let contents = r"
+import os
+import setuptools
+
+EXTENSIONS = ('redis', 'sqlalchemy')
+
+def _reqs(*f):
+    return [r for r in (l.strip() for l in open(
+        os.path.join(os.getcwd(), 'requirements', *f)).readlines()) if r]
+
+def reqs(*f):
+    return [req for subreq in _reqs(*f) for req in subreq]
+
+def extras(*p):
+    return reqs('extras', *p)
+
+def extras_require():
+    return {x: extras(x + '.txt') for x in EXTENSIONS}
+
+setuptools.setup(name='celery', install_requires=reqs('default.txt'),
+                 extras_require=extras_require())
+";
+        let result = extract(
+            contents,
+            &[
+                ("requirements/default.txt", "kombu>=5.3\n"),
+                ("requirements/extras/redis.txt", "kombu[redis]>=5.3\n"),
+                ("requirements/extras/sqlalchemy.txt", "kombu[sqlalchemy]\n"),
+            ],
+        );
+        assert_eq!(result.extras, Some(ExtrasState::Known));
+        assert_eq!(names_in(&result, &extra("redis")), vec!["kombu"]);
+        assert_eq!(names_in(&result, &extra("sqlalchemy")), vec!["kombu"]);
+        assert_eq!(
+            names_in(&result, &DependencyContext::Runtime),
+            vec!["kombu"]
+        );
+    }
+
     #[test]
     fn unreadable_extras_are_partial_per_extra() {
         let result = extract(

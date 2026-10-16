@@ -507,9 +507,11 @@ impl<'a> ModuleVisitor<'a> {
                     imported_name,
                 );
                 let module = resolved.unwrap_or_else(|| {
-                    self.parsed
-                        .diagnostics
-                        .push(unresolved_relative_diagnostic(line));
+                    self.parsed.diagnostics.push(unresolved_relative_diagnostic(
+                        line,
+                        self.path,
+                        self.layout,
+                    ));
                     String::new()
                 });
                 let name = if module_suffix.is_some() || is_star {

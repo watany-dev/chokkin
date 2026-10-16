@@ -268,7 +268,7 @@ pub fn extract_manifest(
         });
     }
 
-    if let Some((source, graph)) = extract_lockfile(root_path)? {
+    if let Some((source, graph)) = extract_lockfile(root_path, &mut warnings)? {
         lockfile = graph;
         sources.uv_lock = source.kind == LockfileKind::Uv;
         sources.lockfile = Some(source);
@@ -352,7 +352,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v20".to_owned(),
+            unit_version: "manifest-extract-v21".to_owned(),
         },
         inputs,
     })

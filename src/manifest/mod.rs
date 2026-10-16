@@ -17,6 +17,7 @@ mod setup_cfg;
 mod setup_py;
 mod setup_py_eval;
 mod setuptools_reqs;
+mod toml_lines;
 mod types;
 pub(crate) mod util;
 mod uv_lock;
@@ -30,7 +31,9 @@ pub(crate) use extract::{infer_target_version_from_requires_python, requires_pyt
 pub(crate) use lockfile::lockfile_candidates;
 pub(crate) use pep508::{canonical_version_specifiers, is_valid_marker};
 pub(crate) use pep508_util::pep508_distribution_name;
-pub(crate) use pep508_util::{invalid_requirement_name, normalize_distribution_name};
+pub(crate) use pep508_util::{
+    invalid_requirement_name, is_project_name, normalize_distribution_name,
+};
 pub(crate) use requirements::{
     extra_requirements_candidates, join_continued_lines, requirements_line_distribution,
     requirements_line_hashed,

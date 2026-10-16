@@ -1,5 +1,6 @@
 //! Shared formatting helpers for reporters.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
@@ -10,16 +11,37 @@ use crate::rules::{
 
 use super::types::Diagnostic;
 
+/// `text` with each control character (`U+0000`–`U+001F`, `U+007F`–`U+009F`)
+/// written as `\u{..}`. File names, venv METADATA and manifest values come
+/// from the analyzed project; printed raw they could colour the terminal or
+/// forge a report line (#973). JSON and SARIF escape through serde instead.
+pub(crate) fn escape_control(text: &str) -> Cow<'_, str> {
+    if !text.chars().any(char::is_control) {
+        return Cow::Borrowed(text);
+    }
+    let mut escaped = String::with_capacity(text.len() + 8);
+    for ch in text.chars() {
+        if ch.is_control() {
+            escaped.extend(ch.escape_unicode());
+        } else {
+            escaped.push(ch);
+        }
+    }
+    Cow::Owned(escaped)
+}
+
 /// Format a primary location column for human reporters.
 pub(super) fn format_location_column(location: &IssueLocation) -> String {
-    if let Some(origin) = &location.manifest {
-        return format_manifest_origin(origin);
-    }
-    match (&location.file, location.line) {
-        (Some(file), Some(line)) => format!("{file}:{line}"),
-        (Some(file), None) => file.clone(),
-        (None, _) => "-".to_owned(),
-    }
+    let column = if let Some(origin) = &location.manifest {
+        format_manifest_origin(origin)
+    } else {
+        match (&location.file, location.line) {
+            (Some(file), Some(line)) => format!("{file}:{line}"),
+            (Some(file), None) => file.clone(),
+            (None, _) => "-".to_owned(),
+        }
+    };
+    escape_control(&column).into_owned()
 }
 
 fn format_manifest_origin(origin: &DependencyOrigin) -> String {
@@ -29,9 +51,9 @@ fn format_manifest_origin(origin: &DependencyOrigin) -> String {
     }
 }
 
-/// Short subject label for compact output.
+/// Short subject label for compact output, control characters escaped.
 pub(super) fn format_subject(subject: &IssueSubject) -> String {
-    match subject {
+    let label = match subject {
         IssueSubject::File { path } => path.clone(),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::Symbol { module, name } => format!("{module}:{name}"),
@@ -39,16 +61,17 @@ pub(super) fn format_subject(subject: &IssueSubject) -> String {
             module, file, line, ..
         } => format!("{} {module}", import_site(file, *line)),
         IssueSubject::ScriptDistribution { script, name } => format!("script:{script}:{name}"),
-    }
+    };
+    escape_control(&label).into_owned()
 }
 
 /// Short subject label annotated with workspace member metadata when present.
 pub(super) fn format_issue_subject(issue: &Issue) -> String {
     let subject = format_subject(&issue.subject);
-    issue
-        .workspace_member
-        .as_ref()
-        .map_or_else(|| subject.clone(), |member| format!("{member}:{subject}"))
+    issue.workspace_member.as_ref().map_or_else(
+        || subject.clone(),
+        |member| format!("{}:{subject}", escape_control(member)),
+    )
 }
 
 /// Group title for the default reporter.
@@ -72,7 +95,10 @@ pub(super) fn group_title(rule: RuleId, count: usize) -> String {
 pub(super) fn format_issue_line(issue: &Issue) -> String {
     let subject = format_issue_subject(issue);
     let location = format_location_column(&issue.location);
-    format!("  {subject:<24} {location:<22} {}", issue.message)
+    format!(
+        "  {subject:<24} {location:<22} {}",
+        escape_control(&issue.message)
+    )
 }
 
 /// Severity label for reporters.
@@ -144,6 +170,19 @@ mod tests {
     use crate::pipeline::{ProbeWarning, SkipReason, diagnostic_lines};
     use crate::resolver::ResolveWarning;
     use crate::rules::{Issue, IssueLocation, RuleId, Severity};
+
+    /// C0, DEL and C1 are spelled out; other text, `\t` aside, is kept (#973).
+    #[test]
+    fn escape_control_spells_out_control_characters() {
+        assert!(matches!(
+            escape_control("acme/ok.py"),
+            Cow::Borrowed("acme/ok.py")
+        ));
+        assert_eq!(
+            escape_control("a\x1b[31m\nb\tc\x7f\u{9b}é"),
+            "a\\u{1b}[31m\\u{a}b\\u{9}c\\u{7f}\\u{9b}é"
+        );
+    }
 
     #[test]
     fn issue_subject_includes_workspace_member() {

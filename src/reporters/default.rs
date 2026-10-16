@@ -6,7 +6,7 @@ use crate::config::ConfigSources;
 use crate::rules::{IssueReport, RuleId};
 
 use super::format::{
-    baseline_suppressed_count, format_issue_line, group_title, write_warning_count,
+    baseline_suppressed_count, escape_control, format_issue_line, group_title, write_warning_count,
 };
 use super::types::RenderContext;
 
@@ -16,7 +16,7 @@ pub(super) fn render(report: &IssueReport, context: &RenderContext) -> String {
     let _ = writeln!(out, "chokkin {}\n", context.version);
 
     let project = context.project_name.as_deref().unwrap_or("(unknown)");
-    let _ = writeln!(out, "Project: {project}");
+    let _ = writeln!(out, "Project: {}", escape_control(project));
     if let Some(config) = &context.config_label {
         let _ = writeln!(out, "Config : {config}");
     }

@@ -2,7 +2,7 @@
 
 #![allow(clippy::expect_used)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{fs, io};
 
@@ -224,6 +224,205 @@ fn binary_fix_dry_run_reports_planned_not_applied() {
     let stderr = String::from_utf8(fix.stderr).expect("utf8");
     assert!(stderr.contains("  applied CHK002 boto3"), "{stderr}");
     assert!(!stderr.contains("  planned CHK"), "{stderr}");
+}
+
+/// A `pyproject.toml` symlinked outside the root: `--fix` refuses it, and
+/// `--dry-run` must not plan what the run would refuse (#980).
+#[cfg(unix)]
+#[test]
+fn binary_fix_dry_run_skips_target_outside_the_root() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let (root, outside) = symlinked_pyproject(temp.path());
+    let before = fs::read_to_string(&outside).expect("read");
+
+    for args in [&["--fix", "--dry-run"][..], &["--fix"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache"])
+            .args(args)
+            .arg(&root)
+            .output()
+            .expect("run chokkin --fix");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(
+            stderr.contains(
+                "skipped CHK002 requests — unsupported-target: fix target `pyproject.toml` resolves outside the project root"
+            ),
+            "{args:?}: {stderr}"
+        );
+        assert!(!stderr.contains("planned CHK"), "{args:?}: {stderr}");
+    }
+    assert_eq!(fs::read_to_string(&outside).expect("read"), before);
+}
+
+/// `--init` appends to `pyproject.toml`, so it gets the same containment check
+/// as `--fix` (#980).
+#[cfg(unix)]
+#[test]
+fn binary_init_refuses_pyproject_outside_the_root() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let (root, outside) = symlinked_pyproject(temp.path());
+    let before = fs::read_to_string(&outside).expect("read");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--init")
+        .arg(&root)
+        .output()
+        .expect("run chokkin --init");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into()),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("init target `pyproject.toml` resolves outside the project root"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&outside).expect("read"), before);
+}
+
+#[cfg(unix)]
+fn symlinked_pyproject(base: &Path) -> (PathBuf, PathBuf) {
+    let root = base.join("proj");
+    let outside = base.join("outside").join("target_pyproject.toml");
+    fs::create_dir_all(root.join("demo")).expect("mkdir");
+    fs::create_dir_all(outside.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &outside,
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"requests\"]\n",
+    )
+    .expect("write outside pyproject");
+    fs::write(root.join("demo/__init__.py"), "").expect("write package");
+    std::os::unix::fs::symlink(
+        "../outside/target_pyproject.toml",
+        root.join("pyproject.toml"),
+    )
+    .expect("symlink");
+    (root, outside)
+}
+
+/// Links the walk does not follow are named with why, one warning each,
+/// while a link inside the root is read at its target and stays silent
+/// (#986). Built at test time: a committed `/etc/passwd` link would follow
+/// the repository into every checkout and package.
+#[cfg(unix)]
+#[test]
+fn binary_skipped_symlinks_are_reported_with_their_reason() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path().join("proj");
+    let other = temp.path().join("other_project/pkg");
+    fs::create_dir_all(root.join("demo")).expect("mkdir");
+    fs::create_dir_all(&other).expect("mkdir");
+    fs::write(other.join("mod.py"), "").expect("write");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("demo/__init__.py"), "").expect("write package");
+    fs::write(root.join("demo/real.py"), "").expect("write module");
+    symlink("b", root.join("a")).expect("symlink");
+    symlink("a", root.join("b")).expect("symlink");
+    symlink("../other_project/pkg", root.join("outside")).expect("symlink");
+    symlink("/etc/passwd", root.join("secret.py")).expect("symlink");
+    symlink("missing.py", root.join("gone.py")).expect("symlink");
+    symlink("real.py", root.join("demo/alias.py")).expect("symlink");
+    symlink("demo", root.join("demo_alias")).expect("symlink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let skipped: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("did not follow symlink"))
+        .collect();
+    for expected in [
+        "sources: did not follow symlink `a`: it forms a loop",
+        "sources: did not follow symlink `b`: it forms a loop",
+        "sources: did not follow symlink `outside`: it points outside the project root",
+        "sources: did not follow symlink `secret.py`: it points outside the project root",
+        "sources: did not follow symlink `gone.py`: it points to nothing",
+    ] {
+        assert!(
+            skipped.iter().any(|line| line.contains(expected)),
+            "{expected}: {stderr}"
+        );
+    }
+    assert_eq!(skipped.len(), 5, "{stderr}");
+}
+
+/// A link that is neither dangling nor a loop is named with the OS error,
+/// and one in an excluded directory is pruned before it is judged.
+#[cfg(unix)]
+#[test]
+fn binary_symlink_errors_name_the_os_reason() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path().join("proj");
+    let other = temp.path().join("other");
+    fs::create_dir_all(root.join("demo")).expect("mkdir");
+    fs::create_dir_all(&other).expect("mkdir");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("demo/__init__.py"), "").expect("write package");
+    symlink("demo/__init__.py/x", root.join("odd.py")).expect("symlink");
+    symlink("../other", root.join("build")).expect("symlink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let skipped: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("did not follow symlink"))
+        .collect();
+    assert_eq!(skipped.len(), 1, "{stderr}");
+    assert!(
+        skipped[0].contains("did not follow symlink `odd.py`: Not a directory"),
+        "{stderr}"
+    );
+}
+
+/// A symlinked virtualenv answers to a directory pattern (`venv/`) in
+/// `.gitignore`, as the directory it points to would.
+#[cfg(unix)]
+#[test]
+fn binary_gitignored_directory_symlink_is_silent() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path().join("proj");
+    let outside = temp.path().join("env");
+    fs::create_dir_all(root.join(".git")).expect("mkdir");
+    fs::create_dir_all(&outside).expect("mkdir");
+    fs::write(root.join(".git/HEAD"), "").expect("write");
+    fs::write(root.join(".gitignore"), "venv/\n").expect("write");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("app.py"), "").expect("write module");
+    symlink(&outside, root.join("venv")).expect("symlink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("did not follow symlink"), "{stderr}");
 }
 
 #[test]
@@ -603,6 +802,40 @@ fn binary_pep723_script_reports_script_scoped_dependencies() {
         assert_eq!(script_issue["file"], "scripts/tool.py");
         assert_eq!(script_issue["line"], 10);
     }
+}
+
+/// #984: a PEP 723 block declares the environment `uv run` builds, so it
+/// lists runtime peers (marimo's dataframe backends, transformers' `torch`)
+/// that the script never imports. CHK002 says so as likely, not certain.
+#[test]
+fn pep723_unused_dependency_is_likely() {
+    let project = pep723_project();
+    for (extra, severity) in [(&[][..], "warning"), (&["--strict"][..], "error")] {
+        let issues = json_issues(project.path(), extra);
+        let httpx = issues
+            .iter()
+            .find(|issue| issue["target"] == "script:scripts/tool.py:httpx")
+            .expect("httpx unused");
+        assert_eq!(httpx["confidence"], "likely", "{extra:?}");
+        assert_eq!(httpx["severity"], severity, "{extra:?}");
+    }
+}
+
+/// #984: transformers imports `accelerate` itself for `device_map="auto"`.
+#[test]
+fn accelerate_is_used_when_transformers_is() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"transformers\", \"accelerate\"]\n\n[project.scripts]\nacme = \"acme:main\"\n",
+        ),
+        (
+            "acme.py",
+            "import transformers\n\n\ndef main() -> None:\n    transformers.pipeline(\"text-generation\", device_map=\"auto\")\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(!keys.iter().any(|(code, _)| code == "CHK002"), "{keys:?}");
 }
 
 #[test]
@@ -1270,6 +1503,81 @@ fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
         fs::write(path, text).expect("write fixture");
     }
     temp
+}
+
+/// Every path that resolves outside the root says so, instead of "not found"
+/// or nothing (#981): chokkin's own config is an error, a manifest's is a
+/// warning naming what was not read.
+#[test]
+fn paths_outside_the_root_are_reported_as_such() {
+    const PROJECT: &str =
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"requests\"]\n";
+    let cases: [(&str, &str, &str, u8); 6] = [
+        (
+            "requirements.txt",
+            "-r ../x.txt\n",
+            "requirements file `../x.txt` resolves outside the project root",
+            2,
+        ),
+        (
+            "requirements.txt",
+            "-c ../x.txt\nrequests\n",
+            "manifest: `../x.txt` (`-c` in `requirements.txt`) resolves outside the project root and was not read",
+            0,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.chokkin]\nproject = [\"../x\"]\n",
+            "project[0]: path resolves outside the project root",
+            2,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.uv.sources]\nlib = { path = \"../x\" }\n",
+            "manifest: `../x` (`tool.uv.sources.lib` in `pyproject.toml`) resolves outside the project root and was not read",
+            0,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.chokkin.workspaces.w]\npath = \"../x\"\n",
+            "workspaces.w.path: path resolves outside the project root",
+            2,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.chokkin]\nentry = [\"/abs/path\"]\n",
+            "entry[0]: path must be relative to the project root",
+            2,
+        ),
+    ];
+    for (file, text, expected, exit) in cases {
+        let pyproject = if file == "pyproject.toml" {
+            format!("{PROJECT}{text}")
+        } else {
+            PROJECT.to_owned()
+        };
+        let mut files = vec![
+            ("x.txt", "requests\n"),
+            ("x/pyproject.toml", PROJECT),
+            ("p/demo/__init__.py", "import requests\n"),
+            ("p/pyproject.toml", pyproject.as_str()),
+        ];
+        let requirements = format!("p/{file}");
+        if file != "pyproject.toml" {
+            files.push((requirements.as_str(), text));
+        }
+        let temp = write_project(&files);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--no-cache")
+            .arg(temp.path().join("p"))
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains(expected), "{text}: {stderr}");
+        assert!(!stderr.contains("not found"), "{text}: {stderr}");
+        assert!(!stderr.contains("missing constraints"), "{text}: {stderr}");
+        assert_eq!(output.status.code(), Some(exit.into()), "{text}: {stderr}");
+    }
 }
 
 /// litellm's `tests/e2e`: a conftest without `__init__.py` puts its directory
@@ -3151,7 +3459,7 @@ fn binary_parse_warnings_reach_stderr_and_json_diagnostics() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     let expected = [
         "parse: `acme/__init__.py:4`: unsupported `__all__` assignment form",
-        "parse: `scripts/tool.py:1`: could not resolve relative import (missing package context)",
+        "parse: `scripts/tool.py:1`: could not resolve relative import (file is not inside a known package)",
     ];
     for line in expected {
         assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
@@ -4525,7 +4833,7 @@ fn binary_build_environment_pins_in_a_build_group_are_used() {
         (
             name.to_owned(),
             format!(
-                "declared in dependency-groups.{label}, no reachable import, config, or binary usage found"
+                "{name} is declared in dependency-groups.{label}, but no reachable import, config, or binary usage was found"
             ),
         )
     };
@@ -5037,4 +5345,248 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
           `scripts/tool.py`; using the project's target version"
         ]
     );
+}
+
+/// Text from the analyzed project, here a file name and venv METADATA, reaches
+/// text reporters and stderr with control characters escaped, so it cannot
+/// colour the terminal or forge a line; a dist-info whose `Name:` is not a
+/// PEP 508 name is ignored with a warning (#973).
+#[cfg(unix)]
+#[test]
+fn binary_escapes_control_characters_from_the_project() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"pyyaml\"]\n\n\
+             [project.scripts]\nacme = \"acme:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", "import yaml\n\ndef main():\n    pass\n"),
+        ("acme/bad\x1b[31m\nCHK001 forged.py", ""),
+        (
+            ".venv/lib/python3.11/site-packages/evil-1.0.dist-info/METADATA",
+            "Name: evil\x1b[31mRED\x1b[0m\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/evil-1.0.dist-info/top_level.txt",
+            "yaml\n",
+        ),
+    ]);
+    let control = |text: &str| text.chars().any(|ch| ch.is_control() && ch != '\n');
+
+    for reporter in ["default", "compact", "markdown", "github"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", reporter])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!control(&stdout), "{reporter}: {stdout:?}");
+        assert!(!control(&stderr), "{reporter}: {stderr:?}");
+        assert!(
+            stdout.contains("bad\\u{1b}[31m\\u{a}CHK001 forged.py"),
+            "{reporter}: {stdout}"
+        );
+        assert!(
+            !stdout.lines().any(|line| line.starts_with("CHK001 forged")),
+            "{reporter}: {stdout}"
+        );
+        assert!(
+            stderr.lines().any(|line| line
+                == "resolve: ignored `.venv/lib/python3.11/site-packages/evil-1.0.dist-info`: \
+                    `evil\\u{1b}[31mRED\\u{1b}[0m` is not a PEP 508 distribution name"),
+            "{reporter}: {stderr}"
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues = parsed["issues"].to_string();
+    assert!(!issues.contains("evil"), "{issues}");
+    assert!(!issues.contains("\"CHK002\""), "{issues}");
+    assert!(!issues.contains("\"CHK003\""), "{issues}");
+}
+
+/// locust's shape (#977): the wheel includes `pytest_locust/`, a namespace
+/// directory with only `plugin.py`, named by a `pytest11` entry point. It is
+/// a package, so the entry maps and the plugin is neither unused nor its
+/// import unresolved.
+#[test]
+fn binary_wheel_included_namespace_directory_is_a_package() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"locust\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.entry-points.pytest11]\nlocust = \"pytest_locust.plugin\"\n\n\
+             [tool.hatch.build.targets.wheel]\ninclude = [\"locust\", \"pytest_locust\"]\n",
+        ),
+        ("locust/__init__.py", "from locust.core import run\n"),
+        ("locust/core.py", "def run():\n    return 1\n"),
+        (
+            "pytest_locust/plugin.py",
+            "from locust import run\n\n\ndef pytest_configure(config):\n    run()\n",
+        ),
+        ("locust/helpers.py", "import pytest_locust.plugin\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("could not map"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues = parsed["issues"].as_array().expect("issues");
+    let named: Vec<String> = issues
+        .iter()
+        .filter(|issue| issue.to_string().contains("pytest_locust"))
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(named, Vec::<String>::new());
+}
+
+#[test]
+fn pytest_testpaths_suite_package_resolves_by_absolute_name() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"celery\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.pytest.ini_options]\ntestpaths = \"t/unit/\"\n",
+        ),
+        ("celery/__init__.py", "def run():\n    return 1\n"),
+        ("t/__init__.py", ""),
+        ("t/unit/__init__.py", ""),
+        ("t/unit/helpers.py", "def helper():\n    return 1\n"),
+        (
+            "t/unit/test_run.py",
+            "from celery import run\nfrom t.unit.helpers import helper\nfrom .helpers import helper as again\n\n\
+             def test_run():\n    assert run() == helper() == again()\n",
+        ),
+        ("t/integration/__init__.py", ""),
+        (
+            "t/integration/test_live.py",
+            "from t.unit.helpers import helper\nfrom . import conftest\n",
+        ),
+        ("t/integration/conftest.py", "VALUE = 1\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("relative import"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<String> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| ["CHK001", "CHK010"].contains(&issue["code"].as_str().unwrap_or("")))
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(issues, Vec::<String>::new());
+}
+
+#[test]
+fn unused_dependency_names_the_distribution_and_its_pyproject_line() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\n  \"requests>=2\",\n  \"rich\",\n]\n\n\
+             [project.optional-dependencies]\ncli = [\"click\"]\n\n\
+             [dependency-groups]\ndev = [\n  \"attrs\",\n]\n\n\
+             [tool.uv]\ndev-dependencies = [\"ruff\"]\n",
+        ),
+        ("acme/__init__.py", "import rich\n"),
+    ]);
+    let issues = json_issues(project.path(), &["--strict"]);
+    let unused: Vec<_> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            (
+                issue["message"].as_str().unwrap_or_default().to_owned(),
+                issue["manifest"]["line"].as_u64(),
+            )
+        })
+        .collect();
+    let expected = |name: &str, label: &str, line: u64| {
+        (
+            format!(
+                "{name} is declared in {label}, but no reachable import, config, or binary usage was found"
+            ),
+            Some(line),
+        )
+    };
+    assert_eq!(
+        unused,
+        [
+            expected("attrs", "dependency-groups.dev[0]", 14),
+            expected("click", "project.optional-dependencies.cli[0]", 10),
+            expected("requests", "project.dependencies[0]", 5),
+            expected("ruff", "tool.uv.dev-dependencies[0]", 18),
+        ],
+        "{issues:#?}"
+    );
+}
+
+#[test]
+fn poetry_dependency_lines_come_from_their_key() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[tool.poetry]\nname = \"acme\"\nversion = \"0.1.0\"\n\n\
+             [tool.poetry.dependencies]\npython = \"^3.10\"\n\"zope.interface\" = \"*\"\nrich = { version = \"*\" }\n",
+        ),
+        ("acme/__init__.py", "import rich\n"),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    let lines: Vec<_> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["manifest"]["line"].as_u64(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [("zope-interface".to_owned(), Some(7))],
+        "{issues:#?}"
+    );
+}
+
+/// A suite inside a package (`core/tests`) leaves the package a guess
+/// candidate: widening it to `core` would make `core/api.py` test code.
+#[test]
+fn pytest_testpaths_inside_a_package_keeps_the_package_runtime() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"service\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.pytest.ini_options]\ntestpaths = [\"core/tests\"]\n",
+        ),
+        ("core/__init__.py", ""),
+        ("core/api.py", "def handler():\n    return 1\n"),
+        ("core/tests/__init__.py", ""),
+        (
+            "core/tests/test_api.py",
+            "from core.api import handler\n\ndef test_handler():\n    assert handler() == 1\n",
+        ),
+        ("utils/__init__.py", ""),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--probe"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("packages: core"), "{stdout}");
 }
