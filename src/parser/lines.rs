@@ -13,10 +13,11 @@ impl LineIndex {
     pub(crate) fn new(source: &str) -> Self {
         let mut starts = vec![TextSize::default()];
         let bytes = source.as_bytes();
-        for (index, &byte) in bytes.iter().enumerate() {
-            let ends_line =
-                byte == b'\n' || (byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'));
-            if ends_line && let Ok(next) = u32::try_from(index + 1) {
+        // Every file is indexed once per parse; memchr skips line bodies
+        // instead of testing each byte (#761).
+        for index in memchr::memchr2_iter(b'\n', b'\r', bytes) {
+            let crlf = bytes.get(index) == Some(&b'\r') && bytes.get(index + 1) == Some(&b'\n');
+            if !crlf && let Ok(next) = u32::try_from(index + 1) {
                 starts.push(TextSize::new(next));
             }
         }
@@ -43,5 +44,12 @@ mod tests {
             .map(|offset| index.line(TextSize::new(offset)))
             .collect();
         assert_eq!(lines, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn line_starts_follow_runs_of_mixed_endings() {
+        let index = LineIndex::new("\r\r\n\n\u{e9}\r\n\r");
+        let starts: Vec<u32> = index.starts.iter().map(|&start| start.to_u32()).collect();
+        assert_eq!(starts, vec![0, 1, 3, 4, 8, 9]);
     }
 }

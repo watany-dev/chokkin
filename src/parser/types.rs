@@ -301,7 +301,8 @@ pub struct ParsedModule {
     /// Module names a module-level `pytest_plugins` lists.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pytest_plugins: Vec<DynamicImport>,
-    /// Attribute accesses for `import module; module.name` symbol tracking.
+    /// Attribute accesses for `import module; module.name` symbol tracking,
+    /// only those through a receiver one of `imports` binds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_accesses: Vec<AttributeAccess>,
     /// Top-level symbol definitions.
