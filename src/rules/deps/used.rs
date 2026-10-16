@@ -285,9 +285,9 @@ fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashMap<String
     let mut roots = HashSet::from([member_path]);
     for path in &paths {
         roots.extend(
-            path.match_indices('/')
-                .map(|(slash, _)| &path[..slash])
-                .filter(|dir| dir.len() > member_path.len())
+            path[member_path.len()..]
+                .match_indices('/')
+                .map(|(slash, _)| &path[..member_path.len() + slash])
                 .filter(|dir| *dir == "src" || dir.ends_with("/src")),
         );
     }
