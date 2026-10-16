@@ -342,19 +342,6 @@ fn run_analysis_core(
         sources,
         parse: &parse,
     };
-    let deps = crate::rules::deps::reconcile_with_context(
-        &DependencyRuleContext {
-            rules: &context,
-            config: &probe.effective_config,
-            strict,
-            build_scripts: &probe.build_scripts,
-        },
-        &probe.manifest,
-        &plugins,
-        &workspace_boundaries,
-        &probe.scripts,
-    );
-
     let production_tests = if production
         && (entry.mode == ProjectMode::Library || !entry.library_members.is_empty())
     {
@@ -364,13 +351,33 @@ fn run_analysis_core(
     };
     // A test the parser could not read is evidence lost, like a root file.
     warnings.extend(production_tests.iter().flatten().flat_map(parse_warnings));
-    let symbols = crate::rules::symbols::analyze_with_context(
-        &context,
-        &entry,
-        &plugins,
-        &probe.manifest,
-        &member_surfaces,
-        production_tests.as_deref(),
+    // Both rule sets only read the analysis; run them side by side.
+    let (deps, symbols) = crate::parallel::join(
+        parse.modules.len(),
+        || {
+            crate::rules::deps::reconcile_with_context(
+                &DependencyRuleContext {
+                    rules: &context,
+                    config: &probe.effective_config,
+                    strict,
+                    build_scripts: &probe.build_scripts,
+                },
+                &probe.manifest,
+                &plugins,
+                &workspace_boundaries,
+                &probe.scripts,
+            )
+        },
+        || {
+            crate::rules::symbols::analyze_with_context(
+                &context,
+                &entry,
+                &plugins,
+                &probe.manifest,
+                &member_surfaces,
+                production_tests.as_deref(),
+            )
+        },
     );
 
     let members: Vec<MemberManifest<'_>> = probe

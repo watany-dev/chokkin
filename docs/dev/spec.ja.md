@@ -1138,7 +1138,7 @@ chokkin/
     entry/       # 実装済み: pipeline step 8 (`build_entry_roots`)
     reachability/ # 実装済み: pipeline step 9 (`analyze_reachability`, `trace_to_file`)
     rules/       # 実装済み: step 10 `rules/deps/` (`reconcile_with_context`, CHK002–CHK009);
-                 #           step 11 `rules/symbols/` (`analyze_with_context`, CHK006–CHK007, CHK010);
+                 #           step 11 `rules/symbols/` (`analyze_with_context`, CHK006–CHK007, CHK010; step 10 と並行);
                  #           step 12 (`emit_issues`, `explain_issue`, ignore/filter)
     reporters/   # 実装済み: default / compact / json / markdown reporter
     fix/         # 実装済み: step 13 (`apply_fixes_with_workspace` — pyproject/requirements/setup.cfg; atomic write, root containment)
