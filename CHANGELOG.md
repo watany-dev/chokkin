@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-10-16
+
+v0.7.6 ships the first version of the unknown-input contract (ADR 0005).
+The JSON / baseline `schema_version` stays `"1"`, and fingerprints are
+unchanged, so baselines keep matching. What chokkin could not read — an
+import it cannot resolve, a skipped entry, an unreadable module, notebook or
+Django settings, an invalid requirement line, an assumed target version —
+now lowers the findings it could hide instead of being dropped, so a
+dependency such a gap might use is reported as Likely and `--fix` leaves it.
+The same signals reach every reporter as warnings, not only `json`: expect
+new `Warnings: N` lines, `::warning` annotations and SARIF notifications on
+projects that chokkin cannot fully read. Requirements files are read more
+like pip (line continuations, inline options, whitespace and markers), and
+transformers, llama_index and airflow analyze markedly faster.
+
 ### Added
 - The GitHub Action's `version` input also takes the path of a chokkin wheel
   (`*.whl`, relative to `working-directory`), which it runs with
@@ -17,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blocks, so the added names count as public API (CHK006) and pass through
   star imports. A non-literal addition (`__all__ += sub.__all__`) warns and
   keeps the list (#567).
+- Signals the pipeline used to drop now reach every reporter as warnings:
+  parse diagnostics, entry and member warnings, manifest warnings of members
+  and extra requirement files, ambiguous imports, an unreadable venv, member
+  `sources:` problems, `--production` test-walk warnings, notebooks with no
+  readable `cells` or unreadable code cells, and unreadable directories.
+  `default` and `compact` end with `Warnings: N (see stderr)`, `markdown`
+  lists them, `github` emits `::warning` annotations with `file=` / `line=`,
+  `sarif` writes them to `invocations[].toolExecutionNotifications` with
+  `locations`, and `json` keeps them in `diagnostics`. Duplicate lines are
+  dropped; stderr, `markdown` and `github` show the first 5 of a kind and
+  `… and M more like the above`, while `json` and `sarif` keep every line.
+  No finding changes from this alone (#877, #892–#895, #898–#900).
 
 ### Changed
 - CHK005 for a package that runtime code imports only inside functions is
@@ -41,7 +68,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     CHK002 to likely. `DJANGO_SETTINGS_MODULE` set beside a nested
     `manage.py`, `wsgi.py` or `asgi.py` now resolves from that directory (#914);
   - a nested `.gitignore` that cannot be read (#915) and a `requires-python`
-    that cannot be read (#917) now warn instead of being silently ignored.
+    that cannot be read (#917) now warn instead of being silently ignored;
+  - a notebook with code cells chokkin cannot read lowers CHK001 and CHK002
+    to likely, and `--explain` names the gap with its first file (#902);
+  - a module imported by a name computed at runtime (`importlib.import_module(x)`)
+    warns once per run that unused files are reported below certain (#909);
+  - a workspace member whose runtime dependencies cannot be read lowers only
+    that member's CHK003 and CHK004 (#910);
+  - an entry outside discovery (`docs/conf.py` excluded by the walk) lowers
+    CHK001 and CHK002 of its project or member to likely (#923);
+  - only imports whose stdlib status depends on the Python version
+    (`tomllib`, `binhex`) drop to info / maybe for CHK003, CHK004 and CHK010
+    when the target version is assumed (#924);
+  - Django settings that `include()` or `exec()` other files at import time
+    count as unread (#925);
+  - an invalid requirement line turns imports of the name it starts with into
+    info / maybe hints, and its warning ends with
+    ``; undeclared imports of `name` are reported as hints`` (#928);
+  - in a library, a public module chokkin skipped lowers CHK002 for what it
+    may import to likely, so `--fix` keeps a dependency only that module
+    imports; `--explain` evidence reads the same files as the verdict (#550).
+  Every lowered finding stays in the report; `--fix` touches only certain
+  findings, so a lowered one is no longer auto-removed.
+- `--production` no longer walks the tree a second time for the dropped test
+  files: a cold run is about 17% faster on llama_index and 11% on airflow,
+  with identical output (#844).
+- Parsed ignore files are shared between the root and member walks, which now
+  run side by side: a cold `--probe` on llama_index takes about half as long,
+  with identical output (#757, #758).
+- The sdist ships only `src/`, `Cargo.toml`, `Cargo.lock`, `pyproject.toml`,
+  `README.md` and `LICENSE` (188 files instead of 1100), and no longer the
+  `.cargo/config.toml` that asked for `lld`, so building it no longer needs
+  `lld` installed (#701).
 
 ### Fixed
 - Python code after a backslash continuation (`python \` then `-c '...'` on the
@@ -68,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parse: skipped …: syntax error at line N: …` warning, instead of being read
   as a module without imports. Its imports are unknown, so CHK001 and CHK002
   for what it may use drop to likely and `--fix` no longer removes a
-  dependency only that file imports.
+  dependency only that file imports (#886).
 - The negative `--trace` names an automatic entry root's rule once
   (`auto: __main__.py` instead of `auto: auto:__main__.py`) (#850).
 - A runtime module that defines or re-exports (`__all__`) both PEP 517 hooks,
@@ -126,6 +184,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension's `from .core import setup`, a pytest plugin's `pytest_*` hook,
   a PEP 517 backend package's `build_wheel`) is no longer CHK007, since the
   host reads it from the package (#873).
+- A bare `celery -A proj.app` or `flask --app web` module is an entry root,
+  so it is no longer CHK001, and the app objects the tool looks up (`app`,
+  `celery`; `app`, `application`, `create_app`, `make_app`) are no longer
+  CHK006. Quoted values (`--app "web.factory:create_app()"`) are unquoted
+  and a factory call marks the factory as used (#851).
+- A setup.py subscript assignment whose base is not a dict
+  (`reqs[0] = ...`) marks setup.py as partially read, so the findings it
+  could hide are lowered, instead of being dropped silently; an unknown key
+  on a known extras dict keeps the other extras (#827).
+- Sphinx `extensions` / `html_theme`, Django `INSTALLED_APPS` /
+  `MIDDLEWARE` / `ROOT_URLCONF` / `WSGI_APPLICATION`, `DJANGO_SETTINGS_MODULE`
+  in `manage.py` and `pytest_plugins` references carry the line of the string
+  that names the module, so an inline ignore on that line works; CHK003 and
+  CHK010 messages name the setting instead of an `import` (#830).
 - An arbitrary-equality (`===`) value in a manifest requirement is read the
   way `packaging` reads it: up to whitespace, `;` or `)`, commas included,
   with empty items dropped. `foo===1.0,,>=1` is accepted, and
@@ -139,6 +211,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `requires-python` with empty items (`>=3.9,`, `>=3.9,,<4`, ` , >=3.9`) sets
   the target version from its bounds, as `packaging`'s `SpecifierSet` reads
   it, instead of falling back to py311 (#880).
+- Two entry points into one module both mark their objects as used; before,
+  only the last one did, so the other was CHK006 (#884).
+- `__all__` changed inside a loop, function or class
+  (`for m in mods: __all__.append(...)`) and a non-dict setup.py
+  `extras_require` warn instead of being dropped silently (#884).
+- A partly unread setup.py `extras_require` keeps the extras it read, and a
+  dynamic `optional-dependencies` is tracked as unread (#869, #905).
+- A broken ignore file is reported once, naming the file, instead of once per
+  walked directory (#903).
+- Poetry `python = …` and `platform = …` dependency constraints become markers,
+  so the dependencies they guard are no longer CHK002 (#888).
+- `setup.cfg` accepts `key: value` lines and reads `file:` directives in
+  `install_requires` and `extras_require`; a missing or escaping `file:` path
+  marks those requirements unread instead of empty (#888).
+- Requirement lines strip whitespace the way Python's `str.strip` does
+  (`click>=\x1f8`), and requirements and constraints files split the marker
+  the way pip does (`bar\u00a0; …`, `"; "` after a URL). `foo ;` has no
+  marker. These were invalid requirements or CHK002 / CHK003 false positives
+  (#889, #890).
+- A requirements line ending in `\` continues on the next line as in pip, and
+  the options pip accepts after a requirement (`--hash`, `--config-settings`,
+  `--global-option`, …) are dropped, so hash-pinned and multi-line
+  requirements declare their distribution instead of being invalid. An
+  option pip rejects keeps the line invalid. `--fix` removes every physical
+  line of a continued requirement and refuses any file with `--hash` in any
+  form (#927).
+- A partial or unknown `__all__` lets every name through `from m import *`,
+  `_` names included, so a name used only through that star import is no
+  longer CHK006; the same applies to a library's public API and to Sphinx and
+  Django config star imports (#951).
+- CHK009 `--fix` no longer removes a line that another context still reads
+  through `-r`. When `requirements.txt` and `requirements-dev.txt` both
+  include `base.txt` and only `requirements.txt` repeats its `requests`, the
+  fix removes the `requirements.txt` line, and the issue is reported on the
+  line the fix removes. A repeat with no line safe to remove is reported as
+  info / likely (#860).
 
 ## [0.7.5] - 2026-10-12
 

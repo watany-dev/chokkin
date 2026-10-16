@@ -1,6 +1,9 @@
 //! `requirements*.txt` line-based edits.
 
-use crate::manifest::{normalize_distribution_name, requirements_line_distribution};
+use crate::manifest::{
+    join_continued_lines, normalize_distribution_name, requirements_line_distribution,
+    requirements_line_hashed,
+};
 
 use super::error::FixError;
 use super::write::{read_manifest, write_manifest};
@@ -14,23 +17,34 @@ pub(super) fn remove_dependency_line(
 ) -> Result<String, FixError> {
     let (rel, contents) = read_manifest(path, "requirements.txt")?;
 
-    if contents.lines().any(|line| line.contains("--hash=")) {
+    // A line pip continues with `\` is one requirement over several physical
+    // lines (#927): it is matched as a whole and removed as a whole.
+    let logical = join_continued_lines(contents.lines());
+    if logical
+        .iter()
+        .any(|line| requirements_line_hashed(&line.text))
+    {
         return Err(FixError::Unsupported {
             detail: "hash-pinned requirements files cannot be auto-edited".to_owned(),
         });
     }
 
     let target = normalize_distribution_name(distribution);
-    let mut removed = false;
-    let mut updated = String::with_capacity(contents.len());
-
-    for (index, raw_line) in contents.split_inclusive('\n').enumerate() {
-        let line_no = u32::try_from(index + 1).unwrap_or(u32::MAX);
-        if line.is_none_or(|expected| expected == line_no) && line_name_matches(raw_line, &target) {
-            removed = true;
-            continue;
+    let mut drop = vec![false; contents.split_inclusive('\n').count()];
+    for joined in &logical {
+        let line_no = u32::try_from(joined.first + 1).unwrap_or(u32::MAX);
+        if line.is_none_or(|expected| expected == line_no)
+            && line_name_matches(&joined.text, &target)
+        {
+            drop[joined.first..joined.first + joined.span].fill(true);
         }
-        updated.push_str(raw_line);
+    }
+    let removed = drop.contains(&true);
+    let mut updated = String::with_capacity(contents.len());
+    for (raw_line, dropped) in contents.split_inclusive('\n').zip(drop) {
+        if !dropped {
+            updated.push_str(raw_line);
+        }
     }
 
     if !removed {
@@ -120,6 +134,35 @@ mod tests {
         remove_dependency_line(&path, "foo", Some(1)).expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert_eq!(updated, "requests\n");
+    }
+
+    #[test]
+    fn removes_every_physical_line_of_a_continued_requirement() {
+        // #927: the manifest names the first physical line of a joined line.
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("requirements.txt");
+        std::fs::write(&path, "foo \\\n    >=1.0 \\\n    ,<2\nrequests \\\n").expect("write");
+        remove_dependency_line(&path, "foo", Some(1)).expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated, "requests \\\n");
+        remove_dependency_line(&path, "requests", Some(1)).expect("remove");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "");
+    }
+
+    #[test]
+    fn hash_pinned_files_are_refused_in_every_option_form() {
+        for contents in [
+            "rich==13.7.0 --hash sha256:abc\nboto3\n",
+            "rich==13.7.0 \\\n    --hash=sha256:abc\nboto3\n",
+            // A line pip rejects for another option still pins a hash.
+            "rich==13.7.0 --hash=sha256:abc --no-deps\nboto3\n",
+        ] {
+            let dir = TempDir::new().expect("tempdir");
+            let path = dir.path().join("requirements.txt");
+            std::fs::write(&path, contents).expect("write");
+            remove_dependency_line(&path, "boto3", None).expect_err(contents);
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), contents);
+        }
     }
 
     mod props {

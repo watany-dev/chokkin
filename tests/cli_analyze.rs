@@ -3040,9 +3040,11 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
             "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\n",
         ),
         // `rich_` cannot end a PEP 508 name, so the name read is `rich`.
+        // pip rejects an option it does not know, so the click line is
+        // invalid even though its requirement part parses (#927).
         (
             "requirements.txt",
-            "PyYAML>=\nrich_ >=13\n>=1.0\nclick==8.1 \\\n",
+            "PyYAML>=\nrich_ >=13\n>=1.0\nclick==8.1 --unknown\n",
         ),
         ("acme/__init__.py", ""),
         (
