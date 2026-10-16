@@ -124,6 +124,13 @@ pub enum ManifestWarning {
         /// `requires-python` as written.
         value: String,
     },
+    /// A lockfile was not used for the transitive check (#972).
+    LockfileSkipped {
+        /// Root-relative lockfile path.
+        file: String,
+        /// Why it was skipped and what that leaves unchecked.
+        reason: String,
+    },
     /// A PEP 723 script block was ignored; the file stays a plain source.
     InlineScriptInvalid {
         /// Root-relative script path.
@@ -150,7 +157,8 @@ impl ManifestWarning {
             | Self::DynamicExtrasUnread { file, .. }
             | Self::RequiresPythonUnreadable { file, .. }
             | Self::InlineScriptRequiresPythonUnreadable { file, .. }
-            | Self::InlineScriptInvalid { file, .. } => *file = join_rel(base, file),
+            | Self::InlineScriptInvalid { file, .. }
+            | Self::LockfileSkipped { file, .. } => *file = join_rel(base, file),
             Self::MetadataConflict {
                 kept_source,
                 ignored_source,

@@ -202,6 +202,7 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::RuntimeDependenciesUnknown { file }
         | ManifestWarning::SetupPyPartiallyStatic { file, .. }
         | ManifestWarning::RequirementsUnreadable { file, .. }
+        | ManifestWarning::LockfileSkipped { file, .. }
         | ManifestWarning::DependencyGroupIncludeUndefined { file, .. }
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
         | ManifestWarning::FileUndecodable { file }
@@ -422,6 +423,9 @@ fn write_manifest_warning(
         },
         ManifestWarning::RequirementsUnreadable { file, reason } => {
             write!(formatter, "manifest: stopped reading `{file}`: {reason}")
+        },
+        ManifestWarning::LockfileSkipped { file, reason } => {
+            write!(formatter, "manifest: skipped lockfile `{file}`: {reason}")
         },
         ManifestWarning::FileUndecodable { file } => write!(
             formatter,

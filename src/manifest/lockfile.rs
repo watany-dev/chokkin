@@ -15,6 +15,12 @@ use super::pylock::extract_pylock;
 use super::types::{LockfileGraph, LockfileKind, LockfileSource};
 use super::util::read_to_string;
 use super::uv_lock::extract_uv_lock;
+use super::warnings::ManifestWarning;
+
+/// Lockfiles beyond either limit are skipped with a warning instead of read
+/// (#972). The corpus's largest is airflow's `uv.lock`: 3.2 MB, 960 packages.
+const MAX_LOCKFILE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_LOCKFILE_PACKAGES: usize = 20_000;
 
 /// Existing lockfiles directly under `root`, highest priority first
 /// (`uv.lock` > `pylock.toml` > `pylock.<name>.toml` > `poetry.lock` > `pdm.lock`).
@@ -32,24 +38,64 @@ pub(crate) fn lockfile_candidates(root: &Path) -> Vec<(LockfileKind, PathBuf)> {
     found
 }
 
-/// Read the highest-priority lockfile under `root`, if any.
+/// Read the highest-priority lockfile under `root`, if any. One over the
+/// size limits counts as absent: CHK003 then stands for CHK004 too, both
+/// asking for the same declaration, so nothing is lowered.
 pub(super) fn extract_lockfile(
     root: &Path,
+    warnings: &mut Vec<ManifestWarning>,
 ) -> Result<Option<(LockfileSource, LockfileGraph)>, ManifestError> {
     let Some((kind, path)) = lockfile_candidates(root).into_iter().next() else {
         return Ok(None);
     };
+    let file = rel_to_root(root, &path);
+    let bytes = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());
+    // Counting the table headers first spares parsing a lock already too
+    // large; the parsed count still catches packages written another way.
+    let headers = std::fs::read_to_string(&path)
+        .ok()
+        .map(|contents| package_headers(&contents));
+    if let Some(reason) = over_limit(bytes, headers) {
+        warnings.push(ManifestWarning::LockfileSkipped { file, reason });
+        return Ok(None);
+    }
     let graph = match kind {
         LockfileKind::Uv => extract_uv_lock(&path)?,
         LockfileKind::Pylock => extract_pylock(&path)?,
         LockfileKind::Poetry => extract_poetry_lock(&path)?,
         LockfileKind::Pdm => extract_pdm_lock(&path)?,
     };
-    let source = LockfileSource {
-        kind,
-        path: rel_to_root(root, &path),
-    };
+    if let Some(reason) = over_limit(bytes, Some(graph.edges.len())) {
+        warnings.push(ManifestWarning::LockfileSkipped { file, reason });
+        return Ok(None);
+    }
+    let source = LockfileSource { kind, path: file };
     Ok(Some((source, graph)))
+}
+
+/// `[[package]]` (uv, Poetry, PDM) and `[[packages]]` (PEP 751) headers.
+fn package_headers(contents: &str) -> usize {
+    contents
+        .lines()
+        .filter(|line| matches!(line.trim(), "[[package]]" | "[[packages]]"))
+        .count()
+}
+
+/// Why a lockfile of `bytes` and `packages` is too large.
+fn over_limit(bytes: u64, packages: Option<usize>) -> Option<String> {
+    const CONSEQUENCE: &str = "transitive dependencies (CHK004) are not checked";
+    if bytes > MAX_LOCKFILE_BYTES {
+        return Some(format!(
+            "{bytes} bytes exceed the {MAX_LOCKFILE_BYTES}-byte limit; {CONSEQUENCE}"
+        ));
+    }
+    packages
+        .filter(|&packages| packages > MAX_LOCKFILE_PACKAGES)
+        .map(|packages| {
+            format!(
+                "{packages} packages exceed the {MAX_LOCKFILE_PACKAGES}-package limit; {CONSEQUENCE}"
+            )
+        })
 }
 
 fn push_if_file(found: &mut Vec<(LockfileKind, PathBuf)>, kind: LockfileKind, path: PathBuf) {
@@ -177,7 +223,7 @@ mod tests {
             "[[package]]\nname = \"requests\"\ndependencies = [\"urllib3<3\"]\n",
         )
         .expect("write");
-        let (source, graph) = extract_lockfile(temp.path())
+        let (source, graph) = extract_lockfile(temp.path(), &mut Vec::new())
             .expect("valid pdm.lock")
             .expect("lockfile present");
         assert_eq!(source.kind, LockfileKind::Pdm);
@@ -191,6 +237,55 @@ mod tests {
     #[test]
     fn no_lockfile_yields_none() {
         let temp = tempfile::tempdir().expect("tempdir");
-        assert!(extract_lockfile(temp.path()).expect("ok").is_none());
+        assert!(
+            extract_lockfile(temp.path(), &mut Vec::new())
+                .expect("ok")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn limits_name_the_exceeded_bound() {
+        assert_eq!(
+            over_limit(MAX_LOCKFILE_BYTES, Some(MAX_LOCKFILE_PACKAGES)),
+            None
+        );
+        let bytes = over_limit(MAX_LOCKFILE_BYTES + 1, None).expect("over bytes");
+        assert!(bytes.contains("byte limit"), "{bytes}");
+        let packages = over_limit(1, Some(MAX_LOCKFILE_PACKAGES + 1)).expect("over packages");
+        assert!(packages.contains("20001 packages"), "{packages}");
+    }
+
+    #[test]
+    fn package_headers_count_every_lock_format() {
+        let contents =
+            "[[package]]\nname = \"a\"\n  [[package]]\n[[packages]]\n[package.metadata]\n";
+        assert_eq!(package_headers(contents), 3);
+    }
+
+    #[test]
+    fn lockfile_over_the_package_limit_is_skipped_with_a_warning() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut lock = String::new();
+        for i in 0..=MAX_LOCKFILE_PACKAGES {
+            lock.push_str("[[package]]\nname = \"pkg-");
+            lock.push_str(&i.to_string());
+            lock.push_str("\"\n");
+        }
+        std::fs::write(temp.path().join("pdm.lock"), lock).expect("write");
+        let mut warnings = Vec::new();
+        assert!(
+            extract_lockfile(temp.path(), &mut warnings)
+                .expect("ok")
+                .is_none()
+        );
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [ManifestWarning::LockfileSkipped { file, reason }]
+                    if file == "pdm.lock" && reason.contains("CHK004")
+            ),
+            "{warnings:?}"
+        );
     }
 }
