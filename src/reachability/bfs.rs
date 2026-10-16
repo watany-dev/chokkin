@@ -401,11 +401,11 @@ fn build_submodule_imports(
     parse: &ParseSummary,
     module_index: &ModuleIndex,
 ) -> HashMap<FileId, Vec<SubmoduleSite>> {
-    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
-    for module in &parse.modules {
-        let Some(file_id) = graph.file_id(&module.path) else {
-            continue;
-        };
+    // Most of these lookups miss (`from pkg import Class`), and a miss tries
+    // every fallback: resolve per module on workers, merge in module order.
+    let per_module = crate::parallel::map_in_order(&parse.modules, |module| {
+        let file_id = graph.file_id(&module.path)?;
+        let mut found = Vec::new();
         for import in &module.imports {
             let Some(name) = import.name.as_deref() else {
                 continue;
@@ -415,12 +415,14 @@ fn build_submodule_imports(
             }
             let submodule = format!("{}.{name}", import.module);
             if let Some(target) = module_index.resolve_from(&module.path, &submodule) {
-                sites
-                    .entry(file_id)
-                    .or_default()
-                    .push((target, submodule, import.line));
+                found.push((target, submodule, import.line));
             }
         }
+        (!found.is_empty()).then_some((file_id, found))
+    });
+    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
+    for (file_id, found) in per_module.into_iter().flatten() {
+        sites.entry(file_id).or_default().extend(found);
     }
     sites
 }

@@ -102,20 +102,31 @@ pub fn discover_inline_scripts<'a>(
     root: &Path,
     paths: impl IntoIterator<Item = &'a str>,
 ) -> (Vec<InlineScript>, Vec<ManifestWarning>) {
+    let paths: Vec<&str> = paths.into_iter().collect();
+    let found = crate::parallel::map_in_order(&paths, |path| file_inline_script(root, path));
     let mut scripts = Vec::new();
     let mut warnings = Vec::new();
-    for path in paths {
-        let Some(text) = std::fs::read(root.join(path))
-            .ok()
-            .and_then(crate::parser::decode_python_source)
-        else {
-            continue;
-        };
-        if let Some(script) = parse_inline_script(path, &text, &mut warnings) {
-            scripts.push(script);
-        }
+    for (script, file_warnings) in found {
+        scripts.extend(script);
+        warnings.extend(file_warnings);
     }
     (scripts, warnings)
+}
+
+fn file_inline_script(root: &Path, path: &str) -> (Option<InlineScript>, Vec<ManifestWarning>) {
+    let mut warnings = Vec::new();
+    let Ok(bytes) = std::fs::read(root.join(path)) else {
+        return (None, warnings);
+    };
+    // Every supported coding keeps ASCII bytes as the same characters, so a
+    // file whose bytes lack the opening line cannot decode to text holding it;
+    // skipping the decode spares nearly every file a full copy (#761).
+    if memchr::memmem::find(&bytes, SCRIPT_OPENING.as_bytes()).is_none() {
+        return (None, warnings);
+    }
+    let script = crate::parser::decode_python_source(bytes)
+        .and_then(|text| parse_inline_script(path, &text, &mut warnings));
+    (script, warnings)
 }
 
 fn read_script_block(text: &str) -> Result<Option<ScriptBlock>, String> {
@@ -332,6 +343,34 @@ mod tests {
         let (scripts, warnings) = discover_inline_scripts(temp.path(), ["run.py"]);
         assert_eq!(warnings, []);
         assert_eq!(scripts.len(), 1);
+    }
+
+    #[test]
+    fn discovery_keeps_path_order_across_workers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let broken = "# /// script\n# dependencies = [\n# ///\n";
+        let paths: Vec<String> = (0..100).map(|index| format!("mod_{index:03}.py")).collect();
+        for (index, path) in paths.iter().enumerate() {
+            let text = match index {
+                7 | 63 => SPEC_EXAMPLE.to_owned(),
+                40 => format!("\u{feff}{SPEC_EXAMPLE}"),
+                20 | 90 => broken.to_owned(),
+                _ => "import os\n".to_owned(),
+            };
+            std::fs::write(temp.path().join(path), text).expect("write");
+        }
+        let (scripts, warnings) =
+            discover_inline_scripts(temp.path(), paths.iter().map(String::as_str));
+        let found: Vec<&str> = scripts.iter().map(|script| script.path.as_str()).collect();
+        assert_eq!(found, ["mod_007.py", "mod_040.py", "mod_063.py"]);
+        let warned: Vec<&str> = warnings
+            .iter()
+            .map(|warning| match warning {
+                ManifestWarning::InlineScriptInvalid { file, .. } => file.as_str(),
+                other => panic!("unexpected warning {other:?}"),
+            })
+            .collect();
+        assert_eq!(warned, ["mod_020.py", "mod_090.py"]);
     }
 
     #[test]

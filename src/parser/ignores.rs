@@ -17,11 +17,20 @@ static IGNORE_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Extract chokkin ignore directives from raw source.
 #[must_use]
 pub fn extract_ignores(source: &str) -> Vec<IgnoreDirective> {
-    let mut directives = Vec::new();
-    let first_stmt_offset = first_statement_offset(source);
-    let lines = LineIndex::new(source);
+    extract_ignores_with(source, &LineIndex::new(source))
+}
 
-    for caps in IGNORE_RE.captures_iter(source) {
+/// [`extract_ignores`] reusing the parser's index of `source`. The header
+/// scan runs only once a directive matches, which most files never do.
+pub(crate) fn extract_ignores_with(source: &str, lines: &LineIndex) -> Vec<IgnoreDirective> {
+    let mut directives = Vec::new();
+    let mut matches = IGNORE_RE.captures_iter(source).peekable();
+    if matches.peek().is_none() {
+        return directives;
+    }
+    let first_stmt_offset = first_statement_offset(source);
+
+    for caps in matches {
         let Some(full) = caps.get(0) else {
             continue;
         };

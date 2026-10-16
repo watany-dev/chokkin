@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator};
 
-use super::attributes::attribute_receiver;
+use super::attributes::is_receiver;
 use super::relative::resolve_relative_name;
 
 #[derive(Debug, Clone, Copy)]
@@ -277,9 +277,7 @@ pub(super) fn edits_sys_path(func: &Expr) -> bool {
     let Expr::Attribute(attribute) = func else {
         return false;
     };
-    let receiver_is = |dotted: &str| {
-        attribute_receiver(&attribute.value).is_some_and(|receiver| receiver == dotted)
-    };
+    let receiver_is = |dotted: &str| is_receiver(&attribute.value, dotted);
     match attribute.attr.as_str() {
         "insert" | "append" | "extend" => receiver_is("sys.path"),
         "addsitedir" => receiver_is("site"),
