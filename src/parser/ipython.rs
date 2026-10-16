@@ -112,9 +112,13 @@ const FOREIGN_CELL_MAGICS: &[&str] = &[
     "system",
 ];
 
-const PYTHON_CELL_MAGICS: &[&str] = &[
-    "capture", "prun", "pypy", "python", "python2", "python3", "time", "timeit",
-];
+/// Cell magics that run their body as Python and take no statement on their
+/// own line.
+const PYTHON_CELL_MAGICS: &[&str] = &["capture", "pypy", "python", "python2", "python3", "time"];
+
+/// Options of `%timeit` and `%prun` that take a value.
+const TIMEIT_VALUED: &[&str] = &["n", "r", "p"];
+const PRUN_VALUED: &[&str] = &["D", "T", "s", "l"];
 
 /// Extensions `IPython` ships, which `%load_ext` finds under
 /// `IPython.extensions` rather than as a top-level module.
@@ -137,7 +141,8 @@ pub(super) fn cell_to_python(cell: &str) -> Result<String, (usize, String)> {
         return Ok(out);
     };
     match cell_magic(magic).map_err(|message| (first, message))? {
-        CellBody::Python => {
+        CellBody::Python(python) => {
+            out.push_str(&python);
             blank_line(lines[first], &mut out);
             rewrite_lines(&lines[first + 1..], first + 1, &mut out)?;
         },
@@ -151,55 +156,72 @@ pub(super) fn cell_to_python(cell: &str) -> Result<String, (usize, String)> {
 }
 
 enum CellBody {
-    Python,
+    /// The body is Python, run after the Python on the magic's own line.
+    Python(String),
     Foreign,
 }
 
 fn cell_magic(line: &str) -> Result<CellBody, String> {
-    let mut words = line.split_whitespace();
-    let name = words.next().unwrap_or_default();
-    if PYTHON_CELL_MAGICS.contains(&name) {
-        return Ok(CellBody::Python);
+    let (name, args) = split_magic(line);
+    match name {
+        // `%%timeit` runs its own line as setup; `%%prun` runs it first.
+        "timeit" => Ok(CellBody::Python(statement(args, TIMEIT_VALUED))),
+        "prun" => Ok(CellBody::Python(statement(args, PRUN_VALUED))),
+        "script" => script_body(args),
+        _ if PYTHON_CELL_MAGICS.contains(&name) => Ok(CellBody::Python(String::new())),
+        _ if FOREIGN_CELL_MAGICS.contains(&name) => Ok(CellBody::Foreign),
+        _ => Err(format!("cell magic `%%{name}` is not recognized")),
     }
-    if FOREIGN_CELL_MAGICS.contains(&name) {
-        return Ok(CellBody::Foreign);
-    }
-    // `%%script python3` runs Python like `%%python3`.
-    if name == "script" {
-        let program = words
-            .find(|word| !word.starts_with('-'))
-            .unwrap_or_default();
-        let program = program.rsplit(['/', '\\']).next().unwrap_or_default();
-        return Ok(
-            if program.starts_with("python") || program.starts_with("pypy") {
-                CellBody::Python
-            } else {
-                CellBody::Foreign
+}
+
+/// `%%script python3` runs Python like `%%python3`; any other program runs
+/// another language.
+fn script_body(args: &str) -> Result<CellBody, String> {
+    let mut words = args.split_whitespace();
+    let program = loop {
+        match words.next() {
+            Some("--out" | "--err" | "--proc") => {
+                words.next();
             },
-        );
-    }
-    Err(format!("cell magic `%%{name}` is not recognized"))
+            Some(word) if word.starts_with('-') => {},
+            Some(word) => break word,
+            None => return Err("cell magic `%%script` names no program".to_owned()),
+        }
+    };
+    let program = program.rsplit(['/', '\\']).next().unwrap_or_default();
+    Ok(
+        if program.starts_with("python") || program.starts_with("pypy") {
+            CellBody::Python(String::new())
+        } else {
+            CellBody::Foreign
+        },
+    )
 }
 
 /// Rewrite each line on its own, the first being the cell's line `start`.
-/// A magic or shell line ending in `\` continues onto the next, which goes
-/// with it.
+/// A line ending in `\` continues onto the next: `IPython` joins them with a
+/// space before it reads the magic or shell command they make up.
 fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (usize, String)> {
-    let mut continued = false;
-    for (index, line) in lines.iter().copied().enumerate() {
+    let mut index = 0;
+    while let Some(line) = lines.get(index) {
         let text = line.trim_end_matches(['\n', '\r']);
-        if continued {
-            blank_line(line, out);
-        } else {
-            let python = rewrite_line(text).map_err(|message| (start + index, message))?;
-            let Some(python) = python else {
-                out.push_str(line);
-                continue;
-            };
-            out.push_str(&python);
-            out.push_str(&line[text.len()..]);
+        let mut joined = text.to_owned();
+        let mut end = index + 1;
+        while let (Some(head), Some(next)) = (joined.strip_suffix('\\'), lines.get(end)) {
+            joined = format!("{head} {}", next.trim_end_matches(['\n', '\r']));
+            end += 1;
         }
-        continued = text.ends_with('\\');
+        match rewrite_line(&joined).map_err(|message| (start + index, message))? {
+            Some(python) => {
+                out.push_str(&python);
+                out.push_str(&line[text.len()..]);
+                for line in &lines[index + 1..end] {
+                    blank_line(line, out);
+                }
+            },
+            None => lines[index..end].iter().for_each(|line| out.push_str(line)),
+        }
+        index = end;
     }
     Ok(())
 }
@@ -224,10 +246,11 @@ fn rewrite_line(text: &str) -> Result<Option<String>, String> {
     let Some((target, value)) = assigned_escape(body) else {
         return Ok(None);
     };
-    if let Some(magic) = value.strip_prefix('%') {
-        line_magic(magic.trim_start())?;
-    }
-    Ok(Some(format!("{indent}{target} = ...")))
+    let python = match value.strip_prefix('%') {
+        Some(magic) => line_magic(magic.trim_start())?,
+        None => "pass".to_owned(),
+    };
+    Ok(Some(format!("{indent}{target} = ...; {python}")))
 }
 
 /// `x = !cmd` or `x = %magic`: the assigned names and the escaped value.
@@ -258,18 +281,23 @@ fn is_help(body: &str) -> bool {
 
 /// The Python a line magic (without its `%`) stands for.
 fn line_magic(magic: &str) -> Result<String, String> {
-    let (name, args) = magic
-        .split_once(char::is_whitespace)
-        .map_or((magic, ""), |(name, args)| (name, args.trim()));
+    let (name, args) = split_magic(magic);
     match name {
         "load_ext" | "reload_ext" => Ok(extension_import(args)),
         "aimport" => Ok(aimport(args)),
         "time" => Ok(statement(args, &[])),
-        "timeit" => Ok(statement(args, &["n", "r", "p"])),
-        "prun" => Ok(statement(args, &["D", "T", "s", "l"])),
+        "timeit" => Ok(statement(args, TIMEIT_VALUED)),
+        "prun" => Ok(statement(args, PRUN_VALUED)),
         _ if INERT_LINE_MAGICS.contains(&name) => Ok("pass".to_owned()),
         _ => Err(format!("line magic `%{name}` is not recognized")),
     }
+}
+
+/// A magic's name and its arguments.
+fn split_magic(magic: &str) -> (&str, &str) {
+    magic
+        .split_once(char::is_whitespace)
+        .map_or((magic, ""), |(name, args)| (name, args.trim()))
 }
 
 fn extension_import(module: &str) -> String {
@@ -280,10 +308,15 @@ fn extension_import(module: &str) -> String {
     format!("import {module}")
 }
 
-/// `%aimport a, b` imports the modules; `-a` excludes one from reloading.
+/// `%aimport a, b` imports the modules; `%aimport -a` only excludes `a`
+/// from reloading, importing nothing.
 fn aimport(args: &str) -> String {
+    if args.starts_with('-') {
+        return "pass".to_owned();
+    }
     let modules: Vec<&str> = args
-        .split([',', ' ', '\t'])
+        .split(',')
+        .map(str::trim)
         .filter(|module| is_dotted_identifier(module))
         .collect();
     if modules.is_empty() {
@@ -328,7 +361,9 @@ mod tests {
         let cell = "% pip install requests\n!ls -la \\\n  /tmp\nfiles = !ls\nfor x in y:\n    !echo $x\nobj?\n?obj.attr\n%matplotlib inline\nimport os\n";
         assert_eq!(
             cell_to_python(cell).as_deref(),
-            Ok("pass\npass\n\nfiles = ...\nfor x in y:\n    pass\npass\npass\npass\nimport os\n")
+            Ok(
+                "pass\npass\n\nfiles = ...; pass\nfor x in y:\n    pass\npass\npass\npass\nimport os\n"
+            )
         );
     }
 
@@ -347,14 +382,47 @@ mod tests {
             cell_to_python("%%script python3\nimport rich\n").as_deref(),
             Ok("\nimport rich\n")
         );
+        assert_eq!(
+            cell_to_python("%%script --out res python3\nimport rich\n").as_deref(),
+            Ok("\nimport rich\n")
+        );
+        assert_eq!(
+            cell_to_python("%%timeit -n 1 import pandas as pd\npd.read_csv(path)\n").as_deref(),
+            Ok("import pandas as pd\npd.read_csv(path)\n")
+        );
+        assert_eq!(
+            cell_to_python("t = %time import foo\n").as_deref(),
+            Ok("t = ...; import foo\n")
+        );
+    }
+
+    #[test]
+    fn continued_lines_join_before_the_rewrite() {
+        assert_eq!(
+            cell_to_python("%load_ext \\\n  foo\n").as_deref(),
+            Ok("import foo\n\n")
+        );
+        let cell = "x = 1 + \\\n  2\n!ls\n";
+        assert_eq!(
+            cell_to_python(cell).as_deref(),
+            Ok("x = 1 + \\\n  2\npass\n")
+        );
+    }
+
+    #[test]
+    fn aimport_imports_named_modules() {
+        assert_eq!(
+            cell_to_python("%aimport a.b, c\n").as_deref(),
+            Ok("import a.b, c\n")
+        );
     }
 
     #[test]
     fn magics_that_load_a_module_import_it() {
-        let cell = "%load_ext ngql\n%load_ext autoreload\n%reload_ext google.colab.data_table\n%aimport -skip a.b, c\n%aimport\n";
+        let cell = "%load_ext ngql\n%load_ext autoreload\n%reload_ext google.colab.data_table\n%aimport -skip a.b\n%aimport\n";
         assert_eq!(
             cell_to_python(cell).as_deref(),
-            Ok("import ngql\npass\nimport google.colab.data_table\nimport a.b, c\npass\n")
+            Ok("import ngql\npass\nimport google.colab.data_table\npass\npass\n")
         );
     }
 
@@ -383,6 +451,10 @@ mod tests {
         assert_eq!(
             cell_to_python("x = %wget url\n"),
             unrecognized(0, "line magic `%wget` is not recognized")
+        );
+        assert_eq!(
+            cell_to_python("%%script --out res\nimport os\n"),
+            unrecognized(0, "cell magic `%%script` names no program")
         );
         assert_eq!(
             cell_to_python("import os\n%%time\n"),

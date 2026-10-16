@@ -1,6 +1,6 @@
 //! Relative import normalization using project layout.
 
-use crate::sources::{LayoutInfo, path_to_module};
+use crate::sources::{LayoutInfo, module_path, path_to_module};
 
 use super::types::ParseDiagnostic;
 use super::types::ParseSeverity;
@@ -47,7 +47,7 @@ pub(crate) fn resolve_relative_import(
 /// package `__init__.py`, its parent otherwise.
 #[must_use]
 pub(super) fn module_package(file_path: &str, layout: &LayoutInfo) -> Option<String> {
-    let current_module = relative_module_name(file_path, layout)?;
+    let current_module = path_to_module(file_path, layout)?;
     Some(containing_package(
         &current_module,
         file_path.ends_with("__init__.py"),
@@ -90,8 +90,10 @@ fn relative_module_name(file_path: &str, layout: &LayoutInfo) -> Option<String> 
 /// `tests/app/admin.py` → `app.admin` when `tests/app/` holds an
 /// `__init__.py` and `tests/` does not. `None` for a file outside any package
 /// directory: `CPython` has no parent package to resolve against there either.
+/// `None` too when the chain's top package shares a name with one the layout
+/// ships (`tests/acme/` beside `src/acme/`): the name would be taken for the
+/// distributed package.
 fn package_chain_module(file_path: &str, layout: &LayoutInfo) -> Option<String> {
-    let stem = file_path.strip_suffix(".py")?;
     let (mut dir, _) = file_path.rsplit_once('/')?;
     if !layout.package_dirs.contains(dir) {
         return None;
@@ -103,10 +105,17 @@ fn package_chain_module(file_path: &str, layout: &LayoutInfo) -> Option<String> 
         dir = parent;
     }
     let base = dir.rfind('/').map_or(0, |slash| slash + 1);
-    let module = stem[base..]
-        .strip_suffix("/__init__")
-        .unwrap_or_else(|| &stem[base..]);
-    Some(module.replace('/', "."))
+    let module = module_path(&file_path[base..])?.replace('/', ".");
+    let top = module.split('.').next()?;
+    let shipped = layout
+        .member_for(file_path)
+        .map_or(layout, |(member, _)| &member.layout);
+    let taken = shipped
+        .packages
+        .iter()
+        .chain(&shipped.local_packages)
+        .any(|package| package == top);
+    (!taken).then_some(module)
 }
 
 fn containing_package(module: &str, is_init: bool) -> String {
@@ -246,6 +255,35 @@ mod tests {
             resolve_relative_import("tests/app/cells.ipynb", &layout, 1, Some("models"), None),
             None
         );
+    }
+
+    #[test]
+    fn init_chain_stops_where_its_name_is_not_its_own() {
+        let layout = LayoutInfo {
+            packages: vec!["acme".to_owned()],
+            package_dirs: ["tests/acme", "tests/app", "tests/my.app"]
+                .map(str::to_owned)
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        // `tests/acme/` would be taken for the distributed `acme`.
+        assert_eq!(
+            resolve_relative_import("tests/acme/test_x.py", &layout, 1, Some("conftest"), None),
+            None
+        );
+        // No import can name a file or package with a `.` in it.
+        assert_eq!(
+            resolve_relative_import("tests/app/foo.bar.py", &layout, 1, Some("models"), None),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("tests/my.app/admin.py", &layout, 1, Some("models"), None),
+            None
+        );
+        // `import_module(".x", package=__package__)` keeps to the layout's
+        // names and stays opaque here.
+        assert_eq!(module_package("tests/app/admin.py", &layout), None);
     }
 
     #[test]

@@ -190,8 +190,10 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnost
             first_line += 1;
             continue;
         };
+        // Python ends a line at a lone `\r` too; `lines()` does not.
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let lines = text.lines().count();
-        match python_cell(text) {
+        match python_cell(&text) {
             Ok(python) => {
                 read_any = true;
                 source.push_str(&python);
@@ -643,6 +645,35 @@ mod tests {
 
     fn empty_layout() -> LayoutInfo {
         LayoutInfo::default()
+    }
+
+    #[test]
+    fn ipython_cells_keep_every_cell_on_its_notebook_lines() {
+        let notebook = NotebookSource {
+            cells: vec![
+                Some("!ls\r\nimport os\r".to_owned()),
+                None,
+                Some("x = 1\r%run helper.py\n".to_owned()),
+            ],
+        };
+        let (source, unread) = ipython_cells(&notebook).expect("a cell is read");
+        assert_eq!(source, "pass\nimport os\n\n\n\n\n\n");
+        assert_eq!(
+            unread,
+            [ParseDiagnostic {
+                line: 6,
+                message: "code cell not read: line magic `%run` is not recognized".to_owned(),
+                severity: ParseSeverity::Warning,
+            }]
+        );
+    }
+
+    #[test]
+    fn ipython_cells_with_no_readable_cell_leave_the_notebook_skipped() {
+        let notebook = NotebookSource {
+            cells: vec![Some("%run helper.py\n".to_owned()), None],
+        };
+        assert_eq!(ipython_cells(&notebook), None);
     }
 
     #[test]
