@@ -3629,6 +3629,73 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
     );
 }
 
+/// An archive line pip installs from a file name that names its
+/// distribution is not read, so imports of that name become hints, resolved
+/// or not, and a runtime one may be the runtime declaration of a dev-only
+/// distribution; a directory line names nothing and lowers nothing (#988).
+#[test]
+fn binary_archive_requirement_turns_imports_of_its_name_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n[dependency-groups]\ndev = [\"qux\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\n",
+        ),
+        (
+            "requirements.txt",
+            "./vendor/foo\nwheels/bar-1.0-py3-none-any.whl\nhttps://example.com/baz-2.0.tar.gz#sha256=0\n./dist/qux-1.0.zip\nwheels/rich-13.0-py3-none-any.whl\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "import foo\nimport bar\nimport baz.core\nimport qux\nimport rich\nimport idna\n",
+        ),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        [
+            "CHK003 acme/main.py:rich info maybe",
+            "CHK003 acme/main.py:idna error certain",
+            "CHK005 qux info maybe",
+            "CHK010 acme/main.py:foo warning likely",
+            "CHK010 acme/main.py:bar info maybe",
+            "CHK010 acme/main.py:baz info maybe",
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--confidence",
+            "maybe",
+            "--explain",
+            "CHK003:rich",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("manifest: `requirements.txt:2` installs `bar` and 3 more distributions from archives chokkin does not read; findings on imports of them are reported as hints"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("a requirement line installs an archive named for the distribution, which is not read: `rich` in `requirements.txt:5`"),
+        "{stderr}"
+    );
+}
+
 /// An unreadable runtime line may be the runtime declaration of a dev-only
 /// distribution, so its runtime import is a misplaced hint; a valid dev
 /// line beside it does not settle where the distribution belongs (#935).

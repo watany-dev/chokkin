@@ -10,7 +10,8 @@ use crate::config::{Confidence, DependencyGroupsConfig, TargetVersion};
 use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
 use crate::manifest::{
-    ExtrasState, InlineScript, LoadedManifest, ManifestWarning, invalid_requirement_name,
+    ExtrasState, InlineScript, LoadedManifest, ManifestWarning, archive_distribution_name,
+    invalid_requirement_name, normalize_distribution_name,
 };
 use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
@@ -18,7 +19,9 @@ use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSetting
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolveWarning, StdlibRange, import_root, is_first_party_import};
 use crate::rules::RuleContext;
-use crate::rules::deps::{DeclarationBucket, declaration_bucket, file_context};
+use crate::rules::deps::{
+    DeclarationBucket, declaration_bucket, declaration_buckets, file_context,
+};
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site};
 use crate::sources::FileContext;
 
@@ -88,6 +91,12 @@ pub enum GapKind {
     /// The same on the runtime side (a runtime, extra or runtime-group line):
     /// it may also be the runtime declaration a misplaced finding misses (#935).
     InvalidRuntimeRequirement,
+    /// A requirements-file line installs an archive whose file name names the
+    /// distribution (#988), which is not read: an import of that distribution
+    /// may be declared.
+    ArchiveRequirement,
+    /// The same on the runtime side, as [`Self::InvalidRuntimeRequirement`].
+    ArchiveRuntimeRequirement,
     /// A reachable import no source resolved to a module (§7): any declared
     /// distribution may provide it (#911).
     UnresolvedImport,
@@ -181,7 +190,14 @@ impl GapKind {
                 IssueSubject::Import { .. },
             )
             | (
-                Self::RuntimeDependenciesUnknown | Self::InvalidRuntimeRequirement,
+                Self::ArchiveRequirement | Self::ArchiveRuntimeRequirement,
+                RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
+                IssueSubject::Import { .. },
+            )
+            | (
+                Self::RuntimeDependenciesUnknown
+                | Self::InvalidRuntimeRequirement
+                | Self::ArchiveRuntimeRequirement,
                 RuleId::Chk005,
                 IssueSubject::Distribution { .. },
             )
@@ -217,6 +233,10 @@ impl GapKind {
             Self::InvalidRequirement | Self::InvalidRuntimeRequirement => {
                 "a requirement line naming the distribution could not be read"
             },
+            Self::ArchiveRequirement | Self::ArchiveRuntimeRequirement => {
+                "a requirement line installs an archive named for the distribution, which is \
+                 not read"
+            },
             Self::UnresolvedImport => "a reachable import could not be resolved to a distribution",
             Self::UnresolvedPublicImport => {
                 "an import in a public module of the library could not be resolved to a \
@@ -245,8 +265,9 @@ impl Gap {
     /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
     /// member's findings, a script's import or block that script's alone, an
     /// assumed stdlib status the imports of that root in that file (and the
-    /// script declarations they miss), and an invalid requirement the
-    /// findings on the distribution it names.
+    /// script declarations they miss), an invalid requirement the findings
+    /// on the distribution it names, and an archive requirement those and the
+    /// unresolved imports whose root is that name.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
         let in_site = match (self.kind, &candidate.subject) {
@@ -270,13 +291,29 @@ impl Gap {
                 *script == self.file && self.site.as_ref().is_some_and(|(site, _)| site == name)
             },
             (
-                GapKind::InvalidRequirement | GapKind::InvalidRuntimeRequirement,
+                GapKind::ArchiveRequirement | GapKind::ArchiveRuntimeRequirement,
+                IssueSubject::Import {
+                    distribution: None,
+                    module,
+                    ..
+                },
+            ) => self.site.as_ref().is_some_and(|(name, _)| {
+                normalize_distribution_name(import_root(module)) == *name
+            }),
+            (
+                GapKind::InvalidRequirement
+                | GapKind::InvalidRuntimeRequirement
+                | GapKind::ArchiveRequirement
+                | GapKind::ArchiveRuntimeRequirement,
                 IssueSubject::Import { distribution, .. },
             ) => self
                 .site
                 .as_ref()
                 .is_some_and(|(name, _)| distribution.as_deref() == Some(name.as_str())),
-            (GapKind::InvalidRuntimeRequirement, IssueSubject::Distribution { name }) => {
+            (
+                GapKind::InvalidRuntimeRequirement | GapKind::ArchiveRuntimeRequirement,
+                IssueSubject::Distribution { name },
+            ) => {
                 self.site.as_ref().is_some_and(|(site, _)| site == name)
             },
             _ => true,
@@ -336,6 +373,7 @@ pub fn collect_gaps(
     gaps.extend(manifest_gap(manifest));
     gaps.extend(extras_gap(manifest));
     gaps.extend(invalid_requirement_gaps(manifest, groups));
+    gaps.extend(archive_requirement_gaps(manifest, groups));
     gaps.extend(assumed_target_gaps(context.parse, manifest, scripts));
     gaps.extend(script_gaps(context.parse, project_range, scripts));
     gaps.extend(members.iter().flat_map(|member| {
@@ -344,6 +382,7 @@ pub fn collect_gaps(
             .into_iter()
             .chain(extras_gap(manifest))
             .chain(invalid_requirement_gaps(manifest, groups))
+            .chain(archive_requirement_gaps(manifest, groups))
             .map(|mut gap| {
                 gap.file = join_rel(member.path, &gap.file);
                 gap.member = Some(member.id.to_owned());
@@ -749,6 +788,44 @@ fn invalid_requirement_gaps(
         .collect()
 }
 
+/// One gap per opaque requirements-file line that installs an archive whose
+/// file name names the distribution (#988): `wheels/bar-1.0-py3-none-any.whl`
+/// installs `bar`, so an import of `bar` may be declared. A directory or URL
+/// line with no such name (`.`, `./vendor/foo`, `git+https://...`) lowers
+/// nothing, for the reason [`invalid_requirement_gaps`] gives. The archive is
+/// never read, so the name stays a gap rather than a declaration: unused,
+/// duplicate and `--fix` keep skipping the line. Its bucket decides the kind
+/// as for an invalid line, a runtime one if any bucket it is in is runtime.
+fn archive_requirement_gaps(
+    manifest: &LoadedManifest,
+    groups: &DependencyGroupsConfig,
+) -> Vec<Gap> {
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.opaque && dep.name.is_empty())
+        .filter_map(|dep| {
+            let name = archive_distribution_name(dep.specifier.as_deref()?)?;
+            let runtime = declaration_buckets(dep, groups).iter().any(|bucket| {
+                matches!(
+                    bucket,
+                    DeclarationBucket::Runtime | DeclarationBucket::Optional(_)
+                )
+            });
+            Some(Gap {
+                file: dep.origin.file.clone(),
+                kind: if runtime {
+                    GapKind::ArchiveRuntimeRequirement
+                } else {
+                    GapKind::ArchiveRequirement
+                },
+                member: None,
+                site: Some((name, dep.origin.line)),
+            })
+        })
+        .collect()
+}
+
 /// Lower each finding a gap's scope covers and name the gap in `--explain`
 /// (ADR 0005 §4). Exit codes still follow severity alone (§7). A cap never
 /// reaches `Maybe`, so a severity a rule derived from confidence (a library
@@ -962,6 +1039,49 @@ mod tests {
                 (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
             ]
+        );
+    }
+
+    /// An archive line names the distribution it installs by its file name,
+    /// so it hints the imports of that name, resolved or not, and a runtime
+    /// one the misplaced finding on it too; an invalid line's name reaches no
+    /// unresolved import (#988).
+    #[test]
+    fn archive_requirement_hints_imports_of_its_name() {
+        let archive = |kind| Gap {
+            file: "requirements.txt".to_owned(),
+            kind,
+            member: None,
+            site: Some(("foo-bar".to_owned(), Some(2))),
+        };
+        let resolved = |module: &str, distribution: &str| IssueSubject::Import {
+            module: module.to_owned(),
+            file: "acme/main.py".to_owned(),
+            line: Some(1),
+            distribution: Some(distribution.to_owned()),
+        };
+        let candidates = || {
+            vec![
+                candidate(RuleId::Chk003, resolved("foo_bar", "foo-bar")),
+                candidate(RuleId::Chk010, import("foo_bar.core")),
+                candidate(RuleId::Chk010, import("foo")),
+                candidate(RuleId::Chk003, resolved("yaml", "pyyaml")),
+                candidate(RuleId::Chk005, distribution("foo-bar")),
+            ]
+        };
+        let hint = (Severity::Info, Confidence::Maybe);
+        let kept = (Severity::Error, Confidence::Certain);
+        assert_eq!(
+            lowered(&[archive(GapKind::ArchiveRuntimeRequirement)], candidates()),
+            [hint, hint, kept, kept, hint]
+        );
+        assert_eq!(
+            lowered(&[archive(GapKind::ArchiveRequirement)], candidates()),
+            [hint, hint, kept, kept, kept]
+        );
+        assert_eq!(
+            lowered(&[archive(GapKind::InvalidRequirement)], candidates()),
+            [hint, kept, kept, kept, kept]
         );
     }
 

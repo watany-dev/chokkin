@@ -393,6 +393,7 @@ fn run_analysis_core(
         stdlib,
     );
     warnings.extend(opaque_import_warning(&gaps));
+    warnings.extend(archive_requirement_warning(&gaps));
     warnings.extend(command_target_warnings(&gaps));
     let issues = emit_issues(
         &reachability,
@@ -452,6 +453,32 @@ fn opaque_import_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
     Some(ProbeWarning::OpaqueDynamicImport {
         path,
         more: files.count(),
+    })
+}
+
+/// An archive line has no manifest warning either: pip accepts it (#988).
+/// The warning names the first line by file and line.
+fn archive_requirement_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
+    let mut sites: Vec<(&str, Option<u32>, &str)> = gaps
+        .iter()
+        .filter(|gap| {
+            matches!(
+                gap.kind,
+                GapKind::ArchiveRequirement | GapKind::ArchiveRuntimeRequirement
+            )
+        })
+        .filter_map(|gap| {
+            let (name, line) = gap.site.as_ref()?;
+            Some((gap.file.as_str(), *line, name.as_str()))
+        })
+        .collect();
+    sites.sort_by_key(|(file, line, _)| (*file, line.is_none(), *line));
+    let (path, line, name) = *sites.first()?;
+    Some(ProbeWarning::ArchiveRequirement {
+        path: path.to_owned(),
+        line,
+        name: name.to_owned(),
+        more: sites.len() - 1,
     })
 }
 

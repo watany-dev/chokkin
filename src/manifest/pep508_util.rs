@@ -259,6 +259,50 @@ pub(super) fn is_url_like(spec: &str) -> bool {
         })
 }
 
+/// Distribution an opaque archive line installs, read from the file name
+/// (#988): a wheel's first `-` field (PEP 427), or an sdist's name before
+/// its last `-`, where a version starting with a digit follows. A query,
+/// fragment, trailing `[extras]` and a marker (after whitespace or `;`) are
+/// ignored. `None` for a directory, a VCS URL, or a file name that does not
+/// have one of these shapes (`foo.whl`, `latest.tar.gz`): such a line names
+/// no distribution to lower.
+#[must_use]
+pub(crate) fn archive_distribution_name(spec: &str) -> Option<String> {
+    const SDIST: [&str; 11] = [
+        ".tar.gz",
+        ".tar.bz2",
+        ".tar.xz",
+        ".tar.lzma",
+        ".tar.lz",
+        ".tar",
+        ".tgz",
+        ".tbz",
+        ".txz",
+        ".tlz",
+        ".zip",
+    ];
+    let spec = spec.split_whitespace().next()?.split(';').next()?;
+    let spec = spec.split(['?', '#']).next()?;
+    let spec = match spec.rfind('[') {
+        Some(open) if spec.ends_with(']') => &spec[..open],
+        _ => spec,
+    };
+    let file = spec.rsplit(['/', '\\']).next()?;
+    let lower = file.to_ascii_lowercase();
+    let name = if let Some(stem) = lower.strip_suffix(".whl").map(|stem| &file[..stem.len()]) {
+        let parts: Vec<&str> = stem.split('-').collect();
+        (matches!(parts.len(), 5 | 6) && parts.iter().all(|part| !part.is_empty()))
+            .then_some(parts[0])?
+    } else {
+        let extension = SDIST.iter().find(|extension| lower.ends_with(*extension))?;
+        let (name, version) = file[..file.len() - extension.len()].rsplit_once('-')?;
+        version
+            .starts_with(|ch: char| ch.is_ascii_digit())
+            .then_some(name)?
+    };
+    is_project_name(name).then(|| normalize_distribution_name(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +571,42 @@ mod tests {
             ("", false),
         ] {
             assert_eq!(looks_like_pip_file(raw), expected, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn archive_distribution_name_reads_the_file_name() {
+        for (spec, expected) in [
+            ("wheels/bar-1.0-py3-none-any.whl", Some("bar")),
+            ("bar-1.0-1-py3-none-any.whl", Some("bar")),
+            (
+                "C:\\wheels\\Foo_Bar-2.0-cp311-cp311-win_amd64.WHL",
+                Some("foo-bar"),
+            ),
+            ("./dist/foo-bar-1.0.tar.gz", Some("foo-bar")),
+            ("https://x/foo-1.0.zip?sha=1#frag", Some("foo")),
+            ("./foo-1.0.tgz[tests]", Some("foo")),
+            (
+                "./foo-1.0-py3-none-any.whl ; python_version < '3.12'",
+                Some("foo"),
+            ),
+            ("./foo-1.0.tar.gz;python_version<'3.12'", Some("foo")),
+            ("file:///srv/foo-1.0.tar.bz2", Some("foo")),
+            ("foo.whl", None),
+            ("bar-1.0-py3.whl", None),
+            ("./latest.tar.gz", None),
+            ("./foo-dev.tar.gz", None),
+            ("./-1.0.tar.gz", None),
+            ("./vendor/foo", None),
+            (".", None),
+            ("git+https://x/foo.git", None),
+            ("https://x/y", None),
+        ] {
+            assert_eq!(
+                archive_distribution_name(spec).as_deref(),
+                expected,
+                "{spec:?}"
+            );
         }
     }
 

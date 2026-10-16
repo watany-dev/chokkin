@@ -65,6 +65,19 @@ pub enum ProbeWarning {
         /// How many other reachable modules do the same.
         more: usize,
     },
+    /// Requirements-file lines install archives chokkin does not read, each
+    /// named for a distribution whose import findings become hints (#988).
+    /// One per run.
+    ArchiveRequirement {
+        /// Root-relative path of the first such requirements file.
+        path: String,
+        /// Line of the first such requirement, when known.
+        line: Option<u32>,
+        /// The distribution its file name names.
+        name: String,
+        /// How many other such lines there are.
+        more: usize,
+    },
     /// A task file or tool config runs Python code no entry reaches, which
     /// caps unused-file findings below certain (#913). One per file.
     UnreadCommandTarget {
@@ -128,6 +141,7 @@ impl ProbeWarning {
             Self::AutoWorkspace { .. }
             | Self::NestedProjectsSkipped { .. }
             | Self::OpaqueDynamicImport { .. }
+            | Self::ArchiveRequirement { .. }
             | Self::UnreadCommandTarget { .. } => {},
         }
         hasher.finish()
@@ -178,7 +192,8 @@ impl ProbeWarning {
                 (Some(path), source_line(path, line))
             },
             Self::OpaqueDynamicImport { path, .. } => (Some(path), None),
-            Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
+            Self::ArchiveRequirement { path, line, .. }
+            | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
             Self::ParseDiagnostic { path, line, .. } => (
                 Some(path),
                 source_line(path, Some(*line).filter(|line| *line > 0)),
@@ -282,24 +297,59 @@ impl fmt::Display for ProbeWarning {
                 "parse: `{path}` and {more} more reachable module{} import a module by a name computed at runtime; unused files are reported below certain",
                 if *more == 1 { "" } else { "s" }
             ),
+            Self::ArchiveRequirement {
+                path,
+                line,
+                name,
+                more,
+            } => write_archive_requirement(formatter, path, *line, name, *more),
             Self::UnreadCommandTarget {
                 path,
                 line,
                 target,
                 more,
-            } => {
-                let site = crate::rules::import_site(path, *line);
-                let others = match more {
-                    0 => String::new(),
-                    1 => " and 1 more target".to_owned(),
-                    more => format!(" and {more} more targets"),
-                };
-                write!(
-                    formatter,
-                    "plugin: `{site}` runs `{target}`{others} as Python code no entry reaches; unused files are reported below certain"
-                )
-            },
+            } => write_command_target(formatter, path, *line, target, *more),
         }
+    }
+}
+
+fn write_command_target(
+    formatter: &mut fmt::Formatter<'_>,
+    path: &str,
+    line: Option<u32>,
+    target: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, line);
+    let others = match more {
+        0 => String::new(),
+        1 => " and 1 more target".to_owned(),
+        more => format!(" and {more} more targets"),
+    };
+    write!(
+        formatter,
+        "plugin: `{site}` runs `{target}`{others} as Python code no entry reaches; unused files are reported below certain"
+    )
+}
+
+fn write_archive_requirement(
+    formatter: &mut fmt::Formatter<'_>,
+    path: &str,
+    line: Option<u32>,
+    name: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, line);
+    match more {
+        0 => write!(
+            formatter,
+            "manifest: `{site}` installs `{name}` from an archive chokkin does not read; findings on imports of `{name}` are reported as hints"
+        ),
+        more => write!(
+            formatter,
+            "manifest: `{site}` installs `{name}` and {more} more distribution{} from archives chokkin does not read; findings on imports of them are reported as hints",
+            if more == 1 { "" } else { "s" }
+        ),
     }
 }
 
@@ -583,6 +633,33 @@ mod tests {
             "parse: `acme/main.py` and 1 more reachable module import a module by a name computed at runtime; unused files are reported below certain"
         );
         assert_eq!(located(&three), (Some("acme/main.py".to_owned()), None));
+    }
+
+    /// One archive-requirement warning names the first line and counts the rest (#988).
+    #[test]
+    fn archive_requirement_warning_names_the_first_line() {
+        let warning = |more| ProbeWarning::ArchiveRequirement {
+            path: "requirements.txt".to_owned(),
+            line: Some(2),
+            name: "bar".to_owned(),
+            more,
+        };
+        assert_eq!(
+            warning(0).to_string(),
+            "manifest: `requirements.txt:2` installs `bar` from an archive chokkin does not read; findings on imports of `bar` are reported as hints"
+        );
+        assert_eq!(
+            warning(1).to_string(),
+            "manifest: `requirements.txt:2` installs `bar` and 1 more distribution from archives chokkin does not read; findings on imports of them are reported as hints"
+        );
+        assert_eq!(
+            warning(2).to_string(),
+            "manifest: `requirements.txt:2` installs `bar` and 2 more distributions from archives chokkin does not read; findings on imports of them are reported as hints"
+        );
+        assert_eq!(
+            located(&warning(0)),
+            (Some("requirements.txt".to_owned()), Some(2))
+        );
     }
 
     /// The unread-extras warning names the extras, or says none were named (#905).
