@@ -477,19 +477,20 @@ fn assumed_target_gaps(
         &TargetVersion::default_py311(),
         manifest.metadata.requires_python.as_deref(),
     );
-    let mut first: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    let own_target: BTreeSet<&str> = scripts
+        .iter()
+        .filter(|script| script.target_version.is_some())
+        .map(|script| script.path.as_str())
+        .collect();
+    let mut first = BTreeMap::new();
     for module in &parse.modules {
-        let own_target = scripts
-            .iter()
-            .any(|script| script.path == module.path && script.target_version.is_some());
-        if own_target {
+        if own_target.contains(module.path.as_str()) {
             continue;
         }
         for import in &module.imports {
             let root = import_root(&import.module);
             if import.relative_level == 0 && !root.is_empty() && assumed.ships_only_outside(root) {
-                let line = first.entry((&module.path, root)).or_insert(import.line);
-                *line = (*line).min(import.line);
+                keep_first_line(&mut first, (module.path.as_str(), root), Some(import.line));
             }
         }
     }
@@ -499,7 +500,7 @@ fn assumed_target_gaps(
             file: file.to_owned(),
             kind: GapKind::AssumedTargetVersion,
             member: None,
-            site: Some((root.to_owned(), Some(line))),
+            site: Some((root.to_owned(), line)),
         })
         .collect()
 }
