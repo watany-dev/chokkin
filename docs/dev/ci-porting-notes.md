@@ -169,9 +169,21 @@ plus the only code path that rewrites user files:
 (`make mutants-diff`, any file under `src/`). Both fail on a missed mutant
 (#837); a weekly failure reaches whoever last edited the cron through GitHub's
 scheduled-workflow notification. The plan job counts the mutants with
-`--list` and splits the run into shards of about 100 (at most 8), so a large
+`--list` and splits the run into shards of about 50 (at most 12), so a large
 diff still finishes within the 60-minute job timeout. `Mutants` is the one
 stable check name to require in branch protection.
+
+Most of a mutant's cost is its rebuild, so the `mutants` job skips
+`Swatinem/rust-cache` (its cache never reaches cargo-mutants' scratch copies,
+and it exports `CARGO_INCREMENTAL=0`), and the Makefile sets
+`CARGO_INCREMENTAL=1` so each mutant is an incremental rebuild of the
+baseline. `.cargo/mutants.toml` runs the tests under nextest (one process per
+test, so the run is as long as the slowest test) with a 60-second floor on the
+per-mutant test timeout, since the auto timeout is 5x the baseline time and a
+short baseline would make it tight. A single long test is the floor of every
+mutant's test time under nextest, so split an exhaustive test by case family
+(as `star_imports_match_cpython_*` is) rather than adding one that runs for
+tens of seconds.
 
 A missed mutant is either a missing test (add it) or an equivalent mutant (no
 observable behavior changes): exclude the latter in `.cargo/mutants.toml`

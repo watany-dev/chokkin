@@ -1,3 +1,16 @@
+# nextest runs each test in its own process, so a mutant's test run is as
+# long as its slowest test rather than the sum (cargo test runs a binary's
+# tests on threads, but the binaries one after another). nextest does not run
+# doctests; the crate has none that execute (`src/lib.rs` only has a
+# ```text block), so nothing is lost. CI's `test` job runs nextest too.
+test_tool = "nextest"
+
+# The auto timeout is 5x the baseline test time, and nextest shortens that
+# baseline. A fixed floor keeps a slower runner, or a mutant that merely slows
+# a test, from hitting the timeout instead of being judged by the tests (a
+# timeout counts as caught, so a tight one hides a missed mutant).
+minimum_test_timeout = 60
+
 # Equivalent mutants: no test can tell them from the original. Match on the
 # mutant description, not the line number, so edits elsewhere keep them aligned.
 exclude_re = [
