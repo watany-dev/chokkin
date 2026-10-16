@@ -120,6 +120,13 @@ impl StdlibRange {
             .is_some_and(|shipped| shipped.first <= high && low <= shipped.last)
     }
 
+    /// Returns whether only bundled minors outside the range ship
+    /// `import_root`, so another range could make it stdlib (#924).
+    #[must_use]
+    pub fn ships_only_outside(self, import_root: &str) -> bool {
+        !self.contains(import_root) && stdlib_modules().contains_key(import_root)
+    }
+
     /// Returns whether every interpreter `requires-python` allows, from its
     /// lower bound up, ships `import_root`, so an `except ImportError:`
     /// fallback for it never runs (#721). `false` without a lower bound.

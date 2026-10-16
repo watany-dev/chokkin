@@ -5,7 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
 
-use ruff_python_ast::Stmt;
+use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
+use ruff_python_ast::{Expr, Stmt};
 use ruff_text_size::{Ranged, TextSize};
 
 use crate::config::PluginId;
@@ -260,6 +261,7 @@ fn push_unread(
     let what = match &reason {
         SettingsUnread::MissingModule { module, .. }
         | SettingsUnread::UnfollowedImport { module, .. } => Some(module.clone()),
+        SettingsUnread::UnreadCall { call, .. } => Some(call.clone()),
         SettingsUnread::UnreadModule { .. } => Some("DJANGO_SETTINGS_MODULE".to_owned()),
         SettingsUnread::NoSettings | SettingsUnread::Unreadable { .. } => None,
     };
@@ -288,6 +290,7 @@ fn read_settings(
     let mut visited = BTreeSet::from([settings_rel.to_owned()]);
     let mut assigned: BTreeSet<&str> = BTreeSet::new();
     let mut unfollowed: Option<(String, String, u32)> = None;
+    let mut called: Option<(String, String, u32)> = None;
     let mut urlconf_read = false;
 
     while let Some(rel) = queue.pop_front() {
@@ -393,6 +396,12 @@ fn read_settings(
             }
         }
 
+        if called.is_none()
+            && let Some((call, start)) = settings_call(&stmts)
+        {
+            called = Some((call, rel.clone(), lines.line(start)));
+        }
+
         for (module, start) in star_imports(&stmts, &rel, ctx) {
             let followed = module
                 .as_deref()
@@ -412,12 +421,15 @@ fn read_settings(
         }
     }
 
-    // What the settings did not set may come from a module they star-import.
+    // What the settings did not set may come from a module they star-import
+    // or a file they run.
     if EXPLAINING_FIELDS
         .iter()
-        .any(|field| !assigned.contains(field))
-        && let Some((module, file, line)) = unfollowed
+        .all(|field| assigned.contains(field))
     {
+        return;
+    }
+    if let Some((module, file, line)) = unfollowed {
         let site = import_site(&file, Some(line));
         push_unread(
             contrib,
@@ -426,7 +438,59 @@ fn read_settings(
             Some(line),
             SettingsUnread::UnfollowedImport { module, site },
         );
+    } else if let Some((call, file, line)) = called {
+        let site = import_site(&file, Some(line));
+        push_unread(
+            contrib,
+            warnings,
+            file,
+            Some(line),
+            SettingsUnread::UnreadCall { call, site },
+        );
     }
+}
+
+/// Calls that run other files into the settings namespace, which the plugin
+/// does not read: django-split-settings' `include()` and `exec()`.
+const SETTINGS_CALLS: &[&str] = &["include", "exec"];
+
+/// The first [`SETTINGS_CALLS`] call that runs when the settings are
+/// imported, shown as `name()`, and where it starts. Module-level blocks
+/// (`if`, `try`, `with`) count; function, class and lambda bodies do not
+/// run on import (#925).
+fn settings_call(stmts: &[Stmt]) -> Option<(String, TextSize)> {
+    #[derive(Default)]
+    struct Calls(Option<(String, TextSize)>);
+
+    impl Visitor<'_> for Calls {
+        fn visit_stmt(&mut self, stmt: &Stmt) {
+            if self.0.is_none() && !matches!(stmt, Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
+                walk_stmt(self, stmt);
+            }
+        }
+
+        fn visit_expr(&mut self, expr: &Expr) {
+            if self.0.is_some() || matches!(expr, Expr::Lambda(_)) {
+                return;
+            }
+            if let Expr::Call(call) = expr {
+                let name = match &*call.func {
+                    Expr::Name(name) => Some(name.id.as_str()),
+                    Expr::Attribute(attribute) => Some(attribute.attr.as_str()),
+                    _ => None,
+                };
+                if let Some(name) = name.filter(|name| SETTINGS_CALLS.contains(name)) {
+                    self.0 = Some((format!("{name}()"), call.start()));
+                    return;
+                }
+            }
+            walk_expr(self, expr);
+        }
+    }
+
+    let mut calls = Calls::default();
+    calls.visit_body(stmts);
+    calls.0
 }
 
 /// Top-level `from m import *` statements: the absolute module, `None` when a

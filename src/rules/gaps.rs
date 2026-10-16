@@ -6,15 +6,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::Confidence;
+use crate::config::{Confidence, TargetVersion};
 use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
-use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning};
+use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning, invalid_requirement_name};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
-use crate::resolver::{ResolveWarning, is_first_party_import};
+use crate::resolver::{ResolveWarning, StdlibRange, import_root, is_first_party_import};
 use crate::rules::RuleContext;
 use crate::rules::deps::file_context;
 use crate::rules::types::{IssueCandidate, IssueSubject, RuleId, Severity, import_site};
@@ -54,6 +54,9 @@ pub struct MemberManifest<'a> {
 pub enum GapKind {
     /// A reachable module that was skipped: none of its imports are known.
     UnreadModule,
+    /// An entry point that is not a discovered source, so it was skipped
+    /// (#923): the code it runs is not followed.
+    SkippedEntry,
     /// A skipped public module of a library that no root reaches: a caller
     /// may import it, so it may use any declared distribution (#550). It
     /// leaves orphans alone, since what it imports must ship in the wheel
@@ -68,6 +71,10 @@ pub enum GapKind {
     /// be read statically (#491): the root's for every finding, a member's
     /// for that member's (#910).
     RuntimeDependenciesUnknown,
+    /// A manifest line that may declare the distribution its leading name
+    /// names could not be parsed (#928): an import of that distribution may
+    /// be declared.
+    InvalidRequirement,
     /// A reachable import no source resolved to a module (§7): any declared
     /// distribution may provide it (#911).
     UnresolvedImport,
@@ -82,6 +89,10 @@ pub enum GapKind {
     /// a module that is not a project file (#914): the apps, middleware and
     /// URL configuration they name are unknown.
     UnreadDjangoSettings,
+    /// The root `requires-python` could not be read, so the assumed py311
+    /// decided that a module only other minors ship is not stdlib (#924):
+    /// the import's findings may be wrong.
+    AssumedTargetVersion,
 }
 
 /// How a gap changes a finding in its scope.
@@ -104,6 +115,7 @@ impl GapKind {
         match (self, candidate.rule, &candidate.subject) {
             (
                 Self::UnreadModule
+                | Self::SkippedEntry
                 | Self::UnreadNotebookCells
                 | Self::OpaqueDynamicImport
                 | Self::UnreadCommandTarget
@@ -113,6 +125,7 @@ impl GapKind {
             )
             | (
                 Self::UnreadModule
+                | Self::SkippedEntry
                 | Self::UnreadPublicModule
                 | Self::UnreadNotebookCells
                 | Self::UnreadDjangoSettings,
@@ -129,6 +142,16 @@ impl GapKind {
                 Self::RuntimeDependenciesUnknown,
                 RuleId::Chk003 | RuleId::Chk004,
                 IssueSubject::Import { .. },
+            )
+            | (
+                Self::InvalidRequirement,
+                RuleId::Chk003 | RuleId::Chk004,
+                IssueSubject::Import { .. },
+            )
+            | (
+                Self::AssumedTargetVersion,
+                RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
+                IssueSubject::Import { .. },
             ) => Some(Lowering::Hint),
             _ => None,
         }
@@ -137,6 +160,7 @@ impl GapKind {
     const fn reason(self) -> &'static str {
         match self {
             Self::UnreadModule => "a reachable module could not be read",
+            Self::SkippedEntry => "an entry point is not a discovered source file",
             Self::UnreadPublicModule => "a public module of the library could not be read",
             Self::UnreadNotebookCells => {
                 "some code cells of a reachable notebook could not be read"
@@ -145,28 +169,47 @@ impl GapKind {
                 "a reachable module imports a module by a name computed at runtime"
             },
             Self::RuntimeDependenciesUnknown => "runtime dependencies could not be read statically",
+            Self::InvalidRequirement => {
+                "a requirement line naming the distribution could not be read"
+            },
             Self::UnresolvedImport => "a reachable import could not be resolved to a distribution",
             Self::UnresolvedScriptImport => {
                 "an import in the script could not be resolved to a distribution"
             },
             Self::UnreadCommandTarget => "a command runs Python code no entry reaches",
             Self::UnreadDjangoSettings => "the Django settings could not be found or read",
+            Self::AssumedTargetVersion => {
+                "`requires-python` could not be read, so py311 decided the module is not stdlib"
+            },
         }
     }
 }
 
 impl Gap {
     /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
-    /// member's findings, a script's import that script's alone.
+    /// member's findings, a script's import that script's alone, and an
+    /// assumed stdlib status the imports of that root in that file, and an
+    /// invalid requirement the imports of the distribution it names.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
-        let in_script = match (self.kind, &candidate.subject) {
+        let in_site = match (self.kind, &candidate.subject) {
             (GapKind::UnresolvedScriptImport, IssueSubject::ScriptDistribution { script, .. }) => {
                 *script == self.file
             },
+            (GapKind::AssumedTargetVersion, IssueSubject::Import { module, file, .. }) => {
+                *file == self.file
+                    && self
+                        .site
+                        .as_ref()
+                        .is_some_and(|(root, _)| root == import_root(module))
+            },
+            (GapKind::InvalidRequirement, IssueSubject::Import { distribution, .. }) => self
+                .site
+                .as_ref()
+                .is_some_and(|(name, _)| distribution.as_deref() == Some(name.as_str())),
             _ => true,
         };
-        in_member && in_script
+        in_member && in_site
     }
 
     /// What `--explain` names: the import or target and its line, or else the file.
@@ -182,16 +225,26 @@ impl Gap {
 ///
 /// One in a module that never runs hides nothing, so module and import gaps
 /// count only where the module is reached or, for an unread module, where a
-/// caller of the library may import it.
+/// caller of the library may import it. `skipped_entries` are the entry
+/// paths skipped as not discovered, less those that do not exist, which run
+/// nothing.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn collect_gaps(
     context: &RuleContext<'_>,
     manifest: &LoadedManifest,
     members: &[MemberManifest<'_>],
     scripts: &[InlineScript],
     plugins: &PluginHints,
+    skipped_entries: &[String],
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
+    gaps.extend(skipped_entries.iter().map(|path| Gap {
+        file: path.clone(),
+        kind: GapKind::SkippedEntry,
+        member: None,
+        site: None,
+    }));
     gaps.extend(unread_public_module_gaps(context.reachability));
     gaps.extend(unresolved_import_gaps(context, manifest, scripts));
     gaps.extend(command_target_gaps(
@@ -200,11 +253,18 @@ pub fn collect_gaps(
     ));
     gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(manifest_gap(manifest));
-    gaps.extend(members.iter().filter_map(|member| {
-        let mut gap = manifest_gap(member.manifest)?;
-        gap.file = join_rel(member.path, &gap.file);
-        gap.member = Some(member.id.to_owned());
-        Some(gap)
+    gaps.extend(invalid_requirement_gaps(manifest));
+    gaps.extend(assumed_target_gaps(context.parse, manifest, scripts));
+    gaps.extend(members.iter().flat_map(|member| {
+        let manifest = member.manifest;
+        manifest_gap(manifest)
+            .into_iter()
+            .chain(invalid_requirement_gaps(manifest))
+            .map(|mut gap| {
+                gap.file = join_rel(member.path, &gap.file);
+                gap.member = Some(member.id.to_owned());
+                gap
+            })
     }));
     // The root's gap sorts before its members', so it is the one `--explain` names first.
     gaps.sort_by(|left, right| {
@@ -397,6 +457,53 @@ fn settings_gap(unread: &UnreadSettings) -> Gap {
     }
 }
 
+/// Each file's imports of a root that only minors py311 does not reach ship
+/// as stdlib, when the root `requires-python` could not be read (#924): one
+/// gap per root at its first line. A PEP 723 script with its own target, and
+/// a member, whose `requires-python` the resolver does not use, assume nothing.
+fn assumed_target_gaps(
+    parse: &ParseSummary,
+    manifest: &LoadedManifest,
+    scripts: &[InlineScript],
+) -> Vec<Gap> {
+    let unreadable = manifest
+        .warnings
+        .iter()
+        .any(|warning| matches!(warning, ManifestWarning::RequiresPythonUnreadable { .. }));
+    if !unreadable {
+        return Vec::new();
+    }
+    let assumed = StdlibRange::new(
+        &TargetVersion::default_py311(),
+        manifest.metadata.requires_python.as_deref(),
+    );
+    let mut first: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    for module in &parse.modules {
+        let own_target = scripts
+            .iter()
+            .any(|script| script.path == module.path && script.target_version.is_some());
+        if own_target {
+            continue;
+        }
+        for import in &module.imports {
+            let root = import_root(&import.module);
+            if import.relative_level == 0 && !root.is_empty() && assumed.ships_only_outside(root) {
+                let line = first.entry((&module.path, root)).or_insert(import.line);
+                *line = (*line).min(import.line);
+            }
+        }
+    }
+    first
+        .into_iter()
+        .map(|((file, root), line)| Gap {
+            file: file.to_owned(),
+            kind: GapKind::AssumedTargetVersion,
+            member: None,
+            site: Some((root.to_owned(), Some(line))),
+        })
+        .collect()
+}
+
 /// The manifest's warning names the file (`pyproject.toml` for
 /// `dynamic = ["dependencies"]`); the fallback keeps the gap if one is missing.
 fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
@@ -417,6 +524,29 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
         member: None,
         site: None,
     })
+}
+
+/// One gap per invalid requirement line that names a distribution (#928).
+/// A line with no name (`>=1.0`, `{{ name }}>=1`) lowers nothing: it names
+/// no distribution, and reading it as an unread manifest would turn every
+/// missing declaration into a hint for one stray line. Constraint lines are
+/// not told apart from declarations, so they lower the same way.
+fn invalid_requirement_gaps(manifest: &LoadedManifest) -> Vec<Gap> {
+    manifest
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            ManifestWarning::InvalidRequirementLine {
+                file, line, raw, ..
+            } => Some(Gap {
+                file: file.clone(),
+                kind: GapKind::InvalidRequirement,
+                member: None,
+                site: Some((invalid_requirement_name(raw)?, *line)),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Lower each finding a gap's scope covers and name the gap in `--explain`
@@ -525,9 +655,10 @@ mod tests {
     }
 
     #[test]
-    fn unread_module_and_django_settings_cap_absence_findings_but_not_script_ones() {
+    fn unread_module_skipped_entry_and_django_settings_cap_absence_findings_but_not_script_ones() {
         for gap in [
             gap("acme/latin.py", GapKind::UnreadModule),
+            gap("manage.py", GapKind::SkippedEntry),
             gap("manage.py", GapKind::UnreadDjangoSettings),
         ] {
             let found = lowered(
@@ -638,6 +769,70 @@ mod tests {
         );
     }
 
+    /// An invalid line may declare the distribution it names, so it lowers
+    /// the missing-declaration findings for that one: the root's line in
+    /// every member, a member's in that member alone (#928).
+    #[test]
+    fn invalid_requirement_hints_only_imports_of_the_distribution_it_names() {
+        let resolved = |module: &str, name: &str| IssueSubject::Import {
+            module: module.to_owned(),
+            file: "acme/main.py".to_owned(),
+            line: Some(1),
+            distribution: Some(name.to_owned()),
+        };
+        let invalid = |file: &str, name: &str, member: Option<&str>| Gap {
+            file: file.to_owned(),
+            kind: GapKind::InvalidRequirement,
+            member: member.map(str::to_owned),
+            site: Some((name.to_owned(), Some(2))),
+        };
+        let mut candidates = vec![
+            candidate(RuleId::Chk003, resolved("yaml", "pyyaml")),
+            in_member(candidate(RuleId::Chk004, resolved("yaml", "pyyaml")), "y"),
+            candidate(RuleId::Chk003, resolved("idna", "idna")),
+            in_member(candidate(RuleId::Chk003, resolved("rich", "rich")), "x"),
+            in_member(candidate(RuleId::Chk003, resolved("rich", "rich")), "y"),
+            candidate(RuleId::Chk003, import("pyyaml")),
+            candidate(RuleId::Chk002, distribution("pyyaml")),
+        ];
+        apply_gaps(
+            &mut candidates,
+            &[
+                invalid("requirements.txt", "pyyaml", None),
+                invalid("packages/x/pyproject.toml", "rich", Some("x")),
+            ],
+        );
+        let found: Vec<_> = candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.severity,
+                    candidate.confidence,
+                    candidate.explain.details.clone(),
+                )
+            })
+            .collect();
+        let detail = |site: &str| {
+            vec![format!(
+                "a requirement line naming the distribution could not be read: {site}"
+            )]
+        };
+        let hint = |site| (Severity::Info, Confidence::Maybe, detail(site));
+        let kept = (Severity::Error, Confidence::Certain, Vec::new());
+        assert_eq!(
+            found,
+            [
+                hint("`pyyaml` in `requirements.txt:2`"),
+                hint("`pyyaml` in `requirements.txt:2`"),
+                kept.clone(),
+                hint("`rich` in `packages/x/pyproject.toml:2`"),
+                kept.clone(),
+                kept.clone(),
+                kept,
+            ]
+        );
+    }
+
     /// The root's unread declarations still lower every finding, a member's
     /// included, and `--explain` counts only the gaps in a finding's scope.
     #[test]
@@ -743,6 +938,41 @@ mod tests {
             found,
             [
                 (Severity::Error, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+    }
+
+    /// Only the assumed py311 decided that `binhex` is not stdlib, so that
+    /// import in that file is a hint; other imports and files keep their level.
+    #[test]
+    fn assumed_target_version_hints_only_the_version_dependent_import() {
+        let mut elsewhere = candidate(RuleId::Chk010, import("binhex"));
+        if let IssueSubject::Import { file, .. } = &mut elsewhere.subject {
+            "acme/cli.py".clone_into(file);
+        }
+        let found = lowered(
+            &[unresolved(
+                "acme/main.py",
+                GapKind::AssumedTargetVersion,
+                "binhex",
+                1,
+            )],
+            vec![
+                candidate(RuleId::Chk010, import("binhex")),
+                candidate(RuleId::Chk003, import("binhex.sub")),
+                candidate(RuleId::Chk010, import("yaml")),
+                elsewhere,
+                candidate(RuleId::Chk002, distribution("binhex")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
             ]

@@ -2745,6 +2745,110 @@ fn binary_unread_django_star_imports_are_a_gap() {
     );
 }
 
+/// [`django_settings_package`] with `manage.py` discovered, so the entry it
+/// skips is not what lowers the findings.
+fn discovered_manage_django_project() -> tempfile::TempDir {
+    let project = django_settings_package(
+        "import os\n\nos.environ[\"DJANGO_SETTINGS_MODULE\"] = \"mysite.settings.dev\"\n",
+    );
+    fs::write(
+        project.path().join("pyproject.toml"),
+        "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nproject = [\"manage.py\", \"mysite/**/*.py\"]\n",
+    )
+    .expect("write pyproject");
+    project
+}
+
+/// `include()` (django-split-settings) and `exec()` run settings files the
+/// plugin does not read, so a field the read files do not set may come from
+/// them (#925).
+#[test]
+fn binary_django_settings_include_and_exec_are_a_gap() {
+    let level = |code: &str, target: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    // Only unused files and distributions depend on what the settings load.
+    let levels = |path: &std::path::Path| -> Vec<_> {
+        issue_levels(path)
+            .into_iter()
+            .filter(|(code, ..)| code == "CHK001" || code == "CHK002")
+            .collect()
+    };
+    let cases = [
+        (
+            "from split_settings.tools import include\n\ninclude(\"components/*.py\")\n",
+            "include()",
+            3,
+        ),
+        (
+            "import split_settings.tools\n\nif True:\n    split_settings.tools.include(\"local.py\")\n",
+            "include()",
+            4,
+        ),
+        (
+            "import os\n\nexec(open(os.path.join(os.path.dirname(__file__), \"local.py\")).read())\n",
+            "exec()",
+            3,
+        ),
+    ];
+    for (settings, call, line) in cases {
+        let project = discovered_manage_django_project();
+        fs::write(project.path().join("mysite/settings/dev.py"), settings).expect("write settings");
+        assert_eq!(
+            levels(project.path()),
+            [
+                level("CHK001", "mysite/settings/base.py", "likely"),
+                level("CHK001", "mysite/urls.py", "likely"),
+                level("CHK002", "django", "likely"),
+            ],
+            "{settings}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK002:django"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(
+            stderr.contains(&format!("plugin: django: settings `mysite/settings/dev.py:{line}` calls `{call}`, which was not read; unused files and dependencies are reported below certain")),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("the Django settings could not be found or read: `{call}` in `mysite/settings/dev.py:{line}`")),
+            "{stderr}"
+        );
+    }
+
+    // Settings that set every field they explain need nothing it includes,
+    // and a call in a function, class or lambda body does not run when they
+    // are imported.
+    let project = discovered_manage_django_project();
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from split_settings.tools import include\n\nROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\"]\nMIDDLEWARE = []\ninclude(\"local.py\")\n",
+    )
+    .expect("write settings");
+    assert_eq!(
+        levels(project.path()),
+        [level("CHK001", "mysite/settings/base.py", "certain")]
+    );
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\n",
+    )
+    .expect("write settings");
+    fs::write(project.path().join("mysite/orphan.py"), "").expect("write orphan");
+    assert_eq!(
+        levels(project.path()),
+        [level("CHK001", "mysite/orphan.py", "certain")]
+    );
+}
+
 /// A `manage.py` that names no settings still marks a Django project, whose
 /// missing settings are a gap; a reusable app that only depends on Django has
 /// no settings of its own, so it gets none (#914).
@@ -2771,6 +2875,226 @@ fn binary_django_gap_needs_a_django_project() {
     fs::remove_file(project.path().join("manage.py")).expect("remove manage.py");
     let warnings = stderr(&project);
     assert!(!warnings.contains("plugin: django:"), "{warnings}");
+}
+
+/// An entry chokkin skips because it is not a discovered source runs code
+/// whose imports are unknown, so the files and distributions it may use fall
+/// to likely; one that does not exist hides nothing (#923).
+#[test]
+fn binary_skipped_entry_lowers_unused_files_and_distributions() {
+    let level = |code: &str, target: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nexclude = [\"manage.py\"]\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\nfrom mysite import helper\n",
+        ),
+        ("mysite/__init__.py", ""),
+        // No public name: Django reading settings is not what this checks.
+        ("mysite/settings.py", "# settings\n"),
+        ("mysite/helper.py", "# helper\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "mysite/helper.py", "likely"),
+            level("CHK002", "django", "likely"),
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:django"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: skipped entry `manage.py`: not a discovered source file; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("an entry point is not a discovered source file: `manage.py`"),
+        "{stderr}"
+    );
+
+    // A config entry that does not exist runs nothing.
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/missing.py\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", "# helper\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "acme/helper.py", "certain"),
+            level("CHK002", "requests", "certain"),
+        ]
+    );
+}
+
+/// An unreadable `requires-python` leaves py311 to decide which modules are
+/// stdlib, so an import of one that only other versions ship becomes a hint;
+/// other imports keep their level, and an explicit `target_version` assumes
+/// nothing (#924).
+#[test]
+fn binary_unreadable_requires_python_turns_version_dependent_imports_into_hints() {
+    let levels = |root: &std::path::Path| -> Vec<(String, String, String, String)> {
+        json_issues(root, &["--no-cache", "--confidence", "maybe"])
+            .iter()
+            .map(|issue| {
+                let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+                (
+                    field("code"),
+                    field("target"),
+                    field("severity"),
+                    field("confidence"),
+                )
+            })
+            .collect()
+    };
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\nrequires-python = \"3.10+\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\n";
+    let files = |pyproject: &'static str| {
+        write_project(&[
+            ("pyproject.toml", pyproject),
+            ("acme/__init__.py", ""),
+            // `binhex` is stdlib in 3.10 only; `yaml` in none.
+            ("acme/main.py", "import binhex\nimport yaml\n"),
+            // A script with its own target assumes nothing.
+            (
+                "acme/tool.py",
+                "# /// script\n# requires-python = \">=3.11\"\n# dependencies = []\n# ///\nimport binhex\n",
+            ),
+        ])
+    };
+    let project = files(pyproject);
+    assert_eq!(
+        levels(project.path()),
+        [
+            level("CHK003", "acme/main.py:yaml", "error", "certain"),
+            level("CHK010", "acme/main.py:binhex", "info", "maybe"),
+            level("CHK010", "acme/tool.py:binhex", "warning", "likely"),
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--confidence",
+            "maybe",
+            "--explain",
+            "CHK010:binhex",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("manifest: could not read `requires-python` \"3.10+\" in `pyproject.toml`; assuming target version py311; imports of modules only other versions ship as stdlib are reported as hints"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`requires-python` could not be read, so py311 decided the module is not stdlib: `binhex` in `acme/main.py:1`"),
+        "{stderr}"
+    );
+
+    let project = files(
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\nrequires-python = \"3.10+\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\ntarget_version = \"py311\"\n",
+    );
+    assert_eq!(
+        levels(project.path()),
+        [
+            level("CHK003", "acme/main.py:yaml", "error", "certain"),
+            level("CHK010", "acme/main.py:binhex", "warning", "likely"),
+            level("CHK010", "acme/tool.py:binhex", "warning", "likely"),
+        ]
+    );
+}
+
+/// An invalid requirement line may have declared the distribution its
+/// leading name names, so an import of that one becomes a hint; a line with
+/// no name lowers nothing, and other imports keep their level (#928).
+#[test]
+fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\n",
+        ),
+        // `rich_` cannot end a PEP 508 name, so the name read is `rich`.
+        (
+            "requirements.txt",
+            "PyYAML>=\nrich_ >=13\n>=1.0\nclick==8.1 \\\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "import yaml\nimport rich\nimport click\nimport idna\n",
+        ),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        [
+            "CHK003 acme/main.py:yaml info maybe",
+            "CHK003 acme/main.py:rich info maybe",
+            "CHK003 acme/main.py:click info maybe",
+            "CHK003 acme/main.py:idna error certain",
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--confidence",
+            "maybe",
+            "--explain",
+            "CHK003:yaml",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "manifest: invalid requirement at `requirements.txt:1`: PyYAML>=; undeclared imports of `pyyaml` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:2`: rich_ >=13; undeclared imports of `rich` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:3`: >=1.0\n",
+    ] {
+        assert!(stderr.contains(warning), "{warning}\n{stderr}");
+    }
+    assert!(
+        stderr.contains("a requirement line naming the distribution could not be read: `pyyaml` in `requirements.txt:1`"),
+        "{stderr}"
+    );
 }
 
 /// What the parser could not read in a file it kept reaches stderr and the
@@ -2848,7 +3172,7 @@ fn binary_entry_warnings_reach_stderr() {
     for line in [
         "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)",
         "entry: could not map `tool.missing` to a source file (`project.scripts.tool` in `packages/tool/pyproject.toml`)",
-        "entry: skipped entry `acme/excluded.py`: not a discovered source file",
+        "entry: skipped entry `acme/excluded.py`: not a discovered source file; unused files and dependencies are reported below certain",
     ] {
         assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
     }
@@ -2890,6 +3214,11 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
             "[project]\nname = \"dyn\"\nversion = \"0.1.0\"\ndynamic = [\"dependencies\"]\n",
         ),
         ("packages/dyn/dyn/__init__.py", ""),
+        (
+            "packages/old/pyproject.toml",
+            "[project]\nname = \"old\"\nversion = \"0.1.0\"\nrequires-python = \"3.10+\"\n",
+        ),
+        ("packages/old/old/__init__.py", ""),
     ]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -2900,8 +3229,11 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     for line in [
         "manifest: invalid requirement at `requirements/docs.txt:2`: not a requirement!!",
+        // Only the root's `requires-python` picks the stdlib, so a member's
+        // lowers nothing and the warning claims no hints.
+        "manifest: could not read `requires-python` \"3.10+\" in `packages/old/pyproject.toml`; assuming target version py311",
         "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
-        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;",
+        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;; undeclared imports of `requests` are reported as hints",
         "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
         "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically; missing-dependency findings in `packages/dyn` are reported as low-confidence info",
     ] {
@@ -4606,7 +4938,8 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
         manifest_lines(project.path()),
         [
             "manifest: could not read `requires-python` \">=3.12,bogus\" in `pyproject.toml`; \
-             assuming target version py311",
+             assuming target version py311; imports of modules only other versions ship as \
+             stdlib are reported as hints",
             "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
              `scripts/tool.py`; using the project's target version",
         ]

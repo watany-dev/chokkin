@@ -236,7 +236,15 @@ fn run_analysis_core(
             .iter()
             .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
     );
-    warnings.extend(entry_warnings(&entry, &probe.sources));
+    let entry_warnings = entry_warnings(&entry, &probe.sources);
+    let skipped_entries: Vec<String> = entry_warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            ProbeWarning::Entry(EntryWarning::MissingEntryPath { path }) => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    warnings.extend(entry_warnings);
     if probe.effective_config.mode == ProjectMode::Auto {
         entry.library_members = probe
             .workspace_inputs
@@ -380,6 +388,7 @@ fn run_analysis_core(
         &members,
         &probe.scripts,
         &plugins,
+        &skipped_entries,
     );
     warnings.extend(opaque_import_warning(&gaps));
     warnings.extend(command_target_warnings(&gaps));

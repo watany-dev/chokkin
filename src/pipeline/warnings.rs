@@ -9,7 +9,7 @@ use std::mem::discriminant;
 use std::path::Path;
 
 use crate::entry::EntryWarning;
-use crate::manifest::ManifestWarning;
+use crate::manifest::{ManifestWarning, invalid_requirement_name};
 use crate::plugins::PluginsWarning;
 use crate::reporters::{Diagnostic, condense_diagnostics};
 use crate::resolver::ResolveWarning;
@@ -333,6 +333,12 @@ fn write_member_manifest_warning(
             formatter,
             "manifest: runtime dependencies in `{file}` could not be read statically; missing-dependency findings in `{member}` are reported as low-confidence info"
         ),
+        // The resolver reads the root's `requires-python` alone, so a
+        // member's assumes nothing that a finding depends on.
+        ManifestWarning::RequiresPythonUnreadable { file, value } => write!(
+            formatter,
+            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311"
+        ),
         ManifestWarning::PoetryDetected
         | ManifestWarning::PdmDetected
         | ManifestWarning::HatchDetected
@@ -382,7 +388,16 @@ fn write_manifest_warning(
                 || format!("`{file}` ({label})"),
                 |line| format!("`{file}:{line}`"),
             );
-            write!(formatter, "manifest: invalid requirement at {at}: {raw}")
+            write!(formatter, "manifest: invalid requirement at {at}: {raw}")?;
+            // A PEP 723 block's line is not a gap (§11), so it lowers nothing.
+            let script = label.starts_with("script.");
+            match invalid_requirement_name(raw).filter(|_| !script) {
+                Some(name) => write!(
+                    formatter,
+                    "; undeclared imports of `{name}` are reported as hints"
+                ),
+                None => Ok(()),
+            }
         },
         ManifestWarning::SetupPyPartiallyStatic { file, argument } => write!(
             formatter,
@@ -417,7 +432,7 @@ fn write_manifest_warning(
         },
         ManifestWarning::RequiresPythonUnreadable { file, value } => write!(
             formatter,
-            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311"
+            "manifest: could not read `requires-python` \"{value}\" in `{file}`; assuming target version py311; imports of modules only other versions ship as stdlib are reported as hints"
         ),
         ManifestWarning::InlineScriptRequiresPythonUnreadable { file, value } => write!(
             formatter,
@@ -797,7 +812,7 @@ mod tests {
                 path: "a.py".to_owned(),
             })
             .to_string(),
-            "entry: skipped entry `a.py`: not a discovered source file"
+            "entry: skipped entry `a.py`: not a discovered source file; unused files and dependencies are reported below certain"
         );
         assert_eq!(
             ProbeWarning::Entry(EntryWarning::UnresolvedModuleTarget {
@@ -884,11 +899,22 @@ mod tests {
 
         assert_eq!(
             warning(Some(3)).to_string(),
-            "manifest: invalid requirement at `pyproject.toml:3`: foo @"
+            "manifest: invalid requirement at `pyproject.toml:3`: foo @; undeclared imports of `foo` are reported as hints"
         );
         assert_eq!(
             warning(None).to_string(),
-            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @"
+            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @; undeclared imports of `foo` are reported as hints"
+        );
+        // A PEP 723 block's line lowers nothing, so it promises no hint.
+        let script = ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
+            file: "tool.py".to_owned(),
+            line: Some(4),
+            label: "script.dependencies[0]".to_owned(),
+            raw: "rich>=".to_owned(),
+        });
+        assert_eq!(
+            script.to_string(),
+            "manifest: invalid requirement at `tool.py:4`: rich>="
         );
     }
 
