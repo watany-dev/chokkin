@@ -84,7 +84,7 @@ fn parse_python_source(
     let mut parsed = match ruff_python_parser::parse_module(source) {
         Ok(module) => {
             let mut visitor = ModuleVisitor::new(path, layout, file_context, &lines);
-            visitor.visit_module(module.suite());
+            visitor.visit_module(source, module.suite());
             let mut parsed = visitor.into_parsed();
             note_unsupported_syntax(target, module.suite(), &mut parsed.diagnostics);
             parsed

@@ -4,14 +4,14 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprCall, Identifier, Operator, Stmt, StmtIf,
-    StmtImport, StmtImportFrom,
+    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, Identifier, Operator,
+    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom,
 };
 use ruff_text_size::{Ranged, TextSize};
 
 use crate::sources::{FileContext, LayoutInfo};
 
-use super::attributes::attribute_receiver;
+use super::attributes::write_receiver;
 use super::condition::{self, Leaf};
 use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
@@ -40,8 +40,31 @@ struct SysPathHints {
     literals: BTreeSet<String>,
 }
 
+/// Whether the source can hold what [`async_library_names`] and
+/// [`first_availability_check`] look for. Most modules cannot, and the scans
+/// rewalk every scope's body.
+struct SourceMentions {
+    async_library: bool,
+    availability: bool,
+}
+
+impl SourceMentions {
+    fn scan(source: &str) -> Self {
+        // A non-ASCII identifier is NFKC-normalized, so its spelling in the
+        // source need not match the name.
+        let ascii = source.is_ascii();
+        let mentions = |word: &str| {
+            !ascii || memchr::memmem::find(source.as_bytes(), word.as_bytes()).is_some()
+        };
+        Self {
+            async_library: mentions("current_async_library"),
+            availability: mentions("find_spec") || mentions("_available"),
+        }
+    }
+}
+
 /// Mutable parse state accumulated while visiting one module.
-pub(super) struct ModuleVisitor<'a> {
+pub(super) struct ModuleVisitor<'a, 'ast> {
     path: &'a str,
     layout: &'a LayoutInfo,
     lines: &'a LineIndex,
@@ -58,6 +81,7 @@ pub(super) struct ModuleVisitor<'a> {
     /// Names the current scope binds to `sniffio.current_async_library()`
     /// (#731).
     async_library_names: HashSet<String>,
+    mentions: SourceMentions,
     /// Inside `if __name__ == "__main__":` of a module other than
     /// `__main__.py`; its imports are dev context (#681).
     in_main_block: bool,
@@ -80,10 +104,14 @@ pub(super) struct ModuleVisitor<'a> {
     command_words: BTreeSet<String>,
     sys_path: SysPathHints,
     loaded_names: HashSet<String>,
+    /// Every `x.attr` the walk meets; [`Self::into_parsed`] keeps
+    /// the ones read through an import binding, which only the whole
+    /// module's imports tell.
+    attribute_sites: Vec<&'ast ExprAttribute>,
     parsed: ParsedModule,
 }
 
-impl<'a> ModuleVisitor<'a> {
+impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// Create a visitor for `path` with empty output.
     pub(super) fn new(
         path: &'a str,
@@ -103,6 +131,10 @@ impl<'a> ModuleVisitor<'a> {
             platform_guard_depth: 0,
             imported_guards: Vec::new(),
             async_library_names: HashSet::new(),
+            mentions: SourceMentions {
+                async_library: true,
+                availability: true,
+            },
             in_main_block: false,
             availability_checked_at: None,
             function_depth: 0,
@@ -115,6 +147,7 @@ impl<'a> ModuleVisitor<'a> {
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
             loaded_names: HashSet::new(),
+            attribute_sites: Vec::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -125,6 +158,7 @@ impl<'a> ModuleVisitor<'a> {
     /// Consume the visitor and return the accumulated parse result.
     #[must_use]
     pub(super) fn into_parsed(mut self) -> ParsedModule {
+        self.parsed.attribute_accesses = self.import_attribute_accesses();
         let runs_commands = self
             .parsed
             .imports
@@ -153,20 +187,66 @@ impl<'a> ModuleVisitor<'a> {
         self.parsed
     }
 
+    /// The attribute sites read through a receiver symbol tracking follows:
+    /// an `import a.b [as c]`'s `a.b` and binding, or a `from` import's
+    /// binding. The rest are most accesses (`self.x`) and never read.
+    fn import_attribute_accesses(&self) -> Vec<AttributeAccess> {
+        let receivers: HashSet<&str> = self
+            .parsed
+            .imports
+            .iter()
+            .flat_map(|import| match import.kind {
+                ImportKind::Import => [
+                    Some(import.module.as_str()),
+                    Some(import.alias.as_deref().unwrap_or(&import.module)),
+                ],
+                ImportKind::ImportFrom => [import.bound_name(), None],
+            })
+            .flatten()
+            .collect();
+        let mut receiver = String::new();
+        self.attribute_sites
+            .iter()
+            .filter_map(|attribute| {
+                receiver.clear();
+                (write_receiver(&attribute.value, &mut receiver)
+                    && receivers.contains(receiver.as_str()))
+                .then(|| AttributeAccess {
+                    receiver: receiver.clone(),
+                    name: attribute.attr.to_string(),
+                    line: self.line_number(*attribute),
+                })
+            })
+            .collect()
+    }
+
     /// Visit module-level statements.
     ///
     /// `__all__` is read first because [`Self::record_symbol`] consults the export
     /// list to decide whether an underscore-prefixed symbol is public.
-    pub(super) fn visit_module(&mut self, stmts: &[Stmt]) {
+    pub(super) fn visit_module(&mut self, source: &str, stmts: &'ast [Stmt]) {
+        self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
-        self.async_library_names = async_library_names(None, stmts);
+        self.async_library_names = self.scope_async_library_names(None, stmts);
         self.visit_body(stmts);
         self.parsed.deprecated_shim = warns_deprecated_on_import(stmts, &self.parsed.imports);
     }
 
+    fn scope_async_library_names(
+        &self,
+        parameters: Option<&Parameters>,
+        body: &[Stmt],
+    ) -> HashSet<String> {
+        if self.mentions.async_library {
+            async_library_names(parameters, body)
+        } else {
+            HashSet::new()
+        }
+    }
+
     /// Visit one `if`/`elif`/`else` branch; `test` is `None` for `else`, and
     /// `earlier` holds the tests of the chain's branches before it.
-    fn visit_branch<'ast>(
+    fn visit_branch(
         &mut self,
         earlier: &[&'ast Expr],
         test: Option<&'ast Expr>,
@@ -274,7 +354,7 @@ impl<'a> ModuleVisitor<'a> {
             .any(|guard| guarded_roots(guard).contains(&root))
     }
 
-    fn visit_decorators(&mut self, decorators: &[Decorator]) {
+    fn visit_decorators(&mut self, decorators: &'ast [Decorator]) {
         self.record_decorators(decorators);
         for decorator in decorators {
             self.visit_expr(&decorator.expression);
@@ -283,7 +363,7 @@ impl<'a> ModuleVisitor<'a> {
 
     /// Record a def/class symbol and walk its body; the caller has already
     /// walked the decorators and signature.
-    fn visit_def_body<'ast>(
+    fn visit_def_body(
         &mut self,
         name: &Identifier,
         decorators: &'ast [Decorator],
@@ -310,7 +390,10 @@ impl<'a> ModuleVisitor<'a> {
             self.availability_checked_at = if saved_checked_at.is_some() {
                 Some(TextSize::default())
             } else {
-                first_availability_check(body)
+                self.mentions
+                    .availability
+                    .then(|| first_availability_check(body))
+                    .flatten()
             };
         }
         self.visit_body(body);
@@ -600,7 +683,7 @@ impl<'a> ModuleVisitor<'a> {
     }
 }
 
-impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
+impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
     /// Statements after `if not is_x_available(): raise ImportError(...)`
     /// only run with `x` installed (#695).
     fn visit_body(&mut self, body: &'ast [Stmt]) {
@@ -631,10 +714,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 if let Some(returns) = &def.returns {
                     self.visit_annotation(returns);
                 }
-                let outer_names = std::mem::replace(
-                    &mut self.async_library_names,
-                    async_library_names(Some(&def.parameters), &def.body),
-                );
+                let names = self.scope_async_library_names(Some(&def.parameters), &def.body);
+                let outer_names = std::mem::replace(&mut self.async_library_names, names);
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
@@ -651,10 +732,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
                 if let Some(arguments) = &def.arguments {
                     self.visit_arguments(arguments);
                 }
-                let outer_names = std::mem::replace(
-                    &mut self.async_library_names,
-                    async_library_names(None, &def.body),
-                );
+                let names = self.scope_async_library_names(None, &def.body);
+                let outer_names = std::mem::replace(&mut self.async_library_names, names);
                 self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
                 self.async_library_names = outer_names;
             },
@@ -846,19 +925,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
     /// walk keeps cold parse to a single traversal per file.
     fn visit_expr(&mut self, expr: &'ast Expr) {
         match expr {
-            Expr::Name(name) if name.ctx.is_load() => {
-                self.loaded_names.insert(name.id.to_string());
-            },
-            Expr::Attribute(attribute) => {
-                if let Some(receiver) = attribute_receiver(&attribute.value) {
-                    let line = self.line_number(attribute);
-                    self.parsed.attribute_accesses.push(AttributeAccess {
-                        receiver,
-                        name: attribute.attr.to_string(),
-                        line,
-                    });
-                }
-            },
+            Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
+            Expr::Attribute(attribute) => self.attribute_sites.push(attribute),
             Expr::Call(call) => {
                 for argument in type_expression_arguments(call, &self.typing_aliases) {
                     AnnotationNames(&mut self.loaded_names).visit_expr(argument);
@@ -921,6 +989,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_> {
     }
 }
 
+/// Adds `name`, allocating only the first time: a module reads most names
+/// many times over.
+fn insert_name(names: &mut HashSet<String>, name: &str) {
+    if !names.contains(name) {
+        names.insert(name.to_owned());
+    }
+}
+
 /// Every name is collected, the ones outside strings included, because
 /// a parsed string annotation is a fresh tree the module walk never reaches.
 struct AnnotationNames<'n>(&'n mut HashSet<String>);
@@ -928,9 +1004,7 @@ struct AnnotationNames<'n>(&'n mut HashSet<String>);
 impl<'a> Visitor<'a> for AnnotationNames<'_> {
     fn visit_expr(&mut self, expr: &'a Expr) {
         match expr {
-            Expr::Name(name) => {
-                self.0.insert(name.id.to_string());
-            },
+            Expr::Name(name) => insert_name(self.0, &name.id),
             Expr::StringLiteral(string) => {
                 if let Ok(parsed) = ruff_python_parser::parse_expression(string.value.to_str()) {
                     self.visit_expr(parsed.expr());
@@ -1119,7 +1193,7 @@ mod tests {
         let layout = LayoutInfo::default();
         let lines = LineIndex::new(source);
         let mut visitor = ModuleVisitor::new(path, &layout, file_context, &lines);
-        visitor.visit_module(module.suite());
+        visitor.visit_module(source, module.suite());
         visitor.into_parsed()
     }
 
@@ -1187,6 +1261,65 @@ mod tests {
         assert!(parsed.attribute_accesses.iter().any(|access| {
             access.receiver == "acme.utils" && access.name == "CONFIG" && access.line == 3
         }));
+    }
+
+    #[test]
+    fn source_mentions_rule_out_scans_only_on_ascii_sources() {
+        let scan = |source: &str| {
+            let mentions = SourceMentions::scan(source);
+            (mentions.async_library, mentions.availability)
+        };
+        assert_eq!(scan("import os\n"), (false, false));
+        assert_eq!(
+            scan("lib = sniffio.current_async_library()\n"),
+            (true, false)
+        );
+        assert_eq!(scan("if find_spec('x'): pass\n"), (false, true));
+        assert_eq!(scan("if is_torch_available(): pass\n"), (false, true));
+        assert_eq!(scan("# caf\u{e9}\n"), (true, true));
+    }
+
+    #[test]
+    fn keeps_attribute_accesses_through_import_receivers_only() {
+        // Symbol tracking reads an access only through a receiver an import
+        // binds, wherever the import sits; the rest (`self.x`) is dropped.
+        let parsed = visit_source(
+            "\
+import subprocess, sys
+import acme.utils as au
+from acme import models
+
+def run(self, obj):
+    self.cache.clear()
+    obj.attr
+    au.helper
+    models.Model
+    late.thing
+    subprocess.run([sys.executable, \"-m\", \"tool\"])
+    tool.main
+    acme.utils.CONFIG
+
+def later():
+    import late
+",
+        );
+        let accesses: Vec<(&str, &str)> = parsed
+            .attribute_accesses
+            .iter()
+            .map(|access| (access.receiver.as_str(), access.name.as_str()))
+            .collect();
+        assert_eq!(
+            accesses,
+            [
+                ("au", "helper"),
+                ("models", "Model"),
+                ("late", "thing"),
+                ("subprocess", "run"),
+                ("sys", "executable"),
+                ("tool", "main"),
+                ("acme.utils", "CONFIG"),
+            ]
+        );
     }
 
     #[test]
@@ -1445,7 +1578,7 @@ mod tests {
             FileContext::Runtime,
             &lines,
         );
-        visitor.visit_module(module.suite());
+        visitor.visit_module(source, module.suite());
         let parsed = visitor.into_parsed();
         let modules: Vec<_> = parsed
             .dynamic_imports
@@ -1468,7 +1601,7 @@ mod tests {
             FileContext::Runtime,
             &lines,
         );
-        visitor.visit_module(module.suite());
+        visitor.visit_module(source, module.suite());
         let parsed = visitor.into_parsed();
         let modules: Vec<_> = parsed
             .dynamic_imports
