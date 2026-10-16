@@ -312,7 +312,7 @@ member manifest の warning も root のものと同じく出す。file は root
 
 workspace member でも member の祖先でもない入れ子 `pyproject.toml` が `[project].name` を持つ場合（fastmcp の `examples/smart_home/` など）は、自前の依存を持つ独立 project として、そのdirectory配下のfileを source inventory から外す（#694）。root の manifest はそれらの依存を記述していないため。`__init__.py` を持つdirectory（package内に置かれた `pyproject.toml`）と、`tests` / `fixtures` などtest系directoryの配下（testがdataとして読むfixture project）は対象外。ただし PEP 723 の inline script block を持つ `.py` は自前の依存を宣言しているので外さず、`script:` の CHK002 / CHK003 で判定する（#714）。件数は `NestedProjectsSkipped` warning（`workspace: skipped N nested projects ... (--no-auto-workspace keeps them)`）で出し、`--no-auto-workspace` では外さない。`load_config` ではなくprobeで行うのは、member manifest読込みが `load_config` を再帰的に呼ぶため。
 
-`chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。
+`chokkin --init` は、auto discoveryで検出したlayout・entry・dependency groupを反映した `[tool.chokkin]` の雛形を `pyproject.toml` に追記する。既存の `[tool.chokkin]` がある場合は上書きせずexit code 2で終了する。`pyproject.toml` が root 外への symlink の場合も、書かずに exit code 2 で終了する(§13 の containment、#980)。
 
 ## 6. 解析エンジン仕様
 
@@ -1044,6 +1044,12 @@ dynamic import周辺の変更
 未使用ファイル削除は明示フラグ必須。v0.2初期実装では `CHK001` のうち
 confidence が `certain` の root-relative file だけを、project root containment
 check 後に削除する。`--dry-run` では削除せず preview のみ返す。
+
+`--fix` の書き込み先は、`..` や絶対パスを含まず、symlink を辿った実体も project
+root 配下にあるものに限る。外れたものは `unsupported-target` として skipped に
+回す。`--dry-run` も preview の前に同じ検査をするので、実行で拒否される編集を
+`planned` と表示しない（#980）。`--init` も追記する前に `pyproject.toml` に同じ検査
+をし、root 外を指していれば何も書かずに exit code 2 で終了する。
 
 ```bash
 uvx chokkin --fix --allow-remove-files

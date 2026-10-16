@@ -2,7 +2,7 @@
 
 #![allow(clippy::expect_used)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{fs, io};
 
@@ -224,6 +224,81 @@ fn binary_fix_dry_run_reports_planned_not_applied() {
     let stderr = String::from_utf8(fix.stderr).expect("utf8");
     assert!(stderr.contains("  applied CHK002 boto3"), "{stderr}");
     assert!(!stderr.contains("  planned CHK"), "{stderr}");
+}
+
+/// A `pyproject.toml` symlinked outside the root: `--fix` refuses it, and
+/// `--dry-run` must not plan what the run would refuse (#980).
+#[cfg(unix)]
+#[test]
+fn binary_fix_dry_run_skips_target_outside_the_root() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let (root, outside) = symlinked_pyproject(temp.path());
+    let before = fs::read_to_string(&outside).expect("read");
+
+    for args in [&["--fix", "--dry-run"][..], &["--fix"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache"])
+            .args(args)
+            .arg(&root)
+            .output()
+            .expect("run chokkin --fix");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(
+            stderr.contains(
+                "skipped CHK002 requests — unsupported-target: fix target `pyproject.toml` resolves outside the project root"
+            ),
+            "{args:?}: {stderr}"
+        );
+        assert!(!stderr.contains("planned CHK"), "{args:?}: {stderr}");
+    }
+    assert_eq!(fs::read_to_string(&outside).expect("read"), before);
+}
+
+/// `--init` appends to `pyproject.toml`, so it gets the same containment check
+/// as `--fix` (#980).
+#[cfg(unix)]
+#[test]
+fn binary_init_refuses_pyproject_outside_the_root() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let (root, outside) = symlinked_pyproject(temp.path());
+    let before = fs::read_to_string(&outside).expect("read");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--init")
+        .arg(&root)
+        .output()
+        .expect("run chokkin --init");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into()),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("init target `pyproject.toml` resolves outside the project root"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&outside).expect("read"), before);
+}
+
+#[cfg(unix)]
+fn symlinked_pyproject(base: &Path) -> (PathBuf, PathBuf) {
+    let root = base.join("proj");
+    let outside = base.join("outside").join("target_pyproject.toml");
+    fs::create_dir_all(root.join("demo")).expect("mkdir");
+    fs::create_dir_all(outside.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &outside,
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"requests\"]\n",
+    )
+    .expect("write outside pyproject");
+    fs::write(root.join("demo/__init__.py"), "").expect("write package");
+    std::os::unix::fs::symlink(
+        "../outside/target_pyproject.toml",
+        root.join("pyproject.toml"),
+    )
+    .expect("symlink");
+    (root, outside)
 }
 
 #[test]

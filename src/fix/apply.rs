@@ -117,7 +117,11 @@ fn apply_action(
     options: FixOptions,
 ) -> Result<AppliedFix, FixError> {
     let (file, description) = if options.dry_run {
-        preview(action)
+        // Same containment check as the write, so a preview never promises
+        // an edit the real run refuses.
+        let preview = preview(action);
+        resolve_contained_path(root, preview.0)?;
+        preview
     } else {
         perform(root, action)?
     };
