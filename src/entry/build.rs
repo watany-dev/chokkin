@@ -100,7 +100,10 @@ pub(crate) fn add_member_manifest_roots<'a>(
         candidates.extend(build_script_entries(manifest));
         for candidate in candidates {
             let path = format!("{member_path}/{}", candidate.spec.path);
+            // The member's own walk found the file but the root's did not (a
+            // root `exclude`): it is skipped like a root entry is (#934).
             if !root_paths.contains(&path) {
+                plan.warnings.push(EntryWarning::MissingEntryPath { path });
                 continue;
             }
             if let Some(root) = plan.roots.iter_mut().find(|root| root.path == path) {

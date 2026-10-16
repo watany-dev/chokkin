@@ -3212,6 +3212,49 @@ fn binary_django_gap_needs_a_django_project() {
     assert!(!warnings.contains("plugin: django:"), "{warnings}");
 }
 
+/// A member's manifest entry the root excludes is skipped like a root one:
+/// its imports are unknown, so what it may use falls to likely (#934).
+#[test]
+fn binary_member_entry_outside_the_root_inventory_is_a_skipped_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0\"\n\n[tool.uv.workspace]\nmembers = [\"packages/tool\"]\n\n[tool.chokkin]\nexclude = [\"packages/tool/src/tool/cli.py\"]\n",
+        ),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0\"\n\n[project.scripts]\ntool = \"tool.cli:main\"\n",
+        ),
+        ("packages/tool/src/tool/__init__.py", ""),
+        (
+            "packages/tool/src/tool/cli.py",
+            "from tool import helper\n\ndef main():\n    pass\n",
+        ),
+        ("packages/tool/src/tool/helper.py", "# helper\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [(
+            "CHK001".to_owned(),
+            "packages/tool/src/tool/helper.py".to_owned(),
+            "error".to_owned(),
+            "likely".to_owned(),
+        )]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "entry: skipped entry `packages/tool/src/tool/cli.py`: not a discovered source file"
+        ),
+        "{stderr}"
+    );
+}
+
 /// An entry chokkin skips because it is not a discovered source runs code
 /// whose imports are unknown, so the files and distributions it may use fall
 /// to likely; one that does not exist hides nothing (#923).
