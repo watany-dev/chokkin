@@ -394,6 +394,21 @@ mod tests {
             cell_to_python("t = %time import foo\n").as_deref(),
             Ok("t = ...; import foo\n")
         );
+        assert_eq!(
+            cell_to_python("%%prun -l 5 run()\nfinish()\n").as_deref(),
+            Ok("run()\nfinish()\n")
+        );
+        assert_eq!(
+            cell_to_python("%%script --bg python3\nimport rich\n").as_deref(),
+            Ok("\nimport rich\n")
+        );
+    }
+
+    #[test]
+    fn escapes_assign_only_to_names() {
+        for cell in ["x[0] = !ls\n", "= !ls\n"] {
+            assert_eq!(cell_to_python(cell).as_deref(), Ok(cell));
+        }
     }
 
     #[test]
@@ -455,6 +470,10 @@ mod tests {
         assert_eq!(
             cell_to_python("%%script --out res\nimport os\n"),
             unrecognized(0, "cell magic `%%script` names no program")
+        );
+        assert_eq!(
+            cell_to_python("%%time\nimport os\n%run helper.py\n"),
+            unrecognized(2, "line magic `%run` is not recognized")
         );
         assert_eq!(
             cell_to_python("import os\n%%time\n"),
