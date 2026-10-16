@@ -156,11 +156,9 @@ kani:
 	cargo kani
 
 ## ─── Code coverage ────────────────────────────────────────────────────────────
-# NOTE: --fail-under-lines is intentionally omitted until the analyzer is implemented.
-# Re-enable at 95% once Phase 1 (v0.1 MVP) coverage is established.
-# See docs/dev/ci-porting-notes.md.
+# coverage: same 95% line gate as the CI coverage job (docs/dev/ci-porting-notes.md).
 coverage:
-	cargo llvm-cov --locked --html
+	cargo llvm-cov --locked --html --fail-under-lines 95
 
 ## ─── Python / maturin distribution ───────────────────────────────────────────
 wheel:

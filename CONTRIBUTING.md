@@ -88,10 +88,11 @@ for all platforms and publishes to PyPI via Trusted Publishing:
    run the wheel and sdist tests locally.
 
 Wheels are built with the toolchain pinned by `RUST_TOOLCHAIN` in
-`.github/workflows/release.yml`, not the latest stable. To move it, bump it in
-its own `ci:` PR (the release workflow builds and tests every wheel on pull
-requests)
-before tagging, not in the release commit.
+`.github/workflows/release.yml`, not the latest stable; the CI lint job
+(rustfmt, clippy, rustdoc) pins the same version in `.github/workflows/ci.yml`
+so a new clippy lint does not break open PRs the day it ships. To move it, bump
+both in their own `ci:` PR (the release workflow builds and tests every wheel
+on pull requests) before tagging, not in the release commit.
 
 Before publishing the first release, a PyPI Trusted Publisher must be
 registered at pypi.org (repo: `watany-dev/chokkin`, workflow: `release.yml`,

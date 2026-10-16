@@ -18,6 +18,9 @@ analysis logic.
 - Use `std::path` for all paths; wheels ship for Linux/macOS/Windows.
 - An extractor states what happens to input it does not recognize; dropping it
   silently is a false positive waiting to happen (ADR 0005).
+- `src/resolver/bundled/` and `src/resolver/stdlib/` are generated: edit the
+  seed (`data/package-map.seed.json`) or the script and run
+  `make check-generated`; never edit the output by hand.
 - Run `make check` before every push.
 - Commit messages: imperative mood with a type prefix (`feat:`, `fix:`,
   `refactor:`, `chore:`, `docs:`, `ci:`). Push to a feature branch, not `main`.
