@@ -2,6 +2,7 @@
 CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
+CARGO_NEXTEST_VERSION       ?= 0.9.133
 
 .PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist sdist-smoke tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts pbt-deep formal tlc mutants mutants-diff kani help
 
@@ -133,15 +134,24 @@ tlc:
 
 ## ─── Test effectiveness (#418) ────────────────────────────────────────────────
 # mutants:      cargo-mutants over src/rules/, src/resolver/, src/fix/ and
-#               src/graph/ (most of the time is builds).
-#               Narrow with ARGS, e.g. ARGS="-f src/rules/emit.rs".
+#               src/graph/ (most of the time is builds). Tests run under
+#               nextest (.cargo/mutants.toml), so `make tools` is needed.
+#               To narrow to one file run cargo mutants directly with the same
+#               env, e.g. `$(MUTANTS_ENV) cargo mutants -f src/rules/emit.rs`
+#               (a -f in ARGS widens the set: file globs are OR'ed).
 #               Results: mutants.out/. CI fails on any missed mutant (#837).
 # mutants-diff: only the mutants on lines changed since BASE (default origin/main);
 #               what the PR check runs.
 # kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
 #               kani-verifier@0.68.0 && cargo kani setup`.
 #               Not part of `make check`. See docs/dev/formal/README.md.
-MUTANTS_ENV = CARGO_PROFILE_DEV_DEBUG=0
+#
+# cargo-mutants builds every mutant in a copy of the tree, so each build is a
+# small edit on top of the baseline: incremental compilation turns the rebuild
+# from a full one (~35 s) into a few seconds. Set explicitly because
+# Swatinem/rust-cache exports CARGO_INCREMENTAL=0 into a job's environment.
+# Debug info is dropped to keep each build and link short.
+MUTANTS_ENV = CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=1
 BASE       ?= origin/main
 
 mutants:
@@ -189,6 +199,7 @@ ifndef SKIP_TOOL_INSTALL
 	cargo install cargo-deny@$(CARGO_DENY_VERSION) --locked
 	cargo install cargo-llvm-cov@$(CARGO_LLVM_COV_VERSION) --locked
 	cargo install cargo-mutants@$(CARGO_MUTANTS_VERSION) --locked
+	cargo install cargo-nextest@$(CARGO_NEXTEST_VERSION) --locked
 endif
 
 help:

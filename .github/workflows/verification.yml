@@ -2,7 +2,7 @@ name: Verification
 
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
 # PR only the mutants on lines the PR changes, weekly all of `make mutants`.
-# Both split into shards of about 100 mutants so a large diff still finishes
+# Both split into shards of about 50 mutants so a large diff still finishes
 # within a job timeout. kani runs on demand, weekly, and on PRs that change a
 # file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
 # regression gate (#836) also runs, but only reports: it never fails the PR.
@@ -53,14 +53,17 @@ jobs:
           tool: cargo-mutants@27.1.0
       - name: Count mutants and pick the shard count
         id: plan
-        # About 100 mutants per shard (~20 min at -j 2), at most 8 shards.
+        # About 50 mutants per shard, at most 12 shards. A mutant takes about
+        # 40 s at -j 2 (incremental rebuild plus the nextest run), so 50 fit
+        # comfortably inside the 60-minute job timeout with the baseline
+        # build on top.
         run: |
           mkdir -p target
           make -s "$MUTANTS_TARGET" ARGS=--list > target/mutants-list.txt
           count=$(grep -c . target/mutants-list.txt || true)
-          shards=$(( (count + 99) / 100 ))
+          shards=$(( (count + 49) / 50 ))
           if [ "$shards" -lt 1 ]; then shards=1; fi
-          if [ "$shards" -gt 8 ]; then shards=8; fi
+          if [ "$shards" -gt 12 ]; then shards=12; fi
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "shards=$(jq -cn --argjson n "$shards" '[range($n)]')" >> "$GITHUB_OUTPUT"
           echo "$count mutants, $shards shard(s)" >> "$GITHUB_STEP_SUMMARY"
@@ -84,10 +87,13 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # No rust-cache here: cargo-mutants builds in copies of the tree that
+      # start without a target directory, so the cache never serves a mutant
+      # build, and the action exports CARGO_INCREMENTAL=0, which turns every
+      # mutant's rebuild into a full one. The Makefile sets CARGO_INCREMENTAL=1.
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
-          tool: cargo-mutants@27.1.0
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.133
       - name: Mutate
         id: mutate
         env:

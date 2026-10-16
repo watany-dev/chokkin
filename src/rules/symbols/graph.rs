@@ -696,20 +696,24 @@ mod tests {
             }
         }
 
+        /// Star-import shapes over three modules: a chain, a chain into an
+        /// unparsed target, a fork, a diamond, a cycle, and a self import next
+        /// to an unparsed target (#951). `star_imports_match_cpython_on_*`
+        /// below has one test per shape: under nextest (and so under
+        /// cargo-mutants) the slowest single test bounds every run.
+        const SHAPES: [[&[usize]; 3]; 6] = [
+            [&[1], &[2], &[]],
+            [&[1], &[2], &[MODULES]],
+            [&[1, 2], &[], &[]],
+            [&[1, 2], &[2], &[]],
+            [&[1], &[2], &[0]],
+            [&[0, 1], &[MODULES], &[1]],
+        ];
+
         /// Every `__all__` state and every set of `alpha` / `_gamma`
-        /// definitions on three modules, over star-import shapes covering a
-        /// chain, a fork, a diamond, a cycle, a self import and an unparsed
-        /// target (#951).
-        #[test]
-        fn star_imports_match_cpython_on_every_small_tree() {
-            const SHAPES: [[&[usize]; 3]; 6] = [
-                [&[1], &[2], &[]],
-                [&[1], &[2], &[MODULES]],
-                [&[1, 2], &[], &[]],
-                [&[1, 2], &[2], &[]],
-                [&[1], &[2], &[0]],
-                [&[0, 1], &[MODULES], &[1]],
-            ];
+        /// definitions on three modules wired as `SHAPES[shape]`.
+        fn star_imports_match_cpython_on_every_small_tree(shape: usize) {
+            let shape = SHAPES[shape];
             let alls = || {
                 [
                     All::Absent,
@@ -727,35 +731,69 @@ mod tests {
                 .iter()
                 .flat_map(|symbols| alls().map(|all| (symbols.to_vec(), all)))
                 .collect();
-            for shape in SHAPES {
-                for a in &states {
-                    for b in &states {
-                        for c in &states {
-                            let modules: Vec<_> = [a, b, c]
-                                .into_iter()
-                                .zip(shape)
-                                .map(|((symbols, all), stars)| Module {
-                                    symbols: symbols.clone(),
-                                    imported: Vec::new(),
-                                    stars: stars.to_vec(),
-                                    all: all.clone(),
-                                })
-                                .collect();
-                            let order = [0, 1, 2];
-                            assert_eq!(
-                                star_sources(&modules, &order),
-                                reference(&modules),
-                                "{modules:?}"
-                            );
-                            assert_eq!(
-                                unexported_star_symbols(&modules),
-                                Vec::<SymbolId>::new(),
-                                "{modules:?}"
-                            );
-                        }
+            for a in &states {
+                for b in &states {
+                    for c in &states {
+                        let modules: Vec<_> = [a, b, c]
+                            .into_iter()
+                            .zip(shape)
+                            .map(|((symbols, all), stars)| Module {
+                                symbols: symbols.clone(),
+                                imported: Vec::new(),
+                                stars: stars.to_vec(),
+                                all: all.clone(),
+                            })
+                            .collect();
+                        let order = [0, 1, 2];
+                        assert_eq!(
+                            star_sources(&modules, &order),
+                            reference(&modules),
+                            "{modules:?}"
+                        );
+                        assert_eq!(
+                            unexported_star_symbols(&modules),
+                            Vec::<SymbolId>::new(),
+                            "{modules:?}"
+                        );
                     }
                 }
             }
+        }
+
+        #[test]
+        fn star_imports_match_cpython_on_a_chain() {
+            star_imports_match_cpython_on_every_small_tree(0);
+        }
+
+        #[test]
+        fn star_imports_match_cpython_on_a_chain_into_an_unparsed_target() {
+            star_imports_match_cpython_on_every_small_tree(1);
+        }
+
+        #[test]
+        fn star_imports_match_cpython_on_a_fork() {
+            star_imports_match_cpython_on_every_small_tree(2);
+        }
+
+        #[test]
+        fn star_imports_match_cpython_on_a_diamond() {
+            star_imports_match_cpython_on_every_small_tree(3);
+        }
+
+        #[test]
+        fn star_imports_match_cpython_on_a_cycle() {
+            star_imports_match_cpython_on_every_small_tree(4);
+        }
+
+        #[test]
+        fn star_imports_match_cpython_on_a_self_import_and_an_unparsed_target() {
+            star_imports_match_cpython_on_every_small_tree(5);
+        }
+
+        /// A shape added to `SHAPES` needs a test above, or it is never run.
+        #[test]
+        fn every_star_import_shape_has_a_test() {
+            assert_eq!(SHAPES.len(), 6);
         }
     }
 }
