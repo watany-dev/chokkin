@@ -68,12 +68,38 @@ pub(super) fn resolve_relative_name(name: &str, package: &str) -> Option<String>
     })
 }
 
-/// Build a diagnostic for an unresolved relative import.
+/// Build a diagnostic for a relative import `resolve_relative_import`
+/// rejected, naming why: the file has no module name in the layout, it is a
+/// top-level module with no parent package, or `level` climbs past the
+/// top-level package (`ImportError: attempted relative import beyond
+/// top-level package`). The three read alike to a user but call for different
+/// fixes, so the wording keeps them apart (#982).
 #[must_use]
-pub(super) fn unresolved_relative_diagnostic(line: u32) -> ParseDiagnostic {
+pub(super) fn unresolved_relative_diagnostic(
+    line: u32,
+    file_path: &str,
+    layout: &LayoutInfo,
+    level: u8,
+) -> ParseDiagnostic {
+    let message = match module_package(file_path, layout) {
+        None => "could not resolve relative import (file is not inside a known package)".to_owned(),
+        Some(package) if package.is_empty() => {
+            let module = path_to_module(file_path, layout).unwrap_or_default();
+            format!(
+                "could not resolve relative import (top-level module `{module}` has no parent package)"
+            )
+        },
+        Some(package) if ascend_package(&package, level).is_none() => {
+            let top = package.split('.').next().unwrap_or_default();
+            format!("relative import reaches beyond the top-level package `{top}`")
+        },
+        // Resolution only fails otherwise when there is no name to import,
+        // which the grammar does not allow (`from . import` needs a name).
+        Some(_) => "could not resolve relative import".to_owned(),
+    };
     ParseDiagnostic {
         line,
-        message: "could not resolve relative import (missing package context)".to_owned(),
+        message,
         severity: ParseSeverity::Warning,
     }
 }
@@ -198,6 +224,30 @@ mod tests {
         assert_eq!(
             resolve_relative_import("src/acme/api/routes.py", &layout, 3, Some("models"), None),
             None
+        );
+    }
+
+    #[test]
+    fn unresolved_diagnostic_names_the_reason() {
+        let layout = src_layout();
+        let message =
+            |path: &str, level: u8| unresolved_relative_diagnostic(1, path, &layout, level).message;
+        assert_eq!(
+            message("src/acme/core.py", 2),
+            "relative import reaches beyond the top-level package `acme`"
+        );
+        assert_eq!(
+            message("src/acme/api/routes.py", 3),
+            "relative import reaches beyond the top-level package `acme`"
+        );
+        assert_eq!(
+            message("src/routes.py", 1),
+            "could not resolve relative import (top-level module `routes` has no parent package)"
+        );
+        let flat = LayoutInfo::new("", vec!["acme".to_owned()]);
+        assert_eq!(
+            unresolved_relative_diagnostic(1, "tests/unit/test_core.py", &flat, 1).message,
+            "could not resolve relative import (file is not inside a known package)"
         );
     }
 

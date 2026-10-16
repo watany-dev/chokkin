@@ -3274,7 +3274,7 @@ fn binary_parse_warnings_reach_stderr_and_json_diagnostics() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     let expected = [
         "parse: `acme/__init__.py:4`: unsupported `__all__` assignment form",
-        "parse: `scripts/tool.py:1`: could not resolve relative import (missing package context)",
+        "parse: `scripts/tool.py:1`: could not resolve relative import (file is not inside a known package)",
     ];
     for line in expected {
         assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
