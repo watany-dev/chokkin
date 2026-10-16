@@ -94,7 +94,7 @@ fn parse_with(
     } else if is_direct_reference(trimmed) {
         // `name @ url` that failed the grammar (e.g. a space in the URL) is
         // invalid, not an opaque URL line.
-        return Err(invalid(raw, origin));
+        return Err(invalid(raw, context, origin));
     } else if let Some(name) = extract_egg_name(trimmed) {
         (name, Vec::new(), None, Some(trimmed.to_owned()), false)
     } else if is_url_like(trimmed) || (files && looks_like_pip_file(trimmed)) {
@@ -106,7 +106,7 @@ fn parse_with(
             true,
         )
     } else {
-        return Err(invalid(raw, origin));
+        return Err(invalid(raw, context, origin));
     };
     Ok(DeclaredDependency {
         name,
@@ -120,12 +120,17 @@ fn parse_with(
     })
 }
 
-pub(super) fn invalid(raw: &str, origin: DependencyOrigin) -> ManifestWarning {
+pub(super) fn invalid(
+    raw: &str,
+    context: DependencyContext,
+    origin: DependencyOrigin,
+) -> ManifestWarning {
     ManifestWarning::InvalidRequirementLine {
         file: origin.file,
         line: origin.line,
         label: origin.label,
         raw: raw.to_owned(),
+        context,
     }
 }
 
@@ -252,6 +257,53 @@ pub(super) fn is_url_like(spec: &str) -> bool {
             spec.get(..prefix.len())
                 .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
         })
+}
+
+/// Distribution an opaque archive line installs, read from the file name
+/// (#988): a wheel's first `-` field (PEP 427), or an sdist's name before
+/// its last `-`, where a version starting with a digit follows. A query,
+/// fragment, trailing `[extras]` and a marker (after whitespace or `;`) are
+/// ignored. `None` for a directory, a VCS URL, or a file name that does not
+/// have one of these shapes (`foo.whl`, `latest.tar.gz`): such a line names
+/// no distribution to lower.
+#[must_use]
+pub(crate) fn archive_distribution_name(spec: &str) -> Option<String> {
+    const SDIST: [&str; 11] = [
+        ".tar.gz",
+        ".tar.bz2",
+        ".tar.xz",
+        ".tar.lzma",
+        ".tar.lz",
+        ".tar",
+        ".tgz",
+        ".tbz",
+        ".txz",
+        ".tlz",
+        ".zip",
+    ];
+    let spec = spec
+        .split_whitespace()
+        .next()?
+        .split([';', '?', '#'])
+        .next()?;
+    let spec = match spec.rfind('[') {
+        Some(open) if spec.ends_with(']') => &spec[..open],
+        _ => spec,
+    };
+    let file = spec.rsplit(['/', '\\']).next()?;
+    let lower = file.to_ascii_lowercase();
+    let name = if let Some(stem) = lower.strip_suffix(".whl").map(|stem| &file[..stem.len()]) {
+        let parts: Vec<&str> = stem.split('-').collect();
+        (matches!(parts.len(), 5 | 6) && parts.iter().all(|part| !part.is_empty()))
+            .then_some(parts[0])?
+    } else {
+        let extension = SDIST.iter().find(|extension| lower.ends_with(*extension))?;
+        let (name, version) = file[..file.len() - extension.len()].rsplit_once('-')?;
+        version
+            .starts_with(|ch: char| ch.is_ascii_digit())
+            .then_some(name)?
+    };
+    is_project_name(name).then(|| normalize_distribution_name(name))
 }
 
 #[cfg(test)]
@@ -400,6 +452,7 @@ mod tests {
                     line: Some(3),
                     label: "requirements.txt".to_owned(),
                     raw: raw.to_owned(),
+                    context: DependencyContext::Runtime,
                 })
             );
         }
@@ -525,6 +578,43 @@ mod tests {
     }
 
     #[test]
+    fn archive_distribution_name_reads_the_file_name() {
+        for (spec, expected) in [
+            ("wheels/bar-1.0-py3-none-any.whl", Some("bar")),
+            ("bar-1.0-1-py3-none-any.whl", Some("bar")),
+            (
+                "C:\\wheels\\Foo_Bar-2.0-cp311-cp311-win_amd64.WHL",
+                Some("foo-bar"),
+            ),
+            ("./dist/foo-bar-1.0.tar.gz", Some("foo-bar")),
+            ("https://x/foo-1.0.zip?sha=1#frag", Some("foo")),
+            ("./foo-1.0.tgz[tests]", Some("foo")),
+            ("./a[b]/foo-1.0.tgz", Some("foo")),
+            (
+                "./foo-1.0-py3-none-any.whl ; python_version < '3.12'",
+                Some("foo"),
+            ),
+            ("./foo-1.0.tar.gz;python_version<'3.12'", Some("foo")),
+            ("file:///srv/foo-1.0.tar.bz2", Some("foo")),
+            ("foo.whl", None),
+            ("bar-1.0-py3.whl", None),
+            ("./latest.tar.gz", None),
+            ("./foo-dev.tar.gz", None),
+            ("./-1.0.tar.gz", None),
+            ("./vendor/foo", None),
+            (".", None),
+            ("git+https://x/foo.git", None),
+            ("https://x/y", None),
+        ] {
+            assert_eq!(
+                archive_distribution_name(spec).as_deref(),
+                expected,
+                "{spec:?}"
+            );
+        }
+    }
+
+    #[test]
     fn surrounding_whitespace_may_be_any_unicode_whitespace() {
         // pip and setuptools strip each line with `str.strip` (#879).
         let dep = parse_pep508_requirement(
@@ -559,6 +649,7 @@ mod tests {
                 line: None,
                 label: "project.dependencies[2]".to_owned(),
                 raw: "pkg >=".to_owned(),
+                context: DependencyContext::Runtime,
             })
         );
     }

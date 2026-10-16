@@ -9,7 +9,7 @@ use std::mem::discriminant;
 use std::path::Path;
 
 use crate::entry::EntryWarning;
-use crate::manifest::{ManifestWarning, invalid_requirement_name};
+use crate::manifest::{DependencyContext, ManifestWarning, invalid_requirement_name};
 use crate::plugins::PluginsWarning;
 use crate::reporters::{Diagnostic, condense_diagnostics, escape_control};
 use crate::resolver::ResolveWarning;
@@ -63,6 +63,19 @@ pub enum ProbeWarning {
         /// Root-relative path of the first such module.
         path: String,
         /// How many other reachable modules do the same.
+        more: usize,
+    },
+    /// Requirements-file lines install archives chokkin does not read, each
+    /// named for a distribution whose import findings become hints (#988).
+    /// One per run.
+    ArchiveRequirement {
+        /// Root-relative path of the first such requirements file.
+        path: String,
+        /// Line of the first such requirement, when known.
+        line: Option<u32>,
+        /// The distribution its file name names.
+        name: String,
+        /// How many other such lines there are.
         more: usize,
     },
     /// A task file or tool config runs Python code no entry reaches, which
@@ -128,6 +141,7 @@ impl ProbeWarning {
             Self::AutoWorkspace { .. }
             | Self::NestedProjectsSkipped { .. }
             | Self::OpaqueDynamicImport { .. }
+            | Self::ArchiveRequirement { .. }
             | Self::UnreadCommandTarget { .. } => {},
         }
         hasher.finish()
@@ -178,7 +192,8 @@ impl ProbeWarning {
                 (Some(path), source_line(path, line))
             },
             Self::OpaqueDynamicImport { path, .. } => (Some(path), None),
-            Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
+            Self::ArchiveRequirement { path, line, .. }
+            | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
             Self::ParseDiagnostic { path, line, .. } => (
                 Some(path),
                 source_line(path, Some(*line).filter(|line| *line > 0)),
@@ -282,24 +297,59 @@ impl fmt::Display for ProbeWarning {
                 "parse: `{path}` and {more} more reachable module{} import a module by a name computed at runtime; unused files are reported below certain",
                 if *more == 1 { "" } else { "s" }
             ),
+            Self::ArchiveRequirement {
+                path,
+                line,
+                name,
+                more,
+            } => write_archive_requirement(formatter, path, *line, name, *more),
             Self::UnreadCommandTarget {
                 path,
                 line,
                 target,
                 more,
-            } => {
-                let site = crate::rules::import_site(path, *line);
-                let others = match more {
-                    0 => String::new(),
-                    1 => " and 1 more target".to_owned(),
-                    more => format!(" and {more} more targets"),
-                };
-                write!(
-                    formatter,
-                    "plugin: `{site}` runs `{target}`{others} as Python code no entry reaches; unused files are reported below certain"
-                )
-            },
+            } => write_command_target(formatter, path, *line, target, *more),
         }
+    }
+}
+
+fn write_command_target(
+    formatter: &mut fmt::Formatter<'_>,
+    path: &str,
+    line: Option<u32>,
+    target: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, line);
+    let others = match more {
+        0 => String::new(),
+        1 => " and 1 more target".to_owned(),
+        more => format!(" and {more} more targets"),
+    };
+    write!(
+        formatter,
+        "plugin: `{site}` runs `{target}`{others} as Python code no entry reaches; unused files are reported below certain"
+    )
+}
+
+fn write_archive_requirement(
+    formatter: &mut fmt::Formatter<'_>,
+    path: &str,
+    line: Option<u32>,
+    name: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, line);
+    match more {
+        0 => write!(
+            formatter,
+            "manifest: `{site}` installs `{name}` from an archive chokkin does not read; findings on imports of `{name}` are reported as hints"
+        ),
+        more => write!(
+            formatter,
+            "manifest: `{site}` installs `{name}` and {more} more distribution{} from archives chokkin does not read; findings on imports of them are reported as hints",
+            if more == 1 { "" } else { "s" }
+        ),
     }
 }
 
@@ -391,19 +441,29 @@ fn write_manifest_warning(
             line,
             label,
             raw,
+            context,
         } => {
             let at = line.map_or_else(
                 || format!("`{file}` ({label})"),
                 |line| format!("`{file}:{line}`"),
             );
             write!(formatter, "manifest: invalid requirement at {at}: {raw}")?;
-            // A PEP 723 block's line is not a gap (§11), so it lowers nothing.
+            // A group's bucket is config's to decide, which the text does not
+            // see; only the fixed runtime contexts name misplaced findings. A
+            // PEP 723 block has no misplaced findings (#936), and a build
+            // requirement lowers like a dev one.
             let script = label.starts_with("script.");
-            match invalid_requirement_name(raw).filter(|_| !script) {
-                Some(name) => write!(
-                    formatter,
-                    "; undeclared imports of `{name}` are reported as hints"
-                ),
+            let findings = if script
+                || matches!(
+                    context,
+                    DependencyContext::Group(_) | DependencyContext::Build
+                ) {
+                "undeclared imports"
+            } else {
+                "undeclared or misplaced imports"
+            };
+            match invalid_requirement_name(raw) {
+                Some(name) => write!(formatter, "; {findings} of `{name}` are reported as hints"),
                 None => Ok(()),
             }
         },
@@ -451,7 +511,7 @@ fn write_manifest_warning(
         ),
         ManifestWarning::InlineScriptRequiresPythonUnreadable { file, value } => write!(
             formatter,
-            "manifest: could not read `requires-python` \"{value}\" in the PEP 723 block of `{file}`; using the project's target version"
+            "manifest: could not read `requires-python` \"{value}\" in the PEP 723 block of `{file}`; using the project's target version; its imports of modules only other versions ship as stdlib are reported as hints"
         ),
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
@@ -539,7 +599,7 @@ pub(super) fn collect_warnings(
 mod tests {
     use crate::config::PluginId;
     use crate::entry::EntryWarning;
-    use crate::manifest::ManifestWarning;
+    use crate::manifest::{DependencyContext, ManifestWarning};
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
 
@@ -578,6 +638,33 @@ mod tests {
             "parse: `acme/main.py` and 1 more reachable module import a module by a name computed at runtime; unused files are reported below certain"
         );
         assert_eq!(located(&three), (Some("acme/main.py".to_owned()), None));
+    }
+
+    /// One archive-requirement warning names the first line and counts the rest (#988).
+    #[test]
+    fn archive_requirement_warning_names_the_first_line() {
+        let warning = |more| ProbeWarning::ArchiveRequirement {
+            path: "requirements.txt".to_owned(),
+            line: Some(2),
+            name: "bar".to_owned(),
+            more,
+        };
+        assert_eq!(
+            warning(0).to_string(),
+            "manifest: `requirements.txt:2` installs `bar` from an archive chokkin does not read; findings on imports of `bar` are reported as hints"
+        );
+        assert_eq!(
+            warning(1).to_string(),
+            "manifest: `requirements.txt:2` installs `bar` and 1 more distribution from archives chokkin does not read; findings on imports of them are reported as hints"
+        );
+        assert_eq!(
+            warning(2).to_string(),
+            "manifest: `requirements.txt:2` installs `bar` and 2 more distributions from archives chokkin does not read; findings on imports of them are reported as hints"
+        );
+        assert_eq!(
+            located(&warning(0)),
+            (Some("requirements.txt".to_owned()), Some(2))
+        );
     }
 
     /// The unread-extras warning names the extras, or says none were named (#905).
@@ -909,27 +996,40 @@ mod tests {
                 line,
                 label: "project.dependencies[0]".to_owned(),
                 raw: "foo @".to_owned(),
+                context: DependencyContext::Runtime,
             })
         };
 
         assert_eq!(
             warning(Some(3)).to_string(),
-            "manifest: invalid requirement at `pyproject.toml:3`: foo @; undeclared imports of `foo` are reported as hints"
+            "manifest: invalid requirement at `pyproject.toml:3`: foo @; undeclared or misplaced imports of `foo` are reported as hints"
         );
         assert_eq!(
             warning(None).to_string(),
-            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @; undeclared imports of `foo` are reported as hints"
+            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @; undeclared or misplaced imports of `foo` are reported as hints"
         );
-        // A PEP 723 block's line lowers nothing, so it promises no hint.
+        // A PEP 723 block has no misplaced findings to name (#936).
         let script = ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
             file: "tool.py".to_owned(),
             line: Some(4),
             label: "script.dependencies[0]".to_owned(),
             raw: "rich>=".to_owned(),
+            context: DependencyContext::Runtime,
         });
         assert_eq!(
             script.to_string(),
-            "manifest: invalid requirement at `tool.py:4`: rich>="
+            "manifest: invalid requirement at `tool.py:4`: rich>=; undeclared imports of `rich` are reported as hints"
+        );
+        let build = ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
+            file: "pyproject.toml".to_owned(),
+            line: Some(2),
+            label: "build-system.requires[0]".to_owned(),
+            raw: "hatchling>=".to_owned(),
+            context: DependencyContext::Build,
+        });
+        assert_eq!(
+            build.to_string(),
+            "manifest: invalid requirement at `pyproject.toml:2`: hatchling>=; undeclared imports of `hatchling` are reported as hints"
         );
     }
 

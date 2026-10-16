@@ -9,11 +9,11 @@ use chokkin::internals::analyze_with_context;
 use chokkin::internals::reconcile_with_context;
 use chokkin::internals::{
     Confidence, LocalTrees, ModuleOrigin, PluginExtractRequest, ProjectRoot, PublicSurface,
-    ResolutionIndex, RootMarker, RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports,
-    analyze_reachability, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
-    collect_gaps, discover_project_root, discover_sources, emit_issues, extract_manifest,
-    extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
-    resolve_imports_for_analysis, resolve_target_version,
+    ResolutionIndex, RootMarker, RuleId, ScopedDeclarations, SeverityLevel, StdlibRange,
+    TargetVersion, add_parsed_imports, analyze_reachability, apply_resolution_to_graph,
+    build_entry_roots, build_graph_skeleton, collect_gaps, discover_project_root, discover_sources,
+    emit_issues, extract_manifest, extract_plugin_hints_with_parse, load_config,
+    parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
 };
 use chokkin::internals::{DependencyRuleContext, RuleContext};
 use chokkin::{ExitStatus, RuntimeOverrides};
@@ -40,6 +40,7 @@ fn load_emit(path: &Path) -> EmitInputs {
 /// `strict_deps` only affects dependency reconciliation, so step 12 can still
 /// apply the configured confidence floor to candidates that non-strict step 10
 /// would never produce (e.g. marker-guarded dependencies).
+#[allow(clippy::too_many_lines)]
 fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
@@ -107,7 +108,16 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &[],
     );
     let symbols = analyze_with_context(&rules, &entry, &plugins, &manifest, &[], None);
-    let gaps = collect_gaps(&rules, &manifest, &[], &[], &plugins, &[]);
+    let gaps = collect_gaps(
+        &rules,
+        &manifest,
+        &[],
+        &[],
+        &plugins,
+        &[],
+        &loaded.effective.dependencies,
+        StdlibRange::new(&TargetVersion::default_py311(), None),
+    );
 
     EmitInputs {
         config: loaded.effective,

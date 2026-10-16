@@ -2480,6 +2480,81 @@ fn binary_unread_public_module_of_a_library_lowers_unused_dependencies() {
     assert!(manifest.contains("\"requests\""), "{manifest}");
 }
 
+/// CHK002 counts the imports of a library's public orphans, so an import it
+/// cannot resolve in one may name the declared distribution, as in a
+/// reachable module: the dependency is not certainly unused and `--fix`
+/// keeps it (#942). A computed name lowers no distribution in either.
+#[test]
+fn binary_gaps_in_a_public_orphan_lower_unused_dependencies() {
+    let cases = [
+        (
+            "import reqests\n",
+            "likely",
+            Some(
+                "an import in a public module of the library could not be resolved to a distribution: `reqests` in `src/acme/client.py:1`",
+            ),
+        ),
+        (
+            "import importlib\n\nimportlib.import_module(NAME)\n",
+            "certain",
+            None,
+        ),
+    ];
+    for (client, confidence, reason) in cases {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[tool.hatch.build.targets.wheel]\npackages = [\"src/acme\"]\n\n[tool.chokkin]\nmode = \"library\"\n",
+            ),
+            ("src/acme/__init__.py", ""),
+            ("src/acme/client.py", client),
+            // Outside the wheel, so not public: its import lowers nothing.
+            ("src/other/extra.py", "import reqests\n"),
+        ]);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let issues: Vec<_> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter(|issue| issue["code"] == "CHK002")
+            .map(|issue| {
+                (
+                    issue["target"].as_str().unwrap_or_default(),
+                    issue["confidence"].as_str().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(issues, [("requests", confidence)], "{client}: {parsed}");
+        let Some(reason) = reason else {
+            continue;
+        };
+
+        let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK002:requests"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(explain.stderr).expect("utf8");
+        assert!(stderr.contains(reason), "{stderr}");
+
+        let fix = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--fix"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin --fix");
+        assert!(fix.status.code().is_some(), "{fix:?}");
+        let manifest =
+            std::fs::read_to_string(project.path().join("pyproject.toml")).expect("read manifest");
+        assert!(manifest.contains("\"requests\""), "{manifest}");
+    }
+}
+
 /// A name computed at runtime may load any module, so an orphan is not
 /// certainly unused; distributions stay certain, since the name still has to
 /// be importable from a declared one (ADR 0005 §6).
@@ -3094,9 +3169,10 @@ fn discovered_manage_django_project() -> tempfile::TempDir {
     project
 }
 
-/// `include()` (django-split-settings) and `exec()` run settings files the
-/// plugin does not read, so a field the read files do not set may come from
-/// them (#925).
+/// `include()` (django-split-settings), `exec()`, `runpy.run_path()` and
+/// `globals().update()` run settings files the plugin does not read or add
+/// names it cannot see, so a field the read files do not set may come from
+/// them (#925, #937).
 #[test]
 fn binary_django_settings_include_and_exec_are_a_gap() {
     let level = |code: &str, target: &str, confidence: &str| {
@@ -3129,6 +3205,26 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
             "import os\n\nexec(open(os.path.join(os.path.dirname(__file__), \"local.py\")).read())\n",
             "exec()",
             3,
+        ),
+        (
+            "import runpy\n\nglobals().update(runpy.run_path(\"local.py\"))\n",
+            "globals().update()",
+            3,
+        ),
+        (
+            "from runpy import run_path\n\nLOCAL = run_path(\"local.py\")\n",
+            "run_path()",
+            3,
+        ),
+        (
+            "import yaml\n\nvars().update(yaml.safe_load(open(\"settings.yaml\")))\n",
+            "vars().update()",
+            3,
+        ),
+        (
+            "try:\n    locals().update(load())\nexcept ImportError:\n    pass\n",
+            "locals().update()",
+            2,
         ),
     ];
     for (settings, call, line) in cases {
@@ -3174,7 +3270,7 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
     );
     fs::write(
         project.path().join("mysite/settings/dev.py"),
-        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\n",
+        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n    globals().update({})\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\nCACHES = {}\nCACHES.update({})\nvars(Local).update({})\n",
     )
     .expect("write settings");
     fs::write(project.path().join("mysite/orphan.py"), "").expect("write orphan");
@@ -3210,6 +3306,188 @@ fn binary_django_gap_needs_a_django_project() {
     fs::remove_file(project.path().join("manage.py")).expect("remove manage.py");
     let warnings = stderr(&project);
     assert!(!warnings.contains("plugin: django:"), "{warnings}");
+}
+
+/// A `module:symbol` entry whose file discovery left out is skipped like a
+/// path entry; one naming no file on disk runs nothing chokkin could read
+/// and lowers nothing, as a missing path does (#933).
+#[test]
+fn binary_module_entry_outside_the_inventory_is_a_skipped_entry() {
+    let level = |code: &str, target: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let manifest = |script: &str| {
+        format!(
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"{script}\"\n\n[tool.chokkin]\nmode = \"app\"\nexclude = [\"acme/cli.py\"]\n"
+        )
+    };
+    let files = |manifest: String| {
+        write_project(&[
+            ("pyproject.toml", manifest.as_str()),
+            ("acme/__init__.py", ""),
+            (
+                "acme/cli.py",
+                "import requests\nfrom acme import helper\n\ndef main():\n    pass\n",
+            ),
+            ("acme/helper.py", "# helper\n"),
+        ])
+    };
+    let project = files(manifest("acme.cli:main"));
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "acme/helper.py", "likely"),
+            level("CHK002", "requests", "likely"),
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: skipped entry `acme/cli.py`: not a discovered source file; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+    // A production file stays a skipped entry under `--production` too.
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--production"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("skipped entry `acme/cli.py`"), "{stderr}");
+
+    let project = files(manifest("acme.missing:main"));
+    assert_eq!(
+        issue_levels(project.path()),
+        [
+            level("CHK001", "acme/helper.py", "certain"),
+            level("CHK002", "requests", "certain"),
+        ]
+    );
+}
+
+/// `--production` leaves test files out on purpose, so a target naming one
+/// is dropped like any non-production entry rather than skipped (#933).
+#[test]
+fn binary_production_module_entry_in_tests_is_not_a_skipped_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"tests.app:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", "# helper\n"),
+        ("tests/__init__.py", ""),
+        ("tests/app.py", "import requests\n\ndef main():\n    pass\n"),
+    ]);
+    let levels: Vec<(String, String)> =
+        json_issues(project.path(), &["--no-cache", "--production"])
+            .iter()
+            .map(|issue| {
+                let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+                (field("target"), field("confidence"))
+            })
+            .collect();
+    assert!(
+        levels.contains(&("requests".to_owned(), "certain".to_owned())),
+        "{levels:?}"
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--production"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped entry"), "{stderr}");
+}
+
+/// A member's build hook outside the member's own tree is not an entry the
+/// root skipped: it is dropped as the root drops one, lowering nothing (#934).
+#[test]
+fn binary_member_build_script_outside_its_tree_is_not_a_skipped_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nroot = \"root_pkg.cli:main\"\n\n[tool.uv.workspace]\nmembers = [\"pkgs/a\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("root_pkg/__init__.py", ""),
+        ("root_pkg/cli.py", "def main():\n    pass\n"),
+        (
+            "pkgs/a/pyproject.toml",
+            "[project]\nname = \"a\"\nversion = \"0\"\n\n[tool.hatch.build.hooks.custom]\npath = \"../../tools/hook.py\"\n",
+        ),
+        ("pkgs/a/a/__init__.py", ""),
+        ("tools/hook.py", "# hook\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped entry"), "{stderr}");
+    let levels: Vec<(String, String)> = json_issues(project.path(), &["--no-cache"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            (field("target"), field("confidence"))
+        })
+        .collect();
+    assert!(
+        levels.contains(&("requests".to_owned(), "certain".to_owned())),
+        "{levels:?}"
+    );
+}
+
+/// A member's manifest entry the root excludes is skipped like a root one:
+/// its imports are unknown, so what it may use falls to likely (#934).
+#[test]
+fn binary_member_entry_outside_the_root_inventory_is_a_skipped_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0\"\n\n[tool.uv.workspace]\nmembers = [\"packages/tool\"]\n\n[tool.chokkin]\nexclude = [\"packages/tool/src/tool/cli.py\"]\n",
+        ),
+        (
+            "packages/tool/pyproject.toml",
+            "[project]\nname = \"tool\"\nversion = \"0\"\n\n[project.scripts]\ntool = \"tool.cli:main\"\n",
+        ),
+        ("packages/tool/src/tool/__init__.py", ""),
+        (
+            "packages/tool/src/tool/cli.py",
+            "from tool import helper\n\ndef main():\n    pass\n",
+        ),
+        ("packages/tool/src/tool/helper.py", "# helper\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [(
+            "CHK001".to_owned(),
+            "packages/tool/src/tool/helper.py".to_owned(),
+            "error".to_owned(),
+            "likely".to_owned(),
+        )]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "entry: skipped entry `packages/tool/src/tool/cli.py`: not a discovered source file"
+        ),
+        "{stderr}"
+    );
 }
 
 /// An entry chokkin skips because it is not a discovered source runs code
@@ -3422,8 +3700,8 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
         .expect("run chokkin");
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     for warning in [
-        "manifest: invalid requirement at `requirements.txt:1`: PyYAML>=; undeclared imports of `pyyaml` are reported as hints",
-        "manifest: invalid requirement at `requirements.txt:2`: rich_ >=13; undeclared imports of `rich` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:1`: PyYAML>=; undeclared or misplaced imports of `pyyaml` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:2`: rich_ >=13; undeclared or misplaced imports of `rich` are reported as hints",
         "manifest: invalid requirement at `requirements.txt:3`: >=1.0\n",
     ] {
         assert!(stderr.contains(warning), "{warning}\n{stderr}");
@@ -3432,6 +3710,178 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
         stderr.contains("a requirement line naming the distribution could not be read: `pyyaml` in `requirements.txt:1`"),
         "{stderr}"
     );
+}
+
+/// An archive line pip installs from a file name that names its
+/// distribution is not read, so imports of that name become hints, resolved
+/// or not, and a runtime one may be the runtime declaration of a dev-only
+/// distribution; a directory line names nothing and lowers nothing (#988).
+#[test]
+fn binary_archive_requirement_turns_imports_of_its_name_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n[dependency-groups]\ndev = [\"qux\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\n",
+        ),
+        (
+            "requirements.txt",
+            "./vendor/foo\nwheels/bar-1.0-py3-none-any.whl\nhttps://example.com/baz-2.0.tar.gz#sha256=0\n./dist/qux-1.0.zip\nwheels/rich-13.0-py3-none-any.whl\n-e wheels/quux-1.0.tar.gz\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "import foo\nimport bar\nimport baz.core\nimport qux\nimport rich\nimport idna\nimport quux\n",
+        ),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        [
+            "CHK003 acme/main.py:rich info maybe",
+            "CHK003 acme/main.py:idna error certain",
+            "CHK005 qux info maybe",
+            "CHK010 acme/main.py:foo warning likely",
+            "CHK010 acme/main.py:bar info maybe",
+            "CHK010 acme/main.py:baz info maybe",
+            // An editable line names a directory, never an archive.
+            "CHK010 acme/main.py:quux warning likely",
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--confidence",
+            "maybe",
+            "--explain",
+            "CHK003:rich",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("manifest: `requirements.txt:2` installs `bar` and 3 more distributions from archives chokkin does not read; findings on imports of them are reported as hints"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("a requirement line installs an archive named for the distribution, which is not read: `rich` in `requirements.txt:5`"),
+        "{stderr}"
+    );
+}
+
+/// An unreadable runtime line may be the runtime declaration of a dev-only
+/// distribution, so its runtime import is a misplaced hint; a valid dev
+/// line beside it does not settle where the distribution belongs (#935).
+#[test]
+fn binary_invalid_runtime_requirement_turns_misplaced_findings_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = [\"rich>=\"]\n\n[dependency-groups]\ndev = [\"rich\", \"pytest\", \"black>=\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/main.py", "import rich\nimport pytest\n"),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        ["CHK005 pytest warning certain", "CHK005 rich info maybe"]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--confidence", "maybe"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "(project.dependencies[0]): rich>=; undeclared or misplaced imports of `rich` are reported as hints",
+        "(dependency-groups.dev[2]): black>=; undeclared imports of `black` are reported as hints",
+    ] {
+        assert!(stderr.contains(warning), "{warning}\n{stderr}");
+    }
+}
+
+/// #936: what a PEP 723 block could not read lowers that script's findings
+/// alone. An unreadable `requires-python` makes its version-dependent imports
+/// hints, and an invalid `dependencies` line its imports of the name it names;
+/// the other script, read in full, keeps its findings.
+#[test]
+fn binary_unread_script_block_turns_that_scripts_findings_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\nrequires-python = \">=3.11\"\ndependencies = []\n",
+        ),
+        (
+            "tools/a.py",
+            "# /// script\n# requires-python = \"bogus\"\n# dependencies = [\"rich>=\"]\n# ///\nimport binhex\nimport rich\nimport httpx\n",
+        ),
+        (
+            "tools/b.py",
+            "# /// script\n# dependencies = []\n# ///\nimport binhex\nimport rich\n",
+        ),
+        // A module that is not the script reads no imports for it.
+        ("tools/__init__.py", ""),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        [
+            "CHK003 script:tools/a.py:httpx error certain",
+            "CHK003 script:tools/a.py:rich info maybe",
+            "CHK003 script:tools/b.py:rich error certain",
+            "CHK010 tools/a.py:binhex info maybe",
+            "CHK010 tools/b.py:binhex warning likely",
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--confidence", "maybe"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "at `tools/a.py:3`: rich>=; undeclared imports of `rich` are reported as hints",
+        "of `tools/a.py`; using the project's target version; its imports of modules only other versions ship as stdlib are reported as hints",
+    ] {
+        assert!(stderr.contains(warning), "{warning}\n{stderr}");
+    }
 }
 
 /// What the parser could not read in a file it kept reaches stderr and the
@@ -3620,7 +4070,7 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
         // lowers nothing and the warning claims no hints.
         "manifest: could not read `requires-python` \"3.10+\" in `packages/old/pyproject.toml`; assuming target version py311",
         "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
-        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;; undeclared imports of `requests` are reported as hints",
+        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;; undeclared or misplaced imports of `requests` are reported as hints",
         "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
         "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically; missing-dependency findings in `packages/dyn` are reported as low-confidence info",
     ] {
@@ -5328,7 +5778,8 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
              assuming target version py311; imports of modules only other versions ship as \
              stdlib are reported as hints",
             "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
-             `scripts/tool.py`; using the project's target version",
+             `scripts/tool.py`; using the project's target version; its imports of modules \
+             only other versions ship as stdlib are reported as hints",
         ]
     );
 
@@ -5342,7 +5793,8 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
         manifest_lines(project.path()),
         [
             "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
-          `scripts/tool.py`; using the project's target version"
+          `scripts/tool.py`; using the project's target version; its imports of modules \
+          only other versions ship as stdlib are reported as hints"
         ]
     );
 }

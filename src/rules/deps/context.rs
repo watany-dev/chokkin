@@ -49,7 +49,7 @@ impl DeclarationBucket {
 
 /// Classify a declared dependency for context matching.
 #[must_use]
-pub(super) fn declaration_bucket(
+pub(crate) fn declaration_bucket(
     context: &DependencyContext,
     groups: &DependencyGroupsConfig,
 ) -> DeclarationBucket {

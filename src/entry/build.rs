@@ -11,7 +11,7 @@ use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 use super::auto::detect_auto_entries;
 use super::merge::merge_entry_candidates;
 use super::mode::{is_library_member, resolve_project_mode};
-use super::module::resolve_module_to_path;
+use super::module::{resolve_module_on_disk, resolve_module_to_path};
 use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning};
 
 /// A workspace member as entry construction reads it: its root-relative
@@ -43,6 +43,7 @@ pub fn build_entry_roots(
         manifest,
         sources,
         &known_paths,
+        production,
         &mut candidates,
         &mut warnings,
     );
@@ -57,6 +58,7 @@ pub fn build_entry_roots(
         sources,
         &known_paths,
         &file_contexts,
+        production,
         &mut candidates,
         &mut warnings,
     );
@@ -71,7 +73,13 @@ pub fn build_entry_roots(
         collect_library_package_entries(sources, &file_contexts, &mut candidates);
     }
     let mut member_warnings = Vec::new();
-    collect_member_entries(members, &known_paths, &mut candidates, &mut member_warnings);
+    collect_member_entries(
+        members,
+        &known_paths,
+        production,
+        &mut candidates,
+        &mut member_warnings,
+    );
     let mut roots = merge_entry_candidates(candidates);
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
     warnings.append(&mut member_warnings);
@@ -106,6 +114,7 @@ fn library_members(config: &ChokkinConfig, members: &[MemberEntryInput<'_>]) -> 
 fn collect_member_entries(
     members: &[MemberEntryInput<'_>],
     root_paths: &BTreeSet<String>,
+    production: bool,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
 ) {
@@ -116,22 +125,67 @@ fn collect_member_entries(
             manifest,
             sources,
             &known_file_paths(sources),
+            production,
             &mut member_candidates,
             &mut member_warnings,
         );
         for warning in &mut member_warnings {
-            if let EntryWarning::UnresolvedModuleTarget { file, .. } = warning {
-                *file = join_rel(member_path, file);
+            match warning {
+                EntryWarning::UnresolvedModuleTarget { file, .. } => {
+                    *file = join_rel(member_path, file);
+                },
+                EntryWarning::MissingEntryPath { path } => *path = join_rel(member_path, path),
             }
         }
         warnings.append(&mut member_warnings);
-        member_candidates.extend(build_script_entries(manifest));
         for mut candidate in member_candidates {
             candidate.spec.path = format!("{member_path}/{}", candidate.spec.path);
             if root_paths.contains(&candidate.spec.path) {
                 candidates.push(candidate);
+            } else {
+                // The member's own walk found the file but the root's did not
+                // (a root `exclude`): it is skipped like a root entry is (#934).
+                warnings.push(EntryWarning::MissingEntryPath {
+                    path: candidate.spec.path,
+                });
             }
         }
+        // A build script the root's walk does not find is dropped, as the
+        // root's own is; `../` paths name no file of the walk at all. Under
+        // `--production` it is a dev file, held back as the root's is.
+        candidates.extend(
+            build_script_entries(manifest)
+                .filter(|candidate| !production || candidate.context.is_included_in_production())
+                .map(|mut candidate| {
+                    candidate.spec.path = format!("{member_path}/{}", candidate.spec.path);
+                    candidate
+                })
+                .filter(|candidate| root_paths.contains(&candidate.spec.path)),
+        );
+    }
+}
+
+/// A target that maps to no discovered file: skipped when a file is there
+/// that discovery left out, its imports unread like a skipped path entry's;
+/// unmapped when no file is, since it runs nothing chokkin could read (#933).
+/// `--production` leaves out a test or dev file on purpose, so its target is
+/// unmapped as it was before #933, not a skipped read.
+fn unresolved_target(
+    module: &str,
+    file: &str,
+    label: &str,
+    sources: &DiscoveredSources,
+    production: bool,
+) -> EntryWarning {
+    match resolve_module_on_disk(module, &sources.layout, &sources.root.path) {
+        Some(path) if !production || assign_file_context(&path).is_included_in_production() => {
+            EntryWarning::MissingEntryPath { path }
+        },
+        _ => EntryWarning::UnresolvedModuleTarget {
+            module: module.to_owned(),
+            file: file.to_owned(),
+            label: label.to_owned(),
+        },
     }
 }
 
@@ -162,10 +216,12 @@ fn collect_config_entries(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_manifest_entries(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
+    production: bool,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
 ) {
@@ -174,11 +230,13 @@ fn collect_manifest_entries(
             continue;
         };
         let Some(path) = resolve_module_to_path(&module, &sources.layout, known_paths) else {
-            warnings.push(EntryWarning::UnresolvedModuleTarget {
-                module: module.clone(),
-                file: entry_point.origin.file.clone(),
-                label: entry_point.origin.label.clone(),
-            });
+            warnings.push(unresolved_target(
+                &module,
+                &entry_point.origin.file,
+                &entry_point.origin.label,
+                sources,
+                production,
+            ));
             continue;
         };
         candidates.push(EntryCandidate {
@@ -334,17 +392,20 @@ fn collect_symbol_ref_entries(
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,
+    production: bool,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
 ) {
     for symbol_ref in plugins.symbol_refs() {
         let Some(path) = resolve_module_to_path(&symbol_ref.module, &sources.layout, known_paths)
         else {
-            warnings.push(EntryWarning::UnresolvedModuleTarget {
-                module: symbol_ref.module.clone(),
-                file: symbol_ref.origin.file.clone(),
-                label: symbol_ref.origin.label.clone(),
-            });
+            warnings.push(unresolved_target(
+                &symbol_ref.module,
+                &symbol_ref.origin.file,
+                &symbol_ref.origin.label,
+                sources,
+                production,
+            ));
             continue;
         };
         let context = context_for_path(&path, file_contexts);

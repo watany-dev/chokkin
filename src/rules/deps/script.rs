@@ -344,6 +344,7 @@ mod tests {
             dependencies: vec![dependency("rich", 3), dependency("httpx", 4)],
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let resolution = ResolutionIndex {
             imports: vec![import("rich", "rich", 7), import("yaml", "pyyaml", 8)],
@@ -385,6 +386,7 @@ mod tests {
             dependencies,
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let resolution = ResolutionIndex {
             imports,
@@ -464,6 +466,7 @@ mod tests {
             dependencies: vec![dependency("httpx", 3)],
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let resolution = ResolutionIndex {
             imports: vec![import("yaml", "pyyaml", 8)],
@@ -499,6 +502,7 @@ mod tests {
             dependencies: vec![dependency("ruff", 3), dependency("httpx", 4)],
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let parse = ParseSummary {
             modules: vec![crate::parser::ParsedModule {
@@ -536,6 +540,7 @@ mod tests {
             dependencies: vec![dependency("httpx", 3)],
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let found = detect_script_dependency_issues(
             &[script],
@@ -556,6 +561,7 @@ mod tests {
             dependencies: Vec::new(),
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let resolution = ResolutionIndex {
             imports: vec![
@@ -614,6 +620,7 @@ mod tests {
             ],
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let helper_import = ResolvedImport {
             file: "scripts/common_utils.py".to_owned(),
@@ -687,6 +694,7 @@ mod tests {
             dependencies: vec![dependency("rich", 3), dependency("httpx", 4)],
             requires_python: None,
             target_version: None,
+            invalid_requirements: Vec::new(),
         };
         let at = |file: &str, module: &str, distribution: &str| ResolvedImport {
             file: file.to_owned(),
