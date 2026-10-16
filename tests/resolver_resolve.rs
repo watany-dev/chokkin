@@ -782,3 +782,55 @@ fn warnings_follow_module_order_across_many_files() {
         .collect();
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn pytest_plugin_sites_take_part_in_warning_order_across_many_files() {
+    // A `pytest_plugins` entry that is the first lookup of an ambiguous root
+    // reports it there; its own unresolved names stay quiet.
+    let pyproject = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[tool.chokkin.package_module_map]\n\"dual-a\" = [\"dual\"]\n\"dual-b\" = [\"dual\"]\n";
+    let mut files = vec![
+        ("pyproject.toml".to_owned(), pyproject.to_owned()),
+        ("app/__init__.py".to_owned(), String::new()),
+    ];
+    for index in 0..80 {
+        let mut source = String::new();
+        if index == 30 {
+            source.push_str("pytest_plugins = [\"dual\", \"missing_plugin\"]\n");
+        }
+        if index == 40 || index > 50 {
+            source.push_str("import dual\n");
+        }
+        files.push((
+            format!("app/m{index:02}.py"),
+            source + &format!("import missing_{index:02}\n"),
+        ));
+    }
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, source)| (path.as_str(), source.as_str()))
+        .collect();
+    let temp = temp_project(&borrowed);
+    let index = resolve_path(temp.path());
+
+    let mut expected = Vec::new();
+    for module in 0..80 {
+        expected.push(format!("unresolved missing_{module:02}"));
+        if module == 30 {
+            expected.push("ambiguous dual".to_owned());
+        }
+    }
+    let actual: Vec<String> = index
+        .warnings
+        .iter()
+        .map(|warning| match warning {
+            chokkin::internals::ResolveWarning::AmbiguousImport { import, .. } => {
+                format!("ambiguous {import}")
+            },
+            chokkin::internals::ResolveWarning::UnresolvedImport { import, .. } => {
+                format!("unresolved {import}")
+            },
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(actual, expected);
+}
