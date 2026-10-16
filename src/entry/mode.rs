@@ -103,7 +103,6 @@ fn is_library_project(manifest: &LoadedManifest, sources: &DiscoveredSources) ->
     sources.files.iter().any(|file| {
         sources.layout.packages.iter().any(|package| {
             file.path == format!("{}/__init__.py", sources.layout.package_dir(package))
-                || file.path == format!("{package}/__init__.py")
         })
     })
 }
@@ -117,9 +116,7 @@ mod tests {
     use crate::manifest::{
         EntryPointDecl, LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata,
     };
-    use crate::sources::{
-        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
-    };
+    use crate::sources::{DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo};
 
     use super::super::types::EntryOrigin;
 
@@ -147,12 +144,7 @@ mod tests {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
             },
-            layout: LayoutInfo {
-                layout: ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            },
+            layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
             files: vec![DiscoveredFile {
                 path: "src/acme/__init__.py".to_owned(),
@@ -178,10 +170,20 @@ mod tests {
         let mut config = default_config();
         config.mode = ProjectMode::Auto;
         let mut sources = library_sources();
-        sources.layout.package_root = "lib".to_owned();
+        sources.layout = LayoutInfo::new("lib", vec!["acme".to_owned()]);
         sources.files[0].path = "lib/acme/__init__.py".to_owned();
         let mode = resolve_project_mode(&config, &manifest, &sources, &[]);
         assert_eq!(mode, ProjectMode::Library);
+    }
+
+    #[test]
+    fn root_package_outside_the_layout_does_not_make_a_library() {
+        // The layout ships `src/acme`; a stray root `acme/` is not it.
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        let mut sources = library_sources();
+        sources.files[0].path = "acme/__init__.py".to_owned();
+        assert!(!is_library_project(&manifest, &sources));
     }
 
     #[test]

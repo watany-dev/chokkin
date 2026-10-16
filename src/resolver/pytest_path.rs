@@ -544,7 +544,7 @@ fn normalize_dir(entry: &str) -> String {
 mod tests {
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::sources::{DiscoveredFile, LayoutInfo, ProjectLayout, assign_file_context};
+    use crate::sources::{DiscoveredFile, LayoutInfo, assign_file_context};
 
     fn sources(paths: &[&str]) -> DiscoveredSources {
         DiscoveredSources {
@@ -552,12 +552,7 @@ mod tests {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
             },
-            layout: LayoutInfo {
-                layout: ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            },
+            layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
             files: paths
                 .iter()

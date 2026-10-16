@@ -315,7 +315,7 @@ mod tests {
     use super::*;
     use crate::config::default_config;
     use crate::manifest::DependencyOrigin;
-    use crate::sources::{DiscoveredSources, LayoutInfo, ProjectLayout};
+    use crate::sources::{DiscoveredSources, LayoutInfo};
 
     fn dep(context: DependencyContext) -> DeclaredDependency {
         DeclaredDependency {
@@ -340,12 +340,7 @@ mod tests {
                 path: std::env::temp_dir(),
                 marker: crate::discovery::RootMarker::PyProjectToml,
             },
-            layout: LayoutInfo {
-                layout: ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            },
+            layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),

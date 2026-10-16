@@ -404,7 +404,7 @@ pub(super) fn large_project_warning(file_count: usize) -> Option<SourcesWarning>
 mod tests {
     use super::*;
     use crate::sources::glob::{build_glob_set, effective_exclude};
-    use crate::sources::types::{LayoutInfo, ProjectLayout};
+    use crate::sources::types::LayoutInfo;
     use std::fs;
     use tempfile::tempdir;
 
@@ -459,14 +459,11 @@ mod tests {
         write_file(&root.join("src/acme/generated/models.py"), "");
 
         let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
             inferred_globs: vec![
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
-            ..Default::default()
+            ..LayoutInfo::new("src", vec!["acme".to_owned()])
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&["src/acme/generated/**".to_owned()]);
@@ -501,14 +498,11 @@ mod tests {
         write_file(&root.join("tests/test_module.py"), "");
 
         let layout = LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
             inferred_globs: vec![
                 "src/**/*.{py,pyi}".to_owned(),
                 "tests/**/*.{py,pyi}".to_owned(),
             ],
-            ..Default::default()
+            ..LayoutInfo::new("src", vec!["acme".to_owned()])
         };
         let project = build_glob_set(&layout.inferred_globs).expect("project globs");
         let exclude_patterns = effective_exclude(&[]);

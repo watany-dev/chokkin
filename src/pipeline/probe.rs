@@ -24,7 +24,7 @@ use crate::plugins::{
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, MemberLayout,
-    SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
+    ProjectLayout, SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
 };
 
 use super::error::ProbeError;
@@ -624,10 +624,10 @@ fn write_scripts(scripts: &[InlineScript], out: &mut impl Write) -> io::Result<(
 fn format_layout(sources: &DiscoveredSources) -> String {
     let info = &sources.layout;
     let layout = info.layout.as_str();
-    let root = if info.package_root.is_empty() || info.package_root == "src" {
-        String::new()
-    } else {
+    let root = if info.layout == ProjectLayout::PackageRoot {
         format!("root: {}, ", info.package_root)
+    } else {
+        String::new()
     };
     if info.packages.is_empty() {
         layout.to_owned()
@@ -836,21 +836,34 @@ mod tests {
         assert!(err.is_usage_error());
     }
 
-    #[test]
-    fn format_layout_unknown_without_packages() {
-        let sources = DiscoveredSources {
+    fn sources_with_layout(layout: crate::sources::LayoutInfo) -> DiscoveredSources {
+        DiscoveredSources {
             root: crate::discovery::ProjectRoot {
                 path: Path::new("/tmp").to_path_buf(),
                 marker: RootMarker::PyProjectToml,
             },
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Unknown,
-                ..Default::default()
-            },
+            layout,
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn format_layout_unknown_without_packages() {
+        let sources = sources_with_layout(crate::sources::LayoutInfo::default());
         assert_eq!(format_layout(&sources), "unknown");
+    }
+
+    #[test]
+    fn format_layout_names_the_root_only_for_a_package_root() {
+        for (root, expected) in [
+            ("lib", "package-root (root: lib, packages: sqlalchemy)"),
+            ("src", "src (packages: sqlalchemy)"),
+            ("", "flat (packages: sqlalchemy)"),
+        ] {
+            let layout = crate::sources::LayoutInfo::new(root, vec!["sqlalchemy".to_owned()]);
+            assert_eq!(format_layout(&sources_with_layout(layout)), expected);
+        }
     }
 }
