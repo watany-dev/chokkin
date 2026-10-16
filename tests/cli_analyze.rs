@@ -3353,6 +3353,14 @@ fn binary_module_entry_outside_the_inventory_is_a_skipped_entry() {
         stderr.contains("entry: skipped entry `acme/cli.py`: not a discovered source file; unused files and dependencies are reported below certain"),
         "{stderr}"
     );
+    // A production file stays a skipped entry under `--production` too.
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--production"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("skipped entry `acme/cli.py`"), "{stderr}");
 
     let project = files(manifest("acme.missing:main"));
     assert_eq!(

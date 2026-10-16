@@ -589,6 +589,7 @@ mod tests {
             ("./dist/foo-bar-1.0.tar.gz", Some("foo-bar")),
             ("https://x/foo-1.0.zip?sha=1#frag", Some("foo")),
             ("./foo-1.0.tgz[tests]", Some("foo")),
+            ("./a[b]/foo-1.0.tgz", Some("foo")),
             (
                 "./foo-1.0-py3-none-any.whl ; python_version < '3.12'",
                 Some("foo"),
