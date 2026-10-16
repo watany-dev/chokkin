@@ -241,6 +241,12 @@ transformers, llama_index and airflow analyze markedly faster.
   `_` names included, so a name used only through that star import is no
   longer CHK006; the same applies to a library's public API and to Sphinx and
   Django config star imports (#951).
+- CHK009 `--fix` no longer removes a line that another context still reads
+  through `-r`. When `requirements.txt` and `requirements-dev.txt` both
+  include `base.txt` and only `requirements.txt` repeats its `requests`, the
+  fix removes the `requirements.txt` line, and the issue is reported on the
+  line the fix removes. A repeat with no line safe to remove is reported as
+  info / likely (#860).
 
 ## [0.7.5] - 2026-10-12
 
