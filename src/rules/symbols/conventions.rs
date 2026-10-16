@@ -126,7 +126,7 @@ fn config_entry_files(plugins: &PluginHints) -> HashSet<&str> {
 /// Names a config entry pulls into its namespace with `from m import *`,
 /// through chained star imports (#729): the host reads them as settings
 /// (`html_theme`, `INSTALLED_APPS`), so no importer ever names them. A module
-/// with `__all__` hands over only the names it lists.
+/// hands over the names `Exports::may_hand_on` allows.
 pub(super) fn config_star_symbols(
     plugins: &PluginHints,
     registry: &[RegistryEntry],
@@ -136,7 +136,7 @@ pub(super) fn config_star_symbols(
     let entries = config_entry_files(plugins);
     let mut seeds = Vec::new();
     let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
-    let mut declares_all = HashSet::new();
+    let mut exports = HashMap::new();
     for module in modules {
         if entries.contains(module.path.as_str()) {
             seeds.extend(star_imports(module));
@@ -146,9 +146,7 @@ pub(super) fn config_star_symbols(
                 .entry(name.as_str())
                 .or_default()
                 .extend(star_imports(module));
-            if !module.exports.names().is_empty() {
-                declares_all.insert(name.as_str());
-            }
+            exports.insert(name.as_str(), &module.exports);
         }
     }
     let reached = star_closure(&star_targets, seeds);
@@ -156,7 +154,9 @@ pub(super) fn config_star_symbols(
         .iter()
         .filter(|entry| {
             reached.contains(&entry.id.module)
-                && (entry.in_all || !declares_all.contains(entry.id.module.as_str()))
+                && exports
+                    .get(entry.id.module.as_str())
+                    .is_none_or(|all| all.may_hand_on(&entry.id.name))
         })
         .map(|entry| entry.id.clone())
         .collect()

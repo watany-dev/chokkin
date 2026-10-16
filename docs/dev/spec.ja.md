@@ -931,7 +931,9 @@ symbol usage analysis が `module.name` を外部参照として扱う。`from p
 参照先の module が `from m import *` で名前を取り込んでいる場合、その参照は `m` の同名 symbol にも届くとみなす (#576)。
 `pkg/__init__.py` が `from .sub.impl import *` するとき、`import pkg; pkg.name` と `from pkg import name` は
 `pkg.sub.impl.name` の参照になる。star 先がさらに star import していれば連鎖を辿り、各段で `__all__` のある module は
-列挙した名前だけ、無い module は `_` で始まらない名前だけを渡す (Python の `import *` と同じ)。star import した module が
+列挙した名前だけ、無い module は `_` で始まらない名前だけを渡す (Python の `import *` と同じ)。`__all__` を読み切れなかった
+module (Partial / Unknown) はどの名前も渡しうるとみなし、`_` で始まる名前も含めて渡す (#951)。読めた list だけを渡すと、
+読めなかった名前の参照が届かず CHK006 を certain で出してしまうため。star import した module が
 同名を自身で定義していれば、そちらが優先され star 先には届かない。外部参照かどうかは
 元の importer で判定するので、定義元 module 自身が package 経由で自分の名前を読んでも外部参照にはならない。
 star import 文そのもの (`pkg/__init__.py` の `from .sub.impl import *`) は従来どおり参照にならない。
@@ -967,14 +969,14 @@ decorator 由来の used 判定は `src/rules/symbols/external.rs` の `REGISTRA
 - list を読む前 (Absent や Unknown のとき) の literal な追記は捨て、Absent なら Unknown にする。読めない list に足した名前だけが `__all__` 全体と扱われ、他の公開名が隠れるのを避けるため。
 - `remove` / `pop` / `clear` / `sort` / `reverse` と、読むだけの `copy` / `index` / `count` は追わない。実行時より広い list は名前を公開扱いにするだけなので、finding を増やさない。
 
-rule は今のところ読めた名前 (`Exports::names`、Known / Partial の list。Absent / Unknown は空) だけを見て、空なら `__all__` なしと同じに扱う。Partial / Unknown で finding を下げるのは、ADR 0005 の移行 step 4 (gap の種類ごとの接続) で、§11 の降格段に gap の種類を足して行う。
+rule は今のところ読めた名前 (`Exports::names`、Known / Partial の list。Absent / Unknown は空) だけを見て、空なら `__all__` なしと同じに扱う。例外は `from m import *` が渡す名前で、Partial / Unknown の module はどの名前も渡しうるとする (`Exports::may_hand_on`、#951)。star の参照解決 (上記 #576)、library mode の star 到達による公開 API、設定エントリの star import の 3 か所がこれを使う。Partial / Unknown で finding を下げるのは、ADR 0005 の移行 step 4 (gap の種類ごとの接続) で、§11 の降格段に gap の種類を足して行う。
 
 `__all__` があるmoduleでは、`__all__` をpublic API宣言として扱う。`__all__` にあるが内部から使われないものは、app modeではwarning (confidence certain) にする。library modeでは、次のいずれかに当てはまるsymbolを公開APIとみなし、CHK006 / CHK007 を出さない (`src/rules/symbols/public.rs`、#489)。それ以外の未参照symbolはinfoにする。wheel target から public surface が求まる場合、surface 外 module の symbol は library mode でも app mode 相当 (warning、公開API扱いなし) にする (§8)。
 
 ```text
 __all__ に載っている
 from ._x import Foo as Foo で再exportしている (PEP 484 の明示的再export)
-公開module (`_` 始まりの要素を含まないdotted name) から from m import * で連鎖的に到達できる (m に __all__ があればその名前だけ)
+公開module (`_` 始まりの要素を含まないdotted name) から from m import * で連鎖的に到達できる (m に __all__ があればその名前だけ。読み切れない __all__ ならどの名前も)
 公開packageの __init__.py で定義・再exportしている
 ```
 
@@ -982,7 +984,7 @@ library modeでは、定義元module自身がその名前を読んでいるsymbo
 
 ツールが import ではなく規約で読むものも報告しない (`src/rules/symbols/conventions.rs`、#655)。protoc の生成物 (`*_pb2.py` / `*_pb2_grpc.py`) と、同じディレクトリに `modeling_x.py` がある `modular_x.py` (transformers の codegen 元) は、test context と同じく CHK006 / CHK007 の対象外・参照元のみとする。alembic plugin が有効なとき、祖先に `versions/` ディレクトリがあり `revision` と `down_revision` を両方定義する module は revision file とみなし、`revision` / `down_revision` / `branch_labels` / `depends_on` / `upgrade` / `downgrade` を CHK006 の外部利用扱いにする。いずれも CHK001 の判定には使わない (生成物が到達不能なら、消してよいかは別に確かめる必要がある)。alembic plugin が `script_location` から entry にしたファイル (`env.py` と revision) は import されず alembic が path で読むので、test context と同じく CHK006 / CHK007 の対象外・参照元のみとする (#667)。airflow の `airflow_version` のように、project 自身の tool が revision module から読む名前もこれで外れる。
 
-設定エントリが `from m import *` で取り込む名前も CHK006 の外部利用扱いにする (`config_star_symbols`、#729)。設定エントリは、ホストが module の名前空間を設定として読む plugin entry で、sphinx plugin の `docs/conf.py` (root と各 workspace member) と django plugin の settings module を指す。Sphinx は `html_theme` を、Django は `INSTALLED_APPS` を名前空間から読むので、どの importer もその名前を書かない (airflow の各 provider の `docs/conf.py` が star import する `provider_conf.py`)。star 先がさらに star import していれば連鎖を辿る。`__all__` のある module は列挙した名前だけ、無い module は公開名すべてを対象にする (連鎖の途中にある `__all__` で先の module の名前を絞ることはしない)。対象は star 先で定義された symbol だけで、設定エントリ自身が定義する名前、`__init__.py` の再export (CHK007)、`manage.py` や `ROOT_URLCONF` の module など設定エントリ以外の entry からの star import は従来どおり扱う。通常コードの star import は従来どおり参照にならない。CHK001 の判定には使わない。
+設定エントリが `from m import *` で取り込む名前も CHK006 の外部利用扱いにする (`config_star_symbols`、#729)。設定エントリは、ホストが module の名前空間を設定として読む plugin entry で、sphinx plugin の `docs/conf.py` (root と各 workspace member) と django plugin の settings module を指す。Sphinx は `html_theme` を、Django は `INSTALLED_APPS` を名前空間から読むので、どの importer もその名前を書かない (airflow の各 provider の `docs/conf.py` が star import する `provider_conf.py`)。star 先がさらに star import していれば連鎖を辿る。`__all__` のある module は列挙した名前だけ、無い module は公開名すべて、`__all__` を読み切れなかった module はすべての名前を対象にする (連鎖の途中にある `__all__` で先の module の名前を絞ることはしない)。対象は star 先で定義された symbol だけで、設定エントリ自身が定義する名前、`__init__.py` の再export (CHK007)、`manage.py` や `ROOT_URLCONF` の module など設定エントリ以外の entry からの star import は従来どおり扱う。通常コードの star import は従来どおり参照にならない。CHK001 の判定には使わない。
 
 ホストが規約名で呼ぶ関数も CHK006 の外部利用扱いにする (`host_hook_symbols`、#777)。対象は module level の関数で、次のいずれか。(1) pytest plugin の `pytest_*` 関数。plugin とみなすのは、いずれかの module の `pytest_plugins` と pyproject の `[tool.pytest.ini_options] pytest_plugins` に挙がった module、`pytest11` entry point の module、pytest (`pytest` / `_pytest`) を関数内でも `TYPE_CHECKING` 下でもない位置で import する module (`-p` で opt-in する mlflow の `mlflow/pytest/plugin.py` のように登録元が無い plugin も拾う)。(2) sphinx plugin が読む `extensions` の名前を、reachability と同じく `docs/conf.py` から解決した file の `setup`。`sys.path` の hint で見つかる拡張は package を付けない名前で挙がる (`sphinx_exts.docroles` を `docroles`) が、同じ末尾を持つだけの別 module は当たりにしない (#779)。(3) build backend の entry（origin `build backend: PEP 517` と `manifest: [build-system.backend-path].path`）の module にある PEP 517 / PEP 660 の hook（`build_wheel` / `build_sdist` / `build_editable` と、その `get_requires_for_build_*` / `prepare_metadata_for_build_*`）。frontend が呼ぶため (#782)。これらの file が package の `__init__.py` で、hook を submodule から再exportしている場合 (`from .core import setup`) は、再exportした名前 `package:setup` も同じ集合に入れる。ホストが読むのは package の名前空間のため (#873)。これらに当たらない module の同名関数は従来どおり報告する。pluggy の hook は decorator で判定する (上記)。CHK001 の判定には使わない。
 

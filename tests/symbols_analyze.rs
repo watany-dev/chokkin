@@ -1232,9 +1232,14 @@ fn names_star_imported_into_sphinx_conf_are_not_chk006() {
             "app/conf_all.py",
             "__all__ = [\"copyright\"]\n\ncopyright = \"2026\"\nnot_listed = 1\n",
         ),
+        // A partial `__all__` may list any of its names (#951).
+        (
+            "app/conf_partial.py",
+            "__all__ = [\"author\"]\n__all__ += EXTRA\n\nauthor = \"me\"\nrelease = \"1\"\n",
+        ),
         (
             "docs/conf.py",
-            "from app.conf_base import *\nfrom app.conf_all import *\n",
+            "from app.conf_base import *\nfrom app.conf_all import *\nfrom app.conf_partial import *\n",
         ),
     ]);
     for (module, name) in [
@@ -1242,6 +1247,8 @@ fn names_star_imported_into_sphinx_conf_are_not_chk006() {
         ("app.conf_base", "setup"),
         ("app.conf_chain", "project"),
         ("app.conf_all", "copyright"),
+        ("app.conf_partial", "author"),
+        ("app.conf_partial", "release"),
     ] {
         assert!(
             !has_symbol_rule(&report, RuleId::Chk006, module, name),
@@ -1373,6 +1380,61 @@ fn package_star_import_chain_forwards_only_names_in_all() {
         assert!(
             has_symbol_rule(&report, RuleId::Chk006, module, name),
             "{module}.{name}: {report:?}"
+        );
+    }
+}
+
+/// A partial `__all__` may list names the parser could not read, so a star
+/// import through it may hand on any name (#951).
+#[test]
+fn partial_all_in_a_star_import_chain_may_hand_on_any_name() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"pkg\"\nversion = \"0\"\ndependencies = []\n\n[project.scripts]\napp = \"pkg.cli:run\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("pkg/__init__.py", "from pkg.mid import *\n"),
+        (
+            "pkg/mid.py",
+            "from pkg.a import *\n_extra = [\"helper\"]\n__all__ = [\"x\"]\n__all__.extend(_extra)\n",
+        ),
+        (
+            "pkg/a.py",
+            "def x(): pass\ndef helper(): pass\ndef unused(): pass\n",
+        ),
+        (
+            "pkg/cli.py",
+            "import pkg\ndef run():\n    pkg.helper()\n    pkg.x()\n",
+        ),
+    ]);
+    for name in ["x", "helper"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "pkg.a", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "pkg.a", "unused"),
+        "{report:?}"
+    );
+}
+
+/// A star-imported module with a partial `__all__` may put any of its names
+/// in the public module's API, and so may a config entry's namespace (#951).
+#[test]
+fn partial_all_in_a_star_imported_module_does_not_narrow_the_public_api() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        ("src/acme/__init__.py", "from ._models import *\n"),
+        (
+            "src/acme/_models.py",
+            "__all__ = [\"Listed\"]\n__all__.extend(EXTRA)\n\nclass Listed:\n    pass\n\nclass Unlisted:\n    pass\n",
+        ),
+    ]);
+    for name in ["Listed", "Unlisted"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "acme._models", name),
+            "{name}: {report:?}"
         );
     }
 }
