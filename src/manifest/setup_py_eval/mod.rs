@@ -2473,4 +2473,60 @@ table = {'other': 'y', **opaque()}
             );
         }
     }
+
+    #[test]
+    fn method_call_on_a_missing_entry_marks_its_dict_partial() {
+        let partial = |source: &str| match evaluate(source)
+            .expect("setup() call")
+            .keyword("extras_require")
+        {
+            Some(Value::Dict { partial, .. }) => *partial,
+            other => panic!("{other:?}"),
+        };
+        assert!(partial(
+            "extras = {'a': ['x']}\nextras['b'].append('y')\nsetup(extras_require=extras)\n"
+        ));
+        assert!(!partial(
+            "extras = {'a': ['x']}\nextras['a'].append('y')\nsetup(extras_require=extras)\n"
+        ));
+    }
+
+    /// Once the step budget is spent the result is `Unknown` anyway, so a
+    /// later in-place change must not walk every stored value: thousands of
+    /// them over a large environment would run for minutes.
+    #[test]
+    fn in_place_changes_after_the_budget_is_spent_do_no_work() {
+        let mut copies = String::new();
+        for i in 0..40 {
+            writeln!(copies, "v{i} = base").expect("write to String");
+        }
+        let source = format!(
+            "base = {}\n{copies}x = ['a']\n{}{}setup(install_requires=base)\n",
+            big_list(90_000),
+            "x = x + x\n".repeat(40),
+            "base.append('y')\n".repeat(2_000),
+        );
+        assert_eq!(install_requires(&source), None);
+    }
+
+    /// `exhausted` holds exactly when `spend` has refused, so a guard on it
+    /// never skips work the budget still allows.
+    #[test]
+    fn budget_is_exhausted_exactly_when_spend_refuses() {
+        let root = Path::new(".");
+        let mut evaluator = Evaluator {
+            root,
+            env: HashMap::new(),
+            functions: HashMap::new(),
+            depth: 0,
+            steps: 0,
+            objects: 0,
+            probed_missing: Vec::new(),
+            table_requirements: BTreeSet::new(),
+        };
+        assert!(evaluator.spend(MAX_STEPS));
+        assert!(!evaluator.exhausted());
+        assert!(!evaluator.spend(1));
+        assert!(evaluator.exhausted());
+    }
 }
