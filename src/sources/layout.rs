@@ -767,8 +767,8 @@ mod tests {
         let (layout, _) =
             infer_layout(temp.path(), &metadata("pandas"), &UvToolSettings::default());
         assert_eq!(layout.packages, vec!["pandas".to_owned()]);
-        assert!(pytest_testpaths(temp.path(), &layout).is_empty());
-        assert!(layout.local_packages.is_empty());
+        assert_eq!(pytest_testpaths(temp.path(), &layout), Vec::<String>::new());
+        assert_eq!(layout.local_packages, Vec::<String>::new());
     }
 
     #[test]

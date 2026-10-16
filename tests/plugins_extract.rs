@@ -476,7 +476,7 @@ fn django_reusable_app_migrations_framework_used() {
         ("app/migrations/0001_initial.py", ""),
     ]);
     let contrib = django_contrib(&hints);
-    assert!(entry_paths(contrib).is_empty());
+    assert_eq!(entry_paths(contrib), Vec::<&str>::new());
     assert!(
         contrib
             .framework_used_globs
