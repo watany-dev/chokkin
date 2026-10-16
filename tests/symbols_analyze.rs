@@ -1350,6 +1350,37 @@ fn django_migration_class_is_not_chk006() {
     );
 }
 
+/// With the Django plugin off, nothing reads `Migration` by name, so it is
+/// unused like any other class, even while pytest stays on.
+#[test]
+fn migration_class_with_django_off_is_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.chokkin.plugins]\ndjango = false\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/cli.py",
+            "from acme.migrations.initial import run\n\n\ndef main():\n    run()\n",
+        ),
+        ("acme/migrations/__init__.py", ""),
+        (
+            "acme/migrations/initial.py",
+            "class Migration:\n    pass\n\n\ndef run():\n    pass\n",
+        ),
+    ]);
+    assert!(
+        has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "acme.migrations.initial",
+            "Migration"
+        ),
+        "{report:?}"
+    );
+}
+
 /// `pkg.name` and `from pkg import name` reach the module a package
 /// star-imports `name` from (#576).
 #[test]

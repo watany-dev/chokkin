@@ -202,3 +202,18 @@ impl DiscoveredSources {
             .filter(|file| file.kind == FileKind::Python)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_key_hash_tells_package_dirs_apart() {
+        let base = LayoutInfo::default();
+        let with_dirs = LayoutInfo {
+            package_dirs: BTreeSet::from(["tests/app".to_owned()]),
+            ..LayoutInfo::default()
+        };
+        assert_ne!(base.cache_key_hash(), with_dirs.cache_key_hash());
+    }
+}
