@@ -91,17 +91,21 @@ impl ReferenceIndex {
         let known_modules: HashSet<&str> = module_names.values().map(String::as_str).collect();
         let stars = StarImports::build(modules, module_names);
 
-        // Workers index their modules apart; a mark only ORs into its entry,
-        // so the merge is order-independent.
-        let mut partials = crate::parallel::fold_per_worker(
+        let partials = crate::parallel::fold_per_worker(
             modules,
             || (Self::default(), StarCache::new()),
             |(index, cache), _, module| {
                 index.add_module(module, module_names, &known_modules, &stars, cache);
             },
         );
-        partials.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(index.entries.len()));
-        let mut partials = partials.into_iter().map(|(index, _)| index);
+        Self::merge(partials.into_iter().map(|(index, _)| index).collect())
+    }
+
+    /// Union of indexes built apart by workers. A mark only ORs into its
+    /// entry, so the result is order-independent.
+    fn merge(mut partials: Vec<Self>) -> Self {
+        partials.sort_unstable_by_key(|index| std::cmp::Reverse(index.entries.len()));
+        let mut partials = partials.into_iter();
         let mut merged = partials.next().unwrap_or_default();
         for partial in partials {
             for (target, external) in partial.entries {
@@ -528,6 +532,29 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn merge_keeps_an_external_mark_from_any_partial() {
+        let index = |entries: &[(&str, bool)]| ReferenceIndex {
+            entries: entries
+                .iter()
+                .map(|&(name, external)| (SymbolId::new("lib", name), external))
+                .collect(),
+        };
+        let merged = ReferenceIndex::merge(vec![
+            index(&[("shared", true), ("only_small", true)]),
+            index(&[("shared", false), ("internal", false), ("external", true)]),
+        ]);
+        assert_eq!(
+            merged,
+            index(&[
+                ("shared", true),
+                ("only_small", true),
+                ("internal", false),
+                ("external", true),
+            ])
+        );
     }
 
     mod props {
