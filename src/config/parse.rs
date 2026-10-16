@@ -7,6 +7,7 @@ use std::path::Path;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use crate::manifest::{UvSourceKind, uv_source_entries};
 use crate::rules::RuleId;
 
 use super::defaults::PartialConfig;
@@ -29,7 +30,7 @@ struct PyProjectTool {
 struct UvTool {
     workspace: Option<UvWorkspace>,
     #[serde(default)]
-    sources: BTreeMap<String, toml::Value>,
+    sources: toml::Table,
 }
 
 #[derive(Deserialize)]
@@ -80,13 +81,15 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
     validate(path, &partial)?;
 
     let (workspace, sources) = uv.map_or_else(Default::default, |uv| (uv.workspace, uv.sources));
-    let uv_path_sources = sources
-        .into_iter()
-        .filter_map(|(name, value)| {
-            let paths = source_paths(&value);
-            (!paths.is_empty()).then_some((name, paths))
-        })
-        .collect();
+    let mut uv_path_sources: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, kind) in uv_source_entries(&sources) {
+        if let UvSourceKind::Path(path) = kind {
+            uv_path_sources
+                .entry(name.to_owned())
+                .or_default()
+                .push(path);
+        }
+    }
     let uv_workspace = workspace.and_then(|workspace| {
         let members = workspace.members.map(UvMembers::into_vec)?;
         (!members.is_empty()).then(|| UvWorkspaceHint {
@@ -102,18 +105,6 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
         uv_workspace,
         uv_path_sources,
     })
-}
-
-/// A source is one table or an array of marker-scoped tables (issue #508).
-fn source_paths(value: &toml::Value) -> Vec<String> {
-    let entries = match value {
-        toml::Value::Array(items) => items.as_slice(),
-        other => std::slice::from_ref(other),
-    };
-    entries
-        .iter()
-        .filter_map(|entry| Some(entry.get("path")?.as_str()?.to_owned()))
-        .collect()
 }
 
 fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
@@ -270,6 +261,31 @@ fn validation_error(path: &Path, field: String, message: &str) -> ConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_sources_keep_written_names_and_marker_array_order() {
+        let contents = concat!(
+            "[tool.uv.sources]\n",
+            "My_Lib = [\n",
+            "  { path = \"lib\", marker = \"sys_platform == 'linux'\" },\n",
+            "  { index = \"cpu\" },\n",
+            "  { path = \"lib-win\", editable = true },\n",
+            "]\n",
+            "billing = { workspace = true }\n",
+            "bad = \"lib\"\n",
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        fs::write(&path, contents).expect("write pyproject");
+        let parsed = parse_pyproject_config(&path).expect("parse");
+        assert_eq!(
+            parsed.uv_path_sources,
+            BTreeMap::from([(
+                "My_Lib".to_owned(),
+                vec!["lib".to_owned(), "lib-win".to_owned()]
+            )])
+        );
+    }
 
     #[test]
     fn escapes_root_folds_parent_segments() {

@@ -83,24 +83,29 @@ pub(super) fn extract_uv_tool(
     result
 }
 
-/// A source may be one table or an array of marker-scoped tables.
 fn parse_sources(sources: &toml::Table) -> Vec<UvSource> {
-    let mut parsed = Vec::new();
-    for (name, value) in sources {
-        let name_norm = normalize_distribution_name(name);
-        let entries: Vec<&toml::Table> = match value {
-            Value::Table(entry) => vec![entry],
-            Value::Array(items) => items.iter().filter_map(Value::as_table).collect(),
-            _ => Vec::new(),
+    source_entries(sources)
+        .map(|(name, kind)| UvSource {
+            name: normalize_distribution_name(name),
+            kind,
+        })
+        .collect()
+}
+
+/// Each `[tool.uv.sources]` entry with its distribution name as written. A
+/// source is one table or an array of marker-scoped tables (#508), yielded in
+/// order; a value of any other shape yields nothing, since uv rejects it.
+pub(crate) fn source_entries(sources: &toml::Table) -> impl Iterator<Item = (&str, UvSourceKind)> {
+    sources.iter().flat_map(|(name, value)| {
+        let entries = match value {
+            Value::Array(items) => items.as_slice(),
+            other => std::slice::from_ref(other),
         };
-        for entry in entries {
-            parsed.push(UvSource {
-                name: name_norm.clone(),
-                kind: source_kind(entry),
-            });
-        }
-    }
-    parsed
+        entries
+            .iter()
+            .filter_map(Value::as_table)
+            .map(move |entry| (name.as_str(), source_kind(entry)))
+    })
 }
 
 fn source_kind(entry: &toml::Table) -> UvSourceKind {

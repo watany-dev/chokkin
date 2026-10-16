@@ -9,9 +9,9 @@ use crate::manifest::{LoadedManifest, LockfileGraph, normalize_distribution_name
 use crate::plugins::PluginHints;
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolutionIndex, import_root};
-use crate::rules::RuleContext;
 use crate::rules::types::WorkspaceDependencyBoundary;
-use crate::sources::DiscoveredFile;
+use crate::rules::{DependencyRuleContext, RuleContext};
+use crate::sources::{DiscoveredFile, LocalTrees, importable_modules};
 
 /// Index of declared dependencies keyed by normalized distribution name.
 pub(super) type DeclaredIndex<'a> = BTreeMap<String, Vec<&'a crate::manifest::DeclaredDependency>>;
@@ -149,11 +149,16 @@ pub(super) fn collect_used_distributions(
 /// the member tree decides.
 pub(super) fn mark_workspace_source_distributions(
     manifest: &LoadedManifest,
-    context: &RuleContext<'_>,
+    dependency: &DependencyRuleContext<'_>,
     reachable: &HashSet<&str>,
     workspace_boundaries: &[WorkspaceDependencyBoundary<'_>],
     used: &mut IndexSet<String>,
 ) {
+    let DependencyRuleContext {
+        rules: context,
+        local,
+        ..
+    } = *dependency;
     let first_party: Vec<&str> = context
         .resolution
         .imports
@@ -171,7 +176,7 @@ pub(super) fn mark_workspace_source_distributions(
         .collect();
     for module in first_party.iter().chain(&entry_modules) {
         let name = normalize_distribution_name(import_root(module));
-        if manifest.uv.is_local_source(&name) {
+        if local.is_local_source(&name) {
             used.insert(name);
         }
     }
@@ -179,7 +184,7 @@ pub(super) fn mark_workspace_source_distributions(
     let paths = sorted_paths(&context.sources.files);
     let mut members = Vec::new();
     for boundary in workspace_boundaries {
-        let Some(name) = local_source_member(manifest, boundary.manifest) else {
+        let Some(name) = local_source_member(manifest, local, boundary.manifest) else {
             continue;
         };
         let Some(member_path) = member_path(manifest, boundary.manifest) else {
@@ -294,6 +299,7 @@ impl<'a> MemberImports<'a> {
 /// local `workspace` / `path` source.
 pub(crate) fn local_source_member(
     root: &LoadedManifest,
+    local: &LocalTrees,
     member: &LoadedManifest,
 ) -> Option<String> {
     let name = normalize_distribution_name(member.metadata.name.as_deref()?);
@@ -301,7 +307,7 @@ pub(crate) fn local_source_member(
         .dependencies
         .iter()
         .any(|dep| normalize_distribution_name(&dep.name) == name);
-    (declared && root.uv.is_local_source(&name)).then_some(name)
+    (declared && local.is_local_source(&name)).then_some(name)
 }
 
 /// Root-relative `/` path of a workspace member; empty for the root itself.
@@ -354,49 +360,33 @@ impl<'a> Providers<'a> {
     }
 }
 
-/// Dotted module names the files under `member_path` provide, imported from
-/// the member root or from a `src` directory (`providers/x/src/airflow/models.py`
-/// gives `airflow` and `airflow.models`), each `true` when a file holds that
-/// module itself (`airflow.models`) rather than only a submodule.
+/// Dotted module names the files under `member_path` provide, by
+/// [`importable_modules`] from the member root or from any `src` directory
+/// below it (`dev/breeze/src/airflow_breeze` gives `airflow_breeze`). Wider
+/// than the resolver's roots: a missed module reports a used member unused.
 fn member_modules<'a>(
     member_path: &str,
     paths: impl IntoIterator<Item = &'a str>,
 ) -> HashMap<String, bool> {
-    let mut modules = HashMap::new();
-    for path in paths {
-        let relative = if member_path.is_empty() {
-            Some(path)
-        } else {
-            path.strip_prefix(member_path)
-                .and_then(|rest| rest.strip_prefix('/'))
-        };
-        let Some(relative) = relative else {
-            continue;
-        };
-        let Some(stem) = relative
-            .strip_suffix(".py")
-            .or_else(|| relative.strip_suffix(".pyi"))
-        else {
-            continue;
-        };
-        let mut parts: Vec<&str> = stem.split('/').collect();
-        if parts.last() == Some(&"__init__") {
-            parts.pop();
-        }
-        let starts = std::iter::once(0).chain(
-            parts
-                .iter()
-                .enumerate()
-                .filter(|(_, part)| **part == "src")
-                .map(|(index, _)| index + 1),
+    let paths: Vec<&str> = paths
+        .into_iter()
+        .filter(|path| {
+            member_path.is_empty()
+                || path
+                    .strip_prefix(member_path)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .collect();
+    let mut roots = HashSet::from([member_path]);
+    for path in &paths {
+        roots.extend(
+            path[member_path.len()..]
+                .match_indices('/')
+                .map(|(slash, _)| &path[..member_path.len() + slash])
+                .filter(|dir| *dir == "src" || dir.ends_with("/src")),
         );
-        for start in starts {
-            for end in start + 1..=parts.len() {
-                *modules.entry(parts[start..end].join(".")).or_default() |= end == parts.len();
-            }
-        }
     }
-    modules
+    importable_modules(paths, &roots)
 }
 
 /// Treat `pytest11` plugins as used whenever pytest is, since pytest loads
@@ -446,6 +436,30 @@ mod tests {
     use crate::parser::ImportContext;
     use crate::reachability::ReachabilityReport;
     use crate::resolver::{ResolveConfidence, ResolvedImport};
+
+    fn mark(
+        manifest: &LoadedManifest,
+        rules: &RuleContext<'_>,
+        reachable: &HashSet<&str>,
+        boundaries: &[WorkspaceDependencyBoundary<'_>],
+    ) -> IndexSet<String> {
+        let config = crate::config::default_config();
+        let mut used = IndexSet::new();
+        mark_workspace_source_distributions(
+            manifest,
+            &DependencyRuleContext {
+                rules,
+                config: &config,
+                strict: false,
+                build_scripts: &BTreeMap::new(),
+                local: &LocalTrees::new(manifest, &[], &config),
+            },
+            reachable,
+            boundaries,
+            &mut used,
+        );
+        used
+    }
 
     #[test]
     fn detects_lockfile_from_manifest_sources() {
@@ -526,6 +540,7 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &PluginHints {
                 contributions: Vec::new(),
@@ -591,7 +606,7 @@ mod tests {
             python_file("airflow-core/tests/utils.py"),
             python_file("task-sdk/src/airflow/sdk/__init__.py"),
         ];
-        let modules = member_modules("airflow-core", files.iter().map(|file| file.path.as_str()));
+        let modules = member_modules("airflow-core", paths(&files));
         assert_eq!(modules.get("airflow"), Some(&true));
         assert_eq!(modules.get("airflow.models"), Some(&false));
         assert_eq!(modules.get("airflow.models.dag"), Some(&true));
@@ -605,6 +620,33 @@ mod tests {
         assert!(provided("airflow.models.dag.DAG"));
         assert!(provided("airflow.DAG"));
         assert!(!provided("airflow.models.DAG"));
+    }
+
+    #[test]
+    fn member_modules_start_after_a_nested_src() {
+        // airflow's `dev` member keeps breeze under `dev/breeze/src`.
+        let files = [
+            python_file("dev/breeze/src/airflow_breeze/__init__.py"),
+            python_file("dev/breeze/src/airflow_breeze/cli.py"),
+            python_file("tools/src/other/__init__.py"),
+        ];
+        let modules = member_modules("dev", paths(&files));
+        assert_eq!(modules.get("airflow_breeze"), Some(&true));
+        assert_eq!(modules.get("airflow_breeze.cli"), Some(&true));
+        assert!(modules.contains_key("breeze.src.airflow_breeze"));
+        assert!(!modules.contains_key("other"));
+        let root = member_modules("", paths(&files));
+        assert_eq!(root.get("airflow_breeze.cli"), Some(&true));
+        assert_eq!(root.get("other"), Some(&true));
+        // A `src` above the member is not one of its roots.
+        let nested = [python_file("src/billing/billing/core.py")];
+        let modules = member_modules("src/billing", paths(&nested));
+        assert_eq!(modules.get("billing.core"), Some(&true));
+        assert!(!modules.contains_key("billing.billing"));
+    }
+
+    fn paths(files: &[DiscoveredFile]) -> impl Iterator<Item = &str> {
+        files.iter().map(|file| file.path.as_str())
     }
 
     fn python_file(path: &str) -> DiscoveredFile {
@@ -795,8 +837,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let graph = ProjectGraph::new(manifest.root.clone());
-        let mut used = IndexSet::new();
-        mark_workspace_source_distributions(
+        let used = mark(
             &manifest,
             &RuleContext {
                 resolution: &resolution,
@@ -804,10 +845,10 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &HashSet::from(["src/app.py"]),
             &boundaries,
-            &mut used,
         );
         let mut used: Vec<String> = used.into_iter().collect();
         used.sort();
@@ -855,8 +896,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let graph = ProjectGraph::new(manifest.root.clone());
-        let mut used = IndexSet::new();
-        mark_workspace_source_distributions(
+        let used = mark(
             &manifest,
             &RuleContext {
                 resolution: &resolution,
@@ -864,10 +904,10 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &HashSet::from(["src/app.py"]),
             &boundaries,
-            &mut used,
         );
         assert_eq!(
             used.into_iter().collect::<Vec<_>>(),
@@ -914,8 +954,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let graph = ProjectGraph::new(manifest.root.clone());
-        let mut used = IndexSet::new();
-        mark_workspace_source_distributions(
+        let used = mark(
             &manifest,
             &RuleContext {
                 resolution: &resolution,
@@ -923,10 +962,10 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &HashSet::from(["e2e/app.py"]),
             &[],
-            &mut used,
         );
         assert!(used.contains("streamlit"));
     }
@@ -965,8 +1004,7 @@ mod tests {
             warnings: Vec::new(),
         };
         let graph = ProjectGraph::new(manifest.root.clone());
-        let mut used = IndexSet::new();
-        mark_workspace_source_distributions(
+        let used = mark(
             &manifest,
             &RuleContext {
                 resolution: &ResolutionIndex::default(),
@@ -974,10 +1012,10 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &HashSet::new(),
             &[],
-            &mut used,
         );
         assert_eq!(used.into_iter().collect::<Vec<_>>(), ["acme"]);
     }
@@ -993,11 +1031,7 @@ mod tests {
         let mut report = ReachabilityReport::default();
         report.unreachable = vec![
             orphan("public.py", ProjectMode::Library, Confidence::Maybe),
-            orphan(
-                "outside_wheel.py",
-                ProjectMode::Library,
-                Confidence::Certain,
-            ),
+            orphan("outside_wheel.py", ProjectMode::App, Confidence::Certain),
             orphan("app_orphan.py", ProjectMode::App, Confidence::Maybe),
         ];
         let reachable = HashSet::from(["main.py"]);

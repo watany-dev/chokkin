@@ -74,6 +74,7 @@ pub fn analyze_with_context(
         graph,
         sources,
         parse,
+        surface,
     } = *context;
     let reachable = reachable_file_paths(graph, reachability);
     let reachable_modules: Vec<_> = parse
@@ -122,7 +123,7 @@ pub fn analyze_with_context(
 
     let wheels = Wheels {
         entry,
-        root: PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files),
+        root: surface,
         members: member_surfaces,
     };
     let mut candidates = detect_unused_exports(
@@ -149,37 +150,12 @@ pub fn analyze_with_context(
 struct Wheels<'a> {
     entry: &'a EntryPlan,
     /// The root wheel's files; `None` when it declares no wheel targets.
-    root: Option<PublicSurface>,
+    root: Option<&'a PublicSurface>,
     /// Each member's root-relative directory with its member-relative surface.
     members: &'a [(String, PublicSurface)],
 }
 
 impl Wheels<'_> {
-    /// A library member ships its own wheel, so its files are judged as a
-    /// library whatever the root mode is, and the root's wheel surface does
-    /// not apply to them (#515).
-    fn mode(&self, path: &str) -> ProjectMode {
-        if self.entry.in_library_member(path) {
-            ProjectMode::Library
-        } else {
-            self.entry.mode
-        }
-    }
-
-    /// A library symbol the wheel does not ship has no outside caller (R-05).
-    fn export_mode(&self, path: &str) -> ProjectMode {
-        if !self.entry.in_library_member(path)
-            && self
-                .root
-                .as_ref()
-                .is_some_and(|surface| !surface.contains(path))
-        {
-            ProjectMode::App
-        } else {
-            self.mode(path)
-        }
-    }
-
     /// Whether a wheel ships root-relative `path`: its innermost member's own
     /// wheel, else the root's. A shipped `__all__` is public API whatever the
     /// mode, since a workspace root with an app signal and a member with its
@@ -274,7 +250,8 @@ fn detect_unused_exports(
         if entry.in_all && wheels.ships(&entry.path) {
             continue;
         }
-        let mode = wheels.export_mode(&entry.path);
+        // A library symbol the wheel does not ship has no outside caller (R-05).
+        let mode = wheels.entry.surface_mode(&entry.path, wheels.root);
         // A library cannot make a name private that its own module reads:
         // it is a TypeVar, an alias, or a type reached through an attribute (#540).
         // Without `export`, an app's top-level name outside `__all__` is a plain
@@ -337,7 +314,7 @@ fn detect_unused_reexports(
         if is_reexport_used(reexport, references, external_symbols) {
             continue;
         }
-        let mode = wheels.mode(&reexport.path);
+        let mode = wheels.entry.mode_for(&reexport.path);
         if mode == ProjectMode::Library && exports_reexport(reexport) {
             continue;
         }

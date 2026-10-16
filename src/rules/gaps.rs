@@ -1173,16 +1173,16 @@ mod tests {
         use crate::graph::FileId;
         use crate::reachability::UnreachableFile;
 
-        let unread = |path: &str, max_confidence| UnreachableFile {
+        let unread = |path: &str, mode, max_confidence| UnreachableFile {
             file: FileId(0),
             path: path.to_owned(),
             max_confidence,
-            mode: ProjectMode::Library,
+            mode,
         };
         let mut reachability = ReachabilityReport::default();
         reachability.unread = vec![
-            unread("acme/client.py", Confidence::Maybe),
-            unread("tools/release.py", Confidence::Certain),
+            unread("acme/client.py", ProjectMode::Library, Confidence::Maybe),
+            unread("tools/release.py", ProjectMode::App, Confidence::Certain),
         ];
         let gaps = unread_public_module_gaps(&reachability);
         assert_eq!(gaps, [gap("acme/client.py", GapKind::UnreadPublicModule)]);

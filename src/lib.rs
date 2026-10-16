@@ -89,8 +89,8 @@ pub mod internals {
         emit_issues, issue_fingerprint,
     };
     pub use crate::sources::{
-        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
-        PublicSurface, SourcesError, SourcesWarning, discover_sources,
+        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, LocalTrees,
+        ProjectLayout, PublicSurface, SourcesError, SourcesWarning, discover_sources,
     };
 
     /// Case count for a proptest block tuned to `tuned` cases.

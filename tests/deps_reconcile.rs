@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 
 use chokkin::internals::reconcile_with_context;
 use chokkin::internals::{
-    Confidence, GraphEdge, ModuleOrigin, PluginExtractRequest, ProjectRoot, RootMarker, RuleId,
-    ScopedDeclarations, Severity, UsedModule, WorkspaceDependencyBoundary, add_parsed_imports,
-    analyze_reachability, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
-    discover_project_root, extract_manifest, extract_plugin_hints_with_parse, load_config,
-    parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
+    Confidence, GraphEdge, LocalTrees, ModuleOrigin, PluginExtractRequest, ProjectRoot, RootMarker,
+    RuleId, ScopedDeclarations, Severity, UsedModule, WorkspaceDependencyBoundary,
+    add_parsed_imports, analyze_reachability, apply_resolution_to_graph, build_entry_roots,
+    build_graph_skeleton, discover_project_root, extract_manifest, extract_plugin_hints_with_parse,
+    load_config, parse_project_sources_with_cache, resolve_imports_for_analysis,
+    resolve_target_version,
 };
 use chokkin::internals::{DependencyRuleContext, RuleContext};
 use chokkin::{RuntimeOverrides, probe_project};
@@ -32,6 +33,8 @@ struct DepsInputs {
     resolution: chokkin::internals::ResolutionIndex,
     reachability: chokkin::internals::ReachabilityReport,
     workspace_inputs: Vec<chokkin::internals::WorkspaceMemberInputs>,
+    local: LocalTrees,
+    surface: Option<chokkin::internals::PublicSurface>,
 }
 
 fn load_deps(path: &Path, production: bool) -> DepsInputs {
@@ -54,7 +57,14 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         cache: None,
     })
     .expect("plugin hints");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
+    let entry = build_entry_roots(
+        &loaded.effective,
+        &manifest,
+        &sources,
+        &[],
+        &plugins,
+        production,
+    );
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -65,6 +75,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
     for reference in &plugin_refs {
         let _ = graph.intern_module(reference.module.clone(), ModuleOrigin::Unknown);
     }
+    let local = LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective);
     let resolution = resolve_imports_for_analysis(
         &loaded.effective,
         &manifest,
@@ -72,7 +83,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         &parse,
         &plugin_refs,
         &[],
-        &loaded.workspace_members,
+        &local,
         &BTreeMap::new(),
         &ScopedDeclarations::default(),
     );
@@ -82,7 +93,12 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
             .expect("reachability");
     let workspace_inputs = probe.workspace_inputs;
 
+    let surface = chokkin::internals::PublicSurface::resolve(
+        manifest.metadata.wheel_targets.as_ref(),
+        &sources.files,
+    );
     DepsInputs {
+        surface,
         manifest,
         config: loaded.effective,
         sources,
@@ -92,6 +108,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         resolution,
         reachability,
         workspace_inputs,
+        local,
     }
 }
 
@@ -128,10 +145,12 @@ fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::internals::De
                 graph: &inputs.graph,
                 sources: &inputs.sources,
                 parse: &inputs.parse,
+                surface: inputs.surface.as_ref(),
             },
             config: &inputs.config,
             strict,
             build_scripts: &BTreeMap::new(),
+            local: &inputs.local,
         },
         &inputs.manifest,
         &inputs.plugins,

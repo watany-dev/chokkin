@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::config::{EntrySpec, PluginId, ProjectMode};
-use crate::sources::FileContext;
+use crate::sources::{FileContext, PublicSurface};
 
 /// Where an entry root was discovered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +102,19 @@ impl EntryPlan {
         }
     }
 
+    /// Mode `path` is judged under once the root wheel's `surface` is known:
+    /// a file outside it has no outside caller, so a root-library file it does
+    /// not ship is judged as in app mode (R-05). A library member ships its own
+    /// wheel, so the root's surface does not apply to it (#515).
+    #[must_use]
+    pub fn surface_mode(&self, path: &str, surface: Option<&PublicSurface>) -> ProjectMode {
+        if !self.in_library_member(path) && surface.is_some_and(|surface| !surface.contains(path)) {
+            ProjectMode::App
+        } else {
+            self.mode_for(path)
+        }
+    }
+
     #[must_use]
     pub fn in_library_member(&self, path: &str) -> bool {
         self.library_members.iter().any(|member| {
@@ -156,4 +169,43 @@ pub(super) struct EntryCandidate {
     pub spec: EntrySpec,
     pub context: FileContext,
     pub origin: EntryOrigin,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(mode: ProjectMode) -> EntryPlan {
+        EntryPlan {
+            mode,
+            roots: Vec::new(),
+            warnings: Vec::new(),
+            library_members: vec!["libs/core".to_owned()],
+        }
+    }
+
+    #[test]
+    fn surface_mode_demotes_only_root_files_the_wheel_does_not_ship() {
+        let surface = PublicSurface {
+            files: ["src/acme/api.py".to_owned()].into(),
+        };
+        let library = plan(ProjectMode::Library);
+        let mode = |path| library.surface_mode(path, Some(&surface));
+        assert_eq!(mode("src/acme/api.py"), ProjectMode::Library);
+        assert_eq!(mode("tools/release.py"), ProjectMode::App);
+        assert_eq!(mode("libs/core/core/x.py"), ProjectMode::Library);
+        assert_eq!(
+            library.surface_mode("tools/release.py", None),
+            ProjectMode::Library
+        );
+        let app = plan(ProjectMode::App);
+        assert_eq!(
+            app.surface_mode("src/acme/api.py", Some(&surface)),
+            ProjectMode::App
+        );
+        assert_eq!(
+            app.surface_mode("libs/core/core/x.py", Some(&surface)),
+            ProjectMode::Library
+        );
+    }
 }
