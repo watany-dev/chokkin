@@ -268,12 +268,30 @@ fn provides(provided: &HashMap<String, bool>, module: &str) -> bool {
 }
 
 /// Dotted module names the files under `member_path` provide, by
-/// [`importable_modules`] from the member root.
+/// [`importable_modules`] from the member root or from any `src` directory
+/// below it (`dev/breeze/src/airflow_breeze` gives `airflow_breeze`). Wider
+/// than the resolver's roots: a missed module reports a used member unused.
 fn member_modules(member_path: &str, files: &[DiscoveredFile]) -> HashMap<String, bool> {
-    importable_modules(
-        files.iter().map(|file| file.path.as_str()),
-        &HashSet::from([member_path]),
-    )
+    let paths: Vec<&str> = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .filter(|path| {
+            member_path.is_empty()
+                || path
+                    .strip_prefix(member_path)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .collect();
+    let mut roots = HashSet::from([member_path]);
+    for path in &paths {
+        roots.extend(
+            path.match_indices('/')
+                .map(|(slash, _)| &path[..slash])
+                .filter(|dir| dir.len() > member_path.len())
+                .filter(|dir| *dir == "src" || dir.ends_with("/src")),
+        );
+    }
+    importable_modules(paths, &roots)
 }
 
 /// Treat `pytest11` plugins as used whenever pytest is, since pytest loads
@@ -505,6 +523,29 @@ mod tests {
         assert!(provides(&modules, "airflow.models.dag.DAG"));
         assert!(provides(&modules, "airflow.DAG"));
         assert!(!provides(&modules, "airflow.models.DAG"));
+    }
+
+    #[test]
+    fn member_modules_start_after_a_nested_src() {
+        // airflow's `dev` member keeps breeze under `dev/breeze/src`.
+        let files = [
+            python_file("dev/breeze/src/airflow_breeze/__init__.py"),
+            python_file("dev/breeze/src/airflow_breeze/cli.py"),
+            python_file("tools/src/other/__init__.py"),
+        ];
+        let modules = member_modules("dev", &files);
+        assert_eq!(modules.get("airflow_breeze"), Some(&true));
+        assert_eq!(modules.get("airflow_breeze.cli"), Some(&true));
+        assert!(modules.contains_key("breeze.src.airflow_breeze"));
+        assert!(!modules.contains_key("other"));
+        let root = member_modules("", &files);
+        assert_eq!(root.get("airflow_breeze.cli"), Some(&true));
+        assert_eq!(root.get("other"), Some(&true));
+        // A `src` above the member is not one of its roots.
+        let nested = [python_file("src/billing/billing/core.py")];
+        let modules = member_modules("src/billing", &nested);
+        assert_eq!(modules.get("billing.core"), Some(&true));
+        assert!(!modules.contains_key("billing.billing"));
     }
 
     fn python_file(path: &str) -> DiscoveredFile {
