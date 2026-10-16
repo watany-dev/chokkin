@@ -132,31 +132,38 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
 /// list with `parse_strings` (#965): the lines of every string are read
 /// together, so a comment is cut and a `\` continuation joins across list
 /// items too (`["requests \\", ">=2"]` is one requirement). A file
-/// reference stands for lines chokkin has not read, so it ends the run.
+/// reference or an unreadable item stands for lines chokkin has not read, so
+/// it ends the run.
 pub(super) fn dependency_items(value: &Value) -> DependencyItems {
-    let mut flat = DependencyItems {
+    let mut result = DependencyItems {
         items: Vec::new(),
         complete: true,
     };
-    flatten_into(value, &mut flat);
-    let mut result = DependencyItems {
-        items: Vec::with_capacity(flat.items.len()),
-        complete: flat.complete,
-    };
-    let mut run: Vec<&str> = Vec::new();
-    for item in &flat.items {
-        match item {
-            DependencyItem::Requirement(text) => run.push(text),
-            DependencyItem::RequirementsFile(path) => {
-                push_parsed_strings(&mut run, &mut result.items);
-                result
-                    .items
-                    .push(DependencyItem::RequirementsFile(path.clone()));
-            },
-        }
-    }
+    let mut run = Vec::new();
+    collect(value, &mut run, &mut result);
     push_parsed_strings(&mut run, &mut result.items);
     result
+}
+
+fn collect<'v>(value: &'v Value, run: &mut Vec<&'v str>, result: &mut DependencyItems) {
+    match value {
+        Value::Str(text) => run.push(text),
+        Value::List(items) => {
+            for item in items {
+                collect(item, run, result);
+            }
+        },
+        Value::RequirementsFile(path) => {
+            push_parsed_strings(run, &mut result.items);
+            result
+                .items
+                .push(DependencyItem::RequirementsFile(path.clone()));
+        },
+        Value::Dict { .. } | Value::Unknown => {
+            push_parsed_strings(run, &mut result.items);
+            result.complete = false;
+        },
+    }
 }
 
 fn push_parsed_strings(run: &mut Vec<&str>, items: &mut Vec<DependencyItem>) {
@@ -166,21 +173,6 @@ fn push_parsed_strings(run: &mut Vec<&str>, items: &mut Vec<DependencyItem>) {
             .map(|item| DependencyItem::Requirement(item.text)),
     );
     run.clear();
-}
-
-fn flatten_into(value: &Value, result: &mut DependencyItems) {
-    match value {
-        Value::Str(text) => result.items.push(DependencyItem::Requirement(text.clone())),
-        Value::List(items) => {
-            for item in items {
-                flatten_into(item, result);
-            }
-        },
-        Value::RequirementsFile(path) => result
-            .items
-            .push(DependencyItem::RequirementsFile(path.clone())),
-        Value::Dict { .. } | Value::Unknown => result.complete = false,
-    }
 }
 
 struct Evaluator<'a> {
@@ -1651,6 +1643,27 @@ mod props {
             texts(Value::Str("requests \\\n".to_owned())),
             ["requests \\"]
         );
+    }
+
+    /// An item chokkin cannot read stands for text it has not seen, so a
+    /// `\` before it joins nothing across it.
+    #[test]
+    fn unreadable_item_ends_the_continuation_run() {
+        let items = dependency_items(&Value::List(vec![
+            Value::Str("foo \\".to_owned()),
+            Value::Unknown,
+            Value::Str("bar".to_owned()),
+        ]));
+        assert!(!items.complete);
+        let texts: Vec<&str> = items
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                DependencyItem::Requirement(text) => Some(text.as_str()),
+                DependencyItem::RequirementsFile(_) => None,
+            })
+            .collect();
+        assert_eq!(texts, ["foo \\", "bar"]);
     }
 
     #[test]

@@ -19,12 +19,14 @@ pub(crate) struct SetuptoolsItem {
 /// line and drops blank and `#`-leading lines, `drop_comment` cuts the line
 /// at ` #` (a `#` with no space before it stays, unlike pip), and
 /// `join_continuation` appends the next line to a line ending in `\` with
-/// the `\` removed and no space inserted (`requests \` + `>=2` is
-/// `requests>=2`).
+/// the `\` and the character before it removed and the rest stripped
+/// (`requests \` + `>=2` is `requests>=2`, `requests\` + `>=2` is
+/// `request>=2`).
 ///
 /// setuptools drops an item whose last line ends in `\` with nothing to
 /// join. chokkin keeps it as written, so it is reported as an invalid
-/// requirement line (#928) instead of vanishing (ADR 0005).
+/// requirement line (#928) instead of vanishing (ADR 0005), unless a URL
+/// takes the `\` in (`pkg @ https://h/x.zip\` stays declared).
 pub(crate) fn setuptools_requirement_items<'a>(
     lines: impl IntoIterator<Item = &'a str>,
 ) -> Vec<SetuptoolsItem> {
@@ -38,9 +40,11 @@ pub(crate) fn setuptools_requirement_items<'a>(
     for (index, line) in lines.enumerate() {
         let item = match pending.take() {
             Some(mut item) => {
-                let head = item.text.strip_suffix('\\').unwrap_or(&item.text);
-                let head = strip_python(head);
-                item.text = format!("{head}{line}");
+                // `item[:-2].strip()`: the `\` and the character before it go.
+                let mut head = item.text.chars();
+                head.next_back();
+                head.next_back();
+                item.text = format!("{}{line}", strip_python(head.as_str()));
                 item
             },
             None => SetuptoolsItem {
@@ -94,6 +98,10 @@ mod tests {
         );
         // The comment goes before the join, so a commented `\` still joins.
         assert_eq!(texts("a \\ # c\nb"), [(0, "ab".to_owned())]);
+        // `join_continuation` also drops the character before the `\`.
+        assert_eq!(texts("requests\\\n>=2"), [(0, "request>=2".to_owned())]);
+        assert_eq!(texts("ab\\\\\ncd"), [(0, "abcd".to_owned())]);
+        assert_eq!(texts("a\\\n\\\nb"), [(0, "b".to_owned())]);
         // `str.strip()` also removes the information separators (#890).
         assert_eq!(
             texts("\x1f# note\n\x1f\nrich\x1f"),
