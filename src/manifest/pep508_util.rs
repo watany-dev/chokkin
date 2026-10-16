@@ -204,8 +204,9 @@ pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
 /// (`_looks_like_path` and `is_archive_file`, #963): it starts with `.`, a
 /// path separator follows its leading name token (`pkg/sub`, `/abs`, the
 /// drive `C:\pkg`), or the token is an archive name (`foo.whl`,
-/// `foo.whl[tests]`). `pkg >= 1/2` and `foo:bar` are not paths, and
-/// `foo.whl>=1` is a requirement named `foo.whl`, as in pip.
+/// `foo.whl[tests]`; pip's `_strip_extras` takes `[...]` only at the very
+/// end). `pkg >= 1/2` and `foo:bar` are not paths, and `foo.whl>=1` and
+/// `foo.whl[tests]>=1` are requirements named `foo.whl`, as in pip.
 #[must_use]
 pub(super) fn looks_like_pip_file(trimmed: &str) -> bool {
     let token = leading_name_token(trimmed);
@@ -505,6 +506,7 @@ mod tests {
             ("pkg >= 1/2", false),
             ("requests", false),
             ("foo.whl>=1", false),
+            ("foo.whl[tests]>=1", false),
             ("", false),
         ] {
             assert_eq!(looks_like_pip_file(raw), expected, "{raw:?}");
