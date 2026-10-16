@@ -34,6 +34,7 @@ struct DepsInputs {
     reachability: chokkin::internals::ReachabilityReport,
     workspace_inputs: Vec<chokkin::internals::WorkspaceMemberInputs>,
     local: LocalTrees,
+    surface: Option<chokkin::internals::PublicSurface>,
 }
 
 fn load_deps(path: &Path, production: bool) -> DepsInputs {
@@ -56,7 +57,14 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         cache: None,
     })
     .expect("plugin hints");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
+    let entry = build_entry_roots(
+        &loaded.effective,
+        &manifest,
+        &sources,
+        &[],
+        &plugins,
+        production,
+    );
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -85,7 +93,12 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
             .expect("reachability");
     let workspace_inputs = probe.workspace_inputs;
 
+    let surface = chokkin::internals::PublicSurface::resolve(
+        manifest.metadata.wheel_targets.as_ref(),
+        &sources.files,
+    );
     DepsInputs {
+        surface,
         manifest,
         config: loaded.effective,
         sources,
@@ -132,6 +145,7 @@ fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::internals::De
                 graph: &inputs.graph,
                 sources: &inputs.sources,
                 parse: &inputs.parse,
+                surface: inputs.surface.as_ref(),
             },
             config: &inputs.config,
             strict,

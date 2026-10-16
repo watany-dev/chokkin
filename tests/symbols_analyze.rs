@@ -30,6 +30,7 @@ struct SymbolInputs {
     resolution: chokkin::internals::ResolutionIndex,
     reachability: chokkin::internals::ReachabilityReport,
     entry: chokkin::internals::EntryPlan,
+    surface: Option<chokkin::internals::PublicSurface>,
 }
 
 fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
@@ -51,7 +52,14 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         cache: None,
     })
     .expect("plugin hints");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
+    let entry = build_entry_roots(
+        &loaded.effective,
+        &manifest,
+        &sources,
+        &[],
+        &plugins,
+        production,
+    );
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -81,6 +89,10 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, production)
             .expect("reachability");
 
+    let surface = chokkin::internals::PublicSurface::resolve(
+        manifest.metadata.wheel_targets.as_ref(),
+        &sources.files,
+    );
     SymbolInputs {
         manifest,
         sources,
@@ -90,6 +102,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         resolution,
         reachability,
         entry,
+        surface,
     }
 }
 
@@ -102,6 +115,7 @@ fn analyze_fixture(name: &str) -> Vec<chokkin::internals::IssueCandidate> {
             graph: &inputs.graph,
             sources: &inputs.sources,
             parse: &inputs.parse,
+            surface: inputs.surface.as_ref(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -244,6 +258,7 @@ fn reexport_imported_from_package_is_not_chk007() {
             graph: &inputs.graph,
             sources: &inputs.sources,
             parse: &inputs.parse,
+            surface: inputs.surface.as_ref(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -464,6 +479,7 @@ fn star_import_in_init_is_not_a_reexport() {
             graph: &inputs.graph,
             sources: &inputs.sources,
             parse: &inputs.parse,
+            surface: inputs.surface.as_ref(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -504,6 +520,7 @@ fn relative_package_import_counts_as_external_reference() {
             graph: &inputs.graph,
             sources: &inputs.sources,
             parse: &inputs.parse,
+            surface: inputs.surface.as_ref(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -540,6 +557,7 @@ fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::internals::IssueCan
             graph: &inputs.graph,
             sources: &inputs.sources,
             parse: &inputs.parse,
+            surface: inputs.surface.as_ref(),
         },
         &inputs.entry,
         &inputs.plugins,

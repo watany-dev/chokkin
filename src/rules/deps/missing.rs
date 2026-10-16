@@ -641,6 +641,7 @@ mod tests {
                     graph: &graph,
                     reachability: &crate::reachability::ReachabilityReport::default(),
                     parse: &parse,
+                    surface: None,
                 },
                 config: &config,
                 strict,

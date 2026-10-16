@@ -54,7 +54,14 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         cache: None,
     })
     .expect("plugin hints");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, production);
+    let entry = build_entry_roots(
+        &loaded.effective,
+        &manifest,
+        &sources,
+        &[],
+        &plugins,
+        production,
+    );
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {

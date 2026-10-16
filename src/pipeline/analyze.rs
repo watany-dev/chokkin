@@ -7,8 +7,7 @@ use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
 use crate::entry::{
-    EntryPlan, EntryWarning, add_member_manifest_roots, build_entry_roots, is_library_member,
-    mark_command_scripts_dev,
+    EntryPlan, EntryWarning, MemberEntryInput, build_entry_roots, mark_command_scripts_dev,
 };
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
@@ -219,23 +218,21 @@ fn run_analysis_core(
     mark_command_scripts_dev(&mut sources, &plugins);
     let sources = &sources;
 
+    let members: Vec<MemberEntryInput<'_>> = probe
+        .workspace_inputs
+        .iter()
+        .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources))
+        .collect();
     let mut entry = build_entry_roots(
         &probe.effective_config,
         &probe.manifest,
         sources,
+        &members,
         &plugins,
         production,
     );
     crate::entry::add_script_roots(&mut entry, &probe.scripts, sources, production);
     crate::entry::add_build_backend_roots(&mut entry, &parse, &sources.files);
-    add_member_manifest_roots(
-        &mut entry,
-        sources,
-        probe
-            .workspace_inputs
-            .iter()
-            .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
-    );
     let entry_warnings = entry_warnings(&entry, &probe.sources);
     let skipped_entries: Vec<String> = entry_warnings
         .iter()
@@ -245,14 +242,6 @@ fn run_analysis_core(
         })
         .collect();
     warnings.extend(entry_warnings);
-    if probe.effective_config.mode == ProjectMode::Auto {
-        entry.library_members = probe
-            .workspace_inputs
-            .iter()
-            .filter(|input| is_library_member(&input.manifest, &input.sources))
-            .map(|input| input.member.path.clone())
-            .collect();
-    }
 
     let mut graph = build_analysis_graph(probe, sources, &parse, &plugins)?;
 
@@ -290,11 +279,12 @@ fn run_analysis_core(
 
     let mut reachability =
         analyze_reachability(&mut graph, sources, &entry, &plugins, &parse, production)?;
-    if let Some(surface) = PublicSurface::resolve(
+    let surface = PublicSurface::resolve(
         probe.manifest.metadata.wheel_targets.as_ref(),
         &sources.files,
-    ) {
-        apply_public_surface(&mut reachability, &surface, &entry);
+    );
+    if let Some(surface) = &surface {
+        apply_public_surface(&mut reachability, surface, &entry);
     }
     // CHK006/CHK007 need every member's surface, app members too (#678). A
     // named member without wheel targets ships its layout's packages (#733);
@@ -341,6 +331,7 @@ fn run_analysis_core(
         graph: &graph,
         sources,
         parse: &parse,
+        surface: surface.as_ref(),
     };
     let deps = crate::rules::deps::reconcile_with_context(
         &DependencyRuleContext {

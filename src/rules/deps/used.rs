@@ -427,6 +427,7 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &PluginHints {
                 contributions: Vec::new(),
@@ -694,6 +695,7 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &HashSet::from(["src/app.py"]),
             &boundaries,
@@ -750,6 +752,7 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &HashSet::from(["e2e/app.py"]),
             &[],
@@ -799,6 +802,7 @@ mod tests {
                 graph: &graph,
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
+                surface: None,
             },
             &HashSet::new(),
             &[],
@@ -817,11 +821,7 @@ mod tests {
         let mut report = ReachabilityReport::default();
         report.unreachable = vec![
             orphan("public.py", ProjectMode::Library, Confidence::Maybe),
-            orphan(
-                "outside_wheel.py",
-                ProjectMode::Library,
-                Confidence::Certain,
-            ),
+            orphan("outside_wheel.py", ProjectMode::App, Confidence::Certain),
             orphan("app_orphan.py", ProjectMode::App, Confidence::Maybe),
         ];
         let reachable = HashSet::from(["main.py"]);

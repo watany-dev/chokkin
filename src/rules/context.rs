@@ -2,8 +2,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    graph::ProjectGraph, parser::ParseSummary, reachability::ReachabilityReport,
-    resolver::ResolutionIndex, sources::DiscoveredSources,
+    graph::ProjectGraph,
+    parser::ParseSummary,
+    reachability::ReachabilityReport,
+    resolver::ResolutionIndex,
+    sources::{DiscoveredSources, PublicSurface},
 };
 
 /// Earlier pipeline outputs read by dependency (step 10) and symbol (step 11) rules.
@@ -18,6 +21,9 @@ pub struct RuleContext<'a> {
     pub sources: &'a DiscoveredSources,
     /// Step 6 parse output.
     pub parse: &'a ParseSummary,
+    /// Files the root wheel ships; `None` without wheel targets or when they
+    /// match no file (R-05). Resolved once per run.
+    pub surface: Option<&'a PublicSurface>,
 }
 
 /// Settings specific to dependency rules; symbol rules do not consume them.

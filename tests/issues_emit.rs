@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use chokkin::internals::analyze_with_context;
 use chokkin::internals::reconcile_with_context;
 use chokkin::internals::{
-    Confidence, LocalTrees, ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolutionIndex,
-    RootMarker, RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports,
+    Confidence, LocalTrees, ModuleOrigin, PluginExtractRequest, ProjectRoot, PublicSurface,
+    ResolutionIndex, RootMarker, RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports,
     analyze_reachability, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
     collect_gaps, discover_project_root, discover_sources, emit_issues, extract_manifest,
     extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
@@ -59,7 +59,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         cache: None,
     })
     .expect("plugin hints");
-    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &plugins, false);
+    let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &[], &plugins, false);
 
     let mut graph = build_graph_skeleton(&manifest, &sources).expect("graph skeleton");
     for module in &parse.modules {
@@ -84,12 +84,14 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     apply_resolution_to_graph(&mut graph, &resolution).expect("apply resolution");
     let reachability = analyze_reachability(&mut graph, &sources, &entry, &plugins, &parse, false)
         .expect("reachability");
+    let surface = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
     let rules = RuleContext {
         resolution: &resolution,
         reachability: &reachability,
         graph: &graph,
         sources: &sources,
         parse: &parse,
+        surface: surface.as_ref(),
     };
     let deps = reconcile_with_context(
         &DependencyRuleContext {

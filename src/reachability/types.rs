@@ -32,16 +32,17 @@ pub struct UnreachableFile {
     /// Upper bound on issue confidence for Step 12.
     pub max_confidence: Confidence,
     /// Mode the file was scored under; a library workspace member's own
-    /// mode can differ from the project's.
+    /// mode can differ from the project's, and a library file its wheel does
+    /// not ship is scored as in app mode (R-05).
     pub mode: ProjectMode,
 }
 
 impl UnreachableFile {
     /// Whether a caller of the library may import the file: an orphan still
-    /// capped at `Maybe` after the wheel surfaces re-scored the rest (R-05).
+    /// judged as library after the wheel surfaces re-scored the rest (R-05).
     #[must_use]
     pub(crate) fn callers_may_import(&self) -> bool {
-        self.mode == ProjectMode::Library && self.max_confidence == Confidence::Maybe
+        self.mode == ProjectMode::Library
     }
 }
 
