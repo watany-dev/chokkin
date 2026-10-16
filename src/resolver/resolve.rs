@@ -7,9 +7,9 @@ use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::{ImportContext, ParseSummary, import_context_for_file};
 use crate::plugins::{ModuleReference, SysPathImport};
-use crate::sources::{DiscoveredFile, DiscoveredSources, path_to_module};
+use crate::sources::{DiscoveredSources, LocalTrees, path_to_module};
 
-use super::first_party::{is_first_party_import, is_workspace_import, path_source_imports};
+use super::first_party::is_first_party_import;
 use super::maps::{ImportMap, build_binary_map};
 use super::pytest_path::PytestImportPaths;
 use super::stdlib::StdlibRange;
@@ -36,8 +36,8 @@ pub struct ScopedDeclarations {
 /// root through the script block or member manifest owning the file.
 /// A script's `requires-python` decides which modules are stdlib for the
 /// imports in that file; every other file uses the project range.
-/// `workspace_members` marks cross-member imports as first-party so workspace
-/// packages do not become false missing-dependency findings.
+/// `local` marks cross-member imports as first-party so workspace packages
+/// do not become false missing-dependency findings.
 /// `sys_path_imports` lets an importer resolve through its import's
 /// `sys.path` edits.
 #[must_use]
@@ -49,7 +49,7 @@ pub fn resolve_imports_for_analysis(
     parse: &ParseSummary,
     plugin_refs: &[ModuleReference],
     sys_path_imports: &[SysPathImport],
-    workspace_members: &[ResolvedWorkspaceMember],
+    local: &LocalTrees,
     script_targets: &BTreeMap<String, StdlibRange>,
     scoped: &ScopedDeclarations,
 ) -> ResolutionIndex {
@@ -59,8 +59,7 @@ pub fn resolve_imports_for_analysis(
         .map_or_else(TargetVersion::default_py311, Clone::clone);
     let stdlib = StdlibRange::new(&target, manifest.metadata.requires_python.as_deref());
 
-    let import_map = ImportMap::build(config)
-        .with_local_sources(path_source_imports(&manifest.root.path, &manifest.uv));
+    let import_map = ImportMap::build(config).with_local_sources(local.path_imports().clone());
     let mut warnings = Vec::new();
     let venv_index = load_venv_index(&manifest.root, &mut warnings);
     let binary_resolutions = build_binary_map(config, &venv_index);
@@ -71,9 +70,9 @@ pub fn resolve_imports_for_analysis(
         parse,
         sys_path_imports,
     );
-    let local_modules = local_modules(&sources.files, workspace_members);
+    let local_modules = local.modules(&sources.files);
     let indexed_roots = indexed_roots(sources);
-    let owners = MemberOwners::new(workspace_members);
+    let owners = MemberOwners::new(local.members());
     let declared = DeclaredNames::new(manifest);
 
     for module in &parse.modules {
@@ -107,8 +106,7 @@ pub fn resolve_imports_for_analysis(
                 sources,
                 manifest,
                 &declared,
-                config,
-                workspace_members,
+                local,
                 &owners,
                 &import_map,
                 &venv_index.imports,
@@ -136,8 +134,7 @@ pub fn resolve_imports_for_analysis(
                 sources,
                 manifest,
                 &declared,
-                config,
-                workspace_members,
+                local,
                 &owners,
                 &import_map,
                 &venv_index.imports,
@@ -178,8 +175,7 @@ pub fn resolve_imports_for_analysis(
                 sources,
                 manifest,
                 &declared,
-                config,
-                workspace_members,
+                local,
                 &owners,
                 &import_map,
                 &venv_index.imports,
@@ -214,8 +210,7 @@ pub fn resolve_imports_for_analysis(
             sources,
             manifest,
             &declared,
-            config,
-            workspace_members,
+            local,
             &owners,
             &import_map,
             &venv_index.imports,
@@ -307,14 +302,13 @@ fn resolve_import_site(
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     declared: &DeclaredNames<'_>,
-    config: &ChokkinConfig,
-    workspace_members: &[ResolvedWorkspaceMember],
+    local: &LocalTrees,
     owners: &MemberOwners<'_>,
     import_map: &ImportMap,
     venv_imports: &BTreeMap<String, Vec<String>>,
     scoped: &ScopedDeclarations,
     pytest_paths: &PytestImportPaths,
-    local_modules: &BTreeSet<String>,
+    local_modules: &HashMap<String, bool>,
     indexed_roots: &BTreeSet<String>,
     warnings: &mut Vec<ResolveWarning>,
     root_cache: &mut RootCache,
@@ -346,8 +340,7 @@ fn resolve_import_site(
                     sources,
                     manifest,
                     declared,
-                    config,
-                    workspace_members,
+                    local,
                     import_map,
                     venv_imports,
                     warnings,
@@ -365,7 +358,9 @@ fn resolve_import_site(
             // A first-party root may share its namespace with a distribution
             // (`poetry` and `poetry.core`); the local tree wins when it has the
             // module itself.
-            (ModuleOrigin::FirstParty, Some((module, ..))) if local_modules.contains(module) => {
+            (ModuleOrigin::FirstParty, Some((module, ..)))
+                if local_modules.contains_key(module) =>
+            {
                 core
             },
             (_, Some((_, distributions, confidence))) => RootResolution {
@@ -460,8 +455,7 @@ fn resolve_import_root(
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
     declared: &DeclaredNames<'_>,
-    config: &ChokkinConfig,
-    workspace_members: &[ResolvedWorkspaceMember],
+    local: &LocalTrees,
     import_map: &ImportMap,
     venv_imports: &BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
@@ -482,12 +476,7 @@ fn resolve_import_root(
         };
     }
 
-    if is_workspace_import(
-        root_name,
-        workspace_members,
-        manifest.uv_workspace.as_ref(),
-        config,
-    ) {
+    if local.names_member(root_name) {
         return RootResolution {
             origin: ModuleOrigin::FirstParty,
             distribution: None,
@@ -661,55 +650,6 @@ fn affix_stripped(name: &str) -> impl Iterator<Item = &str> {
         .filter(|stripped| {
             !stripped.is_empty() && !stripped.starts_with('-') && !stripped.ends_with('-')
         })
-}
-
-/// Every module and package importable from the project root or a workspace
-/// member, in flat or `src/` layout. Deeper matches such as
-/// `tests/fixtures/vendor/poetry/core/` are not importable as `poetry.core`.
-fn local_modules(
-    files: &[DiscoveredFile],
-    workspace_members: &[ResolvedWorkspaceMember],
-) -> BTreeSet<String> {
-    let members: HashSet<&str> = workspace_members
-        .iter()
-        .map(|member| member.path.as_str())
-        .collect();
-    let mut modules = BTreeSet::new();
-    for file in files {
-        let file = file.path.replace('\\', "/");
-        // Member roots by hash lookup per ancestor, not a prefix test against
-        // every member (#592).
-        let mut starts = vec![0];
-        if file.starts_with("src/") {
-            starts.push("src/".len());
-        }
-        for (slash, _) in file.match_indices('/') {
-            let dir = &file[..slash];
-            if members.contains(dir)
-                || dir
-                    .strip_suffix("/src")
-                    .is_some_and(|member| members.contains(member))
-            {
-                starts.push(slash + 1);
-            }
-        }
-        for rest in starts.into_iter().map(|start| &file[start..]) {
-            let mut parts: Vec<&str> = rest.split('/').collect();
-            let leaf = parts.pop().and_then(|leaf| {
-                leaf.strip_suffix(".py")
-                    .or_else(|| leaf.strip_suffix(".pyi"))
-            });
-            let mut module = String::new();
-            for part in parts.into_iter().chain(leaf) {
-                if !module.is_empty() {
-                    module.push('.');
-                }
-                module.push_str(part);
-                modules.insert(module.clone());
-            }
-        }
-    }
-    modules
 }
 
 /// Import roots of the modules [`path_to_module`] names, the same names
@@ -888,46 +828,6 @@ mod tests {
         assert_eq!(owner("packages/api"), Some("api".to_owned()));
         assert_eq!(owner("packages/api2/app.py"), None);
         assert_eq!(owner("src/app.py"), None);
-    }
-
-    #[test]
-    fn local_modules_cover_flat_src_and_member_roots() {
-        let file = |path: &str| DiscoveredFile {
-            path: path.to_owned(),
-            kind: crate::sources::FileKind::Python,
-            context: crate::sources::FileContext::Runtime,
-        };
-        let modules = local_modules(
-            &[
-                file("acme/core.py"),
-                file("src/pkg/stub.pyi"),
-                file("packages/api/src/api/views.py"),
-                file("packages\\api\\plugins\\plug\\hooks.py"),
-                file("README.md"),
-            ],
-            &[
-                member("api", "packages/api"),
-                member("plugins", "packages/api/plugins"),
-            ],
-        );
-        for expected in [
-            "acme",
-            "acme.core",
-            "pkg",
-            "pkg.stub",
-            "api",
-            "api.views",
-            "plug.hooks",
-            "plugins.plug.hooks",
-        ] {
-            assert!(modules.contains(expected), "{expected}: {modules:?}");
-        }
-        assert!(
-            modules
-                .iter()
-                .all(|module| !module.is_empty() && !module.starts_with('.')),
-            "{modules:?}"
-        );
     }
 
     #[test]

@@ -645,6 +645,7 @@ mod tests {
                 config: &config,
                 strict,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::default(),
             },
             &HashSet::from([FILE]),
             has_lockfile,

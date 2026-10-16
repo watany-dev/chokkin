@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use chokkin::internals::RuleContext;
 use chokkin::internals::analyze_with_context;
 use chokkin::internals::{
-    Confidence, PluginExtractRequest, ProjectRoot, RootMarker, RuleId, ScopedDeclarations,
-    Severity, add_parsed_imports, analyze_reachability, apply_resolution_to_graph,
-    build_entry_roots, build_graph_skeleton, discover_project_root, discover_sources,
-    extract_manifest, extract_plugin_hints_with_parse, load_config,
+    Confidence, LocalTrees, PluginExtractRequest, ProjectRoot, RootMarker, RuleId,
+    ScopedDeclarations, Severity, add_parsed_imports, analyze_reachability,
+    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, discover_project_root,
+    discover_sources, extract_manifest, extract_plugin_hints_with_parse, load_config,
     parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
 };
 
@@ -72,7 +72,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         &parse,
         &plugin_refs,
         &[],
-        &loaded.workspace_members,
+        &LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective),
         &BTreeMap::new(),
         &ScopedDeclarations::default(),
     );

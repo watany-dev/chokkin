@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use chokkin::internals::StdlibRange;
 use chokkin::internals::{
-    ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolveConfidence, RootMarker,
+    LocalTrees, ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolveConfidence, RootMarker,
     ScopedDeclarations, discover_project_root, discover_sources, extract_manifest,
     extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
     resolve_imports_for_analysis, resolve_target_version,
@@ -57,7 +57,7 @@ fn resolve_path_scoped(
         &parse,
         &plugin_refs,
         &[],
-        &loaded.workspace_members,
+        &LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective),
         &BTreeMap::new(),
         scoped,
     )
@@ -188,7 +188,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
         &parse,
         &[],
         &[],
-        &loaded.workspace_members,
+        &LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective),
         &script_targets,
         &chokkin::internals::ScopedDeclarations::default(),
     );

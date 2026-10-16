@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use chokkin::internals::{
-    Confidence, PluginExtractRequest, ProjectMode, ProjectRoot, PublicSurface, RootMarker,
-    ScopedDeclarations, TracePath, TraceStep, add_parsed_imports, analyze_reachability,
+    Confidence, LocalTrees, PluginExtractRequest, ProjectMode, ProjectRoot, PublicSurface,
+    RootMarker, ScopedDeclarations, TracePath, TraceStep, add_parsed_imports, analyze_reachability,
     apply_public_surface, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
     discover_project_root, discover_sources, extract_manifest, extract_plugin_hints_with_parse,
     load_config, parse_project_sources_with_cache, resolve_imports_for_analysis,
@@ -75,7 +75,7 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         &parse,
         &plugin_refs,
         &[],
-        &loaded.workspace_members,
+        &LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective),
         &BTreeMap::new(),
         &ScopedDeclarations::default(),
     );

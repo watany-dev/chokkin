@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use chokkin::internals::analyze_with_context;
 use chokkin::internals::reconcile_with_context;
 use chokkin::internals::{
-    Confidence, ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolutionIndex, RootMarker,
-    RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports, analyze_reachability,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, collect_gaps,
-    discover_project_root, discover_sources, emit_issues, extract_manifest,
+    Confidence, LocalTrees, ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolutionIndex,
+    RootMarker, RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports,
+    analyze_reachability, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
+    collect_gaps, discover_project_root, discover_sources, emit_issues, extract_manifest,
     extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
     resolve_imports_for_analysis, resolve_target_version,
 };
@@ -77,7 +77,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &parse,
         &plugin_refs,
         &[],
-        &loaded.workspace_members,
+        &LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective),
         &BTreeMap::new(),
         &ScopedDeclarations::default(),
     );
@@ -97,6 +97,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
             config: &loaded.effective,
             strict: strict_deps,
             build_scripts: &BTreeMap::new(),
+            local: &LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective),
         },
         &manifest,
         &plugins,

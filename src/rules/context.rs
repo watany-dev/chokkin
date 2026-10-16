@@ -31,4 +31,6 @@ pub struct DependencyRuleContext<'a> {
     /// Root-relative build script → normalized `[build-system].requires` of
     /// its manifest (#735).
     pub build_scripts: &'a BTreeMap<String, BTreeSet<String>>,
+    /// The root's workspace members and local `[tool.uv.sources]` trees.
+    pub local: &'a crate::sources::LocalTrees,
 }

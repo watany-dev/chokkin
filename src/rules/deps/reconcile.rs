@@ -95,7 +95,13 @@ fn reconcile_project(
     let mut used = collect_used_distributions(context, plugins, &usage);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
-    mark_workspace_source_distributions(manifest, context, &usage, workspace_boundaries, &mut used);
+    mark_workspace_source_distributions(
+        manifest,
+        dependency,
+        &usage,
+        workspace_boundaries,
+        &mut used,
+    );
 
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());
@@ -438,6 +444,7 @@ mod tests {
                 config: &config,
                 strict: false,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,
@@ -495,6 +502,7 @@ mod tests {
                 config: &config,
                 strict: false,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,
@@ -564,6 +572,7 @@ mod tests {
                 config: &config,
                 strict: true,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,
@@ -645,6 +654,7 @@ mod tests {
                 config: &config,
                 strict: false,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,

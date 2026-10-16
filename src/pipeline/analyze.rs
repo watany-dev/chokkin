@@ -274,7 +274,7 @@ fn run_analysis_core(
         &parse,
         &plugin_refs,
         &sys_path_imports,
-        &probe.workspace_members,
+        &probe.local_trees,
         &script_targets,
         &scoped_declarations(probe),
     );
@@ -348,6 +348,7 @@ fn run_analysis_core(
             config: &probe.effective_config,
             strict,
             build_scripts: &probe.build_scripts,
+            local: &probe.local_trees,
         },
         &probe.manifest,
         &plugins,
@@ -555,7 +556,7 @@ fn uninventoried_member_files(probe: &ProbeReport) -> Vec<DiscoveredFile> {
         .collect();
     let mut files = Vec::new();
     for input in &probe.workspace_inputs {
-        if local_source_member(&probe.manifest, &input.manifest).is_none() {
+        if local_source_member(&probe.manifest, &probe.local_trees, &input.manifest).is_none() {
             continue;
         }
         for file in &input.sources.files {
