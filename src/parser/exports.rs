@@ -12,8 +12,8 @@ use super::types::{Exports, ParseDiagnostic, ParseSeverity};
 /// A literal assignment replaces the list; a later literal `+=`, `.extend`,
 /// `.append`, `.insert` or `__all__ + [...]` adds to it (#567, #876). A
 /// block's paths are read one by one and joined as the union of their names
-/// (#906). Any other update leaves the result [`Exports::Partial`] or
-/// [`Exports::Unknown`] (ADR 0005).
+/// (#906); a loop adds its literal additions once (#875). Any other update
+/// leaves the result [`Exports::Partial`] or [`Exports::Unknown`] (ADR 0005).
 pub(super) fn extract_exports(
     stmts: &[Stmt],
     lines: &LineIndex,
@@ -90,6 +90,11 @@ enum Scope {
     /// Module level, blocks included: each path through it runs once, in
     /// order.
     Module,
+    /// A `for` / `while` body or `else` at module level, which runs any
+    /// number of times and may `break` anywhere: additions are read, since
+    /// adding a literal once or more gives the same names, but a rebinding
+    /// is not (#875).
+    Loop,
     /// Function bodies with `global __all__`: they run only when called, so
     /// no update there is read.
     Opaque,
@@ -172,16 +177,27 @@ impl Reader<'_> {
             Stmt::For(ast::StmtFor { body, orelse, .. })
             | Stmt::While(ast::StmtWhile { body, orelse, .. }) => {
                 let mut ran = state.clone();
-                self.body(body, scope.max(Scope::Opaque), &mut ran);
-                self.body(orelse, scope.max(Scope::Opaque), &mut ran);
+                self.body(body, scope.max(Scope::Loop), &mut ran);
+                self.body(orelse, scope.max(Scope::Loop), &mut ran);
                 *state = std::mem::take(state).join(ran, line);
             },
+            // Like `if` / `elif`: no case runs unless one always matches.
             Stmt::Match(stmt) => {
-                let mut ran = state.clone();
+                let before = state.clone();
+                let exhaustive = stmt
+                    .cases
+                    .iter()
+                    .any(|case| case.guard.is_none() && case.pattern.is_irrefutable());
+                let mut matched = (!exhaustive).then(|| before.clone());
                 for case in &stmt.cases {
-                    self.body(&case.body, scope.max(Scope::Opaque), &mut ran);
+                    let mut branch = before.clone();
+                    self.body(&case.body, scope, &mut branch);
+                    matched = Some(match matched {
+                        Some(matched) => matched.join(branch, line),
+                        None => branch,
+                    });
                 }
-                *state = std::mem::take(state).join(ran, line);
+                *state = matched.unwrap_or(before);
             },
             // An `export` decorator appending `fn.__name__` is the usual case.
             // `global` is read from the function's own statements only: one
@@ -222,7 +238,7 @@ fn apply(update: AllUpdate, scope: Scope, state: &mut State) -> Result<(), ()> {
             };
             return Ok(());
         },
-        (Scope::Module, AllUpdate::Add(names)) => names,
+        (Scope::Module | Scope::Loop, AllUpdate::Add(names)) => names,
         // An unread rebinding keeps the names read so far until gaps demote
         // findings (ADR 0005 step 3): rebuilding the list (`sorted(__all__)`)
         // keeps them, and dropping them would report them as CHK006.
@@ -440,17 +456,18 @@ mod tests {
     }
 
     /// An update that is not read keeps the names read so far and marks the
-    /// list partial: a non-literal rebinding, a block assignment, a mutation
-    /// in a loop, `match`, function or class body, a non-literal addition, or
-    /// a method that may add.
+    /// list partial: a non-literal rebinding, a rebinding in a loop, a
+    /// mutation in a function or class body, a non-literal addition, or a
+    /// method that may add.
     #[test]
     fn unread_updates_make_the_list_partial() {
         for source in [
             "if WIN:\n    __all__ = sorted(names)\n",
             "try:\n    import x\nexcept ImportError:\n    __all__ = __all__ + names\n",
             "for name in names:\n    __all__.append(name)\n",
-            "while more():\n    __all__ += [\"x\"]\nelse:\n    pass\n",
-            "match sys.platform:\n    case \"win32\":\n        __all__ += [\"win\"]\n",
+            "for name in names:\n    __all__ = [\"x\"]\n",
+            "while more():\n    pass\nelse:\n    __all__ = __all__ + names\n",
+            "match sys.platform:\n    case \"win32\":\n        __all__ = sorted(names)\n",
             "def export(fn):\n    __all__.append(fn.__name__)\n    return fn\n",
             "if X:\n    def f():\n        __all__.append(\"f\")\n",
             "def f():\n    global __all__; __all__ = [\"g\"]\n",
@@ -566,6 +583,43 @@ mod tests {
         ] {
             assert_eq!(read(source), (partial(names), vec![1]), "{source}");
         }
+    }
+
+    /// Literal additions in a loop body or `else` are read once: a loop adds
+    /// the same names however often it runs. `match` cases are paths like
+    /// `if` branches (#875).
+    #[test]
+    fn reads_loops_and_match() {
+        for (source, names) in [
+            (
+                "__all__ = [\"foo\"]\nmatch sys.platform:\n    case \"win32\":\n        \
+                 __all__ += [\"win_only\"]\n",
+                &["foo", "win_only"][..],
+            ),
+            (
+                "__all__ = [\"foo\"]\nfor name in (\"a\", \"b\"):\n    if X:\n        \
+                 __all__.append(\"a\")\n        break\nwhile more():\n    pass\nelse:\n    \
+                 __all__.extend([\"b\"])\n",
+                &["foo", "a", "b"],
+            ),
+            (
+                "match kind:\n    case 1:\n        __all__ = [\"a\"]\n    case _:\n        \
+                 __all__ = [\"b\"]\n",
+                &["a", "b"],
+            ),
+            (
+                "__all__ = [\"old\"]\nmatch kind:\n    case 1:\n        __all__ = [\"a\"]\n    \
+                 case x if x:\n        __all__ = [\"b\"]\n",
+                &["old", "a", "b"],
+            ),
+        ] {
+            assert_eq!(read(source), (known(names), vec![]), "{source}");
+        }
+        // No case matches, so `__all__` may stay unbound.
+        assert_eq!(
+            read("match kind:\n    case 1:\n        __all__ = [\"a\"]\n"),
+            (partial(&["a"]), vec![1])
+        );
     }
 
     /// One path the parser cannot read leaves nothing usable when no list

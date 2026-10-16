@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ["Client"]` exports both instead of leaving the list partial or unknown. A
   block that assigns `__all__` on some paths only, with no list before it,
   leaves the list partial with a warning that `__all__` may be unset (#906).
+- Literal additions to `__all__` inside `for` / `while` bodies and their
+  `else`, and literal assignments and additions in `match` cases, are read,
+  so `match sys.platform: case "win32": __all__ += ["win_only"]` exports
+  `win_only` instead of leaving the list partial (#875).
 - `Migration` in a module of a Django app's `migrations` package is no longer
   CHK006: Django's migration loader reads it by name (#926).
 - Relative imports in packages the layout names no module for (Django's
