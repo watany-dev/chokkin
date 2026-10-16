@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__all__.insert(i, "name")` add their literal names to `__all__` like `+=`
   and `.append` do, instead of leaving the list partial with an
   `unsupported __all__ assignment form` warning (#876).
+- A literal `__all__` assignment inside `if` / `try` / `with` is read: each
+  path through the block is followed and the paths join as the union of their
+  names, so `try: __all__ = ["Client", "Auth"] except ImportError: __all__ =
+  ["Client"]` exports both instead of leaving the list partial or unknown. A
+  block that assigns `__all__` on some paths only, with no list before it,
+  leaves the list partial with a warning that `__all__` may be unset (#906).
 - `Migration` in a module of a Django app's `migrations` package is no longer
   CHK006: Django's migration loader reads it by name (#926).
 - Relative imports in packages the layout names no module for (Django's
