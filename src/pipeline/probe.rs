@@ -24,7 +24,7 @@ use crate::plugins::{
 };
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
-    DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, MemberLayout,
+    DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, LocalTrees, MemberLayout,
     ProjectLayout, SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
     unpackaged_module_dirs,
 };
@@ -59,6 +59,8 @@ pub struct ProbeReport {
     /// Whether `workspace_members` were inferred from nested `pyproject.toml`
     /// files rather than declared (#488).
     pub auto_workspace: bool,
+    /// The members and `[tool.uv.sources]` trees the root imports locally.
+    pub local_trees: LocalTrees,
     /// PEP 723 scripts among the discovered Python files.
     pub scripts: Vec<InlineScript>,
     /// Build scripts hatchling runs (#735), root-relative, with the normalized
@@ -209,6 +211,7 @@ pub(super) fn probe_project_with_cache(
         });
     }
     let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
+    let local_trees = LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective);
 
     Ok(ProbeReport {
         version: VERSION,
@@ -221,6 +224,7 @@ pub(super) fn probe_project_with_cache(
         workspace_members: loaded.workspace_members,
         workspace_inputs,
         auto_workspace: loaded.auto_workspace,
+        local_trees,
         scripts,
         build_scripts,
         plugin_activations,

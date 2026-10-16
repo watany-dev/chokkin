@@ -80,6 +80,7 @@ fn django_manage_is_entry_with_plugin_origins() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -105,6 +106,7 @@ fn fastapi_asgi_is_auto_detected() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -123,6 +125,7 @@ fn library_only_resolves_library_mode() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -138,6 +141,7 @@ fn setup_py_without_static_name_resolves_library_mode() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -154,6 +158,7 @@ fn poetry_only_name_resolves_library_mode() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -168,6 +173,7 @@ fn explicit_config_entry_merges_with_auto() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -193,6 +199,7 @@ fn missing_config_entry_emits_warning() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -212,6 +219,7 @@ fn production_excludes_test_context_entries() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         true,
     );
@@ -230,6 +238,7 @@ fn manifest_script_resolves_to_module_file() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -263,6 +272,7 @@ fn library_roots_mark_subpackages_below_the_package_init() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -324,6 +334,7 @@ fn commands_running_scripts_by_path_are_dev_entries() {
         &inputs.config,
         &inputs.manifest,
         &inputs.sources,
+        &[],
         &inputs.plugins,
         false,
     );
@@ -345,5 +356,60 @@ fn commands_running_scripts_by_path_are_dev_entries() {
             ("task-sdk/dev/gen.py", FileContext::Dev),
             ("tools/harness.py", FileContext::Dev),
         ]
+    );
+}
+
+#[test]
+fn workspace_members_add_entry_roots_and_library_members() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    let write = |rel: &str, contents: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    };
+    write(
+        "pyproject.toml",
+        "[tool.uv.workspace]\nmembers = [\"libs/core\", \"apps/cli\"]\n",
+    );
+    write(
+        "libs/core/pyproject.toml",
+        "[project]\nname = \"core\"\nversion = \"0\"\n",
+    );
+    write("libs/core/src/core/__init__.py", "");
+    write(
+        "apps/cli/pyproject.toml",
+        "[project]\nname = \"cli\"\nversion = \"0\"\n\n[project.scripts]\ncli = \"cli.main:run\"\n",
+    );
+    write("apps/cli/src/cli/__init__.py", "");
+    write("apps/cli/src/cli/main.py", "def run():\n    pass\n");
+
+    let inputs = load_pipeline(root);
+    let core = load_pipeline(&root.join("libs/core"));
+    let cli = load_pipeline(&root.join("apps/cli"));
+    let members = [
+        ("libs/core", &core.manifest, &core.sources),
+        ("apps/cli", &cli.manifest, &cli.sources),
+    ];
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &members,
+        &inputs.plugins,
+        false,
+    );
+
+    assert_eq!(plan.library_members, ["libs/core"]);
+    let script = plan
+        .roots
+        .iter()
+        .find(|root| root.path == "apps/cli/src/cli/main.py")
+        .unwrap_or_else(|| panic!("{:#?}", entry_paths(&plan)));
+    assert_eq!(script.symbols.iter().collect::<Vec<_>>(), ["run"]);
+    assert!(
+        matches!(script.origins.as_slice(), [EntryOrigin::Manifest { .. }]),
+        "{:#?}",
+        script.origins
     );
 }

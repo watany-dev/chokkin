@@ -448,6 +448,7 @@ mod tests {
             graph: &graph,
             sources: &sources,
             parse: &parse,
+            surface: None,
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,
@@ -565,6 +566,7 @@ mod tests {
             graph: &graph,
             sources: &sources,
             parse: &parse,
+            surface: None,
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,

@@ -115,20 +115,18 @@ pub fn analyze_reachability(
 ///
 /// Library mode caps orphans at `Maybe` because an outside caller may import
 /// them; a file outside the distributed packages has no such caller, so it is
-/// scored as in app mode. The surface is the root distribution's, so files of
-/// library workspace members, which ship in their own wheels, keep `Maybe`.
+/// scored as in app mode ([`EntryPlan::surface_mode`]). The surface is the
+/// root distribution's, so files of library workspace members, which ship in
+/// their own wheels, keep `Maybe`.
 pub fn apply_public_surface(
     report: &mut ReachabilityReport,
     surface: &PublicSurface,
     entry: &EntryPlan,
 ) {
-    if entry.mode != ProjectMode::Library {
-        return;
-    }
-    let confidence = confidence_for_unreachable(ProjectMode::App);
     for file in report.unreachable.iter_mut().chain(&mut report.unread) {
-        if !surface.contains(&file.path) && !entry.in_library_member(&file.path) {
-            file.max_confidence = confidence;
+        let mode = entry.surface_mode(&file.path, Some(surface));
+        if mode != file.mode {
+            score_as_app(file);
         }
     }
 }
@@ -142,12 +140,18 @@ pub(crate) fn apply_member_surfaces(
     report: &mut ReachabilityReport,
     surfaces: &[&(String, PublicSurface)],
 ) {
-    let confidence = confidence_for_unreachable(ProjectMode::App);
     for file in report.unreachable.iter_mut().chain(&mut report.unread) {
         if member_ships(surfaces.iter().copied(), &file.path) == Some(false) {
-            file.max_confidence = confidence;
+            score_as_app(file);
         }
     }
+}
+
+/// A shipped-surface re-score: the file has no outside caller, so it is
+/// judged and capped as in app mode.
+fn score_as_app(file: &mut UnreachableFile) {
+    file.mode = ProjectMode::App;
+    file.max_confidence = confidence_for_unreachable(ProjectMode::App);
 }
 
 /// Files a plugin's framework glob marks as used, with the glob that matched.
@@ -512,15 +516,20 @@ mod tests {
         let found: Vec<_> = report
             .unreachable
             .iter()
-            .map(|file| (file.path.as_str(), file.max_confidence))
+            .map(|file| (file.path.as_str(), file.max_confidence, file.mode))
             .collect();
         assert_eq!(
             found,
             [
-                ("acme/orphan.py", Confidence::Certain),
-                ("libs/core/pkg/orphan.py", Confidence::Maybe),
+                ("acme/orphan.py", Confidence::Certain, ProjectMode::App),
+                (
+                    "libs/core/pkg/orphan.py",
+                    Confidence::Maybe,
+                    ProjectMode::Library
+                ),
             ]
         );
+        assert!(!report.unreachable[0].callers_may_import());
     }
 
     /// A skipped orphan is no CHK001 finding, but it is scored like one: a

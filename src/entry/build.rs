@@ -10,16 +10,26 @@ use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
 use super::auto::detect_auto_entries;
 use super::merge::merge_entry_candidates;
-use super::mode::resolve_project_mode;
+use super::mode::{is_library_member, resolve_project_mode};
 use super::module::{resolve_module_on_disk, resolve_module_to_path};
 use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning};
 
+/// A workspace member as entry construction reads it: its root-relative
+/// directory, manifest, and member-relative sources.
+pub(crate) type MemberEntryInput<'a> = (&'a str, &'a LoadedManifest, &'a DiscoveredSources);
+
 /// Build the entry root plan for reachability analysis (pipeline step 8).
+///
+/// `members` are the workspace members: their own entry points become roots
+/// and, under `mode = auto`, those that ship as libraries become
+/// `library_members`.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn build_entry_roots(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
+    members: &[MemberEntryInput<'_>],
     plugins: &PluginHints,
     production: bool,
 ) -> EntryPlan {
@@ -62,40 +72,64 @@ pub fn build_entry_roots(
     if mode == ProjectMode::Library {
         collect_library_package_entries(sources, &file_contexts, &mut candidates);
     }
+    let mut member_warnings = Vec::new();
+    collect_member_entries(
+        members,
+        &known_paths,
+        production,
+        &mut candidates,
+        &mut member_warnings,
+    );
     let mut roots = merge_entry_candidates(candidates);
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
+    warnings.append(&mut member_warnings);
 
     EntryPlan {
         mode,
         roots,
         warnings,
-        library_members: Vec::new(),
+        library_members: library_members(config, members),
     }
 }
 
-/// Add each workspace member's own manifest entry points as roots of `plan`.
+/// Members that ship as their own libraries, whatever mode the project
+/// itself resolves to (#488). An explicit `mode` applies to every member.
+fn library_members(config: &ChokkinConfig, members: &[MemberEntryInput<'_>]) -> Vec<String> {
+    if config.mode != ProjectMode::Auto {
+        return Vec::new();
+    }
+    members
+        .iter()
+        .filter(|(_, manifest, sources)| is_library_member(manifest, sources))
+        .map(|(path, ..)| (*path).to_owned())
+        .collect()
+}
+
+/// Each workspace member's own manifest entry points, as root-relative
+/// candidates.
 ///
 /// The root manifest never names a member's `[project.scripts]`, so without
-/// this every file of an app member is an orphan (#488).
-pub(crate) fn add_member_manifest_roots<'a>(
-    plan: &mut EntryPlan,
-    root_sources: &DiscoveredSources,
-    members: impl IntoIterator<Item = (&'a str, &'a LoadedManifest, &'a DiscoveredSources)>,
+/// these every file of an app member is an orphan (#488). They join after
+/// mode resolution, which reads the root's own entries only.
+fn collect_member_entries(
+    members: &[MemberEntryInput<'_>],
+    root_paths: &BTreeSet<String>,
     production: bool,
+    candidates: &mut Vec<EntryCandidate>,
+    warnings: &mut Vec<EntryWarning>,
 ) {
-    let root_paths = known_file_paths(root_sources);
     for (member_path, manifest, sources) in members {
-        let mut candidates = Vec::new();
-        let mut warnings = Vec::new();
+        let mut member_candidates = Vec::new();
+        let mut member_warnings = Vec::new();
         collect_manifest_entries(
             manifest,
             sources,
             &known_file_paths(sources),
             production,
-            &mut candidates,
-            &mut warnings,
+            &mut member_candidates,
+            &mut member_warnings,
         );
-        for warning in &mut warnings {
+        for warning in &mut member_warnings {
             match warning {
                 EntryWarning::UnresolvedModuleTarget { file, .. } => {
                     *file = join_rel(member_path, file);
@@ -103,39 +137,32 @@ pub(crate) fn add_member_manifest_roots<'a>(
                 EntryWarning::MissingEntryPath { path } => *path = join_rel(member_path, path),
             }
         }
-        plan.warnings.append(&mut warnings);
+        warnings.append(&mut member_warnings);
+        for mut candidate in member_candidates {
+            candidate.spec.path = format!("{member_path}/{}", candidate.spec.path);
+            if root_paths.contains(&candidate.spec.path) {
+                candidates.push(candidate);
+            } else {
+                // The member's own walk found the file but the root's did not
+                // (a root `exclude`): it is skipped like a root entry is (#934).
+                warnings.push(EntryWarning::MissingEntryPath {
+                    path: candidate.spec.path,
+                });
+            }
+        }
         // A build script the root's walk does not find is dropped, as the
-        // root's own is; `../` paths name no file of the walk at all.
-        candidates.extend(build_script_entries(manifest).filter(|candidate| {
-            root_paths.contains(&format!("{member_path}/{}", candidate.spec.path))
-        }));
-        if production {
-            candidates.retain(|candidate| candidate.context.is_included_in_production());
-        }
-        for candidate in candidates {
-            let path = format!("{member_path}/{}", candidate.spec.path);
-            // The member's own walk found the file but the root's did not (a
-            // root `exclude`): it is skipped like a root entry is (#934).
-            if !root_paths.contains(&path) {
-                plan.warnings.push(EntryWarning::MissingEntryPath { path });
-                continue;
-            }
-            if let Some(root) = plan.roots.iter_mut().find(|root| root.path == path) {
-                root.symbols.extend(candidate.spec.symbol);
-                if !root.origins.contains(&candidate.origin) {
-                    root.origins.push(candidate.origin);
-                }
-                continue;
-            }
-            plan.roots.push(EntryRoot {
-                path,
-                symbols: candidate.spec.symbol.into_iter().collect(),
-                context: candidate.context,
-                origins: vec![candidate.origin],
-            });
-        }
+        // root's own is; `../` paths name no file of the walk at all. Under
+        // `--production` it is a dev file, held back as the root's is.
+        candidates.extend(
+            build_script_entries(manifest)
+                .filter(|candidate| !production || candidate.context.is_included_in_production())
+                .map(|mut candidate| {
+                    candidate.spec.path = format!("{member_path}/{}", candidate.spec.path);
+                    candidate
+                })
+                .filter(|candidate| root_paths.contains(&candidate.spec.path)),
+        );
     }
-    plan.roots.sort_by(|left, right| left.path.cmp(&right.path));
 }
 
 /// A target that maps to no discovered file: skipped when a file is there

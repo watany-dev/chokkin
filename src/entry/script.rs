@@ -1,11 +1,10 @@
 //! PEP 723 scripts as entry roots.
 
-use std::collections::BTreeSet;
-
+use crate::config::EntrySpec;
 use crate::manifest::InlineScript;
 use crate::sources::{DiscoveredSources, FileContext};
 
-use super::types::{EntryOrigin, EntryPlan, EntryRoot};
+use super::types::{EntryCandidate, EntryOrigin, EntryPlan};
 
 /// Register every PEP 723 script as an entry root of `plan`.
 ///
@@ -26,17 +25,13 @@ pub(crate) fn add_script_roots(
         if production && !context.is_included_in_production() {
             continue;
         }
-        if let Some(root) = plan.roots.iter_mut().find(|root| root.path == script.path) {
-            if !root.origins.contains(&EntryOrigin::Script) {
-                root.origins.push(EntryOrigin::Script);
-            }
-            continue;
-        }
-        plan.roots.push(EntryRoot {
-            path: script.path.clone(),
-            symbols: BTreeSet::new(),
+        plan.push_candidate(EntryCandidate {
+            spec: EntrySpec {
+                path: script.path.clone(),
+                symbol: None,
+            },
             context,
-            origins: vec![EntryOrigin::Script],
+            origin: EntryOrigin::Script,
         });
     }
     plan.roots.sort_by(|left, right| left.path.cmp(&right.path));

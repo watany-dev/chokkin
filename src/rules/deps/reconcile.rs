@@ -14,7 +14,7 @@ use crate::rules::types::{
     DependencyReport, IssueCandidate, WorkspaceDependencyBoundary, sort_candidates,
 };
 use crate::rules::{DependencyRuleContext, RuleContext};
-use crate::sources::{DiscoveredSources, PublicSurface};
+use crate::sources::PublicSurface;
 
 use super::binary::{BinaryProviders, detect_unlisted_binaries};
 use super::duplicate::detect_duplicate_dependencies;
@@ -95,7 +95,13 @@ fn reconcile_project(
     let mut used = collect_used_distributions(context, plugins, &usage);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
-    mark_workspace_source_distributions(manifest, context, &usage, workspace_boundaries, &mut used);
+    mark_workspace_source_distributions(
+        manifest,
+        dependency,
+        &usage,
+        workspace_boundaries,
+        &mut used,
+    );
 
     for distribution in plugins.config_used_distributions() {
         used.insert(distribution.clone());
@@ -111,7 +117,7 @@ fn reconcile_project(
         build_requires: &manifest.metadata.build_requires,
     };
 
-    let metapackage = ships_no_code(manifest, context.sources);
+    let metapackage = ships_no_code(manifest, context.surface);
     let build_groups = build_environment_groups(manifest);
     for deps in declared.values() {
         let deps: Vec<&DeclaredDependency> = deps
@@ -250,12 +256,8 @@ fn group_key(dep: &DeclaredDependency) -> Option<(&str, &str)> {
 /// A wheel target that matches no source file ships a metapackage, whose
 /// distributed dependencies are its content rather than imports (#529).
 /// Dependency groups are not distributed, so they are still checked.
-fn ships_no_code(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
-    manifest
-        .metadata
-        .wheel_targets
-        .as_ref()
-        .is_some_and(|targets| PublicSurface::resolve(Some(targets), &sources.files).is_none())
+fn ships_no_code(manifest: &LoadedManifest, surface: Option<&PublicSurface>) -> bool {
+    manifest.metadata.wheel_targets.is_some() && surface.is_none()
 }
 
 fn workspace_declared_indices<'a>(
@@ -434,10 +436,12 @@ mod tests {
                     graph: &graph,
                     sources: &sources,
                     parse: &parse,
+                    surface: None,
                 },
                 config: &config,
                 strict: false,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,
@@ -491,10 +495,12 @@ mod tests {
                     graph: &graph,
                     sources: &sources,
                     parse: &parse,
+                    surface: None,
                 },
                 config: &config,
                 strict: false,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,
@@ -560,10 +566,12 @@ mod tests {
                     graph: &graph,
                     sources: &sources,
                     parse: &parse,
+                    surface: None,
                 },
                 config: &config,
                 strict: true,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,
@@ -641,10 +649,12 @@ mod tests {
                     graph: &graph,
                     sources: &sources,
                     parse: &parse,
+                    surface: None,
                 },
                 config: &config,
                 strict: false,
                 build_scripts: &BTreeMap::new(),
+                local: &crate::sources::LocalTrees::new(&manifest, &[], &config),
             },
             &manifest,
             &plugins,

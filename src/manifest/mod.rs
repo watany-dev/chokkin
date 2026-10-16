@@ -50,4 +50,5 @@ pub(crate) use types::{
 pub use types::{DependencyContext, DependencyOrigin, ExtrasState, LoadedManifest, LockfileKind};
 #[cfg(test)]
 pub(crate) use types::{EntryPointDecl, LockfileSource, UvSource};
+pub(crate) use uv_tool::source_entries as uv_source_entries;
 pub use warnings::ManifestWarning;

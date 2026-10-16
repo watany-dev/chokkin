@@ -1,11 +1,10 @@
 //! PEP 517 build backends as entry roots (#782).
 
-use std::collections::BTreeSet;
-
+use crate::config::EntrySpec;
 use crate::parser::{ParseSummary, ParsedModule};
 use crate::sources::{DiscoveredFile, FileContext};
 
-use super::types::{EntryOrigin, EntryPlan, EntryRoot};
+use super::types::{EntryCandidate, EntryOrigin, EntryPlan};
 
 /// The hooks PEP 517 requires of every build backend.
 const REQUIRED_HOOKS: [&str; 2] = ["build_wheel", "build_sdist"];
@@ -29,17 +28,13 @@ pub(crate) fn add_build_backend_roots(
         if file.context != FileContext::Runtime {
             continue;
         }
-        if let Some(root) = plan.roots.iter_mut().find(|root| root.path == module.path) {
-            if !root.origins.contains(&EntryOrigin::BuildBackend) {
-                root.origins.push(EntryOrigin::BuildBackend);
-            }
-            continue;
-        }
-        plan.roots.push(EntryRoot {
-            path: module.path.clone(),
-            symbols: BTreeSet::new(),
+        plan.push_candidate(EntryCandidate {
+            spec: EntrySpec {
+                path: module.path.clone(),
+                symbol: None,
+            },
             context: file.context,
-            origins: vec![EntryOrigin::BuildBackend],
+            origin: EntryOrigin::BuildBackend,
         });
     }
     plan.roots.sort_by(|left, right| left.path.cmp(&right.path));
@@ -54,6 +49,9 @@ fn provides_hooks(module: &ParsedModule) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use super::super::types::EntryRoot;
     use super::*;
     use crate::config::ProjectMode;
     use crate::parser::{SymbolDef, SymbolKind};
