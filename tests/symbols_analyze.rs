@@ -1305,6 +1305,82 @@ fn names_star_imported_into_django_settings_are_not_chk006() {
     );
 }
 
+/// Django's migration loader reads `Migration` from each module of an app's
+/// `migrations` package; nothing imports it (#926).
+#[test]
+fn django_migration_class_is_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.0.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = [\"mysite.polls\"]\n",
+        ),
+        ("mysite/polls/__init__.py", ""),
+        ("mysite/polls/migrations/__init__.py", ""),
+        (
+            "mysite/polls/migrations/0001_initial.py",
+            "from django.db import migrations\n\n\nclass Migration(migrations.Migration):\n    dependencies = []\n    operations = []\n\n\ndef leftover():\n    pass\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "mysite.polls.migrations.0001_initial",
+            "Migration"
+        ),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "mysite.polls.migrations.0001_initial",
+            "leftover"
+        ),
+        "{report:?}"
+    );
+}
+
+/// With the Django plugin off, nothing reads `Migration` by name, so it is
+/// unused like any other class, even while pytest stays on.
+#[test]
+fn migration_class_with_django_off_is_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.chokkin.plugins]\ndjango = false\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/cli.py",
+            "from acme.migrations.initial import run\n\n\ndef main():\n    run()\n",
+        ),
+        ("acme/migrations/__init__.py", ""),
+        (
+            "acme/migrations/initial.py",
+            "class Migration:\n    pass\n\n\ndef run():\n    pass\n",
+        ),
+    ]);
+    assert!(
+        has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "acme.migrations.initial",
+            "Migration"
+        ),
+        "{report:?}"
+    );
+}
+
 /// `pkg.name` and `from pkg import name` reach the module a package
 /// star-imports `name` from (#576).
 #[test]

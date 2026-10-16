@@ -41,7 +41,7 @@ pub(crate) fn discover_sources_cached(
     manifest: &LoadedManifest,
     cache: &SourcesCache,
 ) -> Result<Discovery, SourcesError> {
-    let (layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
+    let (mut layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
     // Only inferred globs take testpaths: the parse cache keys on the globs,
     // so testpaths outside them would change file contexts unnoticed.
     let (test_globs, effective_globs) = if config.effective.project.is_empty() {
@@ -84,6 +84,11 @@ pub(crate) fn discover_sources_cached(
     };
     let collected = collect_files(&collect_options)?;
     let files = collected.files;
+    layout.package_dirs = files
+        .iter()
+        .chain(&collected.held_tests)
+        .filter_map(|file| file.path.strip_suffix("/__init__.py").map(str::to_owned))
+        .collect();
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
     warnings.extend(layout_warning);

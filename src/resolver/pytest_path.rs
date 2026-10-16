@@ -355,14 +355,15 @@ impl PytestImportPaths {
             })
     }
 
-    /// The file of `module` beside a script, or in a directory a `sys.path`
-    /// edit adds.
+    /// The file of `module` beside a script, in the script's or test's own
+    /// package, or in a directory a `sys.path` edit adds.
     #[must_use]
     pub(crate) fn resolve_fallback(&self, file: &str, module: &str) -> Option<&str> {
         self.scripts
             .contains(file)
             .then(|| self.find_module(parent_dir(file), module))
             .flatten()
+            .or_else(|| self.resolve_in_own_package(file, module))
             .or_else(|| {
                 let root = import_root(module);
                 self.hinted_dirs(file)
@@ -375,6 +376,22 @@ impl PytestImportPaths {
                     })
                     .find_map(|dir| self.find_module(dir, module))
             })
+    }
+
+    /// `module` inside the outermost package around a script or test, looked
+    /// up from the directory above it: where the parser names a relative
+    /// import when the layout names no module for the file (#896). Other
+    /// roots stay unresolved, as nothing says that directory is on `sys.path`.
+    fn resolve_in_own_package(&self, file: &str, module: &str) -> Option<&str> {
+        if !self.scripts.contains(file) && !self.search.contains_key(file) {
+            return None;
+        }
+        let base = basedir(file, &self.files);
+        let inner = parent_dir(file).strip_prefix(base.as_str())?;
+        let top = inner.trim_start_matches('/').split('/').next()?;
+        (import_root(module) == top)
+            .then(|| self.find_module(&base, module))
+            .flatten()
     }
 
     fn hinted_dirs<'s>(&'s self, file: &'s str) -> impl Iterator<Item = &'s str> {
@@ -795,6 +812,45 @@ mod tests {
             paths.resolve_fallback("tests/pkg/test_y.py", "helpers"),
             None
         );
+    }
+
+    #[test]
+    fn scripts_and_tests_reach_their_own_package_from_above_it() {
+        let files = [
+            "src/acme/__init__.py",
+            "src/acme/run.py",
+            "scripts/pkg/__init__.py",
+            "scripts/pkg/main.py",
+            "scripts/pkg/helpers.py",
+            "scripts/other/__init__.py",
+            "scripts/tool.py",
+            "tests/app/__init__.py",
+            "tests/app/models.py",
+            "tests/app/test_admin.py",
+        ];
+        let settings = PytestImportSettings {
+            importlib: true,
+            ..PytestImportSettings::default()
+        };
+        let paths = PytestImportPaths::with_settings(&sources(&files), &settings);
+        assert_eq!(
+            paths.resolve_fallback("scripts/pkg/main.py", "pkg.helpers"),
+            Some("scripts/pkg/helpers.py")
+        );
+        // The tests' basedir is not on `sys.path` under importlib mode.
+        assert_eq!(paths.resolve("tests/app/test_admin.py", "app.models"), None);
+        assert_eq!(
+            paths.resolve_fallback("tests/app/test_admin.py", "app.models"),
+            Some("tests/app/models.py")
+        );
+        // A sibling package is not reachable from inside another one.
+        assert_eq!(paths.resolve_fallback("scripts/pkg/main.py", "other"), None);
+        assert_eq!(
+            paths.resolve_fallback("scripts/other/__init__.py", "pkg.helpers"),
+            None
+        );
+        // A module the layout names imports by its package name instead.
+        assert_eq!(paths.resolve_fallback("src/acme/run.py", "acme.run"), None);
     }
 
     fn hinting(path: &str, hints: &[&str]) -> crate::parser::ParsedModule {

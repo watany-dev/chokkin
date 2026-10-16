@@ -324,7 +324,7 @@ fn str_constant(expr: &Expr) -> Option<&str> {
     }
 }
 
-fn is_dotted_identifier(module: &str) -> bool {
+pub(super) fn is_dotted_identifier(module: &str) -> bool {
     module.split('.').all(|part| {
         part.chars()
             .next()

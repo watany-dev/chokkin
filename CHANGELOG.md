@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `Migration` in a module of a Django app's `migrations` package is no longer
+  CHK006: Django's migration loader reads it by name (#926).
+- Relative imports in packages the layout names no module for (Django's
+  `tests/admin_views/`, a `scripts/tool/` package) resolve against their
+  `__init__.py` chain instead of warning about a missing package context, and
+  are always first-party, so `from .api import get` in `scripts/requests/`
+  no longer counts as using `requests`. Reachability follows them into the
+  script's or test's own package (#896).
+- Notebooks with IPython syntax are read instead of skipped. Shell escapes
+  (`!ls`, `x = !ls`), help (`obj?`) and magics that neither run Python nor
+  import a module (`%pip`, `%matplotlib`, `%%bash`) are dropped, magics that
+  run Python keep it (`%time`, `%%time`, `%%capture`), and `%load_ext` /
+  `%aimport` count as imports. A cell with any other magic (`%run`,
+  `%%writefile`) or a syntax error is dropped on its own with a
+  `code cell not read` warning at its line, and the rest of the notebook is
+  still read (#962).
 - `-r`, `-c` and `-e` lines in requirements files are read with pip's option
   parser, so other options on the line (`-r base.txt --pre`,
   `--requirement=more.txt --no-index`, `-e <url> --config-settings=k=v`) no

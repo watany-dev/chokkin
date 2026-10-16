@@ -2030,6 +2030,33 @@ fn binary_unreadable_notebook_cell_is_reported() {
     assert!(!stdout.contains("CHK002"), "{stdout}");
 }
 
+/// A notebook with `IPython` magics and shell escapes is read, so the
+/// dependencies its cells import are used, and nothing warns (#962).
+#[test]
+fn binary_notebook_with_ipython_syntax_is_read() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"pandas\", \"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/demo.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": ["%pip install pandas\n", "!ls\n", "import pandas\n"]}, {"cell_type": "code", "source": "%%time\nimport requests\n"}]}"#,
+        ),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "github"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("parse:"), "{stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(!stdout.contains("CHK002"), "{stdout}");
+}
+
 /// A dropped cell may import anything, so a dependency only it imports is not
 /// certainly unused, nor is an orphan it may load (#902, ADR 0005).
 #[test]
@@ -3139,6 +3166,56 @@ fn binary_parse_warnings_reach_stderr_and_json_diagnostics() {
     for line in expected {
         assert!(diagnostics.contains(&line), "{line}\n{diagnostics:?}");
     }
+}
+
+/// A package under a directory the layout does not name (django's
+/// `tests/<app>/`, which `tests/runtests.py` imports top-level) takes its
+/// package context from the `__init__.py` chain, so its relative imports
+/// resolve to the sibling files instead of warning (#896). Such an import
+/// stays first-party even when its root shares a dependency's name.
+#[test]
+fn binary_relative_imports_resolve_in_packages_outside_the_layout() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", "VALUE = 1\n"),
+        ("tests/app/__init__.py", ""),
+        ("tests/app/models.py", "class Thing:\n    pass\n"),
+        ("tests/app/views.py", "def view():\n    pass\n"),
+        (
+            "tests/app/test_admin.py",
+            "from .models import Thing\nfrom . import views\n\n\ndef test_thing():\n    assert Thing and views\n",
+        ),
+        ("scripts/pkg/__init__.py", ""),
+        ("scripts/pkg/main.py", "from .helpers import run\n\nrun()\n"),
+        ("scripts/pkg/helpers.py", "def run():\n    pass\n"),
+        ("scripts/requests/__init__.py", ""),
+        (
+            "scripts/requests/main.py",
+            "from .api import get\n\nget()\n",
+        ),
+        ("scripts/requests/api.py", "def get():\n    pass\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("relative import"), "{stderr}");
+    assert!(!stderr.contains("unresolved import"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let unused: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| matches!(issue["code"].as_str(), Some("CHK001" | "CHK002")))
+        .filter_map(|issue| issue["target"].as_str())
+        .collect();
+    assert_eq!(unused, ["requests"]);
 }
 
 /// An entry point that maps to no source file reaches stderr, for the root
