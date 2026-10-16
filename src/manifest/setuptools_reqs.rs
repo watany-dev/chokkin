@@ -1,8 +1,9 @@
 //! The reader setuptools applies to a requirements option value
 //! (`setuptools._reqs.parse_strings`).
 
+use super::pep508::strip_python;
+
 /// One requirement text of a setuptools option value.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SetuptoolsItem {
     /// Index of the item's first line among the value's non-blank,
     /// non-comment lines: the index `--fix` counts physical lines by, so a
@@ -31,14 +32,15 @@ pub(crate) fn setuptools_requirement_items<'a>(
     let mut pending: Option<SetuptoolsItem> = None;
     let lines = lines
         .into_iter()
-        .map(str::trim)
+        .map(strip_python)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(drop_comment);
     for (index, line) in lines.enumerate() {
         let item = match pending.take() {
             Some(mut item) => {
                 // The `\` is checked before the join, so it is always there.
-                let head = item.text.strip_suffix('\\').unwrap_or(&item.text).trim();
+                let head = item.text.strip_suffix('\\').unwrap_or(&item.text);
+                let head = strip_python(head);
                 item.text = format!("{head}{line}");
                 item
             },
@@ -94,6 +96,11 @@ mod tests {
         );
         // The comment goes before the join, so a commented `\` still joins.
         assert_eq!(texts("a \\ # c\nb"), [(0, "ab".to_owned())]);
+        // `str.strip()` also removes the information separators (#890).
+        assert_eq!(
+            texts("\x1f# note\n\x1f\nrich\x1f"),
+            [(0, "rich".to_owned())]
+        );
     }
 
     #[test]

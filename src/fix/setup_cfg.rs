@@ -40,13 +40,16 @@ pub(super) fn remove_dependency(
             && !removed
             && *at == section
             && *option == key
-            // One physical line is at most one item; a line continued with
-            // `\` keeps its `\` here and names no distribution (#965).
+            // One physical line is at most one item (#965).
             && let Some(item) =
                 setuptools_requirement_items(std::iter::once(*value)).into_iter().next()
         {
             if seen == index {
-                if pep508_distribution_name(&item.text).is_none_or(|name| name != target) {
+                // A line continued with `\` is only the start of its item:
+                // removing it alone would leave the rest of the item behind.
+                if item.text.ends_with('\\')
+                    || pep508_distribution_name(&item.text).is_none_or(|name| name != target)
+                {
                     break;
                 }
                 removed = true;
@@ -158,6 +161,13 @@ mod tests {
         );
         assert_eq!(
             remove(contents, "options.install_requires[0]", "requests"),
+            Err("could not find `options.install_requires[0]` in setup.cfg".to_owned())
+        );
+        // A `\` glued to a URL still parses as a requirement on its own, but
+        // the line is only the start of an item.
+        let url = "[options]\ninstall_requires =\n    requests @ https://h/x.zip\\\n    ; python_version > \"3\"\n";
+        assert_eq!(
+            remove(url, "options.install_requires[0]", "requests"),
             Err("could not find `options.install_requires[0]` in setup.cfg".to_owned())
         );
     }
