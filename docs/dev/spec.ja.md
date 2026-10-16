@@ -465,7 +465,7 @@ entry の参照先 (`module:attr`) を source file に対応付けられない�
 
 ```text
 gui_scripts がある、console_scripts の参照先が自 package の外にある、
-または package の外に runtime の manage.py / asgi.py / wsgi.py / app.py がある
+または package の外に runtime の manage.py / asgi.py / wsgi.py / app.py の entry がある
 (workspace member では自 package を指す console_scripts も含む)
   -> app mode
 
@@ -480,7 +480,7 @@ src/<package>/__init__.py または root直下の <package>/__init__.py
 
 workspace root も member の数によらず同じ基準で判定する (#776)。従来は member が 2 つ以上あると app mode に固定していたため、mlflow のように root が自 package の wheel を配布する library でも公開 API が CHK006 warning になっていた。root が app mode のときは各 member を下記の `is_library_member` で判定する。root が library mode のときは member も library mode で判定する。
 
-app signal は project 自身の package（`layout.packages`）の外にあるものに限る（#652）。`django-admin = "django.core.management:..."` や `httpx = "httpx:main"` のように、console entry の参照先 module の先頭要素が自 package なら、CLI を同梱した library とみなして app signal にしない（GUI を同梱する library は想定しないため、gui entry は常に app signal）。`manage.py` 等のファイル名も、package 内の module（werkzeug の `src/werkzeug/wsgi.py`、mitmproxy の `mitmproxy/tools/web/app.py`）や test / docs / dev context の file（flask の `tests/test_apps/helloworld/wsgi.py`）は数えない。どちらも従来は library の公開 API を app mode の CHK006 certain にしていた。workspace member の判定（`is_library_member`）は file 名の基準だけを共有し、自 package を指す console entry も app signal のままにする。monorepo は CLI を専用 member（airflow の `airflow-core`、llama_index の `llama-dev`）に分けるため、CLI を持つ member は app とみなす。app signal を持つ workspace root（fastmcp）や CLI を持つ member が app になっても、wheel が配布する file の `__all__` は公開 API なので CHK006 / CHK007 にしない（§12、#678、#727）。mode 自体は変えない。
+app signal は project 自身の package（`layout.packages`）の外にあるものに限る（#652）。`django-admin = "django.core.management:..."` や `httpx = "httpx:main"` のように、console entry の参照先 module の先頭要素が自 package なら、CLI を同梱した library とみなして app signal にしない（GUI を同梱する library は想定しないため、gui entry は常に app signal）。`manage.py` 等のファイル名も、package 内の module（werkzeug の `src/werkzeug/wsgi.py`、mitmproxy の `mitmproxy/tools/web/app.py`）や test / docs / dev context の file（flask の `tests/test_apps/helloworld/wsgi.py`）は数えない。どちらも従来は library の公開 API を app mode の CHK006 certain にしていた。ファイル名の signal は entry になった file だけを数える。単独ファイル名の自動検出は root 直下と package 直下に限るので、`deploy/wsgi.py` は `entry` 設定や plugin（Procfile の command など）が entry にしたときだけ app signal になる。workspace member の判定（`is_library_member`）は file 名の基準だけを共有し、自 package を指す console entry も app signal のままにする。monorepo は CLI を専用 member（airflow の `airflow-core`、llama_index の `llama-dev`）に分けるため、CLI を持つ member は app とみなす。app signal を持つ workspace root（fastmcp）や CLI を持つ member が app になっても、wheel が配布する file の `__all__` は公開 API なので CHK006 / CHK007 にしない（§12、#678、#727）。mode 自体は変えない。
 
 setup.py の `setup()` が `name=` を渡していれば、値を読めなくても name ありとみなす (workspace member の判定も同じ)。これがないと、requests のように `name=about["__title__"]` を `exec` 経由で埋める library が name を静的に解決できず app mode に落ち、`--production` で全 file が CHK001 になる (#586)。
 
