@@ -1,5 +1,6 @@
 //! `requirements*.txt` parsing.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::path_util::rel_to_root;
@@ -160,8 +161,8 @@ fn parse_requirements_file_path(
     };
     ctx.include_stack.push(canonical);
 
-    for (line_number, line) in contents.lines().enumerate() {
-        parse_requirements_line(&mut ctx, &rel, line, line_number)?;
+    for line in join_continued_lines(contents.lines()) {
+        parse_requirements_line(&mut ctx, &rel, &line.text, line.first)?;
     }
 
     ctx.include_stack.pop();
@@ -261,7 +262,11 @@ fn parse_requirements_line(
         line: Some(line_no),
         label: rel.to_owned(),
     };
-    match parse_pip_line(trimmed, ctx.default_context.clone(), origin, parse) {
+    let Some(requirement) = requirement_args(trimmed) else {
+        ctx.result.warnings.push(invalid(trimmed, origin));
+        return Ok(());
+    };
+    match parse_pip_line(requirement, ctx.default_context.clone(), origin, parse) {
         Ok(dep) => declared.push(dep),
         Err(warning) => ctx.result.warnings.push(warning),
     }
@@ -413,8 +418,235 @@ pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed.starts_with('-') {
         return None;
     }
-    let (requirement, _) = split_pip_marker(trimmed)?;
+    let (requirement, _) = split_pip_marker(requirement_args(trimmed)?)?;
     requirement_name(requirement)
+}
+
+/// One line of a requirements file after pip's `join_lines`.
+pub(crate) struct LogicalLine<'a> {
+    /// 0-based index of its first physical line, which names it in warnings.
+    pub first: usize,
+    /// Number of physical lines it spans.
+    pub span: usize,
+    pub text: Cow<'a, str>,
+}
+
+/// pip's `join_lines`: a line ending in `\` is joined to the next with the
+/// `\` stripped (`str.strip("\\")`, both ends), unless it is a comment line
+/// (`#` after only whitespace). A comment line ends a continuation and is
+/// joined with a space before it, so the comment is cut later. Comments are
+/// stripped from the joined line, as pip does, so a `#` before a `\`
+/// swallows the line it continues into.
+pub(crate) fn join_continued_lines<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+) -> Vec<LogicalLine<'a>> {
+    let mut joined = Vec::new();
+    let mut pending: Option<(usize, String)> = None;
+    let mut count = 0;
+    for (index, line) in lines.into_iter().enumerate() {
+        count = index + 1;
+        let comment = line
+            .trim_start_matches(is_python_whitespace)
+            .starts_with('#');
+        if line.ends_with('\\') && !comment {
+            let part = line.trim_matches('\\');
+            match &mut pending {
+                Some((_, text)) => text.push_str(part),
+                None => pending = Some((index, part.to_owned())),
+            }
+            continue;
+        }
+        joined.push(match pending.take() {
+            Some((first, mut text)) => {
+                if comment {
+                    text.push(' ');
+                }
+                text.push_str(line);
+                LogicalLine {
+                    first,
+                    span: count - first,
+                    text: Cow::Owned(text),
+                }
+            },
+            None => LogicalLine {
+                first: index,
+                span: 1,
+                text: Cow::Borrowed(line),
+            },
+        });
+    }
+    if let Some((first, text)) = pending {
+        joined.push(LogicalLine {
+            first,
+            span: count - first,
+            text: Cow::Owned(text),
+        });
+    }
+    joined
+}
+
+/// Whether a requirements line (comment included) carries `--hash`.
+pub(crate) fn requirements_line_hashed(line: &str) -> bool {
+    let trimmed = strip_python(strip_comment(line));
+    let (_, options) = break_args_options(trimmed);
+    pip_line_options(options).is_some_and(|names| names.contains(&"hash"))
+}
+
+/// The requirement of a requirements line whose options pip accepts, with the
+/// options cut off; `None` when pip rejects the options (#927).
+fn requirement_args(line: &str) -> Option<&str> {
+    let (requirement, options) = break_args_options(line);
+    pip_line_options(options).map(|_| requirement)
+}
+
+/// pip's `break_args_options`: the requirement is the `' '`-separated tokens
+/// before the first that starts with `-`, and the options are the rest. Only
+/// a space separates, so `foo\t--hash=...` is all requirement and invalid.
+fn break_args_options(line: &str) -> (&str, &str) {
+    let mut start = 0;
+    for token in line.split(' ') {
+        if token.starts_with('-') {
+            let requirement = &line[..start];
+            return (
+                requirement.strip_suffix(' ').unwrap_or(requirement),
+                &line[start..],
+            );
+        }
+        start += token.len() + 1;
+    }
+    (line, "")
+}
+
+/// pip's requirements-file options (`SUPPORTED_OPTIONS` and
+/// `SUPPORTED_OPTIONS_REQ`): long name, short name, and whether it takes a
+/// value. A requirement line may carry any of them; pip uses only `--hash`,
+/// `--config-settings` and `--global-option` there.
+const PIP_LINE_OPTIONS: &[(&str, Option<char>, bool)] = &[
+    ("index-url", Some('i'), true),
+    ("extra-index-url", None, true),
+    ("no-index", None, false),
+    ("constraint", Some('c'), true),
+    ("requirement", Some('r'), true),
+    ("editable", Some('e'), true),
+    ("find-links", Some('f'), true),
+    ("no-binary", None, true),
+    ("only-binary", None, true),
+    ("prefer-binary", None, false),
+    ("require-hashes", None, false),
+    ("pre", None, false),
+    ("trusted-host", None, true),
+    ("use-feature", None, true),
+    ("global-option", None, true),
+    ("hash", None, true),
+    ("config-settings", Some('C'), true),
+];
+
+/// The long names of the options in `options`, read as pip reads them
+/// (`shlex.split`, then `optparse`: `--name=value` or `--name value`, a
+/// unique prefix of a long name, `-xvalue` or `-x value`; positional tokens
+/// are ignored). `None` where pip fails the line: an unclosed quote, an
+/// unknown or ambiguous option, a missing or unexpected value, and a `--hash`
+/// or `--config-settings` value its callback rejects.
+fn pip_line_options(options: &str) -> Option<Vec<&'static str>> {
+    let tokens = shlex_split(options)?;
+    let mut tokens = tokens.iter();
+    let mut names = Vec::new();
+    while let Some(token) = tokens.next() {
+        if token == "--" {
+            break;
+        }
+        let (option, attached) = if let Some(long) = token.strip_prefix("--") {
+            let (name, value) = match long.split_once('=') {
+                Some((name, value)) => (name, Some(value)),
+                None => (long, None),
+            };
+            let option = PIP_LINE_OPTIONS
+                .iter()
+                .find(|(known, ..)| *known == name)
+                .or_else(|| {
+                    let mut prefixed = PIP_LINE_OPTIONS
+                        .iter()
+                        .filter(|(known, ..)| known.starts_with(name));
+                    prefixed.next().filter(|_| prefixed.next().is_none())
+                })?;
+            (option, value.map(str::to_owned))
+        } else if let Some(short) = token.strip_prefix('-').filter(|short| !short.is_empty()) {
+            let mut chars = short.chars();
+            let flag = chars.next();
+            let option = PIP_LINE_OPTIONS
+                .iter()
+                .find(|(_, known, _)| *known == flag)?;
+            let rest = chars.as_str();
+            (option, (!rest.is_empty()).then(|| rest.to_owned()))
+        } else {
+            continue;
+        };
+        let &(name, _, takes_value) = option;
+        let value = match (takes_value, attached) {
+            (false, None) => None,
+            (false, Some(_)) => return None,
+            (true, Some(value)) => Some(value),
+            (true, None) => Some(tokens.next()?.clone()),
+        };
+        let valid = match (name, value.as_deref()) {
+            ("hash", Some(value)) => value
+                .split_once(':')
+                .is_some_and(|(algorithm, _)| matches!(algorithm, "sha256" | "sha384" | "sha512")),
+            ("config-settings", Some(value)) => value.contains('='),
+            _ => true,
+        };
+        if !valid {
+            return None;
+        }
+        names.push(name);
+    }
+    Some(names)
+}
+
+/// Python's `shlex.split` (POSIX mode, no comments); `None` on an unclosed
+/// quote or a trailing `\\`, where it raises.
+fn shlex_split(text: &str) -> Option<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut in_token = false;
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            ' ' | '\t' | '\r' | '\n' => {
+                if in_token {
+                    tokens.push(std::mem::take(&mut token));
+                    in_token = false;
+                }
+                continue;
+            },
+            '\\' => token.push(chars.next()?),
+            '\'' => loop {
+                match chars.next()? {
+                    '\'' => break,
+                    other => token.push(other),
+                }
+            },
+            '"' => loop {
+                match chars.next()? {
+                    '"' => break,
+                    '\\' => match chars.next()? {
+                        escaped @ ('"' | '\\') => token.push(escaped),
+                        other => {
+                            token.push('\\');
+                            token.push(other);
+                        },
+                    },
+                    other => token.push(other),
+                }
+            },
+            other => token.push(other),
+        }
+        in_token = true;
+    }
+    if in_token {
+        tokens.push(token);
+    }
+    Some(tokens)
 }
 
 /// pip-compatible: only `#` preceded by whitespace (or at line start) starts a comment.
@@ -809,6 +1041,134 @@ mod tests {
                 file: "extra.txt".to_owned()
             }]
         );
+    }
+
+    fn parse_requirements_text(text: &str) -> RequirementsExtraction {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("requirements.txt");
+        std::fs::write(&path, text).expect("write requirements");
+        let (result, outcome) =
+            extract_requirements_path(temp.path(), &path, &DependencyContext::Runtime);
+        outcome.expect("parse requirements");
+        result
+    }
+
+    fn declared(result: &RequirementsExtraction) -> Vec<(&str, Option<u32>)> {
+        result
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.as_str(), dep.origin.line))
+            .collect()
+    }
+
+    #[test]
+    fn continued_and_hashed_lines_declare_their_requirement() {
+        // #927: `pip-compile --generate-hashes` output.
+        let result = parse_requirements_text(
+            "click==8.1.7 \\\n    --hash=sha256:ae74fb96 \\\n    --hash=sha256:aaaa\n\
+             rich==13.7.0 --hash=sha256:6da14c10\n\
+             bar ; os_name == \"nt\" --hash=sha256:abc\n",
+        );
+        assert_eq!(result.warnings, []);
+        assert_eq!(
+            declared(&result),
+            [("click", Some(1)), ("rich", Some(4)), ("bar", Some(5))]
+        );
+        assert_eq!(
+            result.dependencies[2].marker.as_deref(),
+            Some("os_name == \"nt\"")
+        );
+    }
+
+    #[test]
+    fn comment_lines_end_a_continuation_like_pip() {
+        // A comment line never continues, even when it ends in `\`, and one
+        // after a continued line ends it.
+        let result = parse_requirements_text("# header \\\nfoo \\\n    # note\nbar\nbaz \\");
+        assert_eq!(result.warnings, []);
+        assert_eq!(
+            declared(&result),
+            [("foo", Some(2)), ("bar", Some(4)), ("baz", Some(5))]
+        );
+    }
+
+    #[test]
+    fn requirement_options_pip_accepts_are_dropped() {
+        let result = parse_requirements_text(
+            "a --hash sha256:abc\n\
+             b --ha=sha512:abc\n\
+             c -C key=value --config-settings=k=v --global-option=x\n\
+             d --index-url https://host/simple --pre\n\
+             e --hash=sha256:abc stray\n\
+             f --hash='sha384:abc'\n",
+        );
+        assert_eq!(result.warnings, []);
+        assert_eq!(
+            result
+                .dependencies
+                .iter()
+                .map(|dep| dep.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c", "d", "e", "f"]
+        );
+    }
+
+    #[test]
+    fn options_pip_rejects_keep_the_line_invalid() {
+        for line in [
+            "foo --unknown",
+            "foo --hash",
+            "foo --hash=md5:abc",
+            "foo --hash=sha256",
+            "foo --hash='sha256:abc",
+            "foo --no-index=1",
+            "foo -C key",
+            "foo --pr",
+            "foo\t--hash=sha256:abc",
+        ] {
+            let result = parse_requirements_text(line);
+            assert_eq!(result.dependencies.len(), 0, "{line:?}");
+            assert_eq!(
+                result.warnings,
+                [ManifestWarning::InvalidRequirementLine {
+                    file: "requirements.txt".to_owned(),
+                    line: Some(1),
+                    label: "requirements.txt".to_owned(),
+                    raw: line.to_owned(),
+                }],
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_distribution_drops_requirement_options() {
+        assert_eq!(
+            requirements_line_distribution("rich==13.7.0 --hash=sha256:abc").as_deref(),
+            Some("rich")
+        );
+        assert_eq!(
+            requirements_line_distribution("rich==13.7.0 --unknown"),
+            None
+        );
+    }
+
+    #[test]
+    fn shlex_split_follows_posix_quoting() {
+        assert_eq!(
+            shlex_split(r#"--a 'b c' "d\"e" f\ g "h\i" ''"#),
+            Some(vec![
+                "--a".to_owned(),
+                "b c".to_owned(),
+                "d\"e".to_owned(),
+                "f g".to_owned(),
+                "h\\i".to_owned(),
+                String::new(),
+            ])
+        );
+        assert_eq!(shlex_split("'open"), None);
+        assert_eq!(shlex_split("\"open"), None);
+        assert_eq!(shlex_split("trailing\\"), None);
     }
 
     #[test]
