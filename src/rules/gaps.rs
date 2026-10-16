@@ -65,9 +65,12 @@ pub enum GapKind {
     /// and so is public too.
     UnreadPublicModule,
     /// A reachable notebook was read, but some cells that may be code were
-    /// not (#902): what those cells import is unknown.
+    /// not (#902): what those cells import is unknown. Every notebook is an
+    /// entry (#514), so none is a public orphan (#942).
     UnreadNotebookCells,
     /// A reachable module loads a module whose name is computed at runtime.
+    /// One in a public orphan is no gap: it lowers no distribution, and what
+    /// a public module loads ships in the wheel and so is public too (#942).
     OpaqueDynamicImport,
     /// A manifest declares its runtime dependencies in a form that could not
     /// be read statically (#491): the root's for every finding, a member's
@@ -88,6 +91,9 @@ pub enum GapKind {
     /// A reachable import no source resolved to a module (§7): any declared
     /// distribution may provide it (#911).
     UnresolvedImport,
+    /// The same in a public module of a library that no root reaches, whose
+    /// imports CHK002 counts (#942).
+    UnresolvedPublicImport,
     /// The same in a PEP 723 script, whose own block installs what it
     /// imports: it lowers that script's findings alone (#911).
     UnresolvedScriptImport,
@@ -153,7 +159,11 @@ impl GapKind {
                 RuleId::Chk002,
                 IssueSubject::Distribution { .. },
             )
-            | (Self::UnresolvedImport, RuleId::Chk002, IssueSubject::Distribution { .. })
+            | (
+                Self::UnresolvedImport | Self::UnresolvedPublicImport,
+                RuleId::Chk002,
+                IssueSubject::Distribution { .. },
+            )
             | (
                 Self::UnresolvedScriptImport,
                 RuleId::Chk002,
@@ -208,6 +218,10 @@ impl GapKind {
                 "a requirement line naming the distribution could not be read"
             },
             Self::UnresolvedImport => "a reachable import could not be resolved to a distribution",
+            Self::UnresolvedPublicImport => {
+                "an import in a public module of the library could not be resolved to a \
+                 distribution"
+            },
             Self::UnresolvedScriptImport => {
                 "an import in the script could not be resolved to a distribution"
             },
@@ -354,6 +368,16 @@ fn is_reached(file: &str, graph: &ProjectGraph, reachability: &ReachabilityRepor
         .is_some_and(|file_id| reachability.reachable.contains(&file_id))
 }
 
+/// Whether a caller of the library may import `file`, which no root reaches:
+/// CHK002 counts its imports (#501), so an import it could not resolve lowers
+/// CHK002 (#942).
+fn is_public_orphan(file: &str, reachability: &ReachabilityReport) -> bool {
+    reachability
+        .unreachable
+        .iter()
+        .any(|orphan| orphan.path == file && orphan.callers_may_import())
+}
+
 fn module_gaps(
     parse: &ParseSummary,
     graph: &ProjectGraph,
@@ -402,7 +426,8 @@ fn unread_public_module_gaps(reachability: &ReachabilityReport) -> Vec<Gap> {
         .collect()
 }
 
-/// One gap per file and module, at the import sites CHK010 warns about: a
+/// One gap per file and module, in a reachable file or a public orphan whose
+/// imports CHK002 counts (#942), at the import sites CHK010 warns about: a
 /// `TYPE_CHECKING` or optional import never fails, a docs or dev file runs
 /// outside the installed package, and a first-party miss is a typo rather
 /// than a distribution (§12). A script's block installs what the script runs
@@ -428,7 +453,8 @@ fn unresolved_import_gaps(
         };
         let counts = *import_context != ImportContext::Type
             && !*optional
-            && is_reached(file, context.graph, context.reachability)
+            && (is_reached(file, context.graph, context.reachability)
+                || is_public_orphan(file, context.reachability))
             && (is_script(file)
                 || !matches!(
                     file_context(file, context.sources),
@@ -446,8 +472,10 @@ fn unresolved_import_gaps(
             file: file.to_owned(),
             kind: if is_script(file) {
                 GapKind::UnresolvedScriptImport
-            } else {
+            } else if is_reached(file, context.graph, context.reachability) {
                 GapKind::UnresolvedImport
+            } else {
+                GapKind::UnresolvedPublicImport
             },
             member: None,
             site: Some((import.to_owned(), line)),
