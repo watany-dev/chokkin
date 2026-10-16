@@ -19,7 +19,7 @@ use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolveWarning, StdlibRange, import_root, is_first_party_import};
 use crate::rules::RuleContext;
 use crate::rules::deps::{DeclarationBucket, declaration_bucket, file_context};
-use crate::rules::types::{IssueCandidate, IssueSubject, RuleId, Severity, import_site};
+use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site};
 use crate::sources::FileContext;
 
 /// One piece of input the analysis could not read.
@@ -103,6 +103,14 @@ pub enum GapKind {
     /// decided that a module only other minors ship is not stdlib (#924):
     /// the import's findings may be wrong.
     AssumedTargetVersion,
+    /// A PEP 723 script's `dependencies` line that may declare the
+    /// distribution it names could not be parsed (#936): that script's
+    /// import of it may be declared.
+    InvalidScriptRequirement,
+    /// A PEP 723 script's `requires-python` could not be read, so the
+    /// project's target decided that a module only other minors ship is not
+    /// stdlib (#936): that script's import of it may be wrong.
+    AssumedScriptTargetVersion,
 }
 
 /// How a gap changes a finding in its scope.
@@ -122,7 +130,8 @@ impl GapKind {
     /// may declare one only as optional, beside a runtime list that was read,
     /// so it caps them and the misplaced ones (#975); an unresolved import may
     /// name what an unused declaration provides. A script's own block is read
-    /// separately, so no project gap reaches its findings.
+    /// separately, so no project manifest gap reaches its findings; what the
+    /// block itself could not read lowers that script's alone (#936).
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
         match (self, candidate.rule, &candidate.subject) {
             (
@@ -167,9 +176,16 @@ impl GapKind {
                 IssueSubject::Distribution { .. },
             )
             | (
-                Self::AssumedTargetVersion,
+                Self::AssumedTargetVersion | Self::AssumedScriptTargetVersion,
                 RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
                 IssueSubject::Import { .. },
+            )
+            | (
+                Self::AssumedTargetVersion
+                | Self::AssumedScriptTargetVersion
+                | Self::InvalidScriptRequirement,
+                RuleId::Chk003,
+                IssueSubject::ScriptDistribution { .. },
             ) => Some(Lowering::Hint),
             _ => None,
         }
@@ -200,27 +216,44 @@ impl GapKind {
             Self::AssumedTargetVersion => {
                 "`requires-python` could not be read, so py311 decided the module is not stdlib"
             },
+            Self::InvalidScriptRequirement => {
+                "a script dependency line naming the distribution could not be read"
+            },
+            Self::AssumedScriptTargetVersion => {
+                "the script's `requires-python` could not be read, so the project's target \
+                 decided the module is not stdlib"
+            },
         }
     }
 }
 
 impl Gap {
     /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
-    /// member's findings, a script's import that script's alone, and an
-    /// assumed stdlib status the imports of that root in that file, and an
-    /// invalid requirement the findings on the distribution it names.
+    /// member's findings, a script's import or block that script's alone, an
+    /// assumed stdlib status the imports of that root in that file (and the
+    /// script declarations they miss), and an invalid requirement the
+    /// findings on the distribution it names.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
         let in_site = match (self.kind, &candidate.subject) {
             (GapKind::UnresolvedScriptImport, IssueSubject::ScriptDistribution { script, .. }) => {
                 *script == self.file
             },
-            (GapKind::AssumedTargetVersion, IssueSubject::Import { module, file, .. }) => {
-                *file == self.file
-                    && self
-                        .site
-                        .as_ref()
-                        .is_some_and(|(root, _)| root == import_root(module))
+            (
+                GapKind::AssumedTargetVersion | GapKind::AssumedScriptTargetVersion,
+                IssueSubject::Import { module, file, .. },
+            ) => *file == self.file && self.names_root(module),
+            (
+                GapKind::AssumedTargetVersion | GapKind::AssumedScriptTargetVersion,
+                IssueSubject::ScriptDistribution { script, .. },
+            ) => {
+                *script == self.file
+                    && candidate.origins.iter().any(|origin| {
+                        matches!(origin, Origin::Import { module, .. } if self.names_root(module))
+                    })
+            },
+            (GapKind::InvalidScriptRequirement, IssueSubject::ScriptDistribution { script, name }) => {
+                *script == self.file && self.site.as_ref().is_some_and(|(site, _)| site == name)
             },
             (
                 GapKind::InvalidRequirement | GapKind::InvalidRuntimeRequirement,
@@ -235,6 +268,13 @@ impl Gap {
             _ => true,
         };
         in_member && in_site
+    }
+
+    /// Whether the site is the root of `module`.
+    fn names_root(&self, module: &str) -> bool {
+        self.site
+            .as_ref()
+            .is_some_and(|(root, _)| root == import_root(module))
     }
 
     /// What `--explain` names: the import or target and its line, or else the file.
@@ -263,6 +303,7 @@ pub fn collect_gaps(
     plugins: &PluginHints,
     skipped_entries: &[String],
     groups: &DependencyGroupsConfig,
+    project_range: StdlibRange,
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
     gaps.extend(skipped_entries.iter().map(|path| Gap {
@@ -282,6 +323,7 @@ pub fn collect_gaps(
     gaps.extend(extras_gap(manifest));
     gaps.extend(invalid_requirement_gaps(manifest, groups));
     gaps.extend(assumed_target_gaps(context.parse, manifest, scripts));
+    gaps.extend(script_gaps(context.parse, project_range, scripts));
     gaps.extend(members.iter().flat_map(|member| {
         let manifest = member.manifest;
         manifest_gap(manifest)
@@ -530,6 +572,62 @@ fn assumed_target_gaps(
             site: Some((root.to_owned(), Some(line))),
         })
         .collect()
+}
+
+/// What a PEP 723 block itself could not read, scoped to that script (#936):
+/// each invalid `dependencies` line that names a distribution, and, when
+/// `requires-python` is unreadable, each root of the script's imports that
+/// the project's range, which the resolver used instead, does not ship as
+/// stdlib although another minor does (one gap per root at its first line).
+fn script_gaps(
+    parse: &ParseSummary,
+    project_range: StdlibRange,
+    scripts: &[InlineScript],
+) -> Vec<Gap> {
+    let mut gaps = Vec::new();
+    for script in scripts {
+        gaps.extend(
+            script
+                .invalid_requirements
+                .iter()
+                .filter_map(|(raw, line)| {
+                    Some(Gap {
+                        file: script.path.clone(),
+                        kind: GapKind::InvalidScriptRequirement,
+                        member: None,
+                        site: Some((invalid_requirement_name(raw)?, *line)),
+                    })
+                }),
+        );
+        if !script.requires_python_unreadable() {
+            continue;
+        }
+        let Some(module) = parse
+            .modules
+            .iter()
+            .find(|module| module.path == script.path)
+        else {
+            continue;
+        };
+        let mut first: BTreeMap<&str, u32> = BTreeMap::new();
+        for import in &module.imports {
+            let root = import_root(&import.module);
+            if import.relative_level == 0
+                && !root.is_empty()
+                && project_range.ships_only_outside(root)
+            {
+                let line = first.entry(root).or_insert(import.line);
+                *line = (*line).min(import.line);
+            }
+        }
+        gaps.extend(first.into_iter().map(|(root, line)| Gap {
+            file: script.path.clone(),
+            kind: GapKind::AssumedScriptTargetVersion,
+            member: None,
+            site: Some((root.to_owned(), Some(line))),
+        }));
+    }
+    gaps
 }
 
 /// The manifest's warning names the file (`pyproject.toml` for
@@ -1128,6 +1226,67 @@ mod tests {
             [
                 (Severity::Info, Confidence::Maybe),
                 (Severity::Info, Confidence::Maybe),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+    }
+
+    /// What a script block could not read hints that script's findings alone:
+    /// its import of a version-dependent root, by module or by the origin of
+    /// a missing declaration, and its import of the name an invalid line names.
+    #[test]
+    fn script_block_gaps_hint_only_that_scripts_findings() {
+        let in_script = |rule, subject| {
+            let mut found = candidate(rule, subject);
+            if let IssueSubject::Import { file, .. } = &mut found.subject {
+                "tool.py".clone_into(file);
+            }
+            found
+        };
+        let mut via_origin = candidate(RuleId::Chk003, script_distribution("setuptools"));
+        via_origin.origins.push(Origin::Import {
+            file: "tool.py".to_owned(),
+            line: Some(1),
+            module: "distutils.core".to_owned(),
+        });
+        let mut other_script = script_distribution("rich");
+        if let IssueSubject::ScriptDistribution { script, .. } = &mut other_script {
+            "other.py".clone_into(script);
+        }
+        let found = lowered(
+            &[
+                unresolved(
+                    "tool.py",
+                    GapKind::AssumedScriptTargetVersion,
+                    "distutils",
+                    1,
+                ),
+                Gap {
+                    file: "tool.py".to_owned(),
+                    kind: GapKind::InvalidScriptRequirement,
+                    member: None,
+                    site: Some(("rich".to_owned(), Some(2))),
+                },
+            ],
+            vec![
+                via_origin,
+                in_script(RuleId::Chk010, import("distutils")),
+                candidate(RuleId::Chk003, script_distribution("rich")),
+                candidate(RuleId::Chk003, script_distribution("httpx")),
+                candidate(RuleId::Chk003, other_script),
+                candidate(RuleId::Chk010, import("distutils")),
+                candidate(RuleId::Chk002, script_distribution("rich")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),

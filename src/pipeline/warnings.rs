@@ -398,16 +398,16 @@ fn write_manifest_warning(
                 |line| format!("`{file}:{line}`"),
             );
             write!(formatter, "manifest: invalid requirement at {at}: {raw}")?;
-            // A PEP 723 block's line is not a gap (§11), so it lowers nothing.
-            let script = label.starts_with("script.");
             // A group's bucket is config's to decide, which the text does not
-            // see; only the fixed runtime contexts name misplaced findings.
-            let findings = if matches!(context, DependencyContext::Group(_)) {
+            // see; only the fixed runtime contexts name misplaced findings. A
+            // PEP 723 block has no misplaced findings (#936).
+            let script = label.starts_with("script.");
+            let findings = if script || matches!(context, DependencyContext::Group(_)) {
                 "undeclared imports"
             } else {
                 "undeclared or misplaced imports"
             };
-            match invalid_requirement_name(raw).filter(|_| !script) {
+            match invalid_requirement_name(raw) {
                 Some(name) => write!(formatter, "; {findings} of `{name}` are reported as hints"),
                 None => Ok(()),
             }
@@ -456,7 +456,7 @@ fn write_manifest_warning(
         ),
         ManifestWarning::InlineScriptRequiresPythonUnreadable { file, value } => write!(
             formatter,
-            "manifest: could not read `requires-python` \"{value}\" in the PEP 723 block of `{file}`; using the project's target version"
+            "manifest: could not read `requires-python` \"{value}\" in the PEP 723 block of `{file}`; using the project's target version; its imports of modules only other versions ship as stdlib are reported as hints"
         ),
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
@@ -926,7 +926,7 @@ mod tests {
             warning(None).to_string(),
             "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @; undeclared or misplaced imports of `foo` are reported as hints"
         );
-        // A PEP 723 block's line lowers nothing, so it promises no hint.
+        // A PEP 723 block has no misplaced findings to name (#936).
         let script = ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
             file: "tool.py".to_owned(),
             line: Some(4),
@@ -936,7 +936,7 @@ mod tests {
         });
         assert_eq!(
             script.to_string(),
-            "manifest: invalid requirement at `tool.py:4`: rich>="
+            "manifest: invalid requirement at `tool.py:4`: rich>=; undeclared imports of `rich` are reported as hints"
         );
     }
 

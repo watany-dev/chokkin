@@ -29,6 +29,20 @@ pub struct InlineScript {
     pub requires_python: Option<String>,
     /// Lower bound of `requires-python` as a target version.
     pub target_version: Option<TargetVersion>,
+    /// `dependencies` entries that could not be parsed, as written, with
+    /// their line: each may declare the distribution it names (#936).
+    pub invalid_requirements: Vec<(String, Option<u32>)>,
+}
+
+impl InlineScript {
+    /// Whether `requires-python` is written but could not be read, so the
+    /// script's imports were resolved with the project's target (#936).
+    #[must_use]
+    pub fn requires_python_unreadable(&self) -> bool {
+        self.requires_python
+            .as_deref()
+            .is_some_and(|value| parse_version_specifiers(value).is_none())
+    }
 }
 
 struct MetadataBlock<'a> {
@@ -196,7 +210,14 @@ fn build_script(
             .ok_or_else(|| "`dependencies` must be an array of strings".to_owned())?,
         Some(_) => return Err("`dependencies` must be an array of strings".to_owned()),
     };
-    let dependencies = declared_dependencies(path, block, &raw_dependencies, warnings);
+    let mut invalid_requirements = Vec::new();
+    let dependencies = declared_dependencies(
+        path,
+        block,
+        &raw_dependencies,
+        &mut invalid_requirements,
+        warnings,
+    );
     if let Some(value) = &requires_python
         && parse_version_specifiers(value).is_none()
     {
@@ -213,6 +234,7 @@ fn build_script(
         dependencies,
         requires_python,
         target_version,
+        invalid_requirements,
     })
 }
 
@@ -220,6 +242,7 @@ fn declared_dependencies(
     path: &str,
     block: &ScriptBlock,
     raw_dependencies: &[String],
+    invalid: &mut Vec<(String, Option<u32>)>,
     warnings: &mut Vec<ManifestWarning>,
 ) -> Vec<DeclaredDependency> {
     let mut dependencies = Vec::new();
@@ -241,7 +264,10 @@ fn declared_dependencies(
         };
         match parse_pep508_requirement(raw, DependencyContext::Runtime, origin) {
             Ok(dependency) => dependencies.push(dependency),
-            Err(warning) => warnings.push(warning),
+            Err(warning) => {
+                invalid.push((raw.clone(), line));
+                warnings.push(warning);
+            },
         }
     }
     dependencies
@@ -279,6 +305,21 @@ mod tests {
             script.dependencies[0].origin.label,
             "script.dependencies[0]"
         );
+    }
+
+    #[test]
+    fn keeps_what_the_block_could_not_read() {
+        let (script, _) = parse(
+            "# /// script\n# requires-python = \"bogus\"\n# dependencies = [\n#   \"rich>=\",\n#   \"httpx\",\n# ]\n# ///\n",
+        );
+        let script = script.expect("script block");
+        assert!(script.requires_python_unreadable());
+        assert_eq!(
+            script.invalid_requirements,
+            [("rich>=".to_owned(), Some(4))]
+        );
+        let (readable, _) = parse(SPEC_EXAMPLE);
+        assert!(!readable.expect("script block").requires_python_unreadable());
     }
 
     #[test]

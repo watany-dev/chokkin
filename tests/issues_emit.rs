@@ -9,9 +9,9 @@ use chokkin::internals::analyze_with_context;
 use chokkin::internals::reconcile_with_context;
 use chokkin::internals::{
     Confidence, ModuleOrigin, PluginExtractRequest, ProjectRoot, ResolutionIndex, RootMarker,
-    RuleId, ScopedDeclarations, SeverityLevel, add_parsed_imports, analyze_reachability,
-    apply_resolution_to_graph, build_entry_roots, build_graph_skeleton, collect_gaps,
-    discover_project_root, discover_sources, emit_issues, extract_manifest,
+    RuleId, ScopedDeclarations, SeverityLevel, StdlibRange, TargetVersion, add_parsed_imports,
+    analyze_reachability, apply_resolution_to_graph, build_entry_roots, build_graph_skeleton,
+    collect_gaps, discover_project_root, discover_sources, emit_issues, extract_manifest,
     extract_plugin_hints_with_parse, load_config, parse_project_sources_with_cache,
     resolve_imports_for_analysis, resolve_target_version,
 };
@@ -112,6 +112,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &plugins,
         &[],
         &loaded.effective.dependencies,
+        StdlibRange::new(&TargetVersion::default_py311(), None),
     );
 
     EmitInputs {

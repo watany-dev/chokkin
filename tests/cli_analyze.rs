@@ -3579,6 +3579,63 @@ fn binary_invalid_runtime_requirement_turns_misplaced_findings_into_hints() {
     }
 }
 
+/// #936: what a PEP 723 block could not read lowers that script's findings
+/// alone. An unreadable `requires-python` makes its version-dependent imports
+/// hints, and an invalid `dependencies` line its imports of the name it names;
+/// the other script, read in full, keeps its findings.
+#[test]
+fn binary_unread_script_block_turns_that_scripts_findings_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\nrequires-python = \">=3.11\"\ndependencies = []\n",
+        ),
+        (
+            "tools/a.py",
+            "# /// script\n# requires-python = \"bogus\"\n# dependencies = [\"rich>=\"]\n# ///\nimport binhex\nimport rich\nimport httpx\n",
+        ),
+        (
+            "tools/b.py",
+            "# /// script\n# dependencies = []\n# ///\nimport binhex\nimport rich\n",
+        ),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        [
+            "CHK003 script:tools/a.py:httpx error certain",
+            "CHK003 script:tools/a.py:rich info maybe",
+            "CHK003 script:tools/b.py:rich error certain",
+            "CHK010 tools/a.py:binhex info maybe",
+            "CHK010 tools/b.py:binhex warning likely",
+        ]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--confidence", "maybe"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "at `tools/a.py:3`: rich>=; undeclared imports of `rich` are reported as hints",
+        "of `tools/a.py`; using the project's target version; its imports of modules only other versions ship as stdlib are reported as hints",
+    ] {
+        assert!(stderr.contains(warning), "{warning}\n{stderr}");
+    }
+}
+
 /// What the parser could not read in a file it kept reaches stderr and the
 /// JSON diagnostics, so a finding it causes has a visible reason (#877).
 #[test]
@@ -5473,7 +5530,8 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
              assuming target version py311; imports of modules only other versions ship as \
              stdlib are reported as hints",
             "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
-             `scripts/tool.py`; using the project's target version",
+             `scripts/tool.py`; using the project's target version; its imports of modules \
+             only other versions ship as stdlib are reported as hints",
         ]
     );
 
@@ -5487,7 +5545,8 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
         manifest_lines(project.path()),
         [
             "manifest: could not read `requires-python` \",\" in the PEP 723 block of \
-          `scripts/tool.py`; using the project's target version"
+          `scripts/tool.py`; using the project's target version; its imports of modules \
+          only other versions ship as stdlib are reported as hints"
         ]
     );
 }
