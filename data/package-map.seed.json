@@ -946,6 +946,120 @@
       "imports": [
         "mkdocstrings_handlers.python"
       ]
+    },
+    {
+      "distribution": "djangorestframework",
+      "imports": [
+        "rest_framework"
+      ]
+    },
+    {
+      "distribution": "django-filter",
+      "imports": [
+        "django_filters"
+      ]
+    },
+    {
+      "distribution": "django-taggit",
+      "imports": [
+        "taggit"
+      ]
+    },
+    {
+      "distribution": "django-modelcluster",
+      "imports": [
+        "modelcluster"
+      ]
+    },
+    {
+      "distribution": "django-treebeard",
+      "imports": [
+        "treebeard"
+      ]
+    },
+    {
+      "distribution": "django-mptt",
+      "imports": [
+        "mptt"
+      ]
+    },
+    {
+      "distribution": "django-ninja",
+      "imports": [
+        "ninja"
+      ]
+    },
+    {
+      "distribution": "strawberry-graphql-django",
+      "imports": [
+        "strawberry_django"
+      ]
+    },
+    {
+      "distribution": "graphql-core",
+      "imports": [
+        "graphql"
+      ]
+    },
+    {
+      "distribution": "django-storages",
+      "imports": [
+        "storages"
+      ]
+    },
+    {
+      "distribution": "django-phonenumber-field",
+      "imports": [
+        "phonenumber_field"
+      ]
+    },
+    {
+      "distribution": "phonenumberslite",
+      "imports": [
+        "phonenumbers"
+      ]
+    },
+    {
+      "distribution": "google-i18n-address",
+      "imports": [
+        "i18naddress"
+      ]
+    },
+    {
+      "distribution": "django-cors-headers",
+      "imports": [
+        "corsheaders"
+      ]
+    },
+    {
+      "distribution": "django-debug-toolbar",
+      "imports": [
+        "debug_toolbar"
+      ]
+    },
+    {
+      "distribution": "django-timezone-field",
+      "imports": [
+        "timezone_field"
+      ]
+    },
+    {
+      "distribution": "social-auth-core",
+      "imports": [
+        "social_core"
+      ]
+    },
+    {
+      "distribution": "social-auth-app-django",
+      "imports": [
+        "social_django"
+      ]
+    },
+    {
+      "distribution": "django-permissionedforms",
+      "imports": [
+        "permissionedforms"
+      ]
     }
   ],
   "auto_packages": [
@@ -969,6 +1083,7 @@
     "brotli",
     "build",
     "cfgv",
+    "channels",
     "chardet",
     "cherrypy",
     "chevron",
@@ -993,6 +1108,7 @@
     "fabric",
     "faker",
     "fastjsonschema",
+    "flask-login",
     "freezegun",
     "furl",
     "gdown",
@@ -1044,6 +1160,7 @@
     "passlib",
     "pendulum",
     "pexpect",
+    "phonenumbers",
     "plotly",
     "polars",
     "pre-commit",
