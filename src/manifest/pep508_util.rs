@@ -53,7 +53,7 @@ pub(super) fn parse_requirement(
     context: DependencyContext,
     origin: DependencyOrigin,
 ) -> Result<DeclaredDependency, ManifestWarning> {
-    parse_with(raw, context, origin, Grammar::Pip)
+    parse_with(raw, context, origin, parse_pip_requirement, true)
 }
 
 /// Parse a requirement from a PEP 508 manifest field (`pyproject.toml`,
@@ -66,28 +66,22 @@ pub(super) fn parse_pep508_requirement(
     context: DependencyContext,
     origin: DependencyOrigin,
 ) -> Result<DeclaredDependency, ManifestWarning> {
-    parse_with(raw, context, origin, Grammar::Pep508)
-}
-
-/// Which reader a requirement text goes through.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Grammar {
-    /// A requirements-file line: an archive-like bare name and a path are files.
-    Pip,
-    /// A manifest field (`packaging`): names only, no file forms.
-    Pep508,
+    parse_with(
+        raw,
+        context,
+        origin,
+        super::pep508::parse_requirement,
+        false,
+    )
 }
 
 fn parse_with(
     raw: &str,
     context: DependencyContext,
     origin: DependencyOrigin,
-    grammar: Grammar,
+    parse: fn(&str) -> Option<Requirement>,
+    files: bool,
 ) -> Result<DeclaredDependency, ManifestWarning> {
-    let parse: fn(&str) -> Option<Requirement> = match grammar {
-        Grammar::Pip => parse_pip_requirement,
-        Grammar::Pep508 => super::pep508::parse_requirement,
-    };
     let trimmed = strip_python(raw);
     let (name, extras, marker, specifier, opaque) = if let Some(requirement) = parse(trimmed) {
         (
@@ -103,7 +97,7 @@ fn parse_with(
         return Err(invalid(raw, origin));
     } else if let Some(name) = extract_egg_name(trimmed) {
         (name, Vec::new(), None, Some(trimmed.to_owned()), false)
-    } else if is_url_like(trimmed) || (grammar == Grammar::Pip && looks_like_pip_file(trimmed)) {
+    } else if is_url_like(trimmed) || (files && looks_like_pip_file(trimmed)) {
         (
             String::new(),
             Vec::new(),
