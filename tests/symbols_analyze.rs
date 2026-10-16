@@ -1305,6 +1305,51 @@ fn names_star_imported_into_django_settings_are_not_chk006() {
     );
 }
 
+/// Django's migration loader reads `Migration` from each module of an app's
+/// `migrations` package; nothing imports it (#926).
+#[test]
+fn django_migration_class_is_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.0.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = [\"mysite.polls\"]\n",
+        ),
+        ("mysite/polls/__init__.py", ""),
+        ("mysite/polls/migrations/__init__.py", ""),
+        (
+            "mysite/polls/migrations/0001_initial.py",
+            "from django.db import migrations\n\n\nclass Migration(migrations.Migration):\n    dependencies = []\n    operations = []\n\n\ndef leftover():\n    pass\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "mysite.polls.migrations.0001_initial",
+            "Migration"
+        ),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "mysite.polls.migrations.0001_initial",
+            "leftover"
+        ),
+        "{report:?}"
+    );
+}
+
 /// `pkg.name` and `from pkg import name` reach the module a package
 /// star-imports `name` from (#576).
 #[test]

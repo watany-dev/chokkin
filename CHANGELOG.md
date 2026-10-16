@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `Migration` in a module of a Django app's `migrations` package is no longer
+  CHK006: Django's migration loader reads it by name (#926).
+
 ## [0.7.6] - 2026-10-16
 
 v0.7.6 ships the first version of the unknown-input contract (ADR 0005).
