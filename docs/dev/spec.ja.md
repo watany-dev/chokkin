@@ -960,6 +960,11 @@ module (Partial / Unknown) はどの名前も渡しうるとみなし、`_` で�
 元の importer で判定するので、定義元 module 自身が package 経由で自分の名前を読んでも外部参照にはならない。
 star import 文そのもの (`pkg/__init__.py` の `from .sub.impl import *`) は従来どおり参照にならない。
 
+import 先の名前がどの module 名でもなく、importer と同じディレクトリに同名の file があれば、その file の module の参照とみなす (#977)。
+`python path/to/script.py` は script のディレクトリを `sys.path` 先頭に置くので、airflow `scripts/` の
+`from common_prek_utils import X` や `from in_container_utils import X` は隣の file を読む。到達性の script fallback と同じ扱いで、
+外すと package として配布される script 置き場の helper をすべて CHK006 にしてしまう。
+
 例外として、literal の接頭辞で組み立てた動的 import (§14、`import_module("pkg.commands." + name)` / `f"pkg.commands.{name}"`) を
 代入や注釈付き代入で名前に束縛し、同じスコープ (関数・class 本体・module) で `getattr(module, <非literal>)` に渡している場合は、
 `pkg.commands` 配下の module で定義された公開 class をすべて外部参照済みとし CHK006 にしない (#728)。poetry の command loader

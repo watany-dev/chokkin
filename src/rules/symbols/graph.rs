@@ -105,6 +105,9 @@ impl ReferenceIndex {
                         let Some((package, name)) = import.import_target() else {
                             continue;
                         };
+                        let package =
+                            sibling_module(&module.path, package, &known_modules, module_names)
+                                .unwrap_or(package);
                         // `from . import x` in the package's own `__init__` defines a re-export, not a use.
                         if import.name.is_some() || package != importer {
                             index.record(importer, SymbolId::new(package, name), &mut stars);
@@ -121,7 +124,14 @@ impl ReferenceIndex {
                     ImportKind::Import => {
                         let binding = import.alias.as_deref().unwrap_or(&import.module);
                         let receivers = [import.module.as_str(), binding];
-                        for target in accesses(module, &import.module, &receivers) {
+                        let target_module = sibling_module(
+                            &module.path,
+                            &import.module,
+                            &known_modules,
+                            module_names,
+                        )
+                        .unwrap_or(&import.module);
+                        for target in accesses(module, target_module, &receivers) {
                             index.record(importer, target, &mut stars);
                         }
                     },
@@ -299,6 +309,27 @@ impl<'a> StarImports<'a> {
     }
 }
 
+/// The module of the file beside `importer_path` that a bare `name` names
+/// when no module of the layout has that name: a script's own directory is
+/// first on `sys.path` (airflow's `from common_prek_utils import X`, #977).
+fn sibling_module<'n>(
+    importer_path: &str,
+    name: &str,
+    known_modules: &HashSet<&str>,
+    module_names: &'n HashMap<&str, String>,
+) -> Option<&'n str> {
+    if known_modules.contains(name) {
+        return None;
+    }
+    // Source paths are `/`-separated on every platform.
+    let stem = name.replace('.', "/");
+    let file = match importer_path.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{stem}.py"),
+        None => format!("{stem}.py"),
+    };
+    module_names.get(file.as_str()).map(String::as_str)
+}
+
 /// Names `module` binds by definition or `from … import`: every symbol and
 /// re-export a reference to `module` can be asked about.
 fn bound_names(module: &ParsedModule) -> HashSet<&str> {
@@ -357,6 +388,38 @@ mod tests {
         };
         let names = bound_names(&module);
         assert_eq!(names, HashSet::from(["helper", "renamed", "sub"]));
+    }
+
+    #[test]
+    fn bare_import_of_a_sibling_file_references_its_module() {
+        // airflow's `scripts/in_container/run.py` runs as a script and
+        // imports `in_container_utils` beside it by its bare name.
+        let utils = ParsedModule {
+            path: "in_container/in_container_utils.py".to_owned(),
+            ..ParsedModule::default()
+        };
+        let run = ParsedModule {
+            path: "in_container/run.py".to_owned(),
+            imports: vec![import(
+                ImportKind::ImportFrom,
+                "in_container_utils",
+                Some("run_command"),
+                None,
+            )],
+            ..ParsedModule::default()
+        };
+        let names = HashMap::from([
+            (
+                utils.path.as_str(),
+                "in_container.in_container_utils".to_owned(),
+            ),
+            (run.path.as_str(), "in_container.run".to_owned()),
+        ]);
+        let index = ReferenceIndex::build(&[&utils, &run], &names);
+        assert!(index.is_externally_referenced(&SymbolId::new(
+            "in_container.in_container_utils",
+            "run_command"
+        )));
     }
 
     mod props {
