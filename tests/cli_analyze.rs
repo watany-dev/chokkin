@@ -3094,9 +3094,10 @@ fn discovered_manage_django_project() -> tempfile::TempDir {
     project
 }
 
-/// `include()` (django-split-settings) and `exec()` run settings files the
-/// plugin does not read, so a field the read files do not set may come from
-/// them (#925).
+/// `include()` (django-split-settings), `exec()`, `runpy.run_path()` and
+/// `globals().update()` run settings files the plugin does not read or add
+/// names it cannot see, so a field the read files do not set may come from
+/// them (#925, #937).
 #[test]
 fn binary_django_settings_include_and_exec_are_a_gap() {
     let level = |code: &str, target: &str, confidence: &str| {
@@ -3129,6 +3130,26 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
             "import os\n\nexec(open(os.path.join(os.path.dirname(__file__), \"local.py\")).read())\n",
             "exec()",
             3,
+        ),
+        (
+            "import runpy\n\nglobals().update(runpy.run_path(\"local.py\"))\n",
+            "globals().update()",
+            3,
+        ),
+        (
+            "from runpy import run_path\n\nLOCAL = run_path(\"local.py\")\n",
+            "run_path()",
+            3,
+        ),
+        (
+            "import yaml\n\nvars().update(yaml.safe_load(open(\"settings.yaml\")))\n",
+            "vars().update()",
+            3,
+        ),
+        (
+            "try:\n    locals().update(load())\nexcept ImportError:\n    pass\n",
+            "locals().update()",
+            2,
         ),
     ];
     for (settings, call, line) in cases {
@@ -3174,7 +3195,7 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
     );
     fs::write(
         project.path().join("mysite/settings/dev.py"),
-        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\n",
+        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n    globals().update({})\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\nCACHES = {}\nCACHES.update({})\nvars(Local).update({})\n",
     )
     .expect("write settings");
     fs::write(project.path().join("mysite/orphan.py"), "").expect("write orphan");

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
 
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
-use ruff_python_ast::{Expr, Stmt};
+use ruff_python_ast::{Expr, ExprCall, Stmt};
 use ruff_text_size::{Ranged, TextSize};
 
 use crate::config::PluginId;
@@ -530,13 +530,20 @@ fn read_settings(
 }
 
 /// Calls that run other files into the settings namespace, which the plugin
-/// does not read: django-split-settings' `include()` and `exec()`.
-const SETTINGS_CALLS: &[&str] = &["include", "exec"];
+/// does not read: django-split-settings' `include()`, `exec()` and
+/// `runpy.run_path()`, by name or as an attribute.
+const SETTINGS_CALLS: &[&str] = &["include", "exec", "run_path"];
 
-/// The first [`SETTINGS_CALLS`] call that runs when the settings are
-/// imported, shown as `name()`, and where it starts. Module-level blocks
-/// (`if`, `try`, `with`) count; function, class and lambda bodies do not
-/// run on import (#925).
+/// Builtins that return the settings namespace when called with no arguments;
+/// `.update()` on one adds names the plugin cannot see.
+const NAMESPACE_CALLS: &[&str] = &["globals", "vars", "locals"];
+
+/// The first [`SETTINGS_CALLS`] call or namespace `.update()` that runs when
+/// the settings are imported, shown as `name()` or `globals().update()`, and
+/// where it starts. Module-level blocks (`if`, `try`, `with`) count; function,
+/// class and lambda bodies do not run on import (#925, #937). `update()` on
+/// anything else, such as a dict or `vars(obj)`, is not the namespace and
+/// stays unread.
 fn settings_call(stmts: &[Stmt]) -> Option<(String, TextSize)> {
     #[derive(Default)]
     struct Calls(Option<(String, TextSize)>);
@@ -562,6 +569,10 @@ fn settings_call(stmts: &[Stmt]) -> Option<(String, TextSize)> {
                     self.0 = Some((format!("{name}()"), call.start()));
                     return;
                 }
+                if let Some(namespace) = namespace_update(call) {
+                    self.0 = Some((format!("{namespace}().update()"), call.start()));
+                    return;
+                }
             }
             walk_expr(self, expr);
         }
@@ -570,6 +581,23 @@ fn settings_call(stmts: &[Stmt]) -> Option<(String, TextSize)> {
     let mut calls = Calls::default();
     calls.visit_body(stmts);
     calls.0
+}
+
+/// The [`NAMESPACE_CALLS`] builtin `call` updates, as in `globals().update(...)`.
+fn namespace_update(call: &ExprCall) -> Option<&str> {
+    let Expr::Attribute(attribute) = &*call.func else {
+        return None;
+    };
+    let Expr::Call(receiver) = &*attribute.value else {
+        return None;
+    };
+    let Expr::Name(name) = &*receiver.func else {
+        return None;
+    };
+    (attribute.attr.as_str() == "update"
+        && receiver.arguments.is_empty()
+        && NAMESPACE_CALLS.contains(&name.id.as_str()))
+    .then_some(name.id.as_str())
 }
 
 /// Top-level `from m import *` statements: the absolute module, `None` when a
