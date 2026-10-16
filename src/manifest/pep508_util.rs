@@ -281,8 +281,11 @@ pub(crate) fn archive_distribution_name(spec: &str) -> Option<String> {
         ".tlz",
         ".zip",
     ];
-    let spec = spec.split_whitespace().next()?.split(';').next()?;
-    let spec = spec.split(['?', '#']).next()?;
+    let spec = spec
+        .split_whitespace()
+        .next()?
+        .split([';', '?', '#'])
+        .next()?;
     let spec = match spec.rfind('[') {
         Some(open) if spec.ends_with(']') => &spec[..open],
         _ => spec,

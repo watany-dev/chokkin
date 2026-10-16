@@ -13,7 +13,7 @@ use crate::manifest::{
     ExtrasState, InlineScript, LoadedManifest, ManifestWarning, archive_distribution_name,
     invalid_requirement_name, normalize_distribution_name,
 };
-use crate::parser::{ImportContext, ParseSummary};
+use crate::parser::{ImportContext, ParseSummary, ParsedModule};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
@@ -288,7 +288,7 @@ impl Gap {
                     })
             },
             (GapKind::InvalidScriptRequirement, IssueSubject::ScriptDistribution { script, name }) => {
-                *script == self.file && self.site.as_ref().is_some_and(|(site, _)| site == name)
+                *script == self.file && self.site_is(name)
             },
             (
                 GapKind::ArchiveRequirement | GapKind::ArchiveRuntimeRequirement,
@@ -297,25 +297,18 @@ impl Gap {
                     module,
                     ..
                 },
-            ) => self.site.as_ref().is_some_and(|(name, _)| {
-                normalize_distribution_name(import_root(module)) == *name
-            }),
+            ) => self.site_is(&normalize_distribution_name(import_root(module))),
             (
                 GapKind::InvalidRequirement
                 | GapKind::InvalidRuntimeRequirement
                 | GapKind::ArchiveRequirement
                 | GapKind::ArchiveRuntimeRequirement,
                 IssueSubject::Import { distribution, .. },
-            ) => self
-                .site
-                .as_ref()
-                .is_some_and(|(name, _)| distribution.as_deref() == Some(name.as_str())),
+            ) => distribution.as_deref().is_some_and(|name| self.site_is(name)),
             (
                 GapKind::InvalidRuntimeRequirement | GapKind::ArchiveRuntimeRequirement,
                 IssueSubject::Distribution { name },
-            ) => {
-                self.site.as_ref().is_some_and(|(site, _)| site == name)
-            },
+            ) => self.site_is(name),
             _ => true,
         };
         in_member && in_site
@@ -323,9 +316,11 @@ impl Gap {
 
     /// Whether the site is the root of `module`.
     fn names_root(&self, module: &str) -> bool {
-        self.site
-            .as_ref()
-            .is_some_and(|(root, _)| root == import_root(module))
+        self.site_is(import_root(module))
+    }
+
+    fn site_is(&self, name: &str) -> bool {
+        self.site.as_ref().is_some_and(|(site, _)| site == name)
     }
 
     /// What `--explain` names: the import or target and its line, or else the file.
@@ -614,7 +609,7 @@ fn assumed_target_gaps(
         &TargetVersion::default_py311(),
         manifest.metadata.requires_python.as_deref(),
     );
-    let mut first: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    let mut gaps = Vec::new();
     for module in &parse.modules {
         let own_target = scripts
             .iter()
@@ -622,23 +617,32 @@ fn assumed_target_gaps(
         if own_target {
             continue;
         }
-        for import in &module.imports {
-            let root = import_root(&import.module);
-            if import.relative_level == 0 && !root.is_empty() && assumed.ships_only_outside(root) {
-                let line = first.entry((&module.path, root)).or_insert(import.line);
-                *line = (*line).min(import.line);
-            }
+        gaps.extend(
+            version_dependent_roots(module, assumed)
+                .into_iter()
+                .map(|(root, line)| Gap {
+                    file: module.path.clone(),
+                    kind: GapKind::AssumedTargetVersion,
+                    member: None,
+                    site: Some((root.to_owned(), Some(line))),
+                }),
+        );
+    }
+    gaps
+}
+
+/// Each absolute import root of `module` that `range` does not ship as stdlib
+/// although another minor does, at its first line.
+fn version_dependent_roots(module: &ParsedModule, range: StdlibRange) -> BTreeMap<&str, u32> {
+    let mut first: BTreeMap<&str, u32> = BTreeMap::new();
+    for import in &module.imports {
+        let root = import_root(&import.module);
+        if import.relative_level == 0 && !root.is_empty() && range.ships_only_outside(root) {
+            let line = first.entry(root).or_insert(import.line);
+            *line = (*line).min(import.line);
         }
     }
     first
-        .into_iter()
-        .map(|((file, root), line)| Gap {
-            file: file.to_owned(),
-            kind: GapKind::AssumedTargetVersion,
-            member: None,
-            site: Some((root.to_owned(), Some(line))),
-        })
-        .collect()
 }
 
 /// What a PEP 723 block itself could not read, scoped to that script (#936):
@@ -676,18 +680,8 @@ fn script_gaps(
         else {
             continue;
         };
-        let mut first: BTreeMap<&str, u32> = BTreeMap::new();
-        for import in &module.imports {
-            let root = import_root(&import.module);
-            if import.relative_level == 0
-                && !root.is_empty()
-                && project_range.ships_only_outside(root)
-            {
-                let line = first.entry(root).or_insert(import.line);
-                *line = (*line).min(import.line);
-            }
-        }
-        gaps.extend(first.into_iter().map(|(root, line)| Gap {
+        let roots = version_dependent_roots(module, project_range);
+        gaps.extend(roots.into_iter().map(|(root, line)| Gap {
             file: script.path.clone(),
             kind: GapKind::AssumedScriptTargetVersion,
             member: None,
