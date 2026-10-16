@@ -102,6 +102,7 @@ pub fn resolve_imports_for_analysis(
                 import.optional,
                 dead_fallback,
                 import.platform_guarded,
+                import.relative_level,
                 file_stdlib,
                 sources,
                 manifest,
@@ -130,6 +131,7 @@ pub fn resolve_imports_for_analysis(
                 dynamic.optional,
                 false,
                 dynamic.platform_guarded,
+                0,
                 file_stdlib,
                 sources,
                 manifest,
@@ -171,6 +173,7 @@ pub fn resolve_imports_for_analysis(
                 false,
                 false,
                 false,
+                0,
                 file_stdlib,
                 sources,
                 manifest,
@@ -206,6 +209,7 @@ pub fn resolve_imports_for_analysis(
             false,
             false,
             false,
+            0,
             stdlib,
             sources,
             manifest,
@@ -298,6 +302,7 @@ fn resolve_import_site(
     optional: bool,
     dead_fallback: bool,
     platform_guarded: bool,
+    relative_level: u8,
     stdlib: StdlibRange,
     sources: &DiscoveredSources,
     manifest: &LoadedManifest,
@@ -318,7 +323,14 @@ fn resolve_import_site(
     let workspace_member = owners.owner(file);
     let member = workspace_member.as_deref();
     let pick = |candidates: &[String]| site_candidate(candidates, file, member, scoped, declared);
-    let core = if let Some(origin) = site_origin(&root_name, file, context, stdlib, pytest_paths) {
+    // A relative import only reaches within the importer's own package,
+    // whatever its root shares a name with (#896).
+    let site = if relative_level > 0 {
+        Some(ModuleOrigin::FirstParty)
+    } else {
+        site_origin(&root_name, file, context, stdlib, pytest_paths)
+    };
+    let core = if let Some(origin) = site {
         RootResolution {
             origin,
             distribution: None,

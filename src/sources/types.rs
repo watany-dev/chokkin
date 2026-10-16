@@ -1,5 +1,7 @@
 //! Source file discovery types.
 
+use std::collections::BTreeSet;
+
 use crate::cache::CacheKeyHasher;
 use crate::discovery::ProjectRoot;
 
@@ -94,6 +96,11 @@ pub struct LayoutInfo {
     /// Workspace members' own layouts. The root layout cannot name a module
     /// inside a member, so without them no import within a member resolves.
     pub members: Vec<MemberLayout>,
+    /// Root-relative directories holding a discovered `__init__.py`. A file
+    /// the layout names no module for takes its relative imports' package
+    /// context from this chain, as the directory above it would on
+    /// `sys.path` (#896).
+    pub package_dirs: BTreeSet<String>,
 }
 
 /// Layout of one workspace member.
@@ -155,6 +162,10 @@ impl LayoutInfo {
         for member in &self.members {
             hasher.field_str(&member.path);
             hasher.field_str(&member.layout.cache_key_hash());
+        }
+        hasher.field_u64(u64::try_from(self.package_dirs.len()).unwrap_or(u64::MAX));
+        for dir in &self.package_dirs {
+            hasher.field_str(dir);
         }
         hasher.finish()
     }

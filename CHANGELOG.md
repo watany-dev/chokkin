@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `Migration` in a module of a Django app's `migrations` package is no longer
   CHK006: Django's migration loader reads it by name (#926).
+- Relative imports in packages the layout names no module for (Django's
+  `tests/admin_views/`, a `scripts/tool/` package) resolve against their
+  `__init__.py` chain instead of warning about a missing package context, and
+  are always first-party, so `from .api import get` in `scripts/requests/`
+  no longer counts as using `requests`. Reachability follows them into the
+  script's or test's own package (#896).
 
 ## [0.7.6] - 2026-10-16
 

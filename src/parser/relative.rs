@@ -20,7 +20,7 @@ pub(crate) fn resolve_relative_import(
         return module_suffix.map(str::to_owned);
     }
 
-    let current_module = path_to_module(file_path, layout)?;
+    let current_module = relative_module_name(file_path, layout)?;
     let is_init = file_path.ends_with("__init__.py");
     let containing_package = containing_package(&current_module, is_init);
     if containing_package.is_empty() && level > 0 {
@@ -47,7 +47,7 @@ pub(crate) fn resolve_relative_import(
 /// package `__init__.py`, its parent otherwise.
 #[must_use]
 pub(super) fn module_package(file_path: &str, layout: &LayoutInfo) -> Option<String> {
-    let current_module = path_to_module(file_path, layout)?;
+    let current_module = relative_module_name(file_path, layout)?;
     Some(containing_package(
         &current_module,
         file_path.ends_with("__init__.py"),
@@ -76,6 +76,38 @@ pub(super) fn unresolved_relative_diagnostic(line: u32) -> ParseDiagnostic {
         message: "could not resolve relative import (missing package context)".to_owned(),
         severity: ParseSeverity::Warning,
     }
+}
+
+/// The module name relative imports in `file_path` resolve against: the
+/// layout's, else one below the outermost package directory around the file,
+/// as if the directory above that package were on `sys.path` (#896). A
+/// relative import only reaches within its own package, so whichever
+/// directory a runner really puts there, the target file is the same.
+fn relative_module_name(file_path: &str, layout: &LayoutInfo) -> Option<String> {
+    path_to_module(file_path, layout).or_else(|| package_chain_module(file_path, layout))
+}
+
+/// `tests/app/admin.py` → `app.admin` when `tests/app/` holds an
+/// `__init__.py` and `tests/` does not. `None` for a file outside any package
+/// directory: `CPython` has no parent package to resolve against there either.
+fn package_chain_module(file_path: &str, layout: &LayoutInfo) -> Option<String> {
+    let stem = file_path.strip_suffix(".py")?;
+    let (mut dir, _) = file_path.rsplit_once('/')?;
+    if !layout.package_dirs.contains(dir) {
+        return None;
+    }
+    let mut base = 0;
+    while let Some((parent, _)) = dir.rsplit_once('/') {
+        if !layout.package_dirs.contains(parent) {
+            base = parent.len() + 1;
+            break;
+        }
+        dir = parent;
+    }
+    let module = stem[base..]
+        .strip_suffix("/__init__")
+        .unwrap_or_else(|| &stem[base..]);
+    Some(module.replace('/', "."))
 }
 
 fn containing_package(module: &str, is_init: bool) -> String {
@@ -178,6 +210,41 @@ mod tests {
         };
         assert_eq!(
             resolve_relative_import("tests/unit/test_core.py", &layout, 1, None, Some("helpers")),
+            None
+        );
+    }
+
+    #[test]
+    fn package_outside_the_layout_resolves_against_its_init_chain() {
+        // django's `tests/<app>/`: `tests/` has no `__init__.py`, so the app
+        // is a top-level package for whatever puts `tests/` on `sys.path`.
+        let layout = LayoutInfo {
+            packages: vec!["acme".to_owned()],
+            package_dirs: ["tests/app", "tests/app/sub"]
+                .map(str::to_owned)
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_relative_import("tests/app/admin.py", &layout, 1, Some("models"), None),
+            Some("app.models".to_owned())
+        );
+        assert_eq!(
+            resolve_relative_import("tests/app/sub/__init__.py", &layout, 2, None, Some("views")),
+            Some("app.views".to_owned())
+        );
+        // Beyond the outermost package, and outside any package directory.
+        assert_eq!(
+            resolve_relative_import("tests/app/admin.py", &layout, 2, Some("models"), None),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("tests/runtests.py", &layout, 1, Some("app"), None),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("tests/app/cells.ipynb", &layout, 1, Some("models"), None),
             None
         );
     }
