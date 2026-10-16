@@ -115,7 +115,6 @@ impl Requirements<'_> {
     /// missing file, but it may be generated before the build.
     fn push(&self, result: &mut SetupCfgExtraction, value: &str) -> bool {
         let Some(spec) = value.strip_prefix("file:") else {
-            // setuptools reads the value with `parse_strings` (#965).
             for item in setuptools_requirement_items(value.lines()) {
                 push_dependency(DependencyPush {
                     dependencies: &mut result.dependencies,

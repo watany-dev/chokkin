@@ -38,7 +38,6 @@ pub(crate) fn setuptools_requirement_items<'a>(
     for (index, line) in lines.enumerate() {
         let item = match pending.take() {
             Some(mut item) => {
-                // The `\` is checked before the join, so it is always there.
                 let head = item.text.strip_suffix('\\').unwrap_or(&item.text);
                 let head = strip_python(head);
                 item.text = format!("{head}{line}");
@@ -59,7 +58,6 @@ pub(crate) fn setuptools_requirement_items<'a>(
     items
 }
 
-/// `drop_comment`: the text before the first ` #`.
 fn drop_comment(line: &str) -> &str {
     line.split_once(" #").map_or(line, |(head, _)| head)
 }

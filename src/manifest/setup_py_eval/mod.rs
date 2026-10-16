@@ -159,7 +159,6 @@ pub(super) fn dependency_items(value: &Value) -> DependencyItems {
     result
 }
 
-/// Read the strings of one run with `parse_strings` and empty the run.
 fn push_parsed_strings(run: &mut Vec<&str>, items: &mut Vec<DependencyItem>) {
     items.extend(
         setuptools_requirement_items(run.iter().flat_map(|text| text.lines()))

@@ -558,13 +558,9 @@ const PIP_LINE_OPTIONS: &[(&str, Option<char>, bool)] = &[
 /// repeated `-r` / `-c` / `-e` (`opts.requirements[0]`).
 #[derive(Debug, Default, PartialEq, Eq)]
 struct PipLineOptions {
-    /// The line carries `--hash`.
     hashed: bool,
-    /// The first `-r` / `--requirement` value.
     requirement: Option<String>,
-    /// The first `-c` / `--constraint` value.
     constraint: Option<String>,
-    /// The first `-e` / `--editable` value.
     editable: Option<String>,
 }
 
